@@ -40,8 +40,8 @@ try {
   const scene = routedScene(page, source);
   await scene.route();
   assert.equal((await openPaused(page, url)).result.paused, true);
-  await command("render");
-  const initial = await command("assets");
+  await command("control", "render");
+  const initial = await command("query", "assets");
   readyTextures(initial, source);
   const initialResidency = residency(initial);
   assert.ok(initialResidency.textureCpu > 0);
@@ -59,26 +59,26 @@ try {
   assert.ok(source.materials.some(material => material.id === meshView.material.id));
   assert.ok(source.meshes.some(mesh => mesh.id === meshView.mesh.id && mesh.source.kind === meshView.mesh.source.kind), JSON.stringify(meshView.mesh));
   for (let frame = 0; frame < 3; frame++) {
-    const warmed = await command("render");
+    const warmed = await command("control", "render");
     assert.equal(warmed.result.rendering.texture_upload_bytes, 0, "Warm frames must not upload texture pixels again.");
   }
 
-  await command("input", { forward: 1, held: 1 });
-  await command("step", { ticks: 6 });
+  await command("control", "input", { forward: 1, held: 1 });
+  await command("control", "step", { ticks: 6 });
   const input = (await command("inspect", { component: "Input" })).result.value;
   assert.equal(input.move_forward, 1, JSON.stringify(input));
   assert.deepEqual(input.held, [0], JSON.stringify(input));
-  await command("input", { forward: 0 });
+  await command("control", "input", { forward: 0 });
   const playerBefore = await command("inspect", { entity: player, component: "Transform" });
   const progressBefore = await page.locator("canvas").evaluate(canvas => JSON.parse(/** @type {string} */ (canvas.dataset.progress)));
-  const beforeFailure = await command("assets");
+  const beforeFailure = await command("query", "assets");
   const invalidResults = [];
   for (const kind of ["base64"]) {
     const invalid = structuredClone(source);
     invalid.revision++;
     invalid.textures[0].rgba8 = "!invalid-base64!";
     scene.serve(invalid);
-    const failed = await command("reload", {
+    const failed = await command("control", "reload", {
       expected_revision: String(source.revision), revision: String(invalid.revision),
     }, false);
     assert.equal(failed.observation.scene.revision, String(source.revision));
@@ -87,7 +87,7 @@ try {
     invalidResults.push({ kind, code: failed.error.code, path: failed.error.path });
     const unchanged = await command("inspect", { entity: player, component: "Transform" });
     assert.deepEqual(unchanged.result.entity, playerBefore.result.entity);
-    assert.deepEqual(residency(await command("assets")), residency(beforeFailure));
+    assert.deepEqual(residency(await command("query", "assets")), residency(beforeFailure));
     assert.deepEqual(await page.locator("canvas").evaluate(canvas => JSON.parse(/** @type {string} */ (canvas.dataset.progress))), progressBefore);
   }
 
@@ -105,7 +105,7 @@ try {
   }
   const replaced = await scene.reload(command, changed);
   assert.equal(replaced.result.rendering.texture_upload_bytes, initialResidency.textureCpu);
-  const changedAssets = await command("assets");
+  const changedAssets = await command("query", "assets");
   readyTextures(changedAssets, changed);
   assert.deepEqual(residency(changedAssets), initialResidency);
   const changedCapture = await capture("replaced");
@@ -113,10 +113,10 @@ try {
   assert.ok(replacementPixels.changed > 100, "Changing only texture pixels must visibly change the rendered canvas.");
   for (let replacement = 0; replacement < 3; replacement++) {
     await scene.reload(command, changed);
-    const next = await command("assets");
+    const next = await command("query", "assets");
     readyTextures(next, changed);
     assert.deepEqual(residency(next), initialResidency, "Repeated replacement must keep live CPU/GPU residency bounded.");
-    const warmed = await command("render");
+    const warmed = await command("control", "render");
     assert.equal(warmed.result.rendering.texture_upload_bytes, 0);
   }
   const repeatedPixels = await changedPixels(changedCapture, await capture("repeated"));
@@ -127,7 +127,7 @@ try {
   untextured.textures = [];
   for (const material of untextured.materials) delete material.texture;
   await scene.reload(command, untextured);
-  const retired = await command("assets");
+  const retired = await command("query", "assets");
   assert.equal(retired.result.textures, 0);
   assert.equal(retired.result.texture_cpu_bytes, 0);
   assert.deepEqual(retired.result.texture_assets, []);

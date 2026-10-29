@@ -1,6 +1,6 @@
 // @ts-check
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { resolve, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { AgentError, loopbackUrl } from "./agent-protocol.mjs";
@@ -8,21 +8,23 @@ import { launchContext } from "./browser-launch.mjs";
 import { recordReceived, recordSent } from "./exercised.mjs";
 import { workspace } from "./workspace.mjs";
 
-async function compareCaptures(command, requestBrowser, page) {
-  if (Object.keys(command).some(key => !["op", "a", "b", "tolerance"].includes(key))) {
-    throw new AgentError("unknown_field", "compare takes a, b and tolerance.", "$");
+const status = { verb: "query", name: "status" };
+
+async function compareCaptures(compare, requestBrowser, page) {
+  if (!compare || typeof compare !== "object" || Object.keys(compare).some(key => !["a", "b", "tolerance"].includes(key))) {
+    throw new AgentError("unknown_field", "a b tolerance", "$.compare");
   }
-  const tolerance = command.tolerance ?? 0;
-  if (!Number.isInteger(tolerance) || tolerance < 0 || tolerance > 255) throw new AgentError("out_of_range", "tolerance is 0 to 255.", "tolerance");
+  const tolerance = compare.tolerance ?? 0;
+  if (!Number.isInteger(tolerance) || tolerance < 0 || tolerance > 255) throw new AgentError("out_of_range", "0..255", "$.compare.tolerance");
   const root = resolve(workspace, "artifacts", "agent");
   const images = [];
   for (const name of ["a", "b"]) {
-    const path = typeof command[name] === "string" ? resolve(workspace, command[name]) : "";
-    if (!path.startsWith(root + sep) || !path.endsWith(".png")) throw new AgentError("invalid_path", `${name} must name a capture under artifacts/agent.`, name);
-    const bytes = await readFile(path).catch(() => { throw new AgentError("invalid_path", `${command[name]} cannot be read.`, name); });
+    const path = typeof compare[name] === "string" ? resolve(workspace, compare[name]) : "";
+    if (!path.startsWith(root + sep) || !path.endsWith(".png")) throw new AgentError("invalid_path", "a capture under artifacts/agent", `$.compare.${name}`);
+    const bytes = await readFile(path).catch(() => { throw new AgentError("invalid_path", String(compare[name]), `$.compare.${name}`); });
     images.push(bytes.toString("base64"));
   }
-  const response = await requestBrowser({ op: "status" });
+  const response = await requestBrowser(status);
   if (!response.ok) return response;
   const result = await page.evaluate(async ({ images, tolerance }) => {
     const pixels = await Promise.all(images.map(async png => {
@@ -47,7 +49,7 @@ async function compareCaptures(command, requestBrowser, page) {
     }
     return { same_size: true, width: pixels[0].width, height: pixels[0].height, different, total: pixels[0].width * pixels[0].height, largest_difference: largest };
   }, { images, tolerance });
-  return { ...response, result: { compare: result, a: command.a, b: command.b, tolerance } };
+  return { ...response, result: { compare: result, a: compare.a, b: compare.b, tolerance } };
 }
 
 const SESSIONS_KEPT = 10;
@@ -62,10 +64,14 @@ async function pruneSessions(root) {
   await Promise.all(sessions.slice(SESSIONS_KEPT).map(({ path }) => rm(path, { recursive: true, force: true })));
 }
 
+function captures(command) {
+  return command.verb === "capture" || (command.verb === "control" && command.name === "frames" && command.args?.capture === true);
+}
+
 /** @param {{ url: string | URL, browserPath?: string, session?: string, expectedBuild?: string | null, signal?: AbortSignal }} options */
 export async function launchBrowserSession({ url: value, browserPath, session = randomUUID(), expectedBuild, signal }) {
   const url = loopbackUrl(String(value));
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "Session identity must be a bounded identifier.", "session");
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "1..96 letters, digits, underscores or hyphens", "session");
   const browser = await launchContext({ executablePath: browserPath, viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
   let page;
   let instance;
@@ -75,6 +81,7 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
   let invalidationCallback;
   let initialNavigation = true;
   let captureNumber = 0;
+  let watching;
   const listeners = [];
   const diagnostics = [];
 
@@ -103,16 +110,16 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
     if (invalidated) callback();
   }
   const aborted = () => { void close().catch(() => {}); };
-  if (signal?.aborted) { await close(); throw new AgentError("session_cancelled", "Browser startup was cancelled."); }
+  if (signal?.aborted) { await close(); throw new AgentError("session_cancelled", "startup cancelled", "$"); }
   signal?.addEventListener("abort", aborted, { once: true });
   listeners.push(() => signal?.removeEventListener("abort", aborted));
   async function requestBrowser(command) {
-    if (invalidated || closing) throw new AgentError("session_unavailable", "The owned browser runtime is no longer available.");
+    if (invalidated || closing) throw new AgentError("session_unavailable", "the browser runtime closed", "$");
     recordSent(command);
     const response = await page.evaluate(({ expected, expectedBuild, command }) => {
       const api = window.__engineDev;
       if (!api || api.instance !== expected || (expectedBuild !== null && api.build !== expectedBuild)) {
-        return { ok: false, error: { code: "runtime_replaced", path: "$", message: "The browser runtime changed. Start a new development session." } };
+        return { ok: false, error: { code: "runtime_replaced", path: "$", message: "the browser runtime changed" } };
       }
       return api.request(command);
     }, { expected: instance, expectedBuild: build, command });
@@ -125,19 +132,36 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
     while (true) {
       let timer;
       const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new AgentError("runtime_busy", "The development runtime did not finish initialization.");
+      if (remaining <= 0) throw new AgentError("runtime_busy", "initialization", "$");
       let response;
       try {
         response = await Promise.race([
           requestBrowser(command),
-          new Promise((_, reject) => { timer = setTimeout(() => reject(new AgentError("runtime_unavailable", "The initialization command timed out.")), remaining); }),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(new AgentError("runtime_unavailable", "initialization timed out", "$")), remaining); }),
         ]);
       } finally { clearTimeout(timer); }
       if (response?.error?.code === "command_busy") { await delay(25); continue; }
-      if (!response?.ok) throw new AgentError(response?.error?.code ?? "runtime_unavailable", response?.error?.message ?? "The development runtime rejected initialization.", response?.error?.path);
-      if (response.result?.paused !== true) throw new AgentError("runtime_not_paused", "A new development runtime must start paused.");
+      if (!response?.ok) throw new AgentError(response?.error?.code ?? "runtime_unavailable", response?.error?.message ?? "initialization refused", response?.error?.path);
+      if (response.result?.paused !== true) throw new AgentError("runtime_not_paused", "a new session starts paused", "$");
       return response;
     }
+  }
+  async function keepSaved(response, artifacts) {
+    const artifact = response?.result?.artifact;
+    if (!response?.ok || typeof artifact?.path !== "string" || !artifact.path.startsWith("page/")) return response;
+    const text = await page.evaluate(path => window.__engineDev?.saved(path), artifact.path);
+    if (typeof text !== "string") {
+      return { ok: false, observation: response.observation, error: { code: "capture_failed", path: "$", message: artifact.path } };
+    }
+    await mkdir(artifacts, { recursive: true });
+    const path = resolve(artifacts, artifact.path.slice("page/".length));
+    await writeFile(path, text);
+    const bytes = await readFile(path);
+    if (createHash("sha256").update(bytes).digest("hex") !== artifact.sha256) {
+      return { ok: false, observation: response.observation, error: { code: "capture_failed", path: "$", message: artifact.path } };
+    }
+    artifact.path = relative(workspace, path).split(sep).join("/");
+    return response;
   }
 
   try {
@@ -148,6 +172,9 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
     listen(page, "framenavigated", frame => { if (!initialNavigation && frame === page.mainFrame()) invalidate(); });
     listen(page, "close", invalidate);
     listen(page, "crash", invalidate);
+    await page.exposeBinding("__engineWatch", (_source, records) => {
+      for (const record of Array.isArray(records) ? records : []) watching?.(record);
+    });
     await page.route("**/*", async route => {
       const request = route.request();
       if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
@@ -163,60 +190,69 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
         build: window.__engineDev?.build ?? null,
         ready: typeof window.__engineDev?.request === "function",
       }));
-      if (!identity.ready) throw new AgentError("runtime_unavailable", "The game reported an initialization error.");
+      if (!identity.ready) throw new AgentError("runtime_unavailable", "the game failed to start", "$");
       initialNavigation = false;
       instance = identity.instance;
       build = identity.build;
-      if (typeof instance !== "string" || !instance) throw new AgentError("missing_runtime_identity", "The development browser must expose a runtime instance identity.");
-      if (expectedBuild !== undefined && build !== expectedBuild) throw new AgentError("build_mismatch", `Expected build ${expectedBuild}, received ${String(build)}.`, "build");
-      await readyRequest({ op: "render" });
-      await readyRequest({ op: "status" });
+      if (typeof instance !== "string" || !instance) throw new AgentError("missing_runtime_identity", "window.__engineDev.instance", "$");
+      if (expectedBuild !== undefined && build !== expectedBuild) throw new AgentError("build_mismatch", `${expectedBuild} ${String(build)}`, "build");
+      await readyRequest({ verb: "control", name: "render" });
+      await readyRequest(status);
     } catch (error) {
-      const status = await page.locator("#status").textContent({ timeout: 1000 }).catch(() => "unavailable");
-      throw new AgentError(error?.code ?? "runtime_unavailable", `${error?.message ?? error} Status: ${status}. Browser diagnostics: ${JSON.stringify(diagnostics.slice(-5))}`, error?.path);
+      const shown = await page.locator("#status").textContent({ timeout: 1000 }).catch(() => "unavailable");
+      throw new AgentError(error?.code ?? "runtime_unavailable", `${error?.message ?? error} ${shown} ${JSON.stringify(diagnostics.slice(-5))}`, error?.path);
     }
-    if (invalidated || closing) throw new AgentError("session_unavailable", "The browser closed during initialization.");
+    if (invalidated || closing) throw new AgentError("session_unavailable", "the browser closed during initialization", "$");
     const artifacts = resolve(workspace, "artifacts", "agent", session);
     await pruneSessions(resolve(workspace, "artifacts", "agent"));
-    return {
+    const owned = {
       session, url: url.href, instance, build, close, setInvalidated,
       page,
-      async execute(command) {
-        if (command.op === "describe" && command.name === "ProfileCapture") {
-          if (Object.keys(command).some(key => !["op", "name"].includes(key))) throw new AgentError("invalid_request", "describe accepts only name.");
-          const response = await requestBrowser({ op: "status" });
+      async execute(command, onRecord) {
+        if (command.verb === "describe" && command.name === "ProfileCapture") {
+          if (Object.keys(command).some(key => !["verb", "name"].includes(key))) throw new AgentError("unknown_field", "verb name", "$");
+          const response = await requestBrowser(status);
           if (!response.ok) return response;
           const { profileDescriptor } = await import("./agent-profile.mjs");
-          const status = await page.evaluate(() => window.__engineProfile?.status() ?? { available: false });
-          response.result = { ...profileDescriptor, status };
+          const available = await page.evaluate(() => window.__engineProfile?.status() ?? { available: false });
+          response.result = { ...profileDescriptor, status: available };
           return response;
         }
-        if (command.op === "profile") {
+        if (command.verb === "profile" && command.deep !== undefined) {
           const { captureProfile } = await import("./agent-profile.mjs");
-          try { return await captureProfile({ page, requestBrowser, command, artifacts, workspace }); }
+          try { return await captureProfile({ page, requestBrowser, command: command.deep, artifacts, workspace }); }
           catch (error) {
             if (!(error instanceof AgentError)) throw error;
-            const { observation } = await requestBrowser({ op: "status" });
+            const { observation } = await requestBrowser(status);
             return { ok: false, ...(observation ? { observation } : {}), error: { code: error.code, path: error.path, message: error.message } };
           }
         }
-        if (command.op === "compare") {
-          return compareCaptures(command, requestBrowser, page);
+        if (command.verb === "capture" && command.compare !== undefined) {
+          const { compare, ...capture } = command;
+          if (typeof compare?.b === "string") return compareCaptures(compare, requestBrowser, page);
+          const captured = await owned.execute(capture);
+          if (!captured.ok) return captured;
+          const compared = await compareCaptures({ ...compare, b: captured.result.artifact.path }, requestBrowser, page);
+          if (compared.ok) captured.result.compare = compared.result.compare;
+          return compared.ok ? captured : compared;
         }
-        if (command.op === "diagnostics") {
-          const response = await requestBrowser({ op: "status" });
+        if (command.verb === "query" && command.name === "diagnostics") {
+          const response = await requestBrowser(status);
           if (response.ok) response.result = { observation: response.observation ?? response.result?.observation, entries: [...diagnostics] };
           return response;
         }
-        const response = await requestBrowser(command);
-        if (command.op === "describe" && command.name === undefined && response.ok && Array.isArray(response.result?.types)) {
-          response.result.types.push({ name: "ProfileCapture", kind: "tooling", description: "Optional detailed profiling in the isolated profiling build" });
+        watching = command.verb === "watch" ? onRecord : undefined;
+        let response;
+        try { response = await requestBrowser(command); }
+        finally { watching = undefined; }
+        if (command.verb === "describe" && command.name === undefined && response.ok && Array.isArray(response.result?.types)) {
+          response.result.types.push({ name: "ProfileCapture", kind: "tooling" });
           const { controls, parameters } = await page.evaluate(() => ({ controls: window.__engineDev?.controls ?? {}, parameters: window.__engineDev?.parameters ?? {} }));
-          response.result.types.push({ name: "GameControls", kind: "tooling", description: "The game's own controls, which the game control runs by name with args", controls });
-          response.result.types.push({ name: "PageParameters", kind: "tooling", description: "The page URL's parameters the host and game read", parameters });
+          response.result.types.push({ name: "GameControls", kind: "tooling", controls });
+          response.result.types.push({ name: "PageParameters", kind: "tooling", parameters });
         }
-        if ((command.op === "capture" || (command.op === "frames" && command.capture === true)) && response.ok) {
-          if (response.result?.paused !== true) throw new AgentError("capture_requires_pause", "The browser must confirm it is paused before capture.");
+        if (captures(command) && response.ok) {
+          if (response.result?.paused !== true) throw new AgentError("capture_requires_pause", "a paused session", "$");
           try {
             await mkdir(artifacts, { recursive: true });
             const artifact = resolve(artifacts, `capture-${++captureNumber}.png`);
@@ -231,8 +267,9 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
             return { ok: false, observation: response.observation ?? response.result.observation, error: { code: "capture_failed", path: "$", message: error.message } };
           }
         }
-        return response;
+        return keepSaved(response, artifacts);
       },
     };
+    return owned;
   } catch (error) { await close(); throw error; }
 }

@@ -53,7 +53,7 @@ try {
   await openPaused(page, url);
   const checks = [];
 
-  await command("render");
+  await command("control", "render");
   const drawn = await inspect("limb", "Mesh3d");
   assert.equal(drawn.mesh.id, "ribbon");
   assert.deepEqual(drawn.mesh.source, { kind: "inline", vertices: 6, indices: 12 });
@@ -65,7 +65,7 @@ try {
   assert.ok(near.mesh.rendered?.levels.length > 0, `the ball has coarser levels: ${JSON.stringify(near.mesh.rendered)}`);
   async function drawnLevel(entity) {
     await inspect(entity, "Mesh3d");
-    await command("resume");
+    await command("control", "resume");
     try {
       for (let attempt = 0; attempt < 100; attempt++) {
         await delay(100);
@@ -74,7 +74,7 @@ try {
       }
       assert.fail(`${entity}'s drawn level reads back`);
     } finally {
-      await command("pause");
+      await command("control", "pause");
     }
   }
   const nearLevel = await drawnLevel("near-ball");

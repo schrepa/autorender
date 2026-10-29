@@ -395,6 +395,18 @@ impl<G: Game> GameHost<G> {
         self.app.renderer.arm_probe(pixel);
     }
 
+    pub(crate) fn read_back(&self, slot: u32) -> Option<(Option<u32>, u64)> {
+        self.app.renderer.slot_read_back(slot)
+    }
+
+    pub(crate) fn dev_tools(&self) -> &engine_dev::DevTools {
+        &self.development.tools
+    }
+
+    pub(crate) fn dev_scene(&self) -> Option<&engine_scene::SceneInstance> {
+        self.game.scene()
+    }
+
     pub(crate) fn probe_result(
         &mut self,
     ) -> Option<Result<engine_dev::results::ProbeResult, String>> {
@@ -445,7 +457,7 @@ impl<G: Game> GameHost<G> {
             let Some(scene) = self.game.scene() else {
                 return Err(SceneError {
                     code: ErrorCode::UnsupportedCommand,
-                    path: "$.op".into(),
+                    path: "$.name".into(),
                     message: "this game runs no authored scene to reload".into(),
                 });
             };
@@ -454,14 +466,14 @@ impl<G: Game> GameHost<G> {
             else {
                 return Err(SceneError {
                     code: ErrorCode::InvalidRevision,
-                    path: "$.revision".into(),
+                    path: "$.args.revision".into(),
                     message: "revisions must be unsigned decimal strings".into(),
                 });
             };
             if scene.revision() != expected {
                 return Err(SceneError {
                     code: ErrorCode::RevisionConflict,
-                    path: "$.expected_revision".into(),
+                    path: "$.args.expected_revision".into(),
                     message: format!("active revision is {}", scene.revision()),
                 });
             }
@@ -469,7 +481,7 @@ impl<G: Game> GameHost<G> {
             if document.id != scene.id() || document.revision != target {
                 return Err(SceneError {
                     code: ErrorCode::RevisionConflict,
-                    path: "$.revision".into(),
+                    path: "$.args.revision".into(),
                     message: "saved scene ID and revision must match the requested scene".into(),
                 });
             }

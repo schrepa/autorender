@@ -35,19 +35,19 @@ function near(value, expected, epsilon = 0.001) {
   assert.ok(Number.isFinite(value) && Math.abs(value - expected) < epsilon, `${value} != ${expected}`);
 }
 async function state() {
-  const observation = (await command("status")).observation;
+  const observation = (await command("query", "status")).observation;
   return { frame: observation.frame, tick: observation.tick, presentation: observation.presentation,
     transform: await inspect("player", "Transform"), global: await inspect("player", "GlobalTransform") };
 }
 async function sensorEvents() {
-  const { observation, rendering, paused, source, ...snapshot } = (await command("collision_events", { entity: "sensor" })).result;
+  const { observation, rendering, paused, source, ...snapshot } = (await command("query", "collision_events", { entity: "sensor" })).result;
   return snapshot;
 }
 
 try {
   await scene.route();
   await openPaused(page, url, { timeout: 20_000 });
-  await command("render");
+  await command("control", "render");
   await command("describe", { name: "Collider" });
   await command("describe", { name: "CollisionWorld" });
   const world = (await command("inspect", { component: "CollisionWorld" })).result.value;
@@ -57,46 +57,46 @@ try {
   assert.ok(volume);
   const before = await state();
   const ray = { origin: [4, 4, 0], direction: [0, -7, 0], max_distance: 5, filter };
-  const hit = (await command("raycast", ray)).result.hit;
+  const hit = (await command("query", "raycast", ray)).result.hit;
   assert.equal(hit.entity.id, "target"); near(hit.distance, 3);
   near(hit.normal[1], 1);
-  assert.equal((await command("raycast", { ...ray, filter: { memberships: 8, filter: 1 } })).result.hit, null);
+  assert.equal((await command("query", "raycast", { ...ray, filter: { memberships: 8, filter: 1 } })).result.hit, null);
   const sensorRay = { origin: [0, 0.6, 0], direction: [0, 0, -1], max_distance: 3,
     filter: { memberships: 2, filter: 4, sensors: "only" } };
-  assert.equal((await command("raycast", sensorRay)).result.hit.entity.id, "sensor");
-  assert.equal((await command("raycast", { ...sensorRay, filter: { ...sensorRay.filter, sensors: "exclude" } })).result.hit, null);
-  assert.equal((await command("raycast", { ...sensorRay, filter: { ...sensorRay.filter, exclude: "sensor" } })).result.hit, null);
-  const inside = (await command("raycast", { ...ray, origin: [4, 0.5, 0] })).result.hit;
+  assert.equal((await command("query", "raycast", sensorRay)).result.hit.entity.id, "sensor");
+  assert.equal((await command("query", "raycast", { ...sensorRay, filter: { ...sensorRay.filter, sensors: "exclude" } })).result.hit, null);
+  assert.equal((await command("query", "raycast", { ...sensorRay, filter: { ...sensorRay.filter, exclude: "sensor" } })).result.hit, null);
+  const inside = (await command("query", "raycast", { ...ray, origin: [4, 0.5, 0] })).result.hit;
   assert.equal(inside.started_inside, true); near(inside.distance, 0);
-  const overlap = (await command("overlap", { position: [4, 0.5, 0], shape: { kind: "sphere", radius: 0.2 }, filter })).result;
+  const overlap = (await command("query", "overlap", { position: [4, 0.5, 0], shape: { kind: "sphere", radius: 0.2 }, filter })).result;
   assert.equal(overlap.hits.length, 1); assert.equal(overlap.hits[0].id, "target");
-  const cast = (await command("shape_cast", { position: [4, 4, 0], shape: cube([0.25, 0.25, 0.25]), direction: [0, -1, 0], max_distance: 5, filter })).result.hit;
+  const cast = (await command("query", "shape_cast", { position: [4, 4, 0], shape: cube([0.25, 0.25, 0.25]), direction: [0, -1, 0], max_distance: 5, filter })).result.hit;
   assert.equal(cast.entity.id, "target"); near(cast.distance, 2.75);
   for (const [id, x] of [["sheared", 8], ["ellipsoid", -4]]) {
-    const result = (await command("raycast", { ...ray, origin: [x, 5, 0], max_distance: 6 })).result.hit;
+    const result = (await command("query", "raycast", { ...ray, origin: [x, 5, 0], max_distance: 6 })).result.hit;
     assert.equal(result.entity.id, id); near(result.distance, 3.5);
   }
-  const shearedCast = (await command("shape_cast", { position: [8, 5, 0], shape: cube([0.25, 0.25, 0.25]), direction: [0, -1, 0], max_distance: 5, filter })).result.hit;
+  const shearedCast = (await command("query", "shape_cast", { position: [8, 5, 0], shape: cube([0.25, 0.25, 0.25]), direction: [0, -1, 0], max_distance: 5, filter })).result.hit;
   assert.equal(shearedCast.entity.id, "sheared"); near(shearedCast.distance, 3.25);
-  await command("raycast", { ...ray, direction: [0, 0, 0] }, false);
-  await command("overlap", { position: [0, 0, 0], shape: { kind: "sphere", radius: 20 }, filter, limit: 1 }, false);
+  await command("query", "raycast", { ...ray, direction: [0, 0, 0] }, false);
+  await command("query", "overlap", { position: [0, 0, 0], shape: { kind: "sphere", radius: 20 }, filter, limit: 1 }, false);
   assert.deepEqual(await state(), before);
   checks.push("closest_raycast", "inside_hit", "symmetric_layers", "sensor_filter_and_exclusion", "overlap", "shape_cast", "shear_and_ellipsoid", "invalid_and_overflow_nonmutating");
 
-  await command("input", { forward: 1 });
+  await command("control", "input", { forward: 1 });
   const transitions = [];
   for (let tick = 0; tick < 36; tick++) {
-    await command("step", { ticks: 1 });
+    await command("control", "step", { ticks: 1 });
     const events = await sensorEvents();
     for (const event of events.events) transitions.push({ tick, event });
     if (events.events.length) {
       const exact = await state();
-      await command("raycast", ray);
+      await command("query", "raycast", ray);
       assert.deepEqual(await sensorEvents(), events);
       assert.deepEqual(await state(), exact);
-      await command("present", { alpha: 0.5 });
+      await command("control", "present", { alpha: 0.5 });
       const preview = await state();
-      await command("raycast", ray);
+      await command("query", "raycast", ray);
       assert.deepEqual(await state(), preview);
       assert.deepEqual(await sensorEvents(), events);
     }
@@ -109,8 +109,8 @@ try {
   const blocked = structuredClone(fixture);
   blocked.entities.push({ id: "thin-wall", transform: { translation: [0.66, 0.6, 0], rotation_degrees: [0, 90, 0] }, collider: collider(cube([3, 2, 0.01])) });
   await scene.reload(command, blocked);
-  await command("input", { right: 1 });
-  await command("step", { ticks: 30 });
+  await command("control", "input", { right: 1 });
+  await command("control", "step", { ticks: 30 });
   near((await inspect("player", "Transform")).translation[0], 0.05);
   const progress = (await command("inspect", { component: "PlayerWalk" })).result;
   assert.ok(JSON.stringify(progress).includes('"collision_errors":0'));
@@ -120,23 +120,23 @@ try {
   const flat = structuredClone(fixture); flat.revision = scene.revision + 1;
   flat.entities.find(entity => entity.id === "target").collider.shape.half_extents[0] = 0;
   scene.serve(flat);
-  await command("reload", { expected_revision: String(scene.revision), revision: String(flat.revision) }, false);
+  await command("control", "reload", { expected_revision: String(scene.revision), revision: String(flat.revision) }, false);
   assert.deepEqual(await state(), invalidBefore);
   const removed = structuredClone(fixture);
   removed.entities = removed.entities.filter(entity => entity.id !== "target");
   await scene.reload(command, removed);
-  assert.equal((await command("raycast", { ...ray, max_distance: 3.5 })).result.hit, null);
+  assert.equal((await command("query", "raycast", { ...ray, max_distance: 3.5 })).result.hit, null);
   checks.push("invalid_reload_preserves_world", "removed_colliders_retire");
   await command("capture");
   await page.locator("canvas").screenshot({ path: `${output}/collision-fixture.png` });
-  await command("resume");
-  await command("raycast", ray);
-  await command("pause");
+  await command("control", "resume");
+  await command("query", "raycast", ray);
+  await command("control", "pause");
   checks.push("queries_allowed_while_running");
   scene.serve({ ...structuredClone(fixture), entities: [{ id: "target", mesh: "box", material: "gold", transform: { translation: [4, 0.5, 0] } }] });
   await page.goto(sceneUrl({ without: "collision,physics" }).href);
   await developmentReady(page);
-  const missing = await command("raycast", ray, false);
+  const missing = await command("query", "raycast", ray, false);
   assert.match(missing.error.code, /missing_plugin/);
   checks.push("plugin_is_opt_in");
   assert.deepEqual(errors, []);

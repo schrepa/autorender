@@ -26,7 +26,7 @@ pub fn coverage(
     let described: Value = serde_json::from_str(&tools.execute(
         &mut engine,
         engine_dev::Context::default(),
-        &json!({"version": engine_dev::PROTOCOL_VERSION, "op": "describe"}).to_string(),
+        &engine_dev::request(engine_dev::Verb::Describe, json!({})),
     ))
     .expect("replies are JSON");
     let section_types: Vec<&str> = sections.iter().map(|(_, name)| *name).collect();
@@ -52,9 +52,20 @@ pub fn coverage(
             })
         })
         .collect();
-    let ops: Vec<Value> = ["queries", "controls"]
-        .iter()
-        .flat_map(|kind| protocol[kind].as_array().cloned().unwrap_or_default())
+    let named = [engine_dev::Verb::Query, engine_dev::Verb::Control, engine_dev::Verb::Check]
+        .map(engine_dev::Verb::name);
+    let verbs = protocol["verbs"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|verb| !named.contains(&verb.as_str().unwrap_or_default()));
+    let ops: Vec<Value> = verbs
+        .chain(
+            ["queries", "controls"]
+                .iter()
+                .flat_map(|kind| protocol[kind].as_array().cloned().unwrap_or_default()),
+        )
         .map(|op| {
             let op = op.as_str().unwrap_or_default().to_owned();
             json!({"op": op, "smokes": naming(|claims| &claims.ops, &op)})
@@ -108,6 +119,7 @@ impl Claims {
         assert_eq!(code.len(), bare.len(), "strippings keep positions");
         let mut claims = Self::default();
         let mut open: Option<(usize, char)> = None;
+        let mut literals: Vec<(usize, String, Option<&'static str>)> = Vec::new();
         for (at, &c) in bare.iter().enumerate() {
             if c != '"' && c != '\'' {
                 continue;
@@ -117,9 +129,12 @@ impl Claims {
                     open = None;
                     let value: String = code[start + 1..at].iter().collect();
                     let field = field_before(&bare, start);
-                    if field == Some("op") || first_argument(&bare, start) {
+                    let named = named_after(&bare, &literals, start, field);
+                    if matches!(field, Some("op" | "verb")) || first_argument(&bare, start) || named
+                    {
                         claims.ops.insert(value.clone());
                     }
+                    literals.push((at, value.clone(), field));
                     let inspecting = enclosing_call(&bare, start)
                         .is_some_and(|name| name.starts_with("inspect"));
                     if field == Some("component") || inspecting {
@@ -185,7 +200,44 @@ fn field_before(code: &[char], at: usize) -> Option<&'static str> {
         return None;
     }
     let (_, name) = name_before(code, colon)?;
-    ["op", "component"].into_iter().find(|field| *field == name)
+    ["op", "verb", "name", "component"]
+        .into_iter()
+        .find(|field| *field == name)
+}
+
+fn named_after(
+    code: &[char],
+    literals: &[(usize, String, Option<&'static str>)],
+    start: usize,
+    field: Option<&'static str>,
+) -> bool {
+    let (anchor, after_verb) = match field {
+        Some("name") => {
+            let Some((colon, _)) = previous(code, start) else {
+                return false;
+            };
+            let Some((key, _)) = name_before(code, colon) else {
+                return false;
+            };
+            (key, true)
+        }
+        Some(_) => return false,
+        None => (start, false),
+    };
+    let Some((comma, ',')) = previous(code, anchor) else {
+        return false;
+    };
+    let Some((end, quote)) = previous(code, comma) else {
+        return false;
+    };
+    if quote != '"' && quote != '\'' {
+        return false;
+    }
+    literals.iter().any(|(closed, value, field)| {
+        *closed == end
+            && ["query", "control"].contains(&value.as_str())
+            && (!after_verb || *field == Some("verb"))
+    })
 }
 
 fn first_argument(code: &[char], at: usize) -> bool {

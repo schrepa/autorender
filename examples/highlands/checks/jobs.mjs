@@ -26,7 +26,7 @@ async function settle(label) {
   let quiet = 0;
   let previous;
   for (let attempt = 0; attempt < 600 && quiet < 3; attempt++) {
-    const frame = JSON.stringify(drawn((await command("render")).result.rendering));
+    const frame = JSON.stringify(drawn((await command("control", "render")).result.rendering));
     terrains = await inspect("Terrains");
     const { running } = await inspect("Jobs");
     const settled = terrains.resident_tiles > 0 && terrains.baking === 0 && terrains.loading_tiles === 0 && terrains.fallback_tiles === 0
@@ -57,16 +57,16 @@ async function session(name, query, walk) {
     assert.ok(agents.portals > 0 && agents.grounds > 0, `${name}: the walk read its tiles' portals and grounds: ${JSON.stringify(agents)}`);
     assert.equal(agents.failed_jobs, 0, `${name}: no record a walk read failed on a worker: ${agents.latest_job_failure}`);
   }
-  await command("pause");
-  const [ground] = (await command("terrain_height", { points: [[view.position[0], view.position[2]]] })).result.samples;
+  await command("control", "pause");
+  const [ground] = (await command("query", "terrain_height", { points: [[view.position[0], view.position[2]]] })).result.samples;
   const camera = { ...view, position: [view.position[0], ground.height + 30, view.position[2]], target: [view.target[0], ground.height - 60, view.target[2]] };
-  await command("camera", camera);
+  await command("control", "camera", camera);
   const terrains = await settle(name);
   const samples = [];
   for (let first = 0; first < points.length; first += 64) {
-    samples.push(...(await command("terrain_height", { points: points.slice(first, first + 64) })).result.samples);
+    samples.push(...(await command("query", "terrain_height", { points: points.slice(first, first + 64) })).result.samples);
   }
-  const rendering = (await command("render")).result.rendering;
+  const rendering = (await command("control", "render")).result.rendering;
   await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
   const jobs = await inspect("Jobs");
   return { shown, terrains, samples, drawn: drawn(rendering), jobs, agents };

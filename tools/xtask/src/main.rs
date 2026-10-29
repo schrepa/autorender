@@ -77,7 +77,7 @@ fn execute() -> Result<(), Failure> {
         return Ok(pipeline::dev(&root, dev_port(&options)?)?);
     }
     if task == "agent" {
-        return Ok(development::agent(&root, &options)?);
+        return development::agent(&root, &options);
     }
     if task == "scene" {
         return Ok(development::scene(&options)?);
@@ -186,9 +186,9 @@ fn commands() -> Vec<(String, &'static str)> {
         ("build".into(), "Build all release Wasm clients and bundle the web host"),
         ("profile [--attribution]".into(), "Build isolated instrumented games in web/dist-profile; --attribution keeps hot helpers out of line for sampling profilers, in web/dist-attribution"),
         ("dev [--port N]".into(), "Build and serve on loopback (default port 5173)"),
-        (format!("agent watch --game {games} [--web-port N] [--port N]"), "Watch Rust, build, and replace identified browser sessions of the game's page"),
-        ("agent help".into(), "The agent client's verbs and options and the engine's queries and controls, as JSON"),
-        ("agent VERB [--session S] [--json JSON | --file PATH]".into(), "Run a development query or control in a browser session"),
+        (format!("agent iterate --game {games} [--web-port N] [--port N]"), "Watch Rust, build, and replace identified browser sessions of the game's page"),
+        ("agent help".into(), "Every agent verb with its request schema, from the bricks and the protocol, and the client's commands, as JSON"),
+        (format!("agent {} [--session S] [--json JSON | --file PATH]", engine_dev::Verb::names().collect::<Vec<_>>().join("|")), "Send one request to a session and print its reply; check runs verify on the working tree"),
         ("scene validate --file PATH | save --file TARGET --candidate PATH --expected-revision N | schema".into(), "Validate or save revision-checked scene sources, or print the scene schema, as JSON"),
         ("asset import --file PATH --id ID (--output PATH | --into PATH --expected-revision N) [--replace] [--as-prefab]".into(), "Import a static textured GLB with structured results"),
         ("assets".into(), "Validate authored scene sources without changing them"),
@@ -233,7 +233,8 @@ Commands:"
                 .into_iter()
                 .map(|(usage, summary)| serde_json::json!({"usage": usage, "summary": summary}))
                 .collect();
-            println!("{}", serde_json::json!({ "commands": commands }));
+            let agent = serde_json::json!({ "verbs": development::verbs()? });
+            println!("{}", serde_json::json!({ "commands": commands, "agent": agent }));
             Ok(())
         }
         _ => Err("usage: cargo xtask help [--json]".into()),

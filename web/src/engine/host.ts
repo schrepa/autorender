@@ -417,13 +417,13 @@ async function start() {
     });
     pause.textContent = "Resume";
     pause.setAttribute("aria-pressed", "true");
-    await window.__engineDev!.request({ op: "render" });
+    await window.__engineDev!.request({ verb: "control", name: "render" });
     const environment = new URLSearchParams(location.search).get("environment");
     if (environment) {
       const playing = !paused;
       setPaused(true);
       const reply = await window.__engineDev!.request({
-        op: "environment", version: window.__engineDev!.version, merge: true, ...JSON.parse(environment) as Record<string, unknown>,
+        verb: "control", name: "environment", version: window.__engineDev!.version, args: { merge: true, ...JSON.parse(environment) as Record<string, unknown> },
       });
       if (playing) setPaused(false);
       if (!reply.ok) throw new Error(`?environment: ${reply.error?.message ?? "refused"} (${reply.error?.path ?? "$"})`);

@@ -107,7 +107,7 @@ try {
   assert.equal(rootHierarchy.parent_in_active_scene, null);
   const rootComponents = (await command("inspect", { entity: "west-lantern" })).result.entity.components;
   assert.ok(!rootComponents.includes("Mesh3d"), "A prefab placement root must not add a renderable mesh.");
-  const initialAssets = await command("assets");
+  const initialAssets = await command("query", "assets");
   const initialResidency = residency(initialAssets);
   const initialRendering = initialAssets.result.rendering;
   const initialEntities = (await command("inspect", { limit: 1 })).result.total;
@@ -116,10 +116,10 @@ try {
   const accessoryLocal = await inspect("player-accessory", "Transform");
   const playerBefore = await inspect(player, "GlobalTransform");
   const accessoryBefore = await inspect("player-accessory", "GlobalTransform");
-  const beforeTick = (await command("status")).observation.tick;
-  await command("input", { forward: 1 });
-  const stepped = await command("step", { ticks: 6 });
-  await command("input", { forward: 0 });
+  const beforeTick = (await command("query", "status")).observation.tick;
+  await command("control", "input", { forward: 1 });
+  const stepped = await command("control", "step", { ticks: 6 });
+  await command("control", "input", { forward: 0 });
   assert.equal(BigInt(stepped.observation.tick) - BigInt(beforeTick), 6n);
   const playerAfter = await inspect(player, "GlobalTransform");
   const accessoryAfter = await inspect("player-accessory", "GlobalTransform");
@@ -138,7 +138,7 @@ try {
     if (kind === "missing_parent") broken.entities.find(entity => entity.id === "player-accessory").parent = "absent-parent";
     if (kind === "qualified_id_collision") broken.entities.push({ id: "west-lantern.lantern" });
     scene.serve(broken);
-    const failed = await command("reload", { expected_revision: String(scene.revision), revision: String(broken.revision) }, false);
+    const failed = await command("control", "reload", { expected_revision: String(scene.revision), revision: String(broken.revision) }, false);
     assert.equal(failed.observation.scene.revision, String(scene.revision));
     assert.equal(failed.observation.tick, playerState.observation.tick);
     assert.equal(failed.error.code, { cycle: "hierarchy_cycle", missing_parent: "unknown_parent", qualified_id_collision: "duplicate_id" }[kind]);
@@ -147,7 +147,7 @@ try {
     assert.deepEqual((await command("inspect", { entity: player, component: "Transform" })).result.entity, playerState.result.entity);
     assert.deepEqual(await inspect("player-accessory", "GlobalTransform"), accessoryAfter);
     assert.deepEqual((await command("inspect", { component: "PlayerWalk" })).result.value, progress);
-    assert.deepEqual(residency(await command("assets")), initialResidency);
+    assert.deepEqual(residency(await command("query", "assets")), initialResidency);
   }
 
   await reload(fixture);
@@ -174,7 +174,7 @@ try {
   const dot = shear[0] * shear[4] + shear[1] * shear[5] + shear[2] * shear[6];
   assert.ok(Math.abs(dot) > 0.01, "The fixture must exercise shear from rotated children under nonuniform scale.");
   for (let index = 0; index < eastIds.length; index++) assert.deepEqual(await inspect(eastIds[index], "GlobalTransform"), eastBefore[index]);
-  assert.deepEqual(residency(await command("assets")), initialResidency);
+  assert.deepEqual(residency(await command("query", "assets")), initialResidency);
   const transformedCapture = await capture("transformed");
   assert.notEqual(transformedCapture, originalCapture);
 
@@ -184,17 +184,17 @@ try {
   const third = await command("inspect", { parent: "third-lantern", component: "Hierarchy", limit: 10 });
   assert.equal(third.result.total, prefab.entities.length);
   assert.equal((await command("inspect", { limit: 1 })).result.total, initialEntities + prefab.entities.length + 1);
-  const tripledAssets = await command("assets");
+  const tripledAssets = await command("query", "assets");
   assert.deepEqual(residency(tripledAssets), initialResidency, "Adding a placement must share CPU and GPU assets.");
   assert.equal(tripledAssets.result.rendering.draw_calls, initialRendering.draw_calls);
   assert.equal(tripledAssets.result.rendering.instances, initialRendering.instances + prefab.entities.length);
   for (let replacement = 0; replacement < 3; replacement++) {
     await reload(triple);
-    const assets = await command("assets");
+    const assets = await command("query", "assets");
     assert.deepEqual(residency(assets), initialResidency);
     assert.equal(assets.result.rendering.draw_calls, initialRendering.draw_calls);
     assert.equal(assets.result.rendering.instances, initialRendering.instances + prefab.entities.length);
-    const warm = (await command("render")).result.rendering;
+    const warm = (await command("control", "render")).result.rendering;
     assert.equal(warm.mesh_upload_bytes, 0);
     assert.equal(warm.texture_upload_bytes, 0);
     assert.equal(warm.invalid_transforms, 0);
@@ -202,13 +202,13 @@ try {
   const tripleCapture = await capture("three-instances");
 
   await reload(transformed);
-  assert.deepEqual(residency(await command("assets")), initialResidency);
+  assert.deepEqual(residency(await command("query", "assets")), initialResidency);
   assert.equal((await command("inspect", { limit: 1 })).result.total, initialEntities);
   assert.equal((await command("inspect", { entity: "third-lantern" }, false)).error.code, "unknown_entity");
   const removed = structuredClone(transformed);
   removed.entities = removed.entities.filter(entity => !["west-lantern", "east-lantern"].includes(entity.id));
   await reload(removed);
-  const retired = await command("assets");
+  const retired = await command("query", "assets");
   assert.equal(retired.result.rendering.instances, initialRendering.instances - prefab.entities.length * 2);
   assert.equal((await command("inspect", { limit: 1 })).result.total, initialEntities - (prefab.entities.length + 1) * 2);
   for (const id of ["west-lantern", "west-lantern.lantern", "east-lantern.planter"]) {
@@ -222,7 +222,7 @@ try {
   assert.equal(retired.result.rendering.invalid_transforms, 0);
   await capture("removed");
   await reload(fixture);
-  assert.deepEqual(residency(await command("assets")), initialResidency);
+  assert.deepEqual(residency(await command("query", "assets")), initialResidency);
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({
     ok: true, url: url.href, artifact: output, initial: initialResidency,

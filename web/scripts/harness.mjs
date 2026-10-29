@@ -138,15 +138,25 @@ export async function launch({ width = 1200, height = 900, timeout = 30_000, arg
   return { browser, page, errors };
 }
 
+export function verbRequest(verb, rest) {
+  const named = typeof rest[0] === "string";
+  const [name, fields = {}, expectedOk = true] = named ? rest : [undefined, ...rest];
+  const request = named
+    ? { verb, name, ...(Object.keys(fields).length ? { args: fields } : {}) }
+    : { verb, ...fields };
+  return { request, expectedOk, label: named ? `${verb} ${name}` : verb };
+}
+
 export function commander(page, { deadline = 30_000 } = {}) {
-  return async function command(op, fields = {}, expectedOk = true) {
-    recordSent({ op, ...fields });
+  return async function command(verb, ...rest) {
+    const { request, expectedOk, label: op } = verbRequest(verb, rest);
+    recordSent(request);
     let until = Date.now() + deadline;
     for (;;) {
       let timer;
       let answered = false;
       const reply = await Promise.race([
-        page.evaluate(request => window.__engineDev.request(request), { op, ...fields }),
+        page.evaluate(request => window.__engineDev.request(request), request),
         new Promise((_, reject) => {
           const expire = async () => {
             const waiting = await page.evaluate(() => window.__engineDev?.waitingOnGpu?.() ?? false).catch(() => false);
@@ -180,15 +190,15 @@ export function strictStats(stats) {
 }
 
 /**
- * @param {(op: string) => Promise<any>} command
+ * @param {(verb: string, ...rest: any[]) => Promise<any>} command
  * @param {number} frames
  * @param {{ done?: (status: any) => boolean, deadline?: number }} [options]
  */
 export async function waitFrames(command, frames, { done = () => true, deadline = 120_000 } = {}) {
-  const first = Number((await command("status")).observation.frame);
+  const first = Number((await command("query", "status")).observation.frame);
   const until = Date.now() + deadline;
   for (;;) {
-    const status = await command("status");
+    const status = await command("query", "status");
     if (Number(status.observation.frame) - first >= frames && done(status)) return status;
     if (Date.now() > until) {
       throw new Error(`${frames} frames did not run to the state wanted within ${deadline / 1000} s: ${JSON.stringify(status.observation)}`);
@@ -206,7 +216,7 @@ export async function developmentReady(page, { timeout = 60_000 } = {}) {
 export async function openPaused(page, url, { timeout = 60_000 } = {}) {
   await page.goto(String(url), { waitUntil: "domcontentloaded" });
   await developmentReady(page, { timeout });
-  return commander(page, { deadline: timeout })("pause");
+  return commander(page, { deadline: timeout })("control", "pause");
 }
 
 export function differentPixels(page, images, { tolerance = 0, alpha = false } = {}) {
@@ -258,7 +268,7 @@ export function routedScene(page, document) {
     async reload(command, next) {
       served = structuredClone(next);
       served.revision = revision + 1;
-      const reply = await command("reload", { expected_revision: String(revision), revision: String(served.revision) });
+      const reply = await command("control", "reload", { expected_revision: String(revision), revision: String(served.revision) });
       revision = served.revision;
       assert.equal(reply.observation.scene.revision, String(revision));
       return reply;

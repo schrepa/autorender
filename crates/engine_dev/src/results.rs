@@ -27,12 +27,12 @@ macro_rules! results {
 }
 
 results! {
+    describe: crate::results::DescribeResult,
+    inspect: crate::results::InspectResult,
     status: crate::results::StatusResult,
     assets: crate::results::AssetsResult,
     digest: crate::results::DigestResult,
     distribution: crate::results::DistributionResult,
-    inspect: crate::results::InspectResult,
-    describe: crate::results::DescribeResult,
     present: crate::results::PresentResult,
     culling: crate::results::CullingResult,
     camera: crate::results::CameraResult,
@@ -43,11 +43,14 @@ results! {
     step: crate::results::StepResult,
     environment: crate::results::EnvironmentResult,
     frames: crate::results::FramesResult,
-    capture: crate::results::CaptureResult,
     probe: crate::results::ProbeResult,
     game: crate::results::GameResult,
     pause: crate::results::StatusResult,
     resume: crate::results::StatusResult,
+    capture: crate::results::CaptureResult,
+    profile: crate::results::ProfileResult,
+    explain: crate::results::ExplainResult,
+    watch: crate::results::WatchResult,
 }
 
 #[derive(Serialize)]
@@ -191,26 +194,27 @@ pub enum EntityComponents {
 #[serde(untagged)]
 pub enum DescribeResult {
     Listing {
+        verbs: Vec<&'static str>,
+        bricks: Vec<DescribedBrick>,
         types: Vec<DescribedType>,
     },
-    Protocol {
+    Verb {
         name: String,
         kind: TypeKind,
         schema: Value,
-        constraints: String,
-        control_state: serde_json::Map<String, Value>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        control_state: Option<serde_json::Map<String, Value>>,
     },
     Authoring {
         name: String,
         kind: TypeKind,
         schema: Value,
-        constraints: String,
+        opt_in_sections: Vec<&'static str>,
     },
     Observation {
         name: String,
         kind: TypeKind,
         schema: Value,
-        source: &'static str,
     },
     Catalog {
         name: String,
@@ -220,7 +224,31 @@ pub enum DescribeResult {
     Inspector {
         kind: TypeKind,
         descriptor: InspectorDescriptor,
-        feature: Option<&'static str>,
+        brick: Option<&'static str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        at: Option<String>,
+    },
+    Operation {
+        name: String,
+        kind: TypeKind,
+        verb: &'static str,
+        brick: Option<&'static str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        at: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        shows: Option<&'static str>,
+        args: Value,
+    },
+    Brick {
+        kind: TypeKind,
+        brick: DescribedBrick,
+    },
+    Stats {
+        name: String,
+        kind: TypeKind,
+        brick: &'static str,
+        at: String,
+        schema: Value,
     },
 }
 
@@ -230,9 +258,34 @@ pub struct DescribedType {
     pub name: String,
     pub kind: TypeKind,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub brick: Option<Option<&'static str>>,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct DescribedBrick {
+    pub name: &'static str,
+    #[serde(rename = "crate")]
+    pub crate_name: &'static str,
+    pub slot: Option<&'static str>,
+    pub lists: Vec<&'static str>,
+    pub settings: Vec<DescribedEntry>,
+    pub stats: Vec<DescribedEntry>,
+    pub operations: Vec<DescribedEntry>,
+    pub inspectors: Vec<DescribedEntry>,
+    pub explains: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct DescribedEntry {
+    pub name: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub feature: Option<Option<&'static str>>,
+    pub key: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verb: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<String>,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -242,7 +295,10 @@ pub enum TypeKind {
     Component,
     Resource,
     Authoring,
-    Protocol,
+    Verb,
+    Operation,
+    Brick,
+    Stats,
     Observation,
     Catalog,
 }
@@ -337,6 +393,80 @@ pub struct CaptureResult {
     pub rendered: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artifact: Option<KeptArtifact>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digest: Option<DigestResult>,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct ProfileResult {
+    pub frames: u32,
+    pub interval_ms: f64,
+    pub cpu_ms: f64,
+    pub gpu_ms: Option<f64>,
+    pub bricks: Vec<ProfiledBrick>,
+    pub total: usize,
+    pub temporary: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<KeptArtifact>,
+}
+
+#[derive(Clone, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct ProfiledBrick {
+    pub brick: &'static str,
+    pub cpu_ms: f64,
+    pub cpu_ms_max: f64,
+    pub gpu_ms: Option<f64>,
+    pub gpu_ms_max: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heap_live_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub heap_peak_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allocations_per_frame: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gpu_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_after_warmup: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duplicate_upload_bytes: Option<u64>,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct ExplainResult {
+    pub about: &'static str,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        schemars(with = "Vec<serde_json::Map<String, Value>>")
+    )]
+    pub records: Vec<engine_core::ExplainRecord>,
+    pub total: usize,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct WatchResult {
+    pub frames: u32,
+    pub interval_ms: f64,
+    pub records: u32,
+    pub temporary: bool,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct WatchRecord {
+    pub frame: Option<String>,
+    pub tick: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stat: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub component: Option<String>,
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(with = "Option<Value>"))]
+    pub value: Value,
 }
 
 #[derive(Serialize)]

@@ -17,8 +17,8 @@ const fixture = createServer((_, response) => {
     window.__engineDev = {
       instance: crypto.randomUUID(),
       async request(command) {
-        if (command.op === "replace") window.__engineDev.instance = crypto.randomUUID();
-        if (command.op === "navigate") setTimeout(() => location.href = "/next", 25);
+        if (command.name === "replace") window.__engineDev.instance = crypto.randomUUID();
+        if (command.name === "navigate") setTimeout(() => location.href = "/next", 25);
         return {ok:true,observation:{frame:"0",tick:"0",scene:null},result:{paused:true}};
       }
     };
@@ -38,10 +38,10 @@ try {
     child.stderr.on("data", bytes => { stderr = (stderr + bytes.toString()).slice(-8192); });
     const lines = createInterface({ input: child.stdout });
     let session;
-    async function request(op) {
+    async function request(verb, name) {
       const response = await fetch(`http://127.0.0.1:${port}/request`, {
         method: "POST", headers: { "Content-Type": "application/json" }, signal: AbortSignal.timeout(5000),
-        body: JSON.stringify({ version: 1, session, id: randomUUID(), command: { op } }),
+        body: JSON.stringify({ version: 1, session, id: randomUUID(), command: { verb, name } }),
       });
       return response.json();
     }
@@ -54,9 +54,9 @@ try {
       });
       assert.equal(ready.ok, true, JSON.stringify(ready));
       session = ready.session;
-      assert.equal((await request("status")).ok, true);
-      assert.equal((await request(operation)).ok, true);
-      if (operation === "replace") assert.equal((await request("status")).error.code, "runtime_replaced");
+      assert.equal((await request("query", "status")).ok, true);
+      assert.equal((await request("control", operation)).ok, true);
+      if (operation === "replace") assert.equal((await request("query", "status")).error.code, "runtime_replaced");
       let state;
       for (let i = 0; i < 40; i++) {
         state = (await (await fetch(`http://127.0.0.1:${port}/sessions`)).json()).sessions[0].state;
@@ -64,12 +64,12 @@ try {
         await delay(50);
       }
       assert.equal(state, "unavailable");
-      assert.equal((await request("status")).error.code, "session_unavailable");
+      assert.equal((await request("query", "status")).error.code, "session_unavailable");
     } finally {
       lines.close();
       if (child.exitCode === null) {
         const exited = new Promise(resolve => child.once("exit", resolve));
-        if (session) assert.equal((await request("close")).ok, true);
+        if (session) assert.equal((await request("control", "close")).ok, true);
         else child.kill("SIGTERM");
         await exited;
       }

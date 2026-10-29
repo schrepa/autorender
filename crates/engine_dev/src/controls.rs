@@ -1,4 +1,6 @@
-use crate::protocol::bounds;
+use crate::protocol::{
+    CaptureRequest, ExplainQuestion, MAX_WATCHED, ProfileRequest, WatchRequest, bounds,
+};
 use crate::results::{DebugMissingAssetResult, result};
 use crate::{BrowserControl, DevError, bounded};
 use engine_core::{AssetLibrary, Camera, Engine, Mesh3d, glam::Vec3};
@@ -7,14 +9,14 @@ use engine_settings::ErrorCode;
 use serde_json::Value;
 
 impl BrowserControl {
-    pub fn parse(source: &str, op: &str, paused: bool) -> Result<Self, DevError> {
-        let control: Self = crate::parse_request(source)?;
-        control.validate()?;
+    pub fn parse(name: &str, args: Value, paused: bool) -> Result<Self, DevError> {
+        let control: Self = crate::protocol::parse_named(name, args)?;
+        control.validate().map_err(DevError::in_args)?;
         if control.needs_pause() && !paused {
             return Err(DevError::new(
                 ErrorCode::PauseRequired,
                 "$",
-                format!("pause the host before {op}"),
+                format!("pause the host before {name}"),
             ));
         }
         Ok(control)
@@ -49,15 +51,12 @@ impl BrowserControl {
                     "$.interval_ms",
                 )?;
             }
-            Self::Capture {
-                alpha: Some(alpha), ..
-            }
-            | Self::Probe {
+            Self::Probe {
                 alpha: Some(alpha), ..
             } => {
                 validated_presentation_alpha(*alpha)?;
             }
-            Self::Capture { alpha: None, .. } | Self::Probe { alpha: None, .. } => {}
+            Self::Probe { alpha: None, .. } => {}
             Self::Game { name, .. } => {
                 let valid = name.len() <= 64
                     && name.starts_with(|first: char| first.is_ascii_lowercase())
@@ -110,6 +109,94 @@ impl BrowserControl {
         }
         Ok(())
     }
+}
+
+impl CaptureRequest {
+    pub fn validate(&self) -> Result<(), DevError> {
+        if let Some(alpha) = self.alpha {
+            validated_presentation_alpha(alpha)?;
+        }
+        Ok(())
+    }
+}
+
+impl ProfileRequest {
+    pub fn validate(&self) -> Result<(), DevError> {
+        bounded(self.frames, bounds::FRAMES, ErrorCode::OutOfRange, "$.frames")?;
+        bounded(
+            self.interval_ms,
+            bounds::FRAME_INTERVAL,
+            ErrorCode::OutOfRange,
+            "$.interval_ms",
+        )?;
+        page_limit(self.top, "$.top")
+    }
+}
+
+impl ExplainQuestion {
+    pub fn validate(&self) -> Result<(), DevError> {
+        match self {
+            Self::Frame { top, .. } => page_limit(*top, "$.top"),
+            Self::Entity { .. } | Self::Scene {} => Ok(()),
+        }
+    }
+}
+
+impl WatchRequest {
+    pub fn validate(&self) -> Result<(), DevError> {
+        bounded(self.frames, bounds::FRAMES, ErrorCode::OutOfRange, "$.frames")?;
+        bounded(
+            self.interval_ms,
+            bounds::FRAME_INTERVAL,
+            ErrorCode::OutOfRange,
+            "$.interval_ms",
+        )?;
+        if self.stats.is_empty() && self.entities.is_empty() {
+            return Err(DevError::new(
+                ErrorCode::InvalidRequest,
+                "$",
+                "watch names stats or entities",
+            )
+            .allowed(["stats", "entities"]));
+        }
+        for (field, count) in [
+            ("$.stats", self.stats.len()),
+            ("$.entities", self.entities.len()),
+        ] {
+            if count > MAX_WATCHED {
+                return Err(
+                    DevError::new(ErrorCode::OutOfRange, field, format!("{count} watched"))
+                        .expected(format!("at most {MAX_WATCHED}")),
+                );
+            }
+        }
+        for (index, stat) in self.stats.iter().enumerate() {
+            let valid = !stat.is_empty()
+                && stat.len() <= 128
+                && stat
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_.".contains(&byte));
+            if !valid {
+                return Err(DevError::new(
+                    ErrorCode::InvalidName,
+                    format!("$.stats[{index}]"),
+                    stat.clone(),
+                )
+                .expected("a dot path of lowercase stat names, at most 128 bytes"));
+            }
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn page_limit(value: usize, path: &str) -> Result<(), DevError> {
+    if (1..=bounds::MAX_PAGE_SIZE).contains(&value) {
+        return Ok(());
+    }
+    Err(
+        DevError::new(ErrorCode::InvalidPage, path, value.to_string())
+            .expected(format!("1..{}", bounds::MAX_PAGE_SIZE)),
+    )
 }
 
 pub fn validated_presentation_alpha(alpha: f64) -> Result<f32, DevError> {
@@ -175,7 +262,9 @@ impl OperationCall {
             Self::Brick { name, request } => {
                 crate::bricks::run(engine.app.world_mut(), name, request.clone())
             }
-            Self::MissingAsset { entity } => missing_asset(engine, scene, entity),
+            Self::MissingAsset { entity } => {
+                missing_asset(engine, scene, entity).map_err(DevError::in_args)
+            }
         }
     }
 }

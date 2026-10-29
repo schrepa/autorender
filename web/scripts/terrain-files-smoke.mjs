@@ -23,8 +23,8 @@ try {
   assert.ok(report.samples === 513 && Math.abs(report.highest - 200) < 1e-6 && report.filled_gaps > 0, `the import resamples and fills: ${JSON.stringify(report)}`);
   const imported = { ...JSON.parse(await readFile(`${scenes}terrain-smoke-import.scene.json`, "utf8")), id: fixture.id };
   await scene.reload(command, imported);
-  await command("environment", { terrain: fast });
-  await command("camera", overview);
+  await command("control", "environment", { terrain: fast });
+  await command("control", "camera", overview);
   await settle();
   const [summit] = await heights([[0, 0]]);
   assert.ok(summit && Math.abs(summit.height - 200) < 0.01, `the imported summit stands 200 m high: ${JSON.stringify(summit)}`);

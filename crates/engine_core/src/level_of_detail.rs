@@ -1,14 +1,37 @@
-use bevy_ecs::prelude::Resource;
+use bevy_ecs::prelude::{Resource, World};
 use serde::{Deserialize, Serialize};
 
-use crate::bricks::{Brick, Bricks};
+use crate::bricks::{Brick, Bricks, Drawn, ExplainRecord, ExplainRequest};
 use crate::sections::environment_section;
 use engine_settings::settings;
 
 impl Brick for LevelOfDetail {
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.settings::<LevelOfDetail>();
+        bricks.settings::<LevelOfDetail>().explain(explain_level);
     }
+}
+
+const IMPOSTOR_LEVEL: u32 = 3;
+
+fn explain_level(world: &World, request: &ExplainRequest) -> Option<ExplainRecord> {
+    let ExplainRequest::Entity(entity) = request else {
+        return None;
+    };
+    let Drawn::Level(level) = entity.drawn else {
+        return None;
+    };
+    let settings = world
+        .get_resource::<LevelOfDetail>()
+        .copied()
+        .unwrap_or_default();
+    Some(
+        ExplainRecord::new("level")
+            .with("entity", &entity.id)
+            .with("level", level)
+            .with("impostor", level == IMPOSTOR_LEVEL)
+            .with("pixel_error", settings.pixel_error)
+            .with("impostor_pixels", settings.impostor_pixels),
+    )
 }
 
 settings! {

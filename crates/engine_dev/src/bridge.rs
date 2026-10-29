@@ -28,6 +28,13 @@ pub enum Effect {
         args: Map<String, Value>,
     },
     Source,
+    Save {
+        name: String,
+        contents: Value,
+    },
+    Stream {
+        records: Vec<Value>,
+    },
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

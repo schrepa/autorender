@@ -32,7 +32,7 @@ try {
   await openPaused(page, url);
   const checks = [];
 
-  const rendering = (await command("render")).result.rendering;
+  const rendering = (await command("control", "render")).result.rendering;
   assert.ok(Number.isInteger(rendering.frame) && Number.isInteger(rendering.tick), "stats name their frame and tick");
   checks.push({ check: "draws", frame: rendering.frame, tick: rendering.tick });
 
@@ -43,28 +43,28 @@ try {
   assert.ok(Array.isArray(camera.position), `the camera inspects: ${JSON.stringify(camera)}`);
   checks.push({ check: "inspects", probe });
 
-  const merged = (await command("environment", { merge: true, particles: { max_particles: 1 } })).result;
+  const merged = (await command("control", "environment", { merge: true, particles: { max_particles: 1 } })).result;
   assert.deepEqual(merged.environment_changed, ["particles"]);
   assert.equal(merged.before.particles.enabled, true);
   assert.equal(merged.after.particles.enabled, true, "merging keeps the omitted field");
   assert.equal(merged.after.particles.max_particles, 1);
-  const off = (await command("environment", { merge: true, particles: { enabled: false } })).result;
+  const off = (await command("control", "environment", { merge: true, particles: { enabled: false } })).result;
   assert.equal(off.after.particles.max_particles, 1, "merging keeps the budget");
-  await command("environment", { particles: { enabled: true } });
+  await command("control", "environment", { particles: { enabled: true } });
   checks.push({ check: "merged environment" });
 
-  const benchmark = (await command("benchmark", { mode: "render", warmup: 1, samples: 3 })).result.benchmark;
+  const benchmark = (await command("control", "benchmark", { mode: "render", warmup: 1, samples: 3 })).result.benchmark;
   assert.equal(benchmark.samples, 3, `benchmark: ${JSON.stringify(benchmark).slice(0, 300)}`);
 
-  const unknown = await command("environment", { particles: { max_particle: 1 } }, false);
+  const unknown = await command("control", "environment", { particles: { max_particle: 1 } }, false);
   assert.equal(unknown.error.code, "unknown_field", JSON.stringify(unknown.error));
-  assert.equal(unknown.error.path, "$.particles.max_particle");
-  const mistyped = await command("camera", { position: [0, 1, "x"], target: [0, 0, 0], vertical_fov_radians: 1, near: 0.1, far: 100 }, false);
+  assert.equal(unknown.error.path, "$.args.particles.max_particle");
+  const mistyped = await command("control", "camera", { position: [0, 1, "x"], target: [0, 0, 0], vertical_fov_radians: 1, near: 0.1, far: 100 }, false);
   assert.equal(mistyped.error.code, "invalid_type", JSON.stringify(mistyped.error));
-  const game = await command("game", { name: "workload" }, false);
+  const game = await command("control", "game", { name: "workload" }, false);
   assert.equal(game.error.code, "unsupported_command", "scene mode registers no game controls");
   const catalog = (await command("describe", { name: "ErrorCodes" })).result.codes;
-  for (const code of [unknown.error.code, mistyped.error.code, game.error.code]) assert.ok(catalog[code], `the catalog describes ${code}`);
+  for (const code of [unknown.error.code, mistyped.error.code, game.error.code]) assert.ok(catalog.includes(code), `the catalog describes ${code}`);
   checks.push({ check: "errors", unknown: unknown.error, mistyped: mistyped.error });
 
   assert.deepEqual(errors, []);

@@ -29,7 +29,7 @@ export async function startIteration(values) {
   const game = values.game;
   if (!game || !(game in gamePages)) throw new AgentError("invalid_arguments", `--game is one of ${Object.keys(gamePages).join(", ")}.`, "--game");
   const executable = process.env.ENGINE_XTASK_BIN ?? resolve(workspace, "target/debug", process.platform === "win32" ? "xtask.exe" : "xtask");
-  await access(executable).catch(() => { throw new AgentError("build_worker_unavailable", "Start with cargo xtask agent watch to compile the native build worker.", executable); });
+  await access(executable).catch(() => { throw new AgentError("build_worker_unavailable", "Start with cargo xtask agent iterate to compile the native build worker.", executable); });
   const outputRoot = resolve(workspace, "web/pkg-iterations");
   await mkdir(outputRoot, { recursive: true });
   if (relative(outputRoot, await realpath(outputRoot)) !== "") throw new AgentError("unsafe_output_path", "Generated output must not resolve through a symlink.", outputRoot);

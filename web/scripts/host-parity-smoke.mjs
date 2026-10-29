@@ -28,55 +28,59 @@ function pattern(text) {
 }
 
 const CASES = [
-  ["status", { op: "status" }],
-  ["describe", { op: "describe" }],
-  ["describe FrameStats", { op: "describe", name: "FrameStats" }],
-  ["describe ProfileCapture", { op: "describe", name: "ProfileCapture" }],
-  ["inspect environment", { op: "inspect", component: "Environment" }],
-  ["assets", { op: "assets" }],
-  ["input", { op: "input", forward: 1, yaw: 0.25 }],
-  ["step", { op: "step", ticks: 3 }],
-  ["render", { op: "render" }],
-  ["present", { op: "present", alpha: 0.5 }],
-  ["capture", { op: "capture" }],
-  ["capture presented", { op: "capture", alpha: 0.5 }],
-  ["frames", { op: "frames", count: 3, interval_ms: 1000 / 60, capture: true }],
-  ["benchmark", { op: "benchmark", mode: "render", warmup: 1, samples: 4 }],
-  ["benchmark steps", { op: "benchmark", mode: "step", warmup: 0, samples: 2 }],
-  ["culling", { op: "culling", enabled: true }],
-  ["environment", { op: "environment", bloom: { intensity: 0.5 } }],
-  ["camera", { op: "camera", position: [0, 30, 60], target: [0, 0, 0], vertical_fov_radians: 1, near: 0.1, far: 2000 }],
-  ["terrain height", { op: "terrain_height", points: [[0, 0]] }],
-  ["distribution", { op: "distribution", values: [4, 1, 3, 2] }],
-  ["inspect", { op: "inspect", limit: 3 }],
-  ["unknown op", { op: "weather" }, "error"],
-  ["unknown field", { op: "render", sky: 1 }, "error"],
-  ["missing op", { ops: "status" }, "error"],
-  ["too large", { op: "status", padding: "x".repeat(protocol.max_request_bytes) }, "error"],
-  ["raycast without collision", { op: "raycast", origin: [0, 50, 0], direction: [0, -1, 0], max_distance: 100 }, "error"],
-  ["invalid step", { op: "step", ticks: 0 }, "error"],
-  ["invalid input", { op: "input", forward: 2 }, "error"],
-  ["invalid benchmark", { op: "benchmark", samples: 0 }, "error"],
-  ["invalid frames", { op: "frames", count: 0, interval_ms: 1000 / 60 }, "error"],
-  ["unknown game control", { op: "game", name: "weather", args: {} }, "error"],
-  ["reload to a revision the source lacks", { op: "reload", expected_revision: "1", revision: "2" }, "error"],
-  ["profile", { op: "profile", duration_ms: 100 }, "error"],
-  ["resume", { op: "resume" }],
-  ["step while running", { op: "step", ticks: 1 }, "error"],
-  ["capture while running", { op: "capture" }, "error"],
-  ["frames while running", { op: "frames", count: 1, interval_ms: 1000 / 60 }, "error"],
-  ["pause", { op: "pause" }],
-  ["bloom before the fault", { op: "environment", bloom: { intensity: 0.5 } }],
-  ["debug fault", { op: "debug_fault", feature: "post" }],
-  ["frames after the fault", { op: "frames", count: 30, interval_ms: 1000 / 60 }],
-  ["status after the fault", { op: "status" }],
-  ["fault in no lazy feature", { op: "debug_fault", feature: "water" }, "error"],
-  ["missing asset of no entity", { op: "debug_missing_asset", entity: "nothing" }, "error"],
-  ["device loss", { op: "debug_device_loss" }, "error"],
-  ["render after the loss", { op: "render" }, "error"],
-  ["status after the loss", { op: "status" }],
-  ["debug panic", { op: "debug_panic" }, "error"],
-  ["status after the panic", { op: "status" }, "error"],
+  ["status", { verb: "query", name: "status" }],
+  ["describe", { verb: "describe" }],
+  ["describe FrameStats", { verb: "describe", name: "FrameStats" }],
+  ["describe ProfileCapture", { verb: "describe", name: "ProfileCapture" }],
+  ["inspect environment", { verb: "inspect", component: "Environment" }],
+  ["assets", { verb: "query", name: "assets" }],
+  ["input", { verb: "control", name: "input", args: { forward: 1, yaw: 0.25 } }],
+  ["step", { verb: "control", name: "step", args: { ticks: 3 } }],
+  ["render", { verb: "control", name: "render" }],
+  ["present", { verb: "control", name: "present", args: { alpha: 0.5 } }],
+  ["capture", { verb: "capture" }],
+  ["capture presented", { verb: "capture", alpha: 0.5 }],
+  ["frames", { verb: "control", name: "frames", args: { count: 3, interval_ms: 1000 / 60, capture: true } }],
+  ["benchmark", { verb: "control", name: "benchmark", args: { mode: "render", warmup: 1, samples: 4 } }],
+  ["benchmark steps", { verb: "control", name: "benchmark", args: { mode: "step", warmup: 0, samples: 2 } }],
+  ["culling", { verb: "control", name: "culling", args: { enabled: true } }],
+  ["environment", { verb: "control", name: "environment", args: { bloom: { intensity: 0.5 } } }],
+  ["camera", { verb: "control", name: "camera", args: { position: [0, 30, 60], target: [0, 0, 0], vertical_fov_radians: 1, near: 0.1, far: 2000 } }],
+  ["terrain height", { verb: "query", name: "terrain_height", args: { points: [[0, 0]] } }],
+  ["distribution", { verb: "query", name: "distribution", args: { values: [4, 1, 3, 2] } }],
+  ["inspect", { verb: "inspect", limit: 3 }],
+  ["unknown op", { verb: "control", name: "weather" }, "error"],
+  ["unknown field", { verb: "control", name: "render", args: { sky: 1 } }, "error"],
+  ["missing verb", { verbs: "query", name: "status" }, "error"],
+  ["too large", { verb: "query", name: "status", args: { padding: "x".repeat(protocol.max_request_bytes) } }, "error"],
+  ["raycast without collision", { verb: "query", name: "raycast", args: { origin: [0, 50, 0], direction: [0, -1, 0], max_distance: 100 } }, "error"],
+  ["invalid step", { verb: "control", name: "step", args: { ticks: 0 } }, "error"],
+  ["invalid input", { verb: "control", name: "input", args: { forward: 2 } }, "error"],
+  ["invalid benchmark", { verb: "control", name: "benchmark", args: { samples: 0 } }, "error"],
+  ["invalid frames", { verb: "control", name: "frames", args: { count: 0, interval_ms: 1000 / 60 } }, "error"],
+  ["unknown game control", { verb: "control", name: "game", args: { name: "weather", args: {} } }, "error"],
+  ["reload to a revision the source lacks", { verb: "control", name: "reload", args: { expected_revision: "1", revision: "2" } }, "error"],
+  ["deep profile", { verb: "profile", deep: { duration_ms: 100 } }, "error"],
+  ["profile", { verb: "profile", frames: 2 }],
+  ["explain frame", { verb: "explain", about: "frame" }],
+  ["explain scene", { verb: "explain", about: "scene" }],
+  ["watch", { verb: "watch", stats: ["frame", "tick"], entities: [{ entity: "box", component: "Transform" }], frames: 2 }],
+  ["resume", { verb: "control", name: "resume" }],
+  ["step while running", { verb: "control", name: "step", args: { ticks: 1 } }, "error"],
+  ["capture while running", { verb: "capture" }, "error"],
+  ["frames while running", { verb: "control", name: "frames", args: { count: 1, interval_ms: 1000 / 60 } }, "error"],
+  ["pause", { verb: "control", name: "pause" }],
+  ["bloom before the fault", { verb: "control", name: "environment", args: { bloom: { intensity: 0.5 } } }],
+  ["debug fault", { verb: "control", name: "debug_fault", args: { feature: "post" } }],
+  ["frames after the fault", { verb: "control", name: "frames", args: { count: 30, interval_ms: 1000 / 60 } }],
+  ["status after the fault", { verb: "query", name: "status" }],
+  ["fault in no lazy feature", { verb: "control", name: "debug_fault", args: { feature: "water" } }, "error"],
+  ["missing asset of no entity", { verb: "control", name: "debug_missing_asset", args: { entity: "nothing" } }, "error"],
+  ["device loss", { verb: "control", name: "debug_device_loss" }, "error"],
+  ["render after the loss", { verb: "control", name: "render" }, "error"],
+  ["status after the loss", { verb: "query", name: "status" }],
+  ["debug panic", { verb: "control", name: "debug_panic" }, "error"],
+  ["status after the panic", { verb: "query", name: "status" }, "error"],
 ];
 
 function shape(value, prefix = "", out = new Set()) {
@@ -228,20 +232,20 @@ let imagesWeb, imagesNative;
 try {
   imagesNative = await launchNativeSession({ program: (await binaries)["engine-player-native"], args: ["--source", scenePath, "--size=320x200"] });
   imagesWeb = await launchBrowserSession({ url: devUrl("player.html", { source: "/scenes/host-parity.scene.json" }).href });
-  const [web, native] = [await imagesWeb.execute({ op: "digest" }), await imagesNative.execute({ op: "digest" })];
+  const [web, native] = [await imagesWeb.execute({ verb: "query", name: "digest" }), await imagesNative.execute({ verb: "query", name: "digest" })];
   assert.ok(web.ok && native.ok, JSON.stringify({ web: web.error, native: native.error }));
   assert.equal(web.result.assets.textures.count, 1, JSON.stringify(web.result.assets));
   assert.deepEqual(web.result.assets.textures, native.result.assets.textures, "the PNG decodes to the same texture on both hosts");
   const missing = {};
   for (const [host, session] of [["web", imagesWeb], ["native", imagesNative]]) {
-    await session.execute({ op: "pause" });
-    const removed = await session.execute({ op: "debug_missing_asset", entity: "box" });
+    await session.execute({ verb: "control", name: "pause" });
+    const removed = await session.execute({ verb: "control", name: "debug_missing_asset", args: { entity: "box" } });
     assert.ok(removed.ok, JSON.stringify(removed.error));
     assert.deepEqual([removed.result.temporary, removed.result.entities], [true, 1], JSON.stringify(removed.result));
     assert.equal(removed.result.rendering.missing_assets, 1, JSON.stringify(removed.result.rendering));
-    const status = await session.execute({ op: "status" });
+    const status = await session.execute({ verb: "query", name: "status" });
     assert.equal(status.result.rendering.missing_assets, 1, JSON.stringify(status.result.rendering));
-    const listed = await session.execute({ op: "assets" });
+    const listed = await session.execute({ verb: "query", name: "assets" });
     assert.equal(listed.result.missing_total, 1);
     missing[host] = listed.result.missing;
   }
@@ -249,8 +253,8 @@ try {
   const [entry] = missing.web;
   assert.deepEqual([entry.entity.id, entry.entity.scene, entry.draws, entry.missing], ["box", "host-parity", "mesh", "mesh"], JSON.stringify(entry));
   assert.deepEqual(entry.position, [0, 0, 0]);
-  const unknown = await answer(imagesNative, { op: "debug_missing_asset", entity: "nothing" });
-  assert.deepEqual([unknown.error?.code, unknown.error?.path], ["unknown_entity", "$.entity"]);
+  const unknown = await answer(imagesNative, { verb: "control", name: "debug_missing_asset", args: { entity: "nothing" } });
+  assert.deepEqual([unknown.error?.code, unknown.error?.path], ["unknown_entity", "$.args.entity"]);
 } finally {
   await imagesWeb?.close();
   await imagesNative?.close();

@@ -32,20 +32,20 @@ const authored = names => {
 };
 const ray = { origin: [0, 5, 0], direction: [0, -1, 0], max_distance: 20 };
 const requests = {
-  terrain: ["terrain_height", { points: [[0, 0]] }],
+  terrain: ["query", "terrain_height", { points: [[0, 0]] }],
   world_streaming: ["inspect", { component: "WorldCells" }],
   navigation: ["inspect", { component: "NavAgents" }],
   time_of_day: ["inspect", { component: "TimeOfDay" }],
-  collision: ["raycast", ray],
+  collision: ["query", "raycast", ray],
   physics: ["inspect", { component: "PhysicsWorld" }],
 };
 const refusals = {
-  terrain: ["terrain_height", { points: [[0, 0]] }],
-  world_streaming: ["world_changes", { clear: true }],
+  terrain: ["query", "terrain_height", { points: [[0, 0]] }],
+  world_streaming: ["control", "world_changes", { clear: true }],
   navigation: ["inspect", { component: "NavAgents" }],
-  time_of_day: ["environment", { time_of_day: {} }],
-  collision: ["raycast", ray],
-  physics: ["environment", { physics: { enabled: true } }],
+  time_of_day: ["control", "environment", { time_of_day: {} }],
+  collision: ["query", "raycast", ray],
+  physics: ["control", "environment", { physics: { enabled: true } }],
 };
 const features = bricks.filter(name => name in authoring);
 const reads = Object.fromEntries(records.map(record => [record.name, record.reads]));
@@ -75,7 +75,7 @@ async function open(scene, without) {
   await routed.route();
   await page.goto(String(sceneUrl({ without: without.join(",") })), { waitUntil: "domcontentloaded" });
   await developmentReady(page);
-  await command("pause");
+  await command("control", "pause");
   return routed;
 }
 
@@ -84,33 +84,32 @@ try {
   for (const name of features) {
     const without = leftOut(name);
     const scene = await open(core(), without);
-    const rendering = (await command("render")).result.rendering;
+    const rendering = (await command("control", "render")).result.rendering;
     assert.ok(rendering.frame >= 0);
-    const present = (await command("status")).result.features;
+    const present = (await command("query", "status")).result.features;
     assert.deepEqual(present, bricks.filter(other => !without.includes(other)), `${name}: status names the bricks added`);
-    const [op, fields] = refusals[name];
-    const refused = await command(op, fields, false);
-    assert.equal(refused.error.code, "missing_plugin", `${name}: ${op} answers missing_plugin: ${JSON.stringify(refused.error)}`);
+    const refusal = refusals[name];
+    const refused = await command(...refusal, false);
+    assert.equal(refused.error.code, "missing_plugin", `${name}: ${refusal.slice(0, -1).join(" ")} answers missing_plugin: ${JSON.stringify(refused.error)}`);
     const next = authored([name]);
     next.revision = scene.revision + 1;
     scene.serve(next);
-    const reload = await command("reload", { expected_revision: String(scene.revision), revision: String(next.revision) }, false);
+    const reload = await command("control", "reload", { expected_revision: String(scene.revision), revision: String(next.revision) }, false);
     assert.equal(reload.error.code, "missing_plugin", `${name}: ${JSON.stringify(reload.error)}`);
     assert.equal(reload.error.path, authoring[name][1]);
 
     const alone = [name, ...needs(name)];
     const others = features.filter(other => !alone.includes(other));
     await open(authored([name]), others);
-    await command("render");
-    assert.deepEqual((await command("status")).result.features, bricks.filter(other => !others.includes(other)));
-    const [askOp, askFields] = requests[name];
-    await command(askOp, askFields);
+    await command("control", "render");
+    assert.deepEqual((await command("query", "status")).result.features, bricks.filter(other => !others.includes(other)));
+    await command(...requests[name]);
     checks.push({ feature: name, without, refused: refused.error.message, path: reload.error.path });
   }
 
   await open(authored(features), []);
-  await command("render");
-  assert.deepEqual((await command("status")).result.features, bricks);
+  await command("control", "render");
+  assert.deepEqual((await command("query", "status")).result.features, bricks);
 
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ ok: true, checks }));

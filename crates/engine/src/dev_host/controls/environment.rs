@@ -7,7 +7,7 @@ use engine_dev::{DevError, EnvironmentControl};
 
 pub(super) fn set(
     app: &mut AppHost,
-    source: &str,
+    args: Value,
     control: EnvironmentControl,
     (width, height): (u32, u32),
 ) -> Result<Value, DevError> {
@@ -19,14 +19,13 @@ pub(super) fn set(
     };
     let before = current(app);
     let environment = if control.merge {
-        let mut request: Value = serde_json::from_str(source).expect("the control parsed as JSON");
         let mut merged = serde_json::Map::new();
-        for (key, value) in request.as_object_mut().into_iter().flatten() {
-            if ["op", "version", "merge"].contains(&key.as_str()) {
+        for (key, value) in args.as_object().into_iter().flatten() {
+            if key == "merge" {
                 continue;
             }
             let mut section = before[key.as_str()].clone();
-            overlay(&mut section, value.take());
+            overlay(&mut section, value.clone());
             merged.insert(key.clone(), section);
         }
         engine_scene::parse_json::<engine_scene::SceneEnvironment>(

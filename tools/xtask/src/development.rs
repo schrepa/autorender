@@ -1,14 +1,18 @@
 use std::{path::Path, process::Command};
 
-use engine_dev::{DevError, authoring};
+use engine_dev::{CheckRequest, DevError, ErrorCode, PROTOCOL_VERSION, authoring};
 use serde_json::{Value, json};
 
-pub fn agent(root: &Path, arguments: &[String]) -> Result<(), String> {
-    if arguments
-        .first()
-        .is_some_and(|argument| argument == "watch")
-    {
-        crate::pipeline::install_web_dependencies(root)?;
+use crate::Failure;
+
+const MAX_LOCATIONS: usize = 64;
+
+pub fn agent(root: &Path, arguments: &[String]) -> Result<(), Failure> {
+    match arguments.first().map(String::as_str) {
+        Some("help") => return Ok(agent_help(root, &arguments[1..])?),
+        Some("check") => return check(root, &arguments[1..]),
+        Some("iterate") => crate::pipeline::install_web_dependencies(root)?,
+        Some(_) | None => {}
     }
     let status = Command::new("node")
         .arg("web/scripts/agent.mjs")
@@ -25,6 +29,157 @@ pub fn agent(root: &Path, arguments: &[String]) -> Result<(), String> {
     } else {
         Err("agent command failed; see its JSON result".into())
     }
+}
+
+pub fn verbs() -> Result<Value, String> {
+    let engine = crate::bricks::standard_engine();
+    let verbs = engine_dev::schemas::verbs(engine.app.world())?;
+    Ok(Value::Array(
+        verbs
+            .into_iter()
+            .map(|(verb, request)| json!({ "verb": verb, "request": request }))
+            .collect(),
+    ))
+}
+
+fn agent_help(root: &Path, arguments: &[String]) -> Result<(), String> {
+    if let Some(argument) = arguments.first() {
+        return Err(format!("agent help takes no arguments; received {argument:?}"));
+    }
+    let output = Command::new("node")
+        .args(["web/scripts/agent.mjs", "help"])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("cannot start the agent client: {error}"))?;
+    let mut help: Value = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str(line).ok())
+        .unwrap_or_else(|| json!({ "version": PROTOCOL_VERSION, "ok": true }));
+    help["verbs"] = verbs()?;
+    println!("{help}");
+    Ok(())
+}
+
+fn check_request(arguments: &[String]) -> Result<CheckRequest, DevError> {
+    let source = match arguments {
+        [] => "{}".to_owned(),
+        [option, value] if option == "--json" => value.clone(),
+        [option, value] if option == "--file" => std::fs::read_to_string(value).map_err(|error| {
+            DevError::new(ErrorCode::SourceIo, "--file", error.to_string())
+        })?,
+        _ => {
+            return Err(DevError::new(
+                ErrorCode::InvalidArguments,
+                "$",
+                "cargo xtask agent check [--json JSON | --file PATH]",
+            )
+            .allowed(["--json", "--file"]));
+        }
+    };
+    Ok(engine_scene::parse_json(&source)?)
+}
+
+fn check(root: &Path, arguments: &[String]) -> Result<(), Failure> {
+    let request = match check_request(arguments) {
+        Ok(request) => request,
+        Err(error) => {
+            println!(
+                "{}",
+                json!({ "version": PROTOCOL_VERSION, "ok": false, "error": error })
+            );
+            return Err("agent check refused its request; see its JSON result".into());
+        }
+    };
+    let mut verify = Command::new(std::env::current_exe().map_err(|error| error.to_string())?);
+    verify.arg("verify").arg("--json").current_dir(root);
+    if let Some(level) = request.level {
+        verify.args(["--level", level.name()]);
+    }
+    if let Some(base) = &request.base {
+        verify.args(["--base", base]);
+    }
+    let output = verify
+        .output()
+        .map_err(|error| format!("cannot run cargo xtask verify: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let ran = stdout
+        .lines()
+        .rev()
+        .find_map(|line| serde_json::from_str::<Value>(line).ok().filter(|value| value.get("verify").is_some()))
+        .map(|value| value["verify"].clone());
+    let exit = output.status.code();
+    let steps: Vec<Value> = ran
+        .as_ref()
+        .and_then(|ran| ran["steps"].as_array())
+        .into_iter()
+        .flatten()
+        .map(|step| {
+            let mut step = step.clone();
+            if step["ok"] != true {
+                let text = format!("{}\n{stderr}", step["failure"].as_str().unwrap_or_default());
+                step["locations"] = json!(locations(&text));
+            }
+            step
+        })
+        .collect();
+    let passed = output.status.success();
+    let reply = match &ran {
+        Some(ran) => json!({
+            "version": PROTOCOL_VERSION,
+            "ok": true,
+            "result": {
+                "passed": passed,
+                "exit": exit,
+                "level": ran["level"],
+                "base": ran["base"],
+                "failed": steps.iter().filter(|step| step["ok"] != true).count(),
+                "steps": steps,
+            },
+        }),
+        None => json!({
+            "version": PROTOCOL_VERSION,
+            "ok": false,
+            "error": {
+                "code": ErrorCode::InvalidArguments.as_str(),
+                "path": "$",
+                "message": "verify",
+                "exit": exit,
+                "locations": locations(&stderr),
+            },
+        }),
+    };
+    println!("{reply}");
+    match (ran.is_some(), passed) {
+        (true, true) => Ok(()),
+        (true, false) => Err(Failure::found("agent check found faults; see its JSON result")),
+        (false, _) => Err("agent check could not run verify; see its JSON result".into()),
+    }
+}
+
+fn locations(text: &str) -> Vec<String> {
+    const EXTENSIONS: [&str; 6] = [".rs:", ".mjs:", ".ts:", ".wgsl:", ".json:", ".toml:"];
+    let mut found: Vec<String> = Vec::new();
+    let separators = |character: char| character.is_whitespace() || "()[]{}'\"`,;<>".contains(character);
+    for token in text.split(separators) {
+        for extension in EXTENSIONS {
+            let Some(at) = token.find(extension) else {
+                continue;
+            };
+            let after = at + extension.len();
+            let line: String = token[after..].chars().take_while(char::is_ascii_digit).collect();
+            if line.is_empty() {
+                continue;
+            }
+            let path = token[..after - 1].replace('\\', "/");
+            let location = format!("{path}:{line}");
+            if !found.contains(&location) && found.len() < MAX_LOCATIONS {
+                found.push(location);
+            }
+        }
+    }
+    found
 }
 
 pub fn scene(arguments: &[String]) -> Result<(), String> {

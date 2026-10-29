@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::inspect::Inspector;
-use crate::protocol::operation_request;
+use crate::protocol::{Envelope, Query, Verb};
 use crate::{BrowserControl, Control, DevError, DevTools, InspectorDescriptor, InspectorKind};
 
 #[derive(Debug, Default, Deserialize)]
@@ -55,21 +55,41 @@ impl StandardBricks {
     }
 }
 
-pub fn is_control(world: &World, op: &str) -> bool {
-    crate::CONTROL_OPS.contains(&op)
-        || world
-            .get_resource::<BrickRegistry>()
-            .and_then(|registry| registry.operation(op))
-            .is_some_and(|operation| operation.control)
-}
-
 fn added(world: &World, brick: &str) -> bool {
     world
         .get_resource::<BrickRegistry>()
         .is_some_and(|registry| registry.has(brick))
 }
 
-pub(crate) fn run(world: &mut World, name: &str, request: Value) -> Result<Value, DevError> {
+fn registered(world: &World, name: &str, control: bool) -> Option<&'static str> {
+    world
+        .get_resource::<BrickRegistry>()
+        .and_then(|registry| registry.operation(name))
+        .filter(|operation| operation.control == control)
+        .map(|operation| operation.name)
+}
+
+pub fn operation_names(world: &World, verb: Verb) -> Vec<&'static str> {
+    let control = verb == Verb::Control;
+    let core: &[&'static str] = if control {
+        &BrowserControl::NAMES
+    } else {
+        &Query::NAMES
+    };
+    core.iter()
+        .copied()
+        .chain(
+            world
+                .get_resource::<BrickRegistry>()
+                .into_iter()
+                .flat_map(BrickRegistry::operations)
+                .filter(|operation| operation.control == control)
+                .map(|operation| operation.name),
+        )
+        .collect()
+}
+
+pub(crate) fn run(world: &mut World, name: &str, args: Value) -> Result<Value, DevError> {
     let operation = world
         .get_resource::<BrickRegistry>()
         .and_then(|registry| registry.operation(name))
@@ -77,76 +97,76 @@ pub(crate) fn run(world: &mut World, name: &str, request: Value) -> Result<Value
         .ok_or_else(|| {
             DevError::new(
                 ErrorCode::MissingPlugin,
-                "$.op",
+                "$.name",
                 format!("no added brick answers {name}"),
             )
         })?;
-    operation.run(world, request).map_err(DevError::from)
+    operation
+        .run(world, args)
+        .map_err(|error| DevError::from(error).in_args())
 }
 
 impl DevTools {
     pub(crate) fn query_operation(
         &self,
         world: &World,
-        source: &str,
-    ) -> Result<Option<(&'static str, Value)>, DevError> {
-        let Some(op) = op_of(source) else {
-            return Ok(None);
-        };
-        let registry = world.get_resource::<BrickRegistry>();
-        if let Some(operation) = registry.and_then(|registry| registry.operation(&op))
-            && !operation.control
-        {
-            return Ok(Some((operation.name, operation_request(source)?)));
+        name: &str,
+    ) -> Result<Option<&'static str>, DevError> {
+        if let Some(name) = registered(world, name, false) {
+            return Ok(Some(name));
         }
-        match self.standard.of_operation(&op) {
-            Some(brick) if !added(world, brick) => Err(missing_brick(brick, "$.op").into()),
-            Some(_) | None => Ok(None),
+        self.unadded(world, name)?;
+        Ok(None)
+    }
+
+    fn unadded(&self, world: &World, name: &str) -> Result<(), DevError> {
+        match self.standard.of_operation(name) {
+            Some(brick) if !added(world, brick) => Err(missing_brick(brick, "$.name").into()),
+            Some(_) | None => Ok(()),
         }
     }
 
     pub fn parse_control(
         &self,
         world: &World,
-        source: &str,
-        op: &str,
+        envelope: &Envelope,
         paused: bool,
     ) -> Result<Control, DevError> {
-        let registry = world.get_resource::<BrickRegistry>();
-        if let Some(operation) = registry.and_then(|registry| registry.operation(op))
-            && operation.control
-        {
-            let request = operation_request(source)?;
+        let name = envelope.name()?;
+        let args = envelope.args()?;
+        if let Some(name) = registered(world, name, true) {
             if !paused {
                 return Err(DevError::new(
                     ErrorCode::PauseRequired,
                     "$",
-                    format!("pause the host before {op}"),
+                    format!("pause the host before {name}"),
                 ));
             }
             return Ok(Control::Operation(crate::controls::OperationCall::Brick {
-                name: operation.name,
-                request,
+                name,
+                request: args,
             }));
         }
-        if let Some(brick) = self.standard.of_operation(op)
-            && !added(world, brick)
-        {
-            return Err(missing_brick(brick, "$.op").into());
+        self.unadded(world, name)?;
+        if !BrowserControl::NAMES.contains(&name) {
+            return Err(DevError::unknown(
+                "$.name",
+                name,
+                operation_names(world, Verb::Control),
+            ));
         }
-        if op == "environment" {
-            let mut request: Value = engine_scene::parse_json(source)?;
-            if let Some(fields) = request.as_object_mut() {
-                for key in ["op", "version", "merge"] {
-                    fields.remove(key);
-                }
+        if name == "environment" {
+            let mut sections = args.clone();
+            if let Some(fields) = sections.as_object_mut() {
+                fields.remove("merge");
             }
-            let environment: SceneEnvironment = engine_scene::parse_value(request)?;
+            let environment: SceneEnvironment = engine_scene::parse_value(sections)
+                .map_err(|error| DevError::from(error).in_args())?;
             environment
                 .check(world, "$")
-                .map_err(|error| self.named_brick(DevError::from(error)))?;
+                .map_err(|error| self.named_brick(DevError::from(error)).in_args())?;
         }
-        Ok(BrowserControl::parse(source, op, paused)?.route())
+        Ok(BrowserControl::parse(name, args, paused)?.route())
     }
 
     pub(crate) fn named_brick(&self, error: DevError) -> DevError {
@@ -202,12 +222,7 @@ impl DevTools {
         inspectors.insert(
             "Environment".to_owned(),
             Inspector {
-                descriptor: InspectorDescriptor::new("Environment", sections_schema(registry))
-                    .with_description(
-                        "The whole current look as a scene environment: paste it into a scene to \
-                         persist it, or send sections to the environment control. Missing effect \
-                         resources read as off. Each section's inspector describes its fields.",
-                    ),
+                descriptor: InspectorDescriptor::new("Environment", sections_schema(registry)),
                 kind: InspectorKind::Resource,
                 has: Box::new(|_, _| true),
                 read: Box::new(|world, _, _| Some(json!(SceneEnvironment::current(world)))),
@@ -217,20 +232,12 @@ impl DevTools {
         inspectors
     }
 
-    fn schema_named(&self, name: &str) -> Value {
+    pub(crate) fn schema_named(&self, name: &str) -> Value {
         self.schemas
             .get(name)
             .cloned()
             .unwrap_or_else(|| json!({ "type": "object" }))
     }
-}
-
-fn op_of(source: &str) -> Option<String> {
-    serde_json::from_str::<Value>(source)
-        .ok()?
-        .get("op")?
-        .as_str()
-        .map(str::to_owned)
 }
 
 pub(crate) fn sections_schema(registry: &BrickRegistry) -> Value {
@@ -245,7 +252,7 @@ pub(crate) fn sections_schema(registry: &BrickRegistry) -> Value {
                 field.to_owned(),
                 json!({
                     "type": ["object", "null"],
-                    "description": format!("The {inspector} inspector describes its fields."),
+                    "title": inspector,
                 }),
             )
         })

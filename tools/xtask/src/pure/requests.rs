@@ -4,8 +4,8 @@ use std::path::Path;
 
 use engine::{Engine, ErrorCode};
 use engine_dev::{
-    Context, Control, DevError, DevTools, InspectorDescriptor, MAX_INSPECTORS, MAX_REQUEST_BYTES,
-    MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
+    Context, Control, DevError, DevTools, Envelope, InspectorDescriptor, MAX_INSPECTORS,
+    MAX_REQUEST_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
 };
 use engine_scene::{SceneDocument, SceneInstance};
 use serde_json::{Value, json};
@@ -250,10 +250,13 @@ fn crowd() -> String {
 
 fn request_source(refusal: &Value) -> String {
     match &refusal["source"] {
-        Value::String(source) if source == "OVERSIZED" => format!(
-            "{{\"op\":\"status\",\"version\":{PROTOCOL_VERSION},\"pad\":\"{}\"}}",
-            " ".repeat(MAX_REQUEST_BYTES)
-        ),
+        Value::String(source) if source == "OVERSIZED" => json!({
+            "verb": "query",
+            "name": "status",
+            "version": PROTOCOL_VERSION,
+            "args": { "pad": " ".repeat(MAX_REQUEST_BYTES) },
+        })
+        .to_string(),
         Value::String(source) => source.clone(),
         _ => {
             let mut request = refusal["request"].clone();
@@ -295,11 +298,11 @@ fn control(
     source: &str,
     paused: bool,
 ) -> Option<DevError> {
-    let op = serde_json::from_str::<Value>(source)
-        .ok()
-        .and_then(|request| request["op"].as_str().map(str::to_owned))
-        .unwrap_or_default();
-    let control = match tools.parse_control(engine.app.world(), source, &op, paused) {
+    let envelope = match Envelope::parse(source) {
+        Ok(envelope) => envelope,
+        Err(error) => return Some(error),
+    };
+    let control = match tools.parse_control(engine.app.world(), &envelope, paused) {
         Ok(control) => control,
         Err(error) => return Some(error),
     };
@@ -328,7 +331,7 @@ fn register(refusal: &Value) -> Option<DevError> {
             .unwrap_or("a probe")
             .repeat(repeat);
         let descriptor =
-            InspectorDescriptor::new(name, json!({"type": "object"})).with_description(description);
+            InspectorDescriptor::new(name, json!({"type": "object", "title": description}));
         last = tools
             .register_resource::<engine::FixedTime>(descriptor, |_| Value::Null)
             .err();

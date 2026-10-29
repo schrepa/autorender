@@ -79,6 +79,13 @@ impl Renderer {
         }
     }
 
+    pub fn slot_read_back(&self, slot: u32) -> Option<(Option<u32>, u64)> {
+        self.gpu_presentation.watch(slot);
+        let (watched, state) = self.gpu_presentation.watched()?;
+        let age = self.gpu_presentation.read_back_age()?;
+        (watched == slot).then(|| ((state & LOD_STATE != 0).then_some(state & 3), age))
+    }
+
     pub fn impostor_resident(&self, mesh: MeshHandle, material: MaterialHandle) -> Option<bool> {
         let gpu = self.meshes.get(&mesh)?;
         if (gpu.index_count as usize) / 3 < IMPOSTOR_MIN_TRIANGLES {

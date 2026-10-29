@@ -7,39 +7,39 @@ import { AgentError, VERSION, MAX_BYTES, createBridge, failure } from "./agent-p
 import { launchBrowserSession } from "./agent-browser.mjs";
 import { launchNativeSession, nativeProgram } from "./agent-native.mjs";
 
-const protocol = JSON.parse(readFileSync(new URL("../src/generated/protocol.json", import.meta.url), "utf8"));
-const bridgeQueries = ["diagnostics", "compare"];
-const bridgeControls = ["profile", "close"];
-const queries = new Set([...protocol.queries, ...bridgeQueries]);
-const verbs = new Set([...queries, ...protocol.controls, ...bridgeControls]);
+const generated = name => JSON.parse(readFileSync(new URL(`../src/generated/${name}.json`, import.meta.url), "utf8"));
+const protocol = generated("protocol");
+const coverage = generated("coverage");
+const verbs = new Set((protocol.verbs ?? []).filter(verb => verb !== "check"));
+const reading = new Set(["describe", "inspect", "query"]);
 const commands = {
-  watch: { options: ["web-port", "port", "game", "browser"], summary: "Watch Rust, build, and replace identified browser sessions (cargo xtask agent watch)" },
-  serve: { options: ["url", "port", "browser", "native", "args", "profiling"], summary: "Open one browser session on a running dev server, or with --native PACKAGE|PROGRAM [--args \"name=value ...\"] [--profiling on] one native session drawing offscreen, and bridge requests to it" },
-  ab: { options: ["native", "args", "url", "browser", "a", "b", "rounds", "samples", "warmup", "mode", "profile", "profile-ms"], summary: "Measure variant B's commands (--b JSON) against A's (--a JSON) in ABBA windows of one session it opens (--native PACKAGE|PROGRAM [--args ...], or --url): benchmarks, and with --profile on GPU spans and per-draw times; reports medians, B against A, and noise" },
-  sessions: { options: ["port"], summary: "List the bridge's sessions; a request names one with --session" },
-  development: { options: ["port"], summary: "The watch's build state and diagnostics" },
-  request: { options: ["port", "session", "file", "json", "id"], summary: "Send a whole request, or a command, from --file or --json" },
-  help: { options: [], summary: "This list, as JSON" },
+  iterate: { options: ["web-port", "port", "game", "browser"] },
+  serve: { options: ["url", "port", "browser", "native", "args", "profiling"] },
+  ab: { options: ["native", "args", "url", "browser", "a", "b", "rounds", "samples", "warmup", "mode", "profile", "profile-ms"] },
+  sessions: { options: ["port"] },
+  development: { options: ["port"] },
+  request: { options: ["port", "session", "file", "json", "id"] },
+  help: { options: [] },
 };
-const commandOptions = ["port", "session", "file", "json", "id"];
+const verbOptions = ["port", "session", "file", "json", "id"];
 
 function options(args) {
   const result = {};
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i];
-    if (!key.startsWith("--") || !args[i + 1] || args[i + 1].startsWith("--") || key.slice(2) in result) throw new AgentError("invalid_arguments", `Expected unique --name value options; received ${key}.`);
+    if (!key.startsWith("--") || !args[i + 1] || args[i + 1].startsWith("--") || key.slice(2) in result) throw new AgentError("invalid_arguments", `Expected unique --name value options; received ${key}.`, key);
     result[key.slice(2)] = args[i + 1];
   }
   return result;
 }
 
 function pageUrl(url) {
-  if (!url) throw new AgentError("invalid_arguments", "A browser session needs --url, the game page.", "--url");
+  if (!url) throw new AgentError("invalid_arguments", "--url", "--url");
   return url;
 }
 
 function portValue(value = "7331") {
-  if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65_535) throw new AgentError("invalid_arguments", "Port must be an integer from 1 to 65535.", "port");
+  if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65_535) throw new AgentError("invalid_arguments", "1..65535", "--port");
   return Number(value);
 }
 
@@ -53,13 +53,13 @@ async function readJson(path) {
       if (!bytesRead) break;
       size += bytesRead;
     }
-    if (size > MAX_BYTES) throw new AgentError("request_too_large", "Request file exceeds the 1 MiB limit.", "file");
+    if (size > MAX_BYTES) throw new AgentError("request_too_large", `at most ${MAX_BYTES} bytes`, "--file");
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, size)));
   } finally { await file.close(); }
 }
 
 function checkOptions(values, names) {
-  for (const key of Object.keys(values)) if (!names.includes(key)) throw new AgentError("invalid_arguments", `Unknown option --${key}.`);
+  for (const key of Object.keys(values)) if (!names.includes(key)) throw new AgentError("invalid_arguments", names.map(name => `--${name}`).join(" "), `--${key}`);
 }
 
 async function serve(values) {
@@ -85,8 +85,8 @@ async function serve(values) {
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
   try {
-    if (values.native && (values.url || values.browser)) throw new AgentError("invalid_arguments", "A native session takes no --url or --browser.");
-    if ((values.args || values.profiling) && !values.native) throw new AgentError("invalid_arguments", "--args and --profiling on are for a --native program.");
+    if (values.native && (values.url || values.browser)) throw new AgentError("invalid_arguments", "--native takes no --url or --browser", "--native");
+    if ((values.args || values.profiling) && !values.native) throw new AgentError("invalid_arguments", "--args and --profiling need --native", "--native");
     owned = values.native
       ? await launchNativeSession({ program: nativeProgram(values.native, { profiling: values.profiling === "on" }), args: values.args?.split(" ").filter(Boolean).map(option => `--${option}`) ?? [] })
       : await launchBrowserSession({
@@ -97,7 +97,7 @@ async function serve(values) {
       session: owned.session, url: owned.url,
       onTimeout: () => owned.close(),
       onClose: shutdown,
-      execute: command => owned.execute(command),
+      execute: (command, onRecord) => owned.execute(command, onRecord),
     });
     owned.setInvalidated(() => bridge.markUnavailable());
     await new Promise((resolveListen, reject) => {
@@ -109,29 +109,70 @@ async function serve(values) {
   } catch (error) { await shutdown(); throw error; }
 }
 
+async function onlySession(endpoint) {
+  const listed = await fetchJson(endpoint, "/sessions", { signal: AbortSignal.timeout(5_000) });
+  const first = listed?.sessions?.[0]?.session;
+  if (typeof first !== "string") throw new AgentError("invalid_arguments", "a running session", "--session");
+  return first;
+}
+
+function smokesOf(list, key, name) {
+  return coverage[list]?.find(entry => entry[key] === name)?.smokes ?? [];
+}
+
+function withSmokes(response, command) {
+  const result = response?.ok === true ? response.result : undefined;
+  if (command?.verb !== "describe" || !result) return response;
+  if (Array.isArray(result.bricks)) {
+    if (command.detail !== "full") return response;
+    for (const brick of result.bricks) {
+      for (const entry of brick.operations ?? []) entry.smokes = smokesOf("ops", "op", entry.name);
+      for (const entry of brick.settings ?? []) entry.smokes = smokesOf("sections", "section", entry.key);
+      for (const entry of brick.inspectors ?? []) entry.smokes = smokesOf("inspectors", "inspector", entry.name);
+    }
+    for (const type of result.types ?? []) type.smokes = smokesOf("inspectors", "inspector", type.name);
+  } else if (result.kind === "operation" || result.kind === "verb") {
+    result.smokes = smokesOf("ops", "op", result.name);
+  } else if (result.descriptor?.name) {
+    result.smokes = smokesOf("inspectors", "inspector", result.descriptor.name);
+  }
+  return response;
+}
+
 async function client(verb, values) {
-  checkOptions(values, verb in commands ? commands[verb].options : commandOptions);
+  checkOptions(values, verb in commands ? commands[verb].options : verbOptions);
   const endpoint = `http://127.0.0.1:${portValue(values.port)}`;
   if (verb === "sessions" || verb === "development") {
     return fetchJson(endpoint, `/${verb}`, { signal: AbortSignal.timeout(5_000) });
   }
-  if (values.file && values.json) throw new AgentError("invalid_arguments", "Use either --file or --json, not both.");
+  if (values.file && values.json) throw new AgentError("invalid_arguments", "--file or --json", "--json");
   const data = values.file ? await readJson(values.file) : values.json ? JSON.parse(values.json) : {};
   let request;
   if (verb === "request" && data.version !== undefined) {
     request = data;
-    if (values.session && values.session !== request.session) throw new AgentError("session_mismatch", "The --session option must match the request file.");
-    if (values.id && values.id !== request.id) throw new AgentError("invalid_request_id", "The --id option must match the request file.");
+    if (values.session && values.session !== request.session) throw new AgentError("session_mismatch", String(request.session), "--session");
+    if (values.id && values.id !== request.id) throw new AgentError("invalid_request_id", String(request.id), "--id");
   } else {
-    if (!values.session) throw new AgentError("invalid_arguments", "Provide --session from the serve or sessions response.");
-    const command = verb === "request" ? data : { ...data, op: verb };
-    request = { version: VERSION, id: values.id ?? randomUUID(), session: values.session, command };
+    const session = values.session ?? await onlySession(endpoint);
+    const command = verb === "request" ? data : { ...data, verb };
+    request = { version: VERSION, id: values.id ?? randomUUID(), session, command };
   }
   const body = JSON.stringify(request);
-  if (Buffer.byteLength(body) > MAX_BYTES) throw new AgentError("request_too_large", "Serialized request exceeds the 1 MiB limit.");
-  return fetchJson(endpoint, "/request", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body, signal: AbortSignal.timeout(20_000),
-  }, !queries.has(request.command?.op));
+  if (Buffer.byteLength(body) > MAX_BYTES) throw new AgentError("request_too_large", `at most ${MAX_BYTES} bytes`, "--json");
+  const mutation = !reading.has(request.command?.verb);
+  const post = { method: "POST", headers: { "Content-Type": "application/json" }, body };
+  const response = request.command?.verb === "watch"
+    ? await stream(endpoint, { ...post, signal: AbortSignal.timeout(600_000) }, mutation)
+    : await fetchJson(endpoint, "/request", { ...post, signal: AbortSignal.timeout(120_000) }, mutation);
+  return withSmokes(response, request.command);
+}
+
+function unreachable(endpoint, error, mutation) {
+  const connectionRefused = ["ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH", "ENETUNREACH"].includes(error?.cause?.code);
+  if (mutation && !connectionRefused) {
+    return new AgentError("request_outcome_unknown", `${error?.message ?? error}`, "request");
+  }
+  return new AgentError("bridge_unreachable", `${endpoint}: ${error?.message ?? error}`, "--port");
 }
 
 async function fetchJson(endpoint, path, options, mutation = false) {
@@ -139,12 +180,35 @@ async function fetchJson(endpoint, path, options, mutation = false) {
     const response = await fetch(`${endpoint}${path}`, options);
     return await response.json();
   } catch (error) {
-    const connectionRefused = ["ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH", "ENETUNREACH"].includes(error?.cause?.code);
-    if (mutation && !connectionRefused) {
-      throw new AgentError("request_outcome_unknown", `The bridge at ${endpoint} did not return a complete response. The command may have executed; do not retry it. Discover sessions and inspect state with a new request ID. ${error?.message ?? error}`, "request");
-    }
-    throw new AgentError("bridge_unreachable", `Cannot reach the development bridge at ${endpoint}. Start cargo xtask agent watch (or agent serve), and check its --port. ${error?.message ?? error}`, "endpoint");
+    throw unreachable(endpoint, error, mutation);
   }
+}
+
+async function stream(endpoint, options, mutation) {
+  let last;
+  try {
+    const response = await fetch(`${endpoint}/request`, options);
+    if (!response.body) return await response.json();
+    const decoder = new TextDecoder();
+    let pending = "";
+    const take = line => {
+      if (!line.trim()) return;
+      const value = JSON.parse(line);
+      if (value && "record" in value && !("ok" in value)) console.log(line);
+      else last = value;
+    };
+    for await (const chunk of response.body) {
+      pending += decoder.decode(chunk, { stream: true });
+      for (let at = pending.indexOf("\n"); at >= 0; at = pending.indexOf("\n")) {
+        take(pending.slice(0, at));
+        pending = pending.slice(at + 1);
+      }
+    }
+    take(pending);
+  } catch (error) {
+    throw unreachable(endpoint, error, mutation);
+  }
+  return last ?? failure(new AgentError("invalid_browser_response", "no reply after the records", "$"));
 }
 
 async function main() {
@@ -154,11 +218,9 @@ async function main() {
     checkOptions(values, commands.help.options);
     console.log(JSON.stringify({
       version: VERSION, ok: true,
-      usage: "node web/scripts/agent.mjs VERB [--name value]...",
-      commands,
-      queries: [...protocol.queries, ...bridgeQueries], controls: [...protocol.controls, ...bridgeControls], command_options: commandOptions,
-      workflow: ["watch", "sessions", "describe --session S", "inspect --session S --json {...}"],
-      discover: { schemas: "describe (every type) and describe --json {\"name\": NAME}", errors: "describe --json {\"name\": \"ErrorCodes\"}" },
+      verbs: protocol.verbs, queries: protocol.queries, controls: protocol.controls,
+      commands: Object.fromEntries(Object.entries(commands).map(([name, { options }]) => [name, options])),
+      verb_options: verbOptions,
     }));
     return;
   }
@@ -166,7 +228,7 @@ async function main() {
   if (verb === "ab") {
     checkOptions(values, commands.ab.options);
     const { runAb } = await import("./agent-ab.mjs");
-    if (values.native && (values.url || values.browser)) throw new AgentError("invalid_arguments", "A native A/B takes no --url or --browser.");
+    if (values.native && (values.url || values.browser)) throw new AgentError("invalid_arguments", "--native takes no --url or --browser", "--native");
     const owned = values.native
       ? await launchNativeSession({ program: nativeProgram(values.native, { profiling: values.profile === "on" }), args: values.args?.split(" ").filter(Boolean).map(option => `--${option}`) ?? [] })
       : await launchBrowserSession({ url: pageUrl(values.url), browserPath: values.browser });
@@ -175,13 +237,15 @@ async function main() {
     } finally { await owned.close(); }
     return;
   }
-  if (verb === "watch") {
-    checkOptions(values, commands.watch.options);
+  if (verb === "iterate") {
+    checkOptions(values, commands.iterate.options);
     const { startIteration } = await import("./iteration.mjs");
     await startIteration(values);
     return;
   }
-  if (!(verb in commands) && !verbs.has(verb)) throw new AgentError("invalid_arguments", `Use ${Object.keys(commands).join(", ")}, or ${[...verbs].join(", ")}; help lists them.`);
+  if (!(verb in commands) && !verbs.has(verb)) {
+    throw new AgentError("unknown_variant", [...Object.keys(commands), ...verbs].join(" "), "verb");
+  }
   const response = await client(verb, values);
   console.log(JSON.stringify(response));
   if (response.ok === false) process.exitCode = 1;

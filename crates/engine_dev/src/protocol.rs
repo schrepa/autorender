@@ -2,6 +2,7 @@ use engine_scene::SceneEnvironment;
 use engine_settings::ErrorCode;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
 use crate::DevError;
@@ -15,6 +16,8 @@ pub(crate) use engine_core::bounds::default_limit;
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
+pub const MAX_WATCHED: usize = 32;
+pub const MAX_EXPLAINED: usize = 64;
 
 pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("present", "PresentationState"),
@@ -28,7 +31,6 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("render", ""),
     ("pause", "status"),
     ("resume", "status"),
-    ("capture", ""),
     ("game", "GameControls"),
     ("reload", "status"),
     ("debug_panic", "status"),
@@ -38,24 +40,419 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("probe", ""),
 ];
 
-pub(crate) enum ToolsQuery {
-    Status,
-    Inspect {
-        entity: Option<String>,
-        parent: Option<String>,
-        component: Option<String>,
-        offset: usize,
-        limit: usize,
-    },
-    Assets,
-    Digest,
-    Describe {
-        name: Option<String>,
-        definition: Option<String>,
-    },
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum Verb {
+    Describe,
+    Inspect,
+    Query,
+    Control,
+    Capture,
+    Profile,
+    Explain,
+    Watch,
+    Check,
+}
+
+impl Verb {
+    pub const ALL: [Self; 9] = [
+        Self::Describe,
+        Self::Inspect,
+        Self::Query,
+        Self::Control,
+        Self::Capture,
+        Self::Profile,
+        Self::Explain,
+        Self::Watch,
+        Self::Check,
+    ];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Describe => "describe",
+            Self::Inspect => "inspect",
+            Self::Query => "query",
+            Self::Control => "control",
+            Self::Capture => "capture",
+            Self::Profile => "profile",
+            Self::Explain => "explain",
+            Self::Watch => "watch",
+            Self::Check => "check",
+        }
+    }
+
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|verb| verb.name() == name)
+    }
+
+    pub const fn names_operations(self) -> bool {
+        matches!(self, Self::Query | Self::Control)
+    }
+
+    pub fn names() -> impl Iterator<Item = &'static str> {
+        Self::ALL.into_iter().map(Self::name)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum Detail {
+    #[default]
+    Short,
+    Full,
+}
+
+#[derive(Clone, Debug)]
+pub struct Envelope {
+    pub verb: Verb,
+    pub fields: Map<String, Value>,
+}
+
+impl Envelope {
+    pub fn parse(source: &str) -> Result<Self, DevError> {
+        if source.len() > MAX_REQUEST_BYTES {
+            return Err(DevError::new(
+                ErrorCode::RequestTooLarge,
+                "$",
+                format!("request must fit {MAX_REQUEST_BYTES} UTF-8 bytes"),
+            )
+            .expected(format!("at most {MAX_REQUEST_BYTES} bytes")));
+        }
+        let request: Value = engine_scene::parse_json(source)?;
+        let Value::Object(mut fields) = request else {
+            return Err(
+                DevError::new(ErrorCode::InvalidType, "$", "a request is an object")
+                    .expected("object"),
+            );
+        };
+        check_version(fields.remove("version"))?;
+        let verb = match fields.remove("verb") {
+            None => {
+                return Err(
+                    DevError::new(ErrorCode::MissingField, "$.verb", "missing field `verb`")
+                        .allowed(Verb::names()),
+                );
+            }
+            Some(Value::String(name)) => Verb::named(&name)
+                .ok_or_else(|| DevError::unknown("$.verb", &name, Verb::names()))?,
+            Some(_) => {
+                return Err(
+                    DevError::new(ErrorCode::InvalidType, "$.verb", "the verb is a string")
+                        .expected("string")
+                        .allowed(Verb::names()),
+                );
+            }
+        };
+        Ok(Self { verb, fields })
+    }
+
+    pub fn name(&self) -> Result<&str, DevError> {
+        match self.fields.get("name") {
+            Some(Value::String(name)) => Ok(name),
+            Some(_) => Err(
+                DevError::new(ErrorCode::InvalidType, "$.name", "the name is a string")
+                    .expected("string"),
+            ),
+            None => Err(DevError::new(
+                ErrorCode::MissingField,
+                "$.name",
+                "missing field `name`",
+            )),
+        }
+    }
+
+    pub fn args(&self) -> Result<Value, DevError> {
+        let extra = self
+            .fields
+            .keys()
+            .find(|key| !["name", "args"].contains(&key.as_str()));
+        if let Some(extra) = extra {
+            return Err(DevError::new(
+                ErrorCode::UnknownField,
+                format!("$.{extra}"),
+                format!("unknown field `{extra}`, expected `name` or `args`"),
+            )
+            .allowed(["name", "args"]));
+        }
+        match self.fields.get("args") {
+            None => Ok(Value::Object(Map::new())),
+            Some(args @ Value::Object(_)) => Ok(args.clone()),
+            Some(_) => Err(
+                DevError::new(ErrorCode::InvalidType, "$.args", "args are an object")
+                    .expected("object"),
+            ),
+        }
+    }
+
+    pub fn body<T: DeserializeOwned>(&self) -> Result<T, DevError> {
+        Ok(engine_scene::parse_value(Value::Object(self.fields.clone()))?)
+    }
+}
+
+pub fn request(verb: Verb, fields: Value) -> String {
+    let mut request = match fields {
+        Value::Object(fields) => fields,
+        Value::Null
+        | Value::Bool(_)
+        | Value::Number(_)
+        | Value::String(_)
+        | Value::Array(_) => Map::new(),
+    };
+    request.insert("verb".to_owned(), Value::from(verb.name()));
+    request.insert("version".to_owned(), Value::from(PROTOCOL_VERSION));
+    Value::Object(request).to_string()
+}
+
+pub fn named(verb: Verb, name: &str, args: Value) -> String {
+    request(verb, serde_json::json!({ "name": name, "args": args }))
+}
+
+pub(crate) fn parse_named<T: DeserializeOwned>(name: &str, args: Value) -> Result<T, DevError> {
+    let Value::Object(mut fields) = args else {
+        return Err(
+            DevError::new(ErrorCode::InvalidType, "$.args", "args are an object")
+                .expected("object"),
+        );
+    };
+    fields.insert("op".to_owned(), Value::from(name));
+    engine_scene::parse_value(Value::Object(fields)).map_err(|error| {
+        let mut error = DevError::from(error);
+        let path = match error.path.strip_prefix('$') {
+            Some("" | ".op") => "$.args".to_owned(),
+            Some(rest) => format!("$.args{rest}"),
+            None => std::mem::take(&mut error.path),
+        };
+        error.path = path;
+        error
+    })
+}
+
+fn check_version(version: Option<Value>) -> Result<(), DevError> {
+    #[derive(Deserialize)]
+    struct Version {
+        version: u32,
+    }
+    let Some(version) = version else {
+        return Err(DevError::new(
+            ErrorCode::MissingField,
+            "$.version",
+            "missing field `version`",
+        )
+        .expected(PROTOCOL_VERSION.to_string()));
+    };
+    let Version { version } = engine_scene::parse_value(serde_json::json!({ "version": version }))?;
+    if version != PROTOCOL_VERSION {
+        return Err(DevError::new(
+            ErrorCode::UnsupportedVersion,
+            "$.version",
+            format!("accepted protocol version: {PROTOCOL_VERSION}"),
+        )
+        .expected(PROTOCOL_VERSION.to_string()));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+pub enum Query {
+    Status {},
+    Assets {},
+    Digest {},
     Distribution {
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = bounds::MAX_VALUES)))]
         values: Vec<f64>,
     },
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct DescribeRequest {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub definition: Option<String>,
+    #[serde(default)]
+    pub detail: Detail,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct InspectRequest {
+    #[serde(default)]
+    pub entity: Option<String>,
+    #[serde(default)]
+    pub parent: Option<String>,
+    #[serde(default)]
+    pub component: Option<String>,
+    #[serde(default)]
+    pub offset: usize,
+    #[serde(default = "default_limit")]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PAGE)))]
+    pub limit: usize,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct CaptureRequest {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_optional_alpha"
+    )]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        schemars(with = "f64", transform = stated(bounds::ALPHA))
+    )]
+    pub alpha: Option<f64>,
+    #[serde(default)]
+    pub digest: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compare: Option<CompareRequest>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct CompareRequest {
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 512)))]
+    pub a: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub b: Option<String>,
+    #[serde(default)]
+    pub tolerance: u8,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ProfileRequest {
+    #[serde(default = "default_profile_frames")]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAMES)))]
+    pub frames: u32,
+    #[serde(default = "default_interval_ms")]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAME_INTERVAL)))]
+    pub interval_ms: f64,
+    #[serde(default = "default_top")]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PAGE)))]
+    pub top: usize,
+    #[serde(default)]
+    pub detail: Detail,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deep: Option<DeepProfile>,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct DeepProfile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_events: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_samples: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vendor: Option<Vendor>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum Vendor {
+    Pix,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(tag = "about", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ExplainQuestion {
+    Entity {
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 64)))]
+        entity: String,
+        #[serde(default)]
+        detail: Detail,
+    },
+    Frame {
+        #[serde(default = "default_top")]
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PAGE)))]
+        top: usize,
+        #[serde(default)]
+        detail: Detail,
+    },
+    Scene {},
+}
+
+impl Query {
+    pub const NAMES: [&'static str; 4] = ["status", "assets", "digest", "distribution"];
+}
+
+impl ExplainQuestion {
+    pub fn needs_pause(&self) -> bool {
+        matches!(self, Self::Entity { .. })
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct WatchRequest {
+    #[serde(default)]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = MAX_WATCHED)))]
+    pub stats: Vec<String>,
+    #[serde(default)]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = MAX_WATCHED)))]
+    pub entities: Vec<WatchedComponent>,
+    #[serde(default = "default_watch_frames")]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAMES)))]
+    pub frames: u32,
+    #[serde(default = "default_interval_ms")]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAME_INTERVAL)))]
+    pub interval_ms: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct WatchedComponent {
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 64)))]
+    pub entity: String,
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 64)))]
+    pub component: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct CheckRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub level: Option<CheckLevel>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum CheckLevel {
+    Quick,
+    Pr,
+    Merge,
+}
+
+impl CheckLevel {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Quick => "quick",
+            Self::Pr => "pr",
+            Self::Merge => "merge",
+        }
+    }
 }
 
 pub enum Control {
@@ -100,146 +497,7 @@ pub enum HostControl {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(
-    not(target_arch = "wasm32"),
-    derive(schemars::JsonSchema),
-    schemars(transform = with_version)
-)]
-#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
-pub enum DevRequest {
-    Status {},
-    Inspect {
-        #[serde(default)]
-        entity: Option<String>,
-        #[serde(default)]
-        parent: Option<String>,
-        #[serde(default)]
-        component: Option<String>,
-        #[serde(default)]
-        offset: usize,
-        #[serde(default = "default_limit")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PAGE)))]
-        limit: usize,
-    },
-    Assets {},
-    Digest {},
-    Distribution {
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(max = bounds::MAX_VALUES)))]
-        values: Vec<f64>,
-    },
-    Describe {
-        #[serde(default)]
-        name: Option<String>,
-        #[serde(default)]
-        definition: Option<String>,
-    },
-}
-
-pub fn parse_request<T: DeserializeOwned>(source: &str) -> Result<T, DevError> {
-    let (request, version) = split_version(source)?;
-    let request = engine_scene::parse_value(request)?;
-    check_version(version)?;
-    Ok(request)
-}
-
-pub(crate) fn operation_request(source: &str) -> Result<serde_json::Value, DevError> {
-    let (mut request, version) = split_version(source)?;
-    check_version(version)?;
-    if let Some(fields) = request.as_object_mut() {
-        fields.remove("op");
-    }
-    Ok(request)
-}
-
-fn split_version(source: &str) -> Result<(serde_json::Value, Option<serde_json::Value>), DevError> {
-    let mut request: serde_json::Value = engine_scene::parse_json(source)?;
-    let version = request
-        .as_object_mut()
-        .and_then(|fields| fields.remove("version"));
-    Ok((request, version))
-}
-
-fn check_version(version: Option<serde_json::Value>) -> Result<(), DevError> {
-    #[derive(Deserialize)]
-    struct Version {
-        version: u32,
-    }
-    let Some(version) = version else {
-        return Err(DevError::new(
-            ErrorCode::MissingField,
-            "$.version",
-            "missing field `version`",
-        ));
-    };
-    let Version { version } = engine_scene::parse_value(serde_json::json!({ "version": version }))?;
-    if version != PROTOCOL_VERSION {
-        return Err(DevError::new(
-            ErrorCode::UnsupportedVersion,
-            "$.version",
-            format!("accepted protocol version: {PROTOCOL_VERSION}"),
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn with_version(schema: &mut schemars::Schema) {
-    use serde_json::Value;
-    let version = serde_json::to_value(schemars::SchemaGenerator::default().subschema_for::<u32>())
-        .expect("schemas serialize");
-    let requests = schema
-        .get_mut("oneOf")
-        .and_then(Value::as_array_mut)
-        .expect("requests are one of their ops");
-    for request in requests {
-        request
-            .get_mut("properties")
-            .and_then(Value::as_object_mut)
-            .expect("requests have fields")
-            .insert("version".to_owned(), version.clone());
-        let required = request
-            .get_mut("required")
-            .and_then(Value::as_array_mut)
-            .expect("requests require their op");
-        let op = required
-            .iter()
-            .position(|name| name == "op")
-            .expect("requests require their op");
-        required.insert(op + 1, "version".into());
-    }
-}
-
-impl DevRequest {
-    pub(crate) fn route(self) -> ToolsQuery {
-        match self {
-            Self::Status {} => ToolsQuery::Status,
-            Self::Inspect {
-                entity,
-                parent,
-                component,
-                offset,
-                limit,
-            } => ToolsQuery::Inspect {
-                entity,
-                parent,
-                component,
-                offset,
-                limit,
-            },
-            Self::Assets {} => ToolsQuery::Assets,
-            Self::Digest {} => ToolsQuery::Digest,
-            Self::Distribution { values } => ToolsQuery::Distribution { values },
-            Self::Describe { name, definition } => ToolsQuery::Describe { name, definition },
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(
-    not(target_arch = "wasm32"),
-    derive(schemars::JsonSchema),
-    schemars(transform = with_version)
-)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BrowserControl {
     Present {
@@ -325,18 +583,6 @@ pub enum BrowserControl {
     Render {},
     Pause {},
     Resume {},
-    Capture {
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "deserialize_optional_alpha"
-        )]
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(with = "f64", transform = stated(bounds::ALPHA))
-        )]
-        alpha: Option<f64>,
-    },
     Game {
         #[cfg_attr(
             not(target_arch = "wasm32"),
@@ -390,6 +636,27 @@ pub enum BrowserControl {
 }
 
 impl BrowserControl {
+    pub const NAMES: [&'static str; 18] = [
+        "present",
+        "culling",
+        "environment",
+        "camera",
+        "benchmark",
+        "step",
+        "frames",
+        "input",
+        "render",
+        "pause",
+        "resume",
+        "game",
+        "reload",
+        "debug_panic",
+        "debug_fault",
+        "debug_device_loss",
+        "debug_missing_asset",
+        "probe",
+    ];
+
     pub fn route(self) -> Control {
         match self {
             Self::Present { alpha } => Control::Host(HostControl::Present { alpha }),
@@ -438,7 +705,6 @@ impl BrowserControl {
             | Self::Frames { .. }
             | Self::Pause { .. }
             | Self::Resume { .. }
-            | Self::Capture { .. }
             | Self::Probe { .. }
             | Self::DebugDeviceLoss { .. }
             | Self::Game { .. }
@@ -457,7 +723,6 @@ impl BrowserControl {
             | Self::Frames { .. }
             | Self::Input { .. }
             | Self::Render { .. }
-            | Self::Capture { .. }
             | Self::Probe { .. }
             | Self::Game { .. }
             | Self::Reload { .. }
@@ -520,11 +785,28 @@ fn default_warmup() -> u32 {
     30
 }
 
+fn default_samples() -> u32 {
+    120
+}
+
+fn default_profile_frames() -> u32 {
+    60
+}
+
+fn default_watch_frames() -> u32 {
+    60
+}
+
+fn default_interval_ms() -> f64 {
+    1000.0 / 60.0
+}
+
+pub(crate) fn default_top() -> usize {
+    8
+}
+
 fn deserialize_optional_alpha<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<f64>, D::Error> {
     f64::deserialize(deserializer).map(Some)
-}
-fn default_samples() -> u32 {
-    120
 }

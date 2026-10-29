@@ -24,16 +24,18 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use crate::bricks::StandardBricks;
-use crate::protocol::ToolsQuery;
+use crate::protocol::{
+    DescribeRequest, Detail, Envelope, InspectRequest, Query, Verb, parse_named,
+};
 use crate::reply::{Observation, Reply, SceneObservation};
 use crate::results::{
-    AssetsResult, AuthoredEntity, DescribeResult, DescribedType, DistributionResult,
-    EntityComponents, EntityRow, InspectResult, MissingAsset, StatusLimits, StatusResult,
-    TextureAsset, TextureState, TypeKind, result,
+    AssetsResult, AuthoredEntity, DescribeResult, DescribedBrick, DescribedEntry, DescribedType,
+    DistributionResult, EntityComponents, EntityRow, InspectResult, MissingAsset, StatusLimits,
+    StatusResult, TextureAsset, TextureState, TypeKind, result,
 };
 use crate::{
-    DevError, DevRequest, MAX_DESCRIPTION_BYTES, MAX_INSPECTOR_BYTES, MAX_INSPECTORS,
-    MAX_PAGE_SIZE, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
+    BrowserControl, DevError, MAX_INSPECTOR_BYTES, MAX_INSPECTORS, MAX_PAGE_SIZE,
+    MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
     views::{
         CameraView, GlobalTransformView, HierarchyView, InputView, InterpolateTransformView,
         LodLevelView, Mesh3dView, MeshBoundsView, MeshRenderView, MeshView, PresentationModeView,
@@ -41,16 +43,10 @@ use crate::{
     },
 };
 
-const DESCRIBED: &[(&str, TypeKind, &str)] = &[
-    ("SceneDocument", TypeKind::Authoring, ""),
-    ("protocol", TypeKind::Protocol, ""),
-    ("BrowserControl", TypeKind::Protocol, ""),
-    ("FrameStats", TypeKind::Observation, ""),
-    (
-        "ErrorCodes",
-        TypeKind::Catalog,
-        "every error code replies answer with and what it means",
-    ),
+const DESCRIBED: &[(&str, TypeKind)] = &[
+    ("SceneDocument", TypeKind::Authoring),
+    ("FrameStats", TypeKind::Observation),
+    ("ErrorCodes", TypeKind::Catalog),
 ];
 
 pub const TOOLING_TYPES: &[&str] = &["ProfileCapture", "GameControls", "PageParameters"];
@@ -58,7 +54,8 @@ pub const TOOLING_TYPES: &[&str] = &["ProfileCapture", "GameControls", "PagePara
 pub fn reserved_names() -> impl Iterator<Item = &'static str> {
     DESCRIBED
         .iter()
-        .map(|&(name, _, _)| name)
+        .map(|&(name, _)| name)
+        .chain(Verb::names())
         .chain(TOOLING_TYPES.iter().copied())
 }
 
@@ -74,8 +71,6 @@ pub enum InspectorKind {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct InspectorDescriptor {
     pub name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
     pub schema: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default: Option<Value>,
@@ -85,7 +80,6 @@ impl InspectorDescriptor {
     pub fn new(name: impl Into<String>, schema: Value) -> Self {
         Self {
             name: name.into(),
-            description: None,
             schema,
             default: None,
         }
@@ -97,12 +91,6 @@ impl InspectorDescriptor {
             .cloned()
             .unwrap_or_else(|| panic!("no schema named {name} was generated"));
         Self::new(name, schema)
-    }
-
-    #[must_use]
-    pub fn with_description(mut self, description: impl Into<String>) -> Self {
-        self.description = Some(description.into());
-        self
     }
 
     #[must_use]
@@ -145,6 +133,7 @@ pub(crate) struct Inspector {
 
 type BrickInspectors = BTreeMap<String, Inspector>;
 
+#[derive(Clone, Copy)]
 struct InspectSelector<'a> {
     entity: Option<&'a str>,
     parent: Option<&'a str>,
@@ -305,21 +294,13 @@ impl DevTools {
                 format!("a game may register at most {MAX_INSPECTORS} inspectors"),
             ));
         }
-        let description = inspector
-            .descriptor
-            .description
-            .as_deref()
-            .unwrap_or_default();
-        if description.len() > MAX_DESCRIPTION_BYTES
-            || encode(&inspector.descriptor, MAX_INSPECTOR_BYTES).is_err()
-        {
+        if encode(&inspector.descriptor, MAX_INSPECTOR_BYTES).is_err() {
             return Err(DevError::new(
                 ErrorCode::InspectorTooLarge,
                 "$.schema",
-                format!(
-                    "descriptor must fit {MAX_INSPECTOR_BYTES} bytes and description {MAX_DESCRIPTION_BYTES} bytes"
-                ),
-            ));
+                format!("descriptor must fit {MAX_INSPECTOR_BYTES} bytes"),
+            )
+            .expected(format!("at most {MAX_INSPECTOR_BYTES} bytes")));
         }
         self.inspectors.insert(name.clone(), inspector);
         Ok(())
@@ -373,14 +354,8 @@ impl DevTools {
         context: Context<'_>,
         source: &str,
     ) -> Result<Value, DevError> {
+        let envelope = Envelope::parse(source)?;
         let scene = context.scene;
-        if source.len() > MAX_REQUEST_BYTES {
-            return Err(DevError::new(
-                ErrorCode::RequestTooLarge,
-                "$",
-                format!("request must fit {MAX_REQUEST_BYTES} UTF-8 bytes"),
-            ));
-        }
         let wrong_world =
             |engine: &Engine| scene.is_some_and(|scene| !scene.belongs_to(engine.app.world()));
         let refused = || {
@@ -390,55 +365,85 @@ impl DevTools {
                 "scene instance belongs to a different engine world",
             )
         };
-        if let Some((name, request)) = self.query_operation(engine.app.world(), source)? {
-            if wrong_world(engine) {
-                return Err(refused());
+        match envelope.verb {
+            Verb::Query => {
+                let name = envelope.name()?;
+                let args = envelope.args()?;
+                if let Some(name) = self.query_operation(engine.app.world(), name)? {
+                    if wrong_world(engine) {
+                        return Err(refused());
+                    }
+                    return crate::bricks::run(engine.app.world_mut(), name, args);
+                }
+                if !Query::NAMES.contains(&name) {
+                    return Err(DevError::unknown(
+                        "$.name",
+                        name,
+                        crate::bricks::operation_names(engine.app.world(), Verb::Query),
+                    ));
+                }
+                let query: Query = parse_named(name, args)?;
+                if wrong_world(engine) {
+                    return Err(refused());
+                }
+                self.query(engine, context, query)
             }
-            return crate::bricks::run(engine.app.world_mut(), name, request);
-        }
-        let request: DevRequest = crate::parse_request(source)?;
-        if wrong_world(engine) {
-            return Err(refused());
-        }
-        let query = request.route();
-        if let ToolsQuery::Inspect {
-            component: Some(component),
-            entity,
-            parent,
-            offset,
-            limit,
-        } = &query
-            && matches!(component.as_str(), "Collider" | "CollisionWorld")
-        {
-            self.inspect(
-                engine.app.world(),
-                context,
-                InspectSelector {
-                    entity: entity.as_deref(),
-                    parent: parent.as_deref(),
-                    component: Some(component),
-                    offset: *offset,
-                    limit: *limit,
-                },
-            )?;
-            if engine.app.world().contains_resource::<CollisionWorld>() {
-                refresh_collision_world(engine.app.world_mut()).map_err(collision_error)?;
+            Verb::Describe => {
+                let request: DescribeRequest = envelope.body()?;
+                if wrong_world(engine) {
+                    return Err(refused());
+                }
+                self.describe(engine.app.world(), &request)
+                    .map(result::describe)
             }
+            Verb::Inspect => {
+                let request: InspectRequest = envelope.body()?;
+                if wrong_world(engine) {
+                    return Err(refused());
+                }
+                self.inspect_request(engine, context, &request)
+                    .map(result::inspect)
+            }
+            verb @ (Verb::Control
+            | Verb::Capture
+            | Verb::Profile
+            | Verb::Explain
+            | Verb::Watch
+            | Verb::Check) => Err(DevError::new(
+                ErrorCode::UnsupportedCommand,
+                "$.verb",
+                verb.name(),
+            )
+            .allowed([Verb::Describe, Verb::Inspect, Verb::Query].map(Verb::name))),
         }
-        if matches!(query, ToolsQuery::Inspect { .. } | ToolsQuery::Digest) {
+    }
+
+    fn query(
+        &self,
+        engine: &mut Engine,
+        context: Context<'_>,
+        query: Query,
+    ) -> Result<Value, DevError> {
+        let scene = context.scene;
+        if matches!(query, Query::Digest {}) {
             engine.refresh_transforms();
         }
         let engine = &*engine;
-        let slot = |entity| engine.render_slot(entity);
-        let context = Context {
-            render_slot: Some(&slot),
-            ..context
-        };
         let world = engine.app.world();
         match query {
-            ToolsQuery::Status => Ok(result::status(self.status(engine, scene))),
-            ToolsQuery::Assets => assets(world, context).map(result::assets),
-            ToolsQuery::Digest => Ok(result::digest(self.digest(
+            Query::Status {} => Ok(result::status(self.status(engine, scene))),
+            Query::Assets {} => {
+                let slot = |entity| engine.render_slot(entity);
+                assets(
+                    world,
+                    Context {
+                        render_slot: Some(&slot),
+                        ..context
+                    },
+                )
+                .map(result::assets)
+            }
+            Query::Digest {} => Ok(result::digest(self.digest(
                 world,
                 Context {
                     scene,
@@ -446,41 +451,52 @@ impl DevTools {
                     render_slot: None,
                 },
             ))),
-            ToolsQuery::Describe { name, definition } => self
-                .describe(world, name.as_deref(), definition.as_deref())
-                .map(result::describe),
-            ToolsQuery::Distribution { values } => {
+            Query::Distribution { values } => {
                 if values.len() > crate::bounds::MAX_VALUES {
                     return Err(DevError::new(
                         ErrorCode::OutOfRange,
-                        "$.values",
-                        format!("at most {} values", crate::bounds::MAX_VALUES),
-                    ));
+                        "$.args.values",
+                        format!("{} values", values.len()),
+                    )
+                    .expected(format!("at most {}", crate::bounds::MAX_VALUES)));
                 }
                 Ok(result::distribution(DistributionResult {
                     distribution: engine_core::Distribution::of(&values),
                 }))
             }
-            ToolsQuery::Inspect {
-                entity,
-                parent,
-                component,
-                offset,
-                limit,
-            } => self
-                .inspect(
-                    world,
-                    context,
-                    InspectSelector {
-                        entity: entity.as_deref(),
-                        parent: parent.as_deref(),
-                        component: component.as_deref(),
-                        offset,
-                        limit,
-                    },
-                )
-                .map(result::inspect),
         }
+    }
+
+    pub(crate) fn inspect_request(
+        &self,
+        engine: &mut Engine,
+        context: Context<'_>,
+        request: &InspectRequest,
+    ) -> Result<InspectResult, DevError> {
+        let selector = InspectSelector {
+            entity: request.entity.as_deref(),
+            parent: request.parent.as_deref(),
+            component: request.component.as_deref(),
+            offset: request.offset,
+            limit: request.limit,
+        };
+        if selector
+            .component
+            .is_some_and(|component| matches!(component, "Collider" | "CollisionWorld"))
+        {
+            self.inspect(engine.app.world(), context, selector)?;
+            if engine.app.world().contains_resource::<CollisionWorld>() {
+                refresh_collision_world(engine.app.world_mut()).map_err(collision_error)?;
+            }
+        }
+        engine.refresh_transforms();
+        let engine = &*engine;
+        let slot = |entity| engine.render_slot(entity);
+        let context = Context {
+            render_slot: Some(&slot),
+            ..context
+        };
+        self.inspect(engine.app.world(), context, selector)
     }
 
     fn status(&self, engine: &Engine, scene: Option<&SceneInstance>) -> StatusResult {
@@ -509,80 +525,161 @@ impl DevTools {
         }
     }
 
-    fn describe(
-        &self,
-        world: &World,
-        name: Option<&str>,
-        definition: Option<&str>,
-    ) -> Result<DescribeResult, DevError> {
+    fn describe(&self, world: &World, request: &DescribeRequest) -> Result<DescribeResult, DevError> {
         let bricks = self.brick_inspectors(world);
-        let Some(name) = name else {
+        let registry = world.get_resource::<BrickRegistry>();
+        let full = request.detail == Detail::Full;
+        let Some(name) = request.name.as_deref() else {
             let mut types: Vec<DescribedType> = self
                 .all_inspectors(&bricks)
                 .map(|inspector| DescribedType {
                     name: inspector.descriptor.name.clone(),
                     kind: inspector.kind.into(),
-                    description: inspector.descriptor.description.clone(),
-                    feature: Some(inspector.brick),
+                    brick: Some(inspector.brick),
                 })
                 .collect();
-            types.extend(
-                DESCRIBED
-                    .iter()
-                    .map(|&(name, kind, description)| DescribedType {
-                        name: name.to_owned(),
-                        kind,
-                        description: (!description.is_empty()).then(|| description.to_owned()),
-                        feature: None,
-                    }),
-            );
-            return Ok(DescribeResult::Listing { types });
+            types.extend(DESCRIBED.iter().map(|&(name, kind)| DescribedType {
+                name: name.to_owned(),
+                kind,
+                brick: None,
+            }));
+            return Ok(DescribeResult::Listing {
+                verbs: Verb::names().collect(),
+                bricks: registry
+                    .into_iter()
+                    .flat_map(BrickRegistry::bricks)
+                    .map(|brick| described_brick(brick, full))
+                    .collect(),
+                types,
+            });
         };
-        match name {
-            "SceneDocument" => Ok(DescribeResult::Authoring {
+        validate_name(name, "$.name")?;
+        if let Some(verb) = Verb::named(name) {
+            return Ok(DescribeResult::Verb {
                 name: name.to_owned(),
-                kind: TypeKind::Authoring,
-                schema: scene_schema(definition)?,
-                constraints: format!(
-                    "Rust validation checks references, unique expanded IDs, cycles, depth, finite world matrices, collision admission, environment values and asset budgets. Prefabs cannot nest. An environment sets every section on instantiation, omitted ones to the engine default state; the opt-in ones ({}) are then off.",
-                    SceneEnvironment::opt_in_sections(world).join(", ")
-                ),
-            }),
-            "protocol" | "BrowserControl" => {
-                let schemas: Value =
-                    serde_json::from_str(include_str!("../generated/inspectors.json"))
-                        .expect("generated schemas are JSON");
-                Ok(DescribeResult::Protocol {
-                    name: name.to_owned(),
-                    kind: TypeKind::Protocol,
-                    schema: schemas[name].clone(),
-                    constraints: format!(
-                        "version {PROTOCOL_VERSION}; every control but pause and resume requires a paused host; reload revisions must fit u64. Numeric bounds, lengths and defaults are in the schema. Spatial queries need the collision brick but no pause; directions are nonzero and finite; rotations are normalized XYZW. Layer filtering is symmetric; sensors are included, excluded or the only ones. Raycasts and casts return the closest complete hit, terrain heightfields included; casts translate with a fixed orientation. Terrain heights read null where no tile is resident; terrain sweeps compare queries, collision rays and layers. Budget failures never return partial hits. Events are non-consuming latest fixed-tick sensor transitions, with attempted and committed ticks. Present and capture previews preserve clocks and input. The terrain control freezes streaming at the camera's position. Ordinary render, step and capture show current poses. Benchmarks in step mode advance one tick a sample, in present mode sample alpha 0.5 without ticks, and clear input. Controls do not save source."
-                    ),
-                    control_state: control_state(world),
-                })
-            }
-            "ErrorCodes" => Ok(DescribeResult::Catalog {
-                name: name.to_owned(),
-                kind: TypeKind::Catalog,
-                codes: ErrorCode::ALL.iter().map(|&(_, code)| code).collect(),
-            }),
-            "FrameStats" => Ok(DescribeResult::Observation {
-                name: name.to_owned(),
-                kind: TypeKind::Observation,
-                schema: serde_json::from_str(crate::FRAME_STATS_SCHEMA)
-                    .expect("generated schema is JSON"),
-                source: "every successful reply's result.rendering: the last frame's stats",
-            }),
-            _ => {
-                let inspector = self.inspector(world, &bricks, name)?;
-                Ok(DescribeResult::Inspector {
-                    kind: inspector.kind.into(),
-                    descriptor: inspector.descriptor.clone(),
-                    feature: inspector.brick,
-                })
-            }
+                kind: TypeKind::Verb,
+                schema: self.schema_named(verb.name()),
+                control_state: (verb == Verb::Control).then(|| control_state(world)),
+            });
         }
+        match name {
+            "SceneDocument" => {
+                return Ok(DescribeResult::Authoring {
+                    name: name.to_owned(),
+                    kind: TypeKind::Authoring,
+                    schema: scene_schema(request.definition.as_deref())?,
+                    opt_in_sections: SceneEnvironment::opt_in_sections(world),
+                });
+            }
+            "ErrorCodes" => {
+                return Ok(DescribeResult::Catalog {
+                    name: name.to_owned(),
+                    kind: TypeKind::Catalog,
+                    codes: ErrorCode::ALL.iter().map(|&(_, code)| code).collect(),
+                });
+            }
+            "FrameStats" => {
+                return Ok(DescribeResult::Observation {
+                    name: name.to_owned(),
+                    kind: TypeKind::Observation,
+                    schema: frame_stats_schema(),
+                });
+            }
+            _ => {}
+        }
+        if let Some(inspector) = self.inspectors.get(name).or_else(|| bricks.get(name)) {
+            return Ok(DescribeResult::Inspector {
+                kind: inspector.kind.into(),
+                descriptor: inspector.descriptor.clone(),
+                brick: inspector.brick,
+                at: registry.and_then(|registry| inspector_at(registry, name)),
+            });
+        }
+        if let Some(described) = self.described_operation(world, name) {
+            return Ok(described);
+        }
+        if let Some(brick) = registry.and_then(|registry| registry.brick(name)) {
+            return Ok(DescribeResult::Brick {
+                kind: TypeKind::Brick,
+                brick: described_brick(brick, true),
+            });
+        }
+        if let Some(stats) = registry.and_then(|registry| registry.stats().find(|stats| stats.key == name)) {
+            return Ok(DescribeResult::Stats {
+                name: name.to_owned(),
+                kind: TypeKind::Stats,
+                brick: stats.brick,
+                at: engine_core::source_line(stats.at),
+                schema: stats_schema(name),
+            });
+        }
+        if let Some(brick) = self
+            .standard
+            .of_inspector(name)
+            .or_else(|| self.standard.of_operation(name))
+            && !registry.is_some_and(|registry| registry.has(brick))
+        {
+            return Err(engine_core::missing_brick(brick, "$.name").into());
+        }
+        Err(DevError {
+            code: ErrorCode::UnknownInspector,
+            ..DevError::unknown("$.name", name, self.describable(world, &bricks))
+        })
+    }
+
+    fn described_operation(&self, world: &World, name: &str) -> Option<DescribeResult> {
+        let registered = world
+            .get_resource::<BrickRegistry>()
+            .and_then(|registry| registry.operation(name));
+        let verb = match registered {
+            Some(operation) if operation.control => Verb::Control,
+            Some(_) => Verb::Query,
+            None if Query::NAMES.contains(&name) => Verb::Query,
+            None if BrowserControl::NAMES.contains(&name) => Verb::Control,
+            None => return None,
+        };
+        let shows = registered.map(|operation| operation.shows).or_else(|| {
+            crate::protocol::CONTROL_STATE
+                .iter()
+                .find(|(control, _)| *control == name)
+                .map(|&(_, shows)| shows)
+        });
+        Some(DescribeResult::Operation {
+            name: name.to_owned(),
+            kind: TypeKind::Operation,
+            verb: verb.name(),
+            brick: registered.map(|operation| operation.brick),
+            at: registered.map(|operation| engine_core::source_line(operation.at)),
+            shows: shows.filter(|shows| !shows.is_empty()),
+            args: operation_args(&self.schema_named(verb.name()), name),
+        })
+    }
+
+    fn describable(&self, world: &World, bricks: &BrickInspectors) -> Vec<String> {
+        let registry = world.get_resource::<BrickRegistry>();
+        let mut names: Vec<String> = Verb::names()
+            .chain(DESCRIBED.iter().map(|&(name, _)| name))
+            .map(str::to_owned)
+            .chain(
+                self.all_inspectors(bricks)
+                    .map(|inspector| inspector.descriptor.name.clone()),
+            )
+            .chain(
+                [Verb::Query, Verb::Control]
+                    .into_iter()
+                    .flat_map(|verb| crate::bricks::operation_names(world, verb))
+                    .map(str::to_owned),
+            )
+            .chain(
+                registry
+                    .into_iter()
+                    .flat_map(|registry| registry.names().chain(registry.stats().map(|stats| stats.key)))
+                    .map(str::to_owned),
+            )
+            .collect();
+        names.sort();
+        names.dedup();
+        names
     }
 
     fn inspector<'a>(
@@ -600,13 +697,16 @@ impl DevTools {
                 .get_resource::<BrickRegistry>()
                 .is_some_and(|registry| registry.has(brick))
         {
-            return Err(engine_core::missing_brick(brick, "$.op").into());
+            return Err(engine_core::missing_brick(brick, "$.component").into());
         }
-        Err(DevError::new(
-            ErrorCode::UnknownInspector,
-            "$.component",
-            "use describe to discover registered inspectors",
-        ))
+        let known: Vec<String> = self
+            .all_inspectors(bricks)
+            .map(|inspector| inspector.descriptor.name.clone())
+            .collect();
+        Err(DevError {
+            code: ErrorCode::UnknownInspector,
+            ..DevError::unknown("$.component", name, known)
+        })
     }
 
     #[expect(
@@ -823,7 +923,7 @@ fn read_value(
     Ok(value)
 }
 
-fn validate_name(name: &str, path: &str) -> Result<(), DevError> {
+pub(crate) fn validate_name(name: &str, path: &str) -> Result<(), DevError> {
     if name.is_empty()
         || name.len() > 64
         || !name
@@ -858,7 +958,7 @@ impl Write for BoundedWriter {
     }
 }
 
-fn encode(value: &impl Serialize, limit: usize) -> Result<String, serde_json::Error> {
+pub(crate) fn encode(value: &impl Serialize, limit: usize) -> Result<String, serde_json::Error> {
     let mut output = BoundedWriter {
         bytes: Vec::new(),
         limit,
@@ -921,16 +1021,18 @@ fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, DevError>
     })
 }
 
-fn missing_assets(world: &World, assets: &AssetLibrary) -> (Vec<MissingAsset>, usize) {
-    let lacking = |material: MaterialHandle| -> Option<&'static str> {
-        let Some(found) = assets.material(material) else {
-            return Some("material");
-        };
-        found
+pub(crate) fn missing_of(assets: &AssetLibrary, mesh3d: &Mesh3d) -> Option<&'static str> {
+    match assets.material(mesh3d.material) {
+        None => Some("material"),
+        Some(_) if assets.mesh(mesh3d.mesh).is_none() => Some("mesh"),
+        Some(material) => material
             .textures()
             .any(|texture| assets.texture(texture).is_none())
-            .then_some("texture")
-    };
+            .then_some("texture"),
+    }
+}
+
+fn missing_assets(world: &World, assets: &AssetLibrary) -> (Vec<MissingAsset>, usize) {
     let transforms = world.get_resource::<GlobalTransforms>();
     let position = |entity: Entity| {
         transforms
@@ -941,12 +1043,7 @@ fn missing_assets(world: &World, assets: &AssetLibrary) -> (Vec<MissingAsset>, u
     let mut found: Vec<(Entity, &'static str, &'static str)> = Vec::new();
     if let Some(mut meshes) = world.try_query::<(Entity, &Mesh3d)>() {
         for (entity, mesh3d) in meshes.iter(world) {
-            let missing = match assets.material(mesh3d.material) {
-                None => Some("material"),
-                Some(_) if assets.mesh(mesh3d.mesh).is_none() => Some("mesh"),
-                Some(_) => lacking(mesh3d.material),
-            };
-            if let Some(missing) = missing {
+            if let Some(missing) = missing_of(assets, mesh3d) {
                 found.push((entity, "mesh", missing));
             }
         }
@@ -980,4 +1077,144 @@ fn control_state(world: &World) -> serde_json::Map<String, Value> {
         state.insert(operation.name.to_owned(), json!(operation.shows));
     }
     state
+}
+
+fn described_brick(brick: &engine_core::BrickRecord, full: bool) -> DescribedBrick {
+    let at = |at: &'static std::panic::Location<'static>| full.then(|| engine_core::source_line(at));
+    DescribedBrick {
+        name: brick.name,
+        crate_name: brick.crate_name,
+        slot: brick.slot,
+        lists: brick.lists.clone(),
+        settings: brick
+            .settings
+            .iter()
+            .map(|section| DescribedEntry {
+                name: section.name,
+                key: Some(section.key),
+                verb: None,
+                at: at(section.at),
+            })
+            .collect(),
+        stats: brick
+            .stats
+            .iter()
+            .map(|stats| DescribedEntry {
+                name: stats.key,
+                key: None,
+                verb: None,
+                at: at(stats.at),
+            })
+            .collect(),
+        operations: brick
+            .operations
+            .iter()
+            .map(|operation| DescribedEntry {
+                name: operation.name,
+                key: None,
+                verb: Some(if operation.control {
+                    Verb::Control.name()
+                } else {
+                    Verb::Query.name()
+                }),
+                at: at(operation.at),
+            })
+            .collect(),
+        inspectors: brick
+            .inspectors
+            .iter()
+            .map(|inspector| DescribedEntry {
+                name: inspector.name,
+                key: None,
+                verb: None,
+                at: at(inspector.at),
+            })
+            .collect(),
+        explains: brick
+            .explainers
+            .iter()
+            .map(|explainer| engine_core::source_line(explainer.at))
+            .collect(),
+    }
+}
+
+fn inspector_at(registry: &BrickRegistry, name: &str) -> Option<String> {
+    registry
+        .inspector(name)
+        .map(|inspector| inspector.at)
+        .or_else(|| {
+            registry
+                .sections()
+                .find(|section| section.name == name)
+                .map(|section| section.at)
+        })
+        .map(engine_core::source_line)
+}
+
+fn frame_stats_schema() -> Value {
+    serde_json::from_str(crate::FRAME_STATS_SCHEMA).expect("generated schema is JSON")
+}
+
+fn stats_schema(key: &str) -> Value {
+    let schema = frame_stats_schema();
+    let property = &schema["properties"][key];
+    with_definitions(property.clone(), &schema["$defs"])
+}
+
+fn operation_args(verb: &Value, name: &str) -> Value {
+    let variant = verb["oneOf"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|variant| variant["properties"]["name"]["const"] == name);
+    match variant {
+        Some(variant) => with_definitions(
+            variant["properties"]
+                .get("args")
+                .cloned()
+                .unwrap_or_else(|| json!({ "type": "object" })),
+            &verb["$defs"],
+        ),
+        None => Value::Null,
+    }
+}
+
+fn with_definitions(mut schema: Value, definitions: &Value) -> Value {
+    let mut wanted = Vec::new();
+    references(&schema, &mut wanted);
+    let mut kept = serde_json::Map::new();
+    while let Some(name) = wanted.pop() {
+        if kept.contains_key(&name) {
+            continue;
+        }
+        if let Some(definition) = definitions.get(&name) {
+            references(definition, &mut wanted);
+            kept.insert(name, definition.clone());
+        }
+    }
+    if !kept.is_empty()
+        && let Some(fields) = schema.as_object_mut()
+    {
+        fields.insert("$defs".to_owned(), Value::Object(kept));
+    }
+    schema
+}
+
+fn references(value: &Value, names: &mut Vec<String>) {
+    match value {
+        Value::Object(object) => {
+            for (key, value) in object {
+                match value.as_str().and_then(|path| path.strip_prefix("#/$defs/")) {
+                    Some(name) if key == "$ref" => names.push(name.to_owned()),
+                    Some(_) | None => references(value, names),
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                references(value, names);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
 }

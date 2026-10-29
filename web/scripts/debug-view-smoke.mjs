@@ -12,13 +12,13 @@ const command = commander(page);
 
 async function settle() {
   for (let frame = 0; frame < 600; frame++) {
-    if (!(await command("present", { alpha: 0 })).result.rendering.pipelines_compiling) break;
+    if (!(await command("control", "present", { alpha: 0 })).result.rendering.pipelines_compiling) break;
     await delay(50);
   }
   let rendering, previous, stable = 0;
   for (let frame = 1; frame <= 8 || stable < 5; frame++) {
     assert.ok(frame <= 600, `read-back counts settle: ${JSON.stringify(rendering)}`);
-    rendering = (await command("present", { alpha: 0 })).result.rendering;
+    rendering = (await command("control", "present", { alpha: 0 })).result.rendering;
     const counts = JSON.stringify([rendering.level_of_detail.lod0_instances, rendering.level_of_detail.lod1_instances,
       rendering.level_of_detail.lod2_instances, rendering.level_of_detail.impostor_instances]);
     const current = rendering.read_back_age != null && rendering.read_back_age < frame;
@@ -63,7 +63,7 @@ const slotted = ["mesh", "card"];
 try {
   await routedScene(page, gridScene()).route();
   await openPaused(page, url, { timeout: 120_000 });
-  await command("environment", { reflection_probes: { enabled: false } });
+  await command("control", "environment", { reflection_probes: { enabled: false } });
 
   const listing = await command("describe");
   assert.ok(listing.result.types.some(type => type.name === "DebugView"));
@@ -77,7 +77,7 @@ try {
 
   const shown = {};
   for (const view of views) {
-    const changed = await command("environment", { debug_view: { view } });
+    const changed = await command("control", "environment", { debug_view: { view } });
     assert.deepEqual(changed.result.environment_changed, ["debug_view"]);
     assert.equal(await shownView(), view);
     const frame = await capture(view);
@@ -91,7 +91,7 @@ try {
   assert.ok(levels.changed > 0, "levels differ from kinds");
   assert.ok(shown.overdraw.rendering.pipelines > pipelines, "views create their pipelines when shown");
 
-  await command("environment", { debug_view: { view: "off" } });
+  await command("control", "environment", { debug_view: { view: "off" } });
   assert.equal(await shownView(), "off");
   const again = await capture("shaded-again");
   assert.ok(!again.rendering.render_passes.includes("debug_view"), JSON.stringify(again.rendering.render_passes));
@@ -99,14 +99,14 @@ try {
   const same = await differentPixels(page, [before.png, (await exact("exact-again")).png]);
   assert.equal(same.changed, 0, `the shaded image returns exactly: ${JSON.stringify(same)}`);
 
-  const unknown = await command("environment", { debug_view: { view: "everything" } }, false);
-  assert.equal(unknown.error.path.startsWith("$.debug_view"), true, JSON.stringify(unknown.error));
+  const unknown = await command("control", "environment", { debug_view: { view: "everything" } }, false);
+  assert.equal(unknown.error.path.startsWith("$.args.debug_view"), true, JSON.stringify(unknown.error));
 
   const { display_width: width, display_height: height } = again.rendering.resolution;
   const probes = [];
   for (const fraction of [0.3, 0.4, 0.5, 0.6, 0.7]) {
     const point = { x: Math.floor(width * fraction), y: Math.floor(height * 0.55) };
-    const probed = (await command("probe", { ...point, alpha: 0 })).result;
+    const probed = (await command("control", "probe", { ...point, alpha: 0 })).result;
     assert.deepEqual(probed.pixel, [point.x, point.y]);
     assert.ok(kinds.includes(probed.kind), JSON.stringify(probed));
     assert.equal(probed.shaded.length, 3, JSON.stringify(probed));
@@ -123,11 +123,11 @@ try {
     probes.push(probed);
   }
   assert.ok(probes.some(probed => slotted.includes(probed.kind)), `an entity drew one of the points: ${JSON.stringify(probes.map(probed => probed.kind))}`);
-  const sky = (await command("probe", { x: Math.floor(width / 2), y: 2, alpha: 0 })).result;
+  const sky = (await command("control", "probe", { x: Math.floor(width / 2), y: 2, alpha: 0 })).result;
   assert.ok(kinds.includes(sky.kind), JSON.stringify(sky));
-  const outside = await command("probe", { x: width, y: 0 }, false);
+  const outside = await command("control", "probe", { x: width, y: 0 }, false);
   assert.equal(outside.error.code, "out_of_range");
-  assert.equal(outside.error.path, "$.x");
+  assert.equal(outside.error.path, "$.args.x");
   const after = await exact("exact-after-probe");
   assert.equal((await differentPixels(page, [before.png, after.png])).changed, 0);
 
@@ -148,16 +148,16 @@ try {
   const shaded = await terrain.capture("terrain-shaded");
   report.terrain_views = {};
   for (const view of [...waterViews, ...terrainViews]) {
-    await terrain.command("environment", { debug_view: { view } });
+    await terrain.command("control", "environment", { debug_view: { view } });
     const png = await terrain.capture(`terrain-${view}`);
     const pixels = await differentPixels(terrain.page, [shaded, png], { tolerance: 8 });
     assert.ok(pixels.changed > pixels.total / 4, `${view} shows the fixture otherwise: ${JSON.stringify(pixels)}`);
     report.terrain_views[view] = pixels.changed;
   }
-  const { display_width: width, display_height: height } = (await terrain.command("render")).result.rendering.resolution;
+  const { display_width: width, display_height: height } = (await terrain.command("control", "render")).result.rendering.resolution;
   let ground;
   for (const [x, y] of [[0.5, 0.75], [0.4, 0.8], [0.6, 0.8], [0.5, 0.9], [0.3, 0.7], [0.7, 0.7]]) {
-    const probed = (await terrain.command("probe", { x: Math.floor(width * x), y: Math.floor(height * y) })).result;
+    const probed = (await terrain.command("control", "probe", { x: Math.floor(width * x), y: Math.floor(height * y) })).result;
     if (probed.kind === "terrain") {
       ground = probed;
       break;
@@ -173,10 +173,10 @@ try {
   assert.ok(made.sky >= 0 && made.sky <= 1, JSON.stringify(made));
   assert.ok(made.detail.detailed >= made.detail.averaged - 0.01, JSON.stringify(made.detail));
   assert.equal(ground.water, null, JSON.stringify(ground));
-  const above = (await terrain.command("probe", { x: Math.floor(width / 2), y: 1 })).result;
+  const above = (await terrain.command("control", "probe", { x: Math.floor(width / 2), y: 1 })).result;
   assert.equal(above.terrain, null, JSON.stringify(above));
   assert.equal(above.water, null, JSON.stringify(above));
-  await terrain.command("environment", { debug_view: { view: "off" } });
+  await terrain.command("control", "environment", { debug_view: { view: "off" } });
   assert.deepEqual(terrain.errors, []);
   report.ground = ground;
 } finally {

@@ -18,12 +18,12 @@ try {
   }, size);
   await resize("0px");
   await delay(300);
-  const idle = (await command("status")).observation;
+  const idle = (await command("query", "status")).observation;
   await delay(500);
-  const still = (await command("status")).observation;
+  const still = (await command("query", "status")).observation;
   assert.deepEqual([still.frame, still.tick], [idle.frame, idle.tick], `an idle view runs no frames: ${JSON.stringify({ idle, still })}`);
 
-  const tickSeconds = (await command("status")).result.fixed_delta_seconds;
+  const tickSeconds = (await command("query", "status")).result.fixed_delta_seconds;
   const resumed = Date.now();
   await resize("");
   const running = await waitFrames(command, 10);
