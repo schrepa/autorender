@@ -9,6 +9,7 @@ mod agents;
 mod dev;
 pub mod jobs;
 mod nav;
+mod smokes;
 
 pub use agents::{
     NavAgent, NavAgents, NavQuery, NavStats, NavStatus, NavSystems, NavWalk, Navigation,

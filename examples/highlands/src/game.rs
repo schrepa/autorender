@@ -8,6 +8,8 @@ use crate::{Options, RockMaps, scene};
 
 const FREEZE_DETAIL: ActionId = ActionId::new(2).expect("action_index_valid");
 
+const APPLIED: [&str; 4] = ["lod", "look", "effects", "view"];
+
 pub struct Highlands {
     options: Options,
     freeze_held: bool,
@@ -16,8 +18,8 @@ pub struct Highlands {
 impl Highlands {
     pub fn build(options: Options, rocks: &RockMaps) -> engine::Result<(Engine, Self)> {
         let mut engine = scene::create(options.bodies, rocks)?;
-        for name in ["lod", "look", "effects", "view"] {
-            apply(&mut engine, &options, name)?;
+        for name in APPLIED {
+            apply(engine.app.world_mut(), &options, name)?;
         }
         Ok((
             engine,
@@ -26,6 +28,18 @@ impl Highlands {
                 freeze_held: false,
             },
         ))
+    }
+
+    pub(crate) fn furnish(
+        app: &mut App,
+        options: &Options,
+        rocks: &RockMaps,
+    ) -> engine::Result<()> {
+        scene::furnish(app, options.bodies, rocks, false)?;
+        for name in APPLIED {
+            apply(app.world_mut(), options, name)?;
+        }
+        Ok(())
     }
 
     pub fn control(&mut self, engine: &mut Engine, name: &str, value: &str) -> engine::Result<()> {
@@ -38,27 +52,27 @@ impl Highlands {
         }
         let mut options = self.options.clone();
         options.set(name, value)?;
-        apply(engine, &options, name)?;
+        apply(engine.app.world_mut(), &options, name)?;
         self.options = options;
         Ok(())
     }
 }
 
-fn apply(engine: &mut Engine, options: &Options, name: &str) -> engine::Result<()> {
+fn apply(world: &mut World, options: &Options, name: &str) -> engine::Result<()> {
     match name {
         "lod" | "impostors" => {
-            if let Some(mut detail) = engine.app.world_mut().get_resource_mut::<LevelOfDetail>() {
+            if let Some(mut detail) = world.get_resource_mut::<LevelOfDetail>() {
                 detail.enabled = options.lod;
                 detail.impostors = options.impostors;
             }
             Ok(())
         }
-        "look" => scene::set_look(engine, &options.look),
-        "effects" => scene::set_effects(engine, &options.effects, &options.look),
+        "look" => scene::set_look(world, &options.look),
+        "effects" => scene::set_effects(world, &options.effects, &options.look),
         "view" => options
             .view
             .as_deref()
-            .map_or(Ok(()), |view| set_view(engine, view)),
+            .map_or(Ok(()), |view| set_view(world, view)),
         _ => Ok(()),
     }
 }
@@ -85,7 +99,7 @@ impl Game for Highlands {
     }
 
     fn reset_camera(&mut self, engine: &mut Engine) {
-        set_view(engine, "overview").expect("view_known");
+        set_view(engine.app.world_mut(), "overview").expect("view_known");
     }
 
     fn content(&self, _engine: &Engine) -> Option<Vec<u8>> {

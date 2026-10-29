@@ -25,8 +25,8 @@ pub(crate) fn add_systems(app: &mut App) {
     app.add_systems(Presentation, hold_standing_eye.after(CameraSystems));
 }
 
-pub(crate) fn set_view(engine: &mut Engine, view: &str) -> engine::Result<()> {
-    aim(engine.app.world_mut(), view)
+pub(crate) fn set_view(world: &mut World, view: &str) -> engine::Result<()> {
+    aim(world, view)
 }
 
 fn aim(world: &mut World, view: &str) -> engine::Result<()> {

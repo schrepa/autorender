@@ -595,6 +595,7 @@ impl Brick for NavigationBrick {
             .operation::<NavPathQuery>()
             .component_inspector::<NavAgent, NavAgentView>(dev::agent_view)
             .inspector::<NavAgents, Option<NavAgentsView>>(|world, _| dev::agents_view(world));
+        crate::smokes::register(bricks);
     }
 }
 

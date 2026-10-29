@@ -30,6 +30,7 @@ mod select;
 mod shading;
 pub mod shallow_water;
 mod sights;
+pub mod smokes;
 mod steady_water;
 mod surface;
 mod tile;

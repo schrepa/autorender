@@ -25,6 +25,7 @@ pub mod tooling;
 
 pub use engine_core::collections;
 pub use engine_core::{bevy_ecs, glam};
+pub use engine_core::{smoke, smoke_check, smoke_eq};
 
 mod games {
     pub use engine_core::{

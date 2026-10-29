@@ -42,10 +42,20 @@ pub(crate) fn create(bodies: u32, rocks: &RockMaps) -> engine::Result<Engine> {
             .app
             .add_bricks(engine::bricks::standard().without(["collision", "physics"]));
     }
+    furnish(&mut engine.app, bodies, rocks, true)?;
+    Ok(engine)
+}
+
+pub(crate) fn furnish(
+    app: &mut App,
+    bodies: u32,
+    rocks: &RockMaps,
+    flying: bool,
+) -> engine::Result<()> {
     let (atmosphere, lamps) = look(SCENE_LOOK)?;
-    engine.app.insert_resource(atmosphere);
-    apply_sky(engine.app.world_mut(), SCENE_LOOK);
-    let world = engine.app.world_mut();
+    app.insert_resource(atmosphere);
+    apply_sky(app.world_mut(), SCENE_LOOK);
+    let world = app.world_mut();
     let plateau = land::populate(world, bodies, hamlet_radius(), rocks)?;
     field::field(world, plateau)?;
     environment(world);
@@ -55,15 +65,17 @@ pub(crate) fn create(bodies: u32, rocks: &RockMaps) -> engine::Result<Engine> {
         intensity: lamps,
         ..LocalLightSettings::default()
     });
-    if collision {
+    if bodies > 0 {
         refresh_collision_world(world)?;
     }
-    set_view(&mut engine, "overview")?;
-    engine.app.add_plugins(FlyCameraPlugin);
-    views::add_systems(&mut engine.app);
-    land::add_systems(&mut engine.app);
-    engine.app.add_systems(FixedSimulation, field::animate);
-    Ok(engine)
+    set_view(world, "overview")?;
+    if flying {
+        app.add_plugins(FlyCameraPlugin);
+    }
+    views::add_systems(app);
+    land::add_systems(app);
+    app.add_systems(FixedSimulation, field::animate);
+    Ok(())
 }
 
 fn environment(world: &mut World) {
@@ -126,21 +138,17 @@ pub(crate) fn effects() -> String {
     format!("all|none|{}", exclusions.join(","))
 }
 
-pub(crate) fn set_look(engine: &mut Engine, name: &str) -> engine::Result<()> {
+pub(crate) fn set_look(world: &mut World, name: &str) -> engine::Result<()> {
     let (atmosphere, lamps) = look(name)?;
-    engine.app.insert_resource(atmosphere);
-    apply_sky(engine.app.world_mut(), name);
-    if let Some(mut local) = engine
-        .app
-        .world_mut()
-        .get_resource_mut::<LocalLightSettings>()
-    {
+    world.insert_resource(atmosphere);
+    apply_sky(world, name);
+    if let Some(mut local) = world.get_resource_mut::<LocalLightSettings>() {
         local.intensity = lamps;
     }
     Ok(())
 }
 
-pub(crate) fn set_effects(engine: &mut Engine, name: &str, look_name: &str) -> engine::Result<()> {
+pub(crate) fn set_effects(world: &mut World, name: &str, look_name: &str) -> engine::Result<()> {
     let mut on = [true; EFFECTS.len()];
     match name {
         "all" => {}
@@ -169,7 +177,6 @@ pub(crate) fn set_effects(engine: &mut Engine, name: &str, look_name: &str) -> e
         probes,
     ] = on;
     let (_, lamps) = look(look_name)?;
-    let world = engine.app.world_mut();
     world.resource_mut::<Shadows>().enabled = shadows;
     world.resource_mut::<AmbientOcclusion>().intensity = if occlusion {
         AmbientOcclusion::default().intensity
