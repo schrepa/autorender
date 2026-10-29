@@ -1,3 +1,4 @@
+import package::engine::math::TAU;
 import package::sky::common::{SkyUniform, sunlight_over};
 
 struct CloudUniform {
@@ -38,7 +39,6 @@ struct CloudView {
 
 const HORIZON: f32 = 0.05;
 const MIRROR_LAYER: u32 = 1u;
-const TAU: f32 = 6.2831853;
 const FEWEST_STEPS: f32 = 24.0;
 const MOST_STEPS: f32 = 64.0;
 const STEP_LENGTH: f32 = 150.0;

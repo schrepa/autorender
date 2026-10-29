@@ -3,9 +3,11 @@ use engine_render::bindings::Sample::{Depth, Float, Uint, Unfilterable};
 use engine_render::bindings::Sampling::Filtering;
 use engine_render::bindings::View::{D2, D2Array};
 use engine_render::bindings::{Stages, Table, read, read_of, sampler, texture, uniform_of};
+use engine_faces::heightfield::PALETTE_BYTES;
+use engine_faces::placed::PlacedRecord;
 use engine_render::gpu_layouts::scene::PostUniform;
 
-use crate::gpu_layouts::{PALETTE_ENTRIES, PaletteEntry, PlacedGroup, PlacedRecord, TraceTerrain};
+use crate::gpu_layouts::{PlacedGroup, TraceTerrain};
 
 const F: Stages = Stages::FRAGMENT;
 
@@ -22,7 +24,7 @@ pub(crate) const REFLECTIONS: Table = Table {
         texture("heights", Unfilterable, D2Array, F),
         read("directory", F),
         texture("control", Uint, D2Array, F),
-        uniform_of("palette", PALETTE_ENTRIES * size_of::<PaletteEntry>(), F),
+        uniform_of("palette", PALETTE_BYTES, F),
         texture("macro_maps", Float, D2Array, F),
         texture("terrain_sky", Float, D2Array, F),
         read_of("world_terrains", size_of::<TraceTerrain>(), F),

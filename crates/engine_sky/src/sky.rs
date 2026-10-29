@@ -16,8 +16,10 @@ use engine_render::parts::{
     Shading, Step, View,
 };
 use engine_render::pieces::{PieceAt, PieceDecl};
+use engine_render::post::inverse_or_identity;
 use engine_render::profiling::GpuProfiler;
 use engine_render::renderer::Core;
+use engine_render::screen_effects::haze_runs;
 use engine_render::shaders::Entry;
 use engine_render::{buffers, memory, pipelines};
 use engine_time_of_day::TimeOfDay;
@@ -30,7 +32,7 @@ use crate::bindings::{
 use crate::clouds::{CloudFrame, CloudPass};
 use crate::environment::{ENVIRONMENT_FORMAT, Environment, SkyLight};
 use crate::gpu_layouts::{SKY_TABLE_GROUP, SkyPiece};
-use crate::haze::{Haze, haze_runs, inverse_or_identity};
+use crate::haze::Haze;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const VIEW_SIZE: (u32, u32) = (192, 108);
@@ -783,7 +785,7 @@ impl SkyPass {
         sun: Sun,
     ) -> Option<wgpu::CommandEncoder> {
         let probe_settings = snapshot.environment.reflection_probes;
-        let probe_list = probe_list(snapshot);
+        let probe_list = snapshot.probe_list();
         let most_cubes = (core.display.max_layers / FACES as u32).max(1);
         let wanted_cubes = 1 + (probe_list.len() as u32).min(most_cubes - 1);
         let cubes = if wanted_cubes == 1 {
@@ -916,7 +918,7 @@ impl GpuPart for SkyPass {
         };
         let canvas = core.canvas_format();
         self.ensure_sky(&core.device, canvas, SkyTargets::Frame(shape.targets));
-        if frame.kind.gpu_mode && !frame.kind.debug && !probe_list(frame.snapshot).is_empty() {
+        if frame.kind.gpu_mode && !frame.kind.debug && !frame.snapshot.probe_list().is_empty() {
             self.ensure_sky(&core.device, canvas, SkyTargets::Probe);
         }
         if shape.targets == Targets::Debug {
@@ -1142,14 +1144,6 @@ impl EnvironmentFace for SkyPass {
 
     fn finish(&self, encoder: &mut wgpu::CommandEncoder, cube: u32) {
         self.environment.finish(encoder, cube);
-    }
-}
-
-fn probe_list(snapshot: &RenderSnapshot) -> &[engine_core::RenderReflectionProbe] {
-    if snapshot.environment.reflection_probes.enabled {
-        &snapshot.reflection_probes.list
-    } else {
-        &[]
     }
 }
 

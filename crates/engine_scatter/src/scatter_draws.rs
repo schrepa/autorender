@@ -5,13 +5,13 @@ use std::sync::Arc;
 
 use crate::gpu_layouts::Cover;
 use crate::scatter::{
-    GroupLayout, LAYER_SHIFT, LEVELS, NEAR_LEVEL_SHIFT, NO_LAYER, RANK_MAX, RANK_SHIFT, Record,
-    STATE_FRESH, ScatterPass, SnapSources, TERRAIN_INDEX, TerrainInfo,
+    GroupLayout, LAYER_SHIFT, LEVELS, NEAR_LEVEL_SHIFT, NO_LAYER, RANK_MAX, RANK_SHIFT,
+    STATE_FRESH, ScatterPass, SnapSources, TERRAIN_INDEX,
 };
 use crate::scatter_pool::{ScatterPool, TileObjects};
 use engine_core::glam::{Mat4, Vec3};
-use engine_faces::heightfield::HeightfieldFace;
-use engine_faces::placed::Placements;
+use engine_faces::heightfield::{HeightfieldFace, TerrainInfo};
+use engine_faces::placed::{PlacedRecord, Placements};
 use engine_faces::shadows::ShadowCastersFace;
 use engine_render::debug_targets::{DrawKind, DrawRecord, RECORD_SLOT};
 use engine_render::entries::PassKind;
@@ -214,7 +214,9 @@ impl ScatterDraws {
             terrains
                 .iter()
                 .enumerate()
-                .map(|(index, terrain)| terrain_info(heightfield, index, terrain))
+                .map(|(index, terrain)| {
+                    heightfield.terrain_info(index, terrain.origin, &terrain.pyramid)
+                })
                 .collect()
         });
         let (dirty, counts_changed) = self.pool.take_changes();
@@ -660,18 +662,6 @@ fn casts_shadows(cx: &View<'_>) -> bool {
     cx.parts.produces(cx.table.resource("shadow_maps"))
 }
 
-fn terrain_info(
-    heightfield: &dyn HeightfieldFace,
-    index: usize,
-    terrain: &engine_terrain::RenderTerrain,
-) -> TerrainInfo {
-    let (directory, palette, colors) = heightfield.cover_terrain(index);
-    TerrainInfo {
-        origin: terrain.origin.extend(terrain.pyramid.spacing(0)).to_array(),
-        levels: [directory, terrain.pyramid.levels(), palette, colors],
-    }
-}
-
 fn placed_material(
     snapshot: &RenderSnapshot,
     handle: MaterialHandle,
@@ -930,7 +920,7 @@ fn tile_objects(
         let model = placed.model(terrain.origin, placed.position[1]);
         objects.0.push(pose_rows(model));
         objects.1.push(draw.color);
-        objects.2.push(Record {
+        objects.2.push(PlacedRecord {
             center: model.transform_point3(center).to_array(),
             radius: radius * placed.scale,
             group,

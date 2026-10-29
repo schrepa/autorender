@@ -1,9 +1,10 @@
 import package::face::dither::{encoded, stored};
 import package::face::heightfield::{COVER_FAR_SIDE, COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION,
     COVER_ROUGHNESS};
-import package::face::lighting::{BODY_THIN, SurfacePoint, finish, local_light, widened};
+import package::face::lighting::{finish, local_light, widened};
 import package::face::occupancy::foliage;
 import package::face::sun::sun_direction;
+import package::face::surface_point::{BODY_THIN, SurfacePoint};
 import package::frame::view::{PI, camera, stable_normalize};
 import package::meshes::declarations::{SceneTargets, TemporalTargets};
 import package::meshes::surface::{scene_targets, temporal_targets};

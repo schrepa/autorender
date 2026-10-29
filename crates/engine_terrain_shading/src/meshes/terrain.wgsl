@@ -4,12 +4,14 @@ import package::face::heightfield::{COVER_FAR_SIDE, COVER_ROUGHNESS, CoverLaw, S
     cover_seen, cover_share, cover_shown, macro_tint, spread_slopes, surface_vertex, terrain,
     terrain_directory, terrain_level_height, terrain_view, water_cell, water_level};
 import package::face::horizons::bounce_light;
-import package::face::lighting::{BODY_GROUND, SurfacePoint, finish_ground, local_light, widened};
+import package::face::lighting::{finish_ground, local_light, widened};
 import package::face::shadows::{KeptLift, keep_lift, kept_texels};
 import package::face::sun::sun_direction;
+import package::face::surface_point::{BODY_GROUND, SurfacePoint};
 import package::frame::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail_distance, detail_level,
     detail_resolved, detail_span, eye_world, fade_noise, material_detail, stable_normalize};
-import package::meshes::declarations::{SceneTargets, TemporalTargets};
+import package::meshes::declarations::{DepthSceneTargets, DepthTemporalTargets, SceneTargets,
+    TemporalTargets};
 import package::meshes::surface::{Shaded, scene_targets, temporal_targets, world_plane};
 import package::terrain::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
 import package::terrain::sky::terrain_sky_map;
@@ -1439,37 +1441,22 @@ fn terrain_resolved(position: vec4<f32>, dither: f32) -> TerrainResolved {
     return resolved;
 }
 
-struct TerrainSceneTargets {
-    @location(0) color: vec4<f32>,
-    @location(1) glow: vec2<f32>,
-    @location(2) surface: vec4<u32>,
-    @builtin(frag_depth) depth: f32,
-}
-
-struct TerrainTemporalTargets {
-    @location(0) color: vec4<f32>,
-    @location(1) motion: vec2<f32>,
-    @location(2) glow: vec2<f32>,
-    @location(3) surface: vec4<u32>,
-    @builtin(frag_depth) depth: f32,
-}
-
 fn terrain_scene_targets(shaded: Shaded, resolved: TerrainResolved, position: vec4<f32>)
-        -> TerrainSceneTargets {
+        -> DepthSceneTargets {
     let targets = scene_targets(shaded, stored(shaded.color, position.xy));
-    return TerrainSceneTargets(targets.color, targets.glow, targets.surface, resolved.depth);
+    return DepthSceneTargets(targets.color, targets.glow, targets.surface, resolved.depth);
 }
 
 fn terrain_temporal_targets(shaded: Shaded, resolved: TerrainResolved, position: vec4<f32>)
-        -> TerrainTemporalTargets {
+        -> DepthTemporalTargets {
     let targets = temporal_targets(shaded, stored(shaded.color, position.xy), position,
         resolved.previous);
-    return TerrainTemporalTargets(targets.color, targets.motion, targets.glow, targets.surface,
+    return DepthTemporalTargets(targets.color, targets.motion, targets.glow, targets.surface,
         resolved.depth);
 }
 
 @fragment
-fn fs_terrain_resolve_post(@builtin(position) position: vec4<f32>) -> TerrainSceneTargets {
+fn fs_terrain_resolve_post(@builtin(position) position: vec4<f32>) -> DepthSceneTargets {
     let resolved = terrain_resolved(position, 0.5);
     let point = resolved.point;
     return terrain_scene_targets(finish_ground(point, local_light(point, position.xy)), resolved,
@@ -1478,7 +1465,7 @@ fn fs_terrain_resolve_post(@builtin(position) position: vec4<f32>) -> TerrainSce
 
 @fragment
 fn fs_terrain_resolve_temporal(@builtin(position) position: vec4<f32>)
-        -> TerrainTemporalTargets {
+        -> DepthTemporalTargets {
     let resolved = terrain_resolved(position, fade_noise(position.xy));
     let point = resolved.point;
     return terrain_temporal_targets(finish_ground(point, local_light(point, position.xy)),

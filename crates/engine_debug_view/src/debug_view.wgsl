@@ -1,3 +1,8 @@
+import package::meshes::debug::{DEBUG_FADING, DEBUG_KIND_COVER, DEBUG_KIND_FALLS, DEBUG_KIND_SKY,
+    DEBUG_KIND_TERRAIN, DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL, DEBUG_PATCH_EDGE,
+    DEBUG_SHADOWED, DEBUG_SOURCE_SHIFT, DEBUG_SPAN_STEPS, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON,
+    DEBUG_SUN_LEVEL, DEBUG_SUN_NONE, DEBUG_TILE_EDGE};
+
 struct DebugViewUniform {
     view: vec4<u32>,
     sun: vec4<f32>,
@@ -33,23 +38,7 @@ const DEBUG_KIND_MESH: u32 = 1u;
 const DEBUG_KIND_PLACED: u32 = 2u;
 const DEBUG_KIND_CARD: u32 = 3u;
 const DEBUG_KIND_PLACED_CARD: u32 = 4u;
-const DEBUG_KIND_TERRAIN: u32 = 6u;
-const DEBUG_KIND_COVER: u32 = 7u;
-const DEBUG_KIND_WATER: u32 = 8u;
-const DEBUG_KIND_FALLS: u32 = 10u;
-const DEBUG_KIND_SKY: u32 = 11u;
-const DEBUG_LEVEL_SHIFT: u32 = 4u;
-const DEBUG_FADING: u32 = 0x100u;
 const DEBUG_CASTS: u32 = 0x200u;
-const DEBUG_SOURCE_SHIFT: u32 = 16u;
-const DEBUG_SUN_NONE: u32 = 0u;
-const DEBUG_SUN_LEVEL: u32 = 1u;
-const DEBUG_SUN_HORIZON: u32 = 21u;
-const DEBUG_SUN_BEYOND: u32 = 22u;
-const DEBUG_SHADOWED: u32 = 0x80u;
-const DEBUG_TILE_EDGE: u32 = 0x800u;
-const DEBUG_PATCH_EDGE: u32 = 0x1000u;
-const DEBUG_NO_MATERIAL: u32 = 0xffu;
 
 const DEBUG_OTHER = vec3<f32>(0.4, 0.4, 0.42);
 const DEBUG_SKY = vec3<f32>(0.12, 0.13, 0.16);
@@ -82,7 +71,6 @@ const DEBUG_WATER_TURBULENCE = array<vec3<f32>, 3>(
     vec3<f32>(0.02, 0.2, 0.22), vec3<f32>(0.1, 0.6, 0.45), vec3<f32>(0.85, 1.0, 0.4),
 );
 const DEBUG_WATER_CLEAR = vec3<f32>(0.0, 0.12, 0.35);
-const DEBUG_SPAN_STEPS: f32 = 254.0;
 const DEBUG_WATER_SPANS = array<vec3<f32>, 3>(
     vec3<f32>(0.3, 0.05, 0.45), vec3<f32>(0.1, 0.62, 0.58), vec3<f32>(0.98, 0.95, 0.6),
 );

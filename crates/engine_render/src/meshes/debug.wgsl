@@ -20,8 +20,6 @@ const DEBUG_TILE_EDGE: u32 = 0x800u;
 const DEBUG_PATCH_EDGE: u32 = 0x1000u;
 const DEBUG_PATCH_SHIFT: u32 = 24u;
 const DEBUG_NO_MATERIAL: u32 = 0xffu;
-const DEBUG_GRAVITY: f32 = 9.81;
-const DEBUG_DRY: f32 = 1.0e-4;
 const DEBUG_SPAN_STEPS: f32 = 254.0;
 
 struct DebugTargets {

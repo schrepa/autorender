@@ -1,8 +1,9 @@
 import package::engine::color::luminance;
 import package::face::dither::{encoded, stored};
 import package::face::heightfield::{WATER_HELD, terrain};
-import package::face::lighting::{SurfacePoint, environment_brdf, finish, sun_visibility};
+import package::face::lighting::{environment_brdf, finish, sun_visibility};
 import package::face::sun::{sun_color, sun_direction};
+import package::face::surface_point::SurfacePoint;
 import package::frame::view::{camera, detail_resolved, detail_span, eye_world, stable_normalize};
 import package::meshes::declarations::{SceneTargets, TemporalTargets};
 import package::meshes::surface::{Shaded, scene_targets, temporal_targets};

@@ -8,6 +8,25 @@ pub struct CasterDraw {
     pub lods: Vec<(u32, u32, f32)>,
 }
 
+impl CasterDraw {
+    pub fn level_within(&self, error: f32) -> u8 {
+        self.lods
+            .iter()
+            .take_while(|&&(_, _, lod_error)| lod_error <= error)
+            .count() as u8
+    }
+
+    pub fn range(&self, level: u8) -> (u32, u32, i32) {
+        match level.checked_sub(1) {
+            Some(lod) => {
+                let (first_index, index_count, _) = self.lods[lod as usize];
+                (index_count, first_index, self.base_vertex)
+            }
+            None => (self.index_count, self.first_index, self.base_vertex),
+        }
+    }
+}
+
 impl Core {
     pub fn view_group(&self, view: usize, without: &[&str]) -> &wgpu::BindGroup {
         self.camera.view_group(view, without)

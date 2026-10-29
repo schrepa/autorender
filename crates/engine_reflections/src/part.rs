@@ -1,5 +1,5 @@
 use engine_core::{Applied, RenderStats};
-use engine_faces::heightfield::HeightfieldFace;
+use engine_faces::heightfield::{HeightfieldFace, TerrainInfo};
 use engine_faces::placed::PlacedFace;
 use engine_render::bindings::GroupRef;
 use engine_render::cached::{Bound, GroupCache, Versioned};
@@ -18,15 +18,15 @@ use engine_render::post::PostPass;
 use engine_render::profiling::GpuProfiler;
 use engine_render::renderer::Core;
 use engine_render::shaders::Entry;
-use engine_render::targets::{FrameRegion, FrameSize, RENDER_TARGET, ScreenTarget, draw_within};
+use engine_render::targets::{FrameRegion, FrameSize, RENDER_TARGET, ScreenTarget, fullscreen_pass};
 use engine_terrain::{RenderTerrains, TerrainEnvironment};
 
-use crate::gpu_layouts::{ReflectionsPiece, TerrainInfo};
+use crate::gpu_layouts::ReflectionsPiece;
 use crate::layouts::{
     REFLECTION_LEVEL_PIPELINES, REFLECTION_LEVELS, REFLECTION_PIPELINES, REFLECTIONS,
 };
 use crate::shaders::entry::reflections;
-use crate::world_trace::{Placements, TraceFrame, WorldTrace, terrain_info};
+use crate::world_trace::{Placements, TraceFrame, WorldTrace};
 
 const SCENE_LEVELS: u32 = 6;
 
@@ -175,7 +175,9 @@ impl GpuPart for ReflectionsPass {
             .terrains
             .iter()
             .enumerate()
-            .map(|(index, rendered)| terrain_info(terrain, index, rendered))
+            .map(|(index, rendered)| {
+                terrain.terrain_info(index, rendered.origin, &rendered.pyramid)
+            })
             .collect();
         let cover = TerrainEnvironment::of(snapshot).ground_cover.sanitized();
         let trace = TraceFrame {
@@ -624,8 +626,7 @@ impl Reflections {
             let mut pass = fullscreen_pass(
                 encoder,
                 "engine/post-scene-levels",
-                (view, self.level_region(level as u32)),
-                wgpu::LoadOp::Load,
+                (view, self.region.level_region(level as u32)),
                 None,
             );
             pass.set_pipeline(if level == 0 {
@@ -637,43 +638,4 @@ impl Reflections {
             pass.draw(0..3, 0..1);
         }
     }
-
-    fn level_region(&self, level: u32) -> (u32, u32) {
-        let FrameRegion { display, render } = self.region;
-        let part = |drawn: u32, whole: u32| {
-            let whole = (whole >> (level + 1)).max(1);
-            ((drawn >> (level + 1)).max(1) + 1).min(whole)
-        };
-        (
-            part(render.width, display.width),
-            part(render.height, display.height),
-        )
-    }
-}
-
-fn fullscreen_pass<'e>(
-    encoder: &'e mut wgpu::CommandEncoder,
-    label: &str,
-    (view, drawn): (&wgpu::TextureView, (u32, u32)),
-    load: wgpu::LoadOp<wgpu::Color>,
-    timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
-) -> wgpu::RenderPass<'e> {
-    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some(label),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load,
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: None,
-        timestamp_writes,
-        occlusion_query_set: None,
-        multiview_mask: None,
-    });
-    draw_within(&mut pass, drawn);
-    pass
 }

@@ -1,14 +1,14 @@
 import package::engine::math::maximum_abs;
 import package::engine::wind::slot_sway;
 import package::face::dither::{encoded, stored};
-import package::face::lighting::{BODY_SOLID, BODY_THIN, SurfacePoint, finish, local_light,
-    widened};
+import package::face::lighting::{finish, local_light, widened};
 import package::face::sun::sun_direction;
+import package::face::surface_point::{BODY_SOLID, BODY_THIN, SurfacePoint};
 import package::frame::view::{camera, fade_noise, material_detail, stable_normalize};
 import package::meshes::declarations::{
-    ALPHA_MASK, MATERIAL_MAPS, MOVED_SLOT, NORMAL_MAP, TOP_LAYER, VARIANT_MAPS,
-    VARIANT_NORMAL_MAP, VARIANT_TOP_LAYER, colors, material_flag, material_maps, poses,
-    previous_poses
+    ALPHA_MASK, DepthSceneTargets, DepthTemporalTargets, MASK_MIP_SCALE, MATERIAL_MAPS, MOVED_SLOT,
+    NORMAL_MAP, TOP_LAYER, VARIANT_MAPS, VARIANT_NORMAL_MAP, VARIANT_TOP_LAYER, colors,
+    material_flag, material_maps, poses, previous_poses
 };
 import package::meshes::impostor_frames::{
     IMPOSTOR_CUTOFF, IMPOSTOR_FADING, IMPOSTOR_FADING_OUT, IMPOSTOR_HEMISPHERE, IMPOSTOR_MASKED,
@@ -16,8 +16,8 @@ import package::meshes::impostor_frames::{
     impostor_frames, impostor_grid, impostor_index, impostor_met, impostor_over
 };
 import package::meshes::shade::{
-    MASK_MIP_SCALE, MaterialTexels, alpha_cutoff, fragment_pixel, geometric_normal, leafiness,
-    mapped_normal, material_texels, plant_tint, rippled, top_layer_amount
+    MaterialTexels, alpha_cutoff, fragment_pixel, geometric_normal, leafiness, mapped_normal,
+    material_texels, plant_tint, rippled, top_layer_amount
 };
 import package::meshes::surface::{Shaded, scene_targets, temporal_targets};
 import package::meshes::vertex::{octahedral_normal, origin_key, pose_matrix, slot_wind};
@@ -560,38 +560,23 @@ struct ImpostorColor {
     @builtin(frag_depth) depth: f32,
 }
 
-struct ImpostorSceneTargets {
-    @location(0) color: vec4<f32>,
-    @location(1) glow: vec2<f32>,
-    @location(2) surface: vec4<u32>,
-    @builtin(frag_depth) depth: f32,
-}
-
-struct ImpostorTemporalTargets {
-    @location(0) color: vec4<f32>,
-    @location(1) motion: vec2<f32>,
-    @location(2) glow: vec2<f32>,
-    @location(3) surface: vec4<u32>,
-    @builtin(frag_depth) depth: f32,
-}
-
 fn impostor_color(shaded: ImpostorShaded, input: ImpostorOutput) -> ImpostorColor {
     return ImpostorColor(vec4<f32>(encoded(shaded.shaded.color, input.clip_position.xy), 1.0),
         shaded.depth);
 }
 
 fn impostor_scene_targets(shaded: ImpostorShaded, input: ImpostorOutput)
-        -> ImpostorSceneTargets {
+        -> DepthSceneTargets {
     let targets = scene_targets(shaded.shaded,
         stored(shaded.shaded.color, input.clip_position.xy));
-    return ImpostorSceneTargets(targets.color, targets.glow, targets.surface, shaded.depth);
+    return DepthSceneTargets(targets.color, targets.glow, targets.surface, shaded.depth);
 }
 
 fn impostor_temporal_targets(shaded: ImpostorShaded, input: ImpostorTemporalOutput)
-        -> ImpostorTemporalTargets {
+        -> DepthTemporalTargets {
     let targets = temporal_targets(shaded.shaded,
         stored(shaded.shaded.color, input.clip_position.xy), input.clip_position, input.previous);
-    return ImpostorTemporalTargets(targets.color, targets.motion, targets.glow, targets.surface,
+    return DepthTemporalTargets(targets.color, targets.motion, targets.glow, targets.surface,
         shaded.depth);
 }
 
@@ -601,11 +586,11 @@ fn fs_impostor(input: ImpostorOutput) -> ImpostorColor {
 }
 
 @fragment
-fn fs_impostor_post(input: ImpostorOutput) -> ImpostorSceneTargets {
+fn fs_impostor_post(input: ImpostorOutput) -> DepthSceneTargets {
     return impostor_scene_targets(shade_impostor(input), input);
 }
 
 @fragment
-fn fs_impostor_temporal(input: ImpostorTemporalOutput) -> ImpostorTemporalTargets {
+fn fs_impostor_temporal(input: ImpostorTemporalOutput) -> DepthTemporalTargets {
     return impostor_temporal_targets(shade_impostor(impostor_output(input)), input);
 }

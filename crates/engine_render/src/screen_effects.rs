@@ -1,6 +1,6 @@
 use engine_core::Environment;
 
-pub(crate) fn haze_runs(environment: &Environment) -> bool {
+pub fn haze_runs(environment: &Environment) -> bool {
     let haze = environment.haze.sanitized();
     let atmosphere = environment.atmosphere.sanitized();
     let fog = !environment.sky.sanitized().enabled

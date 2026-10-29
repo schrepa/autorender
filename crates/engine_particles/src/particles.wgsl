@@ -1,5 +1,5 @@
 import package::engine::color::encode_srgb;
-import package::engine::math::{pcg, unit};
+import package::engine::math::{TAU, pcg, unit};
 import package::face::bloom::glow_weight;
 import package::face::horizons::terrain_visibility;
 import package::face::lighting::sun_visibility;
@@ -40,8 +40,6 @@ struct Emitter {
 @group(1) @binding(1) var<storage, read> emitters: array<Emitter>;
 @group(1) @binding(2) var<storage, read> owners: array<u32>;
 @group(1) @binding(3) var depth_texture: texture_depth_2d;
-
-const TAU: f32 = 6.2831853;
 
 struct ParticleOutput {
     @builtin(position) clip_position: vec4<f32>,

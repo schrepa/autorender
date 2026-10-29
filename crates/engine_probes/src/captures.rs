@@ -4,7 +4,7 @@ use engine_render::gpu_data::{CameraUniform, FAR_DEPTH};
 use engine_render::parts::{DrawAt, Encode};
 use engine_render::renderer::DEPTH_FORMAT;
 
-use crate::probes::{FACES, ProbePass, face_view_projection, probe_list};
+use crate::probes::{FACES, ProbePass, face_view_projection};
 
 impl ProbePass {
     pub(crate) fn capture(&mut self, cx: &mut Encode<'_>, encoder: &mut wgpu::CommandEncoder) {
@@ -29,7 +29,7 @@ impl ProbePass {
     ) -> u32 {
         let parts = cx.parts;
         let snapshot = cx.frame.snapshot;
-        let probes = probe_list(snapshot);
+        let probes = snapshot.probe_list();
         let faces = snapshot.environment.reflection_probes.faces_per_frame;
         let seconds = snapshot.elapsed_seconds;
         let Some(environment) = parts.face::<dyn EnvironmentFace>() else {

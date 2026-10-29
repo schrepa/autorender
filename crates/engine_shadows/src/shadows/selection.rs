@@ -8,7 +8,7 @@ use std::{
 use engine_render::buffers::{ReadbackRing, entry};
 use engine_render::cached::Cached;
 use engine_render::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES};
-use engine_render::gpu_presentation::Presented;
+use engine_render::gpu_presentation::{Presented, storage};
 use engine_render::profiling::{GpuProfiler, Span};
 use engine_render::renderer::FramePoses;
 
@@ -18,7 +18,6 @@ use super::{GROUP, MAPS, MOVING_MAP, ShadowFrame, Source};
 use crate::bindings::SHADOW_SELECT;
 use crate::gpu_layouts::{MOVING_PAIRS, SHADOW_TOTALS};
 
-const MIN_STORAGE_BYTES: u64 = 256;
 const STILLNESS_BYTES: u64 = 16;
 const ID_CAPACITIES: usize = MAPS - 1 + MOVING_PAIRS as usize;
 
@@ -42,15 +41,6 @@ struct SelectKey {
     poses: u64,
     pose_index: usize,
     tiles: u64,
-}
-
-fn storage(
-    device: &wgpu::Device,
-    label: &str,
-    bytes: u64,
-    extra: wgpu::BufferUsages,
-) -> wgpu::Buffer {
-    engine_render::buffers::storage(device, label, bytes.max(MIN_STORAGE_BYTES), extra)
 }
 
 #[derive(Default)]

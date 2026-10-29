@@ -8,7 +8,7 @@ use crate::gpu_layouts::constants::{
     SUBDIVISION_REFUSED, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES,
 };
 use crate::shaders::entry::terrain as draw;
-use engine_faces::heightfield::SubdivisionUniform;
+use engine_faces::heightfield::{SubdivisionUniform, SurfaceDraw};
 use engine_render::buffers::{Growable, ReadbackRing};
 use engine_render::cached::{Bound, GroupCache, Versioned};
 
@@ -17,22 +17,7 @@ const NODE_BYTES: u64 = 4;
 const ARGS_BYTES: u64 = SUBDIVISION_ARGS as u64 * 4;
 const DRAW_OFFSET: u64 = SUBDIVISION_DRAW as u64 * 4;
 const SHALLOWEST: u32 = SUBDIVISION_COUNTED + 2;
-const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint16;
 const _: () = assert!(SURFACE_MESHLET_VERTICES <= 1 << 16, "meshlet_fits_u16");
-
-#[derive(Clone)]
-pub(crate) struct SurfaceDraw {
-    indices: wgpu::Buffer,
-    args: wgpu::Buffer,
-    offset: u64,
-}
-
-impl SurfaceDraw {
-    pub(crate) fn record(&self, pass: &mut wgpu::RenderPass<'_>) {
-        pass.set_index_buffer(self.indices.slice(..), INDEX_FORMAT);
-        pass.draw_indexed_indirect(&self.args, self.offset);
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Measure {
@@ -202,10 +187,7 @@ impl SurfaceTrees {
         self.ground(index).map(|_| self.slot_draw(index))
     }
 
-    pub(super) fn water(
-        &self,
-        index: usize,
-    ) -> Option<(u32, engine_faces::heightfield::SurfaceDraw<'_>)> {
+    pub(super) fn water(&self, index: usize) -> Option<(u32, SurfaceDraw)> {
         let slot = (self.grounds..self.frame.len()).find(|&slot| {
             self.frame
                 .get(slot)
@@ -213,14 +195,7 @@ impl SurfaceTrees {
                 .flatten()
                 .is_some_and(|subdivided| subdivided.terrain == index)
         })?;
-        Some((
-            (slot as u64 * SLOT) as u32,
-            engine_faces::heightfield::SurfaceDraw {
-                indices: &self.indices,
-                args: &self.args,
-                offset: slot as u64 * ARGS_BYTES + DRAW_OFFSET,
-            },
-        ))
+        Some(((slot as u64 * SLOT) as u32, self.slot_draw(slot)))
     }
 
     fn slot_draw(&self, slot: usize) -> SurfaceDraw {

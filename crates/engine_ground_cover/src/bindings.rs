@@ -2,7 +2,8 @@ use engine_render::bindings::{
     Sample, Stages, Table, View, dynamic_uniform, read, texture, uniform_of, write,
 };
 
-use crate::gpu_layouts::{FrameUniform, GrowUniform, PALETTE_BYTES};
+use crate::gpu_layouts::{FrameUniform, GrowUniform};
+use engine_faces::heightfield::PALETTE_BYTES;
 
 use Sample::{Float, Uint, Unfilterable};
 use View::D2Array;

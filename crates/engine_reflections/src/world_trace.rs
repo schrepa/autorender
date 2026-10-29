@@ -1,6 +1,6 @@
 use engine_core::PoseRows;
-use engine_faces::heightfield::{HeightfieldFace, TraceSources};
-use engine_faces::placed::DEAD;
+use engine_faces::heightfield::{HEIGHT_FORMAT, HeightfieldFace, TerrainInfo, TraceSources};
+use engine_faces::placed::{DEAD, PlacedRecord};
 use engine_render::buffers::Growable;
 use engine_render::cached::Bound;
 use engine_render::gpu_calls::Queue;
@@ -9,11 +9,7 @@ use engine_terrain::{RenderTerrains, TileKey};
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use crate::gpu_layouts::{
-    IMPOSTOR_KINDS, NO_PLACED, PlacedGroup, PlacedRecord, TerrainInfo, TraceTerrain,
-};
-
-const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+use crate::gpu_layouts::{IMPOSTOR_KINDS, NO_PLACED, PlacedGroup, TraceTerrain};
 
 pub(crate) struct Placements<'a> {
     pub tiles: Vec<((u64, TileKey), Range<u32>, usize)>,
@@ -639,16 +635,4 @@ fn top_pyramid(tops: Vec<f32>, cells: u32) -> Vec<f32> {
         side = half;
     }
     pyramid
-}
-
-pub(crate) fn terrain_info(
-    heightfield: &dyn HeightfieldFace,
-    index: usize,
-    terrain: &engine_terrain::RenderTerrain,
-) -> TerrainInfo {
-    let (directory, palette, colors) = heightfield.cover_terrain(index);
-    TerrainInfo {
-        origin: terrain.origin.extend(terrain.pyramid.spacing(0)).to_array(),
-        levels: [directory, terrain.pyramid.levels(), palette, colors],
-    }
 }

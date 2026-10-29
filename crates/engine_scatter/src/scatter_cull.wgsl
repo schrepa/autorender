@@ -1,4 +1,5 @@
 import package::face::heightfield::seen_share;
+import package::meshes::declarations::FADE_SLOT;
 
 struct Frame {
     eye: vec4<f32>,
@@ -27,7 +28,6 @@ const SHOWN_CARD: u32 = 5u;
 const SHOWN_NONE: u32 = 6u;
 const STATE_ADOPT: u32 = 0xffffffffu;
 const FADED: u32 = 65535u;
-const FADE_SLOT: u32 = 0x00ffffffu;
 const FADE_OUT: u32 = 0x80000000u;
 
 struct Group {

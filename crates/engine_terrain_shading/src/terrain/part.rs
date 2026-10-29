@@ -3,6 +3,7 @@ use engine_core::{RenderSnapshot, RenderStats, TerrainBounceStats};
 use engine_faces::shadows::ShadowCastersFace;
 use engine_render::cached::Bound;
 use engine_render::entries::PassKind;
+use engine_render::gpu_data::pixels_per_meter;
 use engine_render::graph::{
     Access, Clear, FrameGraph, FrameShape, GraphTable, PassId, ResourceId, TRANSPARENT,
 };
@@ -532,8 +533,4 @@ impl TerrainPass {
             }
         }
     }
-}
-
-fn pixels_per_meter(culling: Mat4, height: f32) -> f32 {
-    culling.row(1).truncate().length() * height * 0.5
 }

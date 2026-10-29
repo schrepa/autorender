@@ -150,7 +150,7 @@ pub struct GpuPresentationPass {
     pose_groups: [Cached<PoseKey, PoseGroups>; 2],
 }
 
-fn storage(
+pub fn storage(
     device: &wgpu::Device,
     label: &str,
     bytes: u64,

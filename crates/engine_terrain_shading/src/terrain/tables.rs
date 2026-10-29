@@ -3,29 +3,17 @@ use super::*;
 use crate::gpu_layouts::constants::WATER_TILE_WORDS;
 use engine_terrain::{Cover, Pyramid};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(super) struct CoverTerms {
-    densest: f32,
-    width: f32,
-}
-
-impl CoverTerms {
-    fn of<'a>(covers: impl IntoIterator<Item = &'a Cover>) -> Self {
-        covers.into_iter().fold(Self::default(), |terms, cover| {
-            if cover.density > terms.densest {
-                Self {
-                    densest: cover.density,
-                    width: cover.width,
-                }
-            } else {
-                terms
+fn densest_cover<'a>(covers: impl IntoIterator<Item = &'a Cover>) -> CoverTerms {
+    covers.into_iter().fold(CoverTerms::default(), |terms, cover| {
+        if cover.density > terms.densest {
+            CoverTerms {
+                densest: cover.density,
+                width: cover.width,
             }
-        })
-    }
-
-    pub(super) fn span(self, pixels_per_meter: f32) -> f32 {
-        self.width * pixels_per_meter
-    }
+        } else {
+            terms
+        }
+    })
 }
 
 pub(crate) struct TerrainTables {
@@ -239,7 +227,7 @@ impl TerrainTables {
             let room = PALETTE_ENTRIES - entries.len();
             let kept = &terrain.surface[..terrain.surface.len().min(room)];
             let terms = if kept.len() == terrain.surface.len() {
-                CoverTerms::of(kept.iter().filter_map(|look| look.cover.as_ref()))
+                densest_cover(kept.iter().filter_map(|look| look.cover.as_ref()))
             } else {
                 CoverTerms::default()
             };

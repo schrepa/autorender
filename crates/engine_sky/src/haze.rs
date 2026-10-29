@@ -1,12 +1,14 @@
 use bytemuck::Zeroable;
-use engine_core::{Environment, RenderSnapshot, glam::Mat4};
+use engine_core::{RenderSnapshot, glam::Mat4};
 use engine_render::cached::{Bound, GroupCache};
 use engine_render::gpu_layouts::scene::PostUniform;
 use engine_render::pipelines::{self, Fullscreen, fullscreen};
+use engine_render::post::inverse_or_identity;
 use engine_render::profiling::GpuProfiler;
 use engine_render::renderer::Core;
+use engine_render::screen_effects::haze_runs;
 use engine_render::targets::{
-    FrameRegion, FrameSize, RENDER_TARGET, ScreenTarget, draw_within, texture_2d,
+    FrameRegion, FrameSize, RENDER_TARGET, ScreenTarget, fullscreen_pass, texture_2d,
 };
 
 use crate::bindings::{HAZE, HAZE_FILTER};
@@ -14,24 +16,6 @@ use crate::pipeline_layouts::{HAZE_FILTER_PIPELINES, HAZE_PIPELINES};
 use crate::shaders::entry::haze;
 
 const HAZE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-
-pub(crate) fn haze_runs(environment: &Environment) -> bool {
-    let haze = environment.haze.sanitized();
-    let atmosphere = environment.atmosphere.sanitized();
-    let fog = !environment.sky.sanitized().enabled
-        && atmosphere.fog_density > 0.0
-        && atmosphere.fog_max > 0.0;
-    haze.enabled && haze.reach > 0.0 && (haze.strength > 0.0 || fog)
-}
-
-pub(crate) fn inverse_or_identity(matrix: Mat4) -> Mat4 {
-    let inverse = matrix.inverse();
-    if inverse.is_finite() {
-        inverse
-    } else {
-        Mat4::IDENTITY
-    }
-}
 
 struct Targets {
     textures: [wgpu::Texture; 3],
@@ -315,30 +299,4 @@ impl Haze {
         };
         u64::from(size.width) * u64::from(size.height) * 24
     }
-}
-
-fn fullscreen_pass<'e>(
-    encoder: &'e mut wgpu::CommandEncoder,
-    label: &str,
-    (view, drawn): (&wgpu::TextureView, (u32, u32)),
-    timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
-) -> wgpu::RenderPass<'e> {
-    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some(label),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Load,
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: None,
-        timestamp_writes,
-        occlusion_query_set: None,
-        multiview_mask: None,
-    });
-    draw_within(&mut pass, drawn);
-    pass
 }

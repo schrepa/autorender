@@ -23,11 +23,17 @@ impl Brick for ScatterBrick {
         bricks
             .list::<ScatterList>()
             .settings::<engine_core::Foliage>()
+            .smoke(
+                "foliage_settings",
+                true,
+                engine_core::brick_smokes::foliage_settings,
+            )
             .render_part(&scatter::PART)
             .render_part(&occupancy::PART)
             .shaders(shaders::MODULES)
             .face_defaults(engine_faces::defaults::MODULES)
             .pipeline_layouts(pipeline_layouts::PIPELINE_LAYOUTS)
-            .mirrors(gpu_layouts::LAYOUTS, gpu_layouts::DECLARED);
+            .mirrors(gpu_layouts::LAYOUTS, gpu_layouts::DECLARED)
+            .mirrors(engine_faces::placed::LAYOUTS, &[]);
     }
 }

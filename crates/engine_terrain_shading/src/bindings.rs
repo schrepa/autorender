@@ -14,13 +14,8 @@ use crate::gpu_layouts::constants::HORIZON_RECORD_SLOTS;
 
 const C: Stages = Stages::COMPUTE;
 const F: Stages = Stages::FRAGMENT;
-const V: Stages = Stages::VERTEX;
-const VF: Stages = Stages::VERTEX_FRAGMENT;
 
 pub(crate) const HORIZON_RECORDS_BYTES: usize = HORIZON_RECORD_SLOTS * size_of::<[f32; 4]>();
-
-const SHADOW_ROUTE_BYTES: usize =
-    engine_core::MAX_MOVING_TILES as usize * size_of::<[[f32; 4]; 5]>() + size_of::<[f32; 4]>();
 
 pub(crate) const TERRAIN_RESOLVE: Table = Table {
     label: "engine/terrain-resolve-layout",
@@ -84,13 +79,5 @@ pub(crate) const BOUNCE: Table = Table {
         uniform_of("bounce_palette", PALETTE_BYTES, C),
         texture("bounce_macro", Float, D2Array, C),
         write("bounce_scratch", C),
-    ],
-};
-
-pub(crate) const TERRAIN_SHADOW_VIEW: Table = Table {
-    label: "engine/terrain-shadow-view-layout",
-    bindings: &[
-        dynamic_uniform("view", 96, V),
-        read_of("routes", SHADOW_ROUTE_BYTES, VF),
     ],
 };

@@ -4,10 +4,11 @@ import package::face::heightfield::{NO_WATER_BLOCK, NO_WATER_SURFACE, TerrainSub
     WATER_HELD, WATER_LIVE_BLOCK, WaterAt, surface_vertex, terrain, terrain_level_height,
     terrain_surface_leaves, terrain_view, water_at_level, water_cell, water_info, water_read,
     water_smooth, water_texel, water_words, water_words_add};
-import package::face::lighting::{BODY_WATER, SurfacePoint, distribution, environment_brdf,
-    finish, fresnel, highlights, specular, sun_visibility, visibility};
+import package::face::lighting::{distribution, environment_brdf, finish, fresnel, highlights,
+    specular, sun_visibility, visibility};
 import package::face::sky::{ambient, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
+import package::face::surface_point::{BODY_WATER, SurfacePoint};
 import package::frame::view::{PI, camera, detail_across, detail_level, eye_world,
     stable_normalize};
 import package::meshes::declarations::{SceneTargets, TemporalTargets};

@@ -35,7 +35,7 @@ use engine_render::parts::{
     Shading, Step, View,
 };
 use engine_render::profiling::GpuProfiler;
-use engine_render::renderer::{Core, FramePoses};
+use engine_render::renderer::{CasterDraw, Core, FramePoses};
 
 use crate::gpu_layouts::{ComposeData, RouteData, ShadowCullUniform, ShadowUniform, SkyUniform};
 use crate::shadow_fit::{ClipPlan, ClipSettings, ClipStats, Clipmap, LightBasis};
@@ -158,65 +158,6 @@ fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
 enum Source {
     Presented,
     Listed,
-}
-
-pub(crate) struct CasterDraw {
-    pub index_count: u32,
-    pub first_index: u32,
-    pub base_vertex: i32,
-    pub lods: Vec<(u32, u32, f32)>,
-}
-
-impl CasterDraw {
-    fn level_within(&self, error: f32) -> u8 {
-        self.lods
-            .iter()
-            .take_while(|&&(_, _, lod_error)| lod_error <= error)
-            .count() as u8
-    }
-
-    fn range(&self, level: u8) -> (u32, u32, i32) {
-        match level.checked_sub(1) {
-            Some(lod) => {
-                let (first_index, index_count, _) = self.lods[lod as usize];
-                (index_count, first_index, self.base_vertex)
-            }
-            None => (self.index_count, self.first_index, self.base_vertex),
-        }
-    }
-}
-
-fn caster_draw(core: &Core, mesh: MeshHandle, levels: bool) -> CasterDraw {
-    core.meshes.get(&mesh).map_or(
-        CasterDraw {
-            index_count: 0,
-            first_index: 0,
-            base_vertex: 0,
-            lods: Vec::new(),
-        },
-        |mesh| {
-            let draw = mesh.draw(&core.mesh_arena);
-            let lods = if !levels {
-                Vec::new()
-            } else {
-                mesh.lods
-                    .iter()
-                    .enumerate()
-                    .map(|(level, &(offset, count, error))| {
-                        let (offset, count) = mesh.caster_range(level + 1, (offset, count));
-                        (draw.first_index + offset, count, error)
-                    })
-                    .collect()
-            };
-            let (offset, count) = mesh.caster_range(0, (0, draw.index_count));
-            CasterDraw {
-                index_count: count,
-                first_index: draw.first_index + offset,
-                base_vertex: draw.base_vertex,
-                lods,
-            }
-        },
-    )
 }
 
 struct ShadowInputs<'a> {
@@ -870,7 +811,7 @@ impl GpuPart for ShadowPass {
         let parity = cx.frame.temporal.as_ref().map_or(0, |frame| frame.parity);
         let core = &*cx.core;
         let levels = snapshot.environment.level_of_detail.enabled;
-        let placement = |mesh| caster_draw(core, mesh, levels);
+        let placement = |mesh| core.caster_draw(mesh, levels);
         self.frame = self.prepare_maps(
             &core.device,
             &core.queue,

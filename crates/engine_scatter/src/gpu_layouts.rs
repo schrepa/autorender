@@ -18,24 +18,6 @@ engine_render::gpu_structs! {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct Record as ["Record"] {
-        pub center: [f32; 3],
-        pub radius: f32,
-        pub group: u32,
-        pub scale: f32,
-        pub terrain: u32,
-        pub sink: f32,
-        pub state: u32,
-        pub pad: [u32; 3],
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct TerrainInfo as ["TerrainInfo"] {
-        pub origin: [f32; 4],
-        pub levels: [u32; 4],
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct SnapUniform as ["Snap"] {
         pub counts: [u32; 4],
         pub eye: [f32; 4],

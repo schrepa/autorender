@@ -1,9 +1,9 @@
 use super::atlas::TileAtlas;
 use super::tables::TerrainTables;
 use super::*;
-use crate::gpu_layouts::constants::GROUND_TEXELS;
 use engine_core::glam::Vec2;
-use engine_terrain::{PATCH_QUADS, PATCHES_PER_TILE, Pyramid};
+use engine_faces::shadows::ground_level;
+use engine_terrain::{PATCH_QUADS, PATCHES_PER_TILE};
 
 pub(crate) struct PatchDraws {
     indices: wgpu::Buffer,
@@ -623,13 +623,6 @@ fn terrain_uniform(
         },
         water: [tables.water_base, 0, 0, 0],
     }
-}
-
-fn ground_level(pyramid: &Pyramid, texel: f32) -> u32 {
-    let coarsest = pyramid.levels().saturating_sub(1);
-    (0..coarsest)
-        .find(|&level| pyramid.spacing(level) >= GROUND_TEXELS * texel)
-        .unwrap_or(coarsest)
 }
 
 pub(crate) fn planes(clip: Mat4, sides_only: bool) -> Vec<Vec4> {

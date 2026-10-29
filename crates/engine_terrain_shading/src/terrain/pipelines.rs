@@ -4,10 +4,9 @@ use super::tables::TerrainTables;
 use super::water_blocks::WaterBlocks;
 use super::*;
 use crate::shaders::entry::terrain as draw;
+use engine_faces::shadows::SHADOW_FORMAT;
 
 type GroupKey = (u64, u64, u64, u64, u64, u64, u64, u64, u64);
-
-const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 
 pub(super) struct GroupSources<'a> {
     pub(super) atlas: &'a TileAtlas,

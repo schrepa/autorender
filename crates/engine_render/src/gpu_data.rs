@@ -446,23 +446,6 @@ pub fn mip_chain_bytes(width: u32, height: u32) -> u64 {
         .sum()
 }
 
-pub const JITTER_SAMPLES: u32 = 8;
-
-fn halton(mut index: u32, base: u32) -> f32 {
-    let (mut scale, mut value) = (1.0, 0.0);
-    while index > 0 {
-        scale /= base as f32;
-        value += scale * (index % base) as f32;
-        index /= base;
-    }
-    value
-}
-
-pub fn jitter_offset(frame: u32) -> [f32; 2] {
-    let index = frame % JITTER_SAMPLES + 1;
-    [halton(index, 2) - 0.5, halton(index, 3) - 0.5]
-}
-
 pub fn jitter_clip(offset: [f32; 2], width: u32, height: u32) -> [f32; 2] {
     [
         2.0 * offset[0] / width.max(1) as f32,
@@ -516,6 +499,10 @@ pub fn planes(view_projection: glam::Mat4) -> [[f32; 4]; 6] {
     .map(|plane: glam::Vec4| {
         (plane / engine_core::math::max(plane.truncate().length(), 1.0e-12)).to_array()
     })
+}
+
+pub fn pixels_per_meter(culling: glam::Mat4, height: f32) -> f32 {
+    culling.row(1).truncate().length() * height * 0.5
 }
 
 pub fn clamped_extent(width: u32, height: u32, limit: u32) -> Option<(u32, u32)> {

@@ -9,8 +9,9 @@ use engine_render::lazy::Lazy;
 use engine_render::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View};
 use engine_render::pipeline_layouts::PipelineLayout;
 use engine_render::pipelines::{self, Fullscreen, GroupLayout, fullscreen};
+use engine_render::post::OCCLUSION_FORMAT;
 use engine_render::profiling::Span;
-use engine_render::targets::{FrameRegion, ScreenTarget, draw_within};
+use engine_render::targets::{FrameRegion, ScreenTarget, fullscreen_pass};
 
 use crate::layouts::{
     AMBIENT, AMBIENT_OCCLUSION, AMBIENT_OCCLUSION_PIPELINES, OCCLUSION_FILTER,
@@ -18,7 +19,6 @@ use crate::layouts::{
 };
 use crate::shaders::entry::ambient_occlusion;
 
-const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 const RAW_OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 
 pub static PART: PartEntry = PartEntry {
@@ -359,30 +359,4 @@ impl Occlusion {
             ],
         );
     }
-}
-
-fn fullscreen_pass<'e>(
-    encoder: &'e mut wgpu::CommandEncoder,
-    label: &str,
-    (view, drawn): (&wgpu::TextureView, (u32, u32)),
-    timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
-) -> wgpu::RenderPass<'e> {
-    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some(label),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Load,
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: None,
-        timestamp_writes,
-        occlusion_query_set: None,
-        multiview_mask: None,
-    });
-    draw_within(&mut pass, drawn);
-    pass
 }
