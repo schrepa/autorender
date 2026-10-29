@@ -108,6 +108,7 @@ pub fn generated(world: &World) -> Result<Generated, String> {
         "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),
         "Collider": schemars::schema_for!(engine_collision::ColliderView),
         "RigidBody": schemars::schema_for!(engine_physics::RigidBodyView),
+        "Terrain": schemars::schema_for!(views::TerrainView),
         "Tint": schemars::schema_for!(views::TintView),
         "Grounded": schemars::schema_for!(views::GroundedView),
         "Jobs": schemars::schema_for!(views::JobsView),

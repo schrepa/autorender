@@ -1,62 +1,19 @@
-mod controls;
-mod queries;
-mod results;
-
-use engine_core::Engine;
-use engine_core::bevy_ecs;
-use engine_core::bevy_ecs::prelude::{Entity, Resource, World};
-use engine_scene::SceneInstance;
-#[cfg(not(target_arch = "wasm32"))]
-use engine_settings::{rule::same, stated};
+use super::*;
 use engine_terrain::{FALLS_SHOWN, FallView, RiverFlowView};
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
-use super::EngineControl;
-use crate::inspect::Inspector;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::protocol::stamp_rule;
-use crate::results::result;
-use crate::{Context, DevError, DevTools, InspectorDescriptor, InspectorKind};
-use controls::{TerrainEditing, draw_river, edit_terrain};
-pub use queries::TerrainKey;
-pub(crate) use queries::terrain_key;
-pub use queries::{TerrainHeightQuery, TerrainRouteQuery, TerrainSweepQuery};
-pub use results::{
-    HeightSample, Reach, RouteFound, StandingWater, SweepExample, SweepLayers, SweepRays,
-    TerrainEdited, TerrainHeightResult, TerrainRouteResult, TerrainSweepResult, Worst,
-};
-
-pub(crate) fn register(tools: &mut DevTools, schemas: &Value) {
-    tools
-        .register_component::<engine_terrain::TerrainPrefetch>(
-            InspectorDescriptor::generated(schemas, "TerrainPrefetch")
-                .with_default(json!(engine_terrain::TerrainPrefetch::default())),
-            |prefetch| json!(prefetch),
-        )
-        .expect("built-in descriptor is bounded");
-    tools
-        .insert(Inspector {
+impl DevTools {
+    pub(super) fn register_terrain(&mut self, schemas: &Value) {
+        self.insert(Inspector {
             descriptor: InspectorDescriptor::generated(schemas, "Terrain"),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| {
                 entity.is_some_and(|entity| world.get::<engine_terrain::Terrain>(entity).is_some())
             }),
             read: Box::new(terrain_view),
+            brick: Some("terrain"),
         })
         .expect("built-in descriptor is bounded");
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn schemas(schemas: &mut serde_json::Map<String, Value>) {
-    schemas.insert(
-        "TerrainPrefetch".into(),
-        super::schema::<engine_terrain::TerrainPrefetch>(),
-    );
-    schemas.insert(
-        "Terrain".into(),
-        super::schema::<crate::views::TerrainView>(),
-    );
+    }
 }
 
 fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) -> Option<Value> {
@@ -224,139 +181,4 @@ fn hydrology_view(
             })
             .unwrap_or_default(),
     }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct TerrainEditControl {
-    #[serde(default)]
-    pub terrain: Option<String>,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
-    )]
-    pub id: String,
-    pub center: [f64; 2],
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stamp_rule("radius")))]
-    pub radius: f64,
-    #[serde(default)]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stamp_rule("falloff")))]
-    pub falloff: f64,
-    pub change: engine_terrain::StampOp,
-}
-
-impl EngineControl for TerrainEditControl {
-    fn changed(&self) -> &'static str {
-        "terrain edited"
-    }
-
-    fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
-        editing(
-            engine,
-            scene,
-            self.terrain.as_deref(),
-            TerrainEditing::Edit {
-                id: self.id.clone(),
-                center: self.center,
-                radius: self.radius,
-                falloff: self.falloff,
-                change: self.change,
-            },
-        )
-        .map(result::terrain_edit)
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct TerrainRiverControl {
-    #[serde(default)]
-    pub terrain: Option<String>,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
-    )]
-    pub id: String,
-    #[serde(default)]
-    pub points: Vec<[f64; 2]>,
-    #[serde(default)]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_terrain::GivenRiver::rule_of("width")))))]
-    pub width: Vec<f64>,
-    #[serde(default)]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_terrain::GivenRiver::rule_of("depth")))))]
-    pub depth: Vec<f64>,
-    #[serde(default)]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(same(engine_terrain::GivenRiver::rule_of("discharge")))))]
-    pub discharge: Vec<f64>,
-    #[serde(default)]
-    pub name: Option<String>,
-}
-
-impl EngineControl for TerrainRiverControl {
-    fn changed(&self) -> &'static str {
-        "terrain edited"
-    }
-
-    fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
-        draw_river(engine, scene, self).map(result::terrain_river)
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct TerrainUndoControl {
-    #[serde(default)]
-    pub terrain: Option<String>,
-}
-
-impl EngineControl for TerrainUndoControl {
-    fn changed(&self) -> &'static str {
-        "terrain edited"
-    }
-
-    fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
-        editing(engine, scene, self.terrain.as_deref(), TerrainEditing::Undo)
-            .map(result::terrain_undo)
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct TerrainRedoControl {
-    #[serde(default)]
-    pub terrain: Option<String>,
-}
-
-impl EngineControl for TerrainRedoControl {
-    fn changed(&self) -> &'static str {
-        "terrain edited"
-    }
-
-    fn apply(&self, engine: &mut Engine, scene: Option<&SceneInstance>) -> Result<Value, DevError> {
-        editing(engine, scene, self.terrain.as_deref(), TerrainEditing::Redo)
-            .map(result::terrain_redo)
-    }
-}
-
-#[derive(Resource, Default)]
-struct TerrainRedo(Vec<(Entity, engine_terrain::TerrainEdit)>);
-
-fn editing(
-    engine: &mut Engine,
-    scene: Option<&SceneInstance>,
-    name: Option<&str>,
-    editing: TerrainEditing,
-) -> Result<TerrainEdited, DevError> {
-    let mut redo = engine
-        .app
-        .world_mut()
-        .remove_resource::<TerrainRedo>()
-        .unwrap_or_default();
-    let result = edit_terrain(engine, scene, name, &mut redo.0, editing);
-    engine.app.world_mut().insert_resource(redo);
-    result
 }

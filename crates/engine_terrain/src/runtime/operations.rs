@@ -1,5 +1,5 @@
 use super::*;
-use engine_core::{Error, ErrorCode, Operation, TerrainDebug};
+use engine_core::{Error, ErrorCode, Operation, TerrainDebug, bounds, missing_brick};
 #[cfg(feature = "schema")]
 use engine_settings::{rule::same, stated};
 
@@ -43,6 +43,7 @@ fn terrain_setting(value: f32, name: &'static str) -> Result<f32, Error> {
 impl Operation for TerrainControl {
     const NAME: &'static str = "terrain";
     const CONTROL: bool = true;
+    const SHOWS: &'static str = "TerrainDebug";
     type Request = Self;
 
     fn run(world: &mut World, request: Self) -> Result<serde_json::Value, Error> {
@@ -91,6 +92,11 @@ impl Operation for TerrainControl {
     fn schema() -> schemars::Schema {
         schemars::schema_for!(Self)
     }
+
+    #[cfg(feature = "schema")]
+    fn result_schema() -> Option<schemars::Schema> {
+        Some(schemars::schema_for!(TerrainControlResult))
+    }
 }
 
 #[derive(Serialize)]
@@ -104,4 +110,21 @@ pub enum TerrainKey {
 pub fn terrain_key(world: &World, entity: Entity) -> TerrainKey {
     engine_core::authored_id(world, entity)
         .map_or_else(|| TerrainKey::Entity(entity.to_bits()), TerrainKey::Authored)
+}
+
+pub(super) fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
+    match Setting::check(&value, "value", bounds::COORDINATE) {
+        Ok(()) => Ok(value as f32),
+        Err(invalid) => Err(Error::new(ErrorCode::OutOfRange, path, invalid.rule)),
+    }
+}
+
+pub(super) fn terrains(world: &World) -> Result<&Terrains, Error> {
+    world
+        .get_resource::<Terrains>()
+        .ok_or_else(|| missing_brick("terrain", "$.op"))
+}
+
+pub(super) fn reply(result: impl Serialize) -> serde_json::Value {
+    serde_json::to_value(result).expect("results serialize")
 }
