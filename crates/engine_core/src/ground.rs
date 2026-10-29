@@ -5,7 +5,7 @@ use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_settings::Error;
 use glam::{Mat4, Vec2, Vec3};
 
-use crate::{Pyramid, RecordKey, Slot, TileKey, WaterSample};
+use crate::{Pyramid, RecordKey, Slot, TileKey, WaterBodies, WaterSample};
 
 pub struct GroundSlot;
 
@@ -195,7 +195,10 @@ impl Ground {
     }
 
     pub fn water_in(world: &World, point: Vec3) -> Option<WaterSample> {
-        world.get_resource::<Self>()?.face.water(world, point)
+        world
+            .get_resource::<Self>()
+            .and_then(|ground| ground.face.water(world, point))
+            .or_else(|| WaterBodies::water_in(world, point))
     }
 
     pub fn map_in(world: &World, name: &str, x: f32, z: f32) -> Option<f32> {
