@@ -592,7 +592,7 @@ impl Brick for NavigationBrick {
             )
             .operation::<NavGoControl>()
             .operation::<NavPathQuery>()
-            .component_inspector::<NavAgent, Option<NavAgentView>>(|world, entity, _| dev::agent_view(world, entity))
+            .component_inspector::<NavAgent, NavAgentView>(dev::agent_view)
             .inspector::<NavAgents, Option<NavAgentsView>>(|world, _| dev::agents_view(world));
     }
 }

@@ -630,10 +630,6 @@ impl TerrainWorker {
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), String> {
         let invalid = |error: CodecError| error.to_string();
         let kind = JobKind::from_name(kind).ok_or_else(|| format!("unknown job kind {kind}"))?;

@@ -62,13 +62,14 @@ fn remaining(walk: &NavWalk, position: Vec3) -> f32 {
     left
 }
 
-pub(crate) fn agent_view(world: &World, entity: Entity) -> Option<NavAgentView> {
-    let agent = *world.get::<NavAgent>(entity)?;
-    let walk = world.get::<NavWalk>(entity)?;
+pub(crate) fn agent_view(world: &World, entity: Entity, agent: &NavAgent) -> NavAgentView {
+    let agent = *agent;
+    let still = NavWalk::default();
+    let walk = world.get::<NavWalk>(entity).unwrap_or(&still);
     let position = world
         .get::<Transform>(entity)
         .map(|transform| transform.translation);
-    Some(NavAgentView {
+    NavAgentView {
         agent,
         status: walk.status,
         searched_for: walk.destination,
@@ -77,7 +78,7 @@ pub(crate) fn agent_view(world: &World, entity: Entity) -> Option<NavAgentView> 
         next: walk.next,
         left: position.map_or(0.0, |position| remaining(walk, position)),
         searched: walk.searched,
-    })
+    }
 }
 
 pub(crate) fn agents_view(world: &World) -> Option<NavAgentsView> {

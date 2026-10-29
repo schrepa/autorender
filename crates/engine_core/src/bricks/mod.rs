@@ -265,9 +265,11 @@ impl AddBrick for App {
     }
 }
 
+type AddFn = fn(&mut App);
+
 #[derive(Clone, Default)]
 pub struct BrickList {
-    entries: Vec<(&'static str, fn(&mut App))>,
+    entries: Vec<(&'static str, AddFn)>,
 }
 
 impl BrickList {
