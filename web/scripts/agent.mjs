@@ -3,7 +3,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { AgentError, VERSION, MAX_BYTES, createBridge, failure } from "./agent-protocol.mjs";
+import { AgentError, VERSION, MAX_BYTES, atMost, createBridge, failure, range, variants } from "./agent-protocol.mjs";
 import { launchBrowserSession } from "./agent-browser.mjs";
 import { launchNativeSession, nativeProgram } from "./agent-native.mjs";
 
@@ -27,19 +27,19 @@ function options(args) {
   const result = {};
   for (let i = 0; i < args.length; i += 2) {
     const key = args[i];
-    if (!key.startsWith("--") || !args[i + 1] || args[i + 1].startsWith("--") || key.slice(2) in result) throw new AgentError("invalid_arguments", `Expected unique --name value options; received ${key}.`, key);
+    if (!key.startsWith("--") || !args[i + 1] || args[i + 1].startsWith("--") || key.slice(2) in result) throw new AgentError("invalid_arguments", key, { got: key });
     result[key.slice(2)] = args[i + 1];
   }
   return result;
 }
 
 function pageUrl(url) {
-  if (!url) throw new AgentError("invalid_arguments", "--url", "--url");
+  if (!url) throw new AgentError("invalid_arguments", "--url", { expected: "present" });
   return url;
 }
 
 function portValue(value = "7331") {
-  if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65_535) throw new AgentError("invalid_arguments", "1..65535", "--port");
+  if (!/^\d+$/.test(value) || Number(value) < 1 || Number(value) > 65_535) throw new AgentError("invalid_arguments", "--port", { allowed: range(1, 65_535), got: value });
   return Number(value);
 }
 
@@ -53,13 +53,13 @@ async function readJson(path) {
       if (!bytesRead) break;
       size += bytesRead;
     }
-    if (size > MAX_BYTES) throw new AgentError("request_too_large", `at most ${MAX_BYTES} bytes`, "--file");
+    if (size > MAX_BYTES) throw new AgentError("request_too_large", "--file", { allowed: atMost(MAX_BYTES), got: size });
     return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(buffer.subarray(0, size)));
   } finally { await file.close(); }
 }
 
 function checkOptions(values, names) {
-  for (const key of Object.keys(values)) if (!names.includes(key)) throw new AgentError("invalid_arguments", names.map(name => `--${name}`).join(" "), `--${key}`);
+  for (const key of Object.keys(values)) if (!names.includes(key)) throw new AgentError("invalid_arguments", `--${key}`, { allowed: variants(names.map(name => `--${name}`)), got: `--${key}` });
 }
 
 async function serve(values) {
@@ -85,8 +85,8 @@ async function serve(values) {
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
   try {
-    if (values.native && (values.url || values.browser)) throw new AgentError("invalid_arguments", "--native takes no --url or --browser", "--native");
-    if ((values.args || values.profiling) && !values.native) throw new AgentError("invalid_arguments", "--args and --profiling need --native", "--native");
+    if (values.native && (values.url || values.browser)) throw new AgentError("invalid_arguments", values.url ? "--url" : "--browser", { expected: "absent" });
+    if ((values.args || values.profiling) && !values.native) throw new AgentError("invalid_arguments", "--native", { expected: "present" });
     owned = values.native
       ? await launchNativeSession({ program: nativeProgram(values.native, { profiling: values.profiling === "on" }), args: values.args?.split(" ").filter(Boolean).map(option => `--${option}`) ?? [] })
       : await launchBrowserSession({
@@ -112,7 +112,7 @@ async function serve(values) {
 async function onlySession(endpoint) {
   const listed = await fetchJson(endpoint, "/sessions", { signal: AbortSignal.timeout(5_000) });
   const first = listed?.sessions?.[0]?.session;
-  if (typeof first !== "string") throw new AgentError("invalid_arguments", "a running session", "--session");
+  if (typeof first !== "string") throw new AgentError("invalid_arguments", "--session", { expected: "present" });
   return first;
 }
 
@@ -145,20 +145,20 @@ async function client(verb, values) {
   if (verb === "sessions" || verb === "development") {
     return fetchJson(endpoint, `/${verb}`, { signal: AbortSignal.timeout(5_000) });
   }
-  if (values.file && values.json) throw new AgentError("invalid_arguments", "--file or --json", "--json");
+  if (values.file && values.json) throw new AgentError("invalid_arguments", "--json", { expected: "absent" });
   const data = values.file ? await readJson(values.file) : values.json ? JSON.parse(values.json) : {};
   let request;
   if (verb === "request" && data.version !== undefined) {
     request = data;
-    if (values.session && values.session !== request.session) throw new AgentError("session_mismatch", String(request.session), "--session");
-    if (values.id && values.id !== request.id) throw new AgentError("invalid_request_id", String(request.id), "--id");
+    if (values.session && values.session !== request.session) throw new AgentError("session_mismatch", "--session", { expected: "matching", got: request.session });
+    if (values.id && values.id !== request.id) throw new AgentError("invalid_request_id", "--id", { expected: "matching", got: request.id });
   } else {
     const session = values.session ?? await onlySession(endpoint);
     const command = verb === "request" ? data : { ...data, verb };
     request = { version: VERSION, id: values.id ?? randomUUID(), session, command };
   }
   const body = JSON.stringify(request);
-  if (Buffer.byteLength(body) > MAX_BYTES) throw new AgentError("request_too_large", `at most ${MAX_BYTES} bytes`, "--json");
+  if (Buffer.byteLength(body) > MAX_BYTES) throw new AgentError("request_too_large", "--json", { allowed: atMost(MAX_BYTES), got: Buffer.byteLength(body) });
   const mutation = !reading.has(request.command?.verb);
   const post = { method: "POST", headers: { "Content-Type": "application/json" }, body };
   const response = request.command?.verb === "watch"
@@ -170,9 +170,9 @@ async function client(verb, values) {
 function unreachable(endpoint, error, mutation) {
   const connectionRefused = ["ECONNREFUSED", "ENOTFOUND", "EHOSTUNREACH", "ENETUNREACH"].includes(error?.cause?.code);
   if (mutation && !connectionRefused) {
-    return new AgentError("request_outcome_unknown", `${error?.message ?? error}`, "request");
+    return new AgentError("request_outcome_unknown", "request", { got: String(error?.cause?.code ?? error?.message ?? error) });
   }
-  return new AgentError("bridge_unreachable", `${endpoint}: ${error?.message ?? error}`, "--port");
+  return new AgentError("bridge_unreachable", "--port", { got: endpoint });
 }
 
 async function fetchJson(endpoint, path, options, mutation = false) {
@@ -208,7 +208,7 @@ async function stream(endpoint, options, mutation) {
   } catch (error) {
     throw unreachable(endpoint, error, mutation);
   }
-  return last ?? failure(new AgentError("invalid_browser_response", "no reply after the records", "$"));
+  return last ?? failure(new AgentError("invalid_browser_response", "$", { expected: "present" }));
 }
 
 async function main() {
@@ -228,7 +228,7 @@ async function main() {
   if (verb === "ab") {
     checkOptions(values, commands.ab.options);
     const { runAb } = await import("./agent-ab.mjs");
-    if (values.native && (values.url || values.browser)) throw new AgentError("invalid_arguments", "--native takes no --url or --browser", "--native");
+    if (values.native && (values.url || values.browser)) throw new AgentError("invalid_arguments", values.url ? "--url" : "--browser", { expected: "absent" });
     const owned = values.native
       ? await launchNativeSession({ program: nativeProgram(values.native, { profiling: values.profile === "on" }), args: values.args?.split(" ").filter(Boolean).map(option => `--${option}`) ?? [] })
       : await launchBrowserSession({ url: pageUrl(values.url), browserPath: values.browser });
@@ -244,7 +244,7 @@ async function main() {
     return;
   }
   if (!(verb in commands) && !verbs.has(verb)) {
-    throw new AgentError("unknown_variant", [...Object.keys(commands), ...verbs].join(" "), "verb");
+    throw new AgentError("unknown_variant", "verb", { allowed: variants([...Object.keys(commands), ...verbs]), got: verb });
   }
   const response = await client(verb, values);
   console.log(JSON.stringify(response));

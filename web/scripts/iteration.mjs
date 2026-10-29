@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createReadStream, readFileSync } from "node:fs";
 import { access, mkdir, lstat, realpath, rm, stat, open } from "node:fs/promises";
 import { resolve, dirname, relative } from "node:path";
-import { AgentError, createBridge, failure } from "./agent-protocol.mjs";
+import { AgentError, createBridge, failure, range, variants } from "./agent-protocol.mjs";
 import { launchBrowserSession } from "./agent-browser.mjs";
 import { fingerprintSources, watchSources } from "./iteration-watch.mjs";
 import { IterationController } from "./iteration-controller.mjs";
@@ -15,30 +15,31 @@ const gamePages = Object.fromEntries(clients.filter(client => client.game).map(c
 const wasmNames = clients.map(client => client.wasm);
 const builtArtifact = new RegExp(`^/_engine/builds/([A-Za-z0-9_-]{1,100})/(${wasmNames.join("|")})(\\.js|_bg\\.wasm)$`);
 const GENERATION = /^[A-Za-z0-9_-]{1,100}$/;
-function port(value, fallback) {
+const OPTIONS = ["web-port", "port", "game", "browser"];
+function port(value, fallback, name) {
   const text = value ?? String(fallback);
-  if (!/^\d+$/.test(text) || Number(text) < 1 || Number(text) > 65535) throw new AgentError("invalid_arguments", "Ports must be integers from 1 to 65535.");
+  if (!/^\d+$/.test(text) || Number(text) < 1 || Number(text) > 65535) throw new AgentError("invalid_arguments", name, { allowed: range(1, 65535), got: text });
   return Number(text);
 }
 
 export async function startIteration(values) {
-  for (const key of Object.keys(values)) if (!["web-port", "port", "game", "browser"].includes(key)) throw new AgentError("invalid_arguments", `Unknown option --${key}.`);
-  const webPort = port(values["web-port"], 5174);
-  const bridgePort = port(values.port, 7331);
-  if (webPort === bridgePort) throw new AgentError("invalid_arguments", "Web and bridge ports must differ.");
+  for (const key of Object.keys(values)) if (!OPTIONS.includes(key)) throw new AgentError("invalid_arguments", `--${key}`, { allowed: variants(OPTIONS.map(name => `--${name}`)), got: `--${key}` });
+  const webPort = port(values["web-port"], 5174, "--web-port");
+  const bridgePort = port(values.port, 7331, "--port");
+  if (webPort === bridgePort) throw new AgentError("invalid_arguments", "--port", { expected: "unique", got: bridgePort });
   const game = values.game;
-  if (!game || !(game in gamePages)) throw new AgentError("invalid_arguments", `--game is one of ${Object.keys(gamePages).join(", ")}.`, "--game");
+  if (!game || !(game in gamePages)) throw new AgentError("invalid_arguments", "--game", { allowed: variants(Object.keys(gamePages)), got: game });
   const executable = process.env.ENGINE_XTASK_BIN ?? resolve(workspace, "target/debug", process.platform === "win32" ? "xtask.exe" : "xtask");
-  await access(executable).catch(() => { throw new AgentError("build_worker_unavailable", "Start with cargo xtask agent iterate to compile the native build worker.", executable); });
+  await access(executable).catch(() => { throw new AgentError("build_worker_unavailable", executable, { expected: "file" }); });
   const outputRoot = resolve(workspace, "web/pkg-iterations");
   await mkdir(outputRoot, { recursive: true });
-  if (relative(outputRoot, await realpath(outputRoot)) !== "") throw new AgentError("unsafe_output_path", "Generated output must not resolve through a symlink.", outputRoot);
+  if (relative(outputRoot, await realpath(outputRoot)) !== "") throw new AgentError("unsafe_output_path", outputRoot, { expected: "path" });
   const lockPath = resolve(outputRoot, ".watch.lock");
   const watch = randomUUID();
   let lock;
   try { lock = await open(lockPath, "wx"); }
   catch (error) {
-    if (error.code === "EEXIST") throw new AgentError("watch_locked", "This working copy already has a watcher. After a crash, confirm it stopped before removing web/pkg-iterations/.watch.lock.", lockPath);
+    if (error.code === "EEXIST") throw new AgentError("watch_locked", lockPath, { expected: "absent" });
     throw error;
   }
   await lock.writeFile(JSON.stringify({ pid: process.pid, watch, web_port: webPort, bridge_port: bridgePort }));
@@ -63,7 +64,7 @@ export async function startIteration(values) {
     if (!GENERATION.test(id) || !owned.has(id)) return;
     const path = resolve(outputRoot, id);
     try {
-      if ((await lstat(path)).isSymbolicLink() || dirname(await realpath(path)) !== outputRoot) throw new AgentError("unsafe_output_path", "Refusing to remove a generation outside its owned directory.", path);
+      if ((await lstat(path)).isSymbolicLink() || dirname(await realpath(path)) !== outputRoot) throw new AgentError("unsafe_output_path", path, { expected: "path" });
       await rm(path, { recursive: true, force: true });
     } catch (error) { if (error.code !== "ENOENT") throw error; }
     owned.delete(id);
@@ -126,11 +127,11 @@ export async function startIteration(values) {
           onTimeout: () => { browserStates.get(candidate).available = false; return candidate.close(); },
           validate: async () => {
             const matches = !cancellation.signal.aborted && (await fingerprintSources(workspace)).fingerprint === snapshot.fingerprint;
-            if (!browserStates.get(candidate)?.available) throw new AgentError("activation_failed", "The candidate browser closed before activation.");
+            if (!browserStates.get(candidate)?.available) throw new AgentError("activation_failed", "$", { expected: "live" });
             return matches;
           },
           commit: () => {
-            if (!browserStates.get(candidate)?.available) throw new AgentError("activation_failed", "The candidate browser closed before activation.");
+            if (!browserStates.get(candidate)?.available) throw new AgentError("activation_failed", "$", { expected: "live" });
             commit();
             active = candidate;
           },
@@ -147,7 +148,7 @@ export async function startIteration(values) {
     });
     bridge = createBridge({
       session: randomUUID(), url: baseUrl, initiallyUnavailable: true,
-      execute: () => { throw new AgentError("session_unavailable", "No successful build is active."); },
+      execute: () => { throw new AgentError("session_unavailable", "$", { expected: "live" }); },
       onClose: shutdown,
       development: () => ({ watch, game, web_url: baseUrl, bridge_url: `http://127.0.0.1:${bridgePort}`, runtime_state: active ? (browserStates.get(active)?.available ? "ready" : "unavailable") : "none", watcher_error: watcherError ?? null, ...controller.status() }),
     });

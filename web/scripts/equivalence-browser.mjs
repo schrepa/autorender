@@ -89,7 +89,7 @@ async function shoot(capture, file) {
   if (capture === "exact") fields = {};
   else if (capture.startsWith("display:")) {
     const reply = await request({ verb: "control", name: "frames", args: { count: Number(capture.split(":")[1]), interval_ms: 1000 / 60, capture: true } });
-    if (!reply?.ok) return { unavailable: `the host ran no display frames: ${reply?.error?.message ?? ""}` };
+    if (!reply?.ok) return { unavailable: `the host ran no display frames: ${reply?.error?.code ?? ""}` };
     await page.locator("canvas").screenshot({ path: file });
     return { path: file, rendering: reply.result.rendering };
   } else {

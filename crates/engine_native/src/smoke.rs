@@ -4,18 +4,16 @@ use std::time::Instant;
 
 use engine::smoke::{SmokeEntry, SmokeFailure, SmokeSession};
 use engine::smokes::{
-    FRAME_MS, Headless, LIST, SmokeRecord, answered, fault, listed, request_line, select,
+    Build, FRAME_MS, Headless, LIST, SmokeRecord, answered, fault, listed, request_line, select,
     step_lines,
 };
-use engine::{App, Engine, Game};
+use engine::{App, Game};
 use serde_json::Value;
 
 use crate::dev::DevSession;
 use crate::{HostOptions, Offscreen};
 
 const SIZE: (u32, u32) = (960, 540);
-
-pub type Build<'a, G> = &'a dyn Fn(&[&str]) -> engine::Result<(Engine, G)>;
 
 pub type Attach<'a, G> = &'a dyn Fn(DevSession<G>) -> DevSession<G>;
 
@@ -77,7 +75,7 @@ impl<'a, G: Game> Runner<'a, G> {
         }
         let started = Instant::now();
         let elapsed = || started.elapsed().as_secs_f64() * 1000.0;
-        let backend = match self.open(&[]) {
+        let backend = match self.open(None, &[]) {
             Ok(backend) => backend,
             Err(error) => return SmokeRecord::failed(entry, elapsed(), fault("session", &error)),
         };
@@ -87,6 +85,7 @@ impl<'a, G: Game> Runner<'a, G> {
         let mut session = Native {
             runner: self,
             backend,
+            source: None,
             clock: 0.0,
             faults: Vec::new(),
         };
@@ -95,24 +94,27 @@ impl<'a, G: Game> Runner<'a, G> {
         SmokeRecord::of(entry, elapsed(), outcome, faults)
     }
 
-    fn open(&mut self, without: &[&str]) -> engine::Result<Backend<G>> {
+    fn open(&mut self, source: Option<&str>, without: &[&str]) -> engine::Result<Backend<G>> {
         if self.gpu != Some(false) {
             let size = self.options.size.unwrap_or(SIZE);
             let build = self.build;
             match Offscreen::launch(size, self.options.gpu, &self.options.jobs, || {
-                build(without)
+                build(source, without)
             }) {
                 Ok(mut game) => {
                     self.options.settings.apply(game.host_mut());
                     self.gpu = Some(true);
-                    let session = DevSession::new(game, self.artifacts());
+                    let mut session = DevSession::new(game, self.artifacts());
+                    if let Some(document) = source {
+                        session.play(document);
+                    }
                     return Ok(Backend::Gpu(Box::new((self.attach)(session))));
                 }
                 Err(error) if self.gpu == Some(true) => return Err(error),
                 Err(_) => {}
             }
         }
-        let (engine, game) = (self.build)(without)?;
+        let (engine, game) = (self.build)(source, without)?;
         self.gpu = Some(false);
         Ok(Backend::Headless(Box::new(Headless::new(engine, game))))
     }
@@ -128,6 +130,7 @@ impl<'a, G: Game> Runner<'a, G> {
 struct Native<'r, 'a, G: Game> {
     runner: &'r mut Runner<'a, G>,
     backend: Backend<G>,
+    source: Option<String>,
     clock: f64,
     faults: Vec<SmokeFailure>,
 }
@@ -183,12 +186,19 @@ impl<G: Game> SmokeSession for Native<'_, '_, G> {
     }
 
     fn restart(&mut self, without: &[&str]) {
-        match self.runner.open(without) {
+        match self.runner.open(self.source.as_deref(), without) {
             Ok(backend) => {
                 self.backend = backend;
                 self.clock = 0.0;
             }
             Err(error) => self.faults.push(fault("restart", &error)),
+        }
+    }
+
+    fn source(&mut self, document: &str) {
+        self.source = Some(document.to_owned());
+        if let Backend::Gpu(session) = &mut self.backend {
+            session.play(document);
         }
     }
 }

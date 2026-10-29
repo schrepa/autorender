@@ -74,12 +74,15 @@ engine::__if_dev! {
             query: String,
         ) -> Result<bool, JsValue> {
             let options = page_options(&query)?;
-            let build = move |without: &[&str]| {
-                if without.is_empty() {
-                    Highlands::build(options.clone(), &RockMaps::default())
-                } else {
-                    Err(Error::new(ErrorCode::UnsupportedCommand, "$.without").got(without))
-                }
+            let build = move |source: Option<&str>, without: &[&str]| match source {
+                None => Ok((
+                    engine::smokes::standard_engine(without)?,
+                    Highlands::new(options.clone()),
+                )),
+                Some(_) => Err(
+                    Error::new(ErrorCode::UnsupportedCommand, "$.source")
+                        .expected(engine::Expected::Absent),
+                ),
             };
             engine::smokes::page::run::<Highlands>(
                 canvas,

@@ -502,6 +502,7 @@ impl HostOptions {
             println!("{}", json!({ "shader_hash": shader_hash() }));
             return Ok(());
         }
+        #[cfg(feature = "dev")]
         if let Some(names) = &self.smoke {
             if names == engine::smokes::LIST {
                 return Ok(());

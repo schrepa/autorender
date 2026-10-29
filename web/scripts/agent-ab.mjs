@@ -1,15 +1,15 @@
 // @ts-check
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { AgentError } from "./agent-protocol.mjs";
+import { AgentError, detailOf, range, variants as oneOf } from "./agent-protocol.mjs";
 import { workspace } from "./workspace.mjs";
 
 function commands(text, name) {
   let value;
-  try { value = JSON.parse(text ?? "[]"); } catch (error) { throw new AgentError("invalid_arguments", `--${name} is JSON: ${error.message}`, name); }
+  try { value = JSON.parse(text ?? "[]"); } catch { throw new AgentError("invalid_arguments", `--${name}`, { expected: "json" }); }
   const list = Array.isArray(value) ? value : [value];
   if (list.some(command => !command || typeof command !== "object" || typeof command.verb !== "string")) {
-    throw new AgentError("invalid_arguments", "commands with a verb", `--${name}`);
+    throw new AgentError("invalid_arguments", `--${name}`, { expected: "object" });
   }
   return list;
 }
@@ -17,7 +17,7 @@ function commands(text, name) {
 const integer = (value, fallback, minimum, maximum, name) => {
   if (value === undefined) return fallback;
   const number = Number(value);
-  if (!Number.isInteger(number) || number < minimum || number > maximum) throw new AgentError("invalid_arguments", `--${name} is ${minimum} to ${maximum}.`, name);
+  if (!Number.isInteger(number) || number < minimum || number > maximum) throw new AgentError("invalid_arguments", `--${name}`, { allowed: range(minimum, maximum), got: value });
   return number;
 };
 
@@ -27,12 +27,12 @@ export async function runAb(session, values) {
   const samples = integer(values.samples, 60, 1, 600, "samples");
   const warmup = integer(values.warmup, 10, 0, 600, "warmup");
   const mode = values.mode ?? "present";
-  if (!["step", "render", "present"].includes(mode)) throw new AgentError("invalid_arguments", "--mode is step, render or present.", "mode");
+  if (!["step", "render", "present"].includes(mode)) throw new AgentError("invalid_arguments", "--mode", { allowed: oneOf(["step", "render", "present"]), got: mode });
   const profile = values.profile === "on";
   const durationMs = integer(values["profile-ms"], 2000, 100, 5000, "profile-ms");
   const run = async command => {
     const reply = await session.execute(command);
-    if (!reply.ok) throw new AgentError(reply.error?.code ?? "bridge_error", `${command.verb} ${command.name ?? ""}: ${reply.error?.message ?? "failed"}`, reply.error?.path);
+    if (!reply.ok) throw new AgentError(reply.error?.code ?? "bridge_error", reply.error?.path, detailOf(reply.error));
     return reply.result;
   };
   const control = (name, args = {}) => run({ verb: "control", name, args });
@@ -41,7 +41,7 @@ export async function runAb(session, values) {
   if (status.paused !== true) await control("pause");
   for (const command of [...variants.a, ...variants.b]) {
     const owned = command.verb === "profile" || (command.verb === "control" && ["resume", "pause", "benchmark", "close"].includes(command.name));
-    if (owned) throw new AgentError("invalid_arguments", `${command.verb} ${command.name ?? ""}`, "--a");
+    if (owned) throw new AgentError("invalid_arguments", "--a", { got: command });
   }
   for (const variant of ["a", "b"]) {
     for (const command of variants[variant]) await run(command);

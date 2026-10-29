@@ -164,6 +164,7 @@ pub mod stats {
 }
 
 pub mod host;
+#[cfg(feature = "dev")]
 pub mod smokes;
 
 #[cfg(feature = "dev")]

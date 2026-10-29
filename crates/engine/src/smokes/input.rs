@@ -1,7 +1,7 @@
 use engine_core::smoke::{SmokeFailure, SmokeResult, SmokeSession};
 use serde_json::{Value, json};
 
-use super::requests::{control, grid, inspected, spawn};
+use super::requests::{control, grid, inspected, serve};
 use crate::camera::FlyCameraController;
 use crate::host::InputGatherer;
 
@@ -93,8 +93,7 @@ fn steps(session: &mut dyn SmokeSession, input: Value, ticks: u32) -> SmokeResul
 }
 
 pub(crate) fn input_camera(session: &mut dyn SmokeSession) -> SmokeResult {
-    spawn(session, &grid(8, false))?;
-    control(session, "pause", json!({}), "pauses")?;
+    serve(session, &grid(8, false), &[])?;
     let flies = session
         .app()
         .world()

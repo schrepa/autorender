@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use crate::bench::hex;
 use crate::checkouts::checkout;
 use crate::measure::{commit_id, git, iso, output, read_json};
+use crate::process::Project;
 use crate::serve::{Server, free_port};
 
 const ATTEMPTS: usize = 3;
@@ -210,15 +211,13 @@ fn attempt(
     url: &str,
     log: &Path,
 ) -> Result<(i32, Vec<Value>), String> {
-    let script = format!("scripts/{name}.mjs");
-    if !web.join(&script).is_file() {
-        fs::write(log, format!("{script} does not exist\n")).map_err(|error| error.to_string())?;
-        return Ok((-1, Vec::new()));
-    }
+    let project = Project::read(workspace, crate::smoke::PLAYER)?;
+    let page = project
+        .client()
+        .and_then(|client| client.page.clone())
+        .ok_or_else(|| format!("{}: page", project.package))?;
     let mut child = Command::new("node")
-        .arg(&script)
-        .env("DEMO_URL", url)
-        .env("ENGINE_WORKSPACE", workspace)
+        .args(["scripts/smoke-browser.mjs", &format!("{url}/{page}?smoke={name}")])
         .current_dir(web)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -239,7 +238,23 @@ fn attempt(
     let status = child.wait().map_err(|error| error.to_string())?;
     let stderr = stderr.join().unwrap_or_default();
     fs::write(log, format!("{stdout}\n{stderr}")).map_err(|error| error.to_string())?;
-    Ok((status.code().unwrap_or(-1), measurements(&stdout)))
+    Ok((judged(status.code(), &stdout), measurements(&stdout)))
+}
+
+fn judged(code: Option<i32>, stdout: &str) -> i32 {
+    let records: Vec<Value> = stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|record| record["smoke"].is_string())
+        .collect();
+    let unrun = records.is_empty() || records.iter().any(|record| record["skipped"] == true);
+    let failed = records.iter().any(|record| record["ok"] != true);
+    match code {
+        Some(0) if unrun => -1,
+        Some(0) if failed => 3,
+        Some(code) => code,
+        None => -1,
+    }
 }
 
 fn measurements(stdout: &str) -> Vec<Value> {

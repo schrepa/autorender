@@ -42,6 +42,7 @@ pub trait SmokeSession {
     fn frame(&mut self) -> bool;
     fn gpu(&self) -> bool;
     fn restart(&mut self, without: &[&str]);
+    fn source(&mut self, document: &str);
 }
 
 #[derive(Clone, Copy, Debug)]

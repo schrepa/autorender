@@ -1,39 +1,30 @@
 // @ts-check
 import { randomUUID } from "node:crypto";
+import { AgentError, atMost, refusal } from "./agent-protocol.mjs";
 
 const MAX_RESULT_BYTES = 512 * 1024;
 
-class IterationError extends Error {
-  constructor(code, message, path = "$") {
-    super(message);
-    this.code = code;
-    this.path = path;
-  }
-}
+class IterationError extends AgentError {}
 
 function failure(error) {
-  return {
-    code: String(error?.code ?? "iteration_error").slice(0, 96),
-    path: String(error?.path ?? "$").slice(0, 256),
-    message: String(error?.message ?? error).slice(0, 4000),
-  };
+  return refusal(error, "iteration_error");
 }
 
 function source(snapshot) {
   if (!snapshot || typeof snapshot.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(snapshot.fingerprint)
     || !Number.isInteger(snapshot.files) || snapshot.files < 0 || snapshot.files > 20_000) {
-    throw new IterationError("invalid_fingerprint", "Expected a SHA-256 source fingerprint and a bounded file count.");
+    throw new IterationError("invalid_fingerprint", "$", { got: snapshot });
   }
   return { fingerprint: snapshot.fingerprint, files: snapshot.files };
 }
 
 function buildResult(result) {
   if (!result || typeof result !== "object" || typeof result.ok !== "boolean") {
-    throw new IterationError("invalid_build_result", "Build results must contain an ok boolean.");
+    throw new IterationError("invalid_build_result", "$.ok", { expected: "boolean" });
   }
   const json = JSON.stringify(result);
   if (Buffer.byteLength(json) > MAX_RESULT_BYTES) {
-    throw new IterationError("build_result_too_large", "Build results exceed the 512 KiB status budget.");
+    throw new IterationError("build_result_too_large", "$", { allowed: atMost(MAX_RESULT_BYTES), got: Buffer.byteLength(json) });
   }
   return JSON.parse(json);
 }
@@ -137,7 +128,7 @@ export class IterationController {
       let committed = false;
       let activationOpen = false;
       try {
-        if (this.#closed) throw new IterationError("iteration_stopped", "Development iteration is stopped.");
+        if (this.#closed) throw new IterationError("iteration_stopped", "$", { expected: "running" });
         const result = buildResult(await this.#operations.build(attempt, snapshot));
         this.#latest.result = result;
         if (!await this.#fresh(snapshot)) {
@@ -148,7 +139,7 @@ export class IterationController {
           this.#stage("preparing");
           candidate = await this.#operations.prepare(attempt, result);
           if (!candidate || typeof candidate.session !== "string" || !/^[A-Za-z0-9_.:-]{1,96}$/.test(candidate.session)) {
-            throw new IterationError("invalid_candidate", "Prepared browsers must expose a bounded session identifier.");
+            throw new IterationError("invalid_candidate", "$.session", { expected: "id", got: candidate?.session });
           }
           if (!await this.#fresh(snapshot)) {
             this.#stage(this.#closed ? "stopped" : "superseded");
@@ -156,17 +147,17 @@ export class IterationController {
             this.#stage("activating");
             activationOpen = true;
             try { await this.#operations.promote(candidate, snapshot, () => {
-              if (!activationOpen) throw new IterationError("activation_expired", "This activation callback has expired.");
-              if (committed) throw new IterationError("activation_committed", "This build has already been activated.");
-              if (this.#closed) throw new IterationError("iteration_stopped", "Development iteration is stopped.");
+              if (!activationOpen) throw new IterationError("activation_expired", "$", { expected: "live" });
+              if (committed) throw new IterationError("activation_committed", "$", { expected: "unique" });
+              if (this.#closed) throw new IterationError("iteration_stopped", "$", { expected: "running" });
               if (this.#desired?.fingerprint !== snapshot.fingerprint) {
-                throw new IterationError("build_superseded", "A newer source fingerprint superseded this build.");
+                throw new IterationError("build_superseded", "$", { expected: "matching", got: snapshot.fingerprint });
               }
               committed = true;
               this.#active = { build: attempt.id, session: candidate.session, fingerprint: snapshot.fingerprint };
               this.#stage("ready");
             }); } finally { activationOpen = false; }
-            if (!committed) throw new IterationError("activation_not_committed", "Session promotion returned without committing activation.");
+            if (!committed) throw new IterationError("activation_not_committed", "$", { expected: "present" });
           }
         }
       } catch (error) {

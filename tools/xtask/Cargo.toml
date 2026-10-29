@@ -29,7 +29,7 @@ naga = { workspace = true, features = ["wgsl-in", "spv-out"] }
 sha2.workspace = true
 engine_assetc.workspace = true
 engine_profiler = { workspace = true, features = ["load"] }
-engine = { workspace = true, features = ["schema"] }
+engine = { workspace = true, features = ["schema", "dev"] }
 engine_checks.workspace = true
 bevy_ecs = { workspace = true, features = ["debug"] }
 serde_json.workspace = true

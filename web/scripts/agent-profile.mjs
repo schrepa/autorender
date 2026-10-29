@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { relative, resolve, sep } from "node:path";
-import { AgentError } from "./agent-protocol.mjs";
+import { AgentError, atMost, range, variants } from "./agent-protocol.mjs";
 
 const MAX_ARTIFACT_BYTES = 32 * 1024 * 1024;
 const protocol = JSON.parse(readFileSync(new URL("../src/generated/protocol.json", import.meta.url), "utf8"));
@@ -40,22 +40,24 @@ export const nativeProfileDescriptor = {
 };
 
 export async function captureProfile({ page, requestBrowser, command, artifacts, workspace }) {
-  if (!command || typeof command !== "object" || Array.isArray(command)) throw new AgentError("invalid_type", "object", "$.deep");
-  const unknown = Object.keys(command).find(key => !["duration_ms", "max_events", "cpu_samples"].includes(key));
-  if (unknown) throw new AgentError("unknown_field", "duration_ms max_events cpu_samples", `$.deep.${unknown}`);
+  if (!command || typeof command !== "object" || Array.isArray(command)) throw new AgentError("invalid_type", "$.deep", { expected: "object" });
+  const fields = ["duration_ms", "max_events", "cpu_samples"];
+  const unknown = Object.keys(command).find(key => !fields.includes(key));
+  if (unknown) throw new AgentError("unknown_field", `$.deep.${unknown}`, { allowed: variants(fields), got: unknown });
   const within = (value, { minimum, maximum }) => Number.isInteger(value) && value >= minimum && value <= maximum;
   const duration = command.duration_ms === undefined ? LIMITS.duration_ms.default : command.duration_ms;
   const maxEvents = command.max_events === undefined ? LIMITS.max_events.default : command.max_events;
-  if (!within(duration, LIMITS.duration_ms) || !within(maxEvents, LIMITS.max_events) ||
-      (command.cpu_samples !== undefined && typeof command.cpu_samples !== "boolean")) {
-    const range = name => `${LIMITS[name].minimum}..${LIMITS[name].maximum}`;
-    throw new AgentError("out_of_range", `duration_ms ${range("duration_ms")}, max_events ${range("max_events")}, cpu_samples boolean`, "$.deep");
+  for (const [name, value] of [["duration_ms", duration], ["max_events", maxEvents]]) {
+    if (!within(value, LIMITS[name])) throw new AgentError("out_of_range", `$.deep.${name}`, { allowed: range(LIMITS[name].minimum, LIMITS[name].maximum), got: value });
+  }
+  if (command.cpu_samples !== undefined && typeof command.cpu_samples !== "boolean") {
+    throw new AgentError("invalid_type", "$.deep.cpu_samples", { expected: "boolean", got: command.cpu_samples });
   }
   const before = await requestBrowser({ verb: "query", name: "status" });
   if (!before.ok) return before;
-  if (before.result?.paused !== true) throw new AgentError("pause_required", "a paused session", "$");
+  if (before.result?.paused !== true) throw new AgentError("pause_required", "$", { expected: "paused" });
   const available = await page.evaluate(() => typeof window.__engineProfile?.start === "function");
-  if (!available) throw new AgentError("profiling_unavailable", "the profiling build's page (cargo xtask profile)", "$");
+  if (!available) throw new AgentError("profiling_unavailable", "$", { expected: "supported" });
   const browser = await page.context().newCDPSession(page);
   let resumed = false, sampling = false, stoppedProfile, report;
   const cpuSamples = command.cpu_samples ?? true;
@@ -79,9 +81,9 @@ export async function captureProfile({ page, requestBrowser, command, artifacts,
     resumed = false;
     const serialized = await page.evaluate(limit => {
       const json = JSON.stringify(window.__engineProfile.export());
-      if (new TextEncoder().encode(json).byteLength > limit) throw new Error("Profile exceeds artifact limit.");
-      return json;
+      return new TextEncoder().encode(json).byteLength > limit ? null : json;
     }, MAX_ARTIFACT_BYTES);
+    if (serialized === null) throw new AgentError("profile_too_large", "$", { allowed: atMost(MAX_ARTIFACT_BYTES) });
     report = JSON.parse(serialized);
     report.agent = {
       browser_version: page.context().browser()?.version() ?? null,
@@ -93,7 +95,7 @@ export async function captureProfile({ page, requestBrowser, command, artifacts,
     const stem = `profile-${randomUUID()}`;
     const save = async (name, value) => {
       const json = JSON.stringify(value);
-      if (Buffer.byteLength(json) > MAX_ARTIFACT_BYTES) throw new AgentError("profile_too_large", `at most ${MAX_ARTIFACT_BYTES} bytes`, "$");
+      if (Buffer.byteLength(json) > MAX_ARTIFACT_BYTES) throw new AgentError("profile_too_large", "$", { allowed: atMost(MAX_ARTIFACT_BYTES), got: Buffer.byteLength(json) });
       const path = resolve(artifacts, name);
       await writeFile(path, json, { flag: "wx" });
       return relative(workspace, path).split(sep).join("/");

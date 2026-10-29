@@ -6,27 +6,55 @@ export const MAX_BYTES = 1024 * 1024;
 const MAX_REQUEST_IDS = 65_536;
 const ID_PATTERN = /^[A-Za-z0-9_.:-]{1,96}$/;
 
+const DETAIL = ["expected", "allowed", "nearest", "got"];
+const MAX_GOT = 256;
+const REQUEST_FIELDS = ["version", "id", "session", "command"];
+
 export class AgentError extends Error {
-  constructor(code, message, path = "$") {
-    super(message);
+  /**
+   * @param {string} code
+   * @param {string} [path]
+   * @param {{ expected?: string, allowed?: object, nearest?: unknown, got?: unknown }} [detail]
+   */
+  constructor(code, path = "$", detail = {}) {
+    super(code);
     this.code = code;
     this.path = path;
+    this.detail = detail;
   }
 }
 
-export function failure(error) {
-  return { ok: false, error: {
-    code: String(error?.code ?? "bridge_error").slice(0, 96),
+export const atMost = max => ({ kind: "at_most", max });
+export const range = (min, max) => ({ kind: "range", min, max });
+export const variants = values => ({ kind: "variants", values: [...values].map(String) });
+
+export function detailOf(error) {
+  if (error instanceof AgentError) return error.detail;
+  if (typeof error?.code === "string" && typeof error?.path === "string") {
+    return Object.fromEntries(DETAIL.filter(key => error[key] !== undefined).map(key => [key, error[key]]));
+  }
+  return { got: String(error?.message ?? error) };
+}
+
+export function refusal(error, code = "bridge_error") {
+  const { got, ...detail } = detailOf(error);
+  return {
+    code: String(error?.code ?? code).slice(0, 96),
     path: String(error?.path ?? "$").slice(0, 256),
-    message: String(error?.message ?? error).slice(0, 4000),
-  } };
+    ...detail,
+    ...(got === undefined ? {} : { got: typeof got === "string" ? got.slice(0, MAX_GOT) : got }),
+  };
+}
+
+export function failure(error) {
+  return { ok: false, error: refusal(error) };
 }
 
 export function loopbackUrl(value) {
   let url;
-  try { url = new URL(value); } catch { throw new AgentError("invalid_url", "Expected an absolute loopback HTTP URL.", "url"); }
+  try { url = new URL(value); } catch { throw new AgentError("invalid_url", "url", { expected: "uri", got: value }); }
   if (url.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) || url.username || url.password) {
-    throw new AgentError("invalid_url", "The development URL must use HTTP on localhost, 127.0.0.1, or [::1], without credentials.", "url");
+    throw new AgentError("invalid_url", "url", { allowed: variants(["http://127.0.0.1", "http://localhost", "http://[::1]"]), got: url.origin });
   }
   url.searchParams.set("engine_dev", "1");
   return url;
@@ -41,29 +69,29 @@ function envelope(request, session, response) {
 }
 
 function validate(request, session) {
-  if (!request || typeof request !== "object" || Array.isArray(request)) throw new AgentError("invalid_request", "Expected a request object.");
-  if (request.version !== VERSION) throw new AgentError("unsupported_version", "Only protocol version 1 is supported.", "version");
-  if (typeof request.id !== "string" || !ID_PATTERN.test(request.id)) throw new AgentError("invalid_request_id", "Use 1–96 ASCII letters, digits, underscores, dots, colons, or hyphens.", "id");
-  if (request.session !== session) throw new AgentError("session_mismatch", "This request names a different development session.", "session");
+  if (!request || typeof request !== "object" || Array.isArray(request)) throw new AgentError("invalid_request", "$", { expected: "object" });
+  if (request.version !== VERSION) throw new AgentError("unsupported_version", "version", { allowed: variants([VERSION]), got: request.version });
+  if (typeof request.id !== "string" || !ID_PATTERN.test(request.id)) throw new AgentError("invalid_request_id", "id", { expected: "id", got: request.id });
+  if (request.session !== session) throw new AgentError("session_mismatch", "session", { expected: "matching", got: request.session });
   if (!request.command || typeof request.command !== "object" || Array.isArray(request.command) || typeof request.command.verb !== "string") {
-    throw new AgentError("invalid_command", "Expected command.verb to be a string.", "command.verb");
+    throw new AgentError("invalid_command", "command.verb", { expected: "string" });
   }
   for (const key of Object.keys(request)) {
-    if (!["version", "id", "session", "command"].includes(key)) throw new AgentError("invalid_request", `Unknown request field: ${key}.`, key);
+    if (!REQUEST_FIELDS.includes(key)) throw new AgentError("invalid_request", key, { allowed: variants(REQUEST_FIELDS), got: key });
   }
 }
 
 async function readRequest(request) {
-  if (Number(request.headers["content-length"]) > MAX_BYTES) throw new AgentError("request_too_large", "Request exceeds the 1 MiB limit.");
+  if (Number(request.headers["content-length"]) > MAX_BYTES) throw new AgentError("request_too_large", "$", { allowed: atMost(MAX_BYTES), got: Number(request.headers["content-length"]) });
   const chunks = [];
   let size = 0;
   for await (const chunk of request) {
     size += chunk.length;
-    if (size > MAX_BYTES) throw new AgentError("request_too_large", "Request exceeds the 1 MiB limit.");
+    if (size > MAX_BYTES) throw new AgentError("request_too_large", "$", { allowed: atMost(MAX_BYTES), got: size });
     chunks.push(chunk);
   }
   try { return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks))); }
-  catch { throw new AgentError("invalid_json", "Request must be valid UTF-8 JSON."); }
+  catch { throw new AgentError("invalid_json", "$", { expected: "json" }); }
 }
 
 /** @param {{ session: string, url: string, build?: string, execute: (command: any, onRecord?: (record: any) => void) => any, onTimeout?: () => void, onClose: () => any, development?: () => any, initiallyUnavailable?: boolean, deadlineMs?: number, queueLimit?: number }} options */
@@ -83,8 +111,8 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
       const item = queue.shift();
       if (item.replacement) {
         try {
-          if (closed) throw new AgentError("session_closed", "The bridge closed before replacement.");
-          if (item.replacement.validate && !await item.replacement.validate()) throw new AgentError("build_superseded", "Sources changed before this build could be activated.");
+          if (closed) throw new AgentError("session_closed", "$", { expected: "live" });
+          if (item.replacement.validate && !await item.replacement.validate()) throw new AgentError("build_superseded", "$", { expected: "matching" });
           item.replacement.commit?.();
           ({ session, url, build, execute, onTimeout = () => {} } = item.replacement);
           startedAt = new Date().toISOString();
@@ -101,11 +129,11 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
       let response;
       try {
         const closes = closing(item.request.command) && onClose;
-        if (unavailable && !closes) throw new AgentError("session_unavailable", "The session is unavailable; start a new bridge session.");
+        if (unavailable && !closes) throw new AgentError("session_unavailable", "$", { expected: "live" });
         const remaining = item.deadline - Date.now();
-        if (remaining <= 0) throw new AgentError("queue_timeout", "The request expired before execution; it was not dispatched.");
+        if (remaining <= 0) throw new AgentError("queue_timeout", "$", { allowed: atMost(deadlineMs) });
         if (closes) {
-          if (Object.keys(item.request.command).some(key => !["verb", "name"].includes(key))) throw new AgentError("invalid_command", "Close takes no args.", "command.args");
+          if (Object.keys(item.request.command).some(key => !["verb", "name"].includes(key))) throw new AgentError("invalid_command", "command.args", { expected: "absent" });
           unavailable = true;
           closed = true;
           response = { ok: true, result: { state: "closing" } };
@@ -115,12 +143,12 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
             timer = setTimeout(() => {
               unavailable = true;
               Promise.resolve().then(onTimeout).catch(() => {});
-              reject(new AgentError("command_timeout", "The command deadline expired. Its outcome is unknown; this session is now unavailable."));
+              reject(new AgentError("command_timeout", "$", { allowed: atMost(remaining) }));
             }, remaining);
           }),
         ]);
-        if (!response || typeof response.ok !== "boolean") throw new AgentError("invalid_browser_response", "The browser returned an invalid development response.");
-        if (Buffer.byteLength(JSON.stringify(response)) > MAX_BYTES - 1024) throw new AgentError("response_too_large", "The response exceeds the 1 MiB limit; narrow the inspection request.");
+        if (!response || typeof response.ok !== "boolean") throw new AgentError("invalid_browser_response", "$", { expected: "object" });
+        if (Buffer.byteLength(JSON.stringify(response)) > MAX_BYTES - 1024) throw new AgentError("response_too_large", "$", { allowed: atMost(MAX_BYTES - 1024) });
       } catch (error) { response = failure(error); }
       finally { clearTimeout(timer); }
       item.resolve(envelope(item.request, acceptedSession, { ...response, ...(acceptedBuild === undefined ? {} : { build: acceptedBuild }) }));
@@ -130,12 +158,12 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
 
   function submit(request, onRecord) {
     validate(request, session);
-    if (replacing) throw new AgentError("session_replacing", "A validated build is replacing this session; discover the new session before sending commands.");
+    if (replacing) throw new AgentError("session_replacing", "$", { expected: "live" });
     const closes = closing(request.command) && onClose;
-    if (unavailable && !closes) throw new AgentError("session_unavailable", "The session is unavailable; start a new bridge session.");
-    if (requestIds.has(request.id)) throw new AgentError("duplicate_request", "This request ID was already accepted. Inspect the current state with a new ID; mutations are never replayed automatically.", "id");
-    if (requestIds.size >= MAX_REQUEST_IDS && !closes) throw new AgentError("session_request_limit", "The session reached its 65,536-request limit; start a new session.");
-    if (queue.length + Number(running) >= queueLimit) throw new AgentError("queue_full", "The session command queue is full; retry with a new request ID after pending work completes.");
+    if (unavailable && !closes) throw new AgentError("session_unavailable", "$", { expected: "live" });
+    if (requestIds.has(request.id)) throw new AgentError("duplicate_request", "id", { expected: "unique", got: request.id });
+    if (requestIds.size >= MAX_REQUEST_IDS && !closes) throw new AgentError("session_request_limit", "$", { allowed: atMost(MAX_REQUEST_IDS) });
+    if (queue.length + Number(running) >= queueLimit) throw new AgentError("queue_full", "$", { allowed: atMost(queueLimit) });
     requestIds.add(request.id);
     return new Promise(resolve => {
       queue.push({ request, onRecord, deadline: Date.now() + deadlineMs, resolve });
@@ -154,7 +182,7 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
     try {
       const address = /** @type {import("node:net").AddressInfo} */ (server.address());
       if (request.headers.host !== `127.0.0.1:${address.port}` || request.headers.origin !== undefined) {
-        throw new AgentError("origin_rejected", "Use a local command-line client with the bridge's 127.0.0.1 address.");
+        throw new AgentError("origin_rejected", "$", { allowed: variants([`127.0.0.1:${address.port}`]), got: request.headers.host });
       }
       if (request.method === "GET" && request.url === "/sessions") {
         send(response, 200, { version: VERSION, sessions: [{ session, url, ...(build === undefined ? {} : { build }), started_at: startedAt, state: unavailable ? "unavailable" : "ready" }] });
@@ -162,15 +190,16 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
       }
       if (request.method === "GET" && request.url === "/development" && development) {
         const result = { version: VERSION, ok: true, result: development() };
-        if (Buffer.byteLength(JSON.stringify(result)) > MAX_BYTES) throw new AgentError("response_too_large", "Development status exceeds the response limit.");
+        if (Buffer.byteLength(JSON.stringify(result)) > MAX_BYTES) throw new AgentError("response_too_large", "$", { allowed: atMost(MAX_BYTES) });
         send(response, 200, result);
         return;
       }
       if (request.method !== "POST" || request.url !== "/request") {
-        send(response, 404, envelope(null, session, failure(new AgentError("route_not_found", "Use GET /sessions or POST /request."))));
+        const routes = ["GET /sessions", ...(development ? ["GET /development"] : []), "POST /request"];
+        send(response, 404, envelope(null, session, failure(new AgentError("route_not_found", "$", { allowed: variants(routes), got: `${request.method} ${request.url}` }))));
         return;
       }
-      if (request.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") throw new AgentError("content_type", "Requests must use Content-Type: application/json.");
+      if (request.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") throw new AgentError("content_type", "$", { allowed: variants(["application/json"]), got: request.headers["content-type"] });
       parsed = await readRequest(request);
       if (parsed?.command?.verb === "watch") {
         const held = [];
@@ -198,7 +227,7 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
     server, submit,
     markUnavailable: () => { unavailable = true; },
     replaceSession(next) {
-      if (closed || replacing) return Promise.reject(new AgentError("session_replacing", "The bridge is closing or already replacing a session."));
+      if (closed || replacing) return Promise.reject(new AgentError("session_replacing", "$", { expected: "live" }));
       replacing = true;
       return new Promise((resolve, reject) => {
         queue.push({ replacement: next, resolve, reject });

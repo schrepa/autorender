@@ -36,11 +36,11 @@ engine::__if_dev! {
             names: String,
             report: JsValue,
         ) -> Result<bool, JsValue> {
-            engine::smokes::page::run::<engine::smokes::SmokeGame>(
+            engine::smokes::page::run::<engine::smokes::Played<ScenePlayer>>(
                 canvas,
                 &names,
                 &engine::smokes::standard(),
-                &engine::smokes::standard_game,
+                &|source, without| engine::smokes::played(source, without, ScenePlayer::new),
                 &report,
             )
             .await

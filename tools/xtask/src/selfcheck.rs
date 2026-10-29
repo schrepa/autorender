@@ -11,7 +11,7 @@ const PAIRS: u64 = 2;
 const TIME_RATIO: f64 = 1.25;
 const FRAME_TIME: &str = "wall:frame_ms_mean";
 const BUSY_CPU_PCT: f64 = 50.0;
-const CHECK: &str = "agent-lifecycle-smoke";
+const CHECK: &str = "agent_lifecycle";
 pub(crate) const KINDS: [&str; 2] = ["measure", "checks"];
 
 pub fn selfcheck(root: &Path, arguments: &[String]) -> Result<(), Failure> {
