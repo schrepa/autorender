@@ -119,7 +119,8 @@ pub(crate) fn import(
         let emissive = material.emissive_factor().map(|value| value * strength);
         scene.materials.push(SceneMaterial {
             id: format!("{id}.material{index}"),
-            color: [red, green, blue, 1.0],
+            provided: None,
+            color: Some([red, green, blue, 1.0]),
             texture,
             surface: Some(SceneSurface {
                 roughness: pbr.roughness_factor(),

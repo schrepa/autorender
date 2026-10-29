@@ -80,7 +80,8 @@ impl SceneDocument {
                 MeshSource::Cube { .. }
                 | MeshSource::Plane { .. }
                 | MeshSource::Octahedron { .. }
-                | MeshSource::Inline { .. } => {}
+                | MeshSource::Inline { .. }
+                | MeshSource::Provided { .. } => {}
             }
         }
         let entities = self

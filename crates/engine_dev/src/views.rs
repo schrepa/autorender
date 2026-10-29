@@ -289,6 +289,7 @@ pub struct TextureView {
     pub id: Option<String>,
     pub uri: Option<String>,
     pub inline: bool,
+    pub provided: Option<String>,
     pub alive: bool,
     pub width: Option<u32>,
     pub height: Option<u32>,
