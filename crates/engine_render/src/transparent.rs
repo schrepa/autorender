@@ -3,29 +3,29 @@
     reason = "the composite reads the targets and pipelines its frame made"
 )]
 
-use engine_core::{Drawn, RenderStats};
-
-use crate::bindings::{GroupRef, TRANSPARENT_COMPOSITE};
+use crate::bindings::TRANSPARENT_COMPOSITE;
 use crate::cached::Bound;
+use crate::composite::{TRANSPARENT_COMPOSITE as COMPOSITE_MODULE, composite_entry};
 use crate::graph::{
     Access, Clear, FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId,
     Stage, TRANSPARENT, WHITE,
 };
-use crate::particles::{ParticleFrame, ParticlePass};
-use crate::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View};
-use crate::pipeline_layouts::{PARTICLE_PIPELINES, TRANSPARENT_COMPOSITE_PIPELINES};
-use crate::post::PostPass;
+use crate::parts::{
+    CORE_BRICK, Create, DrawAt, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View,
+};
+use crate::pipeline_layouts::TRANSPARENT_COMPOSITE_PIPELINES;
+use crate::post::{PostPass, shared_groups};
 use crate::profiling::Span;
 use crate::shaders::entry::transparent;
 use crate::targets::{FrameSize, ScreenTarget};
 
-pub(crate) const ACCUMULATED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-pub(crate) const REVEALED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
+pub const ACCUMULATED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub const REVEALED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
 
-pub(crate) static PART: PartEntry = PartEntry {
+pub static PART: PartEntry = PartEntry {
     decl: PartDecl {
         name: "transparency",
-        brick: "core",
+        brick: CORE_BRICK,
         passes: &[
             PassDecl {
                 name: "transparent",
@@ -64,7 +64,7 @@ fn create(_: &Create<'_>) -> Box<dyn GpuPart> {
     Box::new(Transparency::default())
 }
 
-pub(crate) fn accumulation_targets() -> [Option<wgpu::ColorTargetState>; 2] {
+pub fn accumulation_targets() -> [Option<wgpu::ColorTargetState>; 2] {
     let add = wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
         dst_factor: wgpu::BlendFactor::One,
@@ -112,8 +112,7 @@ impl Drop for Targets {
 
 struct TransparentPass {
     layout: crate::pipelines::GroupLayout,
-    pipeline_layout: wgpu::PipelineLayout,
-    composite: [Option<wgpu::RenderPipeline>; 4],
+    composite: [Option<wgpu::RenderPipeline>; 2],
     surface_format: wgpu::TextureFormat,
     depth_format: wgpu::TextureFormat,
     targets: ScreenTarget<Targets>,
@@ -126,10 +125,8 @@ impl TransparentPass {
         depth_format: wgpu::TextureFormat,
     ) -> Self {
         let layout = crate::pipelines::layout(device, &TRANSPARENT_COMPOSITE);
-        let pipeline_layout = crate::pipelines::layout_of(device, &TRANSPARENT_COMPOSITE_PIPELINES);
         Self {
             layout,
-            pipeline_layout,
             composite: Default::default(),
             surface_format,
             depth_format,
@@ -195,8 +192,8 @@ impl TransparentPass {
         Some([&targets.accumulated, &targets.revealed])
     }
 
-    fn ensure_composite(&mut self, device: &wgpu::Device, post: bool, dither: bool) {
-        let index = composite_index(post, dither);
+    fn ensure_composite(&mut self, device: &wgpu::Device, post: bool) {
+        let index = usize::from(post);
         if self.composite[index].is_some() {
             return;
         }
@@ -229,17 +226,16 @@ impl TransparentPass {
                 write_mask: wgpu::ColorWrites::empty(),
             }));
         }
-        let constants = [
-            ("TARGET_IS_SRGB", if format.is_srgb() { 1.0 } else { 0.0 }),
-            ("DITHER", if dither { 1.0 } else { 0.0 }),
-        ];
+        let constants = [("TARGET_IS_SRGB", if format.is_srgb() { 1.0 } else { 0.0 })];
+        let pipeline_layout =
+            crate::pipelines::layout_of(device, &TRANSPARENT_COMPOSITE_PIPELINES);
         self.composite[index] = Some(crate::pipelines::fullscreen(
             device,
             &crate::pipelines::Fullscreen {
                 label: "engine/transparent-composite",
-                layout: &self.pipeline_layout,
+                layout: &pipeline_layout,
                 vertex: transparent::vs_fullscreen,
-                fragment: transparent::fs_composite,
+                fragment: composite_entry(COMPOSITE_MODULE),
                 constants: &constants,
                 targets: &targets,
                 depth: Some(wgpu::DepthStencilState {
@@ -253,20 +249,24 @@ impl TransparentPass {
         ));
     }
 
-    fn composite(&self, pass: &mut wgpu::RenderPass<'_>, post: bool, dither: bool) {
+    fn composite(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        post: bool,
+        shared: &[(u32, &wgpu::BindGroup)],
+    ) {
         let targets = self.targets.get().expect("sized_in_begin");
         pass.set_pipeline(
-            self.composite[composite_index(post, dither)]
+            self.composite[usize::from(post)]
                 .as_ref()
                 .expect("ensured"),
         );
         pass.set_bind_group(0, &targets.group, &[]);
+        for &(index, group) in shared {
+            pass.set_bind_group(index, group, &[]);
+        }
         pass.draw(0..3, 0..1);
     }
-}
-
-fn composite_index(post: bool, dither: bool) -> usize {
-    usize::from(post) + 2 * usize::from(dither)
 }
 
 #[derive(Clone, Copy, Default)]
@@ -278,75 +278,26 @@ struct Ids {
     depth: Option<ResourceId>,
     scene: Option<ResourceId>,
     glow: Option<ResourceId>,
-    shadow_maps: Option<ResourceId>,
 }
 
 #[derive(Default)]
-pub(crate) struct Transparency {
+pub struct Transparency {
     surfaces: Option<TransparentPass>,
-    particles: Option<ParticlePass>,
-    frame: Option<TransparencyFrame>,
+    drawn: bool,
     ids: Ids,
 }
 
-struct TransparencyFrame {
-    particles: ParticleFrame,
-    dither: bool,
-}
-
 impl Transparency {
-    fn prepare_frame(&mut self, cx: &Step<'_>, post: bool) -> Option<TransparencyFrame> {
-        let (device, queue) = (&cx.core.device, &cx.core.queue);
-        let snapshot = cx.frame.snapshot;
-        let emitters = (
-            cx.frame.frame.identity(),
-            cx.frame.frame.emitters_revision(),
-        );
-        let (region, depth) = (cx.core.display.region, &cx.core.depth.view);
-        let (surface_format, depth_format) =
-            (cx.core.canvas_format(), cx.core.depth.texture.format());
-        let particles =
-            if snapshot.environment.particles.enabled && !snapshot.particles.list.is_empty() {
-                let particles = self.particles.get_or_insert_with(|| {
-                    ParticlePass::new(
-                        device,
-                        surface_format,
-                        depth_format,
-                        &accumulation_targets(),
-                    )
-                });
-                let prepared =
-                    particles.prepare(device, queue, snapshot, emitters, region.render, depth);
-                if prepared.is_some() {
-                    particles.ensure_additive(device, post);
-                }
-                prepared
-            } else {
-                None
-            };
-        let Some(particles) = particles else {
-            if let Some(surfaces) = self.surfaces.as_mut() {
-                surfaces.release_targets();
-            }
-            return None;
-        };
-        let surfaces = self
-            .surfaces
-            .get_or_insert_with(|| TransparentPass::new(device, surface_format, depth_format));
-        surfaces.begin(device, region.display);
-        let dither = snapshot.environment.dither.enabled;
-        surfaces.ensure_composite(device, post, dither);
-        Some(TransparencyFrame { particles, dither })
-    }
-
     fn surfaces(&self) -> &TransparentPass {
         self.surfaces
             .as_ref()
             .expect("transparent_surfaces_created")
     }
 
-    pub(crate) fn revealed(&self) -> Option<Bound<'_>> {
-        self.frame.as_ref()?;
+    pub fn revealed(&self) -> Option<Bound<'_>> {
+        if !self.drawn {
+            return None;
+        }
         let targets = self.surfaces.as_ref()?.targets.get()?;
         Some(Bound::of(
             targets,
@@ -365,21 +316,39 @@ impl GpuPart for Transparency {
             depth: table.resource("depth"),
             scene: table.resource("scene"),
             glow: table.resource("glow"),
-            shadow_maps: table.resource("shadow_maps"),
         };
+        if let Some(surfaces) = self.surfaces.as_mut() {
+            surfaces.composite = Default::default();
+        }
     }
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         if cx.frame.kind.debug {
-            self.frame = None;
+            self.drawn = false;
             return;
         }
-        let post = cx.parts.get::<PostPass>().is_some_and(PostPass::active);
-        self.frame = self.prepare_frame(cx, post);
+        self.drawn = self.ids.accumulated.is_some_and(|accumulated| {
+            cx.parts.iter().any(|(_, part)| part.wants(accumulated))
+        });
+        if !self.drawn {
+            if let Some(surfaces) = self.surfaces.as_mut() {
+                surfaces.release_targets();
+            }
+            return;
+        }
+        let post = cx.parts.post().is_some_and(PostPass::active);
+        let core = &*cx.core;
+        let device = &core.device;
+        let (surface_format, depth_format) = (core.canvas_format(), core.depth.texture.format());
+        let surfaces = self
+            .surfaces
+            .get_or_insert_with(|| TransparentPass::new(device, surface_format, depth_format));
+        surfaces.begin(device, core.display.region.display);
+        surfaces.ensure_composite(device, post);
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
-        let (Some(_), Some(shape)) = (&self.frame, cx.frame.shape) else {
+        let (true, Some(shape)) = (self.drawn, cx.frame.shape) else {
             return;
         };
         let ids = self.ids;
@@ -394,7 +363,6 @@ impl GpuPart for Transparency {
         };
         let _ = graph
             .add(cx.table, transparent)
-            .read_written(ids.shadow_maps)
             .color(accumulated, Access::Clear(Clear::Color(TRANSPARENT)))
             .color(revealed, Access::Clear(Clear::Color(WHITE)))
             .depth(depth, Access::ReadOnly);
@@ -420,18 +388,12 @@ impl GpuPart for Transparency {
         cx: &mut Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        let Some(frame) = &self.frame else {
+        let (true, Some(shape)) = (self.drawn, cx.frame.shape) else {
             return 0;
         };
-        let Some(&GroupRef::Shared { group, without }) = PARTICLE_PIPELINES.groups.first() else {
-            return 0;
-        };
-        let camera = cx.core.shared_group(group, without);
+        let targets = shape.targets;
         if pass == COMPOSITE_PASS {
-            let post = cx
-                .frame
-                .shape
-                .is_some_and(|shape| shape.targets != crate::graph::Targets::Canvas);
+            let post = targets != crate::graph::Targets::Canvas;
             let mut render = cx.render_pass(
                 encoder,
                 "engine/transparent-composite",
@@ -440,10 +402,18 @@ impl GpuPart for Transparency {
                     .span("transparent_composite")
                     .map(Span::render),
             );
-            self.surfaces().composite(&mut render, post, frame.dither);
-            if let Some(particles) = &self.particles {
-                particles.draw_additive(&mut render, camera, &frame.particles, post);
-            }
+            self.surfaces().composite(
+                &mut render,
+                post,
+                &shared_groups(cx.core, &TRANSPARENT_COMPOSITE_PIPELINES),
+            );
+            let _ = cx.draw_hook(
+                DrawAt::Transparent {
+                    targets,
+                    accumulated: false,
+                },
+                &mut render,
+            );
             return 0;
         }
         let mut render = cx.render_pass(
@@ -451,9 +421,13 @@ impl GpuPart for Transparency {
             "engine/transparent-accumulation",
             cx.core.profiler.span("transparent").map(Span::render),
         );
-        if let Some(particles) = &self.particles {
-            particles.draw_alpha(&mut render, camera, &frame.particles);
-        }
+        let _ = cx.draw_hook(
+            DrawAt::Transparent {
+                targets,
+                accumulated: true,
+            },
+            &mut render,
+        );
         0
     }
 
@@ -470,21 +444,5 @@ impl GpuPart for Transparency {
         self.surfaces
             .as_ref()
             .map_or(0, TransparentPass::capacity_bytes)
-            + self
-                .particles
-                .as_ref()
-                .map_or(0, ParticlePass::capacity_bytes)
-    }
-
-    fn stats(&self, cx: &View<'_>, stats: &mut RenderStats) {
-        let snapshot = cx.frame.snapshot;
-        let particles = self.frame.as_ref().map(|frame| &frame.particles);
-        stats.particles = Drawn {
-            drawn: particles.map_or(0, |frame| frame.total),
-            invalid: snapshot.particles.invalid.min(u32::MAX as usize) as u32,
-            dropped: (snapshot.particles.dropped as u64
-                + particles.map_or(0, |frame| frame.dropped))
-            .min(u64::from(u32::MAX)) as u32,
-        };
     }
 }

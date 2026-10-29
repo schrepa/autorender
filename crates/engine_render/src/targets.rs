@@ -1,8 +1,8 @@
 use crate::cached::Versioned;
-use crate::debug_view::{COUNT_FORMAT as DEBUG_COUNT_FORMAT, IDS_FORMAT as DEBUG_IDS_FORMAT};
 pub(crate) use crate::graph::Targets;
-use crate::post::{GLOW_FORMAT, SCENE_FORMAT, SURFACE_FORMAT};
-use crate::temporal::MOTION_FORMAT;
+use crate::post::{
+    DEBUG_COUNT_FORMAT, DEBUG_IDS_FORMAT, GLOW_FORMAT, MOTION_FORMAT, SCENE_FORMAT, SURFACE_FORMAT,
+};
 
 impl Targets {
     pub(crate) fn formats(self, canvas: wgpu::TextureFormat) -> Vec<wgpu::TextureFormat> {
@@ -19,7 +19,7 @@ impl Targets {
         canvas: wgpu::TextureFormat,
     ) -> Vec<Option<wgpu::ColorTargetState>> {
         if self == Self::Debug {
-            return crate::debug_view::color_targets();
+            return crate::post::debug_color_targets();
         }
         self.formats(canvas)
             .into_iter()

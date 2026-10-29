@@ -1,11 +1,13 @@
 use std::fmt::Write as _;
 
-use engine_core::{Error, ErrorCode, Expected};
+use engine_core::{BrickRegistry, Error, ErrorCode, Expected};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PostStage {
+    Resolve,
     Scene,
     Light,
+    Tonemap,
     Display,
 }
 
@@ -18,8 +20,7 @@ pub struct PixelEffect {
 pub const COLOR_MODULE: &str = "engine::color";
 pub const COMPOSITE_ENTRY: &str = "fs_composite";
 pub const PLAIN_RESOLVE: &str = "post::resolve_plain";
-pub const TAA_RESOLVE: &str = "post::taa";
-pub const RESOLVES: [&str; 2] = [PLAIN_RESOLVE, TAA_RESOLVE];
+pub const TRANSPARENT_COMPOSITE: &str = "transparent::composite";
 
 pub fn composite_path(resolve: &str) -> String {
     format!("generated::composite::{}", resolve.replace("::", "_"))
@@ -37,6 +38,56 @@ pub fn pixel_effects(parts: &crate::parts::Parts) -> Vec<PixelEffect> {
     (0..parts.len())
         .flat_map(|index| parts.decl(index).effects.iter().copied())
         .collect()
+}
+
+pub fn effects_of(registry: &BrickRegistry) -> Vec<PixelEffect> {
+    crate::render_bricks::render_bricks(registry)
+        .flat_map(|(_, brick)| brick.parts.iter())
+        .flat_map(|part| part.decl.effects.iter().copied())
+        .collect()
+}
+
+pub fn resolves(effects: &[PixelEffect]) -> impl Iterator<Item = &'static str> + '_ {
+    std::iter::once(PLAIN_RESOLVE).chain(
+        effects
+            .iter()
+            .filter(|effect| effect.stage == PostStage::Resolve)
+            .map(|effect| effect.module),
+    )
+}
+
+pub fn tonemap_effect(effects: &[PixelEffect]) -> Result<Option<&'static str>, Error> {
+    let mut tonemaps = effects
+        .iter()
+        .filter(|effect| effect.stage == PostStage::Tonemap);
+    let first = tonemaps.next();
+    if let (Some(first), Some(second)) = (first, tonemaps.next()) {
+        return Err(Error::new(ErrorCode::SlotFilledTwice, "$.effects.tonemap")
+            .expected(Expected::Unique)
+            .got(second.module)
+            .nearest(first.module));
+    }
+    Ok(first.map(|effect| effect.module))
+}
+
+pub fn composites(
+    effects: &[PixelEffect],
+) -> Result<Vec<(String, &'static str, String)>, Error> {
+    tonemap_effect(effects)?;
+    let mut made = Vec::new();
+    for resolve in resolves(effects) {
+        made.push((
+            composite_path(resolve),
+            crate::parts::CORE_BRICK,
+            composite_source(resolve, effects, None)?,
+        ));
+    }
+    made.push((
+        composite_path(TRANSPARENT_COMPOSITE),
+        crate::parts::CORE_BRICK,
+        transparent_source(effects),
+    ));
+    Ok(made)
 }
 
 pub fn composite_source(
@@ -80,6 +131,39 @@ pub fn composite_source(
         let _ = writeln!(body, "    color = tonemap(color, resolved.at);");
     }
     let _ = writeln!(body, "    var encoded = encode_srgb(color);");
+    displays(effects, "encoded", "resolved.at", &mut imports, &mut body);
+    let _ = writeln!(body, "    return output(resolved, encoded);");
+    Ok(format!(
+        "{imports}\n@fragment\nfn {COMPOSITE_ENTRY}(@builtin(position) position: vec4<f32>) -> Outputs {{\n{body}}}\n"
+    ))
+}
+
+pub fn transparent_source(effects: &[PixelEffect]) -> String {
+    let mut imports = String::new();
+    let mut body = String::new();
+    let _ = writeln!(
+        imports,
+        "import package::{TRANSPARENT_COMPOSITE}::{{output, weighted}};"
+    );
+    let _ = writeln!(imports, "import package::{COLOR_MODULE}::encode_srgb;");
+    let _ = writeln!(body, "    let drawn = weighted(position);");
+    let _ = writeln!(body, "    if drawn.reveal >= 1.0 {{\n        discard;\n    }}");
+    let _ = writeln!(body, "    let encoded = encode_srgb(drawn.color);");
+    let _ = writeln!(body, "    var shown = encoded;");
+    displays(effects, "shown", "drawn.at", &mut imports, &mut body);
+    let _ = writeln!(body, "    return output(drawn, encoded, shown);");
+    format!(
+        "{imports}\n@fragment\nfn {COMPOSITE_ENTRY}(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {{\n{body}}}\n"
+    )
+}
+
+fn displays(
+    effects: &[PixelEffect],
+    color: &str,
+    at: &str,
+    imports: &mut String,
+    body: &mut String,
+) {
     let displays = effects
         .iter()
         .filter(|effect| effect.stage == PostStage::Display);
@@ -89,10 +173,6 @@ pub fn composite_source(
             "import package::{}::apply as display_{index};",
             effect.module
         );
-        let _ = writeln!(body, "    encoded = display_{index}(encoded, resolved.at);");
+        let _ = writeln!(body, "    {color} = display_{index}({color}, {at});");
     }
-    let _ = writeln!(body, "    return output(resolved, encoded);");
-    Ok(format!(
-        "{imports}\n@fragment\nfn {COMPOSITE_ENTRY}(@builtin(position) position: vec4<f32>) -> Outputs {{\n{body}}}\n"
-    ))
 }

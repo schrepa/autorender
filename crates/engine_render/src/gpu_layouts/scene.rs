@@ -136,7 +136,6 @@ gpu_structs! {
         pub haze: [f32; 4],
         pub previous_view_projection: [[f32; 4]; 4],
         pub previous_eye: [f32; 4],
-        pub sun_direction: [f32; 4],
         pub sky: [f32; 4],
         pub detail: [f32; 4],
     }

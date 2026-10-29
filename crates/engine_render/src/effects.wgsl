@@ -10,7 +10,6 @@ struct Post {
     haze: vec4<f32>,
     previous_view_projection: mat4x4<f32>,
     previous_eye: vec4<f32>,
-    sun_direction: vec4<f32>,
     sky: vec4<f32>,
     detail: vec4<f32>,
 }

@@ -81,39 +81,16 @@ modules! {
     "water::bursts" in "terrain" = "water_bursts.wgsl";
     "water::sim_shared" in "terrain" = "water_sim_shared.wgsl";
     "water::sim" in "terrain" = "water_sim.wgsl";
-    "post::pixel" in "post_effects" = "post/pixel.wgsl";
-    "post::frame" in "post_effects" = "effects.wgsl";
-    "post::effects" in "post_effects" = "post.wgsl";
-    "post::resolve_plain" in "post_effects" = "post/resolve_plain.wgsl";
+    "post::pixel" in "core" = "post/pixel.wgsl";
+    "post::frame" in "core" = "effects.wgsl";
+    "post::resolve_plain" in "core" = "post/resolve_plain.wgsl";
     "post::haze" in "post_effects" = "post/haze.wgsl";
-    "post::bloom" in "post_effects" = "post/bloom.wgsl";
-    "post::dither" in "post_effects" = "post/dither.wgsl";
     "post::taa" in "post_effects" = "temporal.wgsl";
     "post::haze_march" in "post_effects" = "haze.wgsl";
     "post::exposure" in "post_effects" = "exposure.wgsl";
     "post::reflections" in "post_effects" = "reflections.wgsl";
     "particles::draw" in "particles" = "particles.wgsl";
     "debug::view" in "debug_view" = "debug_view.wgsl";
-}
-
-pub const RESOLVES: &[&str] = &["post::resolve_plain", "post::taa"];
-
-pub fn composites() -> Vec<(String, &'static str, String)> {
-    let effects: Vec<crate::composite::PixelEffect> = crate::parts::standard()
-        .iter()
-        .flat_map(|entry| entry.decl.effects.iter().copied())
-        .collect();
-    RESOLVES
-        .iter()
-        .filter_map(|&resolve| {
-            let source = crate::composite::composite_source(resolve, &effects, None).ok()?;
-            Some((
-                crate::composite::composite_path(resolve),
-                "post_effects",
-                source,
-            ))
-        })
-        .collect()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -396,7 +373,6 @@ entry_points! {
     }
     transparent {
         vertex: [vs_fullscreen @ "engine::fullscreen"],
-        fragment: [fs_composite @ "transparent::composite"],
     }
     haze {
         vertex: [vs_fullscreen @ "engine::fullscreen"],
@@ -426,16 +402,6 @@ entry_points! {
     }
     post {
         vertex: [vs_fullscreen @ "engine::fullscreen"],
-        fragment: [
-            fs_occlusion @ "post::effects",
-            fs_effects_filter @ "post::effects",
-            fs_haze_filter @ "post::effects",
-            fs_bloom_first @ "post::effects",
-            fs_bloom_down @ "post::effects",
-            fs_levels_first @ "post::effects",
-            fs_levels_down @ "post::effects",
-            fs_bloom_up @ "post::effects",
-        ],
     }
     reflections {
         vertex: [vs_fullscreen @ "engine::fullscreen"],
