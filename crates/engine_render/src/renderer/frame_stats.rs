@@ -1,7 +1,6 @@
 use super::frame::{EncodeReport, Uploaded};
 use super::*;
 use crate::gpu_presentation::{GpuPrepared, PresentationPart};
-use crate::shadows::ShadowPass;
 
 use engine_core::{CullingStats, DetailStats};
 
@@ -149,7 +148,6 @@ impl Renderer {
             let _owner = crate::memory::owned(decl.brick);
             part.stats(&view, &mut stats);
         }
-        stats.terrain.placed_impostors = core.impostors.placed.live();
         let immediate = core.queue.take_immediate();
         self.profile_counters(info, uploaded, &stats, (gpu_visible, immediate));
         stats
@@ -193,7 +191,7 @@ impl Renderer {
         self.upload_counters(info, uploaded);
         if let Some(prepared) = self
             .parts
-            .get::<PresentationPart>()
+            .presentation()
             .and_then(PresentationPart::prepared)
         {
             gpu_counters(prepared, gpu_visible);
@@ -220,12 +218,6 @@ impl Renderer {
         engine_profile::counter("render.color_write_bytes", writes.color_bytes as f64);
         engine_profile::counter("render.instance_id_write_bytes", writes.slot_bytes as f64);
         engine_profile::counter("render.gpu_presentation", f64::from(u8::from(gpu_mode)));
-        engine_profile::counter(
-            "render.shadow_groups",
-            self.parts
-                .get::<ShadowPass>()
-                .map_or(0, |shadows| shadows.groups().len()) as f64,
-        );
         if let Some(frame) = &info.temporal {
             engine_profile::counter(
                 "render.taa_history",
@@ -289,8 +281,9 @@ impl Renderer {
         }
         engine_profile::counter(
             "memory.gpu_temporal_bytes",
-            (self.part_bytes("memory.gpu_temporal_bytes") + core.instances.alternate_bytes())
-                as f64,
+            (self.part_bytes("memory.gpu_temporal_bytes")
+                + core.instances.alternate_bytes()
+                + core.previous.capacity_bytes()) as f64,
         );
         engine_profile::counter(
             "memory.gpu_presentation_bytes",

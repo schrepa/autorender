@@ -6,6 +6,8 @@
 use super::*;
 use crate::bindings::{GroupRef, SharedBinding, SharedGroups};
 use crate::cached::GrowableGroupCache;
+use crate::pieces::{PIECE_ALIGN, PIECES_BINDING, PieceAt};
+use crate::pipeline_layouts::PipelineLayout;
 
 const FRAME: &str = "frame";
 const LABEL: &str = "engine/shared-group";
@@ -15,20 +17,22 @@ struct SharedView {
     without: &'static [&'static str],
     layout: crate::pipelines::GroupLayout,
     bound: GrowableGroupCache,
-    faces: [GrowableGroupCache; FACES],
+    views: Vec<GrowableGroupCache>,
 }
 
 pub(crate) struct CameraBindings {
     pub(crate) buffer: wgpu::Buffer,
-    lighting_buffer: wgpu::Buffer,
-    lighting: Option<LightingUniform>,
+    pieces: Versioned<wgpu::Buffer>,
+    placed: Vec<(usize, PieceAt)>,
+    staged: Vec<u8>,
+    written: Option<Vec<u8>>,
     views: Vec<SharedView>,
 }
 
 type Sources<'a> = Vec<(&'static str, Bound<'a>)>;
 
 impl CameraBindings {
-    pub(crate) fn new(device: &wgpu::Device, lighting_buffer: wgpu::Buffer) -> Self {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
         let buffer = crate::buffers::uniform(
             device,
             "engine/camera-uniform",
@@ -36,15 +40,21 @@ impl CameraBindings {
         );
         Self {
             buffer,
-            lighting_buffer,
-            lighting: None,
+            pieces: Versioned::new(pieces_buffer(device, PIECE_ALIGN)),
+            placed: Vec::new(),
+            staged: vec![0; PIECE_ALIGN as usize],
+            written: None,
             views: Vec::new(),
         }
     }
 
-    pub(crate) fn install(&mut self, device: &wgpu::Device) {
+    pub(crate) fn install(
+        &mut self,
+        device: &wgpu::Device,
+        layouts: &[(&'static str, &'static PipelineLayout)],
+    ) {
         self.views.clear();
-        for &(_, layout) in crate::pipeline_layouts::PIPELINE_LAYOUTS {
+        for &(_, layout) in crate::pipeline_layouts::PIPELINE_LAYOUTS.iter().chain(layouts) {
             for reference in layout.groups {
                 let GroupRef::Shared { group, without } = *reference else {
                     continue;
@@ -61,31 +71,45 @@ impl CameraBindings {
                     without,
                     layout: crate::pipelines::shared_layout(device, group, without),
                     bound: GrowableGroupCache::default(),
-                    faces: Default::default(),
+                    views: Vec::new(),
                 });
             }
         }
     }
 
-    pub(crate) fn lighting_buffer(&self) -> &wgpu::Buffer {
-        &self.lighting_buffer
-    }
-
-    pub(crate) fn forget_lighting(&mut self) {
-        self.lighting = None;
-    }
-
-    pub(crate) fn write_lighting(
+    pub(crate) fn place_pieces(
         &mut self,
-        queue: &crate::gpu_calls::Queue,
-        lighting: LightingUniform,
-    ) -> u64 {
-        if self.lighting == Some(lighting) {
+        device: &wgpu::Device,
+        placed: Vec<(usize, PieceAt)>,
+        size: u64,
+    ) {
+        if self.pieces.size() != size {
+            self.pieces.replace(pieces_buffer(device, size));
+        }
+        self.placed = placed;
+        self.staged = vec![0; size as usize];
+        self.written = None;
+    }
+
+    pub(crate) fn pieces(&self) -> &wgpu::Buffer {
+        &self.pieces
+    }
+
+    pub(crate) fn write_pieces(&mut self, queue: &crate::gpu_calls::Queue, parts: &Parts) -> u64 {
+        for &(index, at) in &self.placed {
+            let Some(bytes) = parts.part(index).and_then(|part| part.piece()) else {
+                continue;
+            };
+            let start = at.offset as usize;
+            let length = bytes.len().min(at.size as usize);
+            self.staged[start..start + length].copy_from_slice(&bytes[..length]);
+        }
+        if self.written.as_deref() == Some(self.staged.as_slice()) {
             return 0;
         }
-        queue.write_buffer(&self.lighting_buffer, 0, bytemuck::bytes_of(&lighting));
-        self.lighting = Some(lighting);
-        size_of::<LightingUniform>() as u64
+        queue.write_buffer(&self.pieces, 0, &self.staged);
+        self.written = Some(self.staged.clone());
+        self.staged.len() as u64
     }
 
     pub(crate) fn refresh(
@@ -93,11 +117,11 @@ impl CameraBindings {
         device: &wgpu::Device,
         shared: &SharedGroups,
         parts: &Parts,
-        probe_cameras: Option<[&wgpu::Buffer; FACES]>,
+        view_cameras: Option<&[wgpu::Buffer]>,
     ) {
         let Self {
             buffer,
-            lighting_buffer,
+            pieces,
             views,
             ..
         } = self;
@@ -108,10 +132,7 @@ impl CameraBindings {
             }
             let mut sources: Sources<'_> = vec![
                 ("camera", Bound::fixed(buffer.as_entire_binding())),
-                (
-                    "lighting",
-                    Bound::fixed(lighting_buffer.as_entire_binding()),
-                ),
+                (PIECES_BINDING, pieces.bound()),
             ];
             for (_, part) in parts.iter() {
                 part.contribute(view.group, &mut sources);
@@ -125,10 +146,14 @@ impl CameraBindings {
             };
             let bindings = || shared.view(view.group, view.without);
             bind_view(device, (bindings(), &view.layout), &mut view.bound, sources);
-            let Some(cameras) = probe_cameras.filter(|_| view.group == FRAME) else {
+            let Some(cameras) = view_cameras.filter(|_| view.group == FRAME) else {
                 continue;
             };
-            for (face, camera) in cameras.into_iter().enumerate() {
+            if view.views.len() < cameras.len() {
+                view.views
+                    .resize_with(cameras.len(), GrowableGroupCache::default);
+            }
+            for (index, camera) in cameras.iter().enumerate() {
                 let mut sources = sources.clone();
                 if let Some((_, bound)) = sources.iter_mut().find(|(name, _)| *name == "camera") {
                     *bound = Bound::fixed(camera.as_entire_binding());
@@ -136,7 +161,7 @@ impl CameraBindings {
                 bind_view(
                     device,
                     (bindings(), &view.layout),
-                    &mut view.faces[face],
+                    &mut view.views[index],
                     &sources,
                 );
             }
@@ -144,15 +169,17 @@ impl CameraBindings {
     }
 
     pub(crate) fn group(&self, group: &str, without: &[&str]) -> &wgpu::BindGroup {
-        self.view(group, without)
-            .and_then(|view| view.bound.get())
-            .expect("shared_group_built")
+        self.built(group, without).expect("shared_group_built")
     }
 
-    pub(crate) fn probe_group(&self, face: usize, without: &[&str]) -> &wgpu::BindGroup {
+    pub(crate) fn built(&self, group: &str, without: &[&str]) -> Option<&wgpu::BindGroup> {
+        self.view(group, without).and_then(|view| view.bound.get())
+    }
+
+    pub(crate) fn view_group(&self, index: usize, without: &[&str]) -> &wgpu::BindGroup {
         self.view(FRAME, without)
-            .and_then(|view| view.faces.get(face)?.get())
-            .expect("prepared_before_captures")
+            .and_then(|view| view.views.get(index)?.get())
+            .expect("prepared_before_views")
     }
 
     fn view(&self, group: &str, without: &[&str]) -> Option<&SharedView> {
@@ -160,6 +187,10 @@ impl CameraBindings {
             .iter()
             .find(|view| view.group == group && view.without == without)
     }
+}
+
+fn pieces_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
+    crate::buffers::uniform(device, "engine/pieces-uniform", size)
 }
 
 fn bind_view<'s>(
@@ -196,4 +227,10 @@ fn bind_group(
         layout,
         entries,
     })
+}
+
+impl Core {
+    pub fn pieces_buffer(&self) -> &wgpu::Buffer {
+        self.camera.pieces()
+    }
 }

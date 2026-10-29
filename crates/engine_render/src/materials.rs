@@ -15,6 +15,7 @@ use crate::batches::BatchPlan;
 use crate::bindings::MATERIAL;
 use crate::gpu_data::{MaterialUniform, Variant, mip_chain_bytes, mip_levels};
 use crate::mipmaps::MipGenerator;
+use crate::parts::PartAssets;
 
 const COLOR_MAPS: [bool; 5] = [true, false, false, false, true];
 
@@ -110,12 +111,18 @@ impl MaterialStore {
         }
     }
 
-    pub(crate) fn retain(&mut self, plan: &BatchPlan, snapshot: &RenderSnapshot) {
+    pub(crate) fn retain(&mut self, plan: &BatchPlan, assets: &PartAssets<'_>) {
         let extra_material = |handle: &MaterialHandle| {
-            placed_materials(snapshot).any(|source| source.handle == *handle)
+            assets
+                .materials
+                .iter()
+                .any(|source| source.handle == *handle)
         };
         let extra_texture = |handle: &TextureHandle| {
-            placed_textures(snapshot).any(|source| source.handle == *handle)
+            assets
+                .textures
+                .iter()
+                .any(|source| source.handle == *handle)
         };
         let count = self.materials.len();
         self.materials
@@ -133,7 +140,7 @@ impl MaterialStore {
         queue: &crate::gpu_calls::Queue,
         snapshot: &RenderSnapshot,
         plan: &BatchPlan,
-        extra: impl Iterator<Item = MaterialHandle>,
+        assets: &PartAssets<'_>,
         encoder: &mut Option<wgpu::CommandEncoder>,
     ) -> (u64, u32) {
         let mut bytes = 0;
@@ -143,14 +150,10 @@ impl MaterialStore {
                 .get(&source.handle)
                 .is_some_and(|gpu| gpu.version == source.version)
         };
-        let extra: Vec<&RenderMaterial> = extra
-            .filter_map(|handle| {
-                snapshot
-                    .materials
-                    .iter()
-                    .find(|source| source.handle == handle)
-            })
-            .chain(placed_materials(snapshot))
+        let extra: Vec<&RenderMaterial> = assets
+            .materials
+            .iter()
+            .copied()
             .filter(|source| !built(&self.materials, source))
             .collect();
         let sources = plan
@@ -173,7 +176,7 @@ impl MaterialStore {
                     let texture = snapshot
                         .textures
                         .iter()
-                        .chain(placed_textures(snapshot))
+                        .chain(assets.textures.iter().copied())
                         .find(|texture| texture.handle == map.texture)
                         .expect("material_textures_validated");
                     let gpu = create_texture(
@@ -272,22 +275,6 @@ impl MaterialStore {
                 )
             })
     }
-}
-
-fn placed_materials(snapshot: &RenderSnapshot) -> impl Iterator<Item = &RenderMaterial> {
-    engine_terrain::RenderTerrains::of(snapshot)
-        .terrains
-        .iter()
-        .flat_map(|terrain| terrain.assets.iter().flatten())
-        .flat_map(engine_terrain::RenderPlacementAsset::materials)
-}
-
-fn placed_textures(snapshot: &RenderSnapshot) -> impl Iterator<Item = &engine_core::RenderTexture> {
-    engine_terrain::RenderTerrains::of(snapshot)
-        .terrains
-        .iter()
-        .flat_map(|terrain| terrain.assets.iter().flatten())
-        .flat_map(|asset| asset.textures.iter())
 }
 
 fn sampler<'a>(

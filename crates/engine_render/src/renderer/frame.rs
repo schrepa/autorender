@@ -110,25 +110,30 @@ impl Renderer {
         let Some(surface) = core.display.acquire(&core.device, &mut core.depth)? else {
             return Ok(self.core.residency_stats());
         };
-        self.core.specialize_shading(snapshot);
+        if kind.debug {
+            let core = &mut self.core;
+            core.debug.prepare(&core.device, core.display.size());
+        }
         let mut info = FrameInfo {
             snapshot,
             frame,
             kind,
             temporal: None,
-            lighting: None,
             passes: None,
             shape: None,
             kept: 0,
+            written: 0,
         };
         let mut prelude = Prelude::default();
         prelude.attribute(crate::parts::CORE_BRICK);
         let assets = self.upload_assets(snapshot, kind, &mut prelude);
         let packing = self.pack_instances(&mut info);
         let profile_writes = engine_profile::span("render", "queue_writes");
-        let writes = self.write_frame_data(&mut info, &packing, &mut prelude);
+        let mut writes = self.write_frame_data(&info, &packing, &mut prelude);
         self.core.profiler.begin_frame(&self.core.device);
         self.prepare_parts(&info, &mut prelude);
+        let core = &mut self.core;
+        writes.camera_bytes += core.camera.write_pieces(&core.queue, &self.parts);
         drop(profile_writes);
         self.hand_prelude(prelude);
         let profile_encoding = engine_profile::span("render", "command_encoding");
@@ -140,6 +145,11 @@ impl Renderer {
         info.passes = Some(self.prepare_pipelines(&info));
         self.steps(&info, |part, cx| part.prepare_draws(cx, &mut encoder));
         self.refresh_shared(&info);
+        if info.temporal.is_some() {
+            let core = &mut self.core;
+            core.previous
+                .prepare_pose_groups(&core.device, &core.instances);
+        }
         info.shape = Some(self.frame_shape(&info));
         self.steps(&info, |part, cx| part.finish(cx));
         let mut graph = std::mem::take(&mut self.graph);
@@ -155,6 +165,7 @@ impl Renderer {
             }
         };
         info.kept = graph.kept();
+        info.written = graph.written();
         let (mut encoder, draws, batch) = self.encode_passes(&graph, &views, &info, encoder);
         self.graph = graph;
         #[cfg(feature = "dev")]
@@ -163,6 +174,7 @@ impl Renderer {
         self.close_frame(&mut encoder, batch);
         drop(profile_encoding);
         self.submit_frame(kind, surface, encoder);
+        self.core.previous.after_submit(info.temporal.as_ref());
         let uploaded = Uploaded {
             assets,
             packing,

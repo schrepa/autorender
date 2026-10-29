@@ -28,7 +28,7 @@ use inputs::NodeInputs;
 pub(crate) use inputs::Staging;
 use layouts::Shaders;
 pub(crate) use part::{PART, PresentationPart};
-use probes::{ProbeFaces, Stillness};
+use probes::{Stillness, ViewFaces};
 use totals::Totals;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -78,9 +78,17 @@ pub(crate) struct BatchMeta {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct RecordsKey {
-    pub shadow_groups: bool,
+    pub groups: u64,
     pub meshes: u64,
     pub impostors: u64,
+}
+
+pub struct Presented<'a> {
+    pub candidates: &'a wgpu::Buffer,
+    pub batches: &'a wgpu::Buffer,
+    pub flags: &'a wgpu::Buffer,
+    pub count: u32,
+    pub generation: u64,
 }
 
 pub(crate) struct PresentationInputs<'a> {
@@ -129,7 +137,7 @@ pub(crate) struct GpuPresentationPass {
     groups: DrawGroups,
     stillness: Stillness,
     fades: Fades,
-    probes: ProbeFaces,
+    probes: ViewFaces,
     totals: Totals,
     watched: std::cell::Cell<Option<u32>>,
     occlusion_counts: wgpu::Buffer,
@@ -169,9 +177,7 @@ impl GpuPresentationPass {
             groups: DrawGroups::new(device),
             stillness: Stillness::new(device),
             fades: Fades::new(device),
-            probes: ProbeFaces::new(std::array::from_fn(|_| {
-                uniform("engine/presentation-frame-probe")
-            })),
+            probes: ViewFaces::default(),
             totals: Totals::new(device),
             watched: std::cell::Cell::new(None),
             occlusion_counts: storage(
@@ -250,8 +256,8 @@ impl GpuPresentationPass {
         self.subpixel
     }
 
-    pub(crate) fn shadow_inputs(&self) -> crate::shadows::Presented<'_> {
-        crate::shadows::Presented {
+    pub fn presented(&self) -> Presented<'_> {
+        Presented {
             candidates: &self.groups.slot_candidates,
             batches: &self.groups.batches,
             flags: &self.groups.scan,

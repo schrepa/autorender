@@ -6,7 +6,7 @@ use crate::batches::DrawBatch;
 use crate::gpu_data::{FLAG_PROBE, PresentationFrame, STILL_FRAMES, frustum_uniform};
 use crate::mesh_arena::Ids;
 
-type FacesKey = (u64, u64, usize, u64);
+type FacesKey = (u64, u64, usize, u64, usize);
 
 struct FaceGroups {
     cull: wgpu::BindGroup,
@@ -87,25 +87,16 @@ impl Stillness {
     }
 }
 
-pub(super) struct ProbeFaces {
-    uniforms: [wgpu::Buffer; 6],
+#[derive(Default)]
+pub(super) struct ViewFaces {
+    uniforms: Vec<wgpu::Buffer>,
     groups: Vec<(FacesKey, Vec<FaceGroups>)>,
     current: usize,
 }
 
-impl ProbeFaces {
-    pub(super) fn new(uniforms: [wgpu::Buffer; 6]) -> Self {
-        Self {
-            uniforms,
-            groups: Vec::new(),
-            current: 0,
-        }
-    }
-}
-
 impl GpuPresentationPass {
     #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
-    pub(crate) fn encode_probe_face(
+    pub(crate) fn encode_view(
         &mut self,
         device: &wgpu::Device,
         queue: &crate::gpu_calls::Queue,
@@ -120,6 +111,13 @@ impl GpuPresentationPass {
         };
         if self.groups.count() == 0 {
             return false;
+        }
+        while self.probes.uniforms.len() <= face {
+            self.probes.uniforms.push(crate::buffers::uniform(
+                device,
+                "engine/presentation-frame-probe",
+                size_of::<PresentationFrame>() as u64,
+            ));
         }
         let (planes, absolute) = frustum_uniform(view_projection);
         uniform.planes = planes;
@@ -144,6 +142,7 @@ impl GpuPresentationPass {
             generation,
             index,
             self.stillness.generation(),
+            self.probes.uniforms.len(),
         );
         if let Some(index) = self
             .probes
@@ -153,10 +152,10 @@ impl GpuPresentationPass {
         {
             self.probes.current = index;
         } else {
-            self.probes.groups.retain(|((groups, poses, _, still), _)| {
-                (*groups, *poses, *still) == (key.0, key.1, key.3)
+            self.probes.groups.retain(|((groups, poses, _, still, views), _)| {
+                (*groups, *poses, *still, *views) == (key.0, key.1, key.3, key.4)
             });
-            let groups = (0..6)
+            let groups = (0..self.probes.uniforms.len())
                 .map(|face| self.probe_face_groups(device, face, poses))
                 .collect();
             self.probes.groups.push((key, groups));
@@ -209,7 +208,7 @@ impl GpuPresentationPass {
         }
     }
 
-    pub(crate) fn probe_draw_source<'a>(
+    pub(crate) fn view_draw_source<'a>(
         &'a self,
         batch: &DrawBatch,
         index: usize,

@@ -548,6 +548,13 @@ pub(crate) fn install(
     });
 }
 
+pub(crate) fn set_linker(device: &wgpu::Device, linker: Linker) {
+    with_registry(device, |registry| {
+        registry.linker = linker;
+        registry.forget_pipelines();
+    });
+}
+
 pub(crate) fn add_generated(
     device: &wgpu::Device,
     path: String,

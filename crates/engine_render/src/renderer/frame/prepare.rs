@@ -1,13 +1,8 @@
 use super::*;
 use crate::graph::FrameShape;
-use crate::lights::LightPass;
 use crate::memory::buffer_init;
-use crate::parts::{Begin, BeginOut, PreludeStage, UniformsOut};
+use crate::parts::{Begin, BeginOut, PartAssets, PreludeStage};
 use crate::post::PostPass;
-use crate::probes::ProbePass;
-use crate::scatter::ScatterPass;
-use crate::shadows::ShadowPass;
-use crate::temporal::TemporalPass;
 
 impl Renderer {
     pub(super) fn plan_frame(
@@ -43,24 +38,18 @@ impl Renderer {
                 );
             });
         }
-        if out.forget_temporal {
+        let motion = ["motion", "previous_poses"]
+            .into_iter()
+            .any(|name| self.parts.wants(self.table.resource(name)));
+        if out.forget_temporal || (self.core.previous.wanted && !motion) {
             self.forget_temporal();
         }
-        let debug = self.shows_debug_view(snapshot);
-        let post = self
-            .parts
-            .get::<PostPass>()
-            .is_some_and(|post| !post.disabled());
-        let temporal = display
-            && gpu_mode
-            && !debug
-            && self
-                .parts
-                .get::<TemporalPass>()
-                .is_some_and(TemporalPass::active)
-            && post;
-        if !temporal && let Some(pass) = self.parts.get_mut::<TemporalPass>() {
-            pass.reset();
+        self.core.previous.wanted = motion;
+        let debug = self.shows_debug_view();
+        let post = self.parts.post().is_some_and(|post| !post.disabled());
+        let temporal = display && gpu_mode && !debug && motion && post;
+        if !temporal {
+            self.core.previous.reset();
         }
         self.core.display.plan_region(display && !debug && post);
         let profile_residency = engine_profile::span("render", "validate_and_retire");
@@ -72,8 +61,9 @@ impl Renderer {
                     .got(side));
             }
         }
-        self.retire_meshes();
-        self.core.materials.retain(&self.core.plan, snapshot);
+        let assets = self.parts.assets(snapshot);
+        self.retire_meshes(&assets, self.parts.asset_generation());
+        self.core.materials.retain(&self.core.plan, &assets);
         drop(profile_residency);
         Ok(FrameKind {
             gpu_mode,
@@ -84,29 +74,18 @@ impl Renderer {
         })
     }
 
-    fn retire_meshes(&mut self) {
-        let shadows = self.parts.get::<ShadowPass>();
-        let scatter = self.parts.get::<ScatterPass>();
+    fn retire_meshes(&mut self, assets: &PartAssets<'_>, generation: u64) {
         let core = &mut self.core;
-        let residency = (
-            core.plan.rebuilds(),
-            shadows.map_or(0, ShadowPass::groups_generation),
-            scatter.map_or(0, ScatterPass::placed_generation),
-        );
+        let residency = (core.plan.rebuilds(), generation);
         if core.structure_keys.residency == Some(residency) {
             return;
         }
         core.structure_keys.residency = Some(residency);
-        let shadow_meshes: BTreeSet<MeshHandle> = shadows
-            .map(|shadows| shadows.groups().iter().map(|group| group.mesh).collect())
-            .unwrap_or_default();
-        let placed = scatter.map(ScatterPass::placed_meshes);
+        let kept: BTreeSet<MeshHandle> = assets.meshes.iter().map(|&(mesh, _)| mesh).collect();
         let (plan, arena) = (&core.plan, &mut core.mesh_arena);
         let resident = core.meshes.len();
         core.meshes.retain(|handle, mesh| {
-            let keep = plan.contains_mesh(*handle)
-                || shadow_meshes.contains(handle)
-                || placed.is_some_and(|placed| placed.contains(handle));
+            let keep = plan.contains_mesh(*handle) || kept.contains(handle);
             if !keep && let Ok(placement) = mesh.placement {
                 arena.remove(placement);
             }
@@ -119,6 +98,7 @@ impl Renderer {
 
     pub(in crate::renderer) fn forget_temporal(&mut self) {
         self.core.forget_temporal();
+        self.core.previous.release();
         for index in 0..self.parts.len() {
             let _owner = crate::memory::owned(self.parts.decl(index).brick);
             self.parts
@@ -126,10 +106,6 @@ impl Renderer {
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub(super) fn upload_assets(
         &mut self,
         snapshot: &RenderSnapshot,
@@ -137,42 +113,20 @@ impl Renderer {
         prelude: &mut Prelude,
     ) -> AssetUploads {
         let gpu_mode = kind.gpu_mode;
-        let shadows = self.parts.get::<ShadowPass>();
-        let placed_generation = self
-            .parts
-            .get::<ScatterPass>()
-            .map_or(0, ScatterPass::placed_generation);
+        let assets = self.parts.assets(snapshot);
+        let generation = self.parts.asset_generation();
         let core = &mut self.core;
 
         let profile_upload = engine_profile::span("render", "asset_uploads");
         let mut mesh_upload_bytes = 0_u64;
-        let groups = shadows.map_or(&[][..], ShadowPass::groups);
-        let groups_generation = shadows.map_or(0, ShadowPass::groups_generation);
-        let uploads = (
-            core.plan.rebuilds(),
-            groups_generation,
-            core.mesh_layout,
-            placed_generation,
-        );
+        let uploads = (core.plan.rebuilds(), generation, core.mesh_layout);
         let mesh_uploads = core.structure_keys.uploads != Some(uploads);
         let sources = core
             .plan
             .batches
             .iter()
             .map(|batch| (batch.mesh, &snapshot.meshes[batch.source_index]))
-            .chain(
-                groups
-                    .iter()
-                    .map(|group| (group.mesh, &snapshot.meshes[group.source_index])),
-            )
-            .chain(
-                engine_terrain::RenderTerrains::of(snapshot)
-                    .terrains
-                    .iter()
-                    .flat_map(|terrain| terrain.assets.iter().flatten())
-                    .flat_map(engine_terrain::RenderPlacementAsset::meshes)
-                    .map(|mesh| (mesh.handle, mesh)),
-            )
+            .chain(assets.meshes.iter().copied())
             .filter(|_| mesh_uploads);
         for (handle, rendered) in sources {
             let source = &rendered.mesh;
@@ -242,21 +196,16 @@ impl Renderer {
             }
         }
         if mesh_uploads {
-            core.structure_keys.uploads = Some((
-                core.plan.rebuilds(),
-                groups_generation,
-                core.mesh_layout,
-                placed_generation,
-            ));
+            core.structure_keys.uploads =
+                Some((core.plan.rebuilds(), generation, core.mesh_layout));
         }
-        let shadow_materials = groups.iter().filter_map(|group| group.material);
         let mut mips = None;
         let (texture_upload_bytes, mip_levels) = core.materials.upload(
             &core.device,
             &core.queue,
             snapshot,
             &core.plan,
-            shadow_materials,
+            &assets,
             &mut mips,
         );
         core.prepare_impostors(snapshot, gpu_mode, &mut mips);
@@ -284,15 +233,22 @@ impl Renderer {
         self.core
             .instances
             .reserve(&self.core.device, snapshot.instances.len(), temporal);
-        let mut temporal_frame = None;
         if temporal {
+            let mut jitter = None;
             self.steps(info, |part, cx| {
-                if temporal_frame.is_none() {
-                    temporal_frame = part.temporal_frame(cx);
+                if jitter.is_none() {
+                    jitter = part.jitter(cx);
                 }
             });
+            let core = &mut self.core;
+            let generation = core.instances.generation();
+            info.temporal = Some(core.previous.frame(
+                &core.device,
+                &frame,
+                (core.display.region, generation),
+                jitter,
+            ));
         }
-        info.temporal = temporal_frame;
         let core = &mut self.core;
         let slot_key = Some((frame.identity(), frame.structure_revision()));
         let write_slots = !gpu_mode
@@ -320,13 +276,9 @@ impl Renderer {
         }
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub(super) fn write_frame_data(
         &mut self,
-        info: &mut FrameInfo<'_>,
+        info: &FrameInfo<'_>,
         packing: &Packing,
         prelude: &mut Prelude,
     ) -> Writes {
@@ -351,12 +303,11 @@ impl Renderer {
         camera.set_detail(snapshot.detail_eye);
         let seconds = snapshot.elapsed_seconds;
         let previous = core.last_seconds.replace(seconds).unwrap_or(seconds);
-        let terrain_environment = engine_terrain::TerrainEnvironment::of(snapshot);
-        let wind = terrain_environment.wind;
+        let wind = snapshot.wind;
         camera.wind = [
-            wind.velocity[0],
-            wind.velocity[1],
-            wind.gusts,
+            wind[0],
+            wind[1],
+            wind[2],
             if temporal_frame.is_some() {
                 previous
             } else {
@@ -370,22 +321,6 @@ impl Renderer {
             core.uploads.commit_camera(camera);
             camera_upload_bytes = size_of::<CameraUniform>() as u64;
         }
-        let mut lighting = LightingUniform::new(
-            &snapshot.environment.atmosphere,
-            &snapshot.environment.bloom,
-            &snapshot.environment.reflections,
-            (&snapshot.environment.sky, &snapshot.environment.highlights),
-            (&snapshot.environment.foliage, temporal_frame.is_some()),
-        );
-        lighting.grade[3] = f32::from(u8::from(snapshot.environment.dither.enabled));
-        let mut out = UniformsOut::default();
-        self.steps(info, |part, cx| part.uniforms(cx, &mut lighting, &mut out));
-        let core = &mut self.core;
-        if out.forget_lighting {
-            core.camera.forget_lighting();
-        }
-        camera_upload_bytes += core.camera.write_lighting(&core.queue, lighting);
-        info.lighting = Some(lighting);
         let mut color_upload_bytes = 0_u64;
         let mut slot_upload_bytes = 0_u64;
         let pose_ranges = if gpu_mode {
@@ -469,29 +404,37 @@ impl Renderer {
     pub(super) fn prepare_pipelines(&mut self, info: &FrameInfo<'_>) -> Passes {
         let kind = info.kind;
         let gpu_mode = kind.gpu_mode;
-        let lit_frame = self.parts.get::<LightPass>().is_some_and(LightPass::lit);
-        let relights = self.relights();
+        let (shading, warm) = SceneShading::of_parts(&self.parts.shading(info.snapshot));
+        let warm = if self.core.mesh_pipelines.cooking {
+            warm
+        } else {
+            Vec::new()
+        };
+        self.core.specialize_shading(shading, warm);
         let targets = self.frame_targets(info);
-        let opaque_kind = PassKind::opaque(targets, lit_frame);
-        self.core.ensure_variants(opaque_kind, relights);
-        if gpu_mode && !kind.debug && probes_listed(info.snapshot) {
-            self.core
-                .ensure_probe_variants(PassKind::probe(lit_frame), relights);
+        let opaque_kind = PassKind::opaque(targets);
+        let meshes = self.core.mesh_entries.is_some();
+        if meshes {
+            self.core.ensure_variants(opaque_kind);
         }
-        let placed = self
-            .parts
-            .get::<ScatterPass>()
-            .map_or(&[][..], ScatterPass::impostors);
-        let impostor_pass = if gpu_mode
+        let views = (gpu_mode && !kind.debug)
+            .then(|| self.parts.views())
+            .flatten()
+            .map(|views| (views.format, views.mirrored));
+        self.core.views = views;
+        if meshes && views.is_some() {
+            self.core.ensure_view_variants(PassKind::view());
+        }
+        let impostor_pass = if meshes
+            && gpu_mode
             && self
                 .core
                 .impostors
                 .records
                 .iter()
-                .chain(placed)
                 .any(|record| record.sphere[3] > 0.0)
         {
-            self.core.prepare_impostor_draws(opaque_kind, placed)
+            self.core.prepare_impostor_draws(opaque_kind)
         } else {
             None
         };
@@ -502,17 +445,10 @@ impl Renderer {
     }
 
     fn frame_targets(&self, info: &FrameInfo<'_>) -> Targets {
-        let post = self.parts.get::<PostPass>().is_some_and(PostPass::active);
+        let post = self.parts.post().is_some_and(PostPass::active);
         match (&info.temporal, post) {
             _ if info.kind.debug => Targets::Debug,
-            (Some(_), true)
-                if self
-                    .parts
-                    .get::<TemporalPass>()
-                    .is_some_and(TemporalPass::active) =>
-            {
-                Targets::Temporal
-            }
+            (Some(_), true) => Targets::Temporal,
             (_, true) => Targets::Post,
             (_, false) => Targets::Canvas,
         }
@@ -535,32 +471,33 @@ impl Renderer {
     }
 
     pub(super) fn refresh_shared(&mut self, info: &FrameInfo<'_>) {
-        let captures = info.kind.gpu_mode && !info.kind.debug && probes_listed(info.snapshot);
-        let cameras = captures
-            .then(|| self.parts.get::<ProbePass>())
+        let (parts, core) = (&self.parts, &mut self.core);
+        let cameras = (info.kind.gpu_mode && !info.kind.debug)
+            .then(|| parts.views())
             .flatten()
-            .map(|probes| std::array::from_fn(|face| probes.camera(face)));
-        let core = &mut self.core;
+            .map(|views| views.cameras);
         core.camera
-            .refresh(&core.device, &core.shared, &self.parts, cameras);
+            .refresh(&core.device, &core.shared, parts, cameras);
     }
 }
 
 impl Core {
-    pub(super) fn specialize_shading(&mut self, snapshot: &RenderSnapshot) {
-        let shading = SceneShading::of(snapshot);
+    pub(super) fn specialize_shading(&mut self, shading: SceneShading, warm: Vec<SceneShading>) {
         if shading != self.mesh_pipelines.shading {
             self.mesh_pipelines.shading = shading;
-            self.mesh_pipelines.variants.clear();
             self.structure_keys.variants = None;
             self.structure_keys.probes = None;
-            self.impostors.pipelines.forget_shading();
         }
+        self.warm = warm;
     }
-}
 
-fn probes_listed(snapshot: &RenderSnapshot) -> bool {
-    snapshot.environment.reflection_probes.enabled && !snapshot.reflection_probes.list.is_empty()
+    pub fn shading(&self) -> SceneShading {
+        self.mesh_pipelines.shading
+    }
+
+    pub fn warm_shading(&self) -> &[SceneShading] {
+        &self.warm
+    }
 }
 
 fn canvas_clear() -> [f64; 4] {

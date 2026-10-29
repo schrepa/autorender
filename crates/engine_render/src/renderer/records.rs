@@ -1,11 +1,18 @@
 use super::*;
-use crate::water::WaterPass;
+use crate::parts::{MadeRecord, RecordStart};
 
 impl Renderer {
+    fn each_part(&mut self, mut act: impl FnMut(&mut dyn GpuPart)) {
+        for index in 0..self.parts.len() {
+            let _owner = crate::memory::owned(self.parts.decl(index).brick);
+            self.parts.with_part(index, |part, _| act(part));
+        }
+    }
+
     pub fn take_record_wants(&mut self) -> Vec<RecordKey> {
         let mut wants = Vec::new();
         self.core.impostors.atlas.take_wants(&mut wants);
-        self.core.impostors.placed.take_wants(&mut wants);
+        self.each_part(|part| part.record_wants(&mut wants));
         wants
     }
 
@@ -13,60 +20,55 @@ impl Renderer {
         let impostors = &mut self.core.impostors;
         if impostors.atlas.asks(record) {
             impostors.atlas.answer(record, bytes);
-        } else if impostors.placed.asks(record) {
-            impostors.placed.answer(record, bytes);
+            return;
         }
+        let Some(index) = (0..self.parts.len())
+            .find(|&index| self.parts.part(index).is_some_and(|part| part.asks_record(record)))
+        else {
+            return;
+        };
+        let _owner = crate::memory::owned(self.parts.decl(index).brick);
+        self.parts
+            .with_part(index, |part, _| part.answer_record(record, bytes));
     }
 
     pub fn take_made_records(&mut self) -> Vec<(RecordKey, Vec<u8>, engine_core::RecordParity)> {
-        let mut impostors = Vec::new();
-        self.core.impostors.atlas.take_made(&mut impostors);
-        self.core.impostors.placed.take_made(&mut impostors);
-        impostors
-            .into_iter()
+        let mut made = Vec::new();
+        self.core.impostors.atlas.take_made(&mut made);
+        self.each_part(|part| part.made_records(&mut made));
+        made.into_iter()
             .map(|(record, bytes)| (record, bytes, engine_core::RecordParity::Exact))
             .collect()
     }
 
-    pub fn records_left(&self) -> [(&'static str, u64); 2] {
-        [
-            (
-                "impostors",
-                self.core.impostors.atlas.left() + self.core.impostors.placed.left(),
-            ),
-            (
-                "water looks",
-                self.parts
-                    .get::<WaterPass>()
-                    .map_or(0, |water| water.looks_left()),
-            ),
-        ]
+    pub fn records_left(&self) -> Vec<(&'static str, u64)> {
+        let mut left = vec![("impostors", self.core.impostors.atlas.left())];
+        for (_, part) in self.parts.iter() {
+            let Some((name, count)) = part.records_left() else {
+                continue;
+            };
+            match left.iter_mut().find(|(known, _)| *known == name) {
+                Some((_, known)) => *known += count,
+                None => left.push((name, count)),
+            }
+        }
+        left
     }
 
-    pub fn settle_water(
-        &mut self,
-        starts: Vec<(
-            u64,
-            Vec<RecordKey>,
-            std::sync::Arc<engine_terrain::SettleStart>,
-        )>,
-    ) {
-        let _owner = crate::memory::owned(crate::water::PART.decl.brick);
-        if let Some(water) = self.parts.get_mut::<WaterPass>() {
-            water.settle(starts);
+    pub fn start_records(&mut self, mut starts: Vec<RecordStart>) {
+        for index in 0..self.parts.len() {
+            if starts.is_empty() {
+                return;
+            }
+            let _owner = crate::memory::owned(self.parts.decl(index).brick);
+            self.parts
+                .with_part(index, |part, _| part.start_records(&mut starts));
         }
     }
 
-    pub fn take_settled_water(&mut self) -> Vec<(RecordKey, Result<Vec<u8>, String>)> {
-        self.parts
-            .get_mut::<WaterPass>()
-            .map(WaterPass::take_made)
-            .unwrap_or_default()
-    }
-
-    pub fn set_water_cooking(&mut self, cooking: bool) {
-        if let Some(water) = self.parts.get_mut::<WaterPass>() {
-            water.set_cooking(cooking);
-        }
+    pub fn take_records(&mut self) -> Vec<MadeRecord> {
+        let mut made = Vec::new();
+        self.each_part(|part| made.extend(part.take_records()));
+        made
     }
 }

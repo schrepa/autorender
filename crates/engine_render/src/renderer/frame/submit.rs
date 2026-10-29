@@ -114,7 +114,6 @@ impl Renderer {
             core.gpu_presentation.after_submit();
         }
         core.impostors.atlas.after_submit();
-        core.impostors.placed.after_submit();
         #[cfg(feature = "dev")]
         self.map_probe();
         self.core.profiler.submitted();

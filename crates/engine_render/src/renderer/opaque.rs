@@ -1,11 +1,10 @@
 use super::*;
-use crate::debug_view::{DebugViewPass, DrawKind, DrawRecord, bind_record};
+use crate::debug_targets::{DrawKind, DrawRecord, bind_record, debug_records};
 use crate::graph::{
     Access, Clear, FAR, FrameShape, Lifetime, PassBuilder, PassDecl, PassId, ResourceDecl,
     ResourceId, Stage,
 };
 use crate::parts::{Create, DrawAt, Encode, OpaqueSlot, PartDecl, PartEntry, View};
-use crate::temporal::TemporalPass;
 
 pub(crate) static OPAQUE_PART: PartEntry = PartEntry {
     decl: PartDecl {
@@ -250,14 +249,6 @@ fn draw_slots(
     draws
 }
 
-pub(crate) fn debug_records<'a>(cx: &View<'a>) -> Option<&'a DebugViewPass> {
-    cx.frame
-        .shape
-        .is_some_and(|shape| shape.targets == Targets::Debug)
-        .then(|| cx.parts.get::<DebugViewPass>())
-        .flatten()
-}
-
 impl Core {
     pub(crate) fn draw_prepass(
         &self,
@@ -275,11 +266,11 @@ impl Core {
     fn draw_opaque(&self, cx: &View<'_>, pass: &mut wgpu::RenderPass<'_>, phase: usize) -> u32 {
         let mut draws = self.draw_meshes(cx, pass, phase, false);
         let debug = debug_records(cx);
-        let casts = cx.frame.runs(cx.table, "shadow_maps");
+        let casts = cx.frame.writes(cx.table.resource("shadow_maps"));
         if cx.frame.kind.gpu_mode
-            && let Some((targets, lit)) = cx.frame.passes.and_then(|passes| passes.impostor_pass)
+            && let Some(targets) = cx.frame.passes.and_then(|passes| passes.impostor_pass)
             && let (Some(pipeline), Some(group)) = (
-                self.impostors.pipelines.pipeline(targets, lit),
+                self.impostors.pipelines.pipeline(targets),
                 self.impostors.atlas.group(),
             )
         {
@@ -315,21 +306,20 @@ impl Core {
         let Some(passes) = cx.frame.passes else {
             return 0;
         };
+        if self.mesh_entries.is_none() {
+            return 0;
+        }
         let opaque_kind = passes.opaque_kind;
-        let temporal_pass = cx
-            .frame
-            .temporal
-            .as_ref()
-            .zip(cx.parts.get::<TemporalPass>());
-        let lit = opaque_kind.lit && !prepass;
         pass.set_bind_group(0, self.shared_group("frame", &["refraction"]), &[]);
-        if lit {
-            pass.set_bind_group(3, self.shared_group("lights", &[]), &[]);
+        if let Some(lights) = self.camera.built("lights", &[]) {
+            pass.set_bind_group(3, lights, &[]);
         }
         pass.set_bind_group(
             2,
-            temporal_pass
-                .and_then(|(frame, temporal)| temporal.pose_group(frame))
+            cx.frame
+                .temporal
+                .as_ref()
+                .and_then(|frame| self.temporal_pose_group(frame))
                 .unwrap_or_else(|| self.instances.pose_group(0)),
             &[],
         );
@@ -337,7 +327,7 @@ impl Core {
             pass.set_vertex_buffer(1, self.instances.slots().slice(..));
         }
         let debug = debug_records(cx);
-        let casts = cx.frame.runs(cx.table, "shadow_maps");
+        let casts = cx.frame.writes(cx.table.resource("shadow_maps"));
         let mut draws = 0;
         let mut binds = BatchBinds::default();
         let order = if prepass {

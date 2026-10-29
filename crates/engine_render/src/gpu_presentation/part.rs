@@ -1,7 +1,7 @@
 use crate::batches::DrawBatch;
-use crate::bindings::{Contribution, Stages, uniform_of};
-use crate::depth_pyramid::{CullingPart, DepthPyramid, Reduction};
-use crate::gpu_data::{CameraUniform, LightingUniform};
+use crate::bindings::{Contribution, Stages, uniform, uniform_of};
+use crate::depth_pyramid::{DepthPyramid, Reduction};
+use crate::gpu_data::CameraUniform;
 use crate::graph::{
     FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
 };
@@ -9,26 +9,24 @@ use crate::impostors::ImpostorRecord;
 use crate::parts::{
     CORE_BRICK, Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, PreludeStage, Step, View,
 };
-use crate::probes::ProbePass;
-use crate::shadows::ShadowPass;
+use crate::pieces::PIECES_BINDING;
 
 use super::{BatchMeta, CullingView, GpuPrepared, PresentationInputs, RecordsKey, Staging};
 
 const FRAME_VIEW: Contribution = Contribution {
     group: "frame",
     set: "view",
-    bindings: &[
-        uniform_of(
-            "camera",
-            size_of::<CameraUniform>(),
-            Stages::VERTEX_FRAGMENT_COMPUTE,
-        ),
-        uniform_of(
-            "lighting",
-            size_of::<LightingUniform>(),
-            Stages::VERTEX_FRAGMENT,
-        ),
-    ],
+    bindings: &[uniform_of(
+        "camera",
+        size_of::<CameraUniform>(),
+        Stages::VERTEX_FRAGMENT_COMPUTE,
+    )],
+};
+
+const FRAME_PIECES: Contribution = Contribution {
+    group: "frame",
+    set: "pieces",
+    bindings: &[uniform(PIECES_BINDING, Stages::VERTEX_FRAGMENT_COMPUTE)],
 };
 
 pub(crate) static PART: PartEntry = PartEntry {
@@ -48,9 +46,13 @@ pub(crate) static PART: PartEntry = PartEntry {
                 name: "visible",
                 lifetime: Lifetime::Kept,
             },
+            ResourceDecl {
+                name: "previous_poses",
+                lifetime: Lifetime::Kept,
+            },
         ],
         hooks: &[],
-        contributes: &[FRAME_VIEW],
+        contributes: &[FRAME_VIEW, FRAME_PIECES],
         effects: &[],
         labels: &[],
         lazy: false,
@@ -131,9 +133,8 @@ fn prepare_presentation(
     let frame = cx.frame.frame;
     let snapshot = cx.frame.snapshot;
     let temporal_frame = &cx.frame.temporal;
-    let culls = cx.parts.get::<CullingPart>().is_some();
-    let shadows = cx.parts.get::<ShadowPass>();
-    let probes = cx.parts.get::<ProbePass>();
+    let parts = cx.parts;
+    let culls = parts.culling().is_some();
     let core = &mut *cx.core;
 
     let occlusion_enabled = snapshot.environment.occlusion_culling.enabled && culls;
@@ -165,7 +166,7 @@ fn prepare_presentation(
             first_index: draw.first_index,
             base_vertex: draw.base_vertex,
             bounds: mesh.bounds(),
-            group: shadows.map_or(0, |shadows| shadows.batch_group(index)),
+            group: parts.batch_group(index).unwrap_or(0),
             lods: gpu_mesh.plan[..levels - 1]
                 .iter()
                 .map(|&(offset, count, error)| (draw.first_index + offset, count, error))
@@ -176,7 +177,7 @@ fn prepare_presentation(
         }
     };
     let records = RecordsKey {
-        shadow_groups: shadows.is_some_and(|shadows| !shadows.groups().is_empty()),
+        groups: batch_groups(parts, core.plan.batches.len()),
         meshes: core.mesh_layout,
         impostors: if snapshot.environment.level_of_detail.impostors {
             core.impostors.atlas.generation() + 1
@@ -201,9 +202,7 @@ fn prepare_presentation(
             0.0
         },
         impostors: snapshot.environment.level_of_detail.impostors,
-        stillness: (snapshot.environment.reflection_probes.enabled
-            && !snapshot.reflection_probes.list.is_empty())
-        .then(|| probes.is_some_and(ProbePass::waiting)),
+        stillness: parts.views().map(|views| views.still),
         fade: core.switch_fades.share,
     };
     let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
@@ -226,4 +225,13 @@ fn prepare_presentation(
         &view,
         &core.profiler,
     ))
+}
+
+fn batch_groups(parts: &crate::parts::Parts, batches: usize) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+    for index in 0..batches {
+        parts.batch_group(index).hash(&mut hasher);
+    }
+    hasher.finish()
 }

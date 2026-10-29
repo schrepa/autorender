@@ -1,6 +1,6 @@
 use super::*;
 
-pub(crate) struct Core {
+pub struct Core {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: crate::gpu_calls::Queue,
     pub(crate) adapter: crate::AdapterInfo,
@@ -30,6 +30,11 @@ pub(crate) struct Core {
     pub(crate) health: Arc<Mutex<health::Reports>>,
     pub(crate) profiler: GpuProfiler,
     pub(crate) shared: crate::bindings::SharedGroups,
+    pub(crate) previous: PreviousFrame,
+    pub(crate) debug: crate::debug_targets::DebugFrame,
+    pub(crate) mesh_entries: Option<&'static crate::entries::MeshEntries>,
+    pub(crate) warm: Vec<SceneShading>,
+    pub(crate) views: Option<(wgpu::TextureFormat, bool)>,
 }
 
 impl Core {
@@ -53,10 +58,6 @@ impl Core {
 
     pub(crate) fn shared_group(&self, group: &str, without: &[&str]) -> &wgpu::BindGroup {
         self.camera.group(group, without)
-    }
-
-    pub(crate) fn probe_group(&self, face: usize, without: &[&str]) -> &wgpu::BindGroup {
-        self.camera.probe_group(face, without)
     }
 
     pub(crate) fn frame_poses(&self, parity: usize) -> FramePoses<'_> {

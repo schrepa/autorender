@@ -107,32 +107,17 @@ impl Renderer {
                 device_limits.max_texture_array_layers,
             ),
         )?;
-        crate::pipelines::install(
-            &device,
-            &crate::parts::standard_shared(),
-            crate::parts::standard_features(),
-        );
         let pipeline_counts = PipelineCounts::new(&device, display.format());
         let scope = crate::gpu_calls::validation_scope(&device);
         display.configure(&device);
         let depth = DepthTarget::new(&device, display.size());
-        let lighting_buffer = crate::buffers::uniform(
-            &device,
-            "engine/lighting-uniform",
-            size_of::<LightingUniform>() as u64,
-        );
         let materials = MaterialStore::new(&device, &queue);
-        let camera = CameraBindings::new(&device, lighting_buffer);
+        let camera = CameraBindings::new(&device);
+        let debug = crate::debug_targets::DebugFrame::new(&device);
         let instances = Instances::new(&device);
         let mesh_pipelines = MeshPipelines::new(&device);
         let impostor_pipelines = ImpostorPipelines::new(&device);
-        let impostor_atlases = (
-            ImpostorAtlas::new(&device, AtlasShape::SPHERE),
-            ImpostorAtlas::new(
-                &device,
-                AtlasShape::placed(engine_core::LevelOfDetail::default().impostor_pixels),
-            ),
-        );
+        let impostor_atlas = ImpostorAtlas::new(&device, AtlasShape::SPHERE);
         let gpu_presentation = GpuPresentationPass::new(&device);
         let validation = Box::pin(scope.pop());
 
@@ -165,8 +150,7 @@ impl Renderer {
             gpu_presentation,
             culling: Culling { pyramid: None },
             impostors: ImpostorDraws {
-                atlas: impostor_atlases.0,
-                placed: impostor_atlases.1,
+                atlas: impostor_atlas,
                 pipelines: impostor_pipelines,
                 contents: Contents::default(),
                 records: Vec::new(),
@@ -178,6 +162,11 @@ impl Renderer {
             health,
             profiler,
             shared: crate::bindings::SharedGroups::default(),
+            previous: PreviousFrame::default(),
+            debug,
+            mesh_entries: None,
+            warm: Vec::new(),
+            views: None,
         };
         let renderer = Self {
             core,

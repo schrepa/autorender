@@ -19,6 +19,7 @@ pub enum Stage {
     Transparent,
     Exposure,
     PostScene,
+    PostLight,
     Composite,
     AfterFrame,
 }
@@ -38,6 +39,7 @@ impl Stage {
             | Self::Transparent
             | Self::Exposure
             | Self::PostScene
+            | Self::PostLight
             | Self::Composite
             | Self::AfterFrame => 2,
         }
@@ -605,6 +607,13 @@ impl FrameGraph {
     pub fn kept(&self) -> u64 {
         self.kept_passes()
             .fold(0, |mask, node| mask | node.pass.bit())
+    }
+
+    pub fn written(&self) -> u128 {
+        let Set([low, high]) = self
+            .kept_passes()
+            .fold(Set::default(), |written, node| written.union(node.outputs()));
+        u128::from(low) | (u128::from(high) << 64)
     }
 }
 
