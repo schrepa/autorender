@@ -1,9 +1,13 @@
 import package::engine::math::{pcg, unit};
-import package::frame::view::{PI, camera, eye_world, lighting, pixel_noise};
+import package::face::horizons::{bounce_at, bounce_seen};
+import package::face::shadows::{air_shadow, sun_shadowed};
+import package::face::sky::cloud_passing;
+import package::face::sun::{sun_color, sun_direction};
+import package::face::tonemap::exposure;
+import package::frame::view::{PI, camera, eye_world, pixel_noise};
+import package::generated::pieces::pieces;
 import package::post::frame::{depth_texture, inverse_distance_at, post};
-import package::shadows::sample::{SHADOW_MAPS, shadow};
-import package::sky::air::{air_light, air_visibility, cloud_passing};
-import package::terrain::bounce::{bounce_at, bounce_seen};
+import package::sky::air::air_light;
 
 const HAZE_STEPS: u32 = 24u;
 const HAZE_OCTAVES: u32 = 3u;
@@ -33,12 +37,12 @@ fn haze_value(p: vec3<f32>, salt: u32) -> f32 {
 }
 
 fn haze_density(world: vec3<f32>) -> f32 {
-    let spread = lighting.haze_march.z;
+    let spread = pieces.sky.haze_march.z;
     if spread <= 0.0 {
         return 1.0;
     }
     let drift = vec3<f32>(camera.wind.x, 0.0, camera.wind.y) * camera.position.w;
-    var p = (world - drift) * lighting.haze_march.w;
+    var p = (world - drift) * pieces.sky.haze_march.w;
     var sum = 0.0;
     var strength = 1.0;
     var total = 0.0;
@@ -76,14 +80,14 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, depth, 1.0);
     let ray = far_point.xyz / far_point.w - post.eye.xyz;
     let ray_length = length(ray);
-    let reach = min(ray_length, lighting.haze_march.x);
+    let reach = min(ray_length, pieces.sky.haze_march.x);
     if !(reach > 0.0) {
         return vec4<f32>(0.0, 0.0, 0.0, inverse);
     }
     let direction = ray / ray_length;
     let jitter = fract(pixel_noise(position.xy) + post.haze.x);
-    let fog_most = -log(max(1.0 - lighting.fog.w, 1.0e-6));
-    let shadowed = SHADOW_MAPS && shadow.state.x != 0.0;
+    let fog_most = -log(max(1.0 - pieces.sky.fog.w, 1.0e-6));
+    let shadowed = sun_shadowed();
     var through = 1.0;
     var fogged = 0.0;
     var sunlit = 0.0;
@@ -100,10 +104,10 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         let far = reach * next * next;
         let point = eye_world(direction * mix(near, far, jitter));
         let height = max(point.y, -1000.0);
-        let fog_mean = lighting.fog.y * exp(-lighting.fog.z * height)
-            * max(far - max(near, lighting.fog.x), 0.0);
-        let air_mean = lighting.aerial.y * exp(-lighting.aerial.z * height)
-            * max(far - max(near, lighting.aerial.x), 0.0);
+        let fog_mean = pieces.sky.fog.y * exp(-pieces.sky.fog.z * height)
+            * max(far - max(near, pieces.sky.fog.x), 0.0);
+        let air_mean = pieces.sky.aerial.y * exp(-pieces.sky.aerial.z * height)
+            * max(far - max(near, pieces.sky.aerial.x), 0.0);
         if !(fog_mean + air_mean > 0.0) {
             continue;
         }
@@ -117,7 +121,7 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             let scattered = through * covered / step_depth;
             var visible = cloud_passing(point);
             if shadowed && visible > 0.0 {
-                visible *= air_visibility(point);
+                visible *= air_shadow(point);
             }
             sunlit += scattered * step_depth * visible;
             let sky_seen = scattered * haze_seen(point);
@@ -136,12 +140,12 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             mean_through *= 1.0 - covered;
         }
     }
-    let forward = lighting.haze_march.y;
-    let cosine = dot(direction, lighting.sun.xyz);
+    let forward = pieces.sky.haze_march.y;
+    let cosine = dot(direction, sun_direction());
     let denominator = 1.0 + forward * forward - 2.0 * forward * cosine;
     let phase = (1.0 - forward * forward) / (4.0 * PI * denominator * sqrt(denominator));
-    let sun = lighting.sun_color.rgb * (PI * phase * sunlit);
+    let sun = sun_color() * (PI * phase * sunlit);
     let lights = air_light(direction);
     let sky_light = lights.fog * (fog_sky - mean_fog_sky) + lights.air * (air_sky - mean_air_sky);
-    return vec4<f32>((sun + sky_light) * lighting.horizon.w, inverse);
+    return vec4<f32>((sun + sky_light) * exposure(), inverse);
 }
