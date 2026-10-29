@@ -80,6 +80,7 @@ libc = "=0.2.189"
 mach2 = "=0.7.0"
 ash = { version = "=0.38.0", default-features = false, features = ["loaded", "std"] }
 naga = "=30.0.1"
+wesl = { version = "=0.6.0", default-features = false }
 toml_edit = { version = "=0.25.15", default-features = false, features = ["parse"] }
 
 [workspace.lints.rust]

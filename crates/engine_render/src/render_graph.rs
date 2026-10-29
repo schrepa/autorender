@@ -488,13 +488,7 @@ fn load_op(access: Access, written: bool) -> Load {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Targets {
-    Canvas,
-    Post,
-    Temporal,
-    Debug,
-}
+pub(crate) use crate::graph::Targets;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FrameShape {

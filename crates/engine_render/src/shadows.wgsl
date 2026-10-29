@@ -71,7 +71,7 @@ struct Counters {
 
 const STILLNESS: u32 = 1u;
 const SKY_REFRESH: u32 = 2u;
-const F32_MAX: f32 = 0x1.fffffep+127f;
+const F32_MAX: f32 = 3.4028235e38f;
 const VALID: u32 = 4u;
 const KEEP_AFTER: u32 = 8u;
 const MOVING_UNTIL: u32 = 64u;

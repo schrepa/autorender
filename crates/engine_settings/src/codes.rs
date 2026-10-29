@@ -225,6 +225,11 @@ error_codes! {
     UnreadableMap => "unreadable_map",
     InvalidGltf => "invalid_gltf",
     UnsupportedFeature => "unsupported_feature",
+    AmbiguousPasses => "ambiguous_passes",
+    ShaderLink => "shader_link",
+    UnknownModule => "unknown_module",
+    UnknownBinding => "unknown_binding",
+    BindingLimit => "binding_limit",
 
     Comment => "comment",
     Marker => "marker",

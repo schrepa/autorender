@@ -502,9 +502,9 @@ fn evaluate(start: u32, inputs: Inputs) -> f32 {
                 if code == OP_ADD {
                     value = -0.0;
                 } else if code == OP_MIN {
-                    value = 0x1.fffffep+127f;
+                    value = 3.4028235e38f;
                 } else if code == OP_MAX {
-                    value = -0x1.fffffep+127f;
+                    value = -3.4028235e38f;
                 }
                 let first = top - count;
                 if count > 0u {

@@ -89,7 +89,7 @@ const REFLECTION_LOBE_EDGE: f32 = 0.244;
 const REFLECTION_TAPS: u32 = 8u;
 const REFLECTION_FACING: f32 = 0.05;
 const REFLECTION_END: f32 = 0.1;
-const FLOAT_MAX: f32 = 0x1.fffffep+127f;
+const FLOAT_MAX: f32 = 3.4028235e38f;
 
 fn nearest_depth_at(cell: vec2<i32>, mip: i32) -> f32 {
     if mip == 0 {

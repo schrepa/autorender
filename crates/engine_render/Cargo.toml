@@ -22,6 +22,7 @@ libm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 wgpu-types.workspace = true
+wesl.workspace = true
 
 [dependencies.wgpu]
 workspace = true

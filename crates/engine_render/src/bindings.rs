@@ -10,9 +10,14 @@ use crate::gpu_layouts::{
     bounce, clouds, debug_view, ground_cover, occupancy, scatter, sky, terrain, water,
 };
 
+mod groups;
 mod shared;
 mod table;
 
+pub use groups::{
+    BindingDecl, Contribution, GroupRef, ResolvedBinding, ResolvedLayout, SharedBinding,
+    SharedGroups, StageCounts,
+};
 pub use shared::{FeatureRange, SHARED_GROUPS, SharedGroup};
 pub use table::{Binding, Format, Kind, Sample, Sampling, Serves, Stages, Table, View};
 use table::{bind, dynamic_uniform, read, read_of, sampler, texture, uniform, uniform_of, write};

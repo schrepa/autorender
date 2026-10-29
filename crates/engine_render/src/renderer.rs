@@ -45,6 +45,7 @@ use crate::uploads::UploadCache;
 
 mod attribution;
 mod camera;
+mod core_state;
 mod display;
 mod frame;
 mod frame_stats;
@@ -66,6 +67,7 @@ mod terrain_draws;
 
 pub use attribution::GpuPassTimes;
 use camera::CameraBindings;
+pub(crate) use core_state::Core;
 use display::{DepthTarget, Display, DisplayFrame};
 use impostor_draws::ImpostorDraws;
 pub(crate) use instances::FramePoses;

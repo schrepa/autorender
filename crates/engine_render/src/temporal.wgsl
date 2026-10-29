@@ -19,7 +19,7 @@ struct Resolve {
 @group(0) @binding(10) var revealed: texture_2d<f32>;
 @group(0) @binding(11) var haze: texture_2d<f32>;
 
-const STILL_PIXELS: f32 = 0x1p-6f;
+const STILL_PIXELS: f32 = 0.015625f;
 
 struct Outputs {
     @location(0) canvas: vec4<f32>,
