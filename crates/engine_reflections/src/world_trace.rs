@@ -1,76 +1,46 @@
-use engine_terrain::{ERROR_CELLS, ERROR_TEXELS, TILE_STRIDE};
+use engine_core::PoseRows;
+use engine_faces::heightfield::{HeightfieldFace, TraceSources};
+use engine_render::buffers::Growable;
+use engine_render::cached::Bound;
+use engine_render::gpu_calls::Queue;
+use engine_render::gpu_layouts::constants::DEAD;
+use engine_render::gpu_layouts::impostors::ImpostorRecord;
 use engine_terrain::{RenderTerrains, TileKey};
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use crate::buffers::Growable;
-use crate::cached::Bound;
-use crate::gpu_data::PoseData;
-use crate::gpu_layouts::constants::{DEAD, IMPOSTOR_KINDS, NO_PLACED};
-use crate::gpu_layouts::world_trace::{PlacedGroup, TraceTerrain};
-use crate::impostors::ImpostorRecord;
-use crate::scatter::{Record, TerrainInfo};
+use crate::gpu_layouts::{
+    IMPOSTOR_KINDS, NO_PLACED, PlacedGroup, PlacedRecord, TerrainInfo, TraceTerrain,
+};
 
-pub(crate) fn peaks(heights: &[f32]) -> Box<[f32]> {
-    let stride = TILE_STRIDE as usize;
-    let height = |x: usize, z: usize| heights.get((z + 1) * stride + x + 1).copied();
-    let mut side = ERROR_CELLS as usize;
-    let mut level: Vec<f32> = Vec::with_capacity(side * side);
-    for cell_z in 0..side {
-        for cell_x in 0..side {
-            let mut peak = -f32::MAX;
-            for z in 2 * cell_z..=2 * cell_z + 2 {
-                for x in 2 * cell_x..=2 * cell_x + 2 {
-                    peak = engine_core::math::max(peak, height(x, z).unwrap_or(peak));
-                }
-            }
-            level.push(peak);
-        }
-    }
-    let mut all = Vec::with_capacity(ERROR_TEXELS);
-    all.extend_from_slice(&level);
-    while side > 1 {
-        let half = side / 2;
-        let peak = |x: usize, z: usize| level[z * side + x];
-        let coarser: Vec<f32> = (0..half * half)
-            .map(|at| {
-                let (x, z) = (2 * (at % half), 2 * (at / half));
-                engine_core::math::max(
-                    engine_core::math::max(peak(x, z), peak(x + 1, z)),
-                    engine_core::math::max(peak(x, z + 1), peak(x + 1, z + 1)),
-                )
-            })
-            .collect();
-        all.extend_from_slice(&coarser);
-        level = coarser;
-        side = half;
-    }
-    all.into_boxed_slice()
-}
-
-pub(crate) fn peaks_top(peaks: &[f32]) -> f32 {
-    peaks.last().copied().unwrap_or(-f32::MAX)
-}
-
-pub(crate) fn peaks_mip(peaks: &[f32], mip: u32) -> &[f32] {
-    let side = |level: u32| (ERROR_CELLS >> level) as usize;
-    let start: usize = (0..mip).map(|finer| side(finer) * side(finer)).sum();
-    &peaks[start..start + side(mip) * side(mip)]
-}
+const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
 pub(crate) struct Placements<'a> {
     pub tiles: Vec<((u64, TileKey), Range<u32>, usize)>,
-    pub records: &'a [Record],
-    pub poses: &'a [PoseData],
+    pub records: &'a [PlacedRecord],
+    pub poses: &'a [PoseRows],
     pub impostors: &'a [ImpostorRecord],
     pub colors: &'a [[u32; 2]],
     pub revision: u64,
 }
 
+impl<'a> Placements<'a> {
+    pub(crate) fn of(placed: engine_faces::placed::Placements<'a>) -> Self {
+        Self {
+            tiles: placed.tiles,
+            records: bytemuck::try_cast_slice(placed.records).unwrap_or(&[]),
+            poses: bytemuck::try_cast_slice(placed.poses).unwrap_or(&[]),
+            impostors: bytemuck::try_cast_slice(placed.impostors).unwrap_or(&[]),
+            colors: placed.colors,
+            revision: placed.revision,
+        }
+    }
+}
+
 pub(crate) struct TraceFrame<'a> {
     pub terrains: &'a RenderTerrains,
     pub infos: &'a [TerrainInfo],
-    pub terrain: &'a crate::terrain::TerrainPass,
+    pub terrain: &'a dyn HeightfieldFace,
     pub placed: Placements<'a>,
     pub cover: f32,
 }
@@ -116,7 +86,7 @@ pub(crate) struct WorldTrace {
 impl WorldTrace {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let placeholder = |label, format, layers| {
-            crate::targets::texture_2d(
+            engine_render::targets::texture_2d(
                 device,
                 label,
                 (1, 1),
@@ -127,11 +97,7 @@ impl WorldTrace {
             )
         };
         let textures = [
-            placeholder(
-                "engine/post-world-heights",
-                crate::terrain::HEIGHT_FORMAT,
-                1,
-            ),
+            placeholder("engine/post-world-heights", HEIGHT_FORMAT, 1),
             placeholder("engine/post-world-control", wgpu::TextureFormat::R32Uint, 1),
             placeholder(
                 "engine/post-world-frames",
@@ -176,10 +142,10 @@ impl WorldTrace {
             placeholders: Placeholders {
                 _textures: textures,
                 views,
-                record: crate::buffers::storage(
+                record: engine_render::buffers::storage(
                     device,
                     "engine/post-world-record",
-                    size_of::<Record>() as u64,
+                    size_of::<PlacedRecord>() as u64,
                     wgpu::BufferUsages::empty(),
                 ),
             },
@@ -201,7 +167,7 @@ impl WorldTrace {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &Queue,
         frame: Option<&TraceFrame<'_>>,
     ) {
         let Some(frame) = frame else {
@@ -363,7 +329,7 @@ impl WorldTrace {
         }
     }
 
-    fn write_layer_words(&mut self, terrain: &crate::terrain::TerrainPass) {
+    fn write_layer_words(&mut self, terrain: &dyn HeightfieldFace) {
         let count = self.layers;
         let layers = 0..count as usize;
         self.words[layers.clone()].fill(NO_PLACED);
@@ -379,7 +345,7 @@ impl WorldTrace {
         self.dirty.push(words);
     }
 
-    fn upload(&mut self, device: &wgpu::Device, queue: &crate::gpu_calls::Queue) {
+    fn upload(&mut self, device: &wgpu::Device, queue: &Queue) {
         let bytes = (self.words.len() * 4) as u64;
         let mut dirty = std::mem::take(&mut self.dirty);
         if self.placed.grow(device, bytes) {
@@ -401,7 +367,7 @@ impl WorldTrace {
     fn write_groups(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &Queue,
         placed: &Placements<'_>,
     ) {
         let held = placed.impostors.iter().zip(placed.colors);
@@ -432,7 +398,7 @@ impl WorldTrace {
     fn write_terrains(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &Queue,
         frame: &TraceFrame<'_>,
     ) {
         let mut records = Vec::with_capacity(self.written.len());
@@ -469,7 +435,7 @@ impl WorldTrace {
                 cutout: terrain
                     .cutout
                     .map_or([0.0; 4], |(low, high)| [low.x, low.y, high.x, high.y]),
-                maps: [frame.terrain.sky.layer(index), levels, 0, 0],
+                maps: [frame.terrain.sky_layer(index), levels, 0, 0],
                 reach: [apron, frame.cover, highest, 0.0],
             });
         }
@@ -486,7 +452,7 @@ impl WorldTrace {
 
     pub(crate) fn bindings<'a>(
         &'a self,
-        sources: crate::terrain::TraceSources<'a>,
+        sources: TraceSources<'a>,
         (records, poses, placed): (&'a wgpu::Buffer, &'a wgpu::Buffer, u64),
         frames: Option<(&'a wgpu::TextureView, u64)>,
     ) -> [(&'static str, Bound<'a>); 12] {
@@ -494,16 +460,16 @@ impl WorldTrace {
             &self.placeholders.views;
         let [heights, control] = sources.arrays.unwrap_or_else(|| {
             [heights_placeholder, control_placeholder]
-                .map(|view| Bound::fixed(crate::pipelines::view(view)))
+                .map(|view| Bound::fixed(engine_render::pipelines::view(view)))
         });
-        let records = if records.size() >= size_of::<Record>() as u64 {
+        let records = if records.size() >= size_of::<PlacedRecord>() as u64 {
             Bound::counted(placed, records.as_entire_binding())
         } else {
             Bound::fixed(self.placeholders.record.as_entire_binding())
         };
         let frames = frames.map_or_else(
-            || Bound::fixed(crate::pipelines::view(frames_placeholder)),
-            |(view, generation)| Bound::counted(generation, crate::pipelines::view(view)),
+            || Bound::fixed(engine_render::pipelines::view(frames_placeholder)),
+            |(view, generation)| Bound::counted(generation, engine_render::pipelines::view(view)),
         );
         [
             ("heights", heights),
@@ -686,11 +652,11 @@ fn top_pyramid(tops: Vec<f32>, cells: u32) -> Vec<f32> {
 }
 
 pub(crate) fn terrain_info(
-    pass: &crate::terrain::TerrainPass,
+    heightfield: &dyn HeightfieldFace,
     index: usize,
     terrain: &engine_terrain::RenderTerrain,
 ) -> TerrainInfo {
-    let (directory, palette, _, colors) = pass.cover_terrain(index);
+    let (directory, palette, colors) = heightfield.cover_terrain(index);
     TerrainInfo {
         origin: terrain.origin.extend(terrain.pyramid.spacing(0)).to_array(),
         levels: [directory, terrain.pyramid.levels(), palette, colors],
