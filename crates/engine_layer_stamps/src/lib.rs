@@ -1,0 +1,19 @@
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
+
+include!(concat!(env!("OUT_DIR"), "/source.rs"));
+
+use engine_core::{Brick, Bricks};
+use engine_terrain::layer::{AddTerrainLayers, LayerKind};
+
+pub struct LayerStampsBrick;
+
+impl Brick for LayerStampsBrick {
+    fn register(bricks: &mut Bricks<'_>) {
+        bricks.terrain_layers(KINDS);
+    }
+}
+
+pub static KINDS: &[&LayerKind] = &[];

@@ -12,8 +12,8 @@ pub const RIVER_STEP: f32 = 3.0;
 const RISER: f32 = 0.5;
 const BED_REACH: f32 = 1.0;
 const STRETCH: usize = 16;
-pub(crate) const BANK_SLOPE: f32 = 0.65;
-pub(crate) const BANK_REACH: f32 = 16.0;
+pub const BANK_SLOPE: f32 = 0.65;
+pub const BANK_REACH: f32 = 16.0;
 const BANK_ROUNDING: f32 = 1.5;
 const LEAN: f32 = 1.0 / 3.0;
 pub(crate) const FOOTPRINT: f32 = 0.75;
@@ -505,11 +505,11 @@ impl Rivers {
         self.bed(&self.take(point, 0.0), point, 0.0)
     }
 
-    pub(crate) fn edge(&self, x: f32, z: f32, spacing: f32) -> f32 {
+    pub fn edge(&self, x: f32, z: f32, spacing: f32) -> f32 {
         self.take(Vec2::new(x, z), spacing).edge
     }
 
-    pub(crate) fn cut(&self, x: f32, z: f32, ground: f32, spacing: f32) -> f32 {
+    pub fn cut(&self, x: f32, z: f32, ground: f32, spacing: f32) -> f32 {
         self.take(Vec2::new(x, z), spacing).cut(ground)
     }
 

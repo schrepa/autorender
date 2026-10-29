@@ -221,6 +221,8 @@ error_codes! {
 
     InvalidRecord => "invalid_record",
     MissingLayer => "missing_layer",
+    UnknownMap => "unknown_map",
+    UnreadableMap => "unreadable_map",
     InvalidGltf => "invalid_gltf",
     UnsupportedFeature => "unsupported_feature",
 

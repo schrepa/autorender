@@ -32,7 +32,7 @@ impl Setting for Blend {}
 
 impl Blend {
     #[inline(always)]
-    fn apply(self, below: f32, value: f32, weight: f32) -> f32 {
+    pub fn apply(self, below: f32, value: f32, weight: f32) -> f32 {
         let target = match self {
             Self::Add => below + value,
             Self::Max => max(below, value),
@@ -109,14 +109,14 @@ settings! {
 
 impl Stamp {
     #[inline]
-    fn weight(&self, x: f32, z: f32) -> f32 {
+    pub fn weight(&self, x: f32, z: f32) -> f32 {
         let dx = x - self.center[0];
         let dz = z - self.center[1];
         let distance = (dx * dx + dz * dz).sqrt();
         1.0 - smooth((distance - self.radius) / max(self.falloff, 1.0e-6))
     }
 
-    fn reach(&self) -> f32 {
+    pub fn reach(&self) -> f32 {
         self.radius + self.falloff
     }
 }
@@ -223,14 +223,14 @@ impl HeightImage {
     }
 
     #[inline]
-    pub(crate) fn sample_smooth(&self, u: f32, v: f32, level: usize) -> f32 {
+    pub fn sample_smooth(&self, u: f32, v: f32, level: usize) -> f32 {
         let mut sample = 0.0;
         self.sample_smooth_row([u], v, level, |_, value| sample = value);
         sample
     }
 
     #[inline]
-    pub(crate) fn sample_smooth_row(
+    pub fn sample_smooth_row(
         &self,
         us: impl IntoIterator<Item = f32>,
         v: f32,
@@ -258,7 +258,7 @@ impl HeightImage {
     }
 
     #[inline]
-    pub(crate) fn sample(&self, u: f32, v: f32, level: usize) -> f32 {
+    pub fn sample(&self, u: f32, v: f32, level: usize) -> f32 {
         match level
             .checked_sub(1)
             .and_then(|index| self.levels.get(index))
@@ -350,7 +350,7 @@ fn b_spline(t: f32) -> [f32; 4] {
 }
 
 #[inline(always)]
-pub(crate) fn catmull_rom(t: f32) -> [f32; 4] {
+pub fn catmull_rom(t: f32) -> [f32; 4] {
     let t2 = t * t;
     let t3 = t2 * t;
     [
@@ -1052,7 +1052,7 @@ impl Layers {
         }
     }
 
-    pub(crate) fn shown(&self, x: f32, z: f32) -> f32 {
+    pub fn shown(&self, x: f32, z: f32) -> f32 {
         let Some(fade) = self.fade else {
             return 1.0;
         };
@@ -1071,7 +1071,7 @@ impl Layers {
         1.0 - t * t * (3.0 - 2.0 * t)
     }
 
-    pub(crate) fn offset_samples(&self, spacing: f32) -> [i64; 2] {
+    pub fn offset_samples(&self, spacing: f32) -> [i64; 2] {
         [
             (self.offset.x / spacing).round() as i64,
             (self.offset.y / spacing).round() as i64,
@@ -1268,6 +1268,24 @@ impl Layers {
             })
     }
 
+    pub fn changes(&self) -> impl Iterator<Item = crate::layer::ChangeMap<'_>> + '_ {
+        self.layers.iter().filter_map(|layer| {
+            if let Layer::Erosion(ErosionStage {
+                baked: Some(erosion),
+                ..
+            }) = layer
+            {
+                Some(crate::layer::ChangeMap {
+                    spacing: erosion.spacing,
+                    image: &erosion.change,
+                    range: erosion.range,
+                })
+            } else {
+                None
+            }
+        })
+    }
+
     pub(crate) fn noise(&self, index: usize) -> Option<&NoiseTables> {
         self.tables.get(index).and_then(Option::as_ref)
     }
@@ -1457,7 +1475,7 @@ fn unbaked(layer: &Layer) -> Layer {
     }
 }
 
-fn reaches(center: [f32; 2], radius: f32, min: Vec2, max: Vec2) -> bool {
+pub fn reaches(center: [f32; 2], radius: f32, min: Vec2, max: Vec2) -> bool {
     let nearest = Vec2::from(center).clamp(min, max);
     nearest.distance_squared(Vec2::from(center)) <= radius * radius
 }

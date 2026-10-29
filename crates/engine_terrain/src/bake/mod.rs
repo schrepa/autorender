@@ -101,16 +101,16 @@ impl TerrainBake {
     }
 }
 
-struct Gather {
-    level: u32,
+pub struct Gather {
+    pub level: u32,
     pending: Vec<TileKey>,
     job: Option<(TileKey, Generator)>,
-    width: usize,
-    heights: Vec<f32>,
+    pub width: usize,
+    pub heights: Vec<f32>,
 }
 
 impl Gather {
-    fn new(level: u32, pyramid: &Pyramid) -> Self {
+    pub fn new(level: u32, pyramid: &Pyramid) -> Self {
         let level = level.min(pyramid.levels() - 1);
         let [x, z] = pyramid.tiles(level);
         let width = x as usize * TILE_QUADS as usize + 1;
@@ -124,7 +124,7 @@ impl Gather {
         }
     }
 
-    fn advance(&mut self, below: &Arc<Layers>, pyramid: &Pyramid, budget: &mut u64) -> bool {
+    pub fn advance(&mut self, below: &Arc<Layers>, pyramid: &Pyramid, budget: &mut u64) -> bool {
         while *budget > 0 {
             let Some((key, job)) = (match &mut self.job {
                 Some(job) => Some(job),

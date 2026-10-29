@@ -36,16 +36,16 @@ mod games {
         DebugViewMode, Dither, DynamicResolution, DynamicResolutionStats, Engine, EngineConfig,
         EngineEntityCommands, Environment, Filter, FixedPostSimulation, FixedPreSimulation,
         FixedSimulation, FixedSimulationSystems, FixedTime, Foliage, FrameReport, FrameTime,
-        GlobalTransform, GlobalTransforms, Ground, GroundSample, Grounded, Grounding, Haze,
-        HeightHeld, Highlights, InputState, Interior, InterpolateTransform, LevelOfDetail,
+        GlobalTransform, GlobalTransforms, Ground, GroundFace, GroundPoint, Grounded, Grounding,
+        Haze, HeightHeld, Highlights, InputState, Interior, InterpolateTransform, LevelOfDetail,
         LightRegion, LocalLight, LocalLightSettings, MakeSources, MakeTextures, Material,
         MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, NightSky, OcclusionCulling, Parent,
         ParticleBlend, ParticleEmitter, ParticleSettings, Plugin, PluginGroup, Presentation,
-        PresentationState, PresentedTime, PresentedTransform, PresentedTransforms, Records,
-        ReflectionProbe, ReflectionProbeSettings, Reflections, Resolution, ResolutionStats,
-        Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamingFocus, SubpixelCulling,
-        Surface, TemporalAntialiasing, Texture, TextureHandle, TextureRef, TextureSet,
-        TextureSource, TextureUsage, Tint, TopLayer, Transform, UvTransform, ViewSync,
+        PresentationState, PresentedTime, PresentedTransform, PresentedTransforms, ProvidedAssets,
+        Records, ReflectionProbe, ReflectionProbeSettings, Reflections, Resolution,
+        ResolutionStats, Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamingFocus,
+        SubpixelCulling, Surface, TemporalAntialiasing, Texture, TextureHandle, TextureRef,
+        TextureSet, TextureSource, TextureUsage, Tint, TopLayer, Transform, UvTransform, ViewSync,
         ViewSyncSystems, WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource,
         WaterSources, WorldSync, WorldSyncSystems, Wrap, edit_transform, math,
         reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
@@ -109,6 +109,13 @@ pub mod bricks {
             .with::<engine_core::Resolution>()
             .with::<engine_core::DebugView>()
             .with::<engine_core::LightingModel>()
+            .with::<engine_layer_noise::LayerNoiseBrick>()
+            .with::<engine_layer_stamps::LayerStampsBrick>()
+            .with::<engine_layer_heightmap::LayerHeightmapBrick>()
+            .with::<engine_layer_paths::LayerPathsBrick>()
+            .with::<engine_layer_erosion::LayerErosionBrick>()
+            .with::<engine_layer_hydrology::LayerHydrologyBrick>()
+            .with::<engine_layer_relief::LayerReliefBrick>()
     }
 
     pub fn standard_names(names: &str, path: &str) -> crate::Result<Vec<&'static str>> {

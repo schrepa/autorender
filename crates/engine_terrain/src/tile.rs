@@ -1123,7 +1123,7 @@ impl Generator {
 }
 
 impl Layers {
-    pub(crate) fn height_cost(&self) -> u64 {
+    pub fn height_cost(&self) -> u64 {
         (0..self.layers().len())
             .map(|layer| {
                 if self.noise(layer).is_some() {

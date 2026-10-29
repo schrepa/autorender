@@ -67,14 +67,14 @@ pub struct Hydrology {
     pub flow: HeightImage,
     pub wetness: HeightImage,
     pub lakes: HeightImage,
-    pub(crate) water: Arc<WaterGrid>,
-    pub(crate) rivers: Arc<Rivers>,
+    pub water: Arc<WaterGrid>,
+    pub rivers: Arc<Rivers>,
     pub falls: Arc<[Fall]>,
     pub stats: HydrologyStats,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct WaterGrid {
+pub struct WaterGrid {
     pub width: usize,
     pub height: usize,
     pub spacing: f32,
@@ -163,7 +163,7 @@ pub fn decode(sample: f32, range: [f32; 2]) -> f32 {
 }
 
 #[derive(Default)]
-pub(crate) struct Flood {
+pub struct Flood {
     closed: Vec<bool>,
     parents: Vec<u32>,
     open: BinaryHeap<Reverse<u64>>,
@@ -236,12 +236,12 @@ impl Flood {
 }
 
 #[derive(Default)]
-pub(crate) struct Drainage {
-    pub(crate) filled: Vec<f32>,
-    pub(crate) order: Vec<u32>,
-    pub(crate) receivers: Vec<u32>,
-    pub(crate) slopes: Vec<f32>,
-    pub(crate) area: Vec<f32>,
+pub struct Drainage {
+    pub filled: Vec<f32>,
+    pub order: Vec<u32>,
+    pub receivers: Vec<u32>,
+    pub slopes: Vec<f32>,
+    pub area: Vec<f32>,
 }
 
 const RECEIVER_SEED: u32 = 0x2f6b_3c91;
@@ -255,7 +255,7 @@ fn neighbor_steps(width: usize, spacing: f32) -> [(isize, f32); 8] {
     })
 }
 
-pub(crate) fn drainage(heights: &[f32], width: usize, spacing: f32) -> Drainage {
+pub fn drainage(heights: &[f32], width: usize, spacing: f32) -> Drainage {
     let mut drainage = Drainage {
         filled: heights.to_vec(),
         ..Drainage::default()
@@ -265,7 +265,7 @@ pub(crate) fn drainage(heights: &[f32], width: usize, spacing: f32) -> Drainage 
 }
 
 impl Drainage {
-    pub(crate) fn route(&mut self, width: usize, spacing: f32, draw: u32, flood: &mut Flood) {
+    pub fn route(&mut self, width: usize, spacing: f32, draw: u32, flood: &mut Flood) {
         let Self {
             filled,
             order,
@@ -601,7 +601,7 @@ impl Hydrology {
         &self.rivers
     }
 
-    pub(crate) fn water_at(&self, x: f32, z: f32) -> Option<(f32, f32)> {
+    pub fn water_at(&self, x: f32, z: f32) -> Option<(f32, f32)> {
         self.water.at(x, z).or_else(|| self.rivers.water_at(x, z))
     }
 
@@ -810,7 +810,7 @@ impl WaterGrid {
     }
 }
 
-pub(crate) fn image_level(image_spacing: f32, levels: usize, spacing: f32) -> usize {
+pub fn image_level(image_spacing: f32, levels: usize, spacing: f32) -> usize {
     let mut level = 0;
     while level < levels && image_spacing * (2_u32 << level) as f32 <= spacing * 1.0001 {
         level += 1;

@@ -814,6 +814,13 @@ dependencies = [
  "engine_collision",
  "engine_core",
  "engine_dev",
+ "engine_layer_erosion",
+ "engine_layer_heightmap",
+ "engine_layer_hydrology",
+ "engine_layer_noise",
+ "engine_layer_paths",
+ "engine_layer_relief",
+ "engine_layer_stamps",
  "engine_navigation",
  "engine_panic",
  "engine_physics",
@@ -927,6 +934,118 @@ dependencies = [
  "engine_terrain",
  "engine_time_of_day",
  "engine_world_streaming",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "engine_layer_erosion"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_math",
+ "engine_settings",
+ "engine_sources",
+ "engine_terrain",
+ "glam 0.30.9",
+ "libm",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "engine_layer_heightmap"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_math",
+ "engine_settings",
+ "engine_sources",
+ "engine_terrain",
+ "glam 0.30.9",
+ "libm",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "engine_layer_hydrology"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_math",
+ "engine_settings",
+ "engine_sources",
+ "engine_terrain",
+ "glam 0.30.9",
+ "libm",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "engine_layer_noise"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_math",
+ "engine_settings",
+ "engine_sources",
+ "engine_terrain",
+ "glam 0.30.9",
+ "libm",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "engine_layer_paths"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_math",
+ "engine_settings",
+ "engine_sources",
+ "engine_terrain",
+ "glam 0.30.9",
+ "libm",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "engine_layer_relief"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_math",
+ "engine_settings",
+ "engine_sources",
+ "engine_terrain",
+ "glam 0.30.9",
+ "libm",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "engine_layer_stamps"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_math",
+ "engine_settings",
+ "engine_sources",
+ "engine_terrain",
+ "glam 0.30.9",
+ "libm",
  "schemars",
  "serde",
  "serde_json",
@@ -1162,6 +1281,13 @@ dependencies = [
 name = "engine_worker"
 version = "0.1.0"
 dependencies = [
+ "engine_layer_erosion",
+ "engine_layer_heightmap",
+ "engine_layer_hydrology",
+ "engine_layer_noise",
+ "engine_layer_paths",
+ "engine_layer_relief",
+ "engine_layer_stamps",
  "engine_lodbuild",
  "engine_math",
  "engine_navigation",

@@ -69,13 +69,40 @@ impl Runner {
     }
 }
 
-#[derive(Default)]
 pub struct Worker {
     terrain: TerrainWorker,
     navigation: NavigationWorker,
     tables: TableWorker,
     textures: TextureWorker,
     held: Vec<Held>,
+}
+
+pub fn register_standard_layers() {
+    for kinds in [
+        engine_terrain::expr::KINDS,
+        engine_layer_noise::KINDS,
+        engine_layer_stamps::KINDS,
+        engine_layer_heightmap::KINDS,
+        engine_layer_paths::KINDS,
+        engine_layer_erosion::KINDS,
+        engine_layer_hydrology::KINDS,
+        engine_layer_relief::KINDS,
+    ] {
+        engine_terrain::layer::register_kinds(kinds);
+    }
+}
+
+impl Default for Worker {
+    fn default() -> Self {
+        register_standard_layers();
+        Self {
+            terrain: TerrainWorker::new(),
+            navigation: NavigationWorker::new(),
+            tables: TableWorker::new(),
+            textures: TextureWorker::new(),
+            held: Vec::new(),
+        }
+    }
 }
 
 impl Worker {

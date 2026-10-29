@@ -15,6 +15,7 @@ mod instance;
 mod lighting;
 mod material;
 mod probe;
+pub mod rules;
 mod spline;
 mod terrain;
 mod texture;

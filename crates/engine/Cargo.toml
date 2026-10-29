@@ -10,7 +10,7 @@ default = []
 dev = ["dep:engine_dev", "engine_core/dev", "engine_render/dev"]
 profiling = ["engine_profile/enabled", "engine_core/profiling", "engine_collision/profiling", "engine_physics/profiling", "engine_render/profiling", "engine_terrain/profiling"]
 attribution = ["engine_core/attribution", "engine_collision/attribution"]
-schema = ["engine_core/schema", "engine_settings/schema", "engine_panic/schema", "engine_scene/schema", "engine_terrain/schema", "engine_world_streaming/schema", "engine_navigation/schema", "engine_time_of_day/schema", "engine_collision/schema", "engine_physics/schema", "dep:schemars"]
+schema = ["engine_core/schema", "engine_settings/schema", "engine_panic/schema", "engine_scene/schema", "engine_terrain/schema", "engine_layer_noise/schema", "engine_layer_stamps/schema", "engine_layer_heightmap/schema", "engine_layer_paths/schema", "engine_layer_erosion/schema", "engine_layer_hydrology/schema", "engine_layer_relief/schema", "engine_world_streaming/schema", "engine_navigation/schema", "engine_time_of_day/schema", "engine_collision/schema", "engine_physics/schema", "dep:schemars"]
 
 [dependencies]
 engine_core.workspace = true
@@ -18,6 +18,13 @@ engine_profile.workspace = true
 engine_collision.workspace = true
 engine_physics.workspace = true
 engine_terrain.workspace = true
+engine_layer_noise.workspace = true
+engine_layer_stamps.workspace = true
+engine_layer_heightmap.workspace = true
+engine_layer_paths.workspace = true
+engine_layer_erosion.workspace = true
+engine_layer_hydrology.workspace = true
+engine_layer_relief.workspace = true
 engine_world_streaming.workspace = true
 engine_navigation.workspace = true
 engine_time_of_day.workspace = true

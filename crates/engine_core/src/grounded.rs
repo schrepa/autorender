@@ -34,10 +34,10 @@ pub(crate) type GroundedQuery = QueryState<
 >;
 
 pub(crate) fn settle(world: &mut World, query: &mut GroundedQuery) {
-    let Some(ground) = world.get_resource::<crate::Ground>().copied() else {
+    if !world.contains_resource::<crate::Ground>() {
         return;
-    };
-    let revision = (ground.revision)(world);
+    }
+    let revision = crate::Ground::revision_in(world);
     let mut settled = Vec::new();
     for (entity, grounded, transform, at, held) in query.iter(world) {
         if held.is_some_and(|held| held.0) {
@@ -52,7 +52,7 @@ pub(crate) fn settle(world: &mut World, query: &mut GroundedQuery) {
         if !stale {
             continue;
         }
-        let sample = (ground.sample)(world, position.x, position.y);
+        let sample = crate::Ground::sample_in(world, position.x, position.y);
         settled.push((
             entity,
             sample.map(|sample| sample.height + grounded.offset),

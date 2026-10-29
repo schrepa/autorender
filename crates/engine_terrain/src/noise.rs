@@ -2,7 +2,7 @@ use engine_math::{clamp, max, sin_cos};
 use glam::Vec4;
 
 use lanes::{Bits4, floor4};
-pub(crate) use lanes::{max4, min4, sqrt4};
+pub use lanes::{max4, min4, sqrt4};
 
 const GRADIENTS: [[f32; 2]; 16] = [
     [0.980_785_3, 0.195_090_32],
@@ -73,7 +73,7 @@ fn mix(mut h: u32) -> u32 {
 }
 
 #[inline(always)]
-pub(crate) fn hash(x: i32, z: i32, seed: u32) -> u32 {
+pub fn hash(x: i32, z: i32, seed: u32) -> u32 {
     mix(mix(seed ^ x as u32).wrapping_add(z as u32))
 }
 
@@ -98,7 +98,7 @@ fn fade(t: f32) -> (f32, f32) {
 }
 
 #[inline]
-pub(crate) fn gradient_noise(x: f32, z: f32, seed: u32) -> [f32; 3] {
+pub fn gradient_noise(x: f32, z: f32, seed: u32) -> [f32; 3] {
     let (i, j, fx, fz) = cell(x, z);
     let (ux, dux) = fade(fx);
     let (uz, duz) = fade(fz);
@@ -128,7 +128,7 @@ pub(crate) fn gradient_noise(x: f32, z: f32, seed: u32) -> [f32; 3] {
 }
 
 #[inline]
-pub(crate) fn gradient_value(x: f32, z: f32, seed: u32) -> f32 {
+pub fn gradient_value(x: f32, z: f32, seed: u32) -> f32 {
     let (i, j, fx, fz) = cell(x, z);
     value_in(corners(i, j, seed), fx, fz)
 }
@@ -156,7 +156,7 @@ fn value_in([ga, gb, gc, gd]: [[f32; 2]; 4], fx: f32, fz: f32) -> f32 {
     (top + uz * (bottom - top)) * NOISE_SCALE
 }
 
-pub(crate) fn gradient_values(xs: &[f32], zs: &[f32], seed: u32, out: &mut [f32]) {
+pub fn gradient_values(xs: &[f32], zs: &[f32], seed: u32, out: &mut [f32]) {
     let mut held: Option<(i32, i32, [[f32; 2]; 4])> = None;
     for ((value, &x), &z) in out.iter_mut().zip(xs).zip(zs) {
         let (i, j, fx, fz) = cell(x, z);
@@ -173,7 +173,7 @@ pub(crate) fn gradient_values(xs: &[f32], zs: &[f32], seed: u32, out: &mut [f32]
 }
 
 #[inline]
-pub(crate) fn gradient_noise4(x: Vec4, z: Vec4, seed: u32) -> [Vec4; 3] {
+pub fn gradient_noise4(x: Vec4, z: Vec4, seed: u32) -> [Vec4; 3] {
     let x0 = floor4(x);
     let z0 = floor4(z);
     let (i, j) = (Bits4::truncate(x0), Bits4::truncate(z0));
@@ -208,7 +208,7 @@ pub(crate) fn gradient_noise4(x: Vec4, z: Vec4, seed: u32) -> [Vec4; 3] {
 }
 
 #[inline]
-pub(crate) fn gradient_value4(x: Vec4, z: Vec4, seed: u32) -> Vec4 {
+pub fn gradient_value4(x: Vec4, z: Vec4, seed: u32) -> Vec4 {
     let x0 = floor4(x);
     let z0 = floor4(z);
     let (i, j) = (Bits4::truncate(x0), Bits4::truncate(z0));
@@ -231,7 +231,7 @@ pub(crate) fn gradient_value4(x: Vec4, z: Vec4, seed: u32) -> Vec4 {
 }
 
 #[inline]
-pub(crate) fn gullies4(x: Vec4, z: Vec4, across: [Vec4; 2], seed: u32) -> Vec4 {
+pub fn gullies4(x: Vec4, z: Vec4, across: [Vec4; 2], seed: u32) -> Vec4 {
     let x0 = floor4(x);
     let z0 = floor4(z);
     let (i, j) = (Bits4::truncate(x0), Bits4::truncate(z0));
@@ -296,7 +296,7 @@ fn sin_cos4(x: Vec4) -> (Vec4, Vec4) {
 }
 
 #[inline(always)]
-pub(crate) fn smooth4(t: Vec4) -> Vec4 {
+pub fn smooth4(t: Vec4) -> Vec4 {
     let t = min4(max4(t, Vec4::ZERO), Vec4::ONE);
     t * t * (3.0 - 2.0 * t)
 }
@@ -429,17 +429,17 @@ mod lanes {
     }
 
     #[inline(always)]
-    pub(crate) fn sqrt4(value: Vec4) -> Vec4 {
+    pub fn sqrt4(value: Vec4) -> Vec4 {
         f32x4_sqrt(value.into()).into()
     }
 
     #[inline(always)]
-    pub(crate) fn min4(a: Vec4, b: Vec4) -> Vec4 {
+    pub fn min4(a: Vec4, b: Vec4) -> Vec4 {
         f32x4_pmin(a.into(), b.into()).into()
     }
 
     #[inline(always)]
-    pub(crate) fn max4(a: Vec4, b: Vec4) -> Vec4 {
+    pub fn max4(a: Vec4, b: Vec4) -> Vec4 {
         f32x4_pmax(a.into(), b.into()).into()
     }
 }
@@ -531,19 +531,19 @@ mod lanes {
     }
 
     #[inline(always)]
-    pub(crate) fn sqrt4(value: Vec4) -> Vec4 {
+    pub fn sqrt4(value: Vec4) -> Vec4 {
         Vec4::from_array(value.to_array().map(f32::sqrt))
     }
 
     #[inline(always)]
-    pub(crate) fn min4(a: Vec4, b: Vec4) -> Vec4 {
+    pub fn min4(a: Vec4, b: Vec4) -> Vec4 {
         Vec4::from_array(std::array::from_fn(|lane| {
             engine_math::min(a[lane], b[lane])
         }))
     }
 
     #[inline(always)]
-    pub(crate) fn max4(a: Vec4, b: Vec4) -> Vec4 {
+    pub fn max4(a: Vec4, b: Vec4) -> Vec4 {
         Vec4::from_array(std::array::from_fn(|lane| {
             engine_math::max(a[lane], b[lane])
         }))
@@ -551,13 +551,13 @@ mod lanes {
 }
 
 #[inline(always)]
-pub(crate) fn smooth(t: f32) -> f32 {
+pub fn smooth(t: f32) -> f32 {
     let t = clamp(t, 0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
 
 #[inline]
-pub(crate) fn gullies(x: f32, z: f32, across: [f32; 2], seed: u32) -> [f32; 2] {
+pub fn gullies(x: f32, z: f32, across: [f32; 2], seed: u32) -> [f32; 2] {
     let (i, j, fx, fz) = cell(x, z);
     let wx = fx * fx * (3.0 - 2.0 * fx);
     let wz = fz * fz * (3.0 - 2.0 * fz);

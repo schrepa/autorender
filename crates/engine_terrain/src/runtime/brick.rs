@@ -1,8 +1,10 @@
+use super::ground_face::TerrainGround;
 use super::*;
 use crate::jobs::{ShadingJob, SteadiedJob, TerrainWorker};
+use crate::layer::{AddTerrainLayers, TerrainLayerKinds};
 use engine_core::{
     Brick, Bricks, EnvironmentSection, ExplainRecord, ExplainRequest, FixedSimulation,
-    FixedSimulationSystems, GlobalTransforms, Ground, GroundSample, JobWorker, TerrainDebug,
+    FixedSimulationSystems, GlobalTransforms, Ground, GroundSlot, JobWorker, TerrainDebug,
     ViewSync, ViewSyncSystems, WaterSources, WorldSync, WorldSyncSystems,
 };
 
@@ -28,14 +30,10 @@ impl Brick for TerrainBrick {
                 SETTLED_KIND,
             ])
             .resource::<Terrains>()
-            .insert_resource(Ground {
-                sample: ground_sample,
-                revision: |world| {
-                    world
-                        .get_resource::<Terrains>()
-                        .map_or(0, Terrains::revision)
-                },
-            })
+            .slot::<GroundSlot>()
+            .insert_resource(Ground::new("terrain", TerrainGround))
+            .resource::<TerrainLayerKinds>()
+            .terrain_layers(crate::expr::KINDS)
             .systems(ViewSync, stream_terrains.in_set(ViewSyncSystems::Stream))
             .systems(
                 FixedSimulation,
@@ -139,17 +137,6 @@ impl JobWorker for TerrainWorker {
     fn run(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
         TerrainWorker::run(self, kind, input)
     }
-}
-
-fn ground_sample(world: &World, x: f32, z: f32) -> Option<GroundSample> {
-    let sample = world
-        .get_resource::<Terrains>()?
-        .sample(x, z)
-        .filter(|sample| !sample.hole)?;
-    Some(GroundSample {
-        height: sample.height,
-        level: sample.level,
-    })
 }
 
 macro_rules! sections {

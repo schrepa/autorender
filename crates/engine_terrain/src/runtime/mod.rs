@@ -9,6 +9,7 @@ mod edits;
 mod extract;
 mod flow;
 mod ground_cover;
+mod ground_face;
 mod identity;
 mod lighting;
 mod lookups;

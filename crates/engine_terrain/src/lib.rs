@@ -5,26 +5,28 @@
 
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
-mod bake;
-mod bed;
+pub mod bake;
+pub mod bed;
 pub mod bounce;
 pub mod codec;
 mod erosion;
-mod flow;
-mod given;
+pub mod expr;
+pub mod flow;
+pub mod given;
 pub mod gpu;
 pub mod hydraulics;
-mod hydrology;
+pub mod hydrology;
 pub mod jobs;
-mod layers;
+pub mod layer;
+pub mod layers;
 pub mod lighting;
 pub mod macro_colors;
-mod noise;
-mod path;
+pub mod noise;
+pub mod path;
 mod placement;
 mod pyramid;
 mod relief;
-mod rivers;
+pub mod rivers;
 mod runtime;
 mod select;
 mod shading;
@@ -39,7 +41,9 @@ mod tile_water;
 
 pub use bake::{Bake, BakeKind, Baked, ErosionBake, HydrologyBake, PathBake, Stage, TerrainBake};
 pub use bed::{Bed, NARROWEST, Reach};
+pub use engine_core::{Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
 pub use erosion::{Erosion, ErosionLayer, ErosionStats};
+pub use expr::Expr;
 pub use flow::{Block, Pool, RiverFlow, WEIR};
 pub use given::{
     GivenRiver, MAX_CREDIT, MAX_DEPTH, MAX_DISCHARGE, MAX_GIVEN_RIVERS, MAX_PRECISION,
@@ -48,6 +52,10 @@ pub use given::{
 pub use hydrology::{
     FLOW_RANGE, Fall, Hydrology, HydrologyLayer, HydrologySample, HydrologyStats, LAKE_RANGE,
     RIVER_FAR, WETNESS_RANGE,
+};
+pub use layer::{
+    AddTerrainLayers, Below, ChangeMap, LayerBake, LayerFiles, LayerKind, LayerTile, Row,
+    SamplePoint, TerrainLayer, TerrainLayerKinds, TileFrame,
 };
 pub use layers::{
     Blend, ErosionStage, HeightImage, HeightmapLayer, HydrologyStage, Layer, Layers, NoiseLayer,
@@ -61,7 +69,6 @@ pub use placement::{
     AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Footprint, Obstacle, Placed, PlacementChoice,
     PlacementLayer, Placing, Solid,
 };
-pub use pyramid::{Pyramid, TileKey};
 pub use relief::{HummocksLayer, StepsLayer};
 pub use rivers::{RIVER_STEP, Rivers};
 pub use runtime::{
@@ -108,8 +115,6 @@ pub use tile_water::{
 
 pub const MAX_LEVEL: u32 = 15;
 
-pub const TILE_QUADS: u32 = 256;
-pub const TILE_SAMPLES: u32 = TILE_QUADS + 1;
 pub const TILE_STRIDE: u32 = TILE_SAMPLES + 2;
 pub const PATCH_QUADS: u32 = 16;
 pub const PATCHES_PER_TILE: u32 = TILE_QUADS / PATCH_QUADS;
