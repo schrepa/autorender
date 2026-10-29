@@ -1,9 +1,17 @@
 #![expect(clippy::expect_used, reason = "drawing reads what this frame prepared")]
 
-use crate::shaders::entry::particles;
-use engine_core::{ParticleBlend, RenderEmitter};
+use std::cell::Cell;
 
-pub(crate) use crate::gpu_layouts::particles::EmitterData;
+use crate::pipeline_layouts::PARTICLE_PIPELINES;
+use crate::shaders::entry::particles;
+use engine_core::{Drawn, ParticleBlend, RenderEmitter, RenderStats};
+use engine_render::bindings::GroupRef;
+use engine_render::graph::{GraphTable, ResourceId, Targets};
+use engine_render::parts::{Create, DrawAt, GpuPart, Hook, PartDecl, PartEntry, Prelude, Step, View};
+use engine_render::post::PostPass;
+use engine_render::transparent::accumulation_targets;
+
+pub(crate) use crate::gpu_layouts::EmitterData;
 
 impl EmitterData {
     pub(crate) fn new(emitter: &RenderEmitter, first: u32) -> Self {
@@ -34,7 +42,7 @@ impl EmitterData {
     }
 }
 
-pub(crate) use crate::gpu_layouts::particles::ParticleUniform;
+pub(crate) use crate::gpu_layouts::ParticleUniform;
 
 impl ParticleUniform {
     pub(crate) fn new(view_projection: engine_core::glam::Mat4, width: u32, height: u32) -> Self {
@@ -108,9 +116,9 @@ mod gpu {
     use engine_core::RenderSnapshot;
 
     use super::*;
-    use crate::bindings::PARTICLES;
-    use crate::buffers::Growable;
-    use crate::cached::{Bound, GroupCache, Versioned};
+    use crate::pipeline_layouts::PARTICLES;
+    use engine_render::buffers::Growable;
+    use engine_render::cached::{Bound, GroupCache, Versioned};
 
     pub(crate) struct ParticleFrame {
         pub alpha: u32,
@@ -120,7 +128,7 @@ mod gpu {
     }
 
     pub(crate) struct ParticlePass {
-        layout: crate::pipelines::GroupLayout,
+        layout: engine_render::pipelines::GroupLayout,
         pipeline_layout: wgpu::PipelineLayout,
         alpha: wgpu::RenderPipeline,
         mist: Option<wgpu::RenderPipeline>,
@@ -147,9 +155,8 @@ mod gpu {
             depth_format: wgpu::TextureFormat,
             transparent_targets: &[Option<wgpu::ColorTargetState>],
         ) -> Self {
-            let layout = crate::pipelines::layout(device, &PARTICLES);
-            let pipeline_layout =
-                crate::pipelines::layout_of(device, &crate::pipeline_layouts::PARTICLE_PIPELINES);
+            let layout = engine_render::pipelines::layout(device, &PARTICLES);
+            let pipeline_layout = engine_render::pipelines::layout_of(device, &PARTICLE_PIPELINES);
             let alpha = pipeline(
                 device,
                 &pipeline_layout,
@@ -167,7 +174,7 @@ mod gpu {
                 additive: [None, None],
                 surface_format,
                 depth_format,
-                uniform: crate::buffers::uniform(
+                uniform: engine_render::buffers::uniform(
                     device,
                     "engine/particle-uniform",
                     size_of::<ParticleUniform>() as u64,
@@ -201,10 +208,10 @@ mod gpu {
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,
-            queue: &crate::gpu_calls::Queue,
+            queue: &engine_render::gpu_calls::Queue,
             snapshot: &RenderSnapshot,
             emitters: (u64, u64),
-            size: crate::targets::FrameSize,
+            size: engine_render::targets::FrameSize,
             depth: &Versioned<wgpu::TextureView>,
         ) -> Option<ParticleFrame> {
             if !snapshot.environment.particles.enabled || snapshot.particles.list.is_empty() {
@@ -255,7 +262,7 @@ mod gpu {
         fn pack(
             &mut self,
             device: &wgpu::Device,
-            queue: &crate::gpu_calls::Queue,
+            queue: &engine_render::gpu_calls::Queue,
             snapshot: &RenderSnapshot,
         ) {
             let room = self.owners.room() / 4;
@@ -318,8 +325,8 @@ mod gpu {
                     &self.pipeline_layout,
                     particles::fs_particle_add_post,
                     &[
-                        target(crate::post::SCENE_FORMAT, add),
-                        target(crate::post::GLOW_FORMAT, brightest),
+                        target(engine_render::post::SCENE_FORMAT, add),
+                        target(engine_render::post::GLOW_FORMAT, brightest),
                     ],
                     self.depth_format,
                     &[],
@@ -378,14 +385,14 @@ mod gpu {
     fn pipeline(
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
-        fragment: crate::shaders::Entry,
+        fragment: engine_render::shaders::Entry,
         targets: &[Option<wgpu::ColorTargetState>],
         depth_format: wgpu::TextureFormat,
         constants: &[(&str, f64)],
     ) -> wgpu::RenderPipeline {
-        crate::pipelines::geometry(
+        engine_render::pipelines::geometry(
             device,
-            &crate::pipelines::Geometry {
+            &engine_render::pipelines::Geometry {
                 label: "engine/particles",
                 layout,
                 vertex_constants: &[],
@@ -402,7 +409,7 @@ mod gpu {
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                fragment: Some(crate::pipelines::Fragment {
+                fragment: Some(engine_render::pipelines::Fragment {
                     entry: fragment,
                     constants,
                     targets,
@@ -413,3 +420,131 @@ mod gpu {
 }
 
 pub(crate) use gpu::{ParticleFrame, ParticlePass};
+
+pub static PART: PartEntry = PartEntry {
+    decl: PartDecl {
+        name: "particles",
+        brick: "particles",
+        passes: &[],
+        resources: &[],
+        hooks: &[Hook::Transparent],
+        contributes: &[],
+        effects: &[],
+        labels: &[],
+        lazy: false,
+        faces: &[],
+        needs: &[],
+        piece: None,
+    },
+    create,
+};
+
+fn create(_: &Create<'_>) -> Box<dyn GpuPart> {
+    Box::new(Particles::default())
+}
+
+#[derive(Clone, Copy, Default)]
+struct Ids {
+    accumulated: Option<ResourceId>,
+    revealed: Option<ResourceId>,
+}
+
+#[derive(Default)]
+struct Particles {
+    particles: Option<ParticlePass>,
+    frame: Option<ParticleFrame>,
+    accumulated: Cell<bool>,
+    ids: Ids,
+}
+
+impl Particles {
+    fn prepare_frame(&mut self, cx: &Step<'_>, post: bool) -> Option<ParticleFrame> {
+        let (device, queue) = (&cx.core.device, &cx.core.queue);
+        let snapshot = cx.frame.snapshot;
+        let emitters = (
+            cx.frame.frame.identity(),
+            cx.frame.frame.emitters_revision(),
+        );
+        let (region, depth) = (cx.core.display.region, &cx.core.depth.view);
+        let (surface_format, depth_format) =
+            (cx.core.canvas_format(), cx.core.depth.texture.format());
+        if snapshot.environment.particles.enabled && !snapshot.particles.list.is_empty() {
+            let particles = self.particles.get_or_insert_with(|| {
+                ParticlePass::new(
+                    device,
+                    surface_format,
+                    depth_format,
+                    &accumulation_targets(),
+                )
+            });
+            let prepared =
+                particles.prepare(device, queue, snapshot, emitters, region.render, depth);
+            if prepared.is_some() {
+                particles.ensure_additive(device, post);
+            }
+            prepared
+        } else {
+            None
+        }
+    }
+}
+
+impl GpuPart for Particles {
+    fn install(&mut self, table: &GraphTable) {
+        self.ids = Ids {
+            accumulated: table.resource("accumulated"),
+            revealed: table.resource("revealed"),
+        };
+    }
+
+    fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
+        self.accumulated.set(false);
+        if cx.frame.kind.debug {
+            self.frame = None;
+            return;
+        }
+        let post = cx.parts.post().is_some_and(PostPass::active);
+        self.frame = self.prepare_frame(cx, post);
+    }
+
+    fn produces(&self, resource: ResourceId) -> bool {
+        self.frame.is_some()
+            && (self.ids.accumulated == Some(resource) || self.ids.revealed == Some(resource))
+    }
+
+    fn draw(&self, at: DrawAt<'_>, cx: &View<'_>, pass: &mut wgpu::RenderPass<'_>) -> u32 {
+        let (DrawAt::Transparent { targets }, Some(frame), Some(particles)) =
+            (at, &self.frame, &self.particles)
+        else {
+            return 0;
+        };
+        let Some(&GroupRef::Shared { group, without }) = PARTICLE_PIPELINES.groups.first() else {
+            return 0;
+        };
+        let camera = cx.core.shared_group(group, without);
+        if self.accumulated.replace(true) {
+            particles.draw_additive(pass, camera, frame, targets != Targets::Canvas);
+        } else {
+            particles.draw_alpha(pass, camera, frame);
+        }
+        0
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        self.particles
+            .as_ref()
+            .map_or(0, ParticlePass::capacity_bytes)
+    }
+
+    fn stats(&self, cx: &View<'_>, stats: &mut RenderStats) {
+        let snapshot = cx.frame.snapshot;
+        let particles = self.frame.as_ref();
+        stats.particles = Drawn {
+            drawn: particles.map_or(0, |frame| frame.total),
+            invalid: snapshot.particles.invalid.min(u32::MAX as usize) as u32,
+            dropped: (snapshot.particles.dropped as u64
+                + particles.map_or(0, |frame| frame.dropped))
+            .min(u64::from(u32::MAX)) as u32,
+        };
+    }
+}

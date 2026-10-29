@@ -12,6 +12,8 @@ default = []
 engine_core.workspace = true
 engine_faces.workspace = true
 engine_render.workspace = true
+bytemuck.workspace = true
+wgpu.workspace = true
 
 [lints]
 workspace = true

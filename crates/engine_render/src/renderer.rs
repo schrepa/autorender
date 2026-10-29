@@ -55,12 +55,12 @@ mod native;
 mod opaque;
 #[cfg(feature = "dev")]
 mod probe;
-pub(crate) mod probe_captures;
 mod queries;
 mod records;
 pub(crate) mod scatter_draws;
 pub(crate) mod scatter_pool;
 mod startup;
+mod view_draws;
 
 pub use attribution::GpuPassTimes;
 pub(crate) use camera::CameraBindings;

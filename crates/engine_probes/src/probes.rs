@@ -3,28 +3,32 @@ use engine_core::{
     glam::{Mat4, Vec3, Vec4},
     math,
 };
-
-use crate::bindings::{Contribution, Stages, read};
-use crate::cached::{Bound, Cached};
-use crate::gpu_data::{CameraUniform, STILL_FRAMES};
-use crate::gpu_layouts::constants::PROBE_ENTRY_WORDS;
-use crate::graph::{
+use engine_faces::environment::EnvironmentFace;
+use engine_render::bindings::{Contribution, Stages, read};
+use engine_render::cached::{Bound, Cached};
+use engine_render::gpu_data::{CameraUniform, STILL_FRAMES};
+use engine_render::graph::{
     FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
 };
-use crate::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View};
+use engine_render::parts::{
+    Begin, BeginOut, Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Shading, Step, View,
+    Views,
+};
+
+use crate::gpu_layouts::PROBE_ENTRY_WORDS;
 
 pub(crate) const FACES: usize = 6;
 const CAPTURE_NEAR: f32 = 0.05;
 const CAPTURE_FAR: f32 = 4_000.0;
 const GRID_CELLS: f32 = 64.0;
 
-pub(crate) const FRAME_PROBES: Contribution = Contribution {
+const FRAME_PROBES: Contribution = Contribution {
     group: "frame",
     set: "probes",
     bindings: &[read("probe_words", Stages::FRAGMENT)],
 };
 
-pub(crate) static PART: PartEntry = PartEntry {
+pub static PART: PartEntry = PartEntry {
     decl: PartDecl {
         name: "probes",
         brick: "reflection_probes",
@@ -42,7 +46,7 @@ pub(crate) static PART: PartEntry = PartEntry {
         labels: &[],
         lazy: false,
         faces: &[],
-        needs: &[],
+        needs: &["meshes"],
         piece: None,
     },
     create,
@@ -250,19 +254,21 @@ pub(crate) struct ProbePass {
     pub(crate) slots: ProbeSlots,
     cameras: [wgpu::Buffer; FACES],
     depth: Cached<u32, wgpu::TextureView>,
-    words: crate::buffers::Growable,
+    words: engine_render::buffers::Growable,
     staging: Vec<[u32; 4]>,
     pub(crate) faces: u32,
     dropped: u32,
     captures: bool,
+    listed: bool,
+    format: Option<wgpu::TextureFormat>,
     ids: GraphIds,
 }
 
 impl ProbePass {
     pub(crate) fn new(device: &wgpu::Device, camera_bytes: u64) -> Self {
-        let _owner = crate::memory::owned("reflection_probes");
+        let _owner = engine_render::memory::owned("reflection_probes");
         let cameras = std::array::from_fn(|_| {
-            crate::buffers::uniform(device, "engine/probe-camera", camera_bytes)
+            engine_render::buffers::uniform(device, "engine/probe-camera", camera_bytes)
         });
         Self {
             slots: ProbeSlots {
@@ -271,7 +277,7 @@ impl ProbePass {
             },
             cameras,
             depth: Cached::default(),
-            words: crate::buffers::Growable::new(
+            words: engine_render::buffers::Growable::new(
                 device,
                 GRID_LABEL,
                 32,
@@ -281,12 +287,10 @@ impl ProbePass {
             faces: 0,
             dropped: 0,
             captures: false,
+            listed: false,
+            format: None,
             ids: GraphIds::default(),
         }
-    }
-
-    pub(crate) fn waiting(&self) -> bool {
-        self.slots.waiting()
     }
 
     pub(crate) fn camera(&self, face: usize) -> &wgpu::Buffer {
@@ -304,7 +308,7 @@ impl ProbePass {
         format: wgpu::TextureFormat,
     ) -> &wgpu::TextureView {
         self.depth.get_or_insert_with(size, || {
-            let texture = crate::targets::texture_2d(
+            let texture = engine_render::targets::texture_2d(
                 device,
                 "engine/probe-depth",
                 (size, size),
@@ -317,7 +321,7 @@ impl ProbePass {
         })
     }
 
-    fn upload(&mut self, device: &wgpu::Device, queue: &crate::gpu_calls::Queue) {
+    fn upload(&mut self, device: &wgpu::Device, queue: &engine_render::gpu_calls::Queue) {
         let Some(ready) = self.slots.changed_ready() else {
             return;
         };
@@ -431,13 +435,21 @@ impl GpuPart for ProbePass {
         };
     }
 
+    fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
+        self.listed = !probe_list(cx.snapshot).is_empty();
+        self.format = cx
+            .parts
+            .face::<dyn EnvironmentFace>()
+            .map(|environment| environment.radiance_face(0).texture().format());
+    }
+
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         let snapshot = cx.frame.snapshot;
         let probe_list = probe_list(snapshot);
         let plan = cx
             .parts
-            .get::<crate::sky::SkyPass>()
-            .map(crate::sky::SkyPass::environment_plan)
+            .face::<dyn EnvironmentFace>()
+            .map(|environment| environment.plan())
             .unwrap_or_default();
         let (cubes, most_cubes, lost, sky_changed) = (
             plan.cubes.max(1),
@@ -497,5 +509,20 @@ impl GpuPart for ProbePass {
             faces: self.faces,
             dropped: self.dropped,
         };
+    }
+
+    fn shading(&self, snapshot: &RenderSnapshot, shading: &mut Shading) {
+        let enabled = snapshot.environment.reflection_probes.enabled;
+        shading.set("PROBES", if enabled { 1.0 } else { 0.0 });
+    }
+
+    fn views(&self) -> Option<Views<'_>> {
+        let format = self.format.filter(|_| self.listed)?;
+        Some(Views {
+            cameras: &self.cameras,
+            format,
+            mirrored: true,
+            still: self.slots.waiting(),
+        })
     }
 }
