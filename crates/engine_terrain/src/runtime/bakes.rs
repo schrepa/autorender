@@ -2,27 +2,7 @@ use super::*;
 
 pub(super) fn finish_bake(state: &mut TerrainState, baked: Arc<Layers>) {
     if baked.unbaked().is_none() {
-        state.bridges = baked
-            .layers()
-            .iter()
-            .filter_map(|layer| match layer {
-                Layer::Path(PathStage {
-                    baked: Some(profile),
-                    ..
-                }) => Some(profile.bridges()),
-                Layer::Noise(_)
-                | Layer::Heightmap(_)
-                | Layer::Stamp(_)
-                | Layer::Rivers(_)
-                | Layer::Hydrology(_)
-                | Layer::Erosion(_)
-                | Layer::Path(_)
-                | Layer::Steps(_)
-                | Layer::Hummocks(_) => None,
-            })
-            .flatten()
-            .collect::<Vec<_>>()
-            .into();
+        state.bridges = baked.bridges().into();
         state.falls = baked
             .hydrology()
             .map_or_else(|| Arc::from(Vec::new()), |water| water.falls.clone());
@@ -83,24 +63,8 @@ pub(super) fn bake(
             return true;
         }
     };
-    for layer in baked.layers() {
-        match layer {
-            Layer::Hydrology(HydrologyStage {
-                baked: Some(found), ..
-            }) => state.hydrology = HydrologyState::baked(found.stats),
-            Layer::Erosion(ErosionStage {
-                baked: Some(found), ..
-            }) => state.erosion = Some(found.stats),
-            Layer::Noise(_)
-            | Layer::Heightmap(_)
-            | Layer::Stamp(_)
-            | Layer::Rivers(_)
-            | Layer::Hydrology(_)
-            | Layer::Erosion(_)
-            | Layer::Path(_)
-            | Layer::Steps(_)
-            | Layer::Hummocks(_) => {}
-        }
+    if let Some(water) = baked.hydrology() {
+        state.hydrology = HydrologyState::baked(water.stats);
     }
     let before = state.baked.clone();
     finish_bake(state, Arc::new(baked));

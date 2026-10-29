@@ -1,12 +1,13 @@
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
-use glam::{Vec2, Vec3, Vec4};
+use glam::{Vec2, Vec3};
 
 use engine_math::{clamp, max, min};
 
 use crate::hydrology::RIVER_FAR;
-use crate::layers::{Layer, Layers, state_len};
+use crate::layer::{Below, LayerTile, Row, SamplePoint, TileFrame};
+use crate::layers::Layers;
 use crate::rivers::RiverRaster;
 use crate::surface::{
     BiomeRules, Control, RowInputs, RowScratch, SampleShape, erosion_row, smooth_gradient,
@@ -542,49 +543,17 @@ pub(crate) fn on_triangle([v00, v10, v01, v11]: [f32; 4], fu: f32, fv: f32) -> f
     }
 }
 
-const GRID: usize = 69;
-const GRID_FIRST: i64 = -2;
-const GRID_STEP: i64 = 4;
-const COARSE_COST: u64 = 24;
-const NOISE_SAMPLE_COST: u64 = 4;
+struct Prepared(Mutex<Box<dyn LayerTile>>);
 
-#[inline(always)]
-fn interpolate(out: &mut [f32], weights: [f32; 4], taps: [&[f32]; 4]) {
-    let [a, b, c, d] = taps;
-    for ((((value, a), b), c), d) in out.iter_mut().zip(a).zip(b).zip(c).zip(d) {
-        *value = weights[0] * a + weights[1] * b + weights[2] * c + weights[3] * d;
-    }
-}
-
-const QUARTER_WEIGHTS: [[f32; 4]; 4] = [
-    [0.0, 1.0, 0.0, 0.0],
-    [-0.070_312_5, 0.867_187_5, 0.226_562_5, -0.023_437_5],
-    [-0.0625, 0.5625, 0.5625, -0.0625],
-    [-0.023_437_5, 0.226_562_5, 0.867_187_5, -0.070_312_5],
-];
-
-const LANE_WEIGHTS: [Vec4; 4] = {
-    let w = QUARTER_WEIGHTS;
-    [
-        Vec4::new(w[0][0], w[1][0], w[2][0], w[3][0]),
-        Vec4::new(w[0][1], w[1][1], w[2][1], w[3][1]),
-        Vec4::new(w[0][2], w[1][2], w[2][2], w[3][2]),
-        Vec4::new(w[0][3], w[1][3], w[2][3], w[3][3]),
-    ]
-};
-
-#[inline(always)]
-fn interpolate4(out: &mut [Vec4], taps: [&[f32]; 4]) {
-    let [a, b, c, d] = taps;
-    let [wa, wb, wc, wd] = LANE_WEIGHTS;
-    for ((((value, &a), &b), &c), &d) in out.iter_mut().zip(a).zip(b).zip(c).zip(d) {
-        *value = wa * a + wb * b + wc * c + wd * d;
+impl Prepared {
+    fn tile(&mut self) -> &mut Box<dyn LayerTile> {
+        self.0.get_mut().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
 enum Stage {
-    Coarse { layer: usize, row: usize },
+    Prepare { layer: usize },
     Rivers { layer: usize },
     Samples { row: i32 },
     Beds,
@@ -600,17 +569,12 @@ pub struct Generator {
     key: TileKey,
     spacing: f32,
     first: [i64; 2],
-    bands: Vec<Option<(usize, Range<usize>, usize)>>,
-    grids: Vec<Option<Box<[f32]>>>,
+    tiles: Vec<Option<Prepared>>,
     stage: Stage,
     heights: Box<[f32]>,
     holes: Option<Box<[u64]>>,
     xs: Box<[f32]>,
     row: Box<[f32]>,
-    values: Box<[f32]>,
-    column: Box<[f32]>,
-    state: Box<[f32]>,
-    lanes: Box<[Vec4]>,
     min: Vec2,
     max: Vec2,
     surface: Option<Arc<BiomeRules>>,
@@ -729,20 +693,11 @@ impl Generator {
         let [dx, dz] = layers.offset_samples(spacing);
         let first = [x + dx, z + dz];
         let stride = TILE_STRIDE as usize;
-        let bands: Vec<_> = (0..layers.layers().len())
-            .map(|index| layers.noise(index).map(|tables| tables.bands(spacing)))
-            .collect();
-        let lens: Vec<_> = bands
-            .iter()
-            .map(|bands| bands.as_ref().map(|(coarse, _, _)| state_len(*coarse)))
-            .collect();
-        let grids = lens
-            .iter()
-            .map(|len| len.map(|len| vec![0.0; GRID * GRID * len].into_boxed_slice()))
-            .collect();
-        let widest = lens.iter().flatten().copied().max().unwrap_or(0);
-        let xs = (-1..=TILE_SAMPLES as i64)
+        let xs: Box<[f32]> = (-1..=TILE_SAMPLES as i64)
             .map(|i| (first[0] + i) as f32 * spacing)
+            .collect();
+        let zs: Box<[f32]> = (-1..=TILE_SAMPLES as i64)
+            .map(|i| (first[1] + i) as f32 * spacing)
             .collect();
         let min = Vec2::new(
             (first[0] - 1) as f32 * spacing,
@@ -755,22 +710,31 @@ impl Generator {
         let holes = layers
             .holes_reach(min, max)
             .then(|| vec![0; HOLE_WORDS].into_boxed_slice());
+        let frame = TileFrame {
+            key,
+            first,
+            spacing,
+            xs: &xs,
+            zs: &zs,
+            low: min,
+            high: max,
+        };
+        let tiles = layers
+            .layers()
+            .iter()
+            .map(|layer| layer.tile(&frame).map(|tile| Prepared(Mutex::new(tile))))
+            .collect();
         Self {
             layers,
             key,
             spacing,
             first,
-            bands,
-            grids,
-            stage: Stage::Coarse { layer: 0, row: 0 },
+            tiles,
+            stage: Stage::Prepare { layer: 0 },
             heights: vec![0.0; stride * stride].into_boxed_slice(),
             holes,
             xs,
             row: vec![0.0; stride].into_boxed_slice(),
-            values: vec![0.0; stride].into_boxed_slice(),
-            column: vec![0.0; GRID * widest].into_boxed_slice(),
-            state: vec![0.0; widest].into_boxed_slice(),
-            lanes: vec![Vec4::ZERO; widest].into_boxed_slice(),
             min,
             max,
             surface: None,
@@ -780,9 +744,7 @@ impl Generator {
             rasters: Vec::new(),
             river_edges: None,
             river_beds: None,
-            zs: (-1..=TILE_SAMPLES as i64)
-                .map(|i| (first[1] + i) as f32 * spacing)
-                .collect(),
+            zs,
             inputs: SurfaceInputs::default(),
             places: crate::placement::PlaceScratch::default(),
             materials: true,
@@ -796,13 +758,6 @@ impl Generator {
     }
 
     const HEIGHT_ROWS: (i32, i32) = (-1, TILE_SAMPLES as i32 + 1);
-
-    fn grid_rows() -> (usize, usize) {
-        let (first, end) = Self::HEIGHT_ROWS;
-        let low = i64::from(first).div_euclid(GRID_STEP) - GRID_FIRST - 1;
-        let high = i64::from(end - 1).div_euclid(GRID_STEP) - GRID_FIRST + 3;
-        (low as usize, std::cmp::min(high as usize, GRID))
-    }
 
     #[must_use]
     pub fn with_surface(mut self, surface: Arc<BiomeRules>) -> Self {
@@ -859,60 +814,26 @@ impl Generator {
                 return None;
             }
             match self.stage {
-                Stage::Coarse { layer, row } => {
-                    if layer >= self.grids.len() {
+                Stage::Prepare { layer } => {
+                    let Some(prepared) = self.tiles.get_mut(layer) else {
                         self.stage = Stage::Rivers { layer: 0 };
                         continue;
+                    };
+                    if prepared
+                        .as_mut()
+                        .is_none_or(|prepared| prepared.tile().prepare(budget))
+                    {
+                        self.stage = Stage::Prepare { layer: layer + 1 };
                     }
-                    let Some(tables) = self.layers.noise(layer) else {
-                        self.stage = Stage::Coarse {
-                            layer: layer + 1,
-                            row: Self::grid_rows().0,
-                        };
-                        continue;
-                    };
-                    let (coarse, _, gullies) = self.bands[layer].clone().unwrap_or_default();
-                    let z = (self.first[1] + (GRID_FIRST + row as i64) * GRID_STEP) as f32
-                        * self.spacing;
-                    let grid = self.grids[layer].as_mut().expect("noise_layer_grid");
-                    let len = state_len(coarse);
-                    let (first, spacing) = (self.first[0], self.spacing);
-                    let x = |column: usize| {
-                        (first + (GRID_FIRST + column as i64) * GRID_STEP) as f32 * spacing
-                    };
-                    let mut column = 0;
-                    while column < GRID {
-                        let at = (row * GRID + column) * len;
-                        if column + 4 <= GRID {
-                            let xs = Vec4::from_array([0, 1, 2, 3].map(|lane| x(column + lane)));
-                            tables.coarse4(xs, z, coarse, gullies, &mut grid[at..at + 4 * len]);
-                            column += 4;
-                        } else {
-                            tables.coarse(x(column), z, coarse, gullies, &mut grid[at..at + len]);
-                            column += 1;
-                        }
-                    }
-                    *budget = budget.saturating_sub(GRID as u64 * COARSE_COST);
-                    let (first, end) = Self::grid_rows();
-                    self.stage = if row + 1 < end {
-                        Stage::Coarse {
-                            layer,
-                            row: row + 1,
-                        }
-                    } else {
-                        Stage::Coarse {
-                            layer: layer + 1,
-                            row: first,
-                        }
-                    };
                 }
                 Stage::Rivers { layer } => self.stage = self.rasterize(layer, budget),
                 Stage::Samples { row } => {
                     self.sample_row(row);
                     let layers = self
-                        .grids
+                        .layers
+                        .layers()
                         .iter()
-                        .map(|grid| if grid.is_some() { NOISE_SAMPLE_COST } else { 1 })
+                        .map(|layer| layer.row_cost())
                         .sum::<u64>();
                     *budget = budget.saturating_sub(u64::from(TILE_STRIDE) * layers.max(1));
                     self.stage = if row + 1 < Self::HEIGHT_ROWS.1 {
@@ -1053,68 +974,26 @@ impl Generator {
     fn sample_row(&mut self, row: i32) {
         let z = (self.first[1] + i64::from(row)) as f32 * self.spacing;
         self.row.fill(0.0);
-        let coarse_row = i64::from(row).div_euclid(GRID_STEP);
-        let vertical = QUARTER_WEIGHTS[i64::from(row).rem_euclid(GRID_STEP) as usize];
-        for layer in 0..self.layers.layers().len() {
-            let Some(tables) = self.layers.noise(layer) else {
-                if matches!(self.layers.layers()[layer], Layer::Hydrology(_)) {
-                    if let Some(raster) = self.rasters.get(layer).and_then(Option::as_ref) {
-                        let at = (row + 1) as usize;
-                        self.layers
-                            .cut_rivers(raster, at, &mut self.row, &self.xs, z);
-                    }
-                } else {
-                    self.layers.apply_local(
-                        layer,
-                        &mut self.row,
-                        &self.xs,
-                        z,
-                        (self.min, self.max),
-                        self.spacing,
-                    );
+        let at = Row {
+            xs: &self.xs,
+            z,
+            spacing: self.spacing,
+            low: self.min,
+            high: self.max,
+        };
+        for (index, layer) in self.layers.layers().iter().enumerate() {
+            let below = Below::new(&self.layers, index);
+            if layer.makes_water() {
+                if let Some(raster) = self.rasters.get(index).and_then(Option::as_ref) {
+                    let line = (row + 1) as usize;
+                    self.layers
+                        .cut_rivers(raster, line, &mut self.row, &self.xs, z);
                 }
-                continue;
-            };
-            let (octaves, fine, _) = self.bands[layer].clone().unwrap_or_default();
-            let len = state_len(octaves);
-            let grid = self.grids[layer].as_ref().expect("noise_layer_grid");
-            let base = (coarse_row - 1 - GRID_FIRST) as usize;
-            let tap = |row: usize, column: usize| {
-                let at = ((base + row) * GRID + column) * len;
-                &grid[at..at + len]
-            };
-            for (column, sum) in self.column.chunks_exact_mut(len).take(GRID).enumerate() {
-                let taps = [0, 1, 2, 3].map(|row| tap(row, column));
-                interpolate(sum, vertical, taps);
+            } else if let Some(prepared) = self.tiles.get_mut(index).and_then(Option::as_mut) {
+                prepared.tile().apply_row(below, row, &at, &mut self.row);
+            } else {
+                layer.apply_row(below, &at, &mut self.row);
             }
-            let sum = &mut self.state[..len];
-            let lanes = &mut self.lanes[..len];
-            let samples = self.values.len();
-            let mut index = 0;
-            while index < samples {
-                let sample = index as i64 - 1;
-                let coarse = sample.div_euclid(GRID_STEP);
-                let quarter = sample.rem_euclid(GRID_STEP) as usize;
-                let first = (coarse - 1 - GRID_FIRST) as usize;
-                let taps = [0, 1, 2, 3].map(|tap| {
-                    let at = (first + tap) * len;
-                    &self.column[at..at + len]
-                });
-                if quarter == 0 && index + 4 <= samples {
-                    interpolate4(lanes, taps);
-                    let xs = Vec4::from_slice(&self.xs[index..index + 4]);
-                    tables
-                        .finish4(xs, z, lanes, octaves, fine.clone())
-                        .write_to_slice(&mut self.values[index..index + 4]);
-                    index += 4;
-                } else {
-                    interpolate(sum, QUARTER_WEIGHTS[quarter], taps);
-                    self.values[index] =
-                        tables.finish(self.xs[index], z, sum, octaves, fine.clone());
-                    index += 1;
-                }
-            }
-            self.layers.apply_noise(layer, &mut self.row, &self.values);
         }
         let stride = TILE_STRIDE as usize;
         let start = (row + 1) as usize * stride;
@@ -1124,15 +1003,7 @@ impl Generator {
 
 impl Layers {
     pub fn height_cost(&self) -> u64 {
-        (0..self.layers().len())
-            .map(|layer| {
-                if self.noise(layer).is_some() {
-                    16 * COARSE_COST + NOISE_SAMPLE_COST
-                } else {
-                    1
-                }
-            })
-            .sum()
+        self.layers().iter().map(|layer| layer.point_cost()).sum()
     }
 
     pub fn sample_height(&self, pyramid: &Pyramid, level: u32, sample: [i64; 2]) -> f32 {
@@ -1141,48 +1012,24 @@ impl Layers {
         let sample = [sample[0] + dx, sample[1] + dz];
         let x = sample[0] as f32 * spacing;
         let z = sample[1] as f32 * spacing;
-        let [cx, cz] = sample.map(|index| index.div_euclid(GRID_STEP));
-        let horizontal = QUARTER_WEIGHTS[sample[0].rem_euclid(GRID_STEP) as usize];
-        let vertical = QUARTER_WEIGHTS[sample[1].rem_euclid(GRID_STEP) as usize];
-        let point = Vec2::new(x, z);
-        let mut height = [0.0_f32];
-        for layer in 0..self.layers().len() {
-            let Some(tables) = self.noise(layer) else {
-                self.apply_local(layer, &mut height, &[x], z, (point, point), spacing);
-                continue;
-            };
-            let (octaves, fine, gullies) = tables.bands(spacing);
-            let len = state_len(octaves);
-            let mut points = vec![0.0_f32; 16 * len];
-            for (index, point) in points.chunks_exact_mut(len).enumerate() {
-                let column = (cx - 1 + (index / 4) as i64) * GRID_STEP;
-                let row = (cz - 1 + (index % 4) as i64) * GRID_STEP;
-                tables.coarse(
-                    column as f32 * spacing,
-                    row as f32 * spacing,
-                    octaves,
-                    gullies,
-                    point,
-                );
+        let point = SamplePoint {
+            sample,
+            x,
+            z,
+            spacing,
+        };
+        let mut height = 0.0_f32;
+        for (index, layer) in self.layers().iter().enumerate() {
+            if layer.makes_water() {
+                if let Some(rivers) = self.rivers_of(index) {
+                    let cut = rivers.cut(x, z, height, spacing);
+                    height = self.faded(height, cut, x, z);
+                }
+            } else {
+                layer.apply_point(Below::new(self, index), &point, &mut height);
             }
-            let mut columns = vec![0.0_f32; 4 * len];
-            for (column, value) in columns.chunks_exact_mut(len).enumerate() {
-                let taps = [0, 1, 2, 3].map(|row| {
-                    let at = (column * 4 + row) * len;
-                    &points[at..at + len]
-                });
-                interpolate(value, vertical, taps);
-            }
-            let mut sum = vec![0.0_f32; len];
-            let taps = [0, 1, 2, 3].map(|column| &columns[column * len..(column + 1) * len]);
-            interpolate(&mut sum, horizontal, taps);
-            self.apply_noise(
-                layer,
-                &mut height,
-                &[tables.finish(x, z, &sum, octaves, fine)],
-            );
         }
-        height[0]
+        height
     }
 
     pub fn height_at(&self, pyramid: &Pyramid, point: Vec2) -> f32 {

@@ -3,21 +3,25 @@ use std::sync::Arc;
 use bevy_ecs::prelude::{Entity, World};
 use engine_assets::{AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle, MeshVertex};
 use engine_core::{
-    AuthoredId, Interior, OperationScene, ReflectionProbe, Transform, propagate_transforms,
+    AuthoredId, Error, ErrorCode, Interior, OperationScene, ReflectionProbe, Transform,
+    propagate_transforms,
 };
-use glam::{Vec2, Vec3};
+use glam::Vec3;
+use serde_json::{Value, json};
 
+use crate::expr::{Expr, Ramp};
+use crate::layer::{LayerFiles, TerrainLayer, layer_from_json, maps};
 use crate::{
-    AuthoredPlacement, Biome, BiomeLayer, Biomes, Blend, Cover, ErosionLayer, ErosionStage,
-    FarPlacement, HeightImage, HeightmapLayer, HydrologyLayer, HydrologyStage, Layer, Layers,
-    MacroCauses, Mask, NoiseLayer, PathLayer, PathStage, PlacedCollider, PlacedShape,
-    PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod, Pyramid, Stamp, StampOp,
-    SurfaceMaterial, Surroundings, Terrain, TerrainSurface,
+    AuthoredPlacement, Biome, BiomeLayer, Biomes, Cover, FarPlacement, Layers, MacroCauses,
+    PlacedCollider, PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod,
+    Pyramid, SurfaceMaterial, Surroundings, Terrain, TerrainSurface,
 };
 
 pub const FIXTURE: &str = "terrain-fixture";
 
 const DOME_SIDE: u32 = 65;
+
+const DOME: &str = "dome";
 
 const ICOSAHEDRON: [[u32; 3]; 20] = [
     [0, 11, 5],
@@ -166,80 +170,78 @@ fn placed(translation: Vec3) -> Transform {
     }
 }
 
-fn layers() -> Vec<Layer> {
-    let stamp = |center: [f32; 2], radius: f32, falloff: f32, op: StampOp| {
-        Layer::Stamp(Stamp {
-            center,
-            radius,
-            falloff,
-            op,
+fn layers() -> Vec<Arc<dyn TerrainLayer>> {
+    let stamp = |center: [f32; 2], radius: f32, falloff: f32, op: Value| {
+        json!({"type": "stamp", "center": center, "radius": radius, "falloff": falloff, "op": op})
+    };
+    let path = |points: Value, smoothing: f32, tunnel_cut: f32| {
+        json!({
+            "type": "path",
+            "points": points,
+            "width": 6.0,
+            "shoulder": 6.0,
+            "smoothing": smoothing,
+            "bridge_fill": 4.0,
+            "tunnel_cut": tunnel_cut,
         })
     };
-    let path = |points: Vec<[f32; 2]>, smoothing: f32, tunnel_cut: f32| {
-        Layer::Path(PathStage {
-            layer: Arc::new(PathLayer {
-                points,
-                width: 6.0,
-                shoulder: 6.0,
-                smoothing,
-                bridge_fill: 4.0,
-                tunnel_cut,
-            }),
-            baked: None,
-        })
-    };
-    vec![
-        Layer::Noise(NoiseLayer {
-            seed: 3,
-            height: 140.0,
-            wavelength: 600.0,
-            ..NoiseLayer::default()
+    let stack = [
+        json!({"type": "noise", "seed": 3, "height": 140.0, "wavelength": 600.0}),
+        json!({
+            "type": "erosion",
+            "level": 1,
+            "rounds": 6,
+            "incision": 0.001_953_125,
+            "creep": 2.0,
         }),
-        Layer::Erosion(ErosionStage {
-            layer: ErosionLayer {
-                level: 1,
-                rounds: 6,
-                incision: 0.001_953_125,
-                creep: 2.0,
-                ..ErosionLayer::default()
-            },
-            baked: None,
-        }),
-        Layer::Hydrology(HydrologyStage {
-            layer: HydrologyLayer {
-                level: 1,
-                ..HydrologyLayer::default()
-            },
-            baked: None,
-        }),
-        stamp([430.0, 96.0], 10.0, 10.0, StampOp::Lower(12.0)),
+        json!({"type": "hydrology", "level": 1}),
+        stamp([430.0, 96.0], 10.0, 10.0, json!({"lower": 12.0})),
         path(
-            vec![
-                [100.0, 300.0],
-                [250.0, 260.0],
-                [400.0, 150.0],
-                [450.0, 60.0],
-            ],
+            json!([[100.0, 300.0], [250.0, 260.0], [400.0, 150.0], [450.0, 60.0]]),
             60.0,
             25.0,
         ),
-        stamp([750.0, 200.0], 30.0, 40.0, StampOp::Raise(40.0)),
-        path(vec![[600.0, 200.0], [900.0, 200.0]], 400.0, 15.0),
-        stamp([512.0, 512.0], 40.0, 60.0, StampOp::Flatten(30.0)),
-        stamp([560.0, 512.0], 4.0, 0.0, StampOp::Hole),
-        Layer::Heightmap(HeightmapLayer {
-            image: Arc::new(HeightImage::new(DOME_SIDE, DOME_SIDE, dome()).expect("dome_fits")),
-            min: Vec2::new(700.0, 700.0),
-            size: Vec2::new(128.0, 128.0),
-            low: 0.0,
-            high: 200.0,
-            falloff: 0.0,
-            blend: Blend::Max,
-            uri: None,
-            source: None,
-            attribution: None,
+        stamp([750.0, 200.0], 30.0, 40.0, json!({"raise": 40.0})),
+        path(json!([[600.0, 200.0], [900.0, 200.0]]), 400.0, 15.0),
+        stamp([512.0, 512.0], 40.0, 60.0, json!({"flatten": 30.0})),
+        stamp([560.0, 512.0], 4.0, 0.0, json!("hole")),
+        json!({
+            "type": "heightmap",
+            "uri": DOME,
+            "width": DOME_SIDE,
+            "height": DOME_SIDE,
+            "min": [700.0, 700.0],
+            "size": [128.0, 128.0],
+            "low": 0.0,
+            "high": 200.0,
+            "blend": "max",
         }),
-    ]
+    ];
+    stack
+        .iter()
+        .enumerate()
+        .map(|(index, layer)| {
+            layer_from_json(layer, &DomeFiles, &format!("$.layers[{index}]"))
+                .expect("fixture_layer_valid")
+        })
+        .collect()
+}
+
+struct DomeFiles;
+
+impl LayerFiles for DomeFiles {
+    fn buffer(&self, uri: &str, path: &str) -> Result<Option<Arc<[u8]>>, Error> {
+        if uri != DOME {
+            return Err(Error::new(ErrorCode::UnknownReference, path)
+                .got(uri)
+                .variants([DOME]));
+        }
+        let bytes: Vec<u8> = dome()
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
+        Ok(Some(Arc::from(bytes)))
+    }
 }
 
 fn dome() -> Vec<u16> {
@@ -286,7 +288,14 @@ fn looks(grain: MaterialHandle) -> Vec<SurfaceMaterial> {
 }
 
 fn biomes() -> Biomes {
-    let layer = |material: &str, mask: Mask| BiomeLayer {
+    let ramp = |map: &str, from: f32, to: f32| {
+        Expr::Ramp(Ramp {
+            map: map.to_owned(),
+            from,
+            to,
+        })
+    };
+    let layer = |material: &str, mask: Expr| BiomeLayer {
         material: material.to_owned(),
         mask,
         opacity: 1.0,
@@ -302,18 +311,18 @@ fn biomes() -> Biomes {
         biomes: vec![
             Biome {
                 id: "lowland".to_owned(),
-                fitness: Mask::one(),
+                fitness: Expr::one(),
                 layers: vec![
-                    layer("meadow", Mask::one()),
-                    layer("rock", Mask::Slope([25.0, 35.0])),
-                    layer("gravel", Mask::Path([1.0, 0.0])),
+                    layer("meadow", Expr::one()),
+                    layer("rock", ramp(maps::SLOPE, 25.0, 35.0)),
+                    layer("gravel", ramp(maps::PATH, 1.0, 0.0)),
                 ],
                 wetness: None,
             },
             Biome {
                 id: "summit".to_owned(),
-                fitness: Mask::Height([110.0, 130.0]),
-                layers: vec![layer("snow", Mask::one())],
+                fitness: ramp(maps::HEIGHT, 110.0, 130.0),
+                layers: vec![layer("snow", Expr::one())],
                 wetness: None,
             },
         ],

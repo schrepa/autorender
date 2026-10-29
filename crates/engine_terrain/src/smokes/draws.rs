@@ -1,13 +1,13 @@
 use bevy_ecs::prelude::Entity;
 use engine_core::smoke::{SmokeResult, SmokeSession};
 use engine_core::{Transform, smoke_check, smoke_eq};
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use serde_json::{Value, json};
 
 use super::{
     Checked, FAST, SETTLE_FRAMES, WAIT_FRAMES, above, ask, at_most, below, camera, capture,
-    component, control, environment, fast, heights, inspect, name, not, number, open, overview,
-    present, query, refuse, render, renders_until, seen, settle, subdivided, view, with,
+    component, control, environment, fast, heights, inspect, layer_sweep, name, not, number, open,
+    overview, present, refuse, render, renders_until, seen, settle, subdivided, view, with,
 };
 use crate::TerrainPrefetch;
 
@@ -376,12 +376,7 @@ fn memory(session: &mut dyn SmokeSession) -> Checked<()> {
         view([-420.0, 90.0, -420.0], [-300.0, 30.0, -300.0]),
     )?;
     settle(session)?;
-    let joined = query(
-        session,
-        "terrain_sweep",
-        json!({"center": [-380.0, -380.0], "half_extent": 100.0, "samples": 24}),
-    )?;
-    let layers = &joined["layers"];
+    let layers = &layer_sweep(session, Vec2::new(-380.0, -380.0), 100.0, 24);
     smoke_check!(
         number(&layers["compared"]) > 100.0,
         "the_sweep_compares",

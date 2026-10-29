@@ -92,10 +92,10 @@ pub use crate::bounce::TerrainBounce;
 use crate::jobs::{BakeJob, BounceJob, LightingJob, StackView, TerrainRecipe, TileJob};
 pub use crate::lighting::TerrainLighting;
 use crate::{
-    Biome, BiomeLayer, BiomeRules, Biomes, Bridge, ErosionStage, ErosionStats, Fall, GivenRiver,
-    HydrologyStage, HydrologyStats, Layer, Layers, LodRanges, Mask, NoiseMask, Obstacle,
-    PATCH_QUADS, PATCHES_PER_TILE, PathStage, Pyramid, Remap, Route, RouteOptions, Solid, Stamp,
-    TILE_QUADS, TILE_STRIDE, Tile, TileKey, TileSample, WantedTile, WantedView, WaterPoint,
+    Biome, BiomeLayer, BiomeRules, Biomes, Bridge, Expr, Fall, GivenRiver, HydrologyStats, Layers,
+    LodRanges, NoiseMask, Obstacle, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, Route, RouteOptions,
+    Solid, Stamp, TILE_QUADS, TILE_STRIDE, Tile, TileKey, TileSample, WantedTile, WantedView,
+    WaterPoint,
 };
 use engine_assets::{AssetLibrary, Material, MaterialHandle, MeshHandle};
 

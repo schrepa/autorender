@@ -291,20 +291,24 @@ impl<'a> Below<'a> {
         self.index
     }
 
+    pub fn layers(&self) -> &'a [Arc<dyn TerrainLayer>] {
+        self.stack.layers().get(..self.index).unwrap_or_default()
+    }
+
     pub fn shown(&self, x: f32, z: f32) -> f32 {
         self.stack.shown(x, z)
     }
 
     pub fn water(&self) -> Option<&'a Hydrology> {
-        self.stack.hydrology()
+        self.layers().iter().find_map(|layer| layer.water())
     }
 
     pub fn changes(&self) -> impl Iterator<Item = ChangeMap<'a>> + 'a {
-        self.stack.changes()
+        self.layers().iter().filter_map(|layer| layer.change())
     }
 
     pub fn path_at(&self, x: f32, z: f32) -> PathSample {
-        self.stack.path_at(x, z)
+        crate::layers::nearest_path(self.layers(), Vec2::new(x, z))
     }
 }
 

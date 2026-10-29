@@ -260,21 +260,21 @@ impl TerrainSurface {
 
     pub fn default_rules(snow_height: f32) -> Biomes {
         let noise = |wavelength: f32, seed: u32| {
-            Mask::Noise(NoiseMask {
+            Expr::Noise(NoiseMask {
                 wavelength,
                 seed,
                 octaves: 2,
             })
         };
-        let scaled = |mask: Mask, by: f32| Mask::Multiply(vec![mask, Mask::Constant(by)]);
-        let remap = |mask: Mask, from: f32, to: f32| {
-            Mask::Remap(Remap {
-                mask: Box::new(mask),
+        let scaled = |mask: Expr, by: f32| Expr::Mul(vec![mask, Expr::Constant(by)]);
+        let remap = |mask: Expr, from: f32, to: f32| {
+            Expr::Remap(crate::expr::Remap {
+                of: Box::new(mask),
                 from,
                 to,
             })
         };
-        let layer = |material: &str, mask: Mask| BiomeLayer {
+        let layer = |material: &str, mask: Expr| BiomeLayer {
             material: material.into(),
             mask,
             opacity: 1.0,
@@ -286,13 +286,13 @@ impl TerrainSurface {
             materials: ["grass", "dirt", "rock", "snow"].map(String::from).to_vec(),
             biomes: vec![Biome {
                 id: "ground".into(),
-                fitness: Mask::one(),
+                fitness: Expr::one(),
                 layers: vec![
-                    layer("grass", Mask::one()),
+                    layer("grass", Expr::one()),
                     layer(
                         "dirt",
                         remap(
-                            Mask::Add(vec![
+                            Expr::Add(vec![
                                 scaled(noise(60.0, 1), 0.7),
                                 scaled(noise(9.0, 2), 0.3),
                             ]),
@@ -303,10 +303,14 @@ impl TerrainSurface {
                     layer(
                         "snow",
                         remap(
-                            Mask::Add(vec![
-                                Mask::Height([snow_height - 100.0, snow_height + 100.0]),
+                            Expr::Add(vec![
+                                Expr::Ramp(crate::expr::Ramp {
+                                    map: crate::layer::maps::HEIGHT.to_owned(),
+                                    from: snow_height - 100.0,
+                                    to: snow_height + 100.0,
+                                }),
                                 scaled(noise(60.0, 3), 0.4),
-                                Mask::Constant(-0.2),
+                                Expr::Constant(-0.2),
                             ]),
                             0.4,
                             0.6,

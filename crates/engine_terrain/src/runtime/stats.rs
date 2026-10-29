@@ -35,9 +35,31 @@ pub struct TerrainStats {
     pub loading: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct TerrainBakes {
     pub baking: bool,
     pub hydrology: Option<HydrologyStats>,
-    pub erosion: Option<ErosionStats>,
+    pub layers: Vec<LayerStats>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct LayerStats {
+    pub index: usize,
+    pub layer: String,
+    pub stats: serde_json::Value,
+}
+
+pub(super) fn layer_stats(layers: &Layers) -> Vec<LayerStats> {
+    layers
+        .layers()
+        .iter()
+        .enumerate()
+        .filter_map(|(index, layer)| {
+            layer.stats().map(|stats| LayerStats {
+                index,
+                layer: layer.kind().name.to_owned(),
+                stats,
+            })
+        })
+        .collect()
 }
