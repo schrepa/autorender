@@ -89,15 +89,15 @@ impl Native {
     fn start(&self) -> ExitCode {
         #[cfg(feature = "dev")]
         if let Some(names) = &self.host.smoke {
-            let build = |without: &[&str]| {
-                if without.is_empty() {
-                    self.build()
-                } else {
-                    Err(
-                        engine::Error::new(engine::ErrorCode::UnsupportedCommand, "$.without")
-                            .got(without),
-                    )
-                }
+            let build = |source: Option<&str>, without: &[&str]| match source {
+                None => Ok((
+                    engine::smokes::standard_engine(without)?,
+                    Highlands::new(self.options.clone()),
+                )),
+                Some(_) => Err(
+                    engine::Error::new(engine::ErrorCode::UnsupportedCommand, "$.source")
+                        .expected(engine::Expected::Absent),
+                ),
             };
             return engine_native::smoke::run::<Highlands>(
                 &self.host,

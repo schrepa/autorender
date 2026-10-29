@@ -4,6 +4,7 @@ import { constants, readFileSync } from "node:fs";
 import { lstat, open, opendir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
+import { AgentError, atMost } from "./agent-protocol.mjs";
 
 const MAX_FILES = 20_000;
 const MAX_BYTES = 128 * 1024 * 1024;
@@ -15,13 +16,7 @@ const TREES = ["crates", ...clients.map(client => client.folder).filter(folder =
 const FILES = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 const IGNORED = new Set(["target", "pkg", "pkg-dev", "dist", ".git", "node_modules", ".tools"]);
 
-class SourceWatchError extends Error {
-  constructor(code, message, path = "$") {
-    super(message);
-    this.code = code;
-    this.path = path;
-  }
-}
+class SourceWatchError extends AgentError {}
 
 function limit(value, maximum, name) {
   if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
@@ -31,21 +26,21 @@ function limit(value, maximum, name) {
 }
 
 function changed(path) {
-  return new SourceWatchError("source_changed", "Source changed during fingerprinting; retry the scan.", path);
+  return new SourceWatchError("source_changed", path, { expected: "matching" });
 }
 
 async function statPath(root, path, optional = false) {
   try {
     const stat = await lstat(join(root, path), { bigint: true });
     if (stat.isSymbolicLink()) {
-      throw new SourceWatchError("source_symlink", "Build input symlinks are unsupported; use regular files and directories.", path);
+      throw new SourceWatchError("source_symlink", path, { expected: "file" });
     }
     return stat;
   } catch (error) {
     if (error?.code === "ENOENT" && optional) return null;
     if (error instanceof SourceWatchError) throw error;
     if (error?.code === "ENOENT") throw changed(path);
-    throw new SourceWatchError("source_io", String(error?.message ?? error), path);
+    throw new SourceWatchError("source_io", path, { expected: "readable", got: String(error?.code ?? error?.message ?? error) });
   }
 }
 
@@ -59,16 +54,16 @@ export async function fingerprintSources(root, options = {}) {
   const maxBytes = limit(options.maxBytes ?? MAX_BYTES, MAX_BYTES, "maxBytes");
   root = resolve(root);
   const rootStat = /** @type {import("node:fs").BigIntStats} */ (await statPath(root, ""));
-  if (!rootStat.isDirectory()) throw new SourceWatchError("source_type", "Expected a workspace directory.", "$");
+  if (!rootStat.isDirectory()) throw new SourceWatchError("source_type", "$", { expected: "path" });
   const files = [];
   let declaredBytes = 0;
   let entries = 0;
 
   function addFile(path, stat) {
-    if (!stat.isFile()) throw new SourceWatchError("source_type", "Build inputs must be regular files.", path);
-    if (files.length >= maxFiles) throw new SourceWatchError("source_budget", `Build inputs exceed ${maxFiles} files.`, path);
+    if (!stat.isFile()) throw new SourceWatchError("source_type", path, { expected: "file" });
+    if (files.length >= maxFiles) throw new SourceWatchError("source_budget", path, { allowed: atMost(maxFiles) });
     if (stat.size > BigInt(maxBytes - declaredBytes)) {
-      throw new SourceWatchError("source_budget", `Build inputs exceed ${maxBytes} bytes.`, path);
+      throw new SourceWatchError("source_budget", path, { allowed: atMost(maxBytes) });
     }
     declaredBytes += Number(stat.size);
     files.push({ path, stat });
@@ -80,7 +75,7 @@ export async function fingerprintSources(root, options = {}) {
       const parent = parts.slice(0, count).join("/");
       const stat = await statPath(root, parent, true);
       if (!stat) return false;
-      if (!stat.isDirectory()) throw new SourceWatchError("source_type", "Expected a build input directory.", parent);
+      if (!stat.isDirectory()) throw new SourceWatchError("source_type", parent, { expected: "path" });
     }
     return true;
   }
@@ -89,7 +84,7 @@ export async function fingerprintSources(root, options = {}) {
     if (!(await ancestorsPresent(tree))) continue;
     const stat = await statPath(root, tree, true);
     if (!stat) continue;
-    if (!stat.isDirectory()) throw new SourceWatchError("source_type", "Expected a build input directory.", tree);
+    if (!stat.isDirectory()) throw new SourceWatchError("source_type", tree, { expected: "path" });
     const pending = [{ path: tree, depth: 1 }];
     while (pending.length) {
       const current = /** @type {{ path: string, depth: number }} */ (pending.pop());
@@ -97,14 +92,14 @@ export async function fingerprintSources(root, options = {}) {
       if (!directoryStat.isDirectory()) throw changed(current.path);
       let directory;
       try { directory = await opendir(join(root, current.path)); }
-      catch (error) { throw new SourceWatchError("source_io", String(error?.message ?? error), current.path); }
+      catch (error) { throw new SourceWatchError("source_io", current.path, { expected: "readable", got: String(error?.code ?? error?.message ?? error) }); }
       for await (const entry of directory) {
         if (IGNORED.has(entry.name)) continue;
         const path = `${current.path}/${entry.name}`;
-        if (++entries > MAX_ENTRIES) throw new SourceWatchError("source_budget", `Build input traversal exceeds ${MAX_ENTRIES} entries.`, path);
+        if (++entries > MAX_ENTRIES) throw new SourceWatchError("source_budget", path, { allowed: atMost(MAX_ENTRIES) });
         const child = /** @type {import("node:fs").BigIntStats} */ (await statPath(root, path));
         if (child.isDirectory()) {
-          if (current.depth >= MAX_DEPTH) throw new SourceWatchError("source_budget", `Build input traversal exceeds ${MAX_DEPTH} levels.`, path);
+          if (current.depth >= MAX_DEPTH) throw new SourceWatchError("source_budget", path, { allowed: atMost(MAX_DEPTH) });
           pending.push({ path, depth: current.depth + 1 });
         } else addFile(path, child);
       }
@@ -136,7 +131,7 @@ export async function fingerprintSources(root, options = {}) {
         if (!bytesRead) break;
         actualBytes += bytesRead;
         fileBytes += bytesRead;
-        if (actualBytes > maxBytes) throw new SourceWatchError("source_budget", `Build inputs exceed ${maxBytes} bytes.`, file.path);
+        if (actualBytes > maxBytes) throw new SourceWatchError("source_budget", file.path, { allowed: atMost(maxBytes) });
         content.update(buffer.subarray(0, bytesRead));
       }
       const after = await handle.stat({ bigint: true });
@@ -146,7 +141,7 @@ export async function fingerprintSources(root, options = {}) {
     } catch (error) {
       if (error instanceof SourceWatchError) throw error;
       if (error?.code === "ENOENT") throw changed(file.path);
-      throw new SourceWatchError("source_io", String(error?.message ?? error), file.path);
+      throw new SourceWatchError("source_io", file.path, { expected: "readable", got: String(error?.code ?? error?.message ?? error) });
     } finally { await handle?.close(); }
   }
   return { fingerprint: fingerprint.digest("hex"), files: files.length };

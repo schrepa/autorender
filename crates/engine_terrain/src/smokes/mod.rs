@@ -33,8 +33,13 @@ pub(crate) fn register(bricks: &mut Bricks<'_>) {
 
 pub fn ask(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Checked<Value> {
     let reply = session.request(verb, body);
-    smoke_check!(reply.is_ok(), "request_answered", &reply.as_ref().err(), &verb);
-    Ok(reply.unwrap_or_default())
+    smoke_check!(
+        reply.is_ok(),
+        "request_answered",
+        &reply.as_ref().err().map(|refused| &refused["error"]),
+        &verb
+    );
+    Ok(reply.map(|mut answered| answered["result"].take()).unwrap_or_default())
 }
 
 pub fn control(session: &mut dyn SmokeSession, name: &str, args: Value) -> Checked<Value> {
@@ -52,8 +57,13 @@ pub fn refuse(
     args: Value,
 ) -> Checked<Value> {
     let reply = session.request(verb, json!({"name": name, "args": args}));
-    smoke_check!(reply.is_err(), "request_refused", &reply.as_ref().ok(), &name);
-    Ok(reply.err().unwrap_or_default())
+    smoke_check!(
+        reply.is_err(),
+        "request_refused",
+        &reply.as_ref().ok().map(|answered| &answered["result"]),
+        &name
+    );
+    Ok(reply.err().map(|mut refused| refused["error"].take()).unwrap_or_default())
 }
 
 pub fn environment(session: &mut dyn SmokeSession, sections: Value) -> Checked<Value> {

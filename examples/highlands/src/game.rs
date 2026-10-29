@@ -21,13 +21,14 @@ impl Highlands {
         for name in APPLIED {
             apply(engine.app.world_mut(), &options, name)?;
         }
-        Ok((
-            engine,
-            Self {
-                options,
-                freeze_held: false,
-            },
-        ))
+        Ok((engine, Self::new(options)))
+    }
+
+    pub(crate) fn new(options: Options) -> Self {
+        Self {
+            options,
+            freeze_held: false,
+        }
     }
 
     pub(crate) fn furnish(

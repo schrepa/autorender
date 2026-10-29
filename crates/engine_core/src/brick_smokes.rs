@@ -16,17 +16,8 @@ const PAINTS: [[f32; 4]; 4] = [
 type Asked = Result<Value, SmokeFailure>;
 
 fn reply(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Value {
-    let (ok, reply) = match session.request(verb, body) {
-        Ok(reply) => (true, reply),
-        Err(reply) => (false, reply),
-    };
-    if reply.get("ok").is_some_and(Value::is_boolean) {
-        return reply;
-    }
-    if ok {
-        json!({ "ok": true, "result": reply })
-    } else {
-        json!({ "ok": false, "error": reply })
+    match session.request(verb, body) {
+        Ok(reply) | Err(reply) => reply,
     }
 }
 

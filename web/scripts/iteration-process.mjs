@@ -47,16 +47,16 @@ export function runBuild({ executable, root, output, signal, timeoutMs = 600_000
       signal?.removeEventListener("abort", abort);
       resolve(result);
     }
-    child.once("error", error => finish({ ok: false, diagnostics: [], error: { code: "build_worker_unavailable", path: executable, message: error.message } }));
+    child.once("error", error => finish({ ok: false, diagnostics: [], error: { code: "build_worker_unavailable", path: executable, got: String(error?.code ?? error?.message ?? error) } }));
     child.once("close", code => {
-      if (cancelled) { finish({ ok: false, diagnostics: [], error: { code: cancelled, path: "$", message: "Build worker and its compiler tree were stopped." } }); return; }
+      if (cancelled) { finish({ ok: false, diagnostics: [], error: { code: cancelled, path: "$" } }); return; }
       if (!overflow) {
         try {
           const result = JSON.parse(Buffer.concat(chunks).toString("utf8"));
           if (typeof result.ok === "boolean" && !(result.ok && code !== 0)) { finish(result); return; }
         } catch {}
       }
-      finish({ ok: false, diagnostics: [], error: { code: "build_worker_failed", path: "$", message: `Build worker exited ${code}; ${overflow ? "output exceeded 1 MiB" : stderr || "invalid JSON result"}` } });
+      finish({ ok: false, diagnostics: [], error: { code: "build_worker_failed", path: "$", got: { exit_code: code, overflow, stderr: stderr.slice(-4000) } } });
     });
   });
 }

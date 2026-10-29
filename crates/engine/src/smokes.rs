@@ -18,9 +18,12 @@ mod texture;
 
 use engine_core::smoke::{SmokeEntry, SmokeFailure, SmokeResult, SmokeSession};
 use engine_core::{AddBrick, BrickRegistry, Engine, ErrorCode, MAX_DEV_TICKS};
+use engine_scene::{SceneFiles, SceneInstance};
 use serde_json::{Map, Value, json};
 
-use crate::{Error, Game, Result};
+use crate::{Error, Game, Inspectors, Result};
+
+pub type Build<'b, G> = &'b dyn Fn(Option<&str>, &[&str]) -> Result<(Engine, G)>;
 
 pub const ALL: &str = "all";
 
@@ -92,8 +95,70 @@ pub struct SmokeGame;
 
 impl Game for SmokeGame {}
 
-pub fn standard_game(without: &[&str]) -> Result<(Engine, SmokeGame)> {
-    Ok((standard_engine(without)?, SmokeGame))
+pub enum Played<G> {
+    Plain(SmokeGame),
+    Scene(G),
+}
+
+pub fn played<G>(
+    source: Option<&str>,
+    without: &[&str],
+    scene: impl FnOnce(&str, &SceneFiles, &[&'static str]) -> Result<(Engine, G)>,
+) -> Result<(Engine, Played<G>)> {
+    let Some(document) = source else {
+        return Ok((standard_engine(without)?, Played::Plain(SmokeGame)));
+    };
+    let left_out = crate::bricks::standard().check_names(without.iter().copied(), "$.without")?;
+    let (engine, game) = scene(document, &SceneFiles::default(), &left_out)?;
+    Ok((engine, Played::Scene(game)))
+}
+
+impl<G: Game> Game for Played<G> {
+    const ACTIONS: &'static [(&'static str, u32)] = G::ACTIONS;
+
+    fn before_frame(&mut self, engine: &mut Engine) {
+        match self {
+            Self::Plain(game) => game.before_frame(engine),
+            Self::Scene(game) => game.before_frame(engine),
+        }
+    }
+
+    fn reset_camera(&mut self, engine: &mut Engine) {
+        match self {
+            Self::Plain(game) => game.reset_camera(engine),
+            Self::Scene(game) => game.reset_camera(engine),
+        }
+    }
+
+    fn scene(&self) -> Option<&SceneInstance> {
+        match self {
+            Self::Plain(game) => game.scene(),
+            Self::Scene(game) => game.scene(),
+        }
+    }
+
+    fn content(&self, engine: &Engine) -> Option<Vec<u8>> {
+        match self {
+            Self::Plain(game) => game.content(engine),
+            Self::Scene(game) => game.content(engine),
+        }
+    }
+
+    fn reload_scene(
+        &mut self,
+        engine: &mut Engine,
+        source: &str,
+        files: &SceneFiles,
+    ) -> Result<()> {
+        match self {
+            Self::Plain(game) => game.reload_scene(engine, source, files),
+            Self::Scene(game) => game.reload_scene(engine, source, files),
+        }
+    }
+
+    fn inspectors(inspectors: &mut Inspectors) {
+        G::inspectors(inspectors);
+    }
 }
 
 pub fn select<'a>(entries: &'a [SmokeEntry], names: &str) -> Result<Vec<&'a SmokeEntry>> {
@@ -206,19 +271,16 @@ pub fn step_lines(ticks: u32) -> impl Iterator<Item = String> {
     })
 }
 
-#[cfg(feature = "dev")]
 fn json(value: &impl serde::Serialize) -> Value {
     serde_json::to_value(value).unwrap_or(Value::Null)
 }
 
-#[cfg(feature = "dev")]
 pub struct Headless<G: Game> {
     pub engine: Engine,
     pub game: G,
     tools: engine_dev::DevTools,
 }
 
-#[cfg(feature = "dev")]
 impl<G: Game> Headless<G> {
     pub fn new(engine: Engine, game: G) -> Self {
         let mut tools = engine_dev::DevTools::default();
@@ -354,19 +416,19 @@ impl<G: Game> Headless<G> {
     }
 }
 
-#[cfg(all(feature = "dev", target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 pub mod page {
+    use engine_core::App;
     use engine_core::smoke::{SmokeEntry, SmokeFailure, SmokeSession};
-    use engine_core::{App, Engine};
     use engine_dev::{Effect, HostContext, Outcome, Step};
     use serde_json::Value;
     use wasm_bindgen::JsValue;
     use web_sys::HtmlCanvasElement;
 
-    use super::{FRAME_MS, Headless, SmokeRecord, answered, fault, json, request_line, select};
+    use super::{
+        Build, FRAME_MS, Headless, SmokeRecord, answered, fault, json, request_line, select,
+    };
     use crate::{Game, GameHost, RenderTarget, Result};
-
-    type Build<'b, G> = &'b dyn Fn(&[&str]) -> Result<(Engine, G)>;
 
     enum Backend<G: Game> {
         Gpu(Box<GameHost<G>>),
@@ -376,6 +438,7 @@ pub mod page {
     struct Page<'b, G: Game> {
         build: Build<'b, G>,
         backend: Backend<G>,
+        source: Option<String>,
         size: (u32, u32),
         paused: bool,
         clock: f64,
@@ -425,6 +488,7 @@ pub mod page {
         let mut page = Page {
             build,
             backend,
+            source: None,
             size,
             paused: true,
             clock: 0.0,
@@ -442,7 +506,7 @@ pub mod page {
     ) -> Result<Backend<G>> {
         if *gpu != Some(false) {
             let target = RenderTarget::Canvas(canvas.clone());
-            match GameHost::launch(target, || build(&[])).await {
+            match GameHost::launch(target, || build(None, &[])).await {
                 Ok(mut host) => {
                     prepared(&mut host);
                     *gpu = Some(true);
@@ -452,7 +516,7 @@ pub mod page {
                 Err(_) => {}
             }
         }
-        let (engine, game) = build(&[])?;
+        let (engine, game) = build(None, &[])?;
         *gpu = Some(false);
         Ok(Backend::Headless(Box::new(Headless::new(engine, game))))
     }
@@ -524,13 +588,24 @@ pub mod page {
                         match step {
                             Step::Reply(reply) => break reply,
                             Step::Effect(effect) => {
-                                let outcome =
-                                    carry(host.as_mut(), &mut self.paused, self.size, effect);
-                                let context = HostContext {
-                                    paused: self.paused,
-                                    ..context.clone()
+                                step = match (effect, self.source.as_deref()) {
+                                    (Effect::Source, Some(document)) => {
+                                        host.dev_reloaded(document, None, &context)
+                                    }
+                                    (effect, _) => {
+                                        let outcome = carry(
+                                            host.as_mut(),
+                                            &mut self.paused,
+                                            self.size,
+                                            effect,
+                                        );
+                                        let context = HostContext {
+                                            paused: self.paused,
+                                            ..context.clone()
+                                        };
+                                        host.dev_resume(outcome, &context)
+                                    }
                                 };
-                                step = host.dev_resume(outcome, &context);
                             }
                         }
                     };
@@ -580,7 +655,7 @@ pub mod page {
         }
 
         fn restart(&mut self, without: &[&str]) {
-            let (engine, game) = match (self.build)(without) {
+            let (engine, game) = match (self.build)(self.source.as_deref(), without) {
                 Ok(built) => built,
                 Err(error) => {
                     self.faults.push(fault("restart", &error));
@@ -595,6 +670,10 @@ pub mod page {
                 }
                 Backend::Headless(headless) => **headless = Headless::new(engine, game),
             }
+        }
+
+        fn source(&mut self, document: &str) {
+            self.source = Some(document.to_owned());
         }
     }
 }

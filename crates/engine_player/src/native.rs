@@ -78,11 +78,11 @@ impl Options {
     fn start(&self) -> ExitCode {
         #[cfg(feature = "dev")]
         if let Some(names) = &self.host.smoke {
-            return engine_native::smoke::run::<engine::smokes::SmokeGame>(
+            return engine_native::smoke::run::<engine::smokes::Played<ScenePlayer>>(
                 &self.host,
                 names,
                 &engine::smokes::standard(),
-                &engine::smokes::standard_game,
+                &|source, without| engine::smokes::played(source, without, ScenePlayer::new),
                 &|session| session,
             );
         }

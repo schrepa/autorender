@@ -24,11 +24,16 @@ pub struct GameControl<G: Game> {
     pub run: Box<dyn FnMut(&mut GameHost<G>, &Map<String, Value>) -> Result<Value, String>>,
 }
 
+enum Source {
+    File(PathBuf),
+    Document(String),
+}
+
 pub struct DevSession<G: Game> {
     pub(crate) game: Offscreen<G>,
     controls: BTreeMap<String, GameControl<G>>,
     parameters: BTreeMap<String, String>,
-    source: Option<PathBuf>,
+    source: Option<Source>,
     artifacts: PathBuf,
     pix: Option<Pix>,
     captures: u32,
@@ -101,8 +106,12 @@ impl<G: Game> DevSession<G> {
 
     #[must_use]
     pub fn source(mut self, path: &Path) -> Self {
-        self.source = Some(path.to_owned());
+        self.source = Some(Source::File(path.to_owned()));
         self
+    }
+
+    pub(crate) fn play(&mut self, document: &str) {
+        self.source = Some(Source::Document(document.to_owned()));
     }
 
     pub fn run(mut self) -> engine::Result<()> {
@@ -268,14 +277,21 @@ impl<G: Game> DevSession<G> {
             paused: self.paused,
             device_pixel_ratio: 1.0,
             user_agent: "engine_native".to_owned(),
-            source: self.source.as_ref().map(|path| path.display().to_string()),
+            source: match &self.source {
+                Some(Source::File(path)) => Some(path.display().to_string()),
+                Some(Source::Document(_)) | None => None,
+            },
             timing: TIMING.to_owned(),
         }
     }
 
     fn read_source(&self) -> Result<Option<(String, SceneFiles)>, Error> {
-        let Some(path) = &self.source else {
-            return Ok(None);
+        let path = match &self.source {
+            None => return Ok(None),
+            Some(Source::Document(document)) => {
+                return Ok(Some((document.clone(), SceneFiles::default())));
+            }
+            Some(Source::File(path)) => path,
         };
         let source =
             std::fs::read_to_string(path).map_err(|error| file_error("$.source", path, &error))?;

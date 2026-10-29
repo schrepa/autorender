@@ -8,7 +8,7 @@ import { createInterface } from "node:readline";
 import { inflateSync } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { PANIC_PREFIX } from "../src/generated/host.ts";
-import { AgentError } from "./agent-protocol.mjs";
+import { AgentError, atMost, detailOf, range, variants } from "./agent-protocol.mjs";
 import { recordReceived, recordSent } from "./exercised.mjs";
 import { workspace } from "./workspace.mjs";
 
@@ -50,7 +50,7 @@ function decodePng(bytes) {
     const body = bytes.subarray(offset + 8, offset + 8 + length);
     if (type === "IHDR") {
       width = body.readUInt32BE(0); height = body.readUInt32BE(4);
-      if (body[8] !== 8 || body[9] !== 6 || body[12] !== 0) throw new Error("only 8-bit RGBA PNGs without interlacing compare");
+      if (body[8] !== 8 || body[9] !== 6 || body[12] !== 0) throw new AgentError("invalid_texture", "$.compare", { expected: "image", got: { bit_depth: body[8], color_type: body[9], interlace: body[12] } });
     } else if (type === "IDAT") data.push(body);
     offset += 12 + length;
   }
@@ -81,16 +81,16 @@ const status = { verb: "query", name: "status" };
 
 async function compareCaptures(command, request) {
   if (!command || typeof command !== "object" || Object.keys(command).some(key => !["a", "b", "tolerance"].includes(key))) {
-    throw new AgentError("unknown_field", "a b tolerance", "$.compare");
+    throw new AgentError("unknown_field", "$.compare", { allowed: variants(["a", "b", "tolerance"]) });
   }
   const tolerance = command.tolerance ?? 0;
-  if (!Number.isInteger(tolerance) || tolerance < 0 || tolerance > 255) throw new AgentError("out_of_range", "0..255", "$.compare.tolerance");
+  if (!Number.isInteger(tolerance) || tolerance < 0 || tolerance > 255) throw new AgentError("out_of_range", "$.compare.tolerance", { allowed: range(0, 255), got: tolerance });
   const root = resolve(workspace, "artifacts", "agent");
   const images = [];
   for (const name of ["a", "b"]) {
     const path = typeof command[name] === "string" ? resolve(workspace, command[name]) : "";
-    if (!path.startsWith(root + sep) || !path.endsWith(".png")) throw new AgentError("invalid_path", "a capture under artifacts/agent", `$.compare.${name}`);
-    const bytes = await readFile(path).catch(() => { throw new AgentError("invalid_path", String(command[name]), `$.compare.${name}`); });
+    if (!path.startsWith(root + sep) || !path.endsWith(".png")) throw new AgentError("invalid_path", `$.compare.${name}`, { expected: "path", got: command[name] });
+    const bytes = await readFile(path).catch(() => { throw new AgentError("invalid_path", `$.compare.${name}`, { expected: "readable", got: command[name] }); });
     images.push(decodePng(bytes));
   }
   const response = await request(status);
@@ -113,7 +113,7 @@ async function compareCaptures(command, request) {
 
 /** @param {{ program: string, args?: string[], session?: string, signal?: AbortSignal }} options */
 export async function launchNativeSession({ program, args = [], session = randomUUID(), signal }) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "Session identity must be a bounded identifier.", "session");
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "session", { expected: "id", got: session });
   const artifacts = resolve(workspace, "artifacts", "agent", session);
   await pruneSessions(resolve(workspace, "artifacts", "agent"));
   await mkdir(artifacts, { recursive: true });
@@ -122,7 +122,7 @@ export async function launchNativeSession({ program, args = [], session = random
   const waiting = [];
   let closing, invalidated = false, invalidationCallback, ready;
   let panic;
-  const panicked = () => ({ ok: false, error: { code: "runtime_panicked", path: "$", message: panic.message } });
+  const panicked = () => ({ ok: false, error: { code: "runtime_panicked", path: "$", got: panic } });
   function diagnostic(kind, message) {
     diagnostics.push({ kind, message: message.slice(0, 2000), at: new Date().toISOString() });
     if (diagnostics.length > 100) diagnostics.shift();
@@ -147,7 +147,7 @@ export async function launchNativeSession({ program, args = [], session = random
   function invalidate() {
     if (invalidated) return;
     invalidated = true;
-    const error = new AgentError("session_unavailable", `The native runtime exited. Diagnostics: ${JSON.stringify(diagnostics.slice(-5))}`);
+    const error = new AgentError("session_unavailable", "$", { expected: "live", got: { diagnostics: diagnostics.slice(-5) } });
     ready?.reject(error);
     for (const pending of waiting.splice(0)) {
       if (panic) pending.resolve(panicked());
@@ -177,7 +177,7 @@ export async function launchNativeSession({ program, args = [], session = random
   function request(command, onRecord) {
     recordSent(command);
     if (panic && invalidated) return Promise.resolve(panicked());
-    if (invalidated || closing) return Promise.reject(new AgentError("session_unavailable", "the native runtime exited", "$"));
+    if (invalidated || closing) return Promise.reject(new AgentError("session_unavailable", "$", { expected: "live" }));
     return new Promise((resolveReply, rejectReply) => {
       waiting.push({ resolve: resolveReply, reject: rejectReply, onRecord });
       child.stdin.write(`${JSON.stringify(command)}\n`);
@@ -189,20 +189,20 @@ export async function launchNativeSession({ program, args = [], session = random
   try {
     let timer;
     const identity = await Promise.race([readyLine, new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new AgentError("runtime_unavailable", `The native runtime did not start. Diagnostics: ${JSON.stringify(diagnostics.slice(-5))}`)), READY_TIMEOUT_MS);
+      timer = setTimeout(() => reject(new AgentError("runtime_unavailable", "$", { allowed: atMost(READY_TIMEOUT_MS), got: { diagnostics: diagnostics.slice(-5) } })), READY_TIMEOUT_MS);
     })]).finally(() => clearTimeout(timer));
-    if (identity?.ready !== true || typeof identity.instance !== "string") throw new AgentError("missing_runtime_identity", "The native runtime must announce its instance identity.");
+    if (identity?.ready !== true || typeof identity.instance !== "string") throw new AgentError("missing_runtime_identity", "$", { expected: "id", got: identity?.instance ?? null });
     for (const command of [{ verb: "control", name: "render" }, status]) {
       const response = await request(command);
-      if (!response?.ok) throw new AgentError(response?.error?.code ?? "runtime_unavailable", response?.error?.message ?? "initialization refused", response?.error?.path);
-      if (response.result?.paused !== true) throw new AgentError("runtime_not_paused", "a new session starts paused", "$");
+      if (!response?.ok) throw new AgentError(response?.error?.code ?? "runtime_unavailable", response?.error?.path, detailOf(response?.error));
+      if (response.result?.paused !== true) throw new AgentError("runtime_not_paused", "$", { expected: "paused" });
     }
     const owned = {
       session, url: `native:${relative(workspace, program).split(sep).join("/")}`, instance: identity.instance, build: identity.build ?? null,
       adapter: identity.adapter, close, setInvalidated,
       async execute(command, onRecord) {
         if (command.verb === "describe" && command.name === "ProfileCapture") {
-          if (Object.keys(command).some(key => !["verb", "name"].includes(key))) throw new AgentError("unknown_field", "verb name", "$");
+          if (Object.keys(command).some(key => !["verb", "name"].includes(key))) throw new AgentError("unknown_field", "$", { allowed: variants(["verb", "name"]) });
           const response = await request(status);
           if (!response.ok) return response;
           const { nativeProfileDescriptor } = await import("./agent-profile.mjs");
@@ -238,7 +238,7 @@ export async function launchNativeSession({ program, args = [], session = random
           artifact.path = relative(workspace, artifact.path).split(sep).join("/");
           const bytes = await readFile(resolve(workspace, artifact.path));
           if (createHash("sha256").update(bytes).digest("hex") !== artifact.sha256) {
-            return { ok: false, observation: response.observation, error: { code: "capture_failed", path: "$", message: artifact.path } };
+            return { ok: false, observation: response.observation, error: { code: "capture_failed", path: "$", expected: "matching", got: artifact.path } };
           }
         }
         return response;
