@@ -1,23 +1,10 @@
 use engine::prelude::*;
 use engine::{Error, ErrorCode};
 
-use crate::field::{self, hamlet_radius};
 use crate::land::{self, RockMaps};
-use crate::views::{self, set_view};
+use crate::views;
 
-const SCENE_LOOK: &str = "scene";
-
-const HIGHLANDS_LOOK: &str = "golden";
-
-type Look = (&'static str, fn() -> Atmosphere, f32);
-
-const LOOKS: [Look; 5] = [
-    ("golden", Atmosphere::golden_hour, 0.35),
-    ("dusk", Atmosphere::dusk, 0.8),
-    ("night", Atmosphere::night, 1.0),
-    ("day", Atmosphere::day, 0.0),
-    ("sky", physical_look, 0.5),
-];
+const SCENE: &str = include_str!("../highlands.scene.json");
 
 const EFFECTS: [&str; 7] = [
     "shadows",
@@ -29,7 +16,10 @@ const EFFECTS: [&str; 7] = [
     "probes",
 ];
 
-pub(crate) fn create(bodies: u32, rocks: &RockMaps) -> engine::Result<Engine> {
+#[derive(Resource, Clone, Copy)]
+struct SceneReflections(Option<Reflections>);
+
+pub(crate) fn create(bodies: u32, rocks: &RockMaps) -> engine::Result<(Engine, SceneInstance)> {
     let mut engine = Engine::default();
     let collision = bodies > 0;
     if collision {
@@ -42,8 +32,8 @@ pub(crate) fn create(bodies: u32, rocks: &RockMaps) -> engine::Result<Engine> {
             .app
             .add_bricks(engine::bricks::standard().without(["collision", "physics"]));
     }
-    furnish(&mut engine.app, bodies, rocks, true)?;
-    Ok(engine)
+    let instance = furnish(&mut engine.app, bodies, rocks, true)?;
+    Ok((engine, instance))
 }
 
 pub(crate) fn furnish(
@@ -51,66 +41,24 @@ pub(crate) fn furnish(
     bodies: u32,
     rocks: &RockMaps,
     flying: bool,
-) -> engine::Result<()> {
-    let (atmosphere, lamps) = look(SCENE_LOOK)?;
-    app.insert_resource(atmosphere);
-    apply_sky(app.world_mut(), SCENE_LOOK);
+) -> engine::Result<SceneInstance> {
+    let document: SceneDocument = engine::scene::parse_json(SCENE)?;
     let world = app.world_mut();
-    let plateau = land::populate(world, bodies, hamlet_radius(), rocks)?;
-    field::field(world, plateau)?;
-    environment(world);
-    world.insert_resource(reflection_settings());
-    world.insert_resource(LocalLightSettings {
-        distance: 220.0,
-        intensity: lamps,
-        ..LocalLightSettings::default()
-    });
+    land::provide(world, rocks)?;
+    let instance = document.instantiate(world)?;
+    land::populate(world, &document, bodies)?;
+    let reflections = world.get_resource::<Reflections>().copied();
+    world.insert_resource(SceneReflections(reflections));
     if bodies > 0 {
         refresh_collision_world(world)?;
     }
-    set_view(world, "overview")?;
+    views::start(world);
     if flying {
         app.add_plugins(FlyCameraPlugin);
     }
     views::add_systems(app);
     land::add_systems(app);
-    app.add_systems(FixedSimulation, field::animate);
-    Ok(())
-}
-
-fn environment(world: &mut World) {
-    world.insert_resource(TemporalAntialiasing {
-        enabled: true,
-        ..TemporalAntialiasing::default()
-    });
-    world.insert_resource(Wind {
-        velocity: (Vec2::new(5.5, 2.0).normalize() * 2.5).to_array(),
-        gusts: 0.55,
-    });
-    world.insert_resource(Clouds {
-        coverage: 0.38,
-        base: 1500.0,
-        thickness: 1500.0,
-        wind: [11.0, 4.0],
-        shadows: 0.6,
-        ..Clouds::default()
-    });
-    world.insert_resource(AutoExposure::default());
-    world.insert_resource(Water {
-        color: [0.003, 0.02, 0.024],
-        clarity: 4.5,
-        sediment: 0.01,
-        sediment_color: [0.04, 0.16, 0.15],
-        simulation_cell: 1.0,
-        ..Water::default()
-    });
-}
-
-fn reflection_settings() -> Reflections {
-    Reflections {
-        distance: 4000.0,
-        ..Reflections::default()
-    }
+    Ok(instance)
 }
 
 fn collision_budgets() -> engine::collision::CollisionConfig {
@@ -123,14 +71,6 @@ fn collision_budgets() -> engine::collision::CollisionConfig {
     }
 }
 
-fn look_names() -> impl Iterator<Item = &'static str> {
-    std::iter::once(SCENE_LOOK).chain(LOOKS.iter().map(|(name, ..)| *name))
-}
-
-pub(crate) fn looks() -> String {
-    look_names().collect::<Vec<_>>().join("|")
-}
-
 fn exclusions() -> impl Iterator<Item = String> {
     EFFECTS.iter().map(|effect| format!("no-{effect}"))
 }
@@ -139,17 +79,7 @@ pub(crate) fn effects() -> String {
     format!("all|none|{}", exclusions().collect::<Vec<_>>().join(","))
 }
 
-pub(crate) fn set_look(world: &mut World, name: &str) -> engine::Result<()> {
-    let (atmosphere, lamps) = look(name)?;
-    world.insert_resource(atmosphere);
-    apply_sky(world, name);
-    if let Some(mut local) = world.get_resource_mut::<LocalLightSettings>() {
-        local.intensity = lamps;
-    }
-    Ok(())
-}
-
-pub(crate) fn set_effects(world: &mut World, name: &str, look_name: &str) -> engine::Result<()> {
+pub(crate) fn set_effects(world: &mut World, name: &str) -> engine::Result<()> {
     let mut on = [true; EFFECTS.len()];
     match name {
         "all" => {}
@@ -180,7 +110,6 @@ pub(crate) fn set_effects(world: &mut World, name: &str, look_name: &str) -> eng
         particles,
         probes,
     ] = on;
-    let (_, lamps) = look(look_name)?;
     world.resource_mut::<Shadows>().enabled = shadows;
     world.resource_mut::<AmbientOcclusion>().intensity = if occlusion {
         AmbientOcclusion::default().intensity
@@ -192,16 +121,15 @@ pub(crate) fn set_effects(world: &mut World, name: &str, look_name: &str) -> eng
     } else {
         0.0
     };
-    if reflections {
-        world.insert_resource(reflection_settings());
+    let scene = world
+        .get_resource::<SceneReflections>()
+        .and_then(|scene| scene.0);
+    if let Some(settings) = scene.filter(|_| reflections) {
+        world.insert_resource(settings);
     } else {
         world.remove_resource::<Reflections>();
     }
-    {
-        let mut local = world.resource_mut::<LocalLightSettings>();
-        local.enabled = lights;
-        local.intensity = lamps;
-    }
+    world.resource_mut::<LocalLightSettings>().enabled = lights;
     world.resource_mut::<ParticleSettings>().enabled = particles;
     if probes {
         world.insert_resource(ReflectionProbeSettings::default());
@@ -209,55 +137,4 @@ pub(crate) fn set_effects(world: &mut World, name: &str, look_name: &str) -> eng
         world.remove_resource::<ReflectionProbeSettings>();
     }
     Ok(())
-}
-
-fn physical_look() -> Atmosphere {
-    Atmosphere {
-        ambient: 1.0,
-        rim: 0.2,
-        emission: 0.5,
-        exposure: 1.0,
-        saturation: 1.05,
-        contrast: 1.1,
-        vibrance: 0.15,
-        shadow_tint: Vec3::new(0.95, 0.98, 1.06),
-        highlight_tint: Vec3::new(1.04, 1.0, 0.96),
-        ..Atmosphere::day()
-    }
-}
-
-fn apply_sky(world: &mut World, name: &str) {
-    if resolve(name) == "sky" {
-        world.insert_resource(Sky::default());
-        world.insert_resource(TimeOfDay {
-            hours: 16.5,
-            latitude: 42.0,
-            north: 30.0,
-            ..TimeOfDay::default()
-        });
-    } else {
-        world.remove_resource::<Sky>();
-        world.remove_resource::<TimeOfDay>();
-    }
-}
-
-fn look(asked: &str) -> engine::Result<(Atmosphere, f32)> {
-    let name = resolve(asked);
-    LOOKS
-        .iter()
-        .find(|(look, ..)| *look == name)
-        .map(|&(_, atmosphere, lamps)| (atmosphere(), lamps))
-        .ok_or_else(|| {
-            Error::new(ErrorCode::InvalidValue, "$.look")
-                .got(asked)
-                .variants(look_names())
-        })
-}
-
-fn resolve(name: &str) -> &str {
-    if name == SCENE_LOOK {
-        HIGHLANDS_LOOK
-    } else {
-        name
-    }
 }

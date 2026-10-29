@@ -9,8 +9,8 @@ pub(super) struct Hiker {
 
 const HIKER_REST: f32 = 10.0;
 
-pub(super) fn hiker(world: &mut World, road: &[[f32; 2]], half: f32) -> engine::Result<()> {
-    let world_point = |[x, z]: [f32; 2]| [x - half, z - half];
+pub(super) fn hiker(world: &mut World, road: &[[f32; 2]], origin: Vec2) -> engine::Result<()> {
+    let world_point = |[x, z]: [f32; 2]| [x + origin.x, z + origin.y];
     let start = world_point(road[0]);
     let far = road
         .iter()

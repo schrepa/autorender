@@ -6,6 +6,7 @@ use engine::command_line::CommandOption;
 use engine_native::{Arguments, HostOptions, files};
 
 use crate::land::ROCK_FILES;
+use crate::options::WATCH_BODIES;
 use crate::{Highlands, Options, RockMaps, parameters};
 
 struct Native {
@@ -45,6 +46,9 @@ fn command_options() -> Vec<CommandOption> {
     let mut options: Vec<CommandOption> = options()
         .into_iter()
         .map(|(name, values)| {
+            if name == WATCH_BODIES {
+                return CommandOption::flag(&format!("--{name}"));
+            }
             let option = CommandOption::taking(&format!("--{name}"), values);
             match defaults.value(name) {
                 Some(default) => option.defaults_to(default),
@@ -72,6 +76,9 @@ impl Native {
             let name = argument.name.strip_prefix("--").unwrap_or_default();
             if name == "assets" {
                 native.assets = arguments.value(&argument)?.into();
+            } else if name == WATCH_BODIES {
+                arguments.flag(&argument)?;
+                native.options.watch_bodies = true;
             } else if parameters().iter().any(|(known, _)| *known == name) {
                 let value = arguments.value(&argument)?;
                 native.options.set(name, &value)?;

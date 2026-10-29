@@ -232,9 +232,9 @@ impl Eye {
         }
     }
 
-    fn view(&self) -> String {
+    fn stand(&self) -> String {
         format!(
-            "stand:{:.3},{:.3},{:.3},{:.3}",
+            "{:.3},{:.3},{:.3},{:.3}",
             self.x, self.z, self.yaw, self.pitch
         )
     }
@@ -287,7 +287,7 @@ impl Runner<'_> {
         let log = self.folder.join(format!("{stem}.log"));
         let mut arguments: Vec<String> = [
             ("--look", name.clone()),
-            ("--view", eye.view()),
+            ("--stand", eye.stand()),
             ("--dynamic-resolution", "off".to_owned()),
             ("--offscreen", FRAMES.to_string()),
             ("--size", format!("{}x{}", SIZE.0, SIZE.1)),
@@ -302,7 +302,7 @@ impl Runner<'_> {
             "place": spot.name,
             "look": name,
             "distance_m": meters,
-            "view": eye.view(),
+            "stand": eye.stand(),
         });
         eprintln!("{record}");
         let _ = fs::remove_file(&capture);
@@ -666,7 +666,7 @@ fn run_json(run: &Run, ladder: &Ladder) -> Value {
             "z": eye.z,
             "yaw": eye.yaw,
             "pitch": eye.pitch,
-            "view": eye.view(),
+            "stand": eye.stand(),
         },
         "command": run.command,
         "capture": run.capture.display().to_string(),
