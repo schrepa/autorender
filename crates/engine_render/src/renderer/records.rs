@@ -45,6 +45,7 @@ impl Renderer {
             std::sync::Arc<engine_terrain::SettleStart>,
         )>,
     ) {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Water);
         self.water_settle.settle(starts);
     }
 

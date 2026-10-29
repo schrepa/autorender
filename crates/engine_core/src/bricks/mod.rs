@@ -1,8 +1,14 @@
+mod attribution;
 mod error;
 mod extracted;
 mod registry;
 mod scene;
 
+pub(crate) use attribution::under;
+pub use attribution::{
+    BrickCost, BrickCosts, BrickRow, BrickTable, CORE_PASSES, CORE_ROW, UNATTRIBUTED_ROW,
+    WARMUP_FRAMES,
+};
 pub use error::{Error, parse_json, parse_value, parse_value_at};
 pub use extracted::Extracted;
 pub use registry::{
@@ -100,8 +106,22 @@ impl Bricks<'_> {
         schedule: impl ScheduleLabel,
         systems: impl IntoScheduleConfigs<ScheduleSystem, M>,
     ) -> &mut Self {
+        let schedule = schedule.intern();
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        let before = attribution::system_keys(self.app, schedule);
         self.app
             .add_systems(schedule, systems.in_set(BrickSet(self.record.name)));
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        attribution::measure_systems(self.app, schedule, &before, self.record.name);
+        self
+    }
+
+    pub fn passes(&mut self, names: &[&'static str]) -> &mut Self {
+        for &name in names {
+            if !self.record.passes.contains(&name) {
+                self.record.passes.push(name);
+            }
+        }
         self
     }
 
@@ -257,6 +277,12 @@ impl AddBrick for App {
         for (_, add) in bricks.entries {
             add(self);
         }
+        if !self.world().contains_resource::<BrickRegistry>() {
+            self.init_resource::<BrickRegistry>();
+        }
+        self.world_mut()
+            .resource_mut::<BrickRegistry>()
+            .leave_out(bricks.left_out);
         self
     }
 }
@@ -266,6 +292,7 @@ type AddFn = fn(&mut App);
 #[derive(Clone, Default)]
 pub struct BrickList {
     entries: Vec<(&'static str, AddFn)>,
+    left_out: Vec<&'static str>,
 }
 
 impl BrickList {
@@ -278,7 +305,14 @@ impl BrickList {
     #[must_use]
     pub fn without<'n>(mut self, names: impl IntoIterator<Item = &'n str>) -> Self {
         let names: Vec<&str> = names.into_iter().collect();
-        self.entries.retain(|(name, _)| !names.contains(name));
+        let left_out = &mut self.left_out;
+        self.entries.retain(|&(name, _)| {
+            let kept = !names.contains(&name);
+            if !kept && !left_out.contains(&name) {
+                left_out.push(name);
+            }
+            kept
+        });
         self
     }
 

@@ -42,7 +42,7 @@ struct Shape {
 }
 
 impl TerrainMaps {
-    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
         let arrays = defaults(device, queue);
         let views = [view(&arrays[0]), view(&arrays[1])];
         Self {
@@ -285,7 +285,7 @@ fn textures(maps: &RenderSurfaceMaps) -> [Option<&Texture>; 3] {
     textures_of(maps).map(|texture| texture.map(|texture| &*texture.texture))
 }
 
-fn defaults(device: &wgpu::Device, queue: &wgpu::Queue) -> [wgpu::Texture; 2] {
+fn defaults(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> [wgpu::Texture; 2] {
     let arrays = [0, 1].map(|array| {
         let format = gpu_format(TextureFormat::Rgba8, array == 0).0;
         array_texture(device, (1, 1), 1 + array, 1, format, false)

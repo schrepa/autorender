@@ -37,6 +37,7 @@ impl Fades {
     ) {
         let slots = poses.size() / size_of::<PoseRows>() as u64;
         if slots > self.slots {
+            crate::memory::release_buffer(&self.states);
             self.states = storage(
                 device,
                 "engine/presentation-lod-states",
@@ -57,7 +58,7 @@ impl Fades {
         self.generation
     }
 
-    pub(super) fn begin_frame(&self, queue: &wgpu::Queue) {
+    pub(super) fn begin_frame(&self, queue: &crate::gpu_calls::Queue) {
         queue.write_buffer(
             &self.cards,
             0,

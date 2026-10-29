@@ -85,6 +85,9 @@ impl Display {
         match &self.surface {
             Some(surface) => surface.configure(device, &self.configuration),
             None => {
+                if let Some(offscreen) = &self.offscreen {
+                    crate::memory::release_any(offscreen);
+                }
                 self.offscreen = Some(crate::targets::texture_2d(
                     device,
                     "engine/offscreen",
@@ -237,7 +240,7 @@ impl DisplayFrame {
         }
     }
 
-    pub(super) fn present(self, queue: &wgpu::Queue) {
+    pub(super) fn present(self, queue: &crate::gpu_calls::Queue) {
         if let Some(timer) = &self.timer {
             timer.after_submit(queue.get_timestamp_period());
         }
@@ -269,7 +272,7 @@ impl FrameTimer {
                 ty: wgpu::QueryType::Timestamp,
                 count: 2,
             }),
-            resolved: device.create_buffer(&wgpu::BufferDescriptor {
+            resolved: crate::memory::buffer(device, &wgpu::BufferDescriptor {
                 label: Some("engine/frame-timer-resolve"),
                 size: FRAME_STAMP_BYTES,
                 usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
@@ -343,6 +346,7 @@ impl DepthTarget {
     }
 
     fn resize(&mut self, device: &wgpu::Device, size: FrameSize) {
+        crate::memory::release_any(&self.texture);
         *self = Self::new(device, size);
     }
 }

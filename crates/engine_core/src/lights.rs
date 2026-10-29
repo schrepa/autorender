@@ -22,7 +22,8 @@ impl Brick for Lights {
         bricks
             .settings::<LocalLightSettings>()
             .resource::<LightExtractor>()
-            .extract(extract_lights);
+            .extract(extract_lights)
+            .passes(&["lights"]);
     }
 }
 

@@ -6,7 +6,6 @@ use engine_core::glam::{DVec3, Mat4, Vec3, Vec4};
 use engine_terrain::gpu::SurfaceData;
 use engine_terrain::{RenderTerrain, RenderTerrains, TileKey};
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
 use crate::bindings::{SHADOW_VIEW, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS};
 use crate::cached::{Bound, Cached};
@@ -161,7 +160,8 @@ pub(crate) struct TerrainPass {
 }
 
 impl TerrainPass {
-    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
+        let _owner = crate::memory::owned(crate::render_graph::Pass::Subdivision);
         Self {
             atlas: TileAtlas::new(device),
             tables: TerrainTables::new(device),
@@ -298,7 +298,7 @@ impl TerrainPass {
 
     pub(crate) fn write_probe_view(
         &self,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         face: usize,
         relative: Mat4,
         eye: Vec3,

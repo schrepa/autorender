@@ -52,7 +52,7 @@ pub(crate) struct MaterialStore {
 }
 
 impl MaterialStore {
-    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
         let layout = crate::pipelines::layout(device, &MATERIAL);
         let texel =
             |label, format, pixel| crate::targets::texel(device, queue, label, format, pixel);
@@ -134,7 +134,7 @@ impl MaterialStore {
     pub(crate) fn upload(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         snapshot: &RenderSnapshot,
         plan: &BatchPlan,
         extra: impl Iterator<Item = MaterialHandle>,
@@ -334,8 +334,7 @@ fn sampler<'a>(
 }
 
 fn uniform_buffer(device: &wgpu::Device, uniform: &MaterialUniform) -> wgpu::Buffer {
-    use wgpu::util::DeviceExt;
-    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    crate::memory::buffer_init(device, &wgpu::util::BufferInitDescriptor {
         label: Some("engine/material-uniform"),
         contents: bytemuck::bytes_of(uniform),
         usage: wgpu::BufferUsages::UNIFORM,
@@ -419,7 +418,7 @@ pub(crate) fn gpu_format(
 }
 
 pub(crate) fn write_level(
-    queue: &wgpu::Queue,
+    queue: &crate::gpu_calls::Queue,
     texture: &wgpu::Texture,
     (level, layer): (u32, u32),
     (width, height): (u32, u32),
@@ -460,7 +459,7 @@ pub(crate) fn write_level(
 
 fn create_texture(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu_calls::Queue,
     source: &Texture,
     srgb: bool,
     mips: &MipGenerator,

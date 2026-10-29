@@ -41,6 +41,7 @@ mod exposure;
 mod gpu_presentation;
 mod ground_cover;
 mod materials;
+mod memory;
 mod mesh_arena;
 mod mipmaps;
 mod occupancy;
@@ -69,9 +70,12 @@ mod water_particles;
 mod water_settle;
 mod water_sim;
 mod world_trace;
+pub use memory::GpuMemory;
 pub use platform::{AdapterInfo, RenderError, RenderTarget, read_range};
 #[cfg(not(target_arch = "wasm32"))]
 pub use platform::{GpuPreference, NativeWindow, start_native_instances_with};
 #[cfg(not(target_arch = "wasm32"))]
 pub use renderer::GpuMark;
-pub use renderer::{Renderer, StartingRenderer};
+pub use renderer::{GpuPassTimes, Renderer, StartingRenderer};
+
+pub const RENDER_PASSES: &[&str] = render_graph::PASS_NAMES;

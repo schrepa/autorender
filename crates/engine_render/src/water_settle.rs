@@ -139,6 +139,7 @@ fn needs(start: &SettleStart) -> Capacity {
 
 impl WaterSettle {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Water);
         Self {
             kernels: Kernels::new(device),
             buffers: None,
@@ -210,9 +211,10 @@ impl WaterSettle {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         (shader, terrain): (&wgpu::ShaderModule, &TerrainPass),
     ) {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Water);
         self.clears.clear();
         self.copies.clear();
         self.raising = 0;
@@ -264,7 +266,7 @@ impl WaterSettle {
 
     fn raise(
         &mut self,
-        (device, queue): (&wgpu::Device, &wgpu::Queue),
+        (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
         (shader, terrain): (&wgpu::ShaderModule, &TerrainPass),
     ) {
         let Some(buffers) = self.buffers.as_ref() else {
@@ -375,7 +377,7 @@ impl WaterSettle {
         }
     }
 
-    fn write_squares(&mut self, queue: &wgpu::Queue) -> Vec<usize> {
+    fn write_squares(&mut self, queue: &crate::gpu_calls::Queue) -> Vec<usize> {
         let steps = self.steps;
         self.blocks = 0;
         self.sourced = 0;
@@ -481,7 +483,7 @@ impl WaterSettle {
         copies: &[(bool, u64, u64)],
     ) {
         let bytes: u64 = copies.iter().map(|&(_, _, bytes)| bytes).sum();
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = crate::memory::buffer(device, &wgpu::BufferDescriptor {
             label: Some("engine/water-settle-readback"),
             size: bytes,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
@@ -650,6 +652,7 @@ impl WaterSettle {
     }
 
     pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder) {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Water);
         let (Some(pipelines), Some(buffers)) = (self.kernels.created(), &self.buffers) else {
             return;
         };
@@ -726,7 +729,12 @@ impl WaterSettle {
     }
 }
 
-fn load(queue: &wgpu::Queue, buffers: &SlotBuffers, slot: u32, square: &mut Square) -> [Clear; 2] {
+fn load(
+    queue: &crate::gpu_calls::Queue,
+    buffers: &SlotBuffers,
+    slot: u32,
+    square: &mut Square,
+) -> [Clear; 2] {
     let start = &square.start;
     let n = start.water.len() as u64;
     buffers.write_table(queue, slot, &start.stored);

@@ -201,6 +201,7 @@ pub(crate) struct ProbePass {
 
 impl ProbePass {
     pub(crate) fn new(device: &wgpu::Device, camera_bytes: u64) -> Self {
+        let _owner = crate::memory::owned(crate::render_graph::Pass::ProbeCaptures);
         let cameras = std::array::from_fn(|_| {
             crate::buffers::uniform(device, "engine/probe-camera", camera_bytes)
         });
@@ -251,7 +252,7 @@ impl ProbePass {
         })
     }
 
-    pub(crate) fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    pub(crate) fn upload(&mut self, device: &wgpu::Device, queue: &crate::gpu_calls::Queue) {
         let Some(ready) = self.slots.changed_ready() else {
             return;
         };

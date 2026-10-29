@@ -79,10 +79,11 @@ pub use engine_terrain::{MAX_BOUNCE_LEVELS, MAX_OCCUPANCY_LEVELS};
 
 pub mod bricks {
     pub use engine_core::{
-        AddBrick, AuthoredId, Brick, BrickList, BrickRecord, BrickRegistry, BrickSet, BrickStats,
-        Bricks, Error, Extracted, InspectedKind, InspectorEntry, List, Operation, OperationEntry,
-        OperationScene, Owned, SettingsEntry, Slot, StatsEntry, authored_entity, authored_id,
-        bounds, brick_name, missing_brick, parse_json, parse_value, parse_value_at,
+        AddBrick, AuthoredId, Brick, BrickCost, BrickCosts, BrickList, BrickRecord, BrickRegistry,
+        BrickRow, BrickSet, BrickStats, BrickTable, Bricks, CORE_PASSES, CORE_ROW, Error, Extracted,
+        InspectedKind, InspectorEntry, List, Operation, OperationEntry, OperationScene, Owned,
+        SettingsEntry, Slot, StatsEntry, UNATTRIBUTED_ROW, WARMUP_FRAMES, authored_entity,
+        authored_id, bounds, brick_name, missing_brick, parse_json, parse_value, parse_value_at,
     };
 
     pub fn standard() -> BrickList {
@@ -170,7 +171,7 @@ mod app_host;
 mod dev_host;
 mod game_host;
 pub use engine_render::shaders::MODULES as SHADER_MODULES;
-pub use engine_render::{AdapterInfo, RenderError, RenderTarget};
+pub use engine_render::{AdapterInfo, RENDER_PASSES, RenderError, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine_render::{GpuMark, GpuPreference, NativeWindow, start_native_instances_with};
 pub use game_host::GameHost;

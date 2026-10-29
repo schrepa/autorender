@@ -175,13 +175,13 @@ mod capture {
                     ty: wgpu::QueryType::Timestamp,
                     count: QUERIES,
                 }),
-                resolve: device.create_buffer(&wgpu::BufferDescriptor {
+                resolve: crate::memory::buffer(device, &wgpu::BufferDescriptor {
                     label: Some("engine/profile-resolve"),
                     size: SLOT_BYTES,
                     usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
                     mapped_at_creation: false,
                 }),
-                readback: device.create_buffer(&wgpu::BufferDescriptor {
+                readback: crate::memory::buffer(device, &wgpu::BufferDescriptor {
                     label: Some("engine/profile-readback"),
                     size: SLOT_BYTES,
                     usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
@@ -219,12 +219,37 @@ mod capture {
         draws: Vec<DrawSample>,
     }
 
+    pub(crate) struct Latest {
+        pub(crate) frame_ms: f64,
+        pub(crate) spans: Vec<(&'static str, f64)>,
+    }
+
+    impl Latest {
+        fn of(
+            frame_ms: f64,
+            names: &[&'static str],
+            stamps: &[(u64, u64)],
+            duration: impl Fn((u64, u64)) -> Option<f64>,
+        ) -> Self {
+            Self {
+                frame_ms,
+                spans: names
+                    .iter()
+                    .zip(stamps)
+                    .filter_map(|(&name, &stamps)| Some((name, duration(stamps)?)))
+                    .collect(),
+            }
+        }
+    }
+
     pub(crate) struct GpuProfiler {
         supported: bool,
         draw_support: Support,
         period_ns: f64,
         slots: Vec<Slot>,
         current: Option<usize>,
+        drawing: bool,
+        latest: Option<Latest>,
         capture: Option<u64>,
         submission: u64,
         attempted: u64,
@@ -251,6 +276,8 @@ mod capture {
                 period_ns,
                 slots: Vec::new(),
                 current: None,
+                drawing: false,
+                latest: None,
                 capture: None,
                 submission: 0,
                 attempted: 0,
@@ -276,47 +303,76 @@ mod capture {
             self.errors = 0;
             self.sample_limit_reached = false;
             self.samples.clear();
-            if self.supported && self.slots.is_empty() {
-                let draws = self.draw_support;
-                self.slots = (0..SLOTS).map(|_| Slot::new(device, draws)).collect();
+            if self.supported {
+                self.make_slots(device);
                 self.samples.reserve_exact(SAMPLE_LIMIT);
             }
         }
 
+        fn make_slots(&mut self, device: &wgpu::Device) {
+            if !self.slots.is_empty() {
+                return;
+            }
+            let timed = self.draw_support;
+            let untimed = Support {
+                timestamps: false,
+                statistics: false,
+            };
+            self.slots = (0..2 * SLOTS)
+                .map(|index| Slot::new(device, if index < SLOTS { timed } else { untimed }))
+                .collect();
+        }
+
         pub(crate) fn begin_frame(&mut self, device: &wgpu::Device) {
             self.current = None;
+            self.drawing = false;
             self.submission = self.submission.saturating_add(1);
             self.poll();
-            let Some(capture) = engine_profile::capture_id() else {
-                return;
-            };
-            if self.capture != Some(capture) {
-                self.begin(device, capture);
+            let capture = engine_profile::capture_id();
+            if let Some(capture) = capture {
+                if self.capture != Some(capture) {
+                    self.begin(device, capture);
+                }
+                self.attempted = self.attempted.saturating_add(1);
             }
-            self.attempted = self.attempted.saturating_add(1);
             if !self.supported {
                 return;
             }
-            if self.submitted as usize >= SAMPLE_LIMIT {
+            self.make_slots(device);
+            if capture.is_some() && self.submitted as usize >= SAMPLE_LIMIT {
                 self.sample_limit_reached = true;
                 self.dropped = self.dropped.saturating_add(1);
                 return;
             }
-            let Some(index) = self.slots.iter().position(|slot| slot.origin.is_none()) else {
-                self.dropped = self.dropped.saturating_add(1);
+            let mut pool = if capture.is_some() {
+                0..SLOTS
+            } else {
+                SLOTS..2 * SLOTS
+            };
+            let Some(index) = pool.find(|&index| self.slots[index].origin.is_none()) else {
+                if capture.is_some() {
+                    self.dropped = self.dropped.saturating_add(1);
+                }
                 return;
             };
             let slot = &mut self.slots[index];
             slot.origin = Some(Origin {
-                capture,
+                capture: capture.unwrap_or(0),
                 frame: engine_profile::current_frame(),
                 submission: self.submission,
             });
             slot.mapped.set(MapState::Pending);
             slot.spans.get_mut().clear();
             slot.draws.get_mut().clear();
-            self.submitted += 1;
+            if capture.is_some() {
+                self.submitted += 1;
+                self.drawing = true;
+            }
             self.current = Some(index);
+        }
+
+        pub(crate) fn latest(&self) -> Option<&Latest> {
+            self.latest.as_ref()
         }
 
         pub(crate) fn capturing(&self) -> bool {
@@ -357,7 +413,7 @@ mod capture {
             label: impl FnOnce() -> String,
         ) -> Option<Draw> {
             let slot = &self.slots[self.current?];
-            if slot.draw_stamps.is_none() && slot.draw_statistics.is_none() {
+            if !self.drawing || (slot.draw_stamps.is_none() && slot.draw_statistics.is_none()) {
                 return None;
             }
             let mut draws = slot.draws.borrow_mut();
@@ -539,6 +595,7 @@ mod capture {
                 if let Some((first, last)) = span {
                     self.last_span = Some((origin.frame, first, last));
                 }
+                self.latest = frame_ms.map(|ms| Latest::of(ms, &names, &stamps, &duration));
                 if Some(origin.capture) != self.capture {
                     continue;
                 }

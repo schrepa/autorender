@@ -201,7 +201,7 @@ impl WorldTrace {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         frame: Option<&TraceFrame<'_>>,
     ) {
         let Some(frame) = frame else {
@@ -379,7 +379,7 @@ impl WorldTrace {
         self.dirty.push(words);
     }
 
-    fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    fn upload(&mut self, device: &wgpu::Device, queue: &crate::gpu_calls::Queue) {
         let bytes = (self.words.len() * 4) as u64;
         let mut dirty = std::mem::take(&mut self.dirty);
         if self.placed.grow(device, bytes) {
@@ -401,7 +401,7 @@ impl WorldTrace {
     fn write_groups(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         placed: &Placements<'_>,
     ) {
         let held = placed.impostors.iter().zip(placed.colors);
@@ -432,7 +432,7 @@ impl WorldTrace {
     fn write_terrains(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         frame: &TraceFrame<'_>,
     ) {
         let mut records = Vec::with_capacity(self.written.len());

@@ -45,6 +45,16 @@ impl Brick for TerrainBrick {
             )
             .resource::<engine_core::WaterObstacles>()
             .extract(extract_terrains)
+            .passes(&[
+                "subdivision",
+                "scatter",
+                "occupancy",
+                "bounce",
+                "ground_cover",
+                "terrain_ids",
+                "terrain_resolve",
+                "water",
+            ])
             .operation::<TerrainControl>()
             .operation::<TerrainEditControl>()
             .operation::<TerrainUndoControl>()

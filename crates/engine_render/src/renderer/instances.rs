@@ -101,7 +101,7 @@ impl Instances {
                 .max(INITIAL_CAPACITY)
                 .next_power_of_two()
                 .min(self.limit);
-            self.slots = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            self.slots = Some(crate::memory::buffer(device, &wgpu::BufferDescriptor {
                 label: Some("engine/retained-slots"),
                 size: (self.slot_capacity * size_of::<u32>()) as u64,
                 usage: wgpu::BufferUsages::VERTEX

@@ -303,7 +303,7 @@ impl SlotBuffers {
         true
     }
 
-    pub(crate) fn write_frames(&self, queue: &wgpu::Queue) {
+    pub(crate) fn write_frames(&self, queue: &crate::gpu_calls::Queue) {
         let capacity = self.capacity;
         for (stage, buffer) in self.frames.iter().enumerate() {
             let frame = SimFrame {
@@ -319,7 +319,7 @@ impl SlotBuffers {
         }
     }
 
-    pub(crate) fn write_squares(&self, queue: &wgpu::Queue, squares: &[SimSlot]) {
+    pub(crate) fn write_squares(&self, queue: &crate::gpu_calls::Queue, squares: &[SimSlot]) {
         let mut all = SimSlots {
             slot: [SimSlot::zeroed(); SIM_SLOTS],
         };
@@ -329,7 +329,11 @@ impl SlotBuffers {
         queue.write_buffer(&self.squares, 0, bytemuck::bytes_of(&all));
     }
 
-    pub(crate) fn write_touches(&mut self, queue: &wgpu::Queue, touches: Option<&SimTouches>) {
+    pub(crate) fn write_touches(
+        &mut self,
+        queue: &crate::gpu_calls::Queue,
+        touches: Option<&SimTouches>,
+    ) {
         self.touched = touches.map(|touches| [touches.blocks[2], touches.blocks[3]]);
         let none = SimTouches::zeroed();
         queue.write_buffer(
@@ -339,7 +343,12 @@ impl SlotBuffers {
         );
     }
 
-    pub(crate) fn write_table(&self, queue: &wgpu::Queue, slot: u32, stored: &StoredBlocks) {
+    pub(crate) fn write_table(
+        &self,
+        queue: &crate::gpu_calls::Queue,
+        slot: u32,
+        stored: &StoredBlocks,
+    ) {
         let at = self.table_at(slot);
         let places = at + u64::from(self.capacity.mapped);
         queue.write_buffer(&self.blocks, at * 4, bytemuck::cast_slice(&stored.table));

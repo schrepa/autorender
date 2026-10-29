@@ -11,7 +11,8 @@ impl Brick for Culling {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<OcclusionCulling>()
-            .settings::<SubpixelCulling>();
+            .settings::<SubpixelCulling>()
+            .passes(&["occlusion_test", "opaque_phase_two"]);
     }
 }
 

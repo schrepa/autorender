@@ -110,18 +110,21 @@ impl DrawGroups {
             self.capacity = grow(candidates);
             let capacity = self.capacity as u64;
             let groups = capacity.div_ceil(u64::from(SCAN_GROUP));
+            crate::memory::release_buffer(&self.candidates);
             self.candidates = storage(
                 device,
                 "engine/presentation-candidates",
                 capacity * size_of::<CandidateData>() as u64,
                 wgpu::BufferUsages::empty(),
             );
+            crate::memory::release_buffer(&self.slot_candidates);
             self.slot_candidates = storage(
                 device,
                 "engine/presentation-slot-candidates",
                 capacity * size_of::<CandidateData>() as u64,
                 wgpu::BufferUsages::empty(),
             );
+            crate::memory::release_buffer(&self.scan);
             self.scan = storage(
                 device,
                 "engine/presentation-scan",
@@ -153,12 +156,14 @@ impl DrawGroups {
         if batches > self.batch_capacity {
             self.batch_capacity = batches.max(64).next_power_of_two();
             let capacity = self.batch_capacity as u64;
+            crate::memory::release_buffer(&self.batches);
             self.batches = storage(
                 device,
                 "engine/presentation-batches",
                 capacity * size_of::<BatchData>() as u64,
                 wgpu::BufferUsages::empty(),
             );
+            crate::memory::release_buffer(&self.batch_bases);
             self.batch_bases = storage(
                 device,
                 "engine/presentation-batch-bases",
@@ -179,7 +184,7 @@ impl DrawGroups {
 
     pub(super) fn rebuild(
         &mut self,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         inputs: &PresentationInputs<'_>,
     ) -> Option<u64> {
         let PresentationInputs {

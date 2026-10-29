@@ -22,7 +22,7 @@ pub(crate) struct SkyMaps {
 }
 
 impl SkyMaps {
-    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
         let empty = crate::targets::texture_2d(
             device,
             "engine/terrain-sky-empty",
@@ -83,7 +83,7 @@ impl SkyMaps {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         terrains: &RenderTerrains,
         settings: &TerrainSettings,
     ) {
@@ -132,7 +132,7 @@ impl SkyMaps {
 }
 
 fn write_layers(
-    queue: &wgpu::Queue,
+    queue: &crate::gpu_calls::Queue,
     texture: &wgpu::Texture,
     index: usize,
     size: u32,

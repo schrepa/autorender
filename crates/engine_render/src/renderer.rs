@@ -7,7 +7,6 @@ use std::{
 use engine_core::{
     MaterialHandle, MeshHandle, RecordKey, RenderFrame, RenderSnapshot, TextureHandle,
 };
-use wgpu::util::DeviceExt;
 
 use crate::platform::{RenderError, RenderTarget, render_error};
 
@@ -43,6 +42,7 @@ use crate::targets::{FrameSize, ScreenTarget, Targets};
 use crate::temporal::{TemporalFrame, TemporalPass};
 use crate::uploads::UploadCache;
 
+mod attribution;
 mod camera;
 mod display;
 mod frame;
@@ -63,6 +63,7 @@ mod scatter_pool;
 mod startup;
 mod terrain_draws;
 
+pub use attribution::GpuPassTimes;
 use camera::CameraBindings;
 use display::{DepthTarget, Display, DisplayFrame};
 use impostor_draws::ImpostorDraws;

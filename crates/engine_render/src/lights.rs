@@ -237,7 +237,7 @@ mod gpu {
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,
-            queue: &wgpu::Queue,
+            queue: &crate::gpu_calls::Queue,
             snapshot: &RenderSnapshot,
             size: crate::targets::FrameSize,
             poses: FramePoses<'_>,
@@ -249,12 +249,14 @@ mod gpu {
             let count = snapshot.lights.list.len();
             if count > self.capacity {
                 self.capacity = count.next_power_of_two();
+                crate::memory::release_buffer(&self.inputs);
                 self.inputs = storage(
                     device,
                     "engine/light-inputs",
                     self.capacity as u64 * 64,
                     wgpu::BufferUsages::empty(),
                 );
+                crate::memory::release_buffer(&self.lights);
                 self.lights = storage(
                     device,
                     "engine/lights",
@@ -388,7 +390,7 @@ mod gpu {
         pub(crate) fn encode_probe_face(
             &mut self,
             device: &wgpu::Device,
-            queue: &wgpu::Queue,
+            queue: &crate::gpu_calls::Queue,
             encoder: &mut wgpu::CommandEncoder,
             face: usize,
             view_projection: Mat4,

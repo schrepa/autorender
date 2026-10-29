@@ -551,7 +551,7 @@ impl PipelineCounts {
         })
     }
 
-    pub(crate) fn frame_submitted(&mut self, queue: &wgpu::Queue) -> u32 {
+    pub(crate) fn frame_submitted(&mut self, queue: &crate::gpu_calls::Queue) -> u32 {
         let created = take_created();
         self.created = self.created.saturating_add(created);
         if created > 0 {
@@ -776,7 +776,7 @@ pub(crate) struct Fillers {
 impl Fillers {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let buffer = |label, size, usage| {
-            device.create_buffer(&wgpu::BufferDescriptor {
+            crate::memory::buffer(device, &wgpu::BufferDescriptor {
                 label: Some(label),
                 size,
                 usage,

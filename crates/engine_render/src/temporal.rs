@@ -73,7 +73,7 @@ pub(crate) struct TemporalPass {
 impl TemporalPass {
     pub(crate) fn new(
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         camera_layout: &crate::pipelines::GroupLayout,
         texture_layout: &crate::pipelines::GroupLayout,
         surface_format: wgpu::TextureFormat,
@@ -170,7 +170,7 @@ impl TemporalPass {
     pub(crate) fn begin(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         frame: &RenderFrame<'_>,
         region: FrameRegion,
         pose_generation: u64,

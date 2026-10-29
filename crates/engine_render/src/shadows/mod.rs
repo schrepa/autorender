@@ -189,6 +189,7 @@ impl ShadowPass {
         device: &wgpu::Device,
         material_layout: &crate::pipelines::GroupLayout,
     ) -> Self {
+        let _owner = crate::memory::owned(crate::render_graph::Pass::ShadowMaps);
         Self {
             pipelines: None,
             material_layout: material_layout.clone(),
@@ -300,7 +301,7 @@ impl ShadowPass {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         inputs: &ShadowInputs<'_>,
     ) -> Option<ShadowFrame> {
         let ShadowInputs {
@@ -615,7 +616,7 @@ impl ShadowPass {
         }
     }
 
-    pub(crate) fn set_horizon_records(&mut self, queue: &wgpu::Queue, count: u32) {
+    pub(crate) fn set_horizon_records(&mut self, queue: &crate::gpu_calls::Queue, count: u32) {
         self.horizon_records = count as f32;
         self.maps.write_horizon_records(queue, self.horizon_records);
     }

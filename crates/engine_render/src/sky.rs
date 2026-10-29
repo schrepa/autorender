@@ -46,7 +46,7 @@ fn table(
     (width, height): (u32, u32),
     usage: wgpu::TextureUsages,
 ) -> Table {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let texture = crate::memory::texture(device, &wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
             width,
@@ -94,6 +94,7 @@ pub(crate) struct SkyPass {
 
 impl SkyPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::CloudDome);
         let uploaded = wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING;
         let transmittance = table(
             device,
@@ -196,7 +197,7 @@ impl SkyPass {
         }
     }
 
-    fn upload(&self, queue: &wgpu::Queue, tables: &SkyTables) {
+    fn upload(&self, queue: &crate::gpu_calls::Queue, tables: &SkyTables) {
         for (table, texels, (width, height)) in [
             (
                 &self.transmittance,
@@ -229,7 +230,7 @@ impl SkyPass {
     pub(crate) fn encode(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         (settings, tables): (&Sky, Option<&StaticTable<SkyTables>>),
         (sun, eye, exposure, seconds, moon): (Vec3, Vec3, f32, f64, [f32; 4]),
         copies: &[SkyCopy<'_>],

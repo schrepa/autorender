@@ -139,6 +139,7 @@ pub fn run<G: Game, E: Into<engine::Error>>(
         frame += 1;
     }
     let mut times = Vec::with_capacity(method.frames as usize);
+    let mut costs = Vec::with_capacity(method.frames as usize);
     let (mut loading, mut compiling) = (false, false);
     mark("serialized-start");
     for _ in 0..method.frames {
@@ -148,6 +149,7 @@ pub fn run<G: Game, E: Into<engine::Error>>(
         let stats = game.host().frame_stats();
         loading |= stats.loading;
         compiling |= stats.pipelines_compiling;
+        costs.extend(stats.bricks_cost);
         frame += 1;
     }
     mark("serialized-end");
@@ -202,8 +204,10 @@ pub fn run<G: Game, E: Into<engine::Error>>(
     let gpu_timestamps = if timings.gpu { "exact" } else { "none" };
     metrics.extend(timings.metrics);
     let adapter = game.host().adapter();
+    let bricks = (!costs.is_empty()).then(|| engine::bricks::BrickCosts::table(&costs));
     let report = json!({
         "report": {
+            "bricks": bricks,
             "size": [size.0, size.1],
             "frames": method.frames,
             "settled": {"held": held, "after_ms": after_ms},

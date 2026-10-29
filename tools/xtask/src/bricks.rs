@@ -180,6 +180,7 @@ fn record(
             }))
             .collect::<Vec<_>>(),
         "inspectors": brick.inspectors.iter().map(|inspector| inspector.name).collect::<Vec<_>>(),
+        "passes": brick.passes,
         "system_set": brick.name,
         "resources": brick.resources.iter().map(|owned| owned.name).collect::<Vec<_>>(),
         "components": brick.components.iter().map(|owned| owned.name).collect::<Vec<_>>(),
@@ -195,6 +196,9 @@ pub fn bricks_json(root: &Path) -> Result<String, String> {
     let names: Vec<&'static str> = world.resource::<BrickRegistry>().names().collect();
     let accessed = accessed(world, &names);
     let registry = world.resource::<BrickRegistry>();
+    registry
+        .check_passes(engine::RENDER_PASSES)
+        .map_err(|error| error.to_string())?;
     let bricks = registry
         .bricks()
         .iter()

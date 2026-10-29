@@ -6,6 +6,8 @@ use engine_render::{RenderError, RenderTarget, Renderer};
 
 use crate::{Error, Result};
 
+#[path = "app_attribution.rs"]
+mod attribution;
 #[cfg(feature = "profiling")]
 #[path = "app_profiling.rs"]
 mod profiling;
@@ -94,6 +96,8 @@ pub(crate) struct AppHost {
     gpu_ms: Option<f32>,
     #[cfg(feature = "profiling")]
     profile_frame: u64,
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    attribution: attribution::Attribution,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -133,7 +137,9 @@ impl AppHost {
         let starting = Renderer::start(target).await.map_err(render_failure)?;
         let engine = built(build)?;
         let renderer = Box::new(starting.finish().await.map_err(render_failure)?);
-        Ok(Self::with(engine, renderer))
+        let mut host = Self::with(engine, renderer);
+        host.claim_passes()?;
+        Ok(host)
     }
 
     fn with(mut engine: Engine, renderer: Box<Renderer>) -> Self {
@@ -156,6 +162,8 @@ impl AppHost {
             gpu_ms: None,
             #[cfg(feature = "profiling")]
             profile_frame: 0,
+            #[cfg(any(feature = "dev", feature = "profiling"))]
+            attribution: attribution::Attribution::default(),
         }
     }
 
@@ -181,6 +189,9 @@ impl AppHost {
             self.renderer.give_record(record, None);
         }
         let replaced = std::mem::replace(&mut self.engine, engine);
+        if let Err(error) = self.claim_passes() {
+            panic!("{error}");
+        }
         self.apply_overrides();
         self.suspend();
         replaced
@@ -597,39 +608,45 @@ impl AppHost {
                 "Frame timestamp must be finite.",
             ));
         }
+        self.begin_attribution();
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
-        let _profile = engine_profile::span("cpu", "host.frame");
+        let profile = engine_profile::span("cpu", "host.frame");
         let interval = self
             .last_timestamp_ms
             .map(|last| (timestamp_ms - last).max(0.0));
         let delta = interval.map_or(0.0, |interval| interval * 0.001);
         self.last_timestamp_ms = Some(timestamp_ms);
         self.set_input(input);
-        let start = now_ms();
-        let report = self.engine.advance(delta);
-        let simulation_ms = now_ms() - start;
-        self.render_frame(
-            width,
-            height,
-            simulation_ms,
-            report,
-            FrameKind::Display {
-                alpha: report.interpolation,
-                interval,
-            },
-        )?;
-        if self.tick_pipelining {
+        {
+            let _core = attribution::core_scope();
             let start = now_ms();
-            if self.engine.run_ahead(delta) {
-                if self.engine.tick_completed_ahead()
-                    && let Some(current) = self.engine.gpu_current()
-                {
-                    self.renderer.prestage_gpu_current(current);
+            let report = self.engine.advance(delta);
+            let simulation_ms = now_ms() - start;
+            self.render_frame(
+                width,
+                height,
+                simulation_ms,
+                report,
+                FrameKind::Display {
+                    alpha: report.interpolation,
+                    interval,
+                },
+            )?;
+            if self.tick_pipelining {
+                let start = now_ms();
+                if self.engine.run_ahead(delta) {
+                    if self.engine.tick_completed_ahead()
+                        && let Some(current) = self.engine.gpu_current()
+                    {
+                        self.renderer.prestage_gpu_current(current);
+                    }
+                    self.stats.simulation_ms += now_ms() - start;
                 }
-                self.stats.simulation_ms += now_ms() - start;
             }
         }
+        drop(profile);
+        self.end_attribution();
         Ok(())
     }
 
@@ -645,23 +662,36 @@ impl AppHost {
             Error::new(ErrorCode::InvalidStep, "$.ticks", error.to_string())
         };
         engine_core::DevStepError::validate(ticks).map_err(invalid)?;
+        self.begin_attribution();
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
-        let _profile = engine_profile::span("cpu", "host.step");
-        self.engine.complete_pending_tick();
-        self.last_timestamp_ms = None;
-        self.set_input(input);
-        let start = now_ms();
-        let report = self.engine.step_fixed(ticks).map_err(invalid)?;
-        let simulation_ms = now_ms() - start;
-        self.render_frame(width, height, simulation_ms, report, FrameKind::Exact)
+        let profile = engine_profile::span("cpu", "host.step");
+        {
+            let _core = attribution::core_scope();
+            self.engine.complete_pending_tick();
+            self.last_timestamp_ms = None;
+            self.set_input(input);
+            let start = now_ms();
+            let report = self.engine.step_fixed(ticks).map_err(invalid)?;
+            let simulation_ms = now_ms() - start;
+            self.render_frame(width, height, simulation_ms, report, FrameKind::Exact)?;
+        }
+        drop(profile);
+        self.end_attribution();
+        Ok(())
     }
 
     #[cfg(feature = "dev")]
     pub fn dev_render(&mut self, width: u32, height: u32) -> Result<()> {
+        self.begin_attribution();
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
-        self.render_frame(width, height, 0.0, FrameReport::default(), FrameKind::Exact)
+        {
+            let _core = attribution::core_scope();
+            self.render_frame(width, height, 0.0, FrameReport::default(), FrameKind::Exact)?;
+        }
+        self.end_attribution();
+        Ok(())
     }
 
     #[cfg(feature = "dev")]
@@ -673,17 +703,23 @@ impl AppHost {
                 "Presentation alpha must be finite and in [0, 1].",
             ));
         }
+        self.begin_attribution();
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
-        self.engine.complete_pending_tick();
-        self.engine.reveal_ticks_ahead();
-        self.render_frame(
-            width,
-            height,
-            0.0,
-            FrameReport::default(),
-            FrameKind::Preview { alpha },
-        )
+        {
+            let _core = attribution::core_scope();
+            self.engine.complete_pending_tick();
+            self.engine.reveal_ticks_ahead();
+            self.render_frame(
+                width,
+                height,
+                0.0,
+                FrameReport::default(),
+                FrameKind::Preview { alpha },
+            )?;
+        }
+        self.end_attribution();
+        Ok(())
     }
 
     fn set_input(&mut self, input: InputState) {
@@ -805,6 +841,7 @@ impl AppHost {
             jobs: engine_core::JobStats::default(),
             disabled_features: self.renderer.disabled_features(),
             render: rendered,
+            bricks_cost: None,
             bricks: std::collections::BTreeMap::new(),
         };
         self.exchange_records();
@@ -881,31 +918,27 @@ impl AppHost {
         }
     }
 
+    fn loading(&self) -> bool {
+        let world = self.engine.app.world();
+        world
+            .get_resource::<engine_terrain::Terrains>()
+            .is_some_and(engine_terrain::Terrains::loading)
+            || world
+                .get_resource::<engine_core::Records>()
+                .is_some_and(engine_core::Records::loading)
+            || world
+                .get_resource::<engine_core::StaticTables>()
+                .is_some_and(engine_core::StaticTables::loading)
+            || self.pipeline_list.waiting()
+    }
+
     pub fn stats(&self) -> FrameStats {
         let (pipelines_listed, pipelines_unlisted) = self.renderer.pipelines_listed();
         FrameStats {
             pipelines_compiling: self.renderer.pipelines_compiling(),
             pipelines_listed,
             pipelines_unlisted,
-            loading: self
-                .engine
-                .app
-                .world()
-                .get_resource::<engine_terrain::Terrains>()
-                .is_some_and(engine_terrain::Terrains::loading)
-                || self
-                    .engine
-                    .app
-                    .world()
-                    .get_resource::<engine_core::Records>()
-                    .is_some_and(engine_core::Records::loading)
-                || self
-                    .engine
-                    .app
-                    .world()
-                    .get_resource::<engine_core::StaticTables>()
-                    .is_some_and(engine_core::StaticTables::loading)
-                || self.pipeline_list.waiting(),
+            loading: self.loading(),
             jobs: self
                 .engine
                 .app

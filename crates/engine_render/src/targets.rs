@@ -40,7 +40,7 @@ pub(crate) fn texture_2d(
     format: wgpu::TextureFormat,
     usage: wgpu::TextureUsages,
 ) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
+    crate::memory::texture(device, &wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
             width,
@@ -58,7 +58,7 @@ pub(crate) fn texture_2d(
 
 pub(crate) fn texel(
     device: &wgpu::Device,
-    queue: &wgpu::Queue,
+    queue: &crate::gpu_calls::Queue,
     label: &str,
     format: wgpu::TextureFormat,
     texel: [u8; 4],
@@ -151,11 +151,17 @@ pub(crate) fn draw_within(pass: &mut wgpu::RenderPass<'_>, (width, height): (u32
 
 pub(crate) struct ScreenTarget<T> {
     made: Option<(FrameSize, Versioned<T>)>,
+    mark: u64,
+    created: Vec<u64>,
 }
 
 impl<T> Default for ScreenTarget<T> {
     fn default() -> Self {
-        Self { made: None }
+        Self {
+            made: None,
+            mark: 0,
+            created: Vec::new(),
+        }
     }
 }
 
@@ -164,11 +170,13 @@ impl<T> ScreenTarget<T> {
         if self.size() == Some(size) {
             return false;
         }
-        self.made = None;
+        self.release();
+        self.mark = crate::memory::created_count();
         true
     }
 
     pub(crate) fn set(&mut self, size: FrameSize, targets: T) {
+        self.created = crate::memory::created_since(self.mark);
         self.made = Some((size, Versioned::new(targets)));
     }
 
@@ -181,6 +189,7 @@ impl<T> ScreenTarget<T> {
     }
 
     pub(crate) fn release(&mut self) {
+        crate::memory::release_ids(&std::mem::take(&mut self.created));
         self.made = None;
     }
 }

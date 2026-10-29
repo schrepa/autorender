@@ -437,7 +437,7 @@ impl GpuPresentationPass {
 
     fn write_frame_uniform(
         &mut self,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         frame: &RenderFrame<'_>,
         alpha: f32,
         view: &CullingView,

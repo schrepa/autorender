@@ -316,7 +316,7 @@ impl PostPass {
     pub(crate) fn begin(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         snapshot: &RenderSnapshot,
         (region, depth): (FrameRegion, &Versioned<wgpu::TextureView>),
         display: bool,
@@ -388,7 +388,7 @@ impl PostPass {
 
     pub(crate) fn prepare_reflections(
         &mut self,
-        (device, queue): (&wgpu::Device, &wgpu::Queue),
+        (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
         (frame, depth): (Effects, &Versioned<wgpu::TextureView>),
         trace: Option<&crate::world_trace::TraceFrame<'_>>,
         (sources, placed, frames): TraceInputs<'_>,

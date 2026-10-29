@@ -13,7 +13,8 @@ impl Brick for Sky {
             .settings::<Sky>()
             .settings::<Haze>()
             .settings::<NightSky>()
-            .resource::<Atmosphere>();
+            .resource::<Atmosphere>()
+            .passes(&["cloud_dome", "cloud_march", "cloud_composite"]);
     }
 }
 

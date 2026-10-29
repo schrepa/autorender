@@ -59,6 +59,7 @@ pub(crate) struct GroundCoverPass {
 
 impl GroundCoverPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::GroundCover);
         Self {
             grow_layout: crate::pipelines::layout(device, &COVER_GROW),
             draw_layout: crate::pipelines::layout(device, &COVER_DRAW),
@@ -119,7 +120,7 @@ impl GroundCoverPass {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         terrain: &TerrainPass,
         terrains: &engine_terrain::RenderTerrains,
         (settings, wind, culling, eye, time): (&GroundCover, [f32; 2], Mat4, Vec3, f32),
@@ -150,7 +151,7 @@ impl GroundCoverPass {
     fn plan(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         terrain: &TerrainPass,
         terrains: &engine_terrain::RenderTerrains,
         (settings, wind, grounded): (&GroundCover, [f32; 2], bool),

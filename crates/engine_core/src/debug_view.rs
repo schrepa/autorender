@@ -7,7 +7,7 @@ use engine_settings::{Setting, settings};
 
 impl Brick for DebugView {
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.settings::<DebugView>();
+        bricks.settings::<DebugView>().passes(&["debug_view"]);
     }
 }
 

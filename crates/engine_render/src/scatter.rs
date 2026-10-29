@@ -146,6 +146,7 @@ struct LeftOut {
 
 impl ScatterPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Scatter);
         let growable =
             |label, bytes| Growable::new(device, label, bytes, wgpu::BufferUsages::empty());
         let regions_placeholder = crate::targets::texture_2d(
@@ -263,10 +264,11 @@ impl ScatterPass {
     pub(crate) fn set_groups(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         groups: &[GroupLayout],
         counts: &[u32],
     ) {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Scatter);
         let mut data = Vec::with_capacity(groups.len());
         self.args.template.clear();
         self.args.casters.clear();
@@ -323,10 +325,11 @@ impl ScatterPass {
     pub(crate) fn write_slots(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         (poses, colors, records, grounds): (&[PoseData], &[ColorData], &[Record], &[GroundData]),
         dirty: Option<std::ops::Range<u32>>,
     ) -> Option<std::ops::Range<u32>> {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Scatter);
         let room = [
             (&self.poses, size_of::<PoseData>()),
             (&self.colors, size_of::<ColorData>()),
@@ -411,11 +414,12 @@ impl ScatterPass {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         (view_projection, eye): (Mat4, Vec3),
         (pixel_error, height, impostors, fade): (Option<f32>, f32, Option<f32>, f32),
         regions: &[(usize, KeptRefresh)],
     ) -> bool {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Scatter);
         self.frame_views.maps.clear();
         if self.resident == 0 {
             return false;
@@ -550,10 +554,11 @@ impl ScatterPass {
     pub(crate) fn prepare_snap(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         sources: Option<SnapSources<'_>>,
         eye: Vec3,
     ) {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Scatter);
         self.snapping = false;
         let Some(sources) = sources.filter(|sources| !sources.terrains.is_empty()) else {
             return;

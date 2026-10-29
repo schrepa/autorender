@@ -42,7 +42,7 @@ pub(super) struct Layout<'a> {
 impl PatchDraws {
     pub(super) fn new(device: &wgpu::Device) -> Self {
         let indices = grid_indices();
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let index_buffer = crate::memory::buffer_init(device, &wgpu::util::BufferInitDescriptor {
             label: Some("engine/terrain-indices"),
             contents: bytemuck::cast_slice(&indices),
             usage: wgpu::BufferUsages::INDEX,
@@ -193,7 +193,7 @@ impl PatchDraws {
 
     pub(super) fn write(
         &mut self,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         views: &TerrainViews<'_>,
         (uniforms, generation): (&wgpu::Buffer, u64),
     ) {
@@ -230,7 +230,7 @@ impl PatchDraws {
 
     pub(super) fn write_probe_view(
         &self,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         face: usize,
         relative: Mat4,
         eye: Vec3,
@@ -478,7 +478,7 @@ pub(super) fn patch_layout() -> wgpu::VertexBufferLayout<'static> {
 }
 
 fn instance_buffer(device: &wgpu::Device, records: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
+    crate::memory::buffer(device, &wgpu::BufferDescriptor {
         label: Some("engine/terrain-patches"),
         size: records * size_of::<PatchRecord>() as u64,
         usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,

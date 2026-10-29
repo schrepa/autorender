@@ -145,7 +145,7 @@ impl Horizons {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         terrains: &RenderTerrains,
         (settings, shadows): (&TerrainSettings, bool),
         (windows, slots): (&[Option<BounceLevels>], u32),
@@ -284,7 +284,7 @@ fn record(
 }
 
 fn write_layers(
-    queue: &wgpu::Queue,
+    queue: &crate::gpu_calls::Queue,
     texture: &wgpu::Texture,
     index: usize,
     size: u32,

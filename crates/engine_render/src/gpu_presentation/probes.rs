@@ -49,6 +49,7 @@ impl Stillness {
             0
         };
         if slots > self.slots || (slots == 0 && self.slots != 0) {
+            crate::memory::release_buffer(&self.frames);
             self.frames = storage(
                 device,
                 "engine/presentation-still-frames",
@@ -107,7 +108,7 @@ impl GpuPresentationPass {
     pub(crate) fn encode_probe_face(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         encoder: &mut wgpu::CommandEncoder,
         face: usize,
         size: u32,

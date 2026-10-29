@@ -8,8 +8,8 @@ use engine_settings::ErrorCode;
 use serde_json::Value;
 
 use super::{
-    Brick, BrickSet, BrickStats, EnvironmentSection, Error, Operation, crate_of, parse_value,
-    parse_value_at, short_type_name,
+    Brick, BrickSet, BrickStats, CORE_PASSES, CORE_ROW, EnvironmentSection, Error, Operation,
+    crate_of, parse_value, parse_value_at, short_type_name,
 };
 use crate::RenderSnapshot;
 
@@ -39,6 +39,7 @@ pub struct BrickRecord {
     pub operations: Vec<OperationEntry>,
     pub inspectors: Vec<InspectorEntry>,
     pub extractions: Vec<fn(&World, &mut RenderSnapshot)>,
+    pub passes: Vec<&'static str>,
     pub resources: Vec<Owned>,
     pub components: Vec<Owned>,
 }
@@ -56,6 +57,7 @@ impl BrickRecord {
             operations: Vec::new(),
             inspectors: Vec::new(),
             extractions: Vec::new(),
+            passes: Vec::new(),
             resources: Vec::new(),
             components: Vec::new(),
         }
@@ -90,6 +92,7 @@ impl BrickRecord {
 #[derive(Resource, Default)]
 pub struct BrickRegistry {
     bricks: Vec<BrickRecord>,
+    left_out: Vec<&'static str>,
 }
 
 impl BrickRegistry {
@@ -159,10 +162,76 @@ impl BrickRegistry {
         self.bricks.iter().flat_map(|brick| &brick.stats)
     }
 
-    pub fn extractions(&self) -> impl Iterator<Item = fn(&World, &mut RenderSnapshot)> + '_ {
+    pub fn extractions(
+        &self,
+    ) -> impl Iterator<Item = (&'static str, fn(&World, &mut RenderSnapshot))> + '_ {
+        self.bricks.iter().flat_map(|brick| {
+            brick
+                .extractions
+                .iter()
+                .map(move |&extract| (brick.name, extract))
+        })
+    }
+
+    pub fn pass_owner(&self, pass: &str) -> Option<&'static str> {
+        if CORE_PASSES.contains(&pass) {
+            return Some(CORE_ROW);
+        }
         self.bricks
             .iter()
-            .flat_map(|brick| brick.extractions.iter().copied())
+            .find(|brick| brick.passes.contains(&pass))
+            .map(|brick| brick.name)
+    }
+
+    pub fn left_out(&self) -> &[&'static str] {
+        &self.left_out
+    }
+
+    pub fn leave_out(&mut self, names: impl IntoIterator<Item = &'static str>) {
+        for name in names {
+            if !self.left_out.contains(&name) && !self.has(name) {
+                self.left_out.push(name);
+            }
+        }
+    }
+
+    pub fn check_passes(&self, passes: &[&str]) -> Result<(), Error> {
+        for brick in &self.bricks {
+            if let Some(unknown) = brick.passes.iter().find(|&&pass| !passes.contains(&pass)) {
+                return Err(Error::new(
+                    ErrorCode::InvalidName,
+                    format!("$.bricks.{}.passes.{unknown}", brick.name),
+                    format!(
+                        "the {} brick claims {unknown}, which is no render pass; passes: {}",
+                        brick.name,
+                        passes.join(", ")
+                    ),
+                ));
+            }
+        }
+        if let Some(unknown) = CORE_PASSES.iter().find(|&&pass| !passes.contains(&pass)) {
+            return Err(Error::new(
+                ErrorCode::InvalidName,
+                format!("$.bricks.{CORE_ROW}.passes.{unknown}"),
+                format!(
+                    "the engine's core claims {unknown}, which is no render pass; passes: {}",
+                    passes.join(", ")
+                ),
+            ));
+        }
+        if !self.left_out.is_empty() {
+            return Ok(());
+        }
+        match passes.iter().find(|&&pass| self.pass_owner(pass).is_none()) {
+            Some(unclaimed) => Err(Error::new(
+                ErrorCode::MissingPlugin,
+                format!("$.passes.{unclaimed}"),
+                format!(
+                    "no brick claims the {unclaimed} render pass: claim it with Bricks::passes"
+                ),
+            )),
+            None => Ok(()),
+        }
     }
 
     pub fn frame_stats(&self, world: &World) -> BTreeMap<&'static str, Value> {
@@ -210,6 +279,11 @@ impl BrickRegistry {
         for inspector in &record.inspectors {
             if let Some(known) = self.inspector(inspector.name) {
                 return Err(taken("inspectors", inspector.name, known.brick));
+            }
+        }
+        for &pass in &record.passes {
+            if let Some(known) = self.pass_owner(pass) {
+                return Err(taken("passes", pass, known));
             }
         }
         let mut record = record;
@@ -406,7 +480,7 @@ impl OperationEntry {
     }
 
     pub fn run(&self, world: &mut World, request: Value) -> Result<Value, Error> {
-        (self.run)(world, request)
+        super::under(self.brick, || (self.run)(world, request))
     }
 
     #[cfg(feature = "schema")]

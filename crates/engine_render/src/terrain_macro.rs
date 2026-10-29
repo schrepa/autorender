@@ -35,7 +35,7 @@ pub(crate) struct MacroMaps {
 }
 
 impl MacroMaps {
-    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
         let empty = crate::targets::texture_2d(
             device,
             "engine/terrain-macro-empty",
@@ -102,7 +102,7 @@ impl MacroMaps {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         terrains: &RenderTerrains,
     ) {
         let first = terrains

@@ -7,7 +7,8 @@ publish.workspace = true
 
 [features]
 default = []
-enabled = ["dep:serde"]
+bricks = []
+enabled = ["dep:serde", "bricks"]
 
 [dependencies]
 serde = { workspace = true, optional = true }

@@ -165,6 +165,7 @@ impl Selection {
             return false;
         }
         self.stillness_capacity = slots.next_power_of_two();
+        crate::memory::release_buffer(&self.stillness);
         self.stillness = storage(
             device,
             "engine/shadow-stillness",
@@ -185,6 +186,7 @@ impl Selection {
         if ids > self.id_capacity {
             self.id_capacity = ids.next_power_of_two();
             self.template_stale = true;
+            crate::memory::release_buffer(&self.ids);
             self.ids = storage(
                 device,
                 "engine/shadow-ids",
@@ -196,12 +198,14 @@ impl Selection {
         if groups > self.arg_capacity {
             self.arg_capacity = groups.next_power_of_two();
             let bytes = (MAPS * self.arg_capacity) as u64 * DRAW_ARGS_BYTES;
+            crate::memory::release_buffer(&self.args);
             self.args = storage(
                 device,
                 "engine/shadow-args",
                 bytes,
                 wgpu::BufferUsages::INDIRECT,
             );
+            crate::memory::release_buffer(&self.args_template);
             self.args_template = storage(
                 device,
                 "engine/shadow-args-template",
@@ -217,6 +221,7 @@ impl Selection {
         self.mask_words = mask_words;
         self.starts_capacity = self.starts_capacity.max(groups.next_power_of_two());
         let words = self.readback_words() + self.starts_capacity;
+        crate::memory::release_buffer(&self.counters);
         self.counters = storage(
             device,
             "engine/shadow-counters",
@@ -232,7 +237,7 @@ impl Selection {
     pub(super) fn update_template(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         casters: &CasterGroups,
         levels: Vec<u8>,
         ranges: impl Fn(usize, u8) -> (u32, u32, i32),
@@ -278,12 +283,14 @@ impl Selection {
             let group_bytes = (groups.len().max(1) * size_of::<BatchData>()) as u64;
             if listed > self.listed_capacity || group_bytes > self.listed_groups.size() {
                 self.listed_capacity = listed.next_power_of_two();
+                crate::memory::release_buffer(&self.listed);
                 self.listed = storage(
                     device,
                     "engine/shadow-casters",
                     (self.listed_capacity * size_of::<CandidateData>()) as u64,
                     wgpu::BufferUsages::empty(),
                 );
+                crate::memory::release_buffer(&self.listed_groups);
                 self.listed_groups = storage(
                     device,
                     "engine/shadow-caster-groups",

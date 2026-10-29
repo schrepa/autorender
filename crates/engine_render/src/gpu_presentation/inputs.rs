@@ -137,18 +137,21 @@ impl NodeInputs {
         if nodes > self.capacity {
             self.capacity = grow(nodes);
             let capacity = self.capacity as u64;
+            crate::memory::release_buffer(&self.locals);
             self.locals = storage(
                 device,
                 "engine/presentation-locals",
                 2 * capacity * size_of::<NodePose>() as u64,
                 wgpu::BufferUsages::empty(),
             );
+            crate::memory::release_buffer(&self.info);
             self.info = storage(
                 device,
                 "engine/presentation-info",
                 capacity * size_of::<NodeInfo>() as u64,
                 wgpu::BufferUsages::empty(),
             );
+            crate::memory::release_buffer(&self.authority);
             self.authority = storage(
                 device,
                 "engine/presentation-authority",
@@ -161,6 +164,7 @@ impl NodeInputs {
         }
         if parents != 0 && self.composed_capacity < self.capacity {
             self.composed_capacity = self.capacity;
+            crate::memory::release_buffer(&self.composed);
             self.composed = storage(
                 device,
                 "engine/presentation-composed",
@@ -171,6 +175,7 @@ impl NodeInputs {
         }
         if parents > self.parent_capacity {
             self.parent_capacity = grow(parents);
+            crate::memory::release_buffer(&self.parents);
             self.parents = storage(
                 device,
                 "engine/presentation-parents",
@@ -208,7 +213,7 @@ impl NodeInputs {
     pub(super) fn upload(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         staging: Staging<'_>,
         gpu: &GpuPresentation<'_>,
         since: Option<u64>,

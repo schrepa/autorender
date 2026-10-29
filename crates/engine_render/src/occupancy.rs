@@ -266,6 +266,7 @@ pub(crate) struct OccupancyPass {
 
 impl OccupancyPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Occupancy);
         let (targets, views, layers) = targets(device, 1, 1);
         let unfiner = |label, format| {
             crate::targets::texture_2d(
@@ -343,7 +344,7 @@ impl OccupancyPass {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         settings: &Occupancy,
         eye: Vec3,
         (covers, slots): (&[Cover], u32),
@@ -733,7 +734,7 @@ fn targets(
     [Vec<wgpu::TextureView>; 2],
 ) {
     let target = |label, format| {
-        device.create_texture(&wgpu::TextureDescriptor {
+        crate::memory::texture(device, &wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
                 width: resolution,

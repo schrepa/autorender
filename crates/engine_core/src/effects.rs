@@ -8,7 +8,10 @@ use engine_settings::settings;
 
 impl Brick for Shadows {
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.settings::<Shadows>().settings::<SkyOcclusion>();
+        bricks
+            .settings::<Shadows>()
+            .settings::<SkyOcclusion>()
+            .passes(&["shadow_select", "shadow_maps", "shadow_marks"]);
     }
 }
 
@@ -22,7 +25,8 @@ impl Brick for PostEffects {
             .settings::<Dither>()
             .settings::<AutoExposure>()
             .settings::<Reflections>()
-            .settings::<TemporalAntialiasing>();
+            .settings::<TemporalAntialiasing>()
+            .passes(&["exposure", "effects", "composite", "temporal_resolve"]);
     }
 }
 

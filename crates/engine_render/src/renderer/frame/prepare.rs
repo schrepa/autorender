@@ -5,6 +5,7 @@
 
 use super::*;
 use crate::clouds::CloudFrame;
+use crate::memory::buffer_init;
 use crate::temporal::ResolveFrame;
 use crate::transparent::TransparencyFrame;
 
@@ -215,12 +216,11 @@ impl Renderer {
                     )
                     .ok_or_else(|| {
                         let buffer = |label, contents: &[u8], usage| {
-                            self.device
-                                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                                    label: Some(label),
-                                    contents,
-                                    usage,
-                                })
+                            buffer_init(&self.device, &wgpu::util::BufferInitDescriptor {
+                                label: Some(label),
+                                contents,
+                                usage,
+                            })
                         };
                         let vertex = wgpu::BufferUsages::VERTEX;
                         OwnMesh {
@@ -503,6 +503,42 @@ impl Renderer {
         let gpu_prepared =
             self.prepare_presentation(frame, gpu, kind, temporal_frame, &mut prelude.inputs);
         let shadow_frame = self.prepare_shadows(snapshot, kind, temporal_frame);
+        self.prepare_clouds(snapshot, kind, lighting);
+        prelude.sky = self.prepare_sky(snapshot);
+        let (environment, probe_list) = self.prepare_environment(snapshot, lighting);
+        prelude.environment = environment;
+        if kind.debug {
+            return Features::debug(gpu_prepared, shadow_frame, probe_list);
+        }
+        let lights = self.prepare_lights(frame, kind, temporal_frame);
+        let post = self.prepare_post(snapshot, temporal_frame, kind.display);
+        let transparency = self.prepare_transparency(
+            snapshot,
+            (frame.identity(), frame.emitters_revision()),
+            post.is_some(),
+        );
+        let temporal = self.prepare_resolve(temporal_frame, transparency.is_some());
+        Features {
+            gpu_prepared,
+            shadow_frame,
+            probe_list,
+            frames: FeatureFrames {
+                lights,
+                transparency,
+                post,
+                temporal,
+                ..FeatureFrames::default()
+            },
+        }
+    }
+
+    fn prepare_clouds(
+        &mut self,
+        snapshot: &RenderSnapshot,
+        kind: FrameKind,
+        lighting: &LightingUniform,
+    ) {
+        let _owner = crate::memory::owned(Pass::Feature(FeaturePass::CloudDome));
         self.features.clouds.get_mut().prepare(
             &self.device,
             &self.queue,
@@ -532,32 +568,6 @@ impl Renderer {
             .environment
             .get_mut()
             .set_clouds(&self.device, self.features.clouds.get().environment_dome());
-        prelude.sky = self.prepare_sky(snapshot);
-        let (environment, probe_list) = self.prepare_environment(snapshot, lighting);
-        prelude.environment = environment;
-        if kind.debug {
-            return Features::debug(gpu_prepared, shadow_frame, probe_list);
-        }
-        let lights = self.prepare_lights(frame, kind, temporal_frame);
-        let post = self.prepare_post(snapshot, temporal_frame, kind.display);
-        let transparency = self.prepare_transparency(
-            snapshot,
-            (frame.identity(), frame.emitters_revision()),
-            post.is_some(),
-        );
-        let temporal = self.prepare_resolve(temporal_frame, transparency.is_some());
-        Features {
-            gpu_prepared,
-            shadow_frame,
-            probe_list,
-            frames: FeatureFrames {
-                lights,
-                transparency,
-                post,
-                temporal,
-                ..FeatureFrames::default()
-            },
-        }
     }
 
     fn prepare_presentation(
@@ -568,6 +578,7 @@ impl Renderer {
         temporal_frame: &Option<TemporalFrame>,
         input_copies: &mut Option<wgpu::CommandEncoder>,
     ) -> Option<GpuPrepared> {
+        let _owner = crate::memory::owned(Pass::Presentation);
         let gpu_mode = kind.gpu_mode;
         let snapshot = frame.snapshot();
 
@@ -673,6 +684,7 @@ impl Renderer {
         kind: FrameKind,
         temporal_frame: &Option<TemporalFrame>,
     ) -> Option<ShadowFrame> {
+        let _owner = crate::memory::owned(Pass::ShadowMaps);
         let gpu_mode = kind.gpu_mode;
 
         let parity = temporal_frame.as_ref().map_or(0, |frame| frame.parity);
@@ -737,6 +749,7 @@ impl Renderer {
             DERIVED_AIR, DERIVED_GLOW, DERIVED_GROUND, DERIVED_HORIZON, DERIVED_SUN, DERIVED_ZENITH,
         };
         use std::mem::offset_of;
+        let _owner = crate::memory::owned(Pass::Feature(FeaturePass::CloudDome));
         let lighting = self.camera.lighting_buffer();
         let at = |offset: usize| offset as u64;
         let mut copies = vec![
@@ -804,6 +817,7 @@ impl Renderer {
         Option<wgpu::CommandEncoder>,
         &'s [engine_core::RenderReflectionProbe],
     ) {
+        let _owner = crate::memory::owned(Pass::Feature(FeaturePass::CloudDome));
         let probe_settings = snapshot.environment.reflection_probes;
         let probe_list: &[engine_core::RenderReflectionProbe] = if probe_settings.enabled {
             &snapshot.reflection_probes.list
@@ -884,6 +898,7 @@ impl Renderer {
         kind: FrameKind,
         temporal_frame: &Option<TemporalFrame>,
     ) -> Option<Ready<LightFrame>> {
+        let _owner = crate::memory::owned(Pass::Feature(FeaturePass::Lights));
         let temporal = kind.temporal;
         let snapshot = frame.snapshot();
 
@@ -921,6 +936,7 @@ impl Renderer {
         temporal_frame: &Option<TemporalFrame>,
         display: bool,
     ) -> Option<Ready<Effects>> {
+        let _owner = crate::memory::owned(Pass::Feature(FeaturePass::Effects));
         let effects = crate::screen_effects::targets_read(&snapshot.environment);
         let region = self.display.region;
         let needs = temporal_frame.is_some() || effects || region.upscales();
@@ -953,6 +969,7 @@ impl Renderer {
         temporal_frame: &Option<TemporalFrame>,
         transparent: bool,
     ) -> Option<Ready<ResolveFrame>> {
+        let _owner = crate::memory::owned(Pass::Feature(FeaturePass::TemporalResolve));
         let (Some(frame), Some(post)) = (temporal_frame, self.features.post.get()) else {
             return None;
         };
@@ -971,6 +988,7 @@ impl Renderer {
         emitters: (u64, u64),
         post: bool,
     ) -> Option<Ready<TransparencyFrame>> {
+        let _owner = crate::memory::owned(Pass::Feature(FeaturePass::Transparent));
         let (device, queue) = (&self.device, &self.queue);
         let inputs = (
             (self.display.region, &self.depth.view),
@@ -1062,6 +1080,7 @@ impl Renderer {
         &mut self,
         targets: Targets,
     ) -> Option<Ready<CloudFrame>> {
+        let _owner = crate::memory::owned(Pass::Feature(FeaturePass::CloudComposite));
         if targets == Targets::Debug {
             return None;
         }
@@ -1093,6 +1112,7 @@ impl Renderer {
     }
 
     fn prepare_reflections(&mut self, state: &FrameState<'_>) {
+        let _owner = crate::memory::owned(Pass::Feature(FeaturePass::Effects));
         let Some(frame) = state
             .features
             .frames

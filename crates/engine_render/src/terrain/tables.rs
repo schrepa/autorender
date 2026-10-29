@@ -90,7 +90,7 @@ impl TerrainTables {
     pub(super) fn write_holes(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         (atlas, edited): (&TileAtlas, bool),
         max_layers: u32,
     ) {
@@ -140,7 +140,7 @@ impl TerrainTables {
 
     pub(super) fn write_fades(
         &mut self,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         (words, dirty): (&[u32], Range<usize>),
     ) {
         if words.is_empty() {
@@ -160,7 +160,7 @@ impl TerrainTables {
 
     pub(super) fn write_palette(
         &mut self,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         terrains: &RenderTerrains,
         maps: &TerrainMaps,
     ) {
@@ -206,7 +206,7 @@ impl TerrainTables {
         self.palette_spare = std::mem::replace(&mut self.palette_written, entries);
     }
 
-    fn write_covers(&mut self, queue: &wgpu::Queue, terrains: &RenderTerrains) {
+    fn write_covers(&mut self, queue: &crate::gpu_calls::Queue, terrains: &RenderTerrains) {
         let mut entries = std::mem::take(&mut self.covers_spare);
         entries.clear();
         self.cover_terms.clear();
@@ -243,7 +243,7 @@ impl TerrainTables {
     pub(super) fn write_directory(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         terrains: &RenderTerrains,
         atlas: &TileAtlas,
     ) {
@@ -311,7 +311,7 @@ impl TerrainTables {
     fn lay_out_directory(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         terrains: &RenderTerrains,
         atlas: &TileAtlas,
     ) {
@@ -375,6 +375,7 @@ impl TerrainTables {
     pub(super) fn size_uniforms(&mut self, device: &wgpu::Device, terrains: &RenderTerrains) {
         let uniform_bytes = terrains.terrains.len() as u64 * SLOT;
         if uniform_bytes > self.uniforms.size() {
+            crate::memory::release_buffer(&self.uniforms);
             self.uniforms = crate::buffers::uniform(
                 device,
                 "engine/terrain-uniforms",

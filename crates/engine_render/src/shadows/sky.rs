@@ -152,7 +152,7 @@ impl SkyMaps {
             .and_then(|textures| textures.layers.get(layer))
     }
 
-    pub(crate) fn release(&mut self, queue: &wgpu::Queue) {
+    pub(crate) fn release(&mut self, queue: &crate::gpu_calls::Queue) {
         if self.textures.is_some() {
             self.textures.replace(None);
         }
@@ -166,7 +166,7 @@ impl SkyMaps {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         settings: &SkyOcclusion,
         eye: Vec3,
         changed: bool,
@@ -317,7 +317,7 @@ impl SkyMaps {
         }
     }
 
-    fn write(&mut self, queue: &wgpu::Queue, uniform: SkyUniform) {
+    fn write(&mut self, queue: &crate::gpu_calls::Queue, uniform: SkyUniform) {
         if self.written != Some(uniform) {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
             self.written = Some(uniform);
