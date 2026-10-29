@@ -12,7 +12,7 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
-    pub(crate) struct Cover as ["Cover" in OCCUPANCY_SHADER] {
+    pub(crate) struct Cover as ["Cover" in "terrain::occupancy_maps"] {
         pub footprint: f32,
         pub bottom: f32,
         pub top: f32,
@@ -20,7 +20,7 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct ListedDraw as ["ListedDraw" in OCCUPANCY_SHADER] {
+    pub(crate) struct ListedDraw as ["ListedDraw" in "terrain::occupancy_maps"] {
         pub vertices: u32,
         pub instances: u32,
         pub first_vertex: u32,

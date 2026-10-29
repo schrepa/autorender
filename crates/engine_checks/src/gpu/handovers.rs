@@ -5,11 +5,11 @@ use naga::Span;
 use super::Checked;
 
 mod flow;
+mod places;
 
 pub(super) use flow::Watch;
 use flow::{Call, Decision, Flow, Read, Source};
-
-const SHADERS: &str = "crates/engine_render/src/";
+use places::{Layout, Sources};
 
 const EYE_WORLD: &str = "eye_world";
 
@@ -105,106 +105,6 @@ const MARK: &str = "// optics:";
 const SHOWN: usize = 4;
 const CALLS_SHOWN: usize = 3;
 
-struct Layout {
-    module: &'static str,
-    files: Vec<File>,
-    marked: Vec<(usize, usize)>,
-}
-
-struct File {
-    start: usize,
-    path: &'static str,
-    lines: Vec<usize>,
-}
-
-impl Layout {
-    fn at(&self, span: Span) -> (String, usize) {
-        let Some(range) = span.to_range() else {
-            return (self.module.to_owned(), 0);
-        };
-        let index = self.files.partition_point(|file| file.start <= range.start);
-        match index.checked_sub(1).and_then(|index| self.files.get(index)) {
-            Some(file) => {
-                let line = file
-                    .lines
-                    .partition_point(|&start| start <= range.start - file.start);
-                (format!("{SHADERS}{}", file.path), line)
-            }
-            None => (self.module.to_owned(), 0),
-        }
-    }
-
-    fn marked(&self, span: Span) -> bool {
-        let Some(range) = span.to_range() else {
-            return false;
-        };
-        let end = range.end.max(range.start + 1);
-        let first = self
-            .marked
-            .partition_point(|&(_, line_end)| line_end <= range.start);
-        self.marked
-            .get(first)
-            .is_some_and(|&(line_start, _)| line_start < end)
-    }
-}
-
-struct Layouts {
-    layouts: Vec<Layout>,
-    lines: BTreeSet<(&'static str, usize)>,
-    unexplained: Vec<String>,
-}
-
-fn layouts(mark: &str, says: &str) -> Layouts {
-    let mut lines = BTreeSet::new();
-    let mut unexplained = Vec::new();
-    let mut files = engine_render::shaders::FILES.iter().copied().peekable();
-    let mut layouts = Vec::new();
-    for &(module, source) in engine_render::shaders::MODULES {
-        let mut layout = Layout {
-            module,
-            files: Vec::new(),
-            marked: Vec::new(),
-        };
-        let mut at = 0;
-        while let Some(&(path, text)) = files.peek() {
-            if !source.get(at..).is_some_and(|rest| rest.starts_with(text)) {
-                break;
-            }
-            files.next();
-            let mut starts = Vec::new();
-            let mut offset = 0;
-            for (index, line) in text.split_inclusive('\n').enumerate() {
-                starts.push(offset);
-                if let Some(found) = line.find(mark) {
-                    layout.marked.push((at + offset, at + offset + line.len()));
-                    lines.insert((path, index + 1));
-                    if line[found + mark.len()..].trim().is_empty() {
-                        unexplained.push(format!(
-                            "{SHADERS}{path}:{}: marks a line `{mark}` without saying {says}",
-                            index + 1
-                        ));
-                    }
-                }
-                offset += line.len();
-            }
-            layout.files.push(File {
-                start: at,
-                path,
-                lines: starts,
-            });
-            at += text.len();
-        }
-        layouts.push(layout);
-    }
-    unexplained.sort();
-    unexplained.dedup();
-    Layouts {
-        layouts,
-        lines,
-        unexplained,
-    }
-}
-
 fn trusted(name: &str) -> bool {
     name == EYE_WORLD || OPTICS.iter().any(|&(optics, _)| optics == name)
 }
@@ -227,20 +127,15 @@ pub(super) fn sweep(
     mark: &str,
     says: &str,
 ) -> Swept {
-    let marks = layouts(mark, says);
+    let marks = places::marks(modules, mark, says);
+    let sources = Sources::new(modules);
     let mut problems = marks.unexplained;
     let mut found = Found::new();
     let mut declared = BTreeSet::new();
     let mut decisions = 0;
     for checked in modules {
-        let Some(layout) = marks
-            .layouts
-            .iter()
-            .find(|layout| layout.module == checked.name)
-        else {
-            continue;
-        };
-        let module = &checked.module;
+        let layout = Layout::new(checked, &sources);
+        let module = places::unmangled(&checked.module);
         declared.extend(
             module
                 .functions
@@ -248,10 +143,11 @@ pub(super) fn sweep(
                 .filter_map(|(_, function)| function.name.clone()),
         );
         declared.extend(module.entry_points.iter().map(|entry| entry.name.clone()));
-        let marked = |span: Span| layout.marked(span);
-        let followed = flow::follow(module, &checked.info, watch, trusted, &marked);
+        let lines = &marks.lines;
+        let marked = |span: Span| layout.marked(span, lines);
+        let followed = flow::follow(&module, &checked.info, watch, trusted, &marked);
         decisions += followed.decisions();
-        report(layout, &followed, &mut found);
+        report(&layout, &followed, &mut found);
         for name in &followed.unsettled {
             problems.push(format!(
                 "{}: the flow of {} through `{name}` never settled",
@@ -304,7 +200,7 @@ pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
     if !swept.found.is_empty() {
         problems.push(format!(
             "{} decisions read the camera outside the detail eye's measures and the optics; \
-             measure detail from the detail eye (scene.wgsl's `detail_distance`, \
+             measure detail from the detail eye (frame::view's `detail_distance`, \
              `detail_across`, `detail_span`), turn eye-relative positions back with \
              `eye_world`, or, where it is optics, list the function in \
              tools/xtask/src/gpu/handovers.rs (OPTICS) or mark the line `{MARK} <why>`:",

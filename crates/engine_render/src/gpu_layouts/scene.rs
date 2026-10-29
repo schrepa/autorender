@@ -93,7 +93,7 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, Pod, Zeroable)]
-    pub(crate) struct ShadowCullUniform as ["Cull" in SHADOW_SHADER] {
+    pub(crate) struct ShadowCullUniform as ["Cull" in "shadows::maps"] {
         pub light: [[f32; 4]; 3],
         pub regions: [[f32; 4]; SHADOW_REGIONS],
         pub region_depths: [[f32; 4]; SHADOW_REGIONS],
@@ -111,7 +111,7 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
-    pub(crate) struct RouteData as ["Routes" in SHADOW_SHADER] {
+    pub(crate) struct RouteData as ["Routes" in "shadows::maps"] {
         pub clips: [[[f32; 4]; 4]; MAX_MOVING_TILES],
         pub slots: [[f32; 4]; MAX_MOVING_TILES],
         pub atlas: [f32; 4],
@@ -142,7 +142,7 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct SkyUniform as ["Sky" in POST_SHADER] {
+    pub(crate) struct SkyUniform as ["Sky" in "post::effects"] {
         pub clips: [[[f32; 4]; 4]; SKY_LAYERS],
         pub directions: [[f32; 4]; SKY_LAYERS],
         pub counts: [f32; 4],
@@ -158,7 +158,7 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, Pod, Zeroable)]
-    pub(crate) struct PresentationFrame as ["Frame" in PRESENTATION_SHADER] {
+    pub(crate) struct PresentationFrame as ["Frame" in "presentation::cull"] {
         pub alpha: f32,
         pub candidates: u32,
         pub budget: u32,
@@ -191,7 +191,7 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, Pod, Zeroable)]
-    pub(crate) struct BatchData as ["Batch" in PRESENTATION_SHADER, "Batch" in SHADOW_SHADER] {
+    pub(crate) struct BatchData as ["Batch" in "presentation::cull", "Batch" in "shadows::maps"] {
         pub start: u32,
         pub count: u32,
         pub index_count: u32,

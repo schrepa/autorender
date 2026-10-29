@@ -1,42 +1,102 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use engine_render::bindings::{
-    Binding, Format, Kind, SHARED_GROUPS, Sample, Sampling, Stages, TABLES, Table, View,
-};
+use engine_render::bindings::{Kind, ResolvedBinding, ResolvedLayout, Stages, TABLES};
 use engine_render::gpu_layouts::{Layout, constants, layouts};
-use engine_render::pipeline_layouts::{
-    LAYOUT_BUDGET, PIPELINE_LAYOUTS, PipelineLayout, REQUIRED_LIMITS, StageLimits,
-    UNIFORM_BINDING_BYTES,
-};
-use engine_render::shaders::{ENTRIES, Stage};
+use engine_render::linker::{Linker, declared_bindings, unmangle};
+use engine_render::shaders::{ENTRIES, MODULES, Stage, composites};
 use naga::valid::{Capabilities, ValidationFlags, Validator};
 
+mod bindings;
 mod eye_reads;
 mod fades;
 mod handovers;
 mod inter_stage;
 
+const GENERATED: &str = "generated::";
+
 pub struct Checked {
-    pub name: &'static str,
+    pub name: String,
+    pub source: String,
+    pub text: String,
     pub module: naga::Module,
     pub info: naga::valid::ModuleInfo,
 }
 
+pub(crate) fn plain(name: &str) -> String {
+    unmangle(name).map_or_else(|| name.to_owned(), |(_, item)| item)
+}
+
+fn own(name: &str) -> bool {
+    unmangle(name).is_none()
+}
+
+fn placement() -> ResolvedLayout {
+    let mut names: Vec<&'static str> = Vec::new();
+    for module in MODULES {
+        for name in declared_bindings(module.source) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    ResolvedLayout {
+        label: "engine/checks",
+        groups: 1,
+        bindings: names
+            .into_iter()
+            .zip(0..)
+            .map(|(name, number)| ResolvedBinding {
+                group: 0,
+                number,
+                name,
+                kind: Kind::Write,
+                stages: Stages::VERTEX_FRAGMENT_COMPUTE,
+                owner: "engine/checks",
+            })
+            .collect(),
+    }
+}
+
 pub fn modules() -> Result<Vec<Checked>, String> {
+    let mut linker = Linker::new(MODULES);
+    let mut sources: Vec<(String, String)> = MODULES
+        .iter()
+        .map(|module| (module.path.to_owned(), module.source.to_owned()))
+        .collect();
+    for (path, brick, source) in composites() {
+        linker.add_generated(path.clone(), brick, source.clone());
+        sources.push((path, source));
+    }
+    linker.set_features(engine_render::standard_features());
+    let layout = placement();
     let mut checked = Vec::new();
     let mut failures = Vec::new();
-    for &(name, source) in engine_render::shaders::MODULES {
-        let module = match naga::front::wgsl::parse_str(source) {
+    for (name, source) in sources {
+        let text = match linker.compose_module(&name, &layout) {
+            Ok(composed) => composed.text.clone(),
+            Err(error) => {
+                failures.push(format!("{name}: {error}"));
+                continue;
+            }
+        };
+        let module = match naga::front::wgsl::parse_str(&text) {
             Ok(module) => module,
             Err(error) => {
-                failures.push(format!("{name}: {}", error.emit_to_string(source)));
+                failures.push(format!("{name}: {}", error.emit_to_string(&text)));
                 continue;
             }
         };
         let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
         match validator.validate(&module) {
-            Ok(info) => checked.push(Checked { name, module, info }),
-            Err(error) => failures.push(format!("{name}: {}", error.emit_to_string(source))),
+            Ok(info) => checked.push(Checked {
+                name,
+                source,
+                text,
+                module,
+                info,
+            }),
+            Err(error) => failures.push(format!("{name}: {}", error.emit_to_string(&text))),
         }
     }
     if failures.is_empty() {
@@ -105,7 +165,7 @@ fn check_layouts(modules: &[Checked]) -> Result<usize, String> {
                 if let Some(members) = wgsl_struct(&checked.module, mirror.name) {
                     found = true;
                     mirrors += 1;
-                    errors.extend(compare(layout, mirror.name, checked.name, &members));
+                    errors.extend(compare(layout, mirror.name, &checked.name, &members));
                 }
             }
             if !found {
@@ -125,176 +185,6 @@ fn check_layouts(modules: &[Checked]) -> Result<usize, String> {
     }
 }
 
-struct Declared<'a> {
-    group: u32,
-    binding: u32,
-    name: &'a str,
-    handle: naga::Handle<naga::GlobalVariable>,
-}
-
-fn declared(module: &naga::Module) -> Vec<Declared<'_>> {
-    module
-        .global_variables
-        .iter()
-        .filter_map(|(handle, global)| {
-            let binding = global.binding.as_ref()?;
-            Some(Declared {
-                group: binding.group,
-                binding: binding.binding,
-                name: global.name.as_deref().unwrap_or_default(),
-                handle,
-            })
-        })
-        .collect()
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Fit {
-    Exact,
-    Larger,
-}
-
-fn fit(module: &naga::Module, global: &naga::GlobalVariable, min_size: u64) -> Result<Fit, String> {
-    let inner = &module.types[global.ty].inner;
-    let size = inner.size(module.to_ctx()) as u64;
-    let flat_stride = match inner {
-        naga::TypeInner::Array {
-            base,
-            size: naga::ArraySize::Dynamic,
-            stride,
-        } if !matches!(module.types[*base].inner, naga::TypeInner::Struct { .. }) => {
-            Some(u64::from(*stride))
-        }
-        _ => None,
-    };
-    if min_size == 0
-        || min_size == size
-        || flat_stride.is_some_and(|stride| min_size > size && min_size.is_multiple_of(stride))
-    {
-        Ok(Fit::Exact)
-    } else if min_size > size {
-        Ok(Fit::Larger)
-    } else {
-        Err(format!(
-            "minimum size {min_size} bytes where the shader's type spans {size}"
-        ))
-    }
-}
-
-fn mismatch(
-    module: &naga::Module,
-    global: &naga::GlobalVariable,
-    binding: &Binding,
-) -> Result<Option<Fit>, String> {
-    let inner = &module.types[global.ty].inner;
-    let sized = |min_size: u64| fit(module, global, min_size).map(Some);
-    let view = |dim: naga::ImageDimension, arrayed: bool| match (dim, arrayed) {
-        (naga::ImageDimension::D2, false) => Some(View::D2),
-        (naga::ImageDimension::D2, true) => Some(View::D2Array),
-        (naga::ImageDimension::D3, false) => Some(View::D3),
-        (naga::ImageDimension::Cube, false) => Some(View::Cube),
-        (naga::ImageDimension::Cube, true) => Some(View::CubeArray),
-        _ => None,
-    };
-    let format = |format: naga::StorageFormat| match format {
-        naga::StorageFormat::R32Float => Some(Format::R32Float),
-        naga::StorageFormat::R32Uint => Some(Format::R32Uint),
-        naga::StorageFormat::Rgba8Snorm => Some(Format::Rgba8Snorm),
-        naga::StorageFormat::Rgba8Unorm => Some(Format::Rgba8Unorm),
-        naga::StorageFormat::Rgba16Float => Some(Format::Rgba16Float),
-        _ => None,
-    };
-    let expected = match (global.space, inner) {
-        (naga::AddressSpace::Uniform, _) => match binding.kind {
-            Kind::Uniform { .. } if inner.size(module.to_ctx()) as u64 > UNIFORM_BINDING_BYTES => {
-                return Err(format!(
-                    "{} bytes, more than the {UNIFORM_BINDING_BYTES} a uniform binding holds on \
-                     every device: bind it as read-only storage",
-                    inner.size(module.to_ctx())
-                ));
-            }
-            Kind::Uniform { min_size, .. } => return sized(min_size),
-            _ => "a uniform buffer",
-        },
-        (naga::AddressSpace::Storage { access }, _)
-            if !access.contains(naga::StorageAccess::STORE) =>
-        {
-            match binding.kind {
-                Kind::Read { min_size } => return sized(min_size),
-                _ => "a read-only storage buffer",
-            }
-        }
-        (naga::AddressSpace::Storage { .. }, _) => match binding.kind {
-            Kind::Write => return Ok(None),
-            _ => "a writable storage buffer",
-        },
-        (naga::AddressSpace::Handle, naga::TypeInner::Sampler { comparison }) => match binding.kind
-        {
-            Kind::Sampler(Sampling::Comparison) if *comparison => return Ok(None),
-            Kind::Sampler(Sampling::Filtering | Sampling::NonFiltering) if !*comparison => {
-                return Ok(None);
-            }
-            _ if *comparison => "a comparison sampler",
-            _ => "a filtering or non-filtering sampler",
-        },
-        (
-            naga::AddressSpace::Handle,
-            naga::TypeInner::Image {
-                dim,
-                arrayed,
-                class,
-            },
-        ) => {
-            let view = view(*dim, *arrayed);
-            match (class, binding.kind) {
-                (naga::ImageClass::Storage { format: stored, .. }, Kind::Storage(table))
-                    if view == Some(View::D2) && format(*stored) == Some(table) =>
-                {
-                    return Ok(None);
-                }
-                (naga::ImageClass::Storage { format: stored, .. }, Kind::StorageArray(table))
-                    if view == Some(View::D2Array) && format(*stored) == Some(table) =>
-                {
-                    return Ok(None);
-                }
-                (naga::ImageClass::Storage { .. }, _) => {
-                    "a storage texture of the shader's format and dimension"
-                }
-                (
-                    class,
-                    Kind::Texture {
-                        sample,
-                        view: table,
-                    },
-                ) if view == Some(table) => match (class, sample) {
-                    (
-                        naga::ImageClass::Sampled {
-                            kind: naga::ScalarKind::Float,
-                            multi: false,
-                        },
-                        Sample::Float | Sample::Unfilterable,
-                    )
-                    | (
-                        naga::ImageClass::Sampled {
-                            kind: naga::ScalarKind::Uint,
-                            multi: false,
-                        },
-                        Sample::Uint,
-                    )
-                    | (naga::ImageClass::Depth { multi: false }, Sample::Depth) => return Ok(None),
-                    _ => "a texture of the shader's sample type",
-                },
-                _ => "a texture of the shader's dimension",
-            }
-        }
-        _ => "a kind of binding tables cannot declare",
-    };
-    Err(format!(
-        "the shader declares {expected}, the table {:?}",
-        binding.kind
-    ))
-}
-
 fn stage_of(stage: naga::ShaderStage) -> Stages {
     match stage {
         naga::ShaderStage::Vertex => Stages::VERTEX,
@@ -303,169 +193,31 @@ fn stage_of(stage: naga::ShaderStage) -> Stages {
     }
 }
 
-fn covers(stages: Stages, stage: Stages) -> bool {
-    (stage.vertex() && stages.vertex())
-        || (stage.fragment() && stages.fragment())
-        || (stage.compute() && stages.compute())
-}
-
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
-fn check_bindings(modules: &[Checked]) -> Result<usize, String> {
-    let mut errors = Vec::new();
-    let module = |name: &str| modules.iter().find(|checked| checked.name == name);
-    for &(table_name, table) in TABLES {
-        for serves in table.serves {
-            if module(serves.module).is_none() {
-                errors.push(format!(
-                    "{table_name}: serves {}, which is not a shader module",
-                    serves.module
-                ));
-            }
-        }
-        for binding in table.bindings {
-            let mut found = false;
-            let mut fits = Vec::new();
-            for serves in table.serves {
-                let Some(checked) = module(serves.module) else {
-                    continue;
-                };
-                for resource in declared(&checked.module) {
-                    if resource.group != serves.group || resource.binding != binding.binding {
-                        continue;
-                    }
-                    if resource.name != binding.name {
-                        continue;
-                    }
-                    found = true;
-                    let global = &checked.module.global_variables[resource.handle];
-                    match mismatch(&checked.module, global, binding) {
-                        Ok(fit) => fits.extend(fit),
-                        Err(why) => errors.push(format!(
-                            "{table_name} binding {} `{}` in {} group {}: {why}",
-                            binding.binding, binding.name, checked.name, serves.group
-                        )),
-                    }
-                }
-            }
-            if !fits.is_empty() && !fits.contains(&Fit::Exact) {
-                errors.push(format!(
-                    "{table_name} binding {} `{}`: its minimum size is no shader's type's size",
-                    binding.binding, binding.name
-                ));
-            }
-            if !found {
-                let names: Vec<_> = table
-                    .serves
-                    .iter()
-                    .filter_map(|serves| {
-                        let checked = module(serves.module)?;
-                        let names: Vec<_> = declared(&checked.module)
-                            .into_iter()
-                            .filter(|resource| {
-                                resource.group == serves.group
-                                    && resource.binding == binding.binding
-                            })
-                            .map(|resource| format!("`{}` in {}", resource.name, checked.name))
-                            .collect();
-                        (!names.is_empty()).then(|| names.join(", "))
-                    })
-                    .collect();
-                errors.push(format!(
-                    "{table_name} binding {} `{}`: no shader group it serves declares it{}",
-                    binding.binding,
-                    binding.name,
-                    if names.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" (binding {} is {})", binding.binding, names.join(", "))
-                    }
-                ));
-            }
-        }
-    }
-    let mut entry_points = 0;
-    for checked in modules {
-        let resources = declared(&checked.module);
-        for (index, entry) in checked.module.entry_points.iter().enumerate() {
-            entry_points += 1;
-            let info = checked.info.get_entry_point(index);
-            let stage = stage_of(entry.stage);
-            let used: Vec<&Declared> = resources
-                .iter()
-                .filter(|resource| !info[resource.handle].is_empty())
-                .collect();
-            let mut groups: Vec<u32> = used.iter().map(|resource| resource.group).collect();
-            groups.sort_unstable();
-            groups.dedup();
-            for group in groups {
-                let wanted: Vec<&&Declared> = used
-                    .iter()
-                    .filter(|resource| resource.group == group)
-                    .collect();
-                let lacking = |table: &Table| -> Vec<String> {
-                    wanted
-                        .iter()
-                        .filter(|resource| {
-                            !table.bindings.iter().any(|binding| {
-                                binding.binding == resource.binding
-                                    && binding.name == resource.name
-                                    && covers(binding.stages, stage)
-                            })
-                        })
-                        .map(|resource| format!("{} `{}`", resource.binding, resource.name))
-                        .collect()
-                };
-                let candidates: Vec<(&str, Vec<String>)> = TABLES
-                    .iter()
-                    .filter(|(_, table)| {
-                        table
-                            .serves
-                            .iter()
-                            .any(|serves| serves.module == checked.name && serves.group == group)
-                    })
-                    .map(|&(name, table)| (name, lacking(table)))
-                    .collect();
-                if candidates.iter().any(|(_, lacking)| lacking.is_empty()) {
-                    continue;
-                }
-                let closest = candidates.iter().min_by_key(|(_, lacking)| lacking.len());
-                errors.push(match closest {
-                    None => format!(
-                        "{} `{}` uses group {group}, which no table serves",
-                        checked.name, entry.name
-                    ),
-                    Some((name, lacking)) => format!(
-                        "{} `{}` group {group}: no table serving it holds all it uses for its stage; {name} lacks {}",
-                        checked.name,
-                        entry.name,
-                        lacking.join(", ")
-                    ),
-                });
-            }
-        }
-    }
-    if errors.is_empty() {
-        Ok(entry_points)
-    } else {
-        Err(errors.join("\n"))
+fn declared_stage(stage: Stage) -> Stages {
+    match stage {
+        Stage::Vertex => Stages::VERTEX,
+        Stage::Fragment => Stages::FRAGMENT,
+        Stage::Compute => Stages::COMPUTE,
     }
 }
 
 fn check_entries(modules: &[Checked]) -> Result<usize, String> {
     let mut errors = Vec::new();
+    let mut distinct = 0;
     for (index, entry) in ENTRIES.iter().enumerate() {
-        if ENTRIES[..index]
+        if let Some(earlier) = ENTRIES[..index]
             .iter()
-            .any(|earlier| earlier.module == entry.module && earlier.name == entry.name)
+            .find(|earlier| earlier.module == entry.module && earlier.name == entry.name)
         {
-            errors.push(format!(
-                "{} `{}` is declared twice in entry_points!",
-                entry.module, entry.name
-            ));
+            if earlier.stage != entry.stage {
+                errors.push(format!(
+                    "{} `{}` is declared {:?} and {:?} in entry_points!",
+                    entry.module, entry.name, earlier.stage, entry.stage
+                ));
+            }
+            continue;
         }
+        distinct += 1;
         let Some(checked) = modules.iter().find(|checked| checked.name == entry.module) else {
             errors.push(format!(
                 "entry point `{}`: {} is not a shader module",
@@ -483,22 +235,19 @@ fn check_entries(modules: &[Checked]) -> Result<usize, String> {
                 "{} has no entry point `{}` (entry_points! declares one)",
                 entry.module, entry.name
             )),
-            Some(point) => {
-                let declared = match entry.stage {
-                    Stage::Vertex => Stages::VERTEX,
-                    Stage::Fragment => Stages::FRAGMENT,
-                    Stage::Compute => Stages::COMPUTE,
-                };
-                if stage_of(point.stage) != declared {
-                    errors.push(format!(
-                        "{} `{}` is a {:?} stage, declared {:?} in entry_points!",
-                        entry.module, entry.name, point.stage, entry.stage
-                    ));
-                }
+            Some(point) if stage_of(point.stage) != declared_stage(entry.stage) => {
+                errors.push(format!(
+                    "{} `{}` is a {:?} stage, declared {:?} in entry_points!",
+                    entry.module, entry.name, point.stage, entry.stage
+                ));
             }
+            Some(_) => {}
         }
     }
-    for checked in modules {
+    for checked in modules
+        .iter()
+        .filter(|checked| !checked.name.starts_with(GENERATED))
+    {
         for point in &checked.module.entry_points {
             if !ENTRIES
                 .iter()
@@ -512,273 +261,7 @@ fn check_entries(modules: &[Checked]) -> Result<usize, String> {
         }
     }
     if errors.is_empty() {
-        Ok(ENTRIES.len())
-    } else {
-        Err(errors.join(
-            "
-",
-        ))
-    }
-}
-
-fn check_ranges() -> Result<usize, String> {
-    let mut errors = Vec::new();
-    for &(table_name, table) in TABLES {
-        for (index, binding) in table.bindings.iter().enumerate() {
-            if table.bindings[..index]
-                .iter()
-                .any(|earlier| earlier.binding == binding.binding)
-            {
-                errors.push(format!(
-                    "{table_name} holds binding {} twice (`{}`)",
-                    binding.binding, binding.name
-                ));
-            }
-        }
-    }
-    let mut placed = 0;
-    for shared in SHARED_GROUPS {
-        let at = format!("{} @ {}", shared.module, shared.group);
-        for (index, range) in shared.ranges.iter().enumerate() {
-            if range.numbers.is_empty() {
-                errors.push(format!("{at}: {}'s range is empty", range.feature));
-            }
-            for earlier in &shared.ranges[..index] {
-                if range.numbers.start < earlier.numbers.end
-                    && earlier.numbers.start < range.numbers.end
-                {
-                    errors.push(format!(
-                        "{at}: {} ({:?}) overlaps {} ({:?})",
-                        range.feature, range.numbers, earlier.feature, earlier.numbers
-                    ));
-                }
-            }
-        }
-        let serving = TABLES.iter().filter(|(_, table)| {
-            table
-                .serves
-                .iter()
-                .any(|serves| serves.module == shared.module && serves.group == shared.group)
-        });
-        for &(table_name, table) in serving {
-            for binding in table.bindings {
-                let owners: Vec<_> = shared
-                    .ranges
-                    .iter()
-                    .filter(|range| range.names.contains(&binding.name))
-                    .collect();
-                match owners.as_slice() {
-                    [] => errors.push(format!(
-                        "{table_name} binding {} `{}`: no feature of {at} lists it (bindings::SHARED_GROUPS)",
-                        binding.binding, binding.name
-                    )),
-                    [range] if !range.numbers.contains(&binding.binding) => errors.push(format!(
-                        "{table_name} binding {} `{}` lies outside {}'s range {:?} in {at}",
-                        binding.binding, binding.name, range.feature, range.numbers
-                    )),
-                    [_] => placed += 1,
-                    [..] => errors.push(format!(
-                        "{at}: `{}` is listed by several features",
-                        binding.name
-                    )),
-                }
-            }
-        }
-        for range in shared.ranges {
-            for name in range.names {
-                let bound = TABLES.iter().any(|(_, table)| {
-                    table.serves.iter().any(|serves| {
-                        serves.module == shared.module && serves.group == shared.group
-                    }) && table.bindings.iter().any(|binding| binding.name == *name)
-                });
-                if !bound {
-                    errors.push(format!(
-                        "{at}: {} lists `{name}`, which no table serving it binds",
-                        range.feature
-                    ));
-                }
-            }
-        }
-    }
-    if errors.is_empty() {
-        Ok(placed)
-    } else {
-        Err(errors.join(
-            "
-",
-        ))
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Resource {
-    UniformBuffer,
-    StorageBuffer,
-    SampledTexture,
-    Sampler,
-    StorageTexture,
-}
-
-impl Resource {
-    const ALL: [Resource; 5] = [
-        Resource::UniformBuffer,
-        Resource::StorageBuffer,
-        Resource::SampledTexture,
-        Resource::Sampler,
-        Resource::StorageTexture,
-    ];
-
-    fn of(kind: Kind) -> Resource {
-        match kind {
-            Kind::Uniform { .. } => Resource::UniformBuffer,
-            Kind::Read { .. } | Kind::Write => Resource::StorageBuffer,
-            Kind::Texture { .. } => Resource::SampledTexture,
-            Kind::Sampler(_) => Resource::Sampler,
-            Kind::Storage(_) | Kind::StorageArray(_) => Resource::StorageTexture,
-        }
-    }
-
-    fn limit(self, limits: &StageLimits) -> u32 {
-        match self {
-            Resource::UniformBuffer => limits.uniform_buffers,
-            Resource::StorageBuffer => limits.storage_buffers,
-            Resource::SampledTexture => limits.sampled_textures,
-            Resource::Sampler => limits.samplers,
-            Resource::StorageTexture => limits.storage_textures,
-        }
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Resource::UniformBuffer => "uniform buffers",
-            Resource::StorageBuffer => "storage buffers",
-            Resource::SampledTexture => "sampled textures",
-            Resource::Sampler => "samplers",
-            Resource::StorageTexture => "storage textures",
-        }
-    }
-}
-
-fn stage_count(layout: &PipelineLayout, stage: Stages, resource: Resource) -> u32 {
-    let count = layout
-        .groups
-        .iter()
-        .flat_map(|table| table.bindings)
-        .filter(|binding| covers(binding.stages, stage) && Resource::of(binding.kind) == resource)
-        .count();
-    u32::try_from(count).unwrap_or(u32::MAX)
-}
-
-fn check_pipeline_layouts() -> Result<usize, String> {
-    let mut errors = Vec::new();
-    for (index, &(name, table)) in TABLES.iter().enumerate() {
-        if let Some((earlier, _)) = TABLES[..index]
-            .iter()
-            .find(|(_, other)| other.label == table.label)
-        {
-            errors.push(format!(
-                "{name} and {earlier} share the label {}",
-                table.label
-            ));
-        }
-        if !PIPELINE_LAYOUTS
-            .iter()
-            .any(|(_, layout)| layout.groups.iter().any(|group| group.label == table.label))
-        {
-            errors.push(format!(
-                "{name} is in no pipeline layout (engine_render::pipeline_layouts)"
-            ));
-        }
-    }
-    let stages = [
-        (Stages::VERTEX, "vertex"),
-        (Stages::FRAGMENT, "fragment"),
-        (Stages::COMPUTE, "compute"),
-    ];
-    for (index, &(name, layout)) in PIPELINE_LAYOUTS.iter().enumerate() {
-        let limits = &layout.limits;
-        if layout.groups.len() > limits.bind_groups as usize {
-            errors.push(format!(
-                "{name}: {} groups, beyond the {} every device grants",
-                layout.groups.len(),
-                limits.bind_groups
-            ));
-        }
-        let serves_slots = |module: &str| {
-            layout.groups.iter().zip(0u32..).all(|(table, slot)| {
-                table.bindings.is_empty()
-                    || table
-                        .serves
-                        .iter()
-                        .any(|serves| serves.module == module && serves.group == slot)
-            })
-        };
-        if !layout
-            .groups
-            .iter()
-            .flat_map(|table| table.serves)
-            .any(|serves| serves_slots(serves.module))
-        {
-            errors.push(format!(
-                "{name}: no shader module's groups are its tables at their slots (the tables' `serves`)"
-            ));
-        }
-        if let Some((earlier, _)) = PIPELINE_LAYOUTS[..index].iter().find(|(_, other)| {
-            other.groups.len() == layout.groups.len()
-                && other
-                    .groups
-                    .iter()
-                    .zip(layout.groups)
-                    .all(|(a, b)| a.label == b.label)
-        }) {
-            errors.push(format!("{name} binds the same tables as {earlier}"));
-        }
-        let dynamic = layout
-            .groups
-            .iter()
-            .flat_map(|table| table.bindings)
-            .filter(|binding| matches!(binding.kind, Kind::Uniform { dynamic: true, .. }))
-            .count();
-        if dynamic > limits.dynamic_uniform_buffers as usize {
-            errors.push(format!(
-                "{name}: {dynamic} dynamic uniform buffers, beyond the {} every device grants",
-                limits.dynamic_uniform_buffers
-            ));
-        }
-        for resource in Resource::ALL {
-            let (limit, required) = (resource.limit(limits), resource.limit(&REQUIRED_LIMITS));
-            let mut most = 0;
-            for (stage, stage_name) in stages {
-                let used = stage_count(layout, stage, resource);
-                most = most.max(used);
-                if used > limit {
-                    errors.push(format!(
-                        "{name}: its {stage_name} stage binds {used} {}, beyond the {limit} {}",
-                        resource.name(),
-                        if limit == required {
-                            "every device grants (name a larger limit with `needing`, and check the device where the layout is built)"
-                        } else {
-                            "it names"
-                        }
-                    ));
-                }
-            }
-            if limit > required && most != limit {
-                errors.push(format!(
-                    "{name} names {limit} {} but binds at most {most} to a stage",
-                    resource.name()
-                ));
-            }
-        }
-    }
-    if PIPELINE_LAYOUTS.len() != LAYOUT_BUDGET {
-        errors.push(format!(
-            "{} pipeline layouts, against a budget of {LAYOUT_BUDGET}: each distinct layout costs Firefox's D3D12 backend about 150 ms of startup, so the budget follows the layouts only deliberately (engine_render::pipeline_layouts::LAYOUT_BUDGET)",
-            PIPELINE_LAYOUTS.len()
-        ));
-    }
-    if errors.is_empty() {
-        Ok(PIPELINE_LAYOUTS.len())
+        Ok(distinct)
     } else {
         Err(errors.join("\n"))
     }
@@ -805,7 +288,7 @@ fn spelled_out(word: &str) -> Option<[String; 4]> {
     ])
 }
 
-fn wgsl_tokens(source: &str) -> Vec<String> {
+pub(crate) fn wgsl_spans(source: &str) -> Vec<(String, usize)> {
     const OPERATORS: [&str; 18] = [
         "->", "<<=", ">>=", "<=", ">=", "==", "!=", "&&", "||", "<<", ">>", "+=", "-=", "*=", "/=",
         "%=", "&=", "|=",
@@ -855,8 +338,8 @@ fn wgsl_tokens(source: &str) -> Vec<String> {
             }
             let word = &source[at..end];
             match spelled_out(word) {
-                Some(spelled) => tokens.extend(spelled),
-                None => tokens.push(word.to_string()),
+                Some(spelled) => tokens.extend(spelled.map(|token| (token, at))),
+                None => tokens.push((word.to_string(), at)),
             }
             at = end;
         } else {
@@ -867,11 +350,18 @@ fn wgsl_tokens(source: &str) -> Vec<String> {
                     || rest.chars().next().map_or(1, char::len_utf8),
                     |operator| operator.len(),
                 );
-            tokens.push(rest[..length].to_string());
+            tokens.push((rest[..length].to_string(), at));
             at += length;
         }
     }
     tokens
+}
+
+fn wgsl_tokens(source: &str) -> Vec<String> {
+    wgsl_spans(source)
+        .into_iter()
+        .map(|(token, _)| token)
+        .collect()
 }
 
 fn wgsl_functions(tokens: &[String]) -> Vec<(String, Vec<String>)> {
@@ -957,25 +447,20 @@ fn wgsl_functions(tokens: &[String]) -> Vec<(String, Vec<String>)> {
 }
 
 fn check_duplicate_bodies() -> Result<usize, String> {
-    let mut files: Vec<(&str, &str)> = Vec::new();
-    for &(file, source) in engine_render::shaders::FILES {
-        if !files.iter().any(|(seen, _)| *seen == file) {
-            files.push((file, source));
-        }
-    }
     let mut functions: Vec<(&str, String, Vec<String>)> = Vec::new();
     let mut errors = Vec::new();
-    for (file, source) in files {
-        for (name, code) in wgsl_functions(&wgsl_tokens(source)) {
-            if let Some((other_file, other, _)) = functions
+    for module in MODULES {
+        for (name, code) in wgsl_functions(&wgsl_tokens(module.source)) {
+            if let Some((other_module, other, _)) = functions
                 .iter()
                 .find(|(_, _, other_code)| *other_code == code)
             {
                 errors.push(format!(
-                    "{file}'s `{name}` is {other_file}'s `{other}` written again: keep one, in a file the modules using it list (engine_render::shaders)"
+                    "{}'s `{name}` is {other_module}'s `{other}` written again: keep one, in a module the others import (engine_render::shaders)",
+                    module.path
                 ));
             }
-            functions.push((file, name, code));
+            functions.push((module.path, name, code));
         }
     }
     if errors.is_empty() {
@@ -1034,12 +519,8 @@ fn mirrored(checked: &Checked, mirror: &str) -> Option<f64> {
         .find_map(|(name, value)| (name == mirror).then_some(value))
 }
 
-fn check_constants(root: &Path, modules: &[Checked]) -> Result<usize, String> {
+fn check_mirrored_constants(modules: &[Checked]) -> (usize, Vec<String>) {
     let mut errors = Vec::new();
-    let declared: Vec<(&str, Vec<(&str, f64)>)> = modules
-        .iter()
-        .map(|checked| (checked.name, wgsl_constants(&checked.module)))
-        .collect();
     let mut mirrors = 0;
     for constant in constants() {
         for mirror in constant.mirrors {
@@ -1070,24 +551,10 @@ fn check_constants(root: &Path, modules: &[Checked]) -> Result<usize, String> {
             }
         }
     }
-    let mut by_name: std::collections::BTreeMap<&str, Vec<(&str, f64)>> = Default::default();
-    for (module, values) in &declared {
-        for &(name, value) in values {
-            by_name.entry(name).or_default().push((module, value));
-        }
-    }
-    for (name, uses) in &by_name {
-        if uses.iter().any(|&(_, value)| value != uses[0].1) {
-            let spelled: Vec<String> = uses
-                .iter()
-                .map(|(module, value)| format!("{value} in {module}"))
-                .collect();
-            errors.push(format!(
-                "WGSL `{name}` differs between modules ({}); name differing values apart",
-                spelled.join(", ")
-            ));
-        }
-    }
+    (mirrors, errors)
+}
+
+fn rust_constants(root: &Path) -> Vec<(std::path::PathBuf, usize, String)> {
     fn walk(directory: &Path, files: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
             let path = entry.path();
@@ -1102,6 +569,7 @@ fn check_constants(root: &Path, modules: &[Checked]) -> Result<usize, String> {
     }
     let mut files = Vec::new();
     walk(&root.join("crates/engine_render/src"), &mut files);
+    let mut found = Vec::new();
     for file in files {
         let Ok(text) = std::fs::read_to_string(&file) else {
             continue;
@@ -1121,16 +589,46 @@ fn check_constants(root: &Path, modules: &[Checked]) -> Result<usize, String> {
                 .chars()
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                 .collect();
-            if rest[name.len()..].trim_start().starts_with(':')
-                && by_name.contains_key(name.as_str())
-            {
-                errors.push(format!(
-                    "{}:{}: `{name}` shares its name with a WGSL constant; declare it once in \
-                     engine_render::gpu_layouts::constants with its mirrors, or name it apart",
-                    file.strip_prefix(root).unwrap_or(&file).display(),
-                    index + 1
-                ));
+            if rest[name.len()..].trim_start().starts_with(':') {
+                found.push((file.clone(), index + 1, name));
             }
+        }
+    }
+    found
+}
+
+fn check_constants(root: &Path, modules: &[Checked]) -> Result<usize, String> {
+    let (mirrors, mut errors) = check_mirrored_constants(modules);
+    let mut by_name: BTreeMap<&str, Vec<(&str, f64)>> = BTreeMap::new();
+    for checked in modules {
+        for (name, value) in wgsl_constants(&checked.module) {
+            if own(name) {
+                by_name
+                    .entry(name)
+                    .or_default()
+                    .push((checked.name.as_str(), value));
+            }
+        }
+    }
+    for (name, uses) in &by_name {
+        if uses.iter().any(|&(_, value)| value != uses[0].1) {
+            let spelled: Vec<String> = uses
+                .iter()
+                .map(|(module, value)| format!("{value} in {module}"))
+                .collect();
+            errors.push(format!(
+                "WGSL `{name}` differs between modules ({}); name differing values apart",
+                spelled.join(", ")
+            ));
+        }
+    }
+    for (file, line, name) in rust_constants(root) {
+        if by_name.contains_key(name.as_str()) {
+            errors.push(format!(
+                "{}:{line}: `{name}` shares its name with a WGSL constant; declare it once in \
+                 engine_render::gpu_layouts::constants with its mirrors, or name it apart",
+                file.strip_prefix(root).unwrap_or(&file).display(),
+            ));
         }
     }
     if errors.is_empty() {
@@ -1153,79 +651,84 @@ fn word_counts(source: &str) -> engine_core::collections::HashMap<&str, usize> {
     counts
 }
 
+fn items(module: &naga::Module) -> Vec<(&'static str, &str)> {
+    let mut items = Vec::new();
+    items.extend(
+        module
+            .functions
+            .iter()
+            .filter_map(|(_, function)| Some(("function", function.name.as_deref()?))),
+    );
+    items.extend(
+        module
+            .global_variables
+            .iter()
+            .filter_map(|(_, global)| Some(("variable", global.name.as_deref()?))),
+    );
+    items.extend(
+        module
+            .overrides
+            .iter()
+            .filter_map(|(_, value)| Some(("override", value.name.as_deref()?))),
+    );
+    items.extend(module.types.iter().filter_map(|(_, ty)| match ty.inner {
+        naga::TypeInner::Struct { .. } => Some(("struct", ty.name.as_deref()?)),
+        _ => None,
+    }));
+    items
+}
+
 fn check_unused(modules: &[Checked]) -> Result<(), String> {
-    use std::collections::{BTreeMap, BTreeSet};
-    fn reachable(module: &naga::Module) -> Vec<String> {
-        let mut items = Vec::new();
-        items.extend(module.functions.iter().filter_map(|(_, function)| {
-            function
-                .name
-                .as_ref()
-                .map(|name| format!("function `{name}`"))
-        }));
-        items.extend(module.global_variables.iter().filter_map(|(_, global)| {
-            global
-                .name
-                .as_ref()
-                .map(|name| format!("variable `{name}`"))
-        }));
-        items.extend(
-            module.overrides.iter().filter_map(|(_, value)| {
-                value.name.as_ref().map(|name| format!("override `{name}`"))
-            }),
-        );
-        items.extend(module.types.iter().filter_map(|(_, ty)| match ty.inner {
-            naga::TypeInner::Struct { .. } => {
-                ty.name.as_ref().map(|name| format!("struct `{name}`"))
+    let mut held: BTreeSet<(String, &'static str, String)> = BTreeSet::new();
+    let mut used: BTreeSet<(String, &'static str, String)> = BTreeSet::new();
+    let words: Vec<_> = modules
+        .iter()
+        .map(|checked| word_counts(&checked.source))
+        .collect();
+    for (index, checked) in modules.iter().enumerate() {
+        let home = |name: &str| {
+            unmangle(name).unwrap_or_else(|| (checked.name.clone(), name.to_owned()))
+        };
+        for (kind, name) in items(&checked.module) {
+            if own(name) {
+                held.insert((checked.name.clone(), kind, name.to_owned()));
             }
-            _ => None,
-        }));
-        items
-    }
-    let mut held: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
-    let mut used = BTreeSet::new();
-    for checked in modules {
-        for item in reachable(&checked.module) {
-            held.entry(item).or_default().insert(checked.name);
         }
         let mut compacted = checked.module.clone();
         naga::compact::compact(&mut compacted, naga::compact::KeepUnused::No);
-        used.extend(reachable(&compacted));
-        let source = engine_render::shaders::MODULES
-            .iter()
-            .find_map(|&(name, source)| (name == checked.name).then_some(source))
-            .unwrap_or_default();
-        let words = word_counts(source);
+        for (kind, name) in items(&compacted) {
+            let (module, item) = home(name);
+            used.insert((module, kind, item));
+        }
+        let imported = format!("package::{}::", checked.name);
         for name in checked
             .module
             .constants
             .iter()
-            .filter_map(|(_, constant)| constant.name.as_ref())
+            .filter_map(|(_, constant)| constant.name.as_deref())
+            .filter(|name| own(name))
         {
-            let item = format!("constant `{name}`");
-            held.entry(item.clone()).or_default().insert(checked.name);
-            if words.get(name.as_str()).copied().unwrap_or_default() > 1 {
-                used.insert(item);
+            let item = (checked.name.clone(), "constant", name.to_owned());
+            let here = words[index].get(name).copied().unwrap_or_default() > 1;
+            let elsewhere = modules.iter().zip(&words).any(|(other, counts)| {
+                other.name != checked.name
+                    && other.source.contains(&imported)
+                    && counts.contains_key(name)
+            });
+            if here || elsewhere {
+                used.insert(item.clone());
             }
+            held.insert(item);
         }
     }
     let unused: Vec<String> = held
-        .iter()
-        .filter(|(item, _)| !used.contains(*item))
-        .map(|(item, modules)| {
-            format!(
-                "{item} of {} is used nowhere; remove it",
-                modules.iter().copied().collect::<Vec<_>>().join(", ")
-            )
-        })
+        .difference(&used)
+        .map(|(module, kind, name)| format!("{kind} `{name}` of {module} is used nowhere; remove it"))
         .collect();
     if unused.is_empty() {
         Ok(())
     } else {
-        Err(unused.join(
-            "
-",
-        ))
+        Err(unused.join("\n"))
     }
 }
 
@@ -1268,14 +771,15 @@ fn check_upload_structs(root: &Path) -> Result<(), String> {
 pub fn check(repository: &crate::Repository) -> Result<(), String> {
     let root = repository.root.as_path();
     let modules = modules()?;
+    let shared = engine_render::standard_shared();
+    let (resolved, unresolved) = bindings::resolve(&shared);
     let mirrors = check_layouts(&modules);
-    let entry_points = check_bindings(&modules);
+    let entry_points = bindings::check(&modules, &resolved, &shared);
     let entries = check_entries(&modules);
     let inter_stage = inter_stage::check(&modules);
-    let ranges = check_ranges();
-    let pipeline_layouts = check_pipeline_layouts();
+    let pipeline_layouts = bindings::check_layouts(&resolved, unresolved, &shared);
     let functions = check_duplicate_bodies();
-    let shared = check_constants(root, &modules);
+    let wgsl_constants = check_constants(root, &modules);
     let unused = check_unused(&modules);
     let structs = check_upload_structs(root);
     let handovers = handovers::check(&modules);
@@ -1286,10 +790,9 @@ pub fn check(repository: &crate::Repository) -> Result<(), String> {
         entry_points.as_ref().err(),
         entries.as_ref().err(),
         inter_stage.as_ref().err(),
-        ranges.as_ref().err(),
         pipeline_layouts.as_ref().err(),
         functions.as_ref().err(),
-        shared.as_ref().err(),
+        wgsl_constants.as_ref().err(),
         unused.as_ref().err(),
         structs.as_ref().err(),
         handovers.as_ref().err(),
@@ -1301,10 +804,7 @@ pub fn check(repository: &crate::Repository) -> Result<(), String> {
     .cloned()
     .collect();
     if !errors.is_empty() {
-        return Err(errors.join(
-            "
-",
-        ));
+        return Err(errors.join("\n"));
     }
     let record = serde_json::json!({
         "event": "shaders_checked",
@@ -1315,10 +815,10 @@ pub fn check(repository: &crate::Repository) -> Result<(), String> {
         "entry_points": entry_points?,
         "staged_entries": entries?,
         "fragment_stages": inter_stage?,
-        "shared_bindings": ranges?,
+        "shared_bindings": shared.groups().map(|(_, bindings)| bindings.len()).sum::<usize>(),
         "pipeline_layouts": pipeline_layouts?,
         "functions": functions?,
-        "wgsl_constants": shared?,
+        "wgsl_constants": wgsl_constants?,
         "rust_constants": constants().count(),
         "shader_decisions": handovers?,
         "handovers": fades?,

@@ -136,7 +136,7 @@ fn entry_report(
             }));
         }
     };
-    let stem = format!("{}.{}", checked.name, entry.name);
+    let stem = format!("{}.{}", checked.name.replace("::", "."), entry.name);
     let spirv = folder.join("spirv").join(format!("{stem}.spv"));
     std::fs::create_dir_all(spirv.parent().expect("file_has_folder"))
         .map_err(|error| error.to_string())?;

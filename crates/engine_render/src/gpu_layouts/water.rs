@@ -17,13 +17,13 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct SimFrame as ["SimFrame" in WATER_SIM_SHADER] {
+    pub(crate) struct SimFrame as ["SimFrame" in "water::sim"] {
         pub stage: [u32; 4],
         pub inputs: [u32; 4],
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct SimSlot as ["SimSlot" in WATER_SIM_SHADER] {
+    pub(crate) struct SimSlot as ["SimSlot" in "water::sim"] {
         pub shape: [u32; 4],
         pub step: [f32; 4],
         pub blocks: [u32; 4],
@@ -31,12 +31,12 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct SimSlots as ["SimSlots" in WATER_SIM_SHADER] {
+    pub(crate) struct SimSlots as ["SimSlots" in "water::sim"] {
         pub slot: [SimSlot; SIM_SLOTS],
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct SimTouch as ["SimTouch" in WATER_SIM_SHADER] {
+    pub(crate) struct SimTouch as ["SimTouch" in "water::sim"] {
         pub center: [f32; 4],
         pub inverse: [[f32; 4]; 3],
         pub velocity: [f32; 4],
@@ -44,7 +44,7 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct SimTouches as ["SimTouches" in WATER_SIM_SHADER] {
+    pub(crate) struct SimTouches as ["SimTouches" in "water::sim"] {
         pub count: [u32; 4],
         pub blocks: [u32; 4],
         pub touch: [SimTouch; SIM_TOUCHES],
