@@ -19,7 +19,7 @@ try {
   const box = await canvas.boundingBox();
   assert.ok(box, "the page has its canvas");
   await canvas.focus();
-  await command("resume");
+  await command("control", "resume");
   const start = await camera();
 
   await page.keyboard.down("KeyW");
@@ -68,7 +68,7 @@ try {
   await page.keyboard.up("KeyW");
   assert.ok(moved(released.position, after_blur.position) < 1e-3, `focus lost, nothing is held: ${JSON.stringify({ released, after_blur })}`);
 
-  await command("pause");
+  await command("control", "pause");
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ ok: true, forward: along, turn, checks: ["key_moves", "release_stops", "drag_turns", "unused_keys_stay", "blur_releases", "clean_browser_diagnostics"] }));
 } finally {

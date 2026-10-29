@@ -13,7 +13,7 @@ async function present(gpu) {
   let rendering, previous, stable = 0;
   for (let frame = 1; frame <= 8 || stable < 5; frame++) {
     assert.ok(frame <= 600, `read-back counts settle: ${JSON.stringify(rendering)}`);
-    rendering = (await command("present", { alpha: 0 })).result.rendering;
+    rendering = (await command("control", "present", { alpha: 0 })).result.rendering;
     const counts = JSON.stringify([rendering.occlusion_culling.instances, rendering.level_of_detail.lod0_instances,
       rendering.level_of_detail.lod1_instances, rendering.level_of_detail.lod2_instances, rendering.level_of_detail.impostor_instances]);
     const current = !gpu || (rendering.occlusion_culling.instances != null && rendering.read_back_age < frame);
@@ -26,7 +26,7 @@ async function present(gpu) {
 
 async function capture(name, gpu) {
   for (let frame = 0; frame < 600; frame++) {
-    if (!(await command("present", { alpha: 0 })).result.rendering.pipelines_compiling) break;
+    if (!(await command("control", "present", { alpha: 0 })).result.rendering.pipelines_compiling) break;
     await delay(50);
   }
   const rendering = await present(gpu);
@@ -42,14 +42,14 @@ const coarser = rendering => (rendering.level_of_detail.lod1_instances ?? 0) + (
 try {
   await openPaused(page, url, { timeout: 120_000 });
 
-  await command("environment", { reflection_probes: { enabled: false } });
+  await command("control", "environment", { reflection_probes: { enabled: false } });
 
   const listing = await command("describe");
   assert.ok(listing.result.types.some(type => type.name === "LevelOfDetail"));
   const look = await command("inspect", { component: "Environment" });
   assert.deepEqual(look.result.value.level_of_detail, { enabled: true, pixel_error: 1, impostors: true, fade_seconds: 0.5 });
 
-  const viewed = await command("game", { name: "view", args: { name: "overview" } });
+  const viewed = await command("control", "game", { name: "view", args: { name: "overview" } });
   assert.deepEqual(viewed.result.result, { view: "overview" });
 
   const measurements = [];
@@ -67,33 +67,33 @@ try {
   const pixels = await differentPixels(page, [cpu.png, gpu.png], { tolerance: 8 });
   differs("impostor difference", pixels, "with mesh levels and impostors");
 
-  await command("environment", { level_of_detail: { impostors: false } });
+  await command("control", "environment", { level_of_detail: { impostors: false } });
   const levels = await capture("overview-levels", true);
   assert.equal(levels.rendering.level_of_detail.impostor_instances ?? 0, 0, JSON.stringify(levels.rendering));
   assert.ok(coarser(levels.rendering) > 0, `coarser levels draw: ${JSON.stringify(levels.rendering)}`);
   const levelPixels = await differentPixels(page, [cpu.png, levels.png], { tolerance: 8 });
   differs("mesh level difference", levelPixels, "with mesh levels alone");
 
-  const disabled = await command("environment", { level_of_detail: { enabled: false } });
+  const disabled = await command("control", "environment", { level_of_detail: { enabled: false } });
   assert.deepEqual(disabled.result.environment_changed, ["level_of_detail"]);
   const exact = await capture("overview-exact", true);
   assert.equal(coarser(exact.rendering), 0, JSON.stringify(exact.rendering));
   const exactPixels = await differentPixels(page, [cpu.png, exact.png], { tolerance: 8 });
   differs("disabled difference", exactPixels, "with levels of detail off");
 
-  await command("environment", { level_of_detail: { max_impostors: 2 } });
+  await command("control", "environment", { level_of_detail: { max_impostors: 2 } });
   const budget = await present(true);
   assert.ok(budget.level_of_detail.impostors > 0 && budget.level_of_detail.impostors <= 2 && budget.level_of_detail.dropped_impostors > 0,
     `budget: ${JSON.stringify(budget)}`);
 
-  await command("environment", { level_of_detail: { enabled: true, pixel_error: 4 } });
+  await command("control", "environment", { level_of_detail: { enabled: true, pixel_error: 4 } });
   const coarse = await present(true);
   assert.ok(coarser(coarse) > coarser(gpu.rendering),
     `pixel error 4 draws more coarsely (${coarser(coarse)} against ${coarser(gpu.rendering)})`);
-  const invalid = await command("environment", { level_of_detail: { pixel_error: 0.1 } }, false);
+  const invalid = await command("control", "environment", { level_of_detail: { pixel_error: 0.1 } }, false);
   assert.equal(invalid.error.code, "invalid_environment");
-  assert.equal(invalid.error.path, "$.level_of_detail.pixel_error");
-  await command("environment", { level_of_detail: { enabled: true, pixel_error: 1 } });
+  assert.equal(invalid.error.path, "$.args.level_of_detail.pixel_error");
+  await command("control", "environment", { level_of_detail: { enabled: true, pixel_error: 1 } });
 
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({

@@ -26,7 +26,7 @@ pub fn dev(root: &Path, port: u16) -> Result<(), String> {
     prepare_dev(root)?;
     println!("Serving the games at http://127.0.0.1:{port}; press Ctrl+C to stop.");
     println!(
-        "For automatic Rust rebuilds and managed browser sessions, run `cargo xtask agent watch`."
+        "For automatic Rust rebuilds and managed browser sessions, run `cargo xtask agent iterate`."
     );
     run(
         root,

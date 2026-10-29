@@ -160,9 +160,13 @@ impl<G: Game> DevSession<G> {
     fn request(&mut self, line: &str) -> Value {
         if line.len() <= engine::dev::MAX_REQUEST_BYTES
             && let Ok(Value::Object(command)) = serde_json::from_str::<Value>(line)
-            && command.get("op") == Some(&json!("profile"))
+            && command.get("verb") == Some(&json!("profile"))
+            && let Some(deep) = command.get("deep")
         {
-            return self.profile(&command);
+            return match deep {
+                Value::Object(deep) => self.profile(deep),
+                _ => self.error(ErrorCode::InvalidType, "$.deep", "deep is an object"),
+            };
         }
         let context = self.context();
         let mut step = self.game.host_mut().dev_request(line, &context);
@@ -229,6 +233,19 @@ impl<G: Game> DevSession<G> {
                 },
                 Err(message) => failed(message),
             },
+            Effect::Save { name, contents } => match self.keep_file(&name, &contents) {
+                Ok(artifact) => Outcome {
+                    artifact: Some(artifact),
+                    ..Outcome::default()
+                },
+                Err(message) => failed(message),
+            },
+            Effect::Stream { records } => {
+                for record in records {
+                    self.reply(&json!({ "verb": "watch", "record": record }));
+                }
+                Outcome::default()
+            }
         };
         let context = self.context();
         self.game.host_mut().dev_resume(outcome, &context)
@@ -278,6 +295,23 @@ impl<G: Game> DevSession<G> {
         })
     }
 
+    fn keep_file(&mut self, name: &str, contents: &Value) -> Result<Artifact, String> {
+        self.captures += 1;
+        let path = self.artifacts.join(format!("{name}-{}.json", self.captures));
+        std::fs::create_dir_all(&self.artifacts).map_err(|error| error.to_string())?;
+        let bytes = serde_json::to_vec(contents).map_err(|error| error.to_string())?;
+        std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
+        Ok(Artifact {
+            path: path.display().to_string(),
+            mime_type: "application/json".to_owned(),
+            bytes: bytes.len() as u64,
+            sha256: Sha256::digest(&bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        })
+    }
+
     fn error(&mut self, code: ErrorCode, path: &str, message: &str) -> Value {
         self.game.host_mut().dev_refusal(code, path, message)
     }
@@ -288,7 +322,7 @@ impl<G: Game> DevSession<G> {
         match self
             .game
             .host_mut()
-            .dev_request(r#"{"op":"status"}"#, &context)
+            .dev_request(r#"{"verb":"query","name":"status"}"#, &context)
         {
             Step::Reply(reply) => reply,
             Step::Effect(effect) => unreachable!("status names no control, yet {effect:?}"),
@@ -297,12 +331,12 @@ impl<G: Game> DevSession<G> {
 
     #[cfg(feature = "profiling")]
     fn profile(&mut self, command: &Map<String, Value>) -> Value {
-        let options = ["op", "duration_ms", "max_events", "cpu_samples", "vendor"];
-        if command.keys().any(|key| !options.contains(&key.as_str())) {
+        let options = ["duration_ms", "max_events", "cpu_samples", "vendor"];
+        if let Some(unknown) = command.keys().find(|key| !options.contains(&key.as_str())) {
             return self.error(
-                ErrorCode::InvalidRequest,
-                "$",
-                "profile accepts duration_ms, max_events, cpu_samples and vendor only",
+                ErrorCode::UnknownField,
+                &format!("$.deep.{unknown}"),
+                "deep profiles take duration_ms, max_events, cpu_samples and vendor",
             );
         }
         let bounded =
@@ -318,20 +352,22 @@ impl<G: Game> DevSession<G> {
             bounded("max_events", (256, max), max),
         ) else {
             return self.error(
-                ErrorCode::InvalidRequest,
-                "$",
+                ErrorCode::OutOfRange,
+                "$.deep",
                 &format!("duration_ms must be 100..5000 and max_events 256..{max}"),
             );
         };
         let pix = match command.get("vendor") {
             None => false,
             Some(vendor) if vendor == "pix" => true,
-            Some(_) => return self.error(ErrorCode::InvalidRequest, "$.vendor", "vendor is pix"),
+            Some(_) => {
+                return self.error(ErrorCode::UnknownVariant, "$.deep.vendor", "vendor is pix");
+            }
         };
         if pix && self.pix.is_none() {
             return self.error(
                 ErrorCode::PixUnavailable,
-                "$.vendor",
+                "$.deep.vendor",
                 "PIX's counters need the session started with --vendor pix, where PIX is installed",
             );
         }
@@ -397,7 +433,6 @@ impl<G: Game> DevSession<G> {
                 "pix_events": pix_file("pix-events.csv"),
                 "pix_summary": pix_file("pix.summary.json"),
             },
-            "note": "The summary lists the hottest functions, lines and instructions per thread, GPU pass and draw costs, each pass's hardware counters where the session counts them, what was captured and the deeper layers recommended to set up; the firefox file opens at profiler.firefox.com or ui.perfetto.dev; pix_summary holds each render-graph node's and draw's counters PIX replayed.",
         }})
     }
 

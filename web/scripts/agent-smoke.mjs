@@ -39,14 +39,19 @@ child.stderr.on("data", bytes => { stderr = (stderr + bytes.toString()).slice(-6
 const lines = createInterface({ input: child.stdout });
 let session;
 
-async function cli(verb, fields = {}, expectOk = true) {
+async function cli(verb, ...rest) {
+  const named = typeof rest[0] === "string";
+  const [name, fields = {}, expectOk = true] = named ? rest : [undefined, ...rest];
+  const body = named ? { name, ...(Object.keys(fields).length ? { args: fields } : {}) } : fields;
   const args = [script, verb, "--port", String(port)];
-  if (verb !== "sessions") args.push("--session", session, "--json", JSON.stringify(fields));
+  if (verb !== "sessions") args.push("--session", session, "--json", JSON.stringify(body));
   let stdout;
   let code = 0;
   try { ({ stdout } = await executeFile(process.execPath, args, { cwd: workspace, windowsHide: true, timeout: 25_000 })); }
   catch (error) { stdout = error.stdout; code = error.code; }
-  const response = JSON.parse(stdout.trim());
+  const lines = stdout.trim().split(/\r?\n/);
+  const response = JSON.parse(lines.at(-1));
+  response.streamed = lines.slice(0, -1).map(line => JSON.parse(line).record);
   if (verb !== "sessions") {
     assert.equal(response.ok, expectOk, JSON.stringify(response));
     assert.equal(response.session, session);
@@ -87,7 +92,7 @@ try {
   const discovery = await cli("sessions");
   assert.equal(discovery.sessions[0].session, session);
 
-  const status = await cli("status");
+  const status = await cli("query", "status");
   assert.equal(status.result.paused, true);
   assert.equal(status.observation.scene.revision, String(source.revision));
   const descriptor = await cli("describe", { name: "Transform" });
@@ -100,21 +105,21 @@ try {
   const before = await inspectPlayer();
   const invalid = await cli("inspect", { limit: 101 }, false);
   assert.equal(invalid.observation.tick, before.observation.tick);
-  const still = (await cli("digest")).result;
+  const still = (await cli("query", "digest")).result;
   assert.ok(still.entities > 0 && still.components.Transform.count > 0 && still.assets.meshes.count > 0,
     `a digest counts the world's entities, components and assets: ${JSON.stringify(still).slice(0, 300)}`);
-  await cli("input", { forward: 1 });
-  const stepped = await cli("step", { ticks: 30 });
+  await cli("control", "input", { forward: 1 });
+  const stepped = await cli("control", "step", { ticks: 30 });
   assert.equal(BigInt(stepped.observation.tick) - BigInt(before.observation.tick), 30n);
   const after = await inspectPlayer();
   assert.ok(after.result.entity.components.Transform.translation[2] < before.result.entity.components.Transform.translation[2]);
-  const walked = (await cli("digest")).result;
+  const walked = (await cli("query", "digest")).result;
   assert.notEqual(walked.hash, still.hash, "the player's walk changes the digest");
   assert.notEqual(walked.components.Transform.hash, still.components.Transform.hash);
   assert.deepEqual(walked.assets, still.assets, "walking changes no asset");
-  assert.equal((await cli("digest")).result.hash, walked.hash, "a digest changes nothing");
-  await cli("input", { forward: 0 });
-  const badStep = await cli("step", { ticks: 0 }, false);
+  assert.equal((await cli("query", "digest")).result.hash, walked.hash, "a digest changes nothing");
+  await cli("control", "input", { forward: 0 });
+  const badStep = await cli("control", "step", { ticks: 0 }, false);
   assert.equal(badStep.observation.tick, after.observation.tick);
   const capture = await cli("capture");
   assert.equal(capture.observation.tick, after.observation.tick);
@@ -140,7 +145,7 @@ try {
   const parameters = listing.result.types.find(type => type.name === "PageParameters")?.parameters ?? {};
   assert.ok(parameters.source && parameters.engine_dev && parameters.taa, `page parameters: ${Object.keys(parameters)}`);
   assert.ok(listing.result.types.some(type => type.name === "GameControls"));
-  const statusReply = (await cli("status")).result;
+  const statusReply = (await cli("query", "status")).result;
   assert.ok(statusReply.build.features.includes("dev") && typeof statusReply.build.version === "string", JSON.stringify(statusReply.build));
   assert.ok("adapter" in statusReply);
   for (const name of ["Atmosphere", "Shadows", "AmbientOcclusion", "Bloom", "Environment"]) {
@@ -159,13 +164,13 @@ try {
   assert.equal(typeof jobs.result.value.cache_hits, "number");
   const tables = await cli("inspect", { component: "StaticTables" });
   assert.equal(typeof tables.result.value.failed_jobs, "number");
-  const invalidLook = await cli("environment", { shadows: { tile_texels: 100 } }, false);
+  const invalidLook = await cli("control", "environment", { shadows: { tile_texels: 100 } }, false);
   assert.equal(invalidLook.error.code, "invalid_environment");
-  assert.equal(invalidLook.error.path, "$.shadows.tile_texels");
+  assert.equal(invalidLook.error.path, "$.args.shadows.tile_texels");
   assert.equal(invalidLook.observation.tick, after.observation.tick);
   assert.deepEqual((await cli("inspect", { component: "Environment" })).result.value, look.result.value);
   assert.deepEqual([capture.result.rendering.haze.active, capture.result.rendering.reflections.active], [true, false]);
-  const night = await cli("environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 }, haze: { reach: 0 }, reflections: {}, highlights: { capped: false }, sky_occlusion: { strength: 0.5, floor: 0.1 } });
+  const night = await cli("control", "environment", { atmosphere: { preset: "night" }, bloom: { intensity: 0 }, haze: { reach: 0 }, reflections: {}, highlights: { capped: false }, sky_occlusion: { strength: 0.5, floor: 0.1 } });
   assert.equal(night.result.temporary, true);
   assert.deepEqual([...night.result.environment_changed].sort(), ["atmosphere", "bloom", "haze", "highlights", "reflections", "sky_occlusion"]);
   assert.ok(night.result.rendering.shadows.sky_maps <= 26);
@@ -178,12 +183,12 @@ try {
   assert.deepEqual(nightLook.result.value.shadows, look.result.value.shadows);
   const nightCapture = await cli("capture");
   assert.notDeepEqual(await readFile(join(workspace, nightCapture.result.artifact.path)), png);
-  const same = (await cli("compare", { a: capture.result.artifact.path, b: capture.result.artifact.path })).result.compare;
+  const same = (await cli("capture", { compare: { a: capture.result.artifact.path, b: capture.result.artifact.path } })).result.compare;
   assert.equal(same.different, 0);
-  const changed = (await cli("compare", { a: capture.result.artifact.path, b: nightCapture.result.artifact.path, tolerance: 8 })).result.compare;
+  const changed = (await cli("capture", { compare: { a: capture.result.artifact.path, b: nightCapture.result.artifact.path, tolerance: 8 } })).result.compare;
   assert.ok(changed.different > 1000 && changed.different <= changed.total, `the night differs: ${JSON.stringify(changed)}`);
 
-  const rejectedReload = await cli("reload", { expected_revision: "0", revision: String(source.revision + 1) }, false);
+  const rejectedReload = await cli("control", "reload", { expected_revision: "0", revision: String(source.revision + 1) }, false);
   assert.equal(rejectedReload.observation.scene.revision, String(source.revision));
   const invalidCandidate = structuredClone(source);
   invalidCandidate.revision++;
@@ -208,7 +213,7 @@ try {
   await sceneCommand(["validate", "--file", candidatePath]);
   await sceneCommand(["save", "--file", sourcePath, "--candidate", candidatePath, "--expected-revision", String(source.revision)]);
   await sceneCommand(["save", "--file", sourcePath, "--candidate", candidatePath, "--expected-revision", String(source.revision)], false);
-  const reloaded = await cli("reload", { expected_revision: String(source.revision), revision: String(candidate.revision) });
+  const reloaded = await cli("control", "reload", { expected_revision: String(source.revision), revision: String(candidate.revision) });
   assert.equal(reloaded.observation.scene.revision, String(candidate.revision));
   assert.equal((await inspectPlayer()).result.entity.name, "Agent verified player");
   const savedLook = (await cli("inspect", { component: "Environment" })).result.value;
@@ -231,13 +236,25 @@ try {
   assert.ok(reloaded.result.rendering.particles.drawn > 0);
   assert.notDeepEqual(savedLook.atmosphere, look.result.value.atmosphere);
   assert.deepEqual(effects(reloaded.result.rendering), [true, false, true]);
-  const assets = await cli("request", { op: "assets" });
+  const assets = await cli("request", { verb: "query", name: "assets" });
   assert.ok(assets.result.meshes >= 4);
-  const resumed = await cli("resume");
+  const costs = (await cli("profile", { frames: 4 })).result;
+  assert.ok(costs.bricks.length > 0, JSON.stringify(costs).slice(0, 400));
+  assert.ok((await readFile(join(workspace, costs.artifact.path))).length > 0, "the profile is a file");
+  const slow = (await cli("explain", { about: "frame", top: 2 })).result;
+  assert.ok(slow.records.some(record => record.decided === "cost"), JSON.stringify(slow.records));
+  const why = (await cli("explain", { about: "entity", entity: playerId })).result;
+  assert.ok(why.records.some(record => record.brick === "core"), JSON.stringify(why.records));
+  const watched = await cli("watch", { stats: ["tick"], entities: [{ entity: playerId, component: "Transform" }], frames: 2 });
+  assert.ok(watched.streamed.some(record => record.stat === "tick"), JSON.stringify(watched.streamed));
+  assert.equal(watched.result.records, watched.streamed.length);
+  const described = (await cli("describe", { name: "raycast" })).result;
+  assert.deepEqual([described.kind, described.verb, described.brick], ["operation", "query", "collision"], JSON.stringify(described));
+  const resumed = await cli("control", "resume");
   assert.equal(resumed.result.paused, false);
-  await cli("step", { ticks: 1 }, false);
-  await cli("pause");
-  const diagnostics = await cli("diagnostics");
+  await cli("control", "step", { ticks: 1 }, false);
+  await cli("control", "pause");
+  const diagnostics = await cli("query", "diagnostics");
   assert.deepEqual(diagnostics.result.entries.filter(entry => entry.kind === "pageerror" || entry.kind === "error"), []);
   console.log(JSON.stringify({ ok: true, session, artifact: capture.result.artifact.path, checks: ["discovery", "description", "inspection", "digest", "precise_step", "input", "capture", "environment_inspection", "environment_control", "failed_reload", "source_validation", "guarded_save", "reload_revision", "saved_environment", "lights_particles_glass", "resume_pause", "diagnostics"] }));
 } finally {
@@ -245,7 +262,7 @@ try {
   try {
     if (child.exitCode === null) {
       const exited = new Promise(resolve => child.once("exit", resolve));
-      if (session) await cli("close");
+      if (session) await cli("control", "close");
       else child.kill("SIGTERM");
       await exited;
     }

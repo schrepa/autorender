@@ -14,7 +14,7 @@ pub(super) fn run(
     host: &mut DevHost,
     app: &mut AppHost,
     scene: Option<&SceneInstance>,
-    (source, control): (&str, Control),
+    (args, control): (Value, Control),
     size: (u32, u32),
 ) -> Result<Value, DevError> {
     match control {
@@ -22,25 +22,35 @@ pub(super) fn run(
             let result = call.apply(&mut app.engine, scene)?;
             then_render(app, size, &call.changed(), result)
         }
-        Control::Host(HostControl::Present { alpha }) => view::present(app, alpha, size),
-        Control::Host(HostControl::Culling { enabled }) => view::culling(app, enabled, size),
-        Control::Host(HostControl::Camera {
+        Control::Host(control) => host_control(host, app, (args, control), size)
+            .map_err(DevError::in_args),
+    }
+}
+
+fn host_control(
+    host: &mut DevHost,
+    app: &mut AppHost,
+    (args, control): (Value, HostControl),
+    size: (u32, u32),
+) -> Result<Value, DevError> {
+    match control {
+        HostControl::Present { alpha } => view::present(app, alpha, size),
+        HostControl::Culling { enabled } => view::culling(app, enabled, size),
+        HostControl::Camera {
             position,
             target,
             vertical_fov_radians,
             near,
             far,
-        }) => view::camera(
+        } => view::camera(
             app,
             (position, target),
             vertical_fov_radians,
             (near, far),
             size,
         ),
-        Control::Host(HostControl::Environment(control)) => {
-            environment::set(app, source, control, size)
-        }
-        Control::Host(HostControl::Input {
+        HostControl::Environment(control) => environment::set(app, args, control, size),
+        HostControl::Input {
             forward,
             right,
             up,
@@ -49,7 +59,7 @@ pub(super) fn run(
             held,
             pressed,
             released,
-        }) => input::batch(
+        } => input::batch(
             host,
             InputBatch {
                 forward,
@@ -62,13 +72,13 @@ pub(super) fn run(
                 released,
             },
         ),
-        Control::Host(HostControl::Step { ticks }) => input::step(host, app, ticks, size),
-        Control::Host(HostControl::Render) => view::render(app, size),
-        Control::Host(HostControl::DebugPanic) => {
+        HostControl::Step { ticks } => input::step(host, app, ticks, size),
+        HostControl::Render => view::render(app, size),
+        HostControl::DebugPanic => {
             panic!("debug_panic: a development session asked the engine to panic")
         }
-        Control::Host(HostControl::DebugFault { feature }) => view::fault(app, &feature, size),
-        Control::Host(HostControl::Loop(control)) => Ok(json!({ "control": control })),
+        HostControl::DebugFault { feature } => view::fault(app, &feature, size),
+        HostControl::Loop(control) => Ok(json!({ "control": control })),
     }
 }
 

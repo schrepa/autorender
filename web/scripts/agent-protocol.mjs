@@ -32,6 +32,10 @@ export function loopbackUrl(value) {
   return url;
 }
 
+export function closing(command) {
+  return command?.verb === "control" && command?.name === "close";
+}
+
 function envelope(request, session, response) {
   return { ...response, version: VERSION, id: typeof request?.id === "string" && ID_PATTERN.test(request.id) ? request.id : null, session };
 }
@@ -41,8 +45,8 @@ function validate(request, session) {
   if (request.version !== VERSION) throw new AgentError("unsupported_version", "Only protocol version 1 is supported.", "version");
   if (typeof request.id !== "string" || !ID_PATTERN.test(request.id)) throw new AgentError("invalid_request_id", "Use 1–96 ASCII letters, digits, underscores, dots, colons, or hyphens.", "id");
   if (request.session !== session) throw new AgentError("session_mismatch", "This request names a different development session.", "session");
-  if (!request.command || typeof request.command !== "object" || Array.isArray(request.command) || typeof request.command.op !== "string") {
-    throw new AgentError("invalid_command", "Expected command.op to be a string.", "command");
+  if (!request.command || typeof request.command !== "object" || Array.isArray(request.command) || typeof request.command.verb !== "string") {
+    throw new AgentError("invalid_command", "Expected command.verb to be a string.", "command.verb");
   }
   for (const key of Object.keys(request)) {
     if (!["version", "id", "session", "command"].includes(key)) throw new AgentError("invalid_request", `Unknown request field: ${key}.`, key);
@@ -62,7 +66,7 @@ async function readRequest(request) {
   catch { throw new AgentError("invalid_json", "Request must be valid UTF-8 JSON."); }
 }
 
-/** @param {{ session: string, url: string, build?: string, execute: (command: any) => any, onTimeout?: () => void, onClose: () => any, development?: () => any, initiallyUnavailable?: boolean, deadlineMs?: number, queueLimit?: number }} options */
+/** @param {{ session: string, url: string, build?: string, execute: (command: any, onRecord?: (record: any) => void) => any, onTimeout?: () => void, onClose: () => any, development?: () => any, initiallyUnavailable?: boolean, deadlineMs?: number, queueLimit?: number }} options */
 export function createBridge({ session, url, build, execute, onTimeout = () => {}, onClose, development, initiallyUnavailable = false, deadlineMs = 15_000, queueLimit = 16 }) {
   let startedAt = new Date().toISOString();
   const requestIds = new Set();
@@ -96,17 +100,17 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
       let timer;
       let response;
       try {
-        const closing = item.request.command.op === "close" && onClose;
-        if (unavailable && !closing) throw new AgentError("session_unavailable", "The session is unavailable; start a new bridge session.");
+        const closes = closing(item.request.command) && onClose;
+        if (unavailable && !closes) throw new AgentError("session_unavailable", "The session is unavailable; start a new bridge session.");
         const remaining = item.deadline - Date.now();
         if (remaining <= 0) throw new AgentError("queue_timeout", "The request expired before execution; it was not dispatched.");
-        if (closing) {
-          if (Object.keys(item.request.command).some(key => key !== "op")) throw new AgentError("invalid_command", "Close accepts only its op field.");
+        if (closes) {
+          if (Object.keys(item.request.command).some(key => !["verb", "name"].includes(key))) throw new AgentError("invalid_command", "Close takes no args.", "command.args");
           unavailable = true;
           closed = true;
           response = { ok: true, result: { state: "closing" } };
         } else response = await Promise.race([
-          Promise.resolve().then(() => execute(item.request.command)),
+          Promise.resolve().then(() => execute(item.request.command, item.onRecord)),
           new Promise((_, reject) => {
             timer = setTimeout(() => {
               unavailable = true;
@@ -124,17 +128,17 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
     running = false;
   }
 
-  function submit(request) {
+  function submit(request, onRecord) {
     validate(request, session);
     if (replacing) throw new AgentError("session_replacing", "A validated build is replacing this session; discover the new session before sending commands.");
-    const closing = request.command.op === "close" && onClose;
-    if (unavailable && !closing) throw new AgentError("session_unavailable", "The session is unavailable; start a new bridge session.");
+    const closes = closing(request.command) && onClose;
+    if (unavailable && !closes) throw new AgentError("session_unavailable", "The session is unavailable; start a new bridge session.");
     if (requestIds.has(request.id)) throw new AgentError("duplicate_request", "This request ID was already accepted. Inspect the current state with a new ID; mutations are never replayed automatically.", "id");
-    if (requestIds.size >= MAX_REQUEST_IDS && !closing) throw new AgentError("session_request_limit", "The session reached its 65,536-request limit; start a new session.");
+    if (requestIds.size >= MAX_REQUEST_IDS && !closes) throw new AgentError("session_request_limit", "The session reached its 65,536-request limit; start a new session.");
     if (queue.length + Number(running) >= queueLimit) throw new AgentError("queue_full", "The session command queue is full; retry with a new request ID after pending work completes.");
     requestIds.add(request.id);
     return new Promise(resolve => {
-      queue.push({ request, deadline: Date.now() + deadlineMs, resolve });
+      queue.push({ request, onRecord, deadline: Date.now() + deadlineMs, resolve });
       void pump();
     });
   }
@@ -168,8 +172,20 @@ export function createBridge({ session, url, build, execute, onTimeout = () => {
       }
       if (request.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") throw new AgentError("content_type", "Requests must use Content-Type: application/json.");
       parsed = await readRequest(request);
+      if (parsed?.command?.verb === "watch") {
+        const held = [];
+        let open = false;
+        const write = line => { if (open) response.write(line); else held.push(line); };
+        const pending = submit(parsed, record => write(`${JSON.stringify({ record })}\n`));
+        response.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" });
+        open = true;
+        for (const line of held.splice(0)) response.write(line);
+        const result = await pending;
+        response.end(`${JSON.stringify(result)}\n`);
+        return;
+      }
       const result = await submit(parsed);
-      if (parsed.command.op === "close" && result.ok && onClose) {
+      if (closing(parsed.command) && result.ok && onClose) {
         response.once("finish", () => { Promise.resolve().then(onClose).catch(() => {}); });
       }
       send(response, 200, result);

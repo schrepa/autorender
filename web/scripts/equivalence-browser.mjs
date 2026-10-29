@@ -31,24 +31,37 @@ function work(stats, prefix = "", out = {}) {
 const { page, close } = await launchContext({ viewport: { width: plan.size[0] + 100, height: plan.size[1] + 100 }, deviceScaleFactor: 1 });
 page.setDefaultTimeout(600_000);
 
+let speaksVerbs = true;
+
+function legacy(command) {
+  const { verb, name, args, ...fields } = command;
+  return verb === "query" || verb === "control" ? { op: name, ...args } : { op: verb, ...fields };
+}
+
 async function request(command) {
   for (;;) {
-    const reply = await page.evaluate(command => window.__engineDev.request(command), command);
+    const sent = speaksVerbs ? command : legacy(command);
+    const reply = await page.evaluate(command => window.__engineDev.request(command), sent);
     if (reply?.error?.code === "command_busy") { await delay(25); continue; }
     return reply;
   }
 }
 
+async function hear() {
+  const reply = await request({ verb: "query", name: "status" });
+  speaksVerbs = reply?.ok === true || reply?.error?.path !== "$.command";
+}
+
 async function ok(command) {
   const reply = await request(command);
-  if (!reply?.ok) throw new Error(`${command.op}: ${JSON.stringify(reply?.error ?? reply).slice(0, 2000)}`);
+  if (!reply?.ok) throw new Error(`${command.verb} ${command.name ?? ""}: ${JSON.stringify(reply?.error ?? reply).slice(0, 2000)}`);
   return reply.result;
 }
 
 function settling(capture) {
-  if (capture === "exact") return { op: "render" };
+  if (capture === "exact") return { verb: "control", name: "render" };
   const [kind, value] = capture.split(":");
-  if (kind === "gpu") return { op: "present", alpha: Number(value) };
+  if (kind === "gpu") return { verb: "control", name: "present", args: { alpha: Number(value) } };
   return undefined;
 }
 
@@ -75,14 +88,14 @@ async function shoot(capture, file) {
   let fields;
   if (capture === "exact") fields = {};
   else if (capture.startsWith("display:")) {
-    const reply = await request({ op: "frames", count: Number(capture.split(":")[1]), interval_ms: 1000 / 60, capture: true });
+    const reply = await request({ verb: "control", name: "frames", args: { count: Number(capture.split(":")[1]), interval_ms: 1000 / 60, capture: true } });
     if (!reply?.ok) return { unavailable: `the host ran no display frames: ${reply?.error?.message ?? ""}` };
     await page.locator("canvas").screenshot({ path: file });
     return { path: file, rendering: reply.result.rendering };
   } else {
     fields = { alpha: Number(capture.split(":")[1]) };
   }
-  const result = await ok({ op: "capture", ...fields });
+  const result = await ok({ verb: "capture", ...fields });
   await page.locator("canvas").screenshot({ path: file });
   return { path: file, rendering: result.rendering };
 }
@@ -106,12 +119,14 @@ async function run(entry, folder) {
       width: ${plan.size[0]}px !important; height: ${plan.size[1]}px !important; z-index: 10000; }
       .engine-page .engine-hud, .engine-page .message { visibility: hidden !important; }` });
     await page.waitForFunction(() => window.__engineDev?.version !== undefined, null, { timeout: 600_000 });
-    await ok({ op: "pause" });
-    if (entry.environment) await ok({ op: "environment", merge: true, ...entry.environment });
-    if (entry.ticks > 0) await ok({ op: "step", ticks: entry.ticks });
+    speaksVerbs = true;
+    await hear();
+    await ok({ verb: "control", name: "pause" });
+    if (entry.environment) await ok({ verb: "control", name: "environment", args: { merge: true, ...entry.environment } });
+    if (entry.ticks > 0) await ok({ verb: "control", name: "step", args: { ticks: entry.ticks } });
     for (const view of entry.views) {
-      if (view.camera) await ok({ op: "camera", ...view.camera });
-      else if (view.name !== "scene") await ok({ op: "game", name: "view", args: { name: view.name } });
+      if (view.camera) await ok({ verb: "control", name: "camera", args: { ...view.camera } });
+      else if (view.name !== "scene") await ok({ verb: "control", name: "game", args: { name: "view", args: { name: view.name } } });
       for (const capture of entry.captures) {
         const key = `${view.name} ${capture}`;
         const frame = settling(capture);
@@ -119,7 +134,7 @@ async function run(entry, folder) {
         if (unsettled) result.unsettled.push(`${key}: ${unsettled}`);
         result.shots[key] = await shoot(capture, join(folder, `${key.replace(/[ :]/g, "-")}.png`));
       }
-      const digest = await request({ op: "digest" });
+      const digest = await request({ verb: "query", name: "digest" });
       result.digests[view.name] = digest?.ok
         ? { hash: digest.result.hash, entities: digest.result.entities, components: digest.result.components, assets: digest.result.assets }
         : null;

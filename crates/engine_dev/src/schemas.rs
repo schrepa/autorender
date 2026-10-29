@@ -2,7 +2,8 @@ use engine_core::bevy_ecs::prelude::World;
 use engine_core::{BrickRegistry, OperationEntry};
 use serde_json::{Map, Value, json};
 
-use crate::{protocol, views};
+use crate::protocol::{self, Verb};
+use crate::views;
 
 pub struct Generated {
     pub files: Vec<(&'static str, String)>,
@@ -47,6 +48,7 @@ pub fn reply(world: &World) -> Result<Value, String> {
         serialized(schemars::schema_for!(crate::Step)),
         serialized(schemars::schema_for!(crate::Outcome)),
         serialized(schemars::schema_for!(crate::HostContext)),
+        serialized(schemars::schema_for!(crate::results::WatchRecord)),
     ] {
         let mut theirs = Map::new();
         let (name, schema) = definition_of(schema, &mut theirs);
@@ -75,7 +77,6 @@ pub fn reply(world: &World) -> Result<Value, String> {
     }
     let required: Vec<&String> = results.keys().collect();
     let op_results = json!({
-        "description": "Each op's result where it is typed, by op: what a successful reply's `result` holds besides what hosts add.",
         "type": "object",
         "properties": results,
         "required": required,
@@ -83,6 +84,14 @@ pub fn reply(world: &World) -> Result<Value, String> {
     definitions.insert("OpResults".to_owned(), op_results);
     reply["$defs"] = Value::Object(definitions);
     Ok(reply)
+}
+
+pub fn verbs(world: &World) -> Result<Vec<(&'static str, Value)>, String> {
+    let registry = registry(world)?;
+    Ok(Verb::ALL
+        .into_iter()
+        .map(|verb| (verb.name(), verb_schema(registry, verb)))
+        .collect())
 }
 
 #[expect(
@@ -114,11 +123,12 @@ pub fn generated(world: &World) -> Result<Generated, String> {
         "Jobs": schemars::schema_for!(views::JobsView),
         "StaticTables": schemars::schema_for!(views::StaticTablesView),
         "StreamedId": schemars::schema_for!(views::StreamedIdView),
-        "protocol": protocol_schema(registry),
-        "BrowserControl": control_schema(registry),
         "FrameStats": frame_stats(registry, &mut problems),
     });
     if let Some(all) = schemas.as_object_mut() {
+        for verb in Verb::ALL {
+            all.insert(verb.name().to_owned(), verb_schema(registry, verb));
+        }
         for inspector in registry.inspectors() {
             match inspector.schema() {
                 Some(schema) => {
@@ -161,8 +171,20 @@ pub fn generated(world: &World) -> Result<Generated, String> {
         all.insert("bricks".to_owned(), bricks_summary(registry));
     }
     let scene_schema = engine_scene::SceneDocument::schema_json(registry);
-    let queries = ops(&schemas["protocol"], &mut problems);
-    let controls = ops(&schemas["BrowserControl"], &mut problems);
+    let queries = names(&schemas[Verb::Query.name()], &mut problems);
+    let controls = names(&schemas[Verb::Control.name()], &mut problems);
+    core_names(
+        registry,
+        (&queries, &protocol::Query::NAMES),
+        "Query::NAMES",
+        &mut problems,
+    );
+    core_names(
+        registry,
+        (&controls, &protocol::BrowserControl::NAMES),
+        "BrowserControl::NAMES",
+        &mut problems,
+    );
     control_state(registry, &controls, &schemas, &mut problems);
     typed_results(registry, &queries, &controls, &mut problems);
     match serde_json::from_str::<Value>(&scene_schema) {
@@ -172,19 +194,11 @@ pub fn generated(world: &World) -> Result<Generated, String> {
     if !problems.is_empty() {
         return Err(problems.join("\n"));
     }
-    let constant = |name: &str, what: &str, ops: &[String]| {
-        format!(
-            "/// The op of every {what}, as requests name it.
-pub const {name}: [&str; {}] = {:?};
-",
-            ops.len(),
-            ops
-        )
-    };
     let summary = json!({
         "version": protocol::PROTOCOL_VERSION,
         "max_request_bytes": protocol::MAX_REQUEST_BYTES,
         "profile_max_events": engine_profile::MAX_EVENTS,
+        "verbs": Verb::names().collect::<Vec<_>>(),
         "queries": queries,
         "controls": controls,
         "bricks": registry.names().collect::<Vec<_>>(),
@@ -208,11 +222,6 @@ pub const {name}: [&str; {}] = {:?};
         (
             "crates/engine_dev/src/generated/scene.schema.json",
             scene_schema,
-        ),
-        (
-            "crates/engine_dev/src/generated/ops.rs",
-            constant("QUERY_OPS", "query", &queries)
-                + &constant("CONTROL_OPS", "control", &controls),
         ),
         ("web/src/generated/protocol.json", pretty(&summary)? + "\n"),
     ];
@@ -250,17 +259,42 @@ fn bricks_summary(registry: &BrickRegistry) -> Value {
         .collect()
 }
 
+fn core_names(
+    registry: &BrickRegistry,
+    (listed, declared): (&[String], &[&str]),
+    constant: &str,
+    problems: &mut Vec<String>,
+) {
+    let core: Vec<&str> = listed
+        .iter()
+        .map(String::as_str)
+        .filter(|name| registry.operation(name).is_none())
+        .collect();
+    if core != declared {
+        problems.push(format!(
+            "{constant} (engine_dev protocol.rs) must list the core names the schema has, in order: {core:?}"
+        ));
+    }
+}
+
 fn typed_results(
     registry: &BrickRegistry,
     queries: &[String],
     controls: &[String],
     problems: &mut Vec<String>,
 ) {
-    let ops: Vec<&str> = queries
-        .iter()
-        .chain(controls)
-        .map(String::as_str)
-        .filter(|op| registry.operation(op).is_none())
+    let ops: Vec<&str> = Verb::names()
+        .filter(|verb| {
+            ![Verb::Query.name(), Verb::Control.name()].contains(verb)
+                && !crate::results::HOST_VERBS.contains(verb)
+        })
+        .chain(
+            queries
+                .iter()
+                .chain(controls)
+                .map(String::as_str)
+                .filter(|op| registry.operation(op).is_none()),
+        )
         .collect();
     let (typed, untyped) = (
         crate::results::TYPED_RESULTS,
@@ -269,13 +303,13 @@ fn typed_results(
     for op in &ops {
         if typed.contains(op) == untyped.contains(op) {
             problems.push(format!(
-                "op {op}'s result is typed (results!) or listed in UNTYPED_RESULTS, not both or neither"
+                "{op}'s result is typed (results!) or listed in UNTYPED_RESULTS, not both or neither"
             ));
         }
     }
     for op in typed.iter().chain(untyped) {
         if !ops.contains(op) {
-            problems.push(format!("{op} in results.rs is no op"));
+            problems.push(format!("{op} in results.rs is no verb or core operation"));
         }
     }
     if untyped.windows(2).any(|pair| pair[0] >= pair[1]) {
@@ -287,58 +321,155 @@ fn version_schema() -> Value {
     serialized(schemars::SchemaGenerator::default().subschema_for::<u32>())
 }
 
-fn operation_variant(operation: &OperationEntry, definitions: &mut Map<String, Value>) -> Value {
-    let (_, mut variant) = definition_of(serialized(operation.schema()), definitions);
-    let Some(fields) = variant.as_object_mut() else {
-        return variant;
-    };
-    fields.remove("title");
-    fields.insert("type".to_owned(), json!("object"));
-    let properties = fields.entry("properties").or_insert_with(|| json!({}));
-    if let Some(properties) = properties.as_object_mut() {
-        properties.insert(
-            "op".to_owned(),
-            json!({ "const": operation.name, "type": "string" }),
-        );
-        properties.insert("version".to_owned(), version_schema());
+fn verb_schema(registry: &BrickRegistry, verb: Verb) -> Value {
+    match verb {
+        Verb::Describe => enveloped(verb, schemars::schema_for!(protocol::DescribeRequest)),
+        Verb::Inspect => enveloped(verb, schemars::schema_for!(protocol::InspectRequest)),
+        Verb::Query => query_schema(registry),
+        Verb::Control => control_schema(registry),
+        Verb::Capture => enveloped(verb, schemars::schema_for!(protocol::CaptureRequest)),
+        Verb::Profile => enveloped(verb, schemars::schema_for!(protocol::ProfileRequest)),
+        Verb::Explain => enveloped(verb, schemars::schema_for!(protocol::ExplainQuestion)),
+        Verb::Watch => enveloped(verb, schemars::schema_for!(protocol::WatchRequest)),
+        Verb::Check => enveloped(verb, schemars::schema_for!(protocol::CheckRequest)),
     }
-    let mut required = vec![json!("op"), json!("version")];
+}
+
+fn marked(verb: Verb, object: &mut Value) {
+    let Some(fields) = object.as_object_mut() else {
+        return;
+    };
+    let properties = fields
+        .entry("properties")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .expect("properties are an object");
+    properties.insert(
+        "verb".to_owned(),
+        json!({ "const": verb.name(), "type": "string" }),
+    );
+    properties.insert("version".to_owned(), version_schema());
+    let mut required = vec![json!("verb"), json!("version")];
     if let Some(Value::Array(theirs)) = fields.remove("required") {
         required.extend(theirs);
     }
     fields.insert("required".to_owned(), Value::Array(required));
-    variant
 }
 
-fn with_operations(mut schema: Value, registry: &BrickRegistry, control: bool) -> Value {
-    let mut definitions = schema["$defs"].as_object().cloned().unwrap_or_default();
-    let variants: Vec<Value> = registry
-        .operations()
-        .filter(|operation| operation.control == control)
-        .map(|operation| operation_variant(operation, &mut definitions))
-        .collect();
-    if let Some(all) = schema.get_mut("oneOf").and_then(Value::as_array_mut) {
-        all.extend(variants);
+fn enveloped(verb: Verb, schema: schemars::Schema) -> Value {
+    let mut schema = serialized(schema);
+    match schema.get_mut("oneOf").and_then(Value::as_array_mut) {
+        Some(variants) => {
+            for variant in variants {
+                marked(verb, variant);
+            }
+        }
+        None => marked(verb, &mut schema),
     }
+    if let Some(fields) = schema.as_object_mut() {
+        fields.insert("title".to_owned(), json!(verb.name()));
+    }
+    schema
+}
+
+fn split_tagged(variant: &Value) -> Option<(String, Value)> {
+    let op = &variant["properties"]["op"];
+    let name = op
+        .get("const")
+        .or_else(|| op["enum"].get(0))
+        .and_then(Value::as_str)?
+        .to_owned();
+    let mut args = variant.clone();
+    if let Some(fields) = args.as_object_mut() {
+        fields.remove("title");
+        if let Some(Value::Object(properties)) = fields.get_mut("properties") {
+            properties.remove("op");
+        }
+        let empty = match fields.get_mut("required") {
+            Some(Value::Array(required)) => {
+                required.retain(|field| field != "op");
+                required.is_empty()
+            }
+            Some(_) | None => false,
+        };
+        if empty {
+            fields.remove("required");
+        }
+    }
+    Some((name, args))
+}
+
+fn named_variant(verb: Verb, name: &str, args: Value) -> Value {
+    let mut required = vec![json!("verb"), json!("version"), json!("name")];
+    if args["required"].as_array().is_some_and(|fields| !fields.is_empty()) {
+        required.push(json!("args"));
+    }
+    json!({
+        "type": "object",
+        "properties": {
+            "verb": { "const": verb.name(), "type": "string" },
+            "version": version_schema(),
+            "name": { "const": name, "type": "string" },
+            "args": args,
+        },
+        "required": required,
+        "additionalProperties": false,
+    })
+}
+
+fn operation_args(operation: &OperationEntry, definitions: &mut Map<String, Value>) -> Value {
+    let (_, mut args) = definition_of(serialized(operation.schema()), definitions);
+    if let Some(fields) = args.as_object_mut() {
+        fields.remove("title");
+        fields.insert("type".to_owned(), json!("object"));
+    }
+    args
+}
+
+fn named_schema(registry: &BrickRegistry, verb: Verb, core: schemars::Schema) -> Value {
+    let control = verb == Verb::Control;
+    let mut core = serialized(core);
+    let mut definitions = core["$defs"].as_object().cloned().unwrap_or_default();
+    let mut variants: Vec<Value> = core["oneOf"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(split_tagged)
+        .map(|(name, args)| named_variant(verb, &name, args))
+        .collect();
+    variants.extend(
+        registry
+            .operations()
+            .filter(|operation| operation.control == control)
+            .map(|operation| {
+                let args = operation_args(operation, &mut definitions);
+                named_variant(verb, operation.name, args)
+            }),
+    );
+    let mut schema = json!({
+        "$schema": core["$schema"].take(),
+        "title": verb.name(),
+        "oneOf": variants,
+    });
     if !definitions.is_empty() {
         schema["$defs"] = Value::Object(definitions);
     }
     schema
 }
 
-fn protocol_schema(registry: &BrickRegistry) -> Value {
-    with_operations(
-        serialized(schemars::schema_for!(protocol::DevRequest)),
+fn query_schema(registry: &BrickRegistry) -> Value {
+    named_schema(
         registry,
-        false,
+        Verb::Query,
+        schemars::schema_for!(protocol::Query),
     )
 }
 
 fn control_schema(registry: &BrickRegistry) -> Value {
-    let mut schema = with_operations(
-        serialized(schemars::schema_for!(protocol::BrowserControl)),
+    let mut schema = named_schema(
         registry,
-        true,
+        Verb::Control,
+        schemars::schema_for!(protocol::BrowserControl),
     );
     let mut titles = vec![("SceneAtmosphere".to_owned(), "Atmosphere")];
     let mut sections = Map::new();
@@ -360,8 +491,8 @@ fn control_schema(registry: &BrickRegistry) -> Value {
         .as_array_mut()
         .into_iter()
         .flatten()
-        .find(|variant| variant["properties"]["op"]["const"] == "environment")
-        .and_then(|variant| variant["properties"].as_object_mut())
+        .find(|variant| variant["properties"]["name"]["const"] == "environment")
+        .and_then(|variant| variant["properties"]["args"]["properties"].as_object_mut())
     {
         environment.extend(sections);
     }
@@ -375,7 +506,7 @@ fn control_schema(registry: &BrickRegistry) -> Value {
                 title,
                 json!({
                     "type": "object",
-                    "description": format!("The {inspector} inspector describes its fields."),
+                    "title": inspector,
                 }),
             );
         }
@@ -398,6 +529,27 @@ fn control_schema(registry: &BrickRegistry) -> Value {
         definitions.retain(|name, _| reached.contains(name));
     }
     schema
+}
+
+fn names(schema: &Value, problems: &mut Vec<String>) -> Vec<String> {
+    let variants = schema
+        .get("oneOf")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    if variants.is_empty() {
+        problems.push("named verbs are one of their names".to_owned());
+    }
+    variants
+        .iter()
+        .filter_map(|variant| {
+            let name = variant["properties"]["name"]["const"].as_str();
+            if name.is_none() {
+                problems.push(format!("a named variant names nothing: {variant}"));
+            }
+            name.map(str::to_owned)
+        })
+        .collect()
 }
 
 fn references(value: &Value, names: &mut Vec<String>) {
@@ -698,28 +850,3 @@ fn resolve<'a>(definitions: &'a Value, schema: &'a Value) -> Option<&'a Value> {
         .or(Some(schema))
 }
 
-fn ops(schema: &Value, problems: &mut Vec<String>) -> Vec<String> {
-    let variants = schema
-        .get("oneOf")
-        .or_else(|| schema.get("anyOf"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    if variants.is_empty() {
-        problems.push("request enums are one of their variants".to_owned());
-    }
-    variants
-        .iter()
-        .filter_map(|variant| {
-            let op = &variant["properties"]["op"];
-            let name = op
-                .get("const")
-                .or_else(|| op["enum"].get(0))
-                .and_then(Value::as_str);
-            if name.is_none() {
-                problems.push(format!("a request variant names no op: {variant}"));
-            }
-            name.map(str::to_owned)
-        })
-        .collect()
-}

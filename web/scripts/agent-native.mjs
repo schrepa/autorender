@@ -77,21 +77,23 @@ function paeth(a, b, c) {
   return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
 }
 
+const status = { verb: "query", name: "status" };
+
 async function compareCaptures(command, request) {
-  if (Object.keys(command).some(key => !["op", "a", "b", "tolerance"].includes(key))) {
-    throw new AgentError("unknown_field", "compare takes a, b and tolerance.", "$");
+  if (!command || typeof command !== "object" || Object.keys(command).some(key => !["a", "b", "tolerance"].includes(key))) {
+    throw new AgentError("unknown_field", "a b tolerance", "$.compare");
   }
   const tolerance = command.tolerance ?? 0;
-  if (!Number.isInteger(tolerance) || tolerance < 0 || tolerance > 255) throw new AgentError("out_of_range", "tolerance is 0 to 255.", "tolerance");
+  if (!Number.isInteger(tolerance) || tolerance < 0 || tolerance > 255) throw new AgentError("out_of_range", "0..255", "$.compare.tolerance");
   const root = resolve(workspace, "artifacts", "agent");
   const images = [];
   for (const name of ["a", "b"]) {
     const path = typeof command[name] === "string" ? resolve(workspace, command[name]) : "";
-    if (!path.startsWith(root + sep) || !path.endsWith(".png")) throw new AgentError("invalid_path", `${name} must name a capture under artifacts/agent.`, name);
-    const bytes = await readFile(path).catch(() => { throw new AgentError("invalid_path", `${command[name]} cannot be read.`, name); });
+    if (!path.startsWith(root + sep) || !path.endsWith(".png")) throw new AgentError("invalid_path", "a capture under artifacts/agent", `$.compare.${name}`);
+    const bytes = await readFile(path).catch(() => { throw new AgentError("invalid_path", String(command[name]), `$.compare.${name}`); });
     images.push(decodePng(bytes));
   }
-  const response = await request({ op: "status" });
+  const response = await request(status);
   if (!response.ok) return response;
   let result;
   if (images[0].width !== images[1].width || images[0].height !== images[1].height) {
@@ -136,6 +138,10 @@ export async function launchNativeSession({ program, args = [], session = random
     let value;
     try { value = JSON.parse(line); } catch { diagnostic("stdout", line); return; }
     if (ready) { const first = ready; ready = undefined; first.resolve(value); return; }
+    if (value && typeof value === "object" && "record" in value && !("ok" in value)) {
+      waiting[0]?.onRecord?.(value.record);
+      return;
+    }
     waiting.shift()?.resolve(value);
   });
   function invalidate() {
@@ -168,12 +174,12 @@ export async function launchNativeSession({ program, args = [], session = random
   }
   const aborted = () => { void close(); };
   signal?.addEventListener("abort", aborted, { once: true });
-  function request(command) {
+  function request(command, onRecord) {
     recordSent(command);
     if (panic && invalidated) return Promise.resolve(panicked());
-    if (invalidated || closing) return Promise.reject(new AgentError("session_unavailable", "The native runtime is no longer available."));
+    if (invalidated || closing) return Promise.reject(new AgentError("session_unavailable", "the native runtime exited", "$"));
     return new Promise((resolveReply, rejectReply) => {
-      waiting.push({ resolve: resolveReply, reject: rejectReply });
+      waiting.push({ resolve: resolveReply, reject: rejectReply, onRecord });
       child.stdin.write(`${JSON.stringify(command)}\n`);
     }).then(reply => {
       recordReceived(reply);
@@ -186,50 +192,59 @@ export async function launchNativeSession({ program, args = [], session = random
       timer = setTimeout(() => reject(new AgentError("runtime_unavailable", `The native runtime did not start. Diagnostics: ${JSON.stringify(diagnostics.slice(-5))}`)), READY_TIMEOUT_MS);
     })]).finally(() => clearTimeout(timer));
     if (identity?.ready !== true || typeof identity.instance !== "string") throw new AgentError("missing_runtime_identity", "The native runtime must announce its instance identity.");
-    for (const op of ["render", "status"]) {
-      const response = await request({ op });
-      if (!response?.ok) throw new AgentError(response?.error?.code ?? "runtime_unavailable", response?.error?.message ?? "The native runtime rejected initialization.", response?.error?.path);
-      if (response.result?.paused !== true) throw new AgentError("runtime_not_paused", "A new development runtime must start paused.");
+    for (const command of [{ verb: "control", name: "render" }, status]) {
+      const response = await request(command);
+      if (!response?.ok) throw new AgentError(response?.error?.code ?? "runtime_unavailable", response?.error?.message ?? "initialization refused", response?.error?.path);
+      if (response.result?.paused !== true) throw new AgentError("runtime_not_paused", "a new session starts paused", "$");
     }
-    return {
+    const owned = {
       session, url: `native:${relative(workspace, program).split(sep).join("/")}`, instance: identity.instance, build: identity.build ?? null,
       adapter: identity.adapter, close, setInvalidated,
-      async execute(command) {
-        if (command.op === "describe" && command.name === "ProfileCapture") {
-          if (Object.keys(command).some(key => !["op", "name"].includes(key))) throw new AgentError("invalid_request", "describe accepts only name.");
-          const response = await request({ op: "status" });
+      async execute(command, onRecord) {
+        if (command.verb === "describe" && command.name === "ProfileCapture") {
+          if (Object.keys(command).some(key => !["verb", "name"].includes(key))) throw new AgentError("unknown_field", "verb name", "$");
+          const response = await request(status);
           if (!response.ok) return response;
           const { nativeProfileDescriptor } = await import("./agent-profile.mjs");
           response.result = { ...nativeProfileDescriptor, status: { available: identity.profiling === true, native: true, counters: identity.counters === true, pix: identity.pix === true } };
           return response;
         }
-        if (command.op === "compare") return compareCaptures(command, request);
-        if (command.op === "diagnostics") {
-          const response = await request({ op: "status" });
+        if (command.verb === "capture" && command.compare !== undefined) {
+          const { compare, ...capture } = command;
+          if (typeof compare?.b === "string") return compareCaptures(compare, request);
+          const captured = await owned.execute(capture);
+          if (!captured.ok) return captured;
+          const compared = await compareCaptures({ ...compare, b: captured.result.artifact.path }, request);
+          if (compared.ok) captured.result.compare = compared.result.compare;
+          return compared.ok ? captured : compared;
+        }
+        if (command.verb === "query" && command.name === "diagnostics") {
+          const response = await request(status);
           if (response.ok) response.result = { observation: response.observation ?? response.result?.observation, entries: [...diagnostics] };
           return response;
         }
-        const response = await request(command);
-        if (command.op === "describe" && command.name === undefined && response.ok && Array.isArray(response.result?.types)) {
-          response.result.types.push({ name: "GameControls", kind: "tooling", description: "The game's own controls, which the game control runs by name with args", controls: identity.controls ?? {} });
-          response.result.types.push({ name: "PageParameters", kind: "tooling", description: "The native program's options the host and game read", parameters: identity.parameters ?? {} });
+        const response = await request(command, onRecord);
+        if (command.verb === "describe" && command.name === undefined && response.ok && Array.isArray(response.result?.types)) {
+          response.result.types.push({ name: "GameControls", kind: "tooling", controls: identity.controls ?? {} });
+          response.result.types.push({ name: "PageParameters", kind: "tooling", parameters: identity.parameters ?? {} });
         }
-        if (command.op === "profile" && response.ok && response.result?.artifacts) {
+        if (command.verb === "profile" && response.ok && response.result?.artifacts) {
           for (const [kind, path] of Object.entries(response.result.artifacts)) {
             if (typeof path === "string") response.result.artifacts[kind] = relative(workspace, path).split(sep).join("/");
           }
         }
-        if (["capture", "frames"].includes(command.op) && response.ok && response.result?.artifact) {
+        if (response.ok && typeof response.result?.artifact?.path === "string") {
           const artifact = response.result.artifact;
           artifact.path = relative(workspace, artifact.path).split(sep).join("/");
           const bytes = await readFile(resolve(workspace, artifact.path));
           if (createHash("sha256").update(bytes).digest("hex") !== artifact.sha256) {
-            return { ok: false, observation: response.observation, error: { code: "capture_failed", path: "$", message: "the capture changed after it was written" } };
+            return { ok: false, observation: response.observation, error: { code: "capture_failed", path: "$", message: artifact.path } };
           }
         }
         return response;
       },
     };
+    return owned;
   } catch (error) {
     await close();
     await delay(0);

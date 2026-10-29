@@ -3,7 +3,10 @@ mod controls;
 
 use crate::app_host::AppHost;
 use engine_core::ErrorCode;
-use engine_dev::{BrowserControl, Context, DevError, DevTools, RenderedMesh, RendererFacts};
+use engine_dev::{
+    CaptureRequest, Context, Control, DevError, DevTools, Envelope, ExplainQuestion, HostControl,
+    ProfileRequest, RenderedMesh, RendererFacts, Verb, WatchRequest,
+};
 use engine_scene::SceneInstance;
 use serde_json::{Value, json};
 
@@ -61,40 +64,28 @@ impl DevHost {
         source: &str,
         paused: bool,
     ) -> bool {
-        if source.len() > engine_dev::MAX_REQUEST_BYTES {
-            return false;
-        }
-        let op = serde_json::from_str::<Value>(source)
-            .ok()
-            .and_then(|request| request.get("op").and_then(Value::as_str).map(str::to_owned));
-        if let Some(op) = op
-            && world
-                .get_resource::<engine_core::BrickRegistry>()
-                .and_then(|registry| registry.operation(&op))
-                .is_some_and(|operation| operation.control)
-        {
-            return paused && self.tools.parse_control(world, source, &op, paused).is_ok();
-        }
-        let Ok(control) = engine_dev::parse_request::<BrowserControl>(source) else {
+        let Ok(envelope) = Envelope::parse(source) else {
             return false;
         };
-        if control.validate().is_err() || (control.needs_pause() && !paused) {
+        if envelope.verb != Verb::Control {
             return false;
         }
-        !matches!(
-            control,
-            BrowserControl::Input { .. }
-                | BrowserControl::Benchmark { .. }
-                | BrowserControl::Frames { .. }
-                | BrowserControl::Pause { .. }
-                | BrowserControl::Resume { .. }
-                | BrowserControl::Capture { .. }
-                | BrowserControl::Game { .. }
-                | BrowserControl::Reload { .. }
-                | BrowserControl::DebugPanic { .. }
-                | BrowserControl::Probe { .. }
-                | BrowserControl::DebugDeviceLoss { .. }
-        )
+        match self.tools.parse_control(world, &envelope, paused) {
+            Ok(Control::Operation(_)) => true,
+            Ok(Control::Host(
+                HostControl::Loop(_) | HostControl::Input { .. } | HostControl::DebugPanic,
+            ))
+            | Err(_) => false,
+            Ok(Control::Host(
+                HostControl::Present { .. }
+                | HostControl::Culling { .. }
+                | HostControl::Environment(_)
+                | HostControl::Camera { .. }
+                | HostControl::Step { .. }
+                | HostControl::Render
+                | HostControl::DebugFault { .. },
+            )) => true,
+        }
     }
 
     pub fn command(
@@ -106,30 +97,31 @@ impl DevHost {
         height: u32,
         paused: bool,
     ) -> String {
-        if source.len() > engine_dev::MAX_REQUEST_BYTES {
-            return self.error(
-                app,
-                scene,
-                ErrorCode::RequestTooLarge,
-                "$",
-                &format!("command exceeds {} bytes", engine_dev::MAX_REQUEST_BYTES),
-            );
-        }
-        let request: Value = match serde_json::from_str(source) {
-            Ok(value) => value,
-            Err(error) => {
-                return self.error(app, scene, ErrorCode::InvalidJson, "$", &error.to_string());
-            }
+        let envelope = match Envelope::parse(source) {
+            Ok(envelope) => envelope,
+            Err(error) => return self.refusal(app, scene, &error),
         };
         app.engine.complete_pending_tick();
-        let op = request.get("op").and_then(Value::as_str);
-        if !op.is_some_and(|op| engine_dev::is_control(app.engine.app.world(), op)) {
-            return self.tools_request(app, scene, source, op == Some("status"));
-        }
-        let op = op.unwrap_or_default().to_owned();
-        match self.control(app, scene, source, &op, (width, height), paused) {
+        let answered = match envelope.verb {
+            Verb::Describe | Verb::Inspect | Verb::Query => {
+                let status = envelope.verb == Verb::Query
+                    && envelope.name().is_ok_and(|name| name == "status");
+                return self.tools_request(app, scene, source, status);
+            }
+            Verb::Control => self.control(app, scene, &envelope, (width, height), paused),
+            Verb::Capture | Verb::Profile | Verb::Explain | Verb::Watch => {
+                looped(&envelope, paused)
+            }
+            Verb::Check => Err(DevError::new(
+                ErrorCode::UnsupportedCommand,
+                "$.verb",
+                Verb::Check.name(),
+            )
+            .expected("cargo xtask agent check")),
+        };
+        match answered {
             Ok(result) => self.result(app, scene, result),
-            Err(error) => self.error(app, scene, error.code, &error.path, &error.message),
+            Err(error) => self.refusal(app, scene, &error),
         }
     }
 
@@ -158,15 +150,15 @@ impl DevHost {
         &mut self,
         app: &mut AppHost,
         scene: Option<&SceneInstance>,
-        source: &str,
-        op: &str,
+        envelope: &Envelope,
         (width, height): (u32, u32),
         paused: bool,
     ) -> Result<Value, DevError> {
         let control = self
             .tools
-            .parse_control(app.engine.app.world(), source, op, paused)?;
-        controls::run(self, app, scene, (source, control), (width, height))
+            .parse_control(app.engine.app.world(), envelope, paused)?;
+        let args = envelope.args()?;
+        controls::run(self, app, scene, (args, control), (width, height))
     }
 
     pub fn result(
@@ -189,21 +181,80 @@ impl DevHost {
         path: &str,
         message: &str,
     ) -> String {
+        self.refusal(app, scene, &DevError::new(code, path, message))
+    }
+
+    pub fn refusal(
+        &mut self,
+        app: &mut AppHost,
+        scene: Option<&SceneInstance>,
+        error: &DevError,
+    ) -> String {
         let mut envelope = self.observation(app, scene);
         envelope["ok"] = json!(false);
         envelope
             .as_object_mut()
             .expect("object envelope")
             .remove("result");
-        envelope["error"] = json!({"code":code,"path":path,"message":message});
+        envelope["error"] = json!(error);
         envelope.to_string()
     }
 
     fn observation(&mut self, app: &mut AppHost, scene: Option<&SceneInstance>) -> Value {
-        let status = json!({"version": engine_dev::PROTOCOL_VERSION, "op": "status"});
-        serde_json::from_str(&execute(&self.tools, app, scene, &status.to_string()))
+        let status = engine_dev::named(Verb::Query, "status", json!({}));
+        serde_json::from_str(&execute(&self.tools, app, scene, &status))
             .expect("development tools serialize an object envelope")
     }
+}
+
+fn looped(envelope: &Envelope, paused: bool) -> Result<Value, DevError> {
+    let needs_pause = match envelope.verb {
+        Verb::Capture => {
+            let request: CaptureRequest = envelope.body()?;
+            request.validate()?;
+            true
+        }
+        Verb::Profile => {
+            let request: ProfileRequest = envelope.body()?;
+            request.validate()?;
+            if request.deep.is_some() {
+                return Err(DevError::new(
+                    ErrorCode::ProfilingUnavailable,
+                    "$.deep",
+                    "deep",
+                )
+                .expected("a native session or the agent bridge, which take deep profiles"));
+            }
+            true
+        }
+        Verb::Explain => {
+            let question: ExplainQuestion = envelope.body()?;
+            question.validate()?;
+            question.needs_pause()
+        }
+        Verb::Watch => {
+            let request: WatchRequest = envelope.body()?;
+            request.validate()?;
+            true
+        }
+        verb @ (Verb::Describe | Verb::Inspect | Verb::Query | Verb::Control | Verb::Check) => {
+            return Err(DevError::new(
+                ErrorCode::UnsupportedCommand,
+                "$.verb",
+                verb.name(),
+            ));
+        }
+    };
+    if needs_pause && !paused {
+        return Err(DevError::new(
+            ErrorCode::PauseRequired,
+            "$",
+            format!("pause the host before {}", envelope.verb.name()),
+        ));
+    }
+    let mut control = envelope.fields.clone();
+    control.insert("op".to_owned(), json!(envelope.verb.name()));
+    Ok(json!({ "control": control }))
 }
 
 fn execute(

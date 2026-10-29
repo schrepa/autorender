@@ -1,5 +1,6 @@
 mod attribution;
 mod error;
+mod explain;
 mod extracted;
 mod registry;
 mod scene;
@@ -10,6 +11,9 @@ pub use attribution::{
     WARMUP_FRAMES,
 };
 pub use error::{Error, parse_json, parse_value, parse_value_at};
+pub use explain::{
+    Drawn, ExplainEntry, ExplainRecord, ExplainRequest, ExplainedEntity, Explainer, source_line,
+};
 pub use extracted::Extracted;
 pub use registry::{
     BrickRecord, BrickRegistry, InspectedKind, InspectorEntry, OperationEntry, Owned,
@@ -17,6 +21,7 @@ pub use registry::{
 };
 pub use scene::{AuthoredId, OperationScene, authored_entity, authored_id};
 
+use std::panic::Location;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use bevy_app::App;
@@ -158,65 +163,84 @@ impl Bricks<'_> {
         self
     }
 
+    #[track_caller]
     pub fn settings<T: EnvironmentSection>(&mut self) -> &mut Self {
+        let at = Location::caller();
         if !T::OPT_IN {
             self.app.init_resource::<T>();
         }
         self.record.own_resource::<T>();
         self.record
             .settings
-            .push(SettingsEntry::of::<T>(self.record.name));
+            .push(SettingsEntry::of::<T>(self.record.name, at));
         self
     }
 
+    #[track_caller]
     pub fn stats<T: BrickStats>(&mut self) -> &mut Self {
+        let at = Location::caller();
         self.app.init_resource::<T>();
         self.record.own_resource::<T>();
         self.record
             .stats
-            .push(StatsEntry::of::<T>(self.record.name));
+            .push(StatsEntry::of::<T>(self.record.name, at));
         self
     }
 
+    #[track_caller]
     pub fn operation<O: Operation>(&mut self) -> &mut Self {
+        let at = Location::caller();
         self.record
             .operations
-            .push(OperationEntry::of::<O>(self.record.name));
+            .push(OperationEntry::of::<O>(self.record.name, at));
+        self
+    }
+
+    #[track_caller]
+    pub fn explain(&mut self, explain: Explainer) -> &mut Self {
+        let at = Location::caller();
+        self.record
+            .explainers
+            .push(ExplainEntry::of(self.record.name, explain, at));
         self
     }
 
     #[cfg(not(feature = "schema"))]
+    #[track_caller]
     pub fn inspector<R: Resource, V: serde::Serialize + 'static>(
         &mut self,
         view: fn(&World, &R) -> V,
     ) -> &mut Self {
-        let entry = InspectorEntry::resource(self.record.name, view);
+        let entry = InspectorEntry::resource(self.record.name, view, Location::caller());
         self.record.inspectors.push(entry);
         self
     }
 
     #[cfg(feature = "schema")]
+    #[track_caller]
     pub fn inspector<R: Resource, V: serde::Serialize + schemars::JsonSchema + 'static>(
         &mut self,
         view: fn(&World, &R) -> V,
     ) -> &mut Self {
-        let entry =
-            InspectorEntry::resource(self.record.name, view).with_schema(registry::schema_of::<V>);
+        let entry = InspectorEntry::resource(self.record.name, view, Location::caller())
+            .with_schema(registry::schema_of::<V>);
         self.record.inspectors.push(entry);
         self
     }
 
     #[cfg(not(feature = "schema"))]
+    #[track_caller]
     pub fn component_inspector<C: Component, V: serde::Serialize + 'static>(
         &mut self,
         view: fn(&World, Entity, &C) -> V,
     ) -> &mut Self {
-        let entry = InspectorEntry::component(self.record.name, view);
+        let entry = InspectorEntry::component(self.record.name, view, Location::caller());
         self.record.inspectors.push(entry);
         self
     }
 
     #[cfg(feature = "schema")]
+    #[track_caller]
     pub fn component_inspector<
         C: Component,
         V: serde::Serialize + schemars::JsonSchema + 'static,
@@ -224,8 +248,8 @@ impl Bricks<'_> {
         &mut self,
         view: fn(&World, Entity, &C) -> V,
     ) -> &mut Self {
-        let entry =
-            InspectorEntry::component(self.record.name, view).with_schema(registry::schema_of::<V>);
+        let entry = InspectorEntry::component(self.record.name, view, Location::caller())
+            .with_schema(registry::schema_of::<V>);
         self.record.inspectors.push(entry);
         self
     }

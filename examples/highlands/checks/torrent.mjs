@@ -28,7 +28,7 @@ async function settle(label) {
   const until = Date.now() + 600_000;
   let previous, quiet = 0;
   while (quiet < 3) {
-    const rendering = (await command("render")).result.rendering;
+    const rendering = (await command("control", "render")).result.rendering;
     const busy = rendering.loading || rendering.pipelines_compiling;
     const counters = JSON.stringify(work(rendering));
     quiet = !busy && counters === previous ? quiet + 1 : 0;
@@ -36,7 +36,7 @@ async function settle(label) {
     assert.ok(Date.now() < until, `${label} settles: ${counters.slice(0, 2000)}`);
     if (busy) await delay(20);
   }
-  for (let frame = 0; frame < 30; frame++) await command("render");
+  for (let frame = 0; frame < 30; frame++) await command("control", "render");
 }
 
 async function capture(name) {
@@ -104,12 +104,12 @@ const measurements = [];
 try {
   await openPaused(page, url, { timeout: 600_000 });
   for (const stream of streams) {
-    await command("game", { name: "view", args: { name: stream } });
-    await command("environment", { debug_view: { view: "off" } });
+    await command("control", "game", { name: "view", args: { name: stream } });
+    await command("control", "environment", { debug_view: { view: "off" } });
     const shaded = await capture(`${stream}-shaded`);
     const shots = [];
     for (const view of waterViews) {
-      await command("environment", { debug_view: { view } });
+      await command("control", "environment", { debug_view: { view } });
       const shown = await capture(`${stream}-${view}`);
       assert.ok(shown.rendering.render_passes.includes("debug_view"), `${stream} ${view}: ${JSON.stringify(shown.rendering.render_passes)}`);
       shots.push(shown.png);
@@ -134,14 +134,14 @@ try {
     assert.ok(shares.varied >= 0.1, `the torrent's turbulence varies: ${JSON.stringify(shares)}`);
 
     assert.ok(seen.nearest, "a water pixel to probe");
-    await command("environment", { debug_view: { view: "water_depth" } });
+    await command("control", "environment", { debug_view: { view: "water_depth" } });
     const { display_width: width, display_height: height } = shaded.rendering.resolution;
     const [x, y] = /** @type {number[]} */ (seen.nearest);
     const point = {
       x: Math.min(width - 1, Math.floor((x + 0.5) * width / seen.width)),
       y: Math.min(height - 1, Math.floor((y + 0.5) * height / seen.height)),
     };
-    const probed = (await command("probe", point)).result;
+    const probed = (await command("control", "probe", point)).result;
     assert.equal(probed.kind, "water", JSON.stringify(probed));
     const water = probed.water;
     assert.ok(water && water.depth > 0 && Number.isFinite(water.depth), JSON.stringify(probed));
@@ -155,7 +155,7 @@ try {
     assert.equal(probed.terrain, null, JSON.stringify(probed));
     report.probe = probed;
   }
-  await command("environment", { debug_view: { view: "off" } });
+  await command("control", "environment", { debug_view: { view: "off" } });
   assert.deepEqual(errors, []);
 } finally {
   await browser.close();

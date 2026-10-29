@@ -27,6 +27,33 @@ struct Session {
     child: Child,
     input: ChildStdin,
     lines: Receiver<String>,
+    legacy: bool,
+}
+
+fn legacy(command: &Value) -> Value {
+    let mut sent = Map::new();
+    let verb = command["verb"].as_str().unwrap_or_default();
+    match verb {
+        "query" | "control" => {
+            sent.insert("op".to_owned(), command["name"].clone());
+            if let Some(args) = command["args"].as_object() {
+                sent.extend(args.clone());
+            }
+        }
+        _ => {
+            sent.insert("op".to_owned(), json!(verb));
+            for (key, value) in command.as_object().into_iter().flatten() {
+                if key != "verb" {
+                    sent.insert(key.clone(), value.clone());
+                }
+            }
+        }
+    }
+    Value::Object(sent)
+}
+
+fn named(verb: &str, name: &str, args: Value) -> Value {
+    json!({ "verb": verb, "name": name, "args": args })
 }
 
 impl Session {
@@ -60,11 +87,14 @@ impl Session {
             child,
             input,
             lines,
+            legacy: false,
         };
         let ready = session.next(log)?;
         if ready["ready"] != true {
             return Err(format!("the program did not say it is ready: {ready}"));
         }
+        let probe = session.request(&named("query", "status", json!({})), log)?;
+        session.legacy = probe["ok"] != true && probe["error"]["path"] == "$.command";
         Ok(session)
     }
 
@@ -99,6 +129,11 @@ impl Session {
     }
 
     fn request(&mut self, command: &Value, log: &Path) -> Result<Value, String> {
+        let command = if self.legacy {
+            legacy(command)
+        } else {
+            command.clone()
+        };
         writeln!(self.input, "{command}")
             .and_then(|()| self.input.flush())
             .map_err(|error| format!("cannot send {command}: {error}"))?;
@@ -109,8 +144,9 @@ impl Session {
         let reply = self.request(command, log)?;
         if reply["ok"] != true {
             return Err(format!(
-                "{}: {}",
-                command["op"].as_str().unwrap_or_default(),
+                "{} {}: {}",
+                command["verb"].as_str().unwrap_or_default(),
+                command["name"].as_str().unwrap_or_default(),
                 reply["error"]
             ));
         }
@@ -201,26 +237,31 @@ pub(super) fn run_cell(cell: &Cell, side: &Side, folder: &Path, gpu: &str) -> Ru
 
 fn drive(session: &mut Session, cell: &Cell, log: &Path, run: &mut Run) -> Result<(), String> {
     if let Some(environment) = &cell.environment {
-        let mut command = json!({"op": "environment", "merge": true});
+        let mut args = json!({"merge": true});
         for (section, value) in environment.as_object().into_iter().flatten() {
-            command[section] = value.clone();
+            args[section] = value.clone();
         }
-        session.ok(&command, log)?;
+        session.ok(&named("control", "environment", args), log)?;
     }
     if cell.ticks > 0 {
-        session.ok(&json!({"op": "step", "ticks": cell.ticks}), log)?;
+        session.ok(
+            &named("control", "step", json!({"ticks": cell.ticks})),
+            log,
+        )?;
     }
     for view in &cell.views {
         match (&view.camera, view.name.as_str()) {
             (Some(camera), _) => {
-                let mut command = camera.clone();
-                command["op"] = "camera".into();
-                session.ok(&command, log)?;
+                session.ok(&named("control", "camera", camera.clone()), log)?;
             }
             (None, "scene") => {}
             (None, name) => {
                 session.ok(
-                    &json!({"op": "game", "name": "view", "args": {"name": name}}),
+                    &named(
+                        "control",
+                        "game",
+                        json!({"name": "view", "args": {"name": name}}),
+                    ),
                     log,
                 )?;
             }
@@ -235,7 +276,7 @@ fn drive(session: &mut Session, cell: &Cell, log: &Path, run: &mut Run) -> Resul
             let shot = shoot(session, *capture, log)?;
             run.shots.insert(key, shot);
         }
-        let digest = session.request(&json!({"op": "digest"}), log)?;
+        let digest = session.request(&named("query", "digest", json!({})), log)?;
         let result = &digest["result"];
         run.digests.insert(
             view.name.clone(),
@@ -256,8 +297,8 @@ fn drive(session: &mut Session, cell: &Cell, log: &Path, run: &mut Run) -> Resul
 
 fn settling_frame(capture: Capture) -> Option<Value> {
     match capture {
-        Capture::Exact => Some(json!({"op": "render"})),
-        Capture::Gpu(alpha) => Some(json!({"op": "present", "alpha": alpha})),
+        Capture::Exact => Some(named("control", "render", json!({}))),
+        Capture::Gpu(alpha) => Some(named("control", "present", json!({"alpha": alpha}))),
         Capture::Display(_) => None,
     }
 }
@@ -307,11 +348,15 @@ fn settle(session: &mut Session, frame: &Value, log: &Path) -> Result<Option<Str
 
 fn shoot(session: &mut Session, capture: Capture, log: &Path) -> Result<Shot, String> {
     let result = match capture {
-        Capture::Exact => session.ok(&json!({"op": "capture"}), log)?,
-        Capture::Gpu(alpha) => session.ok(&json!({"op": "capture", "alpha": alpha}), log)?,
+        Capture::Exact => session.ok(&json!({"verb": "capture"}), log)?,
+        Capture::Gpu(alpha) => session.ok(&json!({"verb": "capture", "alpha": alpha}), log)?,
         Capture::Display(frames) => {
             let reply = session.request(
-                &json!({"op": "frames", "count": frames, "interval_ms": 1000.0 / 60.0, "capture": true}),
+                &named(
+                    "control",
+                    "frames",
+                    json!({"count": frames, "interval_ms": 1000.0 / 60.0, "capture": true}),
+                ),
                 log,
             )?;
             if reply["ok"] != true {

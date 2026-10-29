@@ -29,14 +29,14 @@ async function inspect(entity, component) {
 }
 async function seconds(count) {
   let reply;
-  for (let tick = 0; tick < count * 60; tick += 120) reply = await command("step", { ticks: 120 });
+  for (let tick = 0; tick < count * 60; tick += 120) reply = await command("control", "step", { ticks: 120 });
   return reply;
 }
 
 try {
   await scene.route();
   await openPaused(page, url, { timeout: 20_000 });
-  await command("render");
+  await command("control", "render");
   for (const name of ["RigidBody", "PhysicsWorld", "Physics"]) await command("describe", { name });
   const settings = (await command("inspect", { component: "Physics" })).result.value;
   assert.ok(settings.enabled && Math.abs(settings.gravity[1] + 9.81) < 1e-4, JSON.stringify(settings));
@@ -52,11 +52,11 @@ try {
   assert.ok(world.bodies === 2 && world.held === 0 && world.solids >= 2, JSON.stringify(world));
   assert.equal(landed.result.rendering.physics.bodies, 2, "frames observe physics");
   checks.push("falls_and_rests", "sinks", "world_inspects", "frames_observe");
-  await command("environment", { merge: true, physics: { enabled: false } });
+  await command("control", "environment", { merge: true, physics: { enabled: false } });
   const held = await inspect("stone", "Transform");
   await seconds(1);
   assert.deepEqual(await inspect("stone", "Transform"), held, "physics off holds the stone");
-  await command("environment", { merge: true, physics: { enabled: true } });
+  await command("control", "environment", { merge: true, physics: { enabled: true } });
   await seconds(1);
   assert.notDeepEqual(await inspect("stone", "Transform"), held, "physics on moves it again");
   checks.push("environment_control");
@@ -66,7 +66,7 @@ try {
   const parented = structuredClone(fixture); parented.revision = scene.revision + 1;
   parented.entities.find(entity => entity.id === "stone").parent = "floor";
   scene.serve(parented);
-  const refused = await command("reload", { expected_revision: String(scene.revision), revision: String(parented.revision) }, false);
+  const refused = await command("control", "reload", { expected_revision: String(scene.revision), revision: String(parented.revision) }, false);
   assert.equal(refused.error?.code, "invalid_rigid_body", JSON.stringify(refused.error));
   assert.deepEqual(await inspect("crate", "Transform"), before);
   checks.push("parented_body_refused");

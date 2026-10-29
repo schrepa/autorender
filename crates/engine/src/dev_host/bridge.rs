@@ -1,7 +1,14 @@
-use engine_core::ErrorCode;
-use engine_dev::results::{CaptureResult, FramesResult, GameResult, KeptArtifact, result};
-use engine_dev::{Effect, HostContext, Outcome, Step};
+use engine_core::bevy_ecs::prelude::Entity;
+use engine_core::{Drawn, ErrorCode};
+use engine_dev::results::{
+    CaptureResult, FramesResult, GameResult, KeptArtifact, WatchResult, result,
+};
+use engine_dev::{
+    Effect, EntityFacts, ExplainQuestion, HostContext, Outcome, ProfileRequest, Step,
+    WatchRequest, Watcher,
+};
 use engine_scene::SceneFiles;
+use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
 use crate::host::policy::BENCHMARK_LIMIT_MS;
@@ -38,11 +45,45 @@ pub(crate) enum Pending {
     DeviceLoss {
         waits: u32,
     },
+    Profile(Box<ProfileRun>),
+    Explain {
+        id: String,
+        entity: Entity,
+        slot: u32,
+        waits: u32,
+    },
+    ExplainScene,
+    Watch(Box<WatchRun>),
 }
 
 const LOSS_WAITS: u32 = 120;
 
 const PROBE_WAITS: u32 = 120;
+
+const READ_BACK_WAITS: u32 = 120;
+
+pub(crate) struct ProfileRun {
+    request: ProfileRequest,
+    ran: u32,
+    frames: Vec<engine_core::BrickCosts>,
+}
+
+impl std::fmt::Debug for ProfileRun {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProfileRun")
+            .field("request", &self.request)
+            .field("ran", &self.ran)
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct WatchRun {
+    watcher: Watcher,
+    ran: u32,
+    streaming: bool,
+}
 
 #[derive(Debug)]
 pub(crate) struct BenchmarkRun {
@@ -62,6 +103,27 @@ pub(crate) struct BenchmarkRun {
 }
 
 type Stopped = (ErrorCode, String);
+
+fn query(name: &str) -> Value {
+    json!({ "verb": "query", "name": name })
+}
+
+fn control(name: &str, args: Value) -> Value {
+    json!({ "verb": "control", "name": name, "args": args })
+}
+
+fn shown(alpha: Option<&Value>) -> Value {
+    match alpha {
+        Some(alpha) => control("present", json!({ "alpha": alpha })),
+        None => control("render", json!({})),
+    }
+}
+
+fn parsed<T: DeserializeOwned>(control: &Map<String, Value>) -> Result<T, engine_dev::DevError> {
+    let mut fields = control.clone();
+    fields.remove("op");
+    Ok(engine_scene::parse_value(Value::Object(fields))?)
+}
 
 impl BenchmarkRun {
     fn waited(&mut self, now: f64) -> Result<bool, Stopped> {
@@ -172,12 +234,12 @@ impl<G: Game> GameHost<G> {
             );
         }
         let command = match serde_json::from_str::<Value>(line) {
-            Ok(command @ Value::Object(_)) if command["op"].is_string() => command,
+            Ok(command @ Value::Object(_)) if command["verb"].is_string() => command,
             _ => {
                 return self.dev_refused(
                     ErrorCode::InvalidRequest,
                     "$.command",
-                    "expected an object with an op string",
+                    "expected an object with a verb string",
                 );
             }
         };
@@ -191,6 +253,10 @@ impl<G: Game> GameHost<G> {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub fn dev_resume(&mut self, outcome: Outcome, context: &HostContext) -> Step {
         let Some(pending) = self.dev_pending.take() else {
             return self.dev_refused(
@@ -201,7 +267,7 @@ impl<G: Game> GameHost<G> {
         };
         match pending {
             Pending::Paused => {
-                let status = self.dev_invoke(&json!({"op": "status"}), context);
+                let status = self.dev_invoke(&query("status"), context);
                 self.dev_done(status, context)
             }
             Pending::Frames {
@@ -228,7 +294,7 @@ impl<G: Game> GameHost<G> {
                     let timestamp = f64::from(ran) * interval;
                     return self.dev_effect(pending, Effect::Frame { timestamp });
                 }
-                let mut reply = self.dev_invoke(&json!({"op": "status"}), context);
+                let mut reply = self.dev_invoke(&query("status"), context);
                 reply["result"] = result::frames(FramesResult {
                     frames: count,
                     interval_ms: interval,
@@ -261,21 +327,15 @@ impl<G: Game> GameHost<G> {
             }
             Pending::Game { name } => {
                 if let Some(names) = outcome.missing {
-                    let names = if names.is_empty() {
-                        "none".to_owned()
-                    } else {
-                        names.join(", ")
-                    };
-                    return self.dev_refused(
-                        ErrorCode::UnsupportedCommand,
-                        "$.name",
-                        &format!("this game has no control {name}; it has {names}"),
-                    );
+                    return self.dev_refused_with(engine_dev::DevError {
+                        code: ErrorCode::UnsupportedCommand,
+                        ..engine_dev::DevError::unknown("$.args.name", &name, names)
+                    });
                 }
                 if let Some(message) = outcome.failed {
-                    return self.dev_refused(ErrorCode::GameRule, "$.args", &message);
+                    return self.dev_refused(ErrorCode::GameRule, "$.args.args", &message);
                 }
-                let mut rendered = self.dev_invoke(&json!({"op": "render"}), context);
+                let mut rendered = self.dev_invoke(&control("render", json!({})), context);
                 if rendered["ok"] == true {
                     rendered["result"] = result::game(GameResult {
                         game: name,
@@ -288,7 +348,7 @@ impl<G: Game> GameHost<G> {
                 if outcome.missing.is_some() {
                     return self.dev_refused(
                         ErrorCode::UnsupportedCommand,
-                        "$.op",
+                        "$.name",
                         "this game has no authored scene reload adapter",
                     );
                 }
@@ -305,11 +365,37 @@ impl<G: Game> GameHost<G> {
                 self.dev_probe(reply, waits, context)
             }
             Pending::DeviceLoss { waits } => self.dev_device_lost(waits, context),
+            Pending::Profile(run) => self.dev_profile(run, &outcome, context),
+            Pending::Explain {
+                id,
+                entity,
+                slot,
+                waits,
+            } => {
+                if let Some(message) = outcome.failed {
+                    return self.dev_refused(ErrorCode::RenderFailed, "$", &message);
+                }
+                self.dev_explain_wait((id, entity), slot, waits, context)
+            }
+            Pending::ExplainScene => {
+                if outcome.missing.is_some() {
+                    return self.dev_refused(
+                        ErrorCode::UnsupportedCommand,
+                        "$.about",
+                        "this host loads no scene source",
+                    );
+                }
+                let message = outcome
+                    .failed
+                    .unwrap_or_else(|| "the host handed the explanation no scene".to_owned());
+                self.dev_refused(ErrorCode::SourceIo, "$", &message)
+            }
+            Pending::Watch(run) => self.dev_watch(run, &outcome, context),
         }
     }
 
     fn dev_device_lost(&mut self, waits: u32, context: &HostContext) -> Step {
-        let reply = self.dev_invoke(&json!({"op": "render"}), context);
+        let reply = self.dev_invoke(&control("render", json!({})), context);
         if reply["ok"] != true {
             return self.dev_done(reply, context);
         }
@@ -334,7 +420,10 @@ impl<G: Game> GameHost<G> {
                 .map_or(0, |value| u32::try_from(value).unwrap_or(u32::MAX))
         };
         let (x, y) = (pixel("x"), pixel("y"));
-        for (path, value, size) in [("$.x", x, context.width), ("$.y", y, context.height)] {
+        for (path, value, size) in [
+            ("$.args.x", x, context.width),
+            ("$.args.y", y, context.height),
+        ] {
             if value >= size {
                 return self.dev_refused(
                     ErrorCode::OutOfRange,
@@ -343,10 +432,7 @@ impl<G: Game> GameHost<G> {
                 );
             }
         }
-        let frame = match control.get("alpha") {
-            Some(alpha) => json!({"op": "present", "alpha": alpha}),
-            None => json!({"op": "render"}),
-        };
+        let frame = shown(control.get("alpha"));
         self.arm_probe((x, y));
         let mut reply = Value::Null;
         for _ in 0..2 {
@@ -386,32 +472,50 @@ impl<G: Game> GameHost<G> {
         files: Option<&SceneFiles>,
         context: &HostContext,
     ) -> Step {
-        let Some(Pending::Reload {
-            expected_revision,
-            revision,
-        }) = self.dev_pending.take()
-        else {
-            return self.dev_refused(ErrorCode::InvalidRequest, "$", "no reload is under way");
-        };
-        let reply = self.dev_reload(source, &expected_revision, &revision, files);
-        let mut reply: Value = serde_json::from_str(&reply).expect("development replies are JSON");
-        if reply["ok"] == true {
-            let rendered = self.dev_invoke(&json!({"op": "render"}), context);
-            if rendered["ok"] != true {
-                return self.dev_done(rendered, context);
+        match self.dev_pending.take() {
+            Some(Pending::Reload {
+                expected_revision,
+                revision,
+            }) => {
+                let reply = self.dev_reload(source, &expected_revision, &revision, files);
+                let mut reply: Value =
+                    serde_json::from_str(&reply).expect("development replies are JSON");
+                if reply["ok"] == true {
+                    let rendered = self.dev_invoke(&control("render", json!({})), context);
+                    if rendered["ok"] != true {
+                        return self.dev_done(rendered, context);
+                    }
+                    reply["observation"] = rendered["observation"].clone();
+                }
+                self.dev_done(reply, context)
             }
-            reply["observation"] = rendered["observation"].clone();
+            Some(Pending::ExplainScene) => {
+                let explained = self.dev_tools().explain_scene(
+                    self.engine().app.world(),
+                    source,
+                    files,
+                );
+                let mut reply = self.dev_invoke(&query("status"), context);
+                if reply["ok"] == true {
+                    reply["result"] = result::explain(explained);
+                }
+                self.dev_done(reply, context)
+            }
+            Some(_) | None => {
+                self.dev_refused(ErrorCode::InvalidRequest, "$", "no reload is under way")
+            }
         }
-        self.dev_done(reply, context)
     }
 
     pub fn dev_refusal(&mut self, code: ErrorCode, path: &str, message: &str) -> Value {
-        let status = json!({"op": "status", "version": engine_dev::PROTOCOL_VERSION});
-        let status: Value =
-            serde_json::from_str(&self.dev_command(&status.to_string(), 1, 1, true))
-                .expect("development replies are JSON");
-        json!({"ok": false, "observation": status["observation"],
-            "error": {"code": code, "path": path, "message": message}})
+        self.dev_refusal_with(&engine_dev::DevError::new(code, path, message))
+    }
+
+    fn dev_refusal_with(&mut self, error: &engine_dev::DevError) -> Value {
+        let status = engine_dev::named(engine_dev::Verb::Query, "status", json!({}));
+        let status: Value = serde_json::from_str(&self.dev_command(&status, 1, 1, true))
+            .expect("development replies are JSON");
+        json!({"ok": false, "observation": status["observation"], "error": error})
     }
 
     fn dev_invoke(&mut self, command: &Value, context: &HostContext) -> Value {
@@ -465,22 +569,7 @@ impl<G: Game> GameHost<G> {
                 };
                 self.dev_effect(pending, Effect::Frame { timestamp: 0.0 })
             }
-            "capture" => {
-                let command = match control.get("alpha") {
-                    Some(alpha) => json!({"op": "present", "alpha": alpha}),
-                    None => json!({"op": "render"}),
-                };
-                let mut reply = self.dev_invoke(&command, context);
-                if reply["ok"] != true {
-                    return self.dev_done(reply, context);
-                }
-                reply["result"] = result::capture(CaptureResult {
-                    temporary: control.get("alpha").map(|_| true),
-                    rendered: true,
-                    artifact: None,
-                });
-                self.dev_effect(Pending::Shown { reply }, Effect::Show)
-            }
+            "capture" => self.dev_capture(control, context),
             "debug_device_loss" => {
                 self.lose_device();
                 self.dev_effect(
@@ -507,12 +596,302 @@ impl<G: Game> GameHost<G> {
                 self.dev_effect(pending, Effect::Source)
             }
             "benchmark" => self.dev_benchmark_start(control, context),
+            "profile" => match parsed::<ProfileRequest>(control) {
+                Ok(request) => {
+                    self.suspend();
+                    let run = ProfileRun {
+                        request,
+                        ran: 0,
+                        frames: Vec::new(),
+                    };
+                    self.dev_effect(
+                        Pending::Profile(Box::new(run)),
+                        Effect::Frame { timestamp: 0.0 },
+                    )
+                }
+                Err(error) => self.dev_refused_with(error),
+            },
+            "explain" => match parsed::<ExplainQuestion>(control) {
+                Ok(question) => self.dev_explain_start(question, context),
+                Err(error) => self.dev_refused_with(error),
+            },
+            "watch" => match parsed::<WatchRequest>(control) {
+                Ok(request) => self.dev_watch_start(request, context),
+                Err(error) => self.dev_refused_with(error),
+            },
             _ => self.dev_refused(
                 ErrorCode::UnsupportedCommand,
-                "$.op",
+                "$.name",
                 &format!("this host cannot carry out {op}"),
             ),
         }
+    }
+
+    fn dev_capture(&mut self, control: &Map<String, Value>, context: &HostContext) -> Step {
+        let mut reply = self.dev_invoke(&shown(control.get("alpha")), context);
+        if reply["ok"] != true {
+            return self.dev_done(reply, context);
+        }
+        let digest = if control.get("digest") == Some(&json!(true)) {
+            let digested = self.dev_invoke(&query("digest"), context);
+            if digested["ok"] != true {
+                return self.dev_done(digested, context);
+            }
+            Some(digested["result"].clone())
+        } else {
+            None
+        };
+        reply["result"] = result::capture(CaptureResult {
+            temporary: control.get("alpha").map(|_| true),
+            rendered: true,
+            artifact: None,
+            digest: None,
+        });
+        if let Some(digest) = digest {
+            reply["result"]["digest"] = digest;
+        }
+        self.dev_effect(Pending::Shown { reply }, Effect::Show)
+    }
+
+    fn dev_profile(
+        &mut self,
+        mut run: Box<ProfileRun>,
+        outcome: &Outcome,
+        context: &HostContext,
+    ) -> Step {
+        if let Some(message) = &outcome.failed {
+            return self.dev_refused(
+                ErrorCode::RenderFailed,
+                "$",
+                &format!("frame {} of {} failed: {message}", run.ran + 1, run.request.frames),
+            );
+        }
+        let Some(costs) = self
+            .engine()
+            .app
+            .world()
+            .get_resource::<engine_core::BrickCosts>()
+            .cloned()
+        else {
+            return self.dev_refused_with(
+                engine_dev::DevError::new(ErrorCode::ProfilingUnavailable, "$", "BrickCosts")
+                    .expected("a dev or profiling build, which measures every brick"),
+            );
+        };
+        run.frames.push(costs);
+        run.ran += 1;
+        if run.ran < run.request.frames {
+            let timestamp = f64::from(run.ran) * run.request.interval_ms;
+            return self.dev_effect(Pending::Profile(run), Effect::Frame { timestamp });
+        }
+        let (profiled, contents) = engine_dev::profiled(&run.frames, &run.request);
+        let mut reply = self.dev_invoke(&query("status"), context);
+        if reply["ok"] != true {
+            return self.dev_done(reply, context);
+        }
+        reply["result"] = result::profile(profiled);
+        self.dev_effect(
+            Pending::Shown { reply },
+            Effect::Save {
+                name: "profile".to_owned(),
+                contents,
+            },
+        )
+    }
+
+    fn dev_explain_start(&mut self, question: ExplainQuestion, context: &HostContext) -> Step {
+        match question {
+            ExplainQuestion::Frame { top, detail } => {
+                let stats = self.stats_value();
+                let explained = self.dev_tools().explain_frame(
+                    self.engine().app.world(),
+                    &stats,
+                    top,
+                    detail,
+                );
+                match explained {
+                    Ok(explained) => {
+                        let mut reply = self.dev_invoke(&query("status"), context);
+                        if reply["ok"] == true {
+                            reply["result"] = result::explain(explained);
+                        }
+                        self.dev_done(reply, context)
+                    }
+                    Err(error) => self.dev_refused_with(error),
+                }
+            }
+            ExplainQuestion::Scene {} => self.dev_effect(Pending::ExplainScene, Effect::Source),
+            ExplainQuestion::Entity { entity: id, .. } => {
+                let entity = match self.dev_tools().explained_entity(
+                    self.engine().app.world(),
+                    self.dev_scene(),
+                    &id,
+                ) {
+                    Ok(entity) => entity,
+                    Err(error) => return self.dev_refused_with(error),
+                };
+                let readable = self
+                    .engine()
+                    .app
+                    .world()
+                    .get_resource::<engine_core::LevelOfDetail>()
+                    .is_some_and(|detail| detail.enabled && detail.fade_seconds > 0.0);
+                let Some(slot) = self.engine().render_slot(entity).filter(|_| readable) else {
+                    let slot = self.engine().render_slot(entity);
+                    return self.dev_explained((id, entity), slot, Drawn::Unread, context);
+                };
+                self.read_back(slot);
+                for _ in 0..2 {
+                    let reply = self.dev_invoke(&control("render", json!({})), context);
+                    if reply["ok"] != true {
+                        return self.dev_done(reply, context);
+                    }
+                }
+                self.dev_explain_wait((id, entity), slot, 0, context)
+            }
+        }
+    }
+
+    fn dev_explain_wait(
+        &mut self,
+        (id, entity): (String, Entity),
+        slot: u32,
+        waits: u32,
+        context: &HostContext,
+    ) -> Step {
+        match self.read_back(slot) {
+            Some((level, 0)) => {
+                let drawn = level.map_or(Drawn::Culled, Drawn::Level);
+                self.dev_explained((id, entity), Some(slot), drawn, context)
+            }
+            Some(_) | None if waits >= READ_BACK_WAITS => {
+                self.dev_explained((id, entity), Some(slot), Drawn::Unread, context)
+            }
+            Some(_) | None => self.dev_effect(
+                Pending::Explain {
+                    id,
+                    entity,
+                    slot,
+                    waits: waits + 1,
+                },
+                Effect::Wait { within_ms: 1000.0 },
+            ),
+        }
+    }
+
+    fn dev_explained(
+        &mut self,
+        (id, entity): (String, Entity),
+        slot: Option<u32>,
+        drawn: Drawn,
+        context: &HostContext,
+    ) -> Step {
+        let stats = self.stats_value();
+        let facts = EntityFacts {
+            slot,
+            drawn,
+            frustum_culling: self.engine().frustum_culling(),
+        };
+        let explained = self.dev_tools().explain_entity(
+            self.engine().app.world(),
+            (&id, entity),
+            facts,
+            &stats,
+        );
+        let mut reply = self.dev_invoke(&query("status"), context);
+        if reply["ok"] == true {
+            reply["result"] = result::explain(explained);
+        }
+        self.dev_done(reply, context)
+    }
+
+    fn dev_watch_start(&mut self, request: WatchRequest, context: &HostContext) -> Step {
+        let mut run = Box::new(WatchRun {
+            watcher: Watcher::new(request),
+            ran: 0,
+            streaming: true,
+        });
+        let records = match self.dev_watch_read(&mut run.watcher, context) {
+            Ok(records) => records,
+            Err(refused) => return self.dev_done(refused, context),
+        };
+        self.suspend();
+        self.dev_effect(Pending::Watch(run), Effect::Stream { records })
+    }
+
+    fn dev_watch(&mut self, mut run: Box<WatchRun>, outcome: &Outcome, context: &HostContext) -> Step {
+        if let Some(message) = &outcome.failed {
+            return self.dev_refused(
+                ErrorCode::RenderFailed,
+                "$",
+                &format!("frame {} of {} failed: {message}", run.ran + 1, run.watcher.frames()),
+            );
+        }
+        if !run.streaming {
+            run.ran += 1;
+            let records = match self.dev_watch_read(&mut run.watcher, context) {
+                Ok(records) => records,
+                Err(refused) => return self.dev_done(refused, context),
+            };
+            if !records.is_empty() {
+                run.streaming = true;
+                return self.dev_effect(Pending::Watch(run), Effect::Stream { records });
+            }
+        }
+        if run.ran < run.watcher.frames() {
+            run.streaming = false;
+            let timestamp = f64::from(run.ran) * run.watcher.interval_ms();
+            return self.dev_effect(Pending::Watch(run), Effect::Frame { timestamp });
+        }
+        let mut reply = self.dev_invoke(&query("status"), context);
+        if reply["ok"] == true {
+            reply["result"] = result::watch(WatchResult {
+                frames: run.ran,
+                interval_ms: run.watcher.interval_ms(),
+                records: run.watcher.sent(),
+                temporary: true,
+            });
+        }
+        self.dev_done(reply, context)
+    }
+
+    fn dev_watch_read(
+        &mut self,
+        watcher: &mut Watcher,
+        context: &HostContext,
+    ) -> Result<Vec<Value>, Value> {
+        let mut components = Vec::new();
+        for (index, watched) in watcher.watched().to_vec().into_iter().enumerate() {
+            let mut reply = self.dev_invoke(
+                &json!({
+                    "verb": "inspect",
+                    "entity": watched.entity,
+                    "component": watched.component,
+                }),
+                context,
+            );
+            if reply["ok"] != true {
+                if let Some(path) = reply["error"]["path"].as_str() {
+                    let field = path.strip_prefix("$.").unwrap_or_default().to_owned();
+                    reply["error"]["path"] = json!(format!("$.entities[{index}].{field}"));
+                }
+                return Err(reply);
+            }
+            components.push(reply["result"]["entity"]["components"][&watched.component].clone());
+        }
+        let world = self.engine().app.world();
+        let frame = world
+            .get_resource::<engine_core::FrameTime>()
+            .map(|time| time.frame.to_string());
+        let tick = world
+            .get_resource::<engine_core::FixedTime>()
+            .map(|time| time.tick.to_string());
+        let stats = self.stats_value();
+        Ok(watcher.changes((frame, tick), &stats, components))
+    }
+
+    fn stats_value(&self) -> Value {
+        serde_json::from_str(&self.stats()).expect("frame statistics are JSON")
     }
 
     fn dev_effect(&mut self, pending: Pending, effect: Effect) -> Step {
@@ -523,8 +902,7 @@ impl<G: Game> GameHost<G> {
     fn dev_done(&mut self, mut reply: Value, context: &HostContext) -> Step {
         self.dev_pending = None;
         if reply["ok"] == true {
-            let rendering: Value =
-                serde_json::from_str(&self.stats()).expect("frame statistics are JSON");
+            let rendering = self.stats_value();
             let observation = reply["observation"].clone();
             let mut result = reply["result"]
                 .as_object_mut()
@@ -540,8 +918,12 @@ impl<G: Game> GameHost<G> {
     }
 
     fn dev_refused(&mut self, code: ErrorCode, path: &str, message: &str) -> Step {
+        self.dev_refused_with(engine_dev::DevError::new(code, path, message))
+    }
+
+    fn dev_refused_with(&mut self, error: engine_dev::DevError) -> Step {
         self.dev_pending = None;
-        Step::Reply(self.dev_refusal(code, path, message))
+        Step::Reply(self.dev_refusal_with(&error))
     }
 
     fn dev_benchmark_start(&mut self, control: &Map<String, Value>, context: &HostContext) -> Step {
@@ -555,13 +937,13 @@ impl<G: Game> GameHost<G> {
             .unwrap_or_default()
             .to_owned();
         let frame = match mode.as_str() {
-            "step" => json!({"op": "step", "ticks": 1}),
-            "present" => json!({"op": "present", "alpha": 0.5}),
-            _ => json!({"op": "render"}),
+            "step" => self::control("step", json!({ "ticks": 1 })),
+            "present" => self::control("present", json!({ "alpha": 0.5 })),
+            _ => self::control("render", json!({})),
         };
         let number = |field: &str| control.get(field).and_then(Value::as_u64).unwrap_or(0);
-        let initial = self.dev_invoke(&json!({"op": "assets"}), context);
-        let cleared = self.dev_invoke(&json!({"op": "input"}), context);
+        let initial = self.dev_invoke(&query("assets"), context);
+        let cleared = self.dev_invoke(&self::control("input", json!({})), context);
         if let Some(refused) = [&initial, &cleared]
             .into_iter()
             .find(|reply| reply["ok"] != true)
@@ -621,15 +1003,14 @@ impl<G: Game> GameHost<G> {
             return self.dev_refused(code, "$", &message);
         }
         run.end = reply["observation"].clone();
-        run.unwaited =
-            Some(serde_json::from_str(&self.stats()).expect("frame statistics are JSON"));
+        run.unwaited = Some(self.stats_value());
         run.ran += 1;
         let within_ms = (BENCHMARK_LIMIT_MS as f64 - (now_ms() - run.started)).max(1.0);
         self.dev_effect(Pending::Benchmark(run), Effect::Wait { within_ms })
     }
 
     fn dev_benchmark_report(&mut self, run: &BenchmarkRun, context: &HostContext) -> Step {
-        let after = self.dev_invoke(&json!({"op": "assets"}), context);
+        let after = self.dev_invoke(&query("assets"), context);
         if after["ok"] != true {
             let (code, message) = stopped(&after);
             return self.dev_refused(code, "$", &message);

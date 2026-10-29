@@ -6,15 +6,19 @@ const folder = process.env.ENGINE_SMOKE_SENT;
 const ops = new Set();
 const sections = new Set();
 const inspectors = new Set();
-const CONTROL_FIELDS = new Set(["op", "version", "merge"]);
 
 export function recordSent(request) {
-  if (!folder || typeof request?.op !== "string") return;
-  ops.add(request.op);
-  if (request.op === "environment") {
-    for (const key of Object.keys(request)) if (!CONTROL_FIELDS.has(key)) sections.add(key);
+  if (!folder || typeof request?.verb !== "string") return;
+  const named = ["query", "control"].includes(request.verb);
+  if (named && typeof request.name !== "string") return;
+  ops.add(named ? request.name : request.verb);
+  if (request.verb === "control" && request.name === "environment") {
+    for (const key of Object.keys(request.args ?? {})) if (key !== "merge") sections.add(key);
   }
-  if (request.op === "inspect" && typeof request.component === "string") inspectors.add(request.component);
+  if (request.verb === "inspect" && typeof request.component === "string") inspectors.add(request.component);
+  if (request.verb === "watch") {
+    for (const watched of request.entities ?? []) if (typeof watched?.component === "string") inspectors.add(watched.component);
+  }
 }
 
 const disabled = new Set();

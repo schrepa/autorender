@@ -27,7 +27,7 @@ function partition(rendering, label) {
 
 async function gpuCapture(name, alpha) {
   for (let attempt = 1; ; attempt++) {
-    await command("present", { alpha });
+    await command("control", "present", { alpha });
     await delay(100);
     const { reply, png } = await capture(name, { alpha });
     if (reply.result.rendering.read_back_age > 1 && attempt < 50) continue;
@@ -60,7 +60,7 @@ async function cullingSettings(label) {
   assert.equal(on.occlusion_culling.active, true, "GPU frames run occlusion culling by default");
   assert.equal(on.subpixel_culling.active, true, "GPU frames run sub-pixel culling by default");
   assert.ok(on.render_passes.includes("occlusion_test"), "occlusion culling runs its test pass");
-  const off = await command("environment", { occlusion_culling: { enabled: false }, subpixel_culling: { enabled: false } });
+  const off = await command("control", "environment", { occlusion_culling: { enabled: false }, subpixel_culling: { enabled: false } });
   assert.deepEqual(off.result.environment_changed, ["occlusion_culling", "subpixel_culling"]);
   assert.deepEqual(await inspect("OcclusionCulling"), { enabled: false });
   const without = await preview(`${label}-culling-off`);
@@ -69,9 +69,9 @@ async function cullingSettings(label) {
   assert.equal(without.occlusion_culling.instances, null);
   assert.equal(without.subpixel_culling.instances, null);
   assert.ok(!without.render_passes.includes("occlusion_test"), "no occlusion test runs while it is off");
-  const invalid = await command("environment", { occlusion_culling: { enabled: true, phases: 2 } }, false);
+  const invalid = await command("control", "environment", { occlusion_culling: { enabled: true, phases: 2 } }, false);
   assert.equal(invalid.error.code, "unknown_field", "unknown occlusion culling fields are rejected");
-  await command("environment", { occlusion_culling: { enabled: true }, subpixel_culling: { enabled: true } });
+  await command("control", "environment", { occlusion_culling: { enabled: true }, subpixel_culling: { enabled: true } });
   assert.equal((await preview(`${label}-culling-again`)).occlusion_culling.active, true);
 }
 
@@ -81,21 +81,21 @@ async function verify(workload) {
   const url = sceneUrl();
   await openPaused(page, url);
   if (workload.settle) {
-    await command("resume");
+    await command("control", "resume");
     await waitFrames(command, 2, {
       done: ({ result }) => result.rendering.shadows.tiles_missing === 0 && result.rendering.shadows.tiles_drawn === 0,
     });
-    await command("pause");
+    await command("control", "pause");
   }
-  await command("render");
-  await command("step", { ticks: 3 });
+  await command("control", "render");
+  await command("control", "step", { ticks: 3 });
   const cases = [];
-  const overview = await command("status");
+  const overview = await command("query", "status");
   for (const [label, pose] of [
     ["default-view", null],
     ["partial-view", { position: [0, 30, 0], target: [60, 20, 40], vertical_fov_radians: 0.9, near: 0.1, far: 400 }],
   ]) {
-    if (pose) await command("camera", pose);
+    if (pose) await command("control", "camera", pose);
     for (const alpha of [0, 0.37, 0.81]) cases.push(await compare(`${workload.label}-${label}-${alpha}`, alpha));
   }
   assert.ok(cases.some(value => value.cpu_visible < value.candidates), "A view must exercise GPU culling.");
@@ -104,7 +104,7 @@ async function verify(workload) {
     const motion = await differentPixels(page, [cases[0].cpu, cases[2].cpu], { tolerance: 8 });
     assert.ok(motion.changed > 0, "Fractions must present visibly different poses.");
   }
-  const after = await command("status");
+  const after = await command("query", "status");
   assert.equal(after.observation.tick, overview.observation.tick, "Previews must not advance simulation.");
   if (workload.culling) await cullingSettings(workload.label);
 
@@ -113,9 +113,9 @@ async function verify(workload) {
   assert.equal(state.result.value.gpu_pending, false);
   assert.equal(state.result.value.mode, "interpolated");
 
-  await command("resume");
+  await command("control", "resume");
   await waitFrames(command, 3);
-  const resumed = await command("pause");
+  const resumed = await command("control", "pause");
   assert.equal(resumed.observation.presentation.mode, "interpolated");
   assert.equal(resumed.observation.presentation.gpu_pending, true);
   assert.deepEqual(errors, []);

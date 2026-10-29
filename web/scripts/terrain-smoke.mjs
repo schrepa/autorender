@@ -19,9 +19,9 @@ async function subdivided() {
 try {
   assert.ok(settled.terrain.leaves > 0 && settled.terrain.triangles > 0, "terrain draws");
   const shadows = (await command("inspect", { component: "Shadows" })).result.value;
-  await command("environment", { shadows: { ...shadows, finest_texel: shadows.finest_texel / 2 } });
+  await command("control", "environment", { shadows: { ...shadows, finest_texel: shadows.finest_texel / 2 } });
   const cast = await rendersUntil(rendering => rendering.terrain.shadow_patches > 0, "terrain casts shadows");
-  await command("environment", { shadows });
+  await command("control", "environment", { shadows });
   await settle();
   assert.equal(settled.terrain.dropped_tiles, 0);
   assert.equal(settled.terrain.dropped_materials, 0);
@@ -30,7 +30,7 @@ try {
     `far crates: ${settled.terrain.placed_far_objects} of ${settled.terrain.placed_objects}`);
   let presented;
   for (let frame = 0; frame < 60; frame++) {
-    presented = (await command("present", { alpha: 0 })).result.rendering;
+    presented = (await command("control", "present", { alpha: 0 })).result.rendering;
     if (presented.terrain.placed_impostors > 0) break;
   }
   assert.equal(presented.terrain.placed_impostors, 1, `the balls' impostor comes: ${JSON.stringify(presented)}`);
@@ -57,8 +57,8 @@ try {
   assert.ok(view.level_ranges.every((range, level) => level === 0 || range > view.level_ranges[level - 1]));
   assert.deepEqual(view.terrain.surface.materials.map(material => material.id), ["meadow", "rock", "snow", "gravel"]);
   assert.ok(Math.abs(view.terrain.surface.materials[3].depth - 0.1) < 1e-6, `depth reads back: ${view.terrain.surface.materials[3].depth}`);
-  const stepless = await command("environment", { terrain: { relief_steps: 1 } }, false);
-  assert.equal(stepless.error.path, "$.terrain.relief_steps");
+  const stepless = await command("control", "environment", { terrain: { relief_steps: 1 } }, false);
+  assert.equal(stepless.error.path, "$.args.terrain.relief_steps");
   assert.deepEqual(view.terrain.surface.biomes.map(biome => biome.id), ["lowland", "summit"]);
   assert.deepEqual(view.terrain.surface.assets.map(asset => asset.id), ["crate", "ball"]);
   assert.deepEqual(view.terrain.surface.assets[0], { id: "crate", mesh: "box", material: "plain", lods: [{ mesh: "box", error: 0.0625 }], sway: 0.5, collider: { shape: { kind: "cuboid", half_extents: [0.5, 0.5, 0.5] }, memberships: 1, filter: 4294967295 } });
@@ -85,10 +85,10 @@ try {
     }
     const beyond = await heights([[2500, 2500], [-3000, 1000]]);
     assert.ok(beyond.every(sample => sample && Number.isFinite(sample.height)), `queries past the edges: ${JSON.stringify(beyond)}`);
-    await command("camera", { ...overview, position: [0, 1500, 1800], target: [0, 0, -2000], far: 20000 });
+    await command("control", "camera", { ...overview, position: [0, 1500, 1800], target: [0, 0, -2000], far: 20000 });
     const surroundedFrame = await settle();
     const surrounded = await capture("surroundings");
-    const edged = await command("environment", { terrain: { ...fast, surroundings: false } });
+    const edged = await command("control", "environment", { terrain: { ...fast, surroundings: false } });
     assert.deepEqual(edged.result.environment_changed, ["terrain"]);
     const alone = await settle();
     assert.equal((await command("inspect", { component: "Terrains" })).result.value.surroundings_tiles, 0, "settings turn the surroundings off");
@@ -96,8 +96,8 @@ try {
     const bare = await capture("no-surroundings");
     const filled = await differentPixels(page, [surrounded, bare]);
     assert.ok(filled.changed > 0.2 * filled.total, `the surroundings fill ${filled.changed} of ${filled.total} pixels`);
-    await command("environment", { terrain: fast });
-    await command("camera", overview);
+    await command("control", "environment", { terrain: fast });
+    await command("control", "camera", overview);
     await settle();
     checks.push({ check: "surroundings", reach: around.reach, tiles: status.surroundings_tiles, pixels: filled.changed });
   }
@@ -140,7 +140,7 @@ try {
   const trench = [430 - 512, 96 - 512];
   const [floor] = await heights([trench]);
   assert.equal(floor.path, null, `under its bridge the ground is no road: ${JSON.stringify(floor)}`);
-  const landing = (await command("raycast", { origin: [trench[0], 300, trench[1]], direction: [0, -1, 0], max_distance: 600 })).result.hit;
+  const landing = (await command("query", "raycast", { origin: [trench[0], 300, trench[1]], direction: [0, -1, 0], max_distance: 600 })).result.hit;
   assert.ok(landing?.placed?.layer === 65535 && landing.point[1] > floor.height + 5, `rays land on the deck: ${JSON.stringify(landing)} over ${floor.height}`);
   checks.push({ check: "bridge", bridged: road.bridged, deck: landing.point[1], floor: floor.height });
   const bore = view.paths[1];
@@ -148,7 +148,7 @@ try {
   assert.equal((await command("inspect", { component: "Terrains" })).result.value.tunnels, 1);
   const [mound] = await heights([[750 - 512, 200 - 512]]);
   assert.ok(mound.path === null && !mound.hole, `above the tunnel the ground is no road: ${JSON.stringify(mound)}`);
-  const top = (await command("raycast", { origin: [750 - 512, 400, 200 - 512], direction: [0, -1, 0], max_distance: 600 })).result.hit;
+  const top = (await command("query", "raycast", { origin: [750 - 512, 400, 200 - 512], direction: [0, -1, 0], max_distance: 600 })).result.hit;
   const landed = top?.placed ? top.placed.layer === 65535 && top.point[1] < mound.height - 10 : Math.abs(top?.point[1] - mound.height) < 0.05;
   assert.ok(landed, `rays land on the mound or the floor under it: ${JSON.stringify(top)} under ${mound.height}`);
   const bored = [];
@@ -156,7 +156,7 @@ try {
   const portals = (await heights(bored)).filter(sample => sample?.hole).length;
   assert.ok(portals > 0, "the ground opens at its portals");
   checks.push({ check: "tunnel", tunneled: bore.tunneled, portals, mound: mound.height });
-  const routed = (await command("terrain_route", { from: [-400, 100], to: [300, -250], max_grade: 0.2 })).result;
+  const routed = (await command("query", "terrain_route", { from: [-400, 100], to: [300, -250], max_grade: 0.2 })).result;
   assert.equal(routed.terrain, "ground");
   const route = routed.route;
   assert.ok(route && route.steepest <= 0.2 + 1e-6 && route.points.length >= 2, `a route keeps within its grade: ${JSON.stringify(routed)}`);
@@ -165,7 +165,7 @@ try {
   const [first, last] = [world[0], world[world.length - 1]];
   assert.ok(Math.hypot(first[0] + 400, first[1] - 100) < 3 && Math.hypot(last[0] - 300, last[1] + 250) < 3, `the route joins its ends: ${JSON.stringify([first, last])}`);
   assert.ok(route.length >= Math.hypot(700, 350) - 8, `a route is no shorter than its ends' distance: ${route.length}`);
-  const unrouted = await command("terrain_route", { from: [-400, 100], to: [300, -250], level: 99 }, false);
+  const unrouted = await command("query", "terrain_route", { from: [-400, 100], to: [300, -250], level: 99 }, false);
   assert.equal(unrouted.error.code, "out_of_range");
   checks.push({ check: "route", points: route.points.length, length: route.length, steepest: route.steepest });
 
@@ -182,21 +182,21 @@ try {
   assert.ok(Math.abs(peak.height - 200) < 1e-3, `heightmap peak ${peak.height}`);
   checks.push({ check: "imported heightmap", peak: peak.height });
 
-  const budget = await command("environment", { terrain: { ...fast, max_tiles: 3 } });
+  const budget = await command("control", "environment", { terrain: { ...fast, max_tiles: 3 } });
   assert.ok(budget.result.rendering.terrain.tiles <= 3, `${budget.result.rendering.terrain.tiles} tiles under a budget of 3`);
-  const budgeted = (await command("render")).result.rendering;
+  const budgeted = (await command("control", "render")).result.rendering;
   assert.ok(budgeted.terrain.tiles <= 3 && budgeted.terrain.dropped_tiles > 0, JSON.stringify(budgeted));
-  await command("environment", { terrain: fast });
+  await command("control", "environment", { terrain: fast });
   await settle();
   checks.push({ check: "tile budget", resident: budgeted.terrain.tiles, dropped: budgeted.terrain.dropped_tiles });
 
-  const ray = await command("raycast", { origin: [10, 200, -7], direction: [0, -1, 0], max_distance: 400 });
+  const ray = await command("query", "raycast", { origin: [10, 200, -7], direction: [0, -1, 0], max_distance: 400 });
   const [under] = await heights([[10, -7]]);
   assert.equal(ray.result.hit.entity.id, "ground");
   assert.ok(Math.abs(ray.result.hit.point[1] - under.height) < 2e-3, "ray and query agree");
-  const through = await command("raycast", { origin: [48, 200, 0], direction: [0, -1, 0], max_distance: 400 });
+  const through = await command("query", "raycast", { origin: [48, 200, 0], direction: [0, -1, 0], max_distance: 400 });
   assert.equal(through.result.hit, null, "rays fall through holes");
-  const sweep = (await command("terrain_sweep", { center: [0, 0], half_extent: 120, samples: 24 })).result;
+  const sweep = (await command("query", "terrain_sweep", { center: [0, 0], half_extent: 120, samples: 24 })).result;
   assert.ok(sweep.collision.compared > 100, `sweep compared ${sweep.collision.compared}`);
   assert.ok(sweep.collision.worst.max_difference < 5e-3, `collision differs by ${sweep.collision.worst.max_difference}`);
   assert.ok(ray.result.snapshot.placed_colliders > 0, `placed colliders: ${ray.result.snapshot.placed_colliders}`);
@@ -206,101 +206,101 @@ try {
   checks.push({ check: "render versus collision", compared: sweep.collision.compared, worst: sweep.collision.worst.max_difference, layers: sweep.layers.worst.max_difference, placed_colliders: ray.result.snapshot.placed_colliders, placed_first: sweep.collision.placed_first });
 
   const coarse = await subdivided();
-  const fine = await command("environment", { terrain: { ...fast, pixel_error: 2, subdivision_error: 0.5 } });
+  const fine = await command("control", "environment", { terrain: { ...fast, pixel_error: 2, subdivision_error: 0.5 } });
   await settle();
   const finer = await subdivided();
   const detailed = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
   assert.ok(detailed.level_ranges[0] > view.level_ranges[0], `level 0 reaches ${detailed.level_ranges[0]} m`);
   assert.ok(finer.terrain.triangles > coarse.terrain.triangles, `a smaller subdivision error draws more triangles: ${coarse.terrain.triangles} to ${finer.terrain.triangles}`);
   assert.deepEqual(fine.result.environment_changed, ["terrain"]);
-  const invalid = await command("environment", { terrain: { pixel_error: 0.5 } }, false);
+  const invalid = await command("control", "environment", { terrain: { pixel_error: 0.5 } }, false);
   assert.equal(invalid.error.code, "invalid_environment");
-  assert.equal(invalid.error.path, "$.terrain.pixel_error");
+  assert.equal(invalid.error.path, "$.args.terrain.pixel_error");
   const shaded = await capture("shaded");
-  const off = await command("environment", { terrain: { enabled: false } });
+  const off = await command("control", "environment", { terrain: { enabled: false } });
   assert.equal(off.result.rendering.terrain.leaves, 0);
   const empty = await capture("disabled");
   const shown = await differentPixels(page, [shaded, empty]);
   assert.ok(shown.changed > 10_000, `terrain covers ${shown.changed} pixels`);
-  await command("environment", { terrain: fast });
+  await command("control", "environment", { terrain: fast });
   await settle();
   checks.push({ check: "settings section", fewer: coarse.terrain.triangles, more: finer.terrain.triangles, terrainPixels: shown.changed });
 
   const moving = { ...fast, collision_radius: 0, motion_detail: { speed: 1, fastest: 2, levels: 8, settle: 0.25 } };
-  await command("environment", { terrain: moving });
+  await command("control", "environment", { terrain: moving });
   let waited = 0;
   for (let step = 0; step < 12; step++) {
     const along = -300 + step * 50;
-    await command("camera", { position: [along, 120, along], target: [along + 100, 30, along + 100], vertical_fov_radians: Math.PI / 3, near: 0.5, far: 4000 });
-    await command("step", { ticks: 1 });
+    await command("control", "camera", { position: [along, 120, along], target: [along + 100, 30, along + 100], vertical_fov_radians: Math.PI / 3, near: 0.5, far: 4000 });
+    await command("control", "step", { ticks: 1 });
     waited = Math.max(waited, (await command("inspect", { component: "Terrains" })).result.value.waiting_tiles);
   }
   assert.ok(waited > 0, `tiles wait while the camera moves fast: ${waited}`);
-  for (let step = 0; step < 80; step++) await command("step", { ticks: 1 });
+  for (let step = 0; step < 80; step++) await command("control", "step", { ticks: 1 });
   const rested = (await command("inspect", { component: "Terrains" })).result.value;
   assert.equal(rested.waiting_tiles, 0, `nothing waits once the camera settles: ${JSON.stringify(rested)}`);
   await settle();
-  const tooMany = await command("environment", { terrain: { ...moving, motion_detail: { levels: 9 } } }, false);
+  const tooMany = await command("control", "environment", { terrain: { ...moving, motion_detail: { levels: 9 } } }, false);
   assert.equal(tooMany.error.code, "invalid_environment");
-  assert.equal(tooMany.error.path, "$.terrain.motion_detail.levels");
-  await command("environment", { terrain: fast });
-  await command("camera", overview);
+  assert.equal(tooMany.error.path, "$.args.terrain.motion_detail.levels");
+  await command("control", "environment", { terrain: fast });
+  await command("control", "camera", overview);
   await settle();
   checks.push({ check: "motion detail", waited });
 
-  await command("environment", { terrain: { ...fast, cache_bytes: 1 } });
-  await command("render");
-  await command("environment", { terrain: fast });
+  await command("control", "environment", { terrain: { ...fast, cache_bytes: 1 } });
+  await command("control", "render");
+  await command("control", "environment", { terrain: fast });
   const home = await inspectTerrains();
-  await command("camera", { ...overview, position: [-420, 90, -420], target: [-300, 30, -300] });
+  await command("control", "camera", { ...overview, position: [-420, 90, -420], target: [-300, 30, -300] });
   await settle();
-  const joined = (await command("terrain_sweep", { center: [-380, -380], half_extent: 100, samples: 24 })).result;
+  const joined = (await command("query", "terrain_sweep", { center: [-380, -380], half_extent: 100, samples: 24 })).result;
   assert.ok(joined.layers.compared > 100, `the sweep compared ${joined.layers.compared}`);
   assert.ok(joined.layers.worst.max_difference < 5e-3, `tiles differ from the layers by ${joined.layers.worst.max_difference}`);
-  await command("camera", overview);
+  await command("control", "camera", overview);
   await settle();
   const back = await inspectTerrains();
   assert.ok(back.restored_tiles > home.restored_tiles, `tiles return from memory: ${JSON.stringify(back)}`);
-  await command("environment", { terrain: { ...fast, cache_bytes: 1 } });
-  await command("render");
+  await command("control", "environment", { terrain: { ...fast, cache_bytes: 1 } });
+  await command("control", "render");
   const emptied = await inspectTerrains();
   assert.equal(emptied.cached_tiles, 0, `a byte keeps no tile: ${JSON.stringify(emptied)}`);
-  await command("environment", { terrain: fast });
+  await command("control", "environment", { terrain: fast });
   await settle();
   checks.push({ check: "memory", restored: back.restored_tiles });
 
   const baseline = await capture("view-shaded");
-  const levels = await command("environment", { debug_view: { view: "levels" } });
+  const levels = await command("control", "environment", { debug_view: { view: "levels" } });
   assert.deepEqual(levels.result.environment_changed, ["debug_view"]);
   const levelView = await capture("view-levels");
   assert.ok((await differentPixels(page, [baseline, levelView])).changed > 10_000, "the levels view differs");
-  await command("environment", { debug_view: { view: "tiles" } });
+  await command("control", "environment", { debug_view: { view: "tiles" } });
   await capture("view-tiles");
-  await command("environment", { debug_view: { view: "materials" } });
+  await command("control", "environment", { debug_view: { view: "materials" } });
   const materialView = await capture("view-materials");
   assert.ok((await differentPixels(page, [baseline, materialView])).changed > 10_000, "the materials view differs");
   let sky;
   for (let frame = 0; frame < 400; frame++) {
-    sky = (await command("render")).result.rendering;
+    sky = (await command("control", "render")).result.rendering;
     if (sky.terrain.sky_maps === 2) break;
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   assert.equal(sky.terrain.sky_maps, 2, `the sky maps arrive: ${JSON.stringify(sky)}`);
-  await command("environment", { debug_view: { view: "sky" } });
+  await command("control", "environment", { debug_view: { view: "sky" } });
   const skyView = await capture("view-sky");
   assert.ok((await differentPixels(page, [baseline, skyView])).changed > 10_000, "the sky view differs");
   checks.push({ check: "sky visibility", maps: sky.terrain.sky_maps });
-  await command("environment", { debug_view: { view: "off" } });
-  const frozen = await command("terrain", { freeze: true });
+  await command("control", "environment", { debug_view: { view: "off" } });
+  const frozen = await command("control", "terrain", { freeze: true });
   assert.ok(Array.isArray(frozen.result.frozen_at));
   assert.deepEqual((await command("inspect", { component: "TerrainDebug" })).result.value, { freeze: frozen.result.frozen_at });
-  await command("camera", { ...overview, position: [0, 900, 1400] });
+  await command("control", "camera", { ...overview, position: [0, 900, 1400] });
   const afar = await subdivided();
   await capture("frozen-from-afar");
-  await command("terrain", { freeze: false });
+  await command("control", "terrain", { freeze: false });
   const moved = await subdivided();
   assert.ok(moved.terrain.leaves < afar.terrain.leaves, `unfrozen, the subdivision coarsens as the eye leaves: ${afar.terrain.leaves} leaves frozen, ${moved.terrain.leaves} unfrozen`);
-  await command("camera", overview);
+  await command("control", "camera", overview);
   await settle();
   checks.push({ check: "terrain control", frozenLeaves: afar.terrain.leaves, unfrozenLeaves: moved.terrain.leaves });
 
@@ -311,48 +311,48 @@ try {
       for (let frame = 0; frame < 400; frame++) {
         const height = await ground();
         if (Math.abs(height - wanted) < 0.05) return height;
-        await command("render");
+        await command("control", "render");
         await new Promise(resolve => setTimeout(resolve, 25));
       }
       assert.fail(`${what}: the ground at ${spot} stays at ${await ground()}, not ${wanted}`);
     };
     const authored = await ground();
     const mound = { id: "smoke-mound", center: spot, radius: 20, falloff: 10, change: { raise: 8 } };
-    const raised = (await command("terrain_edit", mound)).result;
+    const raised = (await command("control", "terrain_edit", mound)).result;
     assert.ok(raised.applied && raised.edits === 1 && Math.abs(raised.largest_change - 8) < 1e-3, `the edit applies: ${JSON.stringify(raised)}`);
     const risen = await until(authored + 8, "the edit raises");
-    assert.equal((await command("terrain_edit", mound)).result.applied, false, "repeating an edit leaves it alone");
+    assert.equal((await command("control", "terrain_edit", mound)).result.applied, false, "repeating an edit leaves it alone");
     const view = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
     assert.deepEqual(view.edits.map(edit => edit.id), ["smoke-mound"], `the inspector lists the edits: ${JSON.stringify(view.edits)}`);
-    assert.equal((await command("terrain_undo", {})).result.undone, "smoke-mound");
+    assert.equal((await command("control", "terrain_undo", {})).result.undone, "smoke-mound");
     await until(authored, "undo restores");
-    assert.equal((await command("terrain_redo", {})).result.redone, "smoke-mound");
+    assert.equal((await command("control", "terrain_redo", {})).result.redone, "smoke-mound");
     await until(authored + 8, "redo raises again");
-    const refused = await command("terrain_edit", { ...mound, id: "no spaces" }, false);
-    assert.equal(refused.error.path, "$.id");
-    assert.equal((await command("terrain_undo", {})).result.undone, "smoke-mound");
+    const refused = await command("control", "terrain_edit", { ...mound, id: "no spaces" }, false);
+    assert.equal(refused.error.path, "$.args.id");
+    assert.equal((await command("control", "terrain_undo", {})).result.undone, "smoke-mound");
     await until(authored, "the fixture is left as authored");
     checks.push({ check: "edits", raised: risen - authored, change: raised.largest_change });
   }
   {
     const stream = { id: "smoke-river", points: [[-260, 120], [-200, 150], [-140, 190]], width: [3], discharge: [2] };
-    const drawn = (await command("terrain_river", stream)).result;
+    const drawn = (await command("control", "terrain_river", stream)).result;
     assert.ok(drawn.applied && drawn.rivers === 1 && drawn.dirty, `the river draws: ${JSON.stringify(drawn)}`);
-    assert.equal((await command("terrain_river", stream)).result.applied, false, "drawing the same river again leaves it alone");
+    assert.equal((await command("control", "terrain_river", stream)).result.applied, false, "drawing the same river again leaves it alone");
     const listed = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
     assert.deepEqual(listed.rivers.map(river => river.id), ["smoke-river"], `the inspector lists the drawn rivers: ${JSON.stringify(listed.rivers)}`);
-    const taken = (await command("terrain_river", { id: "smoke-river" })).result;
+    const taken = (await command("control", "terrain_river", { id: "smoke-river" })).result;
     assert.ok(taken.applied && taken.rivers === 0, `no points take the river away: ${JSON.stringify(taken)}`);
     checks.push({ check: "drawn rivers", drawn: drawn.rivers, taken: taken.rivers });
   }
   {
     const [start, end] = [[-300, -250], [-100, -250]];
-    await command("terrain_edit", { id: "smoke-pit", center: [-200, -250], radius: 18, change: "hole" });
+    await command("control", "terrain_edit", { id: "smoke-pit", center: [-200, -250], radius: 18, change: "hole" });
     let found;
     for (let attempt = 0; attempt < 600; attempt++) {
-      found = (await command("nav_path", { from: start, to: end })).result;
+      found = (await command("query", "nav_path", { from: start, to: end })).result;
       if (!found.searching) break;
-      await command("render");
+      await command("control", "render");
       await new Promise(resolve => setTimeout(resolve, 25));
     }
     assert.equal(found.searching, false, `the walk's search ends: ${JSON.stringify(found).slice(0, 300)}`);
@@ -361,24 +361,24 @@ try {
     const straight = Math.hypot(end[0] - start[0], end[1] - start[1]);
     const clear = walked.points.every(([x, , z]) => Math.hypot(x + 200, z + 250) > 18);
     assert.ok(clear && walked.length > straight, `the walk goes around the hole: ${walked.length} m against ${straight} m`);
-    const steep = await command("nav_path", { from: start, to: end, options: { max_slope: 0 } }, false);
-    assert.equal(steep.error.path, "$.options.max_slope");
-    assert.equal((await command("terrain_undo", {})).result.undone, "smoke-pit");
+    const steep = await command("query", "nav_path", { from: start, to: end, options: { max_slope: 0 } }, false);
+    assert.equal(steep.error.path, "$.args.options.max_slope");
+    assert.equal((await command("control", "terrain_undo", {})).result.undone, "smoke-pit");
     checks.push({ check: "navigation", length: walked.length, straight, points: walked.points.length, searched: walked.searched });
   }
   {
     const goal = [-25, 12];
-    const sent = await command("nav_go", { entity: "hiker", destination: goal });
+    const sent = await command("control", "nav_go", { entity: "hiker", destination: goal });
     assert.deepEqual(sent.result.destination, goal);
     let agent;
     for (let attempt = 0; attempt < 400; attempt++) {
-      await command("step", { ticks: 1 });
+      await command("control", "step", { ticks: 1 });
       agent = (await command("inspect", { entity: "hiker", component: "NavAgent" })).result.entity.components.NavAgent;
       if (agent.status !== "searching") break;
       await new Promise(resolve => setTimeout(resolve, 25));
     }
     for (let round = 0; round < 30; round++) {
-      await command("step", { ticks: 60 });
+      await command("control", "step", { ticks: 60 });
       agent = (await command("inspect", { entity: "hiker", component: "NavAgent" })).result.entity.components.NavAgent;
       if (agent.status === "arrived") break;
     }
@@ -386,21 +386,21 @@ try {
     assert.ok(agent.searched > 0 && agent.length > 40, `its walk was searched: ${JSON.stringify(agent)}`);
     const at = (await command("inspect", { entity: "hiker", component: "Transform" })).result.entity.components.Transform.translation;
     assert.ok(Math.hypot(at[0] - goal[0], at[2] - goal[1]) < 1.5, `it stands at its goal: ${at}`);
-    const [ground] = (await command("terrain_height", { points: [[at[0], at[2]]] })).result.samples;
+    const [ground] = (await command("query", "terrain_height", { points: [[at[0], at[2]]] })).result.samples;
     assert.ok(Math.abs(at[1] - (ground.height + 0.5)) < 0.25, `on the ground: ${at[1]} over ${ground.height}`);
-    await command("nav_go", { entity: "hiker", destination: [5000, 5000] });
-    await command("step", { ticks: 2 });
+    await command("control", "nav_go", { entity: "hiker", destination: [5000, 5000] });
+    await command("control", "step", { ticks: 2 });
     const lost = (await command("inspect", { entity: "hiker", component: "NavAgent" })).result.entity.components.NavAgent;
     assert.equal(lost.status, "unreachable", `off the terrain nothing reaches: ${JSON.stringify(lost)}`);
     const stats = (await command("inspect", { component: "NavAgents" })).result.value;
     assert.equal(stats.agents, 1, `the tick counted its agents: ${JSON.stringify(stats)}`);
-    assert.equal((await command("environment", { navigation: { samples_per_tick: 10 } }, false)).error.path, "$.navigation.samples_per_tick");
-    await command("nav_go", { entity: "hiker", destination: null });
+    assert.equal((await command("control", "environment", { navigation: { samples_per_tick: 10 } }, false)).error.path, "$.args.navigation.samples_per_tick");
+    await command("control", "nav_go", { entity: "hiker", destination: null });
     checks.push({ check: "agents", length: agent.length, searched: agent.searched, at });
   }
   {
     const [ground] = await heights([[18, -12]]);
-    const top = (await command("raycast", { origin: [18, ground.height + 50, -12], direction: [0, -1, 0], max_distance: 100 })).result.hit;
+    const top = (await command("query", "raycast", { origin: [18, ground.height + 50, -12], direction: [0, -1, 0], max_distance: 100 })).result.hit;
     assert.ok(top?.placed?.layer === 65534 && Math.abs(top.point[1] - (ground.height + 1.5)) < 0.3,
       `the authored crate stands on the plateau: ${JSON.stringify(top)} over ${ground.height}`);
     const view = (await command("inspect", { entity: "ground", component: "Terrain" })).result.entity.components.Terrain;
@@ -412,23 +412,23 @@ try {
   const named = structuredClone(fixture);
   named.entities.push({ id: "spawn-point", prefetch: {}, transform: { translation: spawnPoint } });
   await scene.reload(command, named);
-  await command("environment", { terrain: fast });
-  await command("camera", overview);
+  await command("control", "environment", { terrain: fast });
+  await command("control", "camera", overview);
   await settle();
   const prefetch = (await command("inspect", { entity: "spawn-point", component: "TerrainPrefetch" })).result.entity.components.TerrainPrefetch;
   assert.equal(prefetch.reach, 2, `a place reaches as far as a camera loads: ${JSON.stringify(prefetch)}`);
   let stored = await inspectTerrains();
   for (let frame = 0; frame < 600 && !(stored.cached_tiles > 0 && stored.prefetching_tiles === 0); frame++) {
-    await command("render");
+    await command("control", "render");
     await new Promise(resolve => setTimeout(resolve, 25));
     stored = await inspectTerrains();
   }
   assert.ok(stored.cached_tiles > 0 && stored.prefetching_tiles === 0, `the place's tiles load into memory: ${JSON.stringify(stored)}`);
-  await command("camera", { ...overview, position: spawnPoint, target: [300, 30, 300] });
+  await command("control", "camera", { ...overview, position: spawnPoint, target: [300, 30, 300] });
   await settle();
   const sent = await inspectTerrains();
   assert.ok(sent.restored_tiles > stored.restored_tiles, `the place's tiles return from memory: ${JSON.stringify(sent)}`);
-  await command("camera", overview);
+  await command("control", "camera", overview);
   await settle();
   checks.push({ check: "prefetch", cached: stored.cached_tiles, bytes: stored.cached_bytes, restored: sent.restored_tiles - stored.restored_tiles });
 

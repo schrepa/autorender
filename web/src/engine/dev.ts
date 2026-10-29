@@ -7,7 +7,7 @@ import type { Effect, HostContext, Outcome, Reply, Step } from "../generated/rep
 import { parseJson } from "../generated/runtime";
 import protocol from "../generated/protocol.json";
 
-type Command = { op: string; [field: string]: unknown };
+type Command = { verb: string; [field: string]: unknown };
 interface Host {
   game: Runtime;
   signal: AbortSignal;
@@ -36,8 +36,10 @@ declare global {
     __engineDev?: {
       version: number; instance: string; build: string | null; controls: Record<string, string>; parameters: Record<string, string>;
       request(command: Command): Promise<Reply>;
+      saved(path: string): string | undefined;
       waitingOnGpu(): boolean;
     };
+    __engineWatch?: (records: unknown[]) => void;
   }
 }
 
@@ -50,6 +52,15 @@ export function connectDevelopment(host: Host): () => void {
   if (!runtime.dev_request) throw new Error("Development Wasm is missing; run cargo xtask dev.");
   const closed = () => disposed || host.signal.aborted;
   let gpuWaits = 0;
+  const saved = new Map<string, string>();
+  async function save(name: string, contents: unknown): Promise<Outcome> {
+    const text = JSON.stringify(contents);
+    const bytes = new TextEncoder().encode(text);
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    const path = `page/${name}-${saved.size + 1}.json`;
+    saved.set(path, text);
+    return { artifact: { path, mime_type: "application/json", bytes: bytes.byteLength, sha256: Array.from(digest, byte => byte.toString(16).padStart(2, "0")).join("") } };
+  }
   async function presented(count: number): Promise<void> {
     const done = host.gpuWorkDone?.();
     if (!done) {
@@ -111,6 +122,11 @@ export function connectDevelopment(host: Host): () => void {
         if (closed()) throw new Error("session closed");
         return parseJson(runtime.dev_reloaded!(source, context(), files));
       }
+      case "save":
+        return resumed(await save(effect.name, effect.contents));
+      case "stream":
+        window.__engineWatch?.(effect.records);
+        return resumed({});
     }
   }
   const api = {
@@ -120,6 +136,11 @@ export function connectDevelopment(host: Host): () => void {
     controls: Object.fromEntries(Object.entries(host.controls ?? {}).map(([name, control]) => [name, control.description])),
     parameters: host.parameters ?? {},
     waitingOnGpu: () => gpuWaits > 0,
+    saved(path: string): string | undefined {
+      const text = saved.get(path);
+      saved.delete(path);
+      return text;
+    },
     async request(command: Command): Promise<Reply> {
       if (closed()) return refuse("session_closed", "$", "the browser runtime was disposed");
       const stopped = host.stopped();

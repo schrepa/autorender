@@ -9,7 +9,7 @@ use crate::Failure;
 use crate::measure::git;
 use map::Check;
 
-const USAGE: &str = "usage: cargo xtask verify [--level quick|pr|merge] [--base REV] [--plan]";
+const USAGE: &str = "usage: cargo xtask verify [--level quick|pr|merge] [--base REV] [--plan] [--json]";
 
 const QUICK_STAGES: &[&str] = &[
     "policy",
@@ -35,6 +35,16 @@ enum Level {
     Quick,
     Pr,
     Merge,
+}
+
+impl Level {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Quick => "quick",
+            Self::Pr => "pr",
+            Self::Merge => "merge",
+        }
+    }
 }
 
 #[derive(Default)]
@@ -133,6 +143,7 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     let mut level = Level::Pr;
     let mut base = None;
     let mut plan_only = false;
+    let mut json = false;
     let mut given = arguments.iter();
     while let Some(argument) = given.next() {
         match argument.as_str() {
@@ -146,6 +157,7 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
             }
             "--base" => base = Some(given.next().ok_or(USAGE)?.clone()),
             "--plan" => plan_only = true,
+            "--json" => json = true,
             _ => return Err(format!("unknown option {argument}\n{USAGE}").into()),
         }
     }
@@ -193,7 +205,18 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     if plan_only {
         return Ok(());
     }
-    run_steps(&steps)
+    let ran = run_steps(&steps);
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "verify": {
+                "level": level.name(),
+                "base": base,
+                "steps": ran.steps,
+            }})
+        );
+    }
+    ran.outcome
 }
 
 #[expect(
@@ -378,20 +401,41 @@ fn steps<'a>(
     Ok(steps)
 }
 
-fn run_steps(steps: &[Step]) -> Result<(), Failure> {
+struct Ran {
+    steps: Vec<serde_json::Value>,
+    outcome: Result<(), Failure>,
+}
+
+fn run_steps(steps: &[Step]) -> Ran {
     let mut results: Vec<(&str, Option<u8>, Duration)> = Vec::new();
+    let mut records = Vec::new();
     for step in steps {
         println!("\n== verify: {} ==", step.name);
         let started = Instant::now();
-        let code = match (step.run)() {
-            Ok(()) => None,
+        let (code, failure) = match (step.run)() {
+            Ok(()) => (None, None),
             Err(failure) => {
                 eprintln!("{} failed: {}", step.name, failure.message);
-                Some(failure.code)
+                (Some(failure.code), Some(failure.message))
             }
         };
-        results.push((&step.name, code, started.elapsed()));
+        let took = started.elapsed();
+        records.push(serde_json::json!({
+            "step": step.name,
+            "ok": code.is_none(),
+            "exit": code,
+            "seconds": took.as_secs_f64(),
+            "failure": failure,
+        }));
+        results.push((&step.name, code, took));
     }
+    Ran {
+        steps: records,
+        outcome: tabled(&results),
+    }
+}
+
+fn tabled(results: &[(&str, Option<u8>, Duration)]) -> Result<(), Failure> {
     let width = results
         .iter()
         .map(|(name, _, _)| name.len())
@@ -399,7 +443,7 @@ fn run_steps(steps: &[Step]) -> Result<(), Failure> {
         .unwrap_or(4)
         .max(4);
     println!("\n{:width$}  result   seconds", "step");
-    for (name, code, took) in &results {
+    for (name, code, took) in results {
         let result = match code {
             None => "ok".to_owned(),
             Some(code) => format!("exit {code}"),

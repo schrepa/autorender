@@ -27,7 +27,7 @@ export async function openTerrain(name) {
     let rendering;
     let resident = 0;
     for (let frame = 0; frame < 600; frame++) {
-      rendering = (await command("render")).result.rendering ?? (await command("status")).result.rendering;
+      rendering = (await command("control", "render")).result.rendering ?? (await command("query", "status")).result.rendering;
       const ready = rendering.terrain.tiles > 0 && rendering.terrain.loading_tiles === 0 && rendering.terrain.fallback_tiles === 0;
       resident = ready ? resident + 1 : 0;
       if (resident > 1) {
@@ -40,7 +40,7 @@ export async function openTerrain(name) {
 
   async function capture(file) {
     const until = Date.now() + COMPILE_MS;
-    while ((await command("render")).result.rendering.pipelines_compiling) {
+    while ((await command("control", "render")).result.rendering.pipelines_compiling) {
       if (Date.now() > until) assert.fail(`pipelines still compiling after ${COMPILE_MS / 1000} s`);
       await new Promise(resolve => setTimeout(resolve, 50));
     }
@@ -52,7 +52,7 @@ export async function openTerrain(name) {
   async function rendersUntil(done, what) {
     let rendering;
     for (let frame = 0; frame < 600; frame++) {
-      rendering = (await command("render")).result.rendering;
+      rendering = (await command("control", "render")).result.rendering;
       if (done(rendering)) return rendering;
       await new Promise(resolve => setTimeout(resolve, 10));
     }
@@ -60,7 +60,7 @@ export async function openTerrain(name) {
   }
 
   async function heights(points) {
-    return (await command("terrain_height", { points })).result.samples;
+    return (await command("query", "terrain_height", { points })).result.samples;
   }
 
   async function inspectTerrains() {
@@ -76,9 +76,9 @@ export async function openTerrain(name) {
     await cp(new URL("fixtures/terrain-smoke/", import.meta.url), folder, { recursive: true });
     await scene.route();
     await openPaused(page, sceneUrl());
-    const opened = await command("environment", { terrain: fast });
+    const opened = await command("control", "environment", { terrain: fast });
     assert.deepEqual(opened.result.environment_changed, ["terrain"]);
-    await command("camera", overview);
+    await command("control", "camera", overview);
     const settled = await settle();
     return {
       page, errors, command, scene, output, settled, close,

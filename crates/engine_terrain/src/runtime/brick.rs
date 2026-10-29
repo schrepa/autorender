@@ -1,9 +1,9 @@
 use super::*;
 use crate::jobs::{ShadingJob, SteadiedJob, TerrainWorker};
 use engine_core::{
-    Brick, Bricks, EnvironmentSection, FixedSimulation, FixedSimulationSystems, Ground,
-    GroundSample, JobWorker, TerrainDebug, ViewSync, ViewSyncSystems, WaterSources, WorldSync,
-    WorldSyncSystems,
+    Brick, Bricks, EnvironmentSection, ExplainRecord, ExplainRequest, FixedSimulation,
+    FixedSimulationSystems, GlobalTransforms, Ground, GroundSample, JobWorker, TerrainDebug,
+    ViewSync, ViewSyncSystems, WaterSources, WorldSync, WorldSyncSystems,
 };
 
 const WATER_SOURCE: &str = "terrain";
@@ -73,8 +73,34 @@ impl Brick for TerrainBrick {
             .operation::<TerrainRouteQuery>()
             .inspector::<Terrains, TerrainsView>(|_, terrains| TerrainsView::of(terrains))
             .inspector::<TerrainDebug, TerrainDebugView>(|_, debug| TerrainDebugView::of(debug))
-            .component_inspector::<TerrainPrefetch, TerrainPrefetch>(|_, _, prefetch| *prefetch);
+            .component_inspector::<TerrainPrefetch, TerrainPrefetch>(|_, _, prefetch| *prefetch)
+            .explain(explain_residency);
     }
+}
+
+fn explain_residency(world: &World, request: &ExplainRequest) -> Option<ExplainRecord> {
+    let ExplainRequest::Entity(entity) = request else {
+        return None;
+    };
+    let terrains = world.get_resource::<Terrains>()?;
+    let position = world
+        .get_resource::<GlobalTransforms>()?
+        .get(entity.entity)?
+        .matrix()?
+        .w_axis;
+    let sample = terrains.sample(position.x, position.z);
+    let decided = if sample.is_some() {
+        "resident"
+    } else {
+        "not_resident"
+    };
+    Some(
+        ExplainRecord::new(decided)
+            .with("entity", &entity.id)
+            .with("position_m", [position.x, position.y, position.z])
+            .with("ground_level", sample.as_ref().map(|sample| sample.level))
+            .with("ground_height_m", sample.as_ref().map(|sample| sample.height)),
+    )
 }
 
 pub(crate) fn join(world: &mut World) {

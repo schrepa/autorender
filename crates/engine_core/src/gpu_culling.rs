@@ -1,7 +1,7 @@
-use bevy_ecs::prelude::Resource;
+use bevy_ecs::prelude::{Resource, World};
 use serde::{Deserialize, Serialize};
 
-use crate::bricks::{Brick, Bricks};
+use crate::bricks::{Brick, Bricks, Drawn, ExplainRecord, ExplainRequest};
 use crate::sections::environment_section;
 use engine_settings::settings;
 
@@ -12,8 +12,35 @@ impl Brick for Culling {
         bricks
             .settings::<OcclusionCulling>()
             .settings::<SubpixelCulling>()
-            .passes(&["occlusion_test", "opaque_phase_two"]);
+            .passes(&["occlusion_test", "opaque_phase_two"])
+            .explain(explain_culled);
     }
+}
+
+fn explain_culled(world: &World, request: &ExplainRequest) -> Option<ExplainRecord> {
+    let ExplainRequest::Entity(entity) = request else {
+        return None;
+    };
+    if entity.drawn != Drawn::Culled {
+        return None;
+    }
+    Some(
+        ExplainRecord::new("culled")
+            .with("entity", &entity.id)
+            .with("slot", entity.slot)
+            .with(
+                "occlusion_culling",
+                world
+                    .get_resource::<OcclusionCulling>()
+                    .is_some_and(|culling| culling.enabled),
+            )
+            .with(
+                "subpixel_culling",
+                world
+                    .get_resource::<SubpixelCulling>()
+                    .is_some_and(|culling| culling.enabled),
+            ),
+    )
 }
 
 settings! {

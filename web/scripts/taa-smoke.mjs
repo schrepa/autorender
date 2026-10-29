@@ -14,8 +14,8 @@ async function open(scene, query) {
   await routedScene(page, scene).route();
   const url = sceneUrl(query);
   await openPaused(page, url);
-  await command("render");
-  await command("step", { ticks: 3 });
+  await command("control", "render");
+  await command("control", "step", { ticks: 3 });
   return url.href;
 }
 
@@ -32,12 +32,12 @@ async function capture(name) {
 }
 
 async function run(name, frames) {
-  await command("resume");
+  await command("control", "resume");
   await waitFrames(command, frames);
   const first = await screenshot(`${name}-a`);
   await waitFrames(command, 18);
   const second = await screenshot(`${name}-b`);
-  await command("pause");
+  await command("control", "pause");
   return [first, second];
 }
 
@@ -139,31 +139,31 @@ try {
     note: "pixels whose largest channel differs by more than 24 levels between two converged still frames 300 ms apart",
   }];
 
-  const observed = async () => (await command("status")).result.rendering;
+  const observed = async () => (await command("query", "status")).result.rendering;
   assert.deepEqual(await inspect(), { enabled: true, ...defaults });
   const temporalFrame = await observed();
   assert.equal(temporalFrame.temporal_antialiasing.active, true, "ordinary frames resolve temporally");
   assert.ok(temporalFrame.render_passes.includes("temporal_resolve"));
-  const off = await command("environment", { temporal_antialiasing: { enabled: false } });
+  const off = await command("control", "environment", { temporal_antialiasing: { enabled: false } });
   assert.deepEqual(off.result.environment_changed, ["temporal_antialiasing"]);
   assert.deepEqual(await inspect(), { enabled: false, ...defaults });
   await run("taa-off", 30);
   const plainFrame = await observed();
   assert.equal(plainFrame.temporal_antialiasing.active, false, "turned off, ordinary frames do not resolve temporally");
   assert.ok(!plainFrame.render_passes.includes("temporal_resolve"));
-  const invalid = await command("environment", { temporal_antialiasing: { enabled: true, samples: 8 } }, false);
+  const invalid = await command("control", "environment", { temporal_antialiasing: { enabled: true, samples: 8 } }, false);
   assert.equal(invalid.error.code, "unknown_field", "unknown temporal antialiasing fields are rejected");
-  await command("environment", { temporal_antialiasing: { enabled: true } });
+  await command("control", "environment", { temporal_antialiasing: { enabled: true } });
   const [again] = await run("taa-again", 30);
   assert.equal((await observed()).temporal_antialiasing.active, true, "turned on again, ordinary frames resolve temporally");
 
   const inspectDither = async () => (await command("inspect", { component: "Dither" })).result.value;
   assert.deepEqual(await inspectDither(), { enabled: true }, "dithering is on by default");
-  const undithered = await command("environment", { dither: { enabled: false } });
+  const undithered = await command("control", "environment", { dither: { enabled: false } });
   assert.deepEqual(undithered.result.environment_changed, ["dither"]);
   assert.deepEqual(await inspectDither(), { enabled: false });
   const [unditheredFirst] = await run("taa-undithered", 60);
-  await command("environment", { dither: { enabled: true } });
+  await command("control", "environment", { dither: { enabled: true } });
   const [ditherFirst, ditherSecond] = await run("taa-dither", 60);
   results.dither = await compare([unditheredFirst, ditherFirst]);
   results.dither_stable = await compare([ditherFirst, ditherSecond]);
@@ -176,11 +176,11 @@ try {
   });
 
   const bare = { nearest_motion: false, rounded_clamp: false, particle_response: 0 };
-  await command("environment", { temporal_antialiasing: { enabled: true, ...bare } });
+  await command("control", "environment", { temporal_antialiasing: { enabled: true, ...bare } });
   assert.deepEqual(await inspect(), { enabled: true, ...bare });
   const [bareFirst] = await run("taa-bare", 60);
   const sturdy = { nearest_motion: true, rounded_clamp: true, particle_response: 2 };
-  const sturdied = await command("environment", { temporal_antialiasing: { enabled: true, ...sturdy } });
+  const sturdied = await command("control", "environment", { temporal_antialiasing: { enabled: true, ...sturdy } });
   assert.deepEqual(sturdied.result.environment_changed, ["temporal_antialiasing"]);
   assert.deepEqual(await inspect(), { enabled: true, ...sturdy });
   const [sturdyFirst, sturdySecond] = await run("taa-sturdy", 60);
@@ -194,14 +194,14 @@ try {
     name: "sturdier still view flicker", value: results.sturdy_stable.changed[24] / results.sturdy_stable.total * 100, unit: "%",
     note: "pixels whose largest channel differs by more than 24 levels between two converged still frames of the sturdier resolve, 300 ms apart",
   });
-  const beyond = await command("environment", { temporal_antialiasing: { enabled: true, particle_response: 9 } }, false);
+  const beyond = await command("control", "environment", { temporal_antialiasing: { enabled: true, particle_response: 9 } }, false);
   assert.equal(beyond.error.code, "invalid_environment", "a particle response beyond its range is rejected");
-  await command("environment", { temporal_antialiasing: { enabled: true } });
+  await command("control", "environment", { temporal_antialiasing: { enabled: true } });
   assert.deepEqual(await inspect(), { enabled: true, ...defaults });
 
   const inspectFoliage = async () => (await command("inspect", { component: "Foliage" })).result.value;
   assert.deepEqual(await inspectFoliage(), { transmission: 1, variation: 1, hashed_cutoff: false, ground_blend: Math.fround(0.4), crown_depth: 2 }, "foliage's defaults");
-  const leaves = await command("environment", { foliage: { hashed_cutoff: true } });
+  const leaves = await command("control", "environment", { foliage: { hashed_cutoff: true } });
   assert.deepEqual(leaves.result.environment_changed, ["foliage"]);
   assert.equal((await inspectFoliage()).hashed_cutoff, true);
   const [leavesFirst] = await run("taa-foliage", 60);
@@ -210,7 +210,7 @@ try {
     name: "foliage difference", value: results.foliage.mean_difference, unit: "levels",
     note: "mean channel difference between converged still frames at foliage's defaults and with hashed cutoffs added",
   });
-  await command("environment", { foliage: {} });
+  await command("control", "environment", { foliage: {} });
 
   const after = await capture("exact-after-taa");
   assert.equal((await compare([exact, after])).changed[0], 0, "captures must stay exact after temporal frames");

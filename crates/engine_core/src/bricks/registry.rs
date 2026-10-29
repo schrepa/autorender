@@ -1,5 +1,6 @@
 use std::any::TypeId;
 use std::collections::BTreeMap;
+use std::panic::Location;
 use std::sync::Arc;
 
 use bevy_ecs::component::Component;
@@ -8,8 +9,9 @@ use engine_settings::ErrorCode;
 use serde_json::Value;
 
 use super::{
-    Brick, BrickSet, BrickStats, CORE_PASSES, CORE_ROW, EnvironmentSection, Error, Operation,
-    crate_of, parse_value, parse_value_at, short_type_name,
+    Brick, BrickSet, BrickStats, CORE_PASSES, CORE_ROW, EnvironmentSection, Error, ExplainEntry,
+    ExplainRecord, ExplainRequest, Operation, crate_of, parse_value, parse_value_at,
+    short_type_name,
 };
 use crate::RenderSnapshot;
 
@@ -39,6 +41,7 @@ pub struct BrickRecord {
     pub stats: Vec<StatsEntry>,
     pub operations: Vec<OperationEntry>,
     pub inspectors: Vec<InspectorEntry>,
+    pub explainers: Vec<ExplainEntry>,
     pub extractions: Vec<fn(&World, &mut RenderSnapshot)>,
     pub passes: Vec<&'static str>,
     pub resources: Vec<Owned>,
@@ -58,6 +61,7 @@ impl BrickRecord {
             stats: Vec::new(),
             operations: Vec::new(),
             inspectors: Vec::new(),
+            explainers: Vec::new(),
             extractions: Vec::new(),
             passes: Vec::new(),
             resources: Vec::new(),
@@ -169,6 +173,17 @@ impl BrickRegistry {
     pub fn stats(&self) -> impl Iterator<Item = &StatsEntry> + '_ {
         self.bricks.iter().flat_map(|brick| &brick.stats)
     }
+
+    pub fn explainers(&self) -> impl Iterator<Item = &ExplainEntry> + '_ {
+        self.bricks.iter().flat_map(|brick| &brick.explainers)
+    }
+
+    pub fn explain(&self, world: &World, request: &ExplainRequest) -> Vec<ExplainRecord> {
+        self.explainers()
+            .filter_map(|entry| entry.explain(world, request))
+            .collect()
+    }
+
 
     pub fn extractions(
         &self,
@@ -318,6 +333,7 @@ pub struct SettingsEntry {
     pub opt_in: bool,
     pub brick: &'static str,
     pub type_id: TypeId,
+    pub at: &'static Location<'static>,
     check: fn(Value, &str) -> Result<(), Error>,
     insert: fn(&mut World, Value, &str) -> Result<(), Error>,
     remove: fn(&mut World),
@@ -331,13 +347,17 @@ pub struct SettingsEntry {
 }
 
 impl SettingsEntry {
-    pub(super) fn of<T: EnvironmentSection>(brick: &'static str) -> Self {
+    pub(super) fn of<T: EnvironmentSection>(
+        brick: &'static str,
+        at: &'static Location<'static>,
+    ) -> Self {
         Self {
             key: T::KEY,
             name: T::NAME,
             opt_in: T::OPT_IN,
             brick,
             type_id: TypeId::of::<T>(),
+            at,
             check: |value, path| parse_section::<T>(value, path).map(drop),
             insert: |world, value, path| {
                 let section = parse_section::<T>(value, path)?;
@@ -431,17 +451,19 @@ pub struct StatsEntry {
     pub key: &'static str,
     pub brick: &'static str,
     pub type_id: TypeId,
+    pub at: &'static Location<'static>,
     read: fn(&World) -> Value,
     #[cfg(feature = "schema")]
     schema: fn() -> schemars::Schema,
 }
 
 impl StatsEntry {
-    pub(super) fn of<T: BrickStats>(brick: &'static str) -> Self {
+    pub(super) fn of<T: BrickStats>(brick: &'static str, at: &'static Location<'static>) -> Self {
         Self {
             key: T::KEY,
             brick,
             type_id: TypeId::of::<T>(),
+            at,
             read: |world| match world.get_resource::<T>() {
                 Some(stats) => to_json(stats),
                 None => to_json(T::default()),
@@ -467,6 +489,7 @@ pub struct OperationEntry {
     pub control: bool,
     pub shows: &'static str,
     pub brick: &'static str,
+    pub at: &'static Location<'static>,
     run: fn(&mut World, Value) -> Result<Value, Error>,
     #[cfg(feature = "schema")]
     schema: fn() -> schemars::Schema,
@@ -475,12 +498,13 @@ pub struct OperationEntry {
 }
 
 impl OperationEntry {
-    pub(super) fn of<O: Operation>(brick: &'static str) -> Self {
+    pub(super) fn of<O: Operation>(brick: &'static str, at: &'static Location<'static>) -> Self {
         Self {
             name: O::NAME,
             control: O::CONTROL,
             shows: O::SHOWS,
             brick,
+            at,
             run: |world, request| {
                 let request: O::Request = parse_value(request)?;
                 O::run(world, request)
@@ -521,6 +545,7 @@ pub struct InspectorEntry {
     pub kind: InspectedKind,
     pub brick: &'static str,
     pub type_id: TypeId,
+    pub at: &'static Location<'static>,
     read: ReadInspected,
     has: fn(&World, Option<Entity>) -> bool,
     #[cfg(feature = "schema")]
@@ -531,12 +556,14 @@ impl InspectorEntry {
     pub(super) fn resource<R: Resource, V: serde::Serialize + 'static>(
         brick: &'static str,
         view: fn(&World, &R) -> V,
+        at: &'static Location<'static>,
     ) -> Self {
         Self {
             name: short_type_name::<R>(),
             kind: InspectedKind::Resource,
             brick,
             type_id: TypeId::of::<R>(),
+            at,
             read: Arc::new(move |world: &World, _: Option<Entity>| {
                 world
                     .get_resource::<R>()
@@ -551,12 +578,14 @@ impl InspectorEntry {
     pub(super) fn component<C: Component, V: serde::Serialize + 'static>(
         brick: &'static str,
         view: fn(&World, Entity, &C) -> V,
+        at: &'static Location<'static>,
     ) -> Self {
         Self {
             name: short_type_name::<C>(),
             kind: InspectedKind::Component,
             brick,
             type_id: TypeId::of::<C>(),
+            at,
             read: Arc::new(move |world: &World, entity: Option<Entity>| {
                 let entity = entity?;
                 world

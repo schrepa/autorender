@@ -23,7 +23,7 @@ const command = commander(page);
 const scene = routedScene(page, fixture);
 
 async function capture(name) {
-  await command("render");
+  await command("control", "render");
   await command("capture");
   const bytes = await page.locator("canvas").screenshot({ path: `${output}/${name}.png` });
   return bytes.toString("base64");
@@ -41,7 +41,7 @@ try {
 
   const listing = await command("describe");
   assert.ok(listing.result.types.some(type => type.name === "SplineMesh"), "describe lists SplineMesh");
-  const first = await command("render");
+  const first = await command("control", "render");
   const built = await spline();
   assert.deepEqual(built.points, curve);
   assert.equal(built.mesh, "box");
@@ -61,14 +61,14 @@ try {
   const without = await capture("bare");
   const { changed } = await differentPixels(page, [withRail, without]);
   assert.ok(changed > 2000, `the rail covers pixels: ${changed}`);
-  const removed = await command("render");
+  const removed = await command("control", "render");
   assert.equal(removed.result.rendering.render_candidates, 2, "removing the field removes its chunks");
   checks.push({ check: "draws and goes", pixels: changed });
 
   const longer = structuredClone(fixture);
   longer.entities[2].spline.points = [...curve, [40, 0.5, 2], [70, 0.5, -2], [160, 0.5, 6], [290, 0.5, -4]];
   await scene.reload(command, longer);
-  await command("render");
+  await command("control", "render");
   const rebuilt = await spline();
   const longerPoints = longer.entities[2].spline.points;
   assert.ok(rebuilt.length >= polyline(longerPoints) && rebuilt.length < 1.1 * polyline(longerPoints), `the longer curve: ${rebuilt.length}`);
@@ -80,7 +80,7 @@ try {
   invalid.entities[2].spline.points = [[0, 0, 0]];
   invalid.revision = scene.revision + 1;
   scene.serve(invalid);
-  const refused = await command("reload", { expected_revision: String(scene.revision), revision: String(invalid.revision) }, false);
+  const refused = await command("control", "reload", { expected_revision: String(scene.revision), revision: String(invalid.revision) }, false);
   assert.equal(refused.error.code, "invalid_spline");
   assert.equal(refused.error.path, "$.entities[2].spline.points");
   assert.equal((await spline()).chunks, rebuilt.chunks, "the scene stays");

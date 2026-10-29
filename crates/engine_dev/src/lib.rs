@@ -8,38 +8,42 @@ mod bridge;
 mod controls;
 mod digest;
 mod error;
+mod explain;
 mod inspect;
+mod profile;
 mod protocol;
 mod reply;
 pub mod results;
 mod views;
+mod watch;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod authoring;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod schemas;
 
-pub use bricks::is_control;
+pub use bricks::operation_names;
 pub use bridge::{Artifact, Effect, HostContext, Outcome, Step};
 pub use controls::{OperationCall, validated_camera, validated_presentation_alpha};
 pub use engine_settings::ErrorCode;
-pub use error::DevError;
+pub use error::{DevError, nearest};
+pub use explain::EntityFacts;
 pub use inspect::{
     Context, DevTools, InspectorDescriptor, InspectorKind, RenderedMesh, RendererFacts,
     TOOLING_TYPES, reserved_names,
 };
+pub use profile::profiled;
 pub use protocol::bounds;
-pub use protocol::bounds::{MAX_DESCRIPTION_BYTES, MAX_PAGE_SIZE, MAX_SCAN_ENTITIES};
+pub use protocol::bounds::{MAX_PAGE_SIZE, MAX_SCAN_ENTITIES};
 pub use protocol::{
-    BenchmarkMode, BrowserControl, Control, DevRequest, EnvironmentControl, HostControl,
-    MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION, parse_request,
+    BenchmarkMode, BrowserControl, CaptureRequest, CheckLevel, CheckRequest, CompareRequest,
+    Control, DeepProfile, DescribeRequest, Detail, Envelope, EnvironmentControl,
+    ExplainQuestion, HostControl, InspectRequest, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+    PROTOCOL_VERSION, ProfileRequest, Query, Vendor, Verb, WatchRequest, WatchedComponent, named,
+    request,
 };
 pub use reply::{Observation, Reply, SceneObservation};
-
-mod ops {
-    include!("generated/ops.rs");
-}
-pub use ops::{CONTROL_OPS, QUERY_OPS};
+pub use watch::{Watcher, stat};
 
 pub const FRAME_STATS_SCHEMA: &str = include_str!("generated/frame_stats.schema.json");
 

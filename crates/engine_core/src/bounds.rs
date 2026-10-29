@@ -1,7 +1,6 @@
 use engine_settings::Rule;
 
 pub const MAX_PAGE_SIZE: usize = 100;
-pub const MAX_DESCRIPTION_BYTES: usize = 512;
 pub const MAX_SCAN_ENTITIES: usize = 10_000;
 pub const PAGE: Rule = Rule::Range(1.0, MAX_PAGE_SIZE as f64);
 pub const MAX_POINTS: usize = 256;

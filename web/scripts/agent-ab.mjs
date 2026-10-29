@@ -8,8 +8,8 @@ function commands(text, name) {
   let value;
   try { value = JSON.parse(text ?? "[]"); } catch (error) { throw new AgentError("invalid_arguments", `--${name} is JSON: ${error.message}`, name); }
   const list = Array.isArray(value) ? value : [value];
-  if (list.some(command => !command || typeof command !== "object" || typeof command.op !== "string")) {
-    throw new AgentError("invalid_arguments", `--${name} lists commands with an op.`, name);
+  if (list.some(command => !command || typeof command !== "object" || typeof command.verb !== "string")) {
+    throw new AgentError("invalid_arguments", "commands with a verb", `--${name}`);
   }
   return list;
 }
@@ -32,25 +32,27 @@ export async function runAb(session, values) {
   const durationMs = integer(values["profile-ms"], 2000, 100, 5000, "profile-ms");
   const run = async command => {
     const reply = await session.execute(command);
-    if (!reply.ok) throw new AgentError(reply.error?.code ?? "bridge_error", `${command.op}: ${reply.error?.message ?? "failed"}`, reply.error?.path);
+    if (!reply.ok) throw new AgentError(reply.error?.code ?? "bridge_error", `${command.verb} ${command.name ?? ""}: ${reply.error?.message ?? "failed"}`, reply.error?.path);
     return reply.result;
   };
-  const median = async values => (values.length ? (await run({ op: "distribution", values })).distribution?.median ?? null : null);
-  const status = await run({ op: "status" });
-  if (status.paused !== true) await run({ op: "pause" });
+  const control = (name, args = {}) => run({ verb: "control", name, args });
+  const median = async values => (values.length ? (await run({ verb: "query", name: "distribution", args: { values } })).distribution?.median ?? null : null);
+  const status = await run({ verb: "query", name: "status" });
+  if (status.paused !== true) await control("pause");
   for (const command of [...variants.a, ...variants.b]) {
-    if (["resume", "pause", "benchmark", "profile", "close"].includes(command.op)) throw new AgentError("invalid_arguments", `variants set state; ${command.op} is the harness's own.`);
+    const owned = command.verb === "profile" || (command.verb === "control" && ["resume", "pause", "benchmark", "close"].includes(command.name));
+    if (owned) throw new AgentError("invalid_arguments", `${command.verb} ${command.name ?? ""}`, "--a");
   }
   for (const variant of ["a", "b"]) {
     for (const command of variants[variant]) await run(command);
-    await run({ op: "benchmark", mode, warmup, samples: Math.min(samples, 10) });
-    if (profile) await run({ op: "profile", duration_ms: Math.min(durationMs, 500) });
+    await control("benchmark", { mode, warmup, samples: Math.min(samples, 10) });
+    if (profile) await run({ verb: "profile", deep: { duration_ms: Math.min(durationMs, 500) } });
   }
   const windows = [];
   const order = Array.from({ length: rounds }, () => ["a", "b", "b", "a"]).flat();
   for (const [index, variant] of order.entries()) {
     for (const command of variants[variant]) await run(command);
-    const benchmark = (await run({ op: "benchmark", mode, warmup, samples })).benchmark;
+    const benchmark = (await control("benchmark", { mode, warmup, samples })).benchmark;
     const window = {
       index, variant,
       frame_interval_ms: benchmark.frame_interval_ms.median,
@@ -59,7 +61,7 @@ export async function runAb(session, values) {
       draws_ms: {},
     };
     if (profile) {
-      const result = await run({ op: "profile", duration_ms: durationMs });
+      const result = await run({ verb: "profile", deep: { duration_ms: durationMs } });
       const report = JSON.parse(await readFile(resolve(workspace, result.artifacts.trace), "utf8"));
       const gpu = report.gpu ?? report.engine?.gpu ?? {};
       const spans = new Map();
@@ -99,6 +101,5 @@ export async function runAb(session, values) {
   return {
     order: order.join(""), mode, warmup, samples, profile: profile ? { duration_ms: durationMs } : null,
     variants, compared, draws, windows,
-    note: "Noise is each variant's largest window difference from its own median, as a share: B against A means little within it. Frame intervals include the GPU's work waited for after each frame natively, and the browser's pacing in browsers.",
   };
 }
