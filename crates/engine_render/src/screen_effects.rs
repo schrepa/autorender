@@ -1,14 +1,5 @@
 use engine_core::Environment;
 
-use crate::graph::{GraphTable, PassBuilder};
-
-pub(crate) struct UniformFrame {
-    pub(crate) haze_turn: f32,
-    pub(crate) haze_history: [f32; 2],
-    pub(crate) world_terrains: u32,
-    pub(crate) occupancy: engine_terrain::Occupancy,
-}
-
 pub(crate) fn haze_runs(environment: &Environment) -> bool {
     let haze = environment.haze.sanitized();
     let atmosphere = environment.atmosphere.sanitized();
@@ -27,8 +18,7 @@ macro_rules! screen_effects {
         $(#[$doc:meta])*
         $effect:ident {
             gate: |$environment:ident| $gate:expr,
-            uniform: |$settings:ident, $on:ident, $frame:pat_param| $uniform:expr,
-            reads: [$($read:literal),*],
+            uniform: |$settings:ident, $on:ident| $uniform:expr,
         },
     )*) => {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -54,28 +44,12 @@ macro_rules! screen_effects {
                 false $(|| self.$effect)*
             }
 
-            pub(crate) fn reads<'g>(
-                self,
-                table: &GraphTable,
-                mut node: PassBuilder<'g>,
-            ) -> PassBuilder<'g> {
-                $(if self.$effect {
-                    $(node = node.read(table.resource($read));)*
-                })*
-                node
-            }
-
-            pub(crate) fn uniforms(
-                self,
-                environment: &Environment,
-                frame: &UniformFrame,
-            ) -> EffectUniforms {
+            pub(crate) fn uniforms(self, environment: &Environment) -> EffectUniforms {
                 EffectUniforms {
                     $($effect: {
-                        let ($settings, $on, $frame) = (
+                        let ($settings, $on) = (
                             environment,
                             if self.$effect { 1.0 } else { 0.0 },
-                            frame,
                         );
                         $uniform
                     },)*
@@ -88,47 +62,33 @@ macro_rules! screen_effects {
 screen_effects! {
     occlusion {
         gate: |environment| environment.ambient_occlusion.sanitized().enabled(),
-        uniform: |settings, on, frame| {
+        uniform: |settings, on| {
             let occlusion = settings.ambient_occlusion.sanitized();
-            let share = crate::occupancy::texel_share(&frame.occupancy);
-            [occlusion.radius, occlusion.intensity, share, on]
+            [occlusion.radius, occlusion.intensity, 0.0, on]
         },
-        reads: ["depth"],
     },
     bloom {
         gate: |environment| environment.bloom.sanitized().enabled(),
-        uniform: |settings, on, _| [settings.bloom.sanitized().intensity, on, 0.0, 0.0],
-        reads: ["scene", "glow"],
+        uniform: |settings, on| [settings.bloom.sanitized().intensity, on, 0.0, 0.0],
     },
     reflections {
         gate: |environment| environment.reflections.sanitized().enabled(),
-        uniform: |settings, on, frame| {
+        uniform: |settings, on| {
             let reflections = settings.reflections.sanitized();
-            [
-                reflections.distance,
-                reflections.intensity,
-                on,
-                frame.world_terrains as f32,
-            ]
+            [reflections.distance, reflections.intensity, on, 0.0]
         },
-        reads: ["depth", "scene", "glow", "surface"],
     },
     haze {
         gate: |environment| haze_runs(environment),
-        uniform: |_settings, on, frame| {
-            let [across, down] = frame.haze_history;
-            [frame.haze_turn, across, down, on]
-        },
-        reads: ["depth", "shadow_maps", "cloud_dome", "bounce", "haze"],
+        uniform: |_settings, on| [0.0, 0.0, 0.0, on],
     },
     sky {
         gate: |environment| {
             environment.sky_occlusion.sanitized().darkens() && environment.shadows.enabled
         },
-        uniform: |settings, on, _| {
+        uniform: |settings, on| {
             let sky = settings.sky_occlusion.sanitized();
             [sky.strength, sky.floor, 0.0, on]
         },
-        reads: ["depth", "shadow_maps"],
     },
 }

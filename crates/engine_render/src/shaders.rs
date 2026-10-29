@@ -125,7 +125,6 @@ crate::entry_points! {
     }
     transparent {
         vertex: [vs_fullscreen @ "engine::fullscreen"],
-        fragment: [fs_composite @ "transparent::composite"],
     }
     post {
         vertex: [vs_fullscreen @ "engine::fullscreen"],

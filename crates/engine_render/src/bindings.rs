@@ -189,22 +189,10 @@ tables! {
         label: "engine/post-layout",
         bindings: &[
             uniform("post", F),
-            texture("depth_texture", Depth, D2, F),
             texture("scene", Float, D2, F),
-            texture("glow", Float, D2, F),
-            texture("source", Float, D2, F),
             texture("occlusion", Float, D2, F),
-            texture("bloom", Float, D2, F),
             sampler("linear", Filtering, F),
             texture("reflections", Float, D2, F),
-            texture("marched", Unfilterable, D2, F),
-            texture("raw_occlusion", Unfilterable, D2, F),
-            texture("bloom_source", Float, D2, F),
-            texture("sky_maps", Depth, D2Array, F),
-            sampler("sky_sampler", Comparison, F),
-            uniform_of("sky", size_of::<SkyUniform>(), F),
-            texture("haze", Float, D2, F),
-            sampler("bloom_sampler", Filtering, F),
         ],
     };
 
