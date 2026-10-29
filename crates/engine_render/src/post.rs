@@ -7,7 +7,7 @@ use crate::shaders::entry::post;
 use engine_core::{RenderSnapshot, glam::Mat4};
 
 use crate::bindings::{GroupRef, POST};
-use crate::cached::{Bound, Versioned};
+use crate::cached::Bound;
 use crate::composite::{PLAIN_RESOLVE, composite_entry, composites, pixel_effects};
 use crate::gpu_data::PostUniform;
 use crate::graph::{
@@ -30,45 +30,9 @@ pub const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
 pub const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Uint;
 pub const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 pub const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-pub const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
-pub const DEBUG_IDS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
-pub const DEBUG_COUNT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
-pub const DEBUG_TERRAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
 const SCENE_LEVELS: u32 = 6;
 
 const COMPOSITED: [&str; 5] = ["scene", "glow", "occlusion", "reflections", "surface"];
-const MOTION: [(&str, &str, wgpu::TextureFormat); 1] =
-    [("motion", "engine/post-motion", MOTION_FORMAT)];
-const DEBUG: [(&str, &str, wgpu::TextureFormat); 3] = [
-    ("debug_ids", "engine/post-debug-ids", DEBUG_IDS_FORMAT),
-    ("debug_count", "engine/post-debug-count", DEBUG_COUNT_FORMAT),
-    (
-        "debug_terrain",
-        "engine/post-debug-terrain",
-        DEBUG_TERRAIN_FORMAT,
-    ),
-];
-
-pub fn debug_color_targets() -> Vec<Option<wgpu::ColorTargetState>> {
-    let add = wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    };
-    vec![
-        Some(DEBUG_IDS_FORMAT.into()),
-        Some(wgpu::ColorTargetState {
-            format: DEBUG_COUNT_FORMAT,
-            blend: Some(wgpu::BlendState {
-                color: add,
-                alpha: add,
-            }),
-            write_mask: wgpu::ColorWrites::ALL,
-        }),
-        Some(DEBUG_TERRAIN_FORMAT.into()),
-    ]
-}
-
 const fn per_frame(name: &'static str) -> ResourceDecl {
     ResourceDecl {
         name,
@@ -126,8 +90,6 @@ struct Ids {
 pub struct PostPass {
     post: Lazy<Post>,
     frame: Option<Effects>,
-    motion: ScreenTarget<Made<1>>,
-    debug: ScreenTarget<Made<3>>,
     ids: Ids,
     linked: bool,
 }
@@ -166,25 +128,9 @@ impl PostPass {
         ))
     }
 
-    #[cfg(feature = "dev")]
-    pub fn debug_textures(&self) -> Option<[&wgpu::Texture; 3]> {
-        Some(self.debug.get()?.textures.each_ref())
-    }
-
     fn found(&self, resource: &str) -> Option<(u64, &wgpu::TextureView)> {
-        fn within<'a, const N: usize>(
-            made: Option<&'a Versioned<Made<N>>>,
-            resource: &str,
-        ) -> Option<(u64, &'a wgpu::TextureView)> {
-            let made = made?;
-            Some((made.generation(), made.view(resource)?))
-        }
-        within(self.motion.get(), resource)
-            .or_else(|| within(self.debug.get(), resource))
-            .or_else(|| {
-                let targets = self.post.get()?.targets.get()?;
-                Some((targets.generation(), targets.made.view(resource)?))
-            })
+        let targets = self.post.get()?.targets.get()?;
+        Some((targets.generation(), targets.made.view(resource)?))
     }
 }
 
@@ -226,34 +172,6 @@ fn composite_pipeline(
     )
 }
 
-fn ensure<const N: usize>(
-    target: &mut ScreenTarget<Made<N>>,
-    device: &wgpu::Device,
-    size: FrameSize,
-    (made, usage): (
-        [(&'static str, &'static str, wgpu::TextureFormat); N],
-        wgpu::TextureUsages,
-    ),
-) {
-    if !target.resizes(size) {
-        return;
-    }
-    let textures = made.map(|(_, label, format)| {
-        crate::targets::texture_2d(device, label, size.pixels(), 1, 1, format, usage)
-    });
-    let views = textures
-        .each_ref()
-        .map(|texture| texture.create_view(&Default::default()));
-    target.set(
-        size,
-        Made {
-            textures,
-            views,
-            names: made.map(|(name, _, _)| name),
-        },
-    );
-}
-
 impl GpuPart for PostPass {
     fn install(&mut self, table: &GraphTable) {
         self.ids = Ids {
@@ -287,24 +205,7 @@ impl GpuPart for PostPass {
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         let core = &*cx.core;
         let device = &core.device;
-        if cx.frame.kind.temporal {
-            ensure(
-                &mut self.motion,
-                device,
-                core.display.region.display,
-                (MOTION, crate::targets::RENDER_TARGET),
-            );
-        }
         if cx.frame.kind.debug {
-            ensure(
-                &mut self.debug,
-                device,
-                core.display.size(),
-                (
-                    DEBUG,
-                    crate::targets::RENDER_TARGET | wgpu::TextureUsages::COPY_SRC,
-                ),
-            );
             self.frame = None;
             return;
         }
@@ -390,19 +291,8 @@ impl GpuPart for PostPass {
         self.target_view(resource).cloned()
     }
 
-    fn forget_targets(&mut self, targets: crate::graph::Targets) {
-        if targets == crate::graph::Targets::Temporal {
-            self.motion.release();
-        }
-    }
-
     fn capacity_bytes(&self) -> u64 {
-        let pixels = |size: Option<FrameSize>| {
-            size.map_or(0, |size| u64::from(size.width) * u64::from(size.height))
-        };
         self.post.get().map_or(0, Post::capacity_bytes)
-            + pixels(self.motion.size()) * 4
-            + pixels(self.debug.size()) * 26
     }
 
     fn poll(&mut self) -> bool {

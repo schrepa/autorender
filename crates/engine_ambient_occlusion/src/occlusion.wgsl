@@ -2,6 +2,7 @@ import package::engine::screen_points::{depth_normal, world_at};
 import package::post::frame::post;
 
 @group(0) @binding(12) var raw_occlusion: texture_2d<f32>;
+@group(0) @binding(19) var<uniform> canopy: vec4<f32>;
 
 const SKY_DIRECTIONS: u32 = 13u;
 const SKY_LAYERS: u32 = 26u;
@@ -29,7 +30,7 @@ fn occlusion_radius() -> f32 {
 }
 
 fn occlusion_share(pixels: f32) -> f32 {
-    let handover = post.occlusion.z * post.eye.w;
+    let handover = canopy.x * post.eye.w;
     return saturate(log2(max(pixels, 1.0e-6) / max(handover, 1.0e-6)));
 }
 

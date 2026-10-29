@@ -894,12 +894,8 @@ impl GpuPart for ShadowPass {
     }
 
     fn prepare_draws(&mut self, cx: &mut Step<'_>, _encoder: &mut wgpu::CommandEncoder) {
-        let impostor_pass = cx
-            .frame
-            .passes
-            .is_some_and(|passes| passes.impostor_pass.is_some());
         let placed = cx.parts.face::<dyn PlacedFace>();
-        if impostor_pass
+        if cx.frame.kind.gpu_mode
             && placed.is_some_and(|placed| {
                 placed
                     .impostors()

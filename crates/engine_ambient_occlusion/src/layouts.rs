@@ -8,6 +8,7 @@ pub const AMBIENT_OCCLUSION: Table = Table {
     label: "engine/ambient-occlusion-layout",
     bindings: &[
         uniform("post", F),
+        uniform("canopy", F),
         texture("depth_texture", Sample::Depth, View::D2, F),
     ],
 };

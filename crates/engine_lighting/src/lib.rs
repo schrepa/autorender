@@ -1,3 +1,8 @@
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
+
 use engine_core::{Brick, Bricks, Slot};
 use engine_faces::slots::LightingSlot;
 use engine_render::render_bricks::AddRenderParts;

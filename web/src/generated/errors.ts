@@ -162,6 +162,8 @@ export type ErrorCode =
   | "unknown_module"
   | "unknown_binding"
   | "binding_limit"
+  | "slot_filled_twice"
+  | "slot_unfilled"
   | "comment"
   | "marker"
   | "lint_allowed"

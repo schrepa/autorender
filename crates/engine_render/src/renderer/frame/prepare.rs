@@ -417,10 +417,8 @@ impl Renderer {
             .flatten()
             .map(|views| (views.format, views.mirrored));
         self.core.views = views;
-        if meshes && views.is_some() {
-            if let Some((format, mirrored)) = views {
-                self.core.ensure_view_variants(format, mirrored);
-            }
+        if meshes && let Some((format, mirrored)) = views {
+            self.core.ensure_view_variants(format, mirrored);
         }
         let impostor_pass = if meshes
             && gpu_mode

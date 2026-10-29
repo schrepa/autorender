@@ -1,4 +1,5 @@
 use engine_core::{Applied, RenderStats};
+use engine_faces::occupancy::OccupancyFace;
 use engine_render::cached::{Bound, GroupCache, Versioned};
 use engine_render::graph::{
     Access, Clear, FrameGraph, GraphTable, PassDecl, PassId, ResourceId, Stage,
@@ -105,6 +106,11 @@ impl GpuPart for OcclusionPass {
             return;
         };
         occlusion.size(device, core.display.region);
+        let share = cx
+            .parts
+            .face::<dyn OccupancyFace>()
+            .map_or(0.0, OccupancyFace::texel_share);
+        occlusion.write_canopy(&core.queue, share);
         let environment = &cx.frame.snapshot.environment;
         let ambient = environment.ambient_occlusion.sanitized().enabled();
         let sky = environment.sky_occlusion.sanitized().darkens() && environment.shadows.enabled;
@@ -227,8 +233,10 @@ struct Occlusion {
     filter: wgpu::RenderPipeline,
     targets: ScreenTarget<Targets>,
     region: FrameRegion,
-    occlusion_group: GroupCache<2>,
+    occlusion_group: GroupCache<3>,
     filter_group: GroupCache<2>,
+    canopy: wgpu::Buffer,
+    canopy_share: Option<f32>,
 }
 
 impl Occlusion {
@@ -271,6 +279,15 @@ impl Occlusion {
             region: FrameRegion::default(),
             occlusion_group: GroupCache::default(),
             filter_group: GroupCache::default(),
+            canopy: engine_render::buffers::uniform(device, "engine/ambient-occlusion-canopy", 16),
+            canopy_share: None,
+        }
+    }
+
+    fn write_canopy(&mut self, queue: &engine_render::gpu_calls::Queue, share: f32) {
+        if self.canopy_share != Some(share) {
+            queue.write_buffer(&self.canopy, 0, bytemuck::bytes_of(&[share, 0.0, 0.0, 0.0]));
+            self.canopy_share = Some(share);
         }
     }
 
@@ -323,7 +340,11 @@ impl Occlusion {
             device,
             "engine/ambient-occlusion-group",
             (&AMBIENT_OCCLUSION, &self.occlusion_layout),
-            [("post", uniform.clone()), ("depth_texture", depth.bound())],
+            [
+                ("post", uniform.clone()),
+                ("canopy", Bound::fixed(self.canopy.as_entire_binding())),
+                ("depth_texture", depth.bound()),
+            ],
         );
         self.filter_group.bind(
             device,

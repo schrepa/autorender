@@ -813,6 +813,10 @@ impl Parts {
         self.slots.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.slots.is_empty()
+    }
+
     pub fn decl(&self, index: usize) -> &'static PartDecl {
         &self.slots[index].entry.decl
     }

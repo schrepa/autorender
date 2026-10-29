@@ -941,6 +941,7 @@ dependencies = [
 name = "engine_ambient_occlusion"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",

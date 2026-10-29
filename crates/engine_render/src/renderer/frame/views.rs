@@ -5,15 +5,15 @@ const DEBUG_TARGETS: [&str; 3] = ["debug_ids", "debug_count", "debug_terrain"];
 
 impl Renderer {
     pub(super) fn shows_debug_view(&self) -> bool {
-        #[cfg(feature = "dev")]
-        let forced = self.core.display.probe.forces();
-        #[cfg(not(feature = "dev"))]
-        let forced = None;
-        forced.unwrap_or_else(|| {
+        let wanted = || {
             DEBUG_TARGETS
                 .into_iter()
                 .any(|name| self.parts.wants(self.table.resource(name)))
-        })
+        };
+        #[cfg(feature = "dev")]
+        return self.core.display.probe.forces().unwrap_or_else(wanted);
+        #[cfg(not(feature = "dev"))]
+        wanted()
     }
 
     pub(super) fn node_views(

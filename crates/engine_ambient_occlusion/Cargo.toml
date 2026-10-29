@@ -12,6 +12,7 @@ dev = ["engine_render/dev"]
 [dependencies]
 engine_core.workspace = true
 engine_faces.workspace = true
+bytemuck.workspace = true
 engine_render.workspace = true
 wgpu.workspace = true
 

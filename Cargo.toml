@@ -65,6 +65,8 @@ engine_ambient_occlusion = { path = "crates/engine_ambient_occlusion" }
 engine_reflections = { path = "crates/engine_reflections" }
 engine_bloom = { path = "crates/engine_bloom" }
 engine_dither = { path = "crates/engine_dither" }
+highlands_pond = { path = "examples/highlands/bricks/pond" }
+highlands_toon_lighting = { path = "examples/highlands/bricks/toon_lighting" }
 base64 = "=0.22.1"
 gltf = { version = "=1.4.1", default-features = false, features = ["utils", "names", "allow_empty_texture", "KHR_texture_transform", "KHR_materials_emissive_strength"] }
 png = "=0.17.16"

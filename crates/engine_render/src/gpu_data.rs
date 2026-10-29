@@ -341,6 +341,7 @@ impl Variant {
         Self(bits)
     }
 
+    #[must_use]
     pub fn uber(self) -> Self {
         let state = Self::EXTENDED | Self::ALPHA_MASK | Self::DOUBLE_SIDED;
         Self(self.0 & state | Self::UBER)
@@ -379,6 +380,7 @@ impl Variant {
         self.0 & Self::ALPHA_MASK != 0
     }
 
+    #[must_use]
     pub fn opaque(self) -> Self {
         if self.alpha_mask() {
             Self(self.0 | Self::PRETESTED)
@@ -387,6 +389,7 @@ impl Variant {
         }
     }
 
+    #[must_use]
     pub fn prepass(self) -> Self {
         Self(self.0 & !Self::PRETESTED | Self::PREPASS)
     }
@@ -399,6 +402,7 @@ impl Variant {
         self.0 & Self::PRETESTED != 0
     }
 
+    #[must_use]
     pub fn with_extended(self, extended: bool) -> Self {
         Self(if extended {
             self.0 | Self::EXTENDED
@@ -411,6 +415,7 @@ impl Variant {
         self.0 & Self::EXTENDED != 0
     }
 
+    #[must_use]
     pub fn with_fading(self, fading: bool) -> Self {
         Self(if fading {
             self.0 | Self::FADING
@@ -419,6 +424,7 @@ impl Variant {
         })
     }
 
+    #[must_use]
     pub fn with_grounding(self, grounding: bool) -> Self {
         Self(if grounding {
             self.0 | Self::GROUNDING

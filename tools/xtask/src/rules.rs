@@ -11,7 +11,7 @@ pub const RULES: Rules = Rules {
                 "crates/engine_terrain_shading/src/meshes/terrain.wgsl",
                 1643,
             ),
-            ("crates/engine_water/src/water_sim.wgsl", 1645),
+            ("crates/engine_water/src/sim.wgsl", 1645),
             ("tools/lodbuild/src/simplify.rs", 2009),
         ],
         wide_structs: &[
@@ -21,7 +21,11 @@ pub const RULES: Rules = Rules {
                 "GpuInputs",
                 35,
             ),
-            ("crates/engine_render/src/post.rs", "Post", 32),
+            (
+                "crates/engine_render/src/renderer/core_state.rs",
+                "Core",
+                34,
+            ),
             ("crates/engine_scatter/src/scatter.rs", "ScatterPass", 40),
             ("crates/engine_sky/src/clouds.rs", "CloudPass", 48),
             (
@@ -115,8 +119,11 @@ pub const RULES: Rules = Rules {
             "JobFailures",
             "JobWorker",
             "LOD_RECORD",
+            "LightExtractor",
             "LodInput",
             "MAX_DEV_TICKS",
+            "ParticleExtractor",
+            "ProbeExtractor",
             "RenderTables",
             "StaticTable",
             "StaticTables",

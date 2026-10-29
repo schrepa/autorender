@@ -165,6 +165,7 @@ type Levels = (
 );
 
 impl ScatterDraws {
+    #[expect(clippy::too_many_lines, reason = "one pass over the placed batches")]
     pub(crate) fn prepare(
         &mut self,
         scatter: &mut ScatterPass,

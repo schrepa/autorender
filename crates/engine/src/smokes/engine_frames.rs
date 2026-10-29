@@ -127,7 +127,7 @@ pub(crate) fn core_only_frames(session: &mut dyn SmokeSession) -> SmokeResult {
     );
     let bricks: Vec<&String> = passes
         .iter()
-        .filter(|pass| found.passes.iter().any(|known| *known == pass.as_str()))
+        .filter(|pass| found.passes.contains(&pass.as_str()))
         .collect();
     smoke_check!(
         bricks.is_empty(),

@@ -261,6 +261,7 @@
         "debug_view",
         "hierarchy",
         "highlands_lod",
+        "highlands_toon_lighting",
         "host_faults",
         "host_images",
         "host_parity",
@@ -299,6 +300,7 @@
       "op": "capture",
       "smokes": [
         "agent",
+        "core_only_frames",
         "culling_settings",
         "debug_view",
         "foliage_settings",
@@ -306,6 +308,7 @@
         "host_faults",
         "host_images",
         "host_parity",
+        "lit_meshes_frames",
         "native",
         "temporal_antialiasing"
       ]
@@ -491,14 +494,17 @@
     {
       "op": "camera",
       "smokes": [
+        "core_only_frames",
         "culling_settings",
         "debug_view_terrain",
         "foliage_settings",
         "gpu_presentation",
         "hierarchy",
+        "highlands_pond",
         "host_faults",
         "host_images",
         "host_parity",
+        "lit_meshes_frames",
         "meshes",
         "native",
         "plugins",
@@ -525,6 +531,7 @@
       "smokes": [
         "agent",
         "agent_lifecycle",
+        "core_only_frames",
         "culling_settings",
         "foliage_settings",
         "gpu_presentation",
@@ -533,6 +540,7 @@
         "host_parity",
         "input_camera",
         "input_keys",
+        "lit_meshes_frames",
         "native",
         "temporal_antialiasing",
         "texture"
@@ -568,13 +576,16 @@
       "op": "render",
       "smokes": [
         "agent",
+        "core_only_frames",
         "culling_settings",
         "foliage_settings",
         "gpu_presentation",
         "hierarchy",
+        "highlands_toon_lighting",
         "host_faults",
         "host_images",
         "host_parity",
+        "lit_meshes_frames",
         "native",
         "plugins",
         "surfaces",
@@ -588,6 +599,7 @@
         "agent",
         "agent_lifecycle",
         "collision",
+        "core_only_frames",
         "culling_settings",
         "debug_view",
         "debug_view_terrain",
@@ -595,9 +607,12 @@
         "frame_loop",
         "gpu_presentation",
         "hierarchy",
+        "highlands_pond",
+        "highlands_toon_lighting",
         "host_faults",
         "host_images",
         "host_parity",
+        "lit_meshes_frames",
         "meshes",
         "native",
         "physics",
@@ -616,11 +631,13 @@
       "smokes": [
         "agent",
         "collision",
+        "core_only_frames",
         "frame_loop",
         "gpu_presentation",
         "host_faults",
         "host_images",
         "host_parity",
+        "lit_meshes_frames",
         "native",
         "terrain_water_sky"
       ]
@@ -687,10 +704,13 @@
       "op": "terrain",
       "smokes": [
         "agent",
+        "core_only_frames",
         "debug_view",
         "debug_view_terrain",
         "highlands_jobs",
+        "highlands_pond",
         "highlands_torrent",
+        "lit_meshes_frames",
         "plugins",
         "streamed_scene",
         "terrain_draws",
@@ -757,9 +777,12 @@
       "section": "terrain",
       "smokes": [
         "agent",
+        "core_only_frames",
         "debug_view_terrain",
         "highlands_jobs",
+        "highlands_pond",
         "highlands_torrent",
+        "lit_meshes_frames",
         "plugins",
         "streamed_scene",
         "terrain_draws",
@@ -842,28 +865,52 @@
       "stats": true
     },
     {
+      "inspector": "Highlights",
+      "section": "highlights",
+      "smokes": [
+        "agent"
+      ],
+      "stats": false
+    },
+    {
+      "inspector": "Foliage",
+      "section": "foliage",
+      "smokes": [
+        "culling_settings",
+        "foliage_settings",
+        "temporal_antialiasing"
+      ],
+      "stats": false
+    },
+    {
+      "inspector": "Shadows",
+      "section": "shadows",
+      "smokes": [
+        "agent",
+        "culling_settings",
+        "debug_view",
+        "foliage_settings",
+        "gpu_presentation",
+        "temporal_antialiasing",
+        "terrain_draws",
+        "terrain_surface",
+        "terrain_water_sky"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "SkyOcclusion",
+      "section": "sky_occlusion",
+      "smokes": [
+        "agent"
+      ],
+      "stats": false
+    },
+    {
       "inspector": "LocalLightSettings",
       "section": "local_lights",
       "smokes": [
         "agent"
-      ],
-      "stats": true
-    },
-    {
-      "inspector": "ParticleSettings",
-      "section": "particles",
-      "smokes": [
-        "agent",
-        "surfaces"
-      ],
-      "stats": true
-    },
-    {
-      "inspector": "ReflectionProbeSettings",
-      "section": "reflection_probes",
-      "smokes": [
-        "debug_view",
-        "terrain_water_sky"
       ],
       "stats": true
     },
@@ -909,32 +956,25 @@
       "stats": false
     },
     {
-      "inspector": "Shadows",
-      "section": "shadows",
+      "inspector": "ReflectionProbeSettings",
+      "section": "reflection_probes",
       "smokes": [
-        "agent",
-        "culling_settings",
         "debug_view",
-        "foliage_settings",
-        "gpu_presentation",
-        "temporal_antialiasing",
-        "terrain_draws",
-        "terrain_surface",
         "terrain_water_sky"
       ],
       "stats": true
     },
     {
-      "inspector": "SkyOcclusion",
-      "section": "sky_occlusion",
+      "inspector": "AmbientOcclusion",
+      "section": "ambient_occlusion",
       "smokes": [
         "agent"
       ],
-      "stats": false
+      "stats": true
     },
     {
-      "inspector": "AmbientOcclusion",
-      "section": "ambient_occlusion",
+      "inspector": "Reflections",
+      "section": "reflections",
       "smokes": [
         "agent"
       ],
@@ -964,18 +1004,11 @@
       "stats": false
     },
     {
-      "inspector": "AutoExposure",
-      "section": "auto_exposure",
+      "inspector": "ParticleSettings",
+      "section": "particles",
       "smokes": [
-        "terrain_water_sky"
-      ],
-      "stats": false
-    },
-    {
-      "inspector": "Reflections",
-      "section": "reflections",
-      "smokes": [
-        "agent"
+        "agent",
+        "surfaces"
       ],
       "stats": true
     },
@@ -989,6 +1022,25 @@
         "temporal_antialiasing"
       ],
       "stats": true
+    },
+    {
+      "inspector": "AutoExposure",
+      "section": "auto_exposure",
+      "smokes": [
+        "terrain_water_sky"
+      ],
+      "stats": false
+    },
+    {
+      "inspector": "DebugView",
+      "section": "debug_view",
+      "smokes": [
+        "debug_view",
+        "debug_view_terrain",
+        "highlands_torrent",
+        "terrain_draws"
+      ],
+      "stats": false
     },
     {
       "inspector": "LevelOfDetail",
@@ -1040,35 +1092,6 @@
         "native"
       ],
       "stats": true
-    },
-    {
-      "inspector": "DebugView",
-      "section": "debug_view",
-      "smokes": [
-        "debug_view",
-        "debug_view_terrain",
-        "highlands_torrent",
-        "terrain_draws"
-      ],
-      "stats": false
-    },
-    {
-      "inspector": "Highlights",
-      "section": "highlights",
-      "smokes": [
-        "agent"
-      ],
-      "stats": false
-    },
-    {
-      "inspector": "Foliage",
-      "section": "foliage",
-      "smokes": [
-        "culling_settings",
-        "foliage_settings",
-        "temporal_antialiasing"
-      ],
-      "stats": false
     }
   ]
 }

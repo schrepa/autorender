@@ -340,6 +340,10 @@ fn pipeline_layout(device: &wgpu::Device) -> wgpu::PipelineLayout {
     engine_render::pipelines::layout_of(device, &crate::pipeline_layouts::LIT_TERRAIN_PIPELINES)
 }
 
+#[expect(
+    clippy::type_complexity,
+    reason = "a pipeline's entries, holes and shading"
+)]
 fn geometry(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,

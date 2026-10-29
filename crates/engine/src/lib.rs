@@ -58,9 +58,9 @@ mod games {
         ResolutionStats, Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamingFocus,
         SubpixelCulling, Surface, TemporalAntialiasing, Texture, TextureHandle, TextureRef,
         TextureSet, TextureSource, TextureUsage, Tint, TopLayer, Transform, UvTransform, ViewSync,
-        ViewSyncSystems, WaterKind, WaterObstacle, WaterObstacles, WaterSample, WorldSync,
-        WorldSyncSystems, Wrap, edit_transform, math, reset_all_interpolation, reset_interpolation,
-        set_parent, set_parents, trim_cards,
+        ViewSyncSystems, WaterBodies, WaterFace, WaterKind, WaterObstacle, WaterObstacles,
+        WaterSample, WorldSync, WorldSyncSystems, Wrap, edit_transform, math,
+        reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
     };
     pub use engine_debug_view::DebugViewBrick;
     pub use engine_dither::DitherBrick;

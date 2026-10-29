@@ -1,31 +1,8 @@
 use crate::cached::Versioned;
+use crate::debug_targets::{COUNT_FORMAT, IDS_FORMAT, color_targets as debug_color_targets};
 pub(crate) use crate::graph::Targets;
 use crate::post::{GLOW_FORMAT, SCENE_FORMAT, SURFACE_FORMAT};
-
-pub const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
-pub const DEBUG_IDS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
-pub const DEBUG_COUNT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
-pub const DEBUG_TERRAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
-
-fn debug_color_targets() -> Vec<Option<wgpu::ColorTargetState>> {
-    let add = wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    };
-    vec![
-        Some(DEBUG_IDS_FORMAT.into()),
-        Some(wgpu::ColorTargetState {
-            format: DEBUG_COUNT_FORMAT,
-            blend: Some(wgpu::BlendState {
-                color: add,
-                alpha: add,
-            }),
-            write_mask: wgpu::ColorWrites::ALL,
-        }),
-        Some(DEBUG_TERRAIN_FORMAT.into()),
-    ]
-}
+use crate::renderer::MOTION_FORMAT;
 
 impl Targets {
     pub fn formats(self, canvas: wgpu::TextureFormat) -> Vec<wgpu::TextureFormat> {
@@ -33,7 +10,7 @@ impl Targets {
             Self::Canvas => vec![canvas],
             Self::Post => vec![SCENE_FORMAT, GLOW_FORMAT, SURFACE_FORMAT],
             Self::Temporal => vec![SCENE_FORMAT, MOTION_FORMAT, GLOW_FORMAT, SURFACE_FORMAT],
-            Self::Debug => vec![DEBUG_IDS_FORMAT, DEBUG_COUNT_FORMAT],
+            Self::Debug => vec![IDS_FORMAT, COUNT_FORMAT],
         }
     }
 
