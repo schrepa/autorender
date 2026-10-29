@@ -1,4 +1,5 @@
-/** An error's code, as replies name it; protocol.json's `errors` say what each means. */
+import type { Error as Failure } from "./reply";
+
 export type ErrorCode =
   | "invalid_json"
   | "unknown_field"
@@ -148,16 +149,43 @@ export type ErrorCode =
   | "activation_expired"
   | "source_budget"
   | "source_symlink"
-  | "source_type";
+  | "source_type"
+  | "invalid_pack"
+  | "invalid_record"
+  | "missing_layer"
+  | "invalid_gltf"
+  | "unsupported_feature"
+  | "comment"
+  | "marker"
+  | "lint_allowed"
+  | "lint_missing"
+  | "forbidden_code"
+  | "unsafe_unlisted"
+  | "safety_missing"
+  | "error_type"
+  | "version_unpinned"
+  | "not_inherited"
+  | "exception_unused"
+  | "core_uses_brick"
+  | "brick_internal_path"
+  | "brick_cycle"
+  | "crate_cycle"
+  | "replaces_unknown"
+  | "face_missing"
+  | "file_too_long"
+  | "struct_too_wide"
+  | "example_named"
+  | "example_dependency"
+  | "facade_export"
+  | "generated_stale"
+  | "schedule_ambiguity";
 
-/** An error the engine threw on the page: its code and where (a JSON path, or
- * `?NAME` for a page parameter), its message saying both and what is wrong. */
-export interface EngineError extends Error {
-  code: ErrorCode;
-  path: string;
-}
+export type EngineError = Error & Failure;
 
-/** `thrown` as an error the engine threw, where it is one. */
 export function engineError(thrown: unknown): EngineError | undefined {
   return thrown instanceof Error && thrown.name === "EngineError" ? thrown as EngineError : undefined;
+}
+
+export function engineFailure(failure: Failure): EngineError {
+  return Object.assign(new Error(JSON.stringify(failure)), failure, { name: "EngineError" });
 }

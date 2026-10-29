@@ -135,9 +135,11 @@ fn change_world(
                 .got(ids.len()));
         }
         if let Some(index) = ids.iter().position(|id| id.is_empty() || id.len() > 192) {
-            return Err(Error::new(ErrorCode::OutOfRange, format!("{path}[{index}]"))
-                .range(1.0, 192.0)
-                .got(ids[index].len()));
+            return Err(
+                Error::new(ErrorCode::OutOfRange, format!("{path}[{index}]"))
+                    .range(1.0, 192.0)
+                    .got(ids[index].len()),
+            );
         }
     }
     let mut changes = world

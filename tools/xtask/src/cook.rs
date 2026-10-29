@@ -186,18 +186,21 @@ fn read_back(root: &Path, pack: &Pack, problems: &mut Vec<Value>) -> Result<Vec<
             .get(start..end)
             .ok_or_else(|| format!("{file} ends before byte {end}"))
     };
-    let (offset, stored, _) = engine_worker::pack_directory(header)?;
-    let index = engine_worker::PackIndex::open(header, range(offset, stored)?)?;
+    let (offset, stored, _) =
+        engine_worker::pack_directory(header).map_err(|error| error.to_string())?;
+    let index = engine_worker::PackIndex::open(header, range(offset, stored)?)
+        .map_err(|error| error.to_string())?;
     let listing = engine_worker::listing_key();
     let entry = index
         .entries()
         .iter()
         .find(|entry| entry.key == listing)
         .ok_or_else(|| format!("{file} lists no record kinds: cook it again"))?;
-    let kinds = engine_worker::read_listing(&engine_worker::unpack(
-        entry,
-        range(entry.offset, u64::from(entry.stored))?,
-    )?)?;
+    let kinds = engine_worker::read_listing(
+        &engine_worker::unpack(entry, range(entry.offset, u64::from(entry.stored))?)
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
     let mut read = Vec::with_capacity(index.len());
     for entry in index.entries() {
         let key: String = entry.key.iter().map(|byte| format!("{byte:02x}")).collect();
@@ -214,8 +217,9 @@ fn read_back(root: &Path, pack: &Pack, problems: &mut Vec<Value>) -> Result<Vec<
                 continue;
             }
         };
-        let unpacked = range(entry.offset, u64::from(entry.stored))
-            .and_then(|stored| engine_worker::unpack(entry, stored));
+        let unpacked = range(entry.offset, u64::from(entry.stored)).and_then(|stored| {
+            engine_worker::unpack(entry, stored).map_err(|error| error.to_string())
+        });
         match unpacked {
             Ok(record) => read.push(json!({
                 "kind": kind,

@@ -11,7 +11,10 @@ pub fn write(root: &Path, files: &[(String, String)]) -> Result<(), String> {
         }
         fs::write(root.join(path), contents)
             .map_err(|error| format!("cannot write {path}: {error}"))?;
-        println!("{}", serde_json::json!({"event": "generated", "file": path}));
+        println!(
+            "{}",
+            serde_json::json!({"event": "generated", "file": path})
+        );
     }
     Ok(())
 }

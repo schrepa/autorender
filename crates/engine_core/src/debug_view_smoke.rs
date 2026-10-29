@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use crate::smoke::{SmokeFailure, SmokeResult, SmokeSession};
 use crate::{
-    AssetLibrary, Error, Camera, Material, Mesh, Mesh3d, Texture, Transform, set_parents,
+    AssetLibrary, Camera, Error, Material, Mesh, Mesh3d, Texture, Transform, set_parents,
     smoke_check, smoke_eq,
 };
 
@@ -39,7 +39,12 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     let listed = listing["types"]
         .as_array()
         .is_some_and(|types| types.iter().any(|kind| kind["name"] == "DebugView"));
-    smoke_check!(listed, "setting_discoverable", json!(listing["types"]), json!("DebugView"));
+    smoke_check!(
+        listed,
+        "setting_discoverable",
+        json!(listing["types"]),
+        json!("DebugView")
+    );
     let look = ask(session, "inspect", json!({"component": "Environment"}))?;
     smoke_eq!(
         json!(look["value"]["debug_view"]),
@@ -56,7 +61,11 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     let before = exact(session)?;
     let shown = views(session, &shaded)?;
     let off = environment(session, json!({"debug_view": {"view": "off"}}))?;
-    smoke_eq!(json!(off["environment_changed"]), json!(["debug_view"]), "view_turns_off");
+    smoke_eq!(
+        json!(off["environment_changed"]),
+        json!(["debug_view"]),
+        "view_turns_off"
+    );
     smoke_eq!(json!(shown_view(session)?), json!("off"), "view_reads_off");
     let again = capture(session)?;
     smoke_check!(
@@ -90,11 +99,18 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     Ok(())
 }
 
-fn views(session: &mut dyn SmokeSession, shaded: &(Value, Value)) -> Result<Vec<Value>, SmokeFailure> {
+fn views(
+    session: &mut dyn SmokeSession,
+    shaded: &(Value, Value),
+) -> Result<Vec<Value>, SmokeFailure> {
     let mut shown = Vec::new();
     for view in VIEWS {
         let changed = environment(session, json!({"debug_view": {"view": view}}))?;
-        smoke_eq!(json!(changed["environment_changed"]), json!(["debug_view"]), "view_changes_setting");
+        smoke_eq!(
+            json!(changed["environment_changed"]),
+            json!(["debug_view"]),
+            "view_changes_setting"
+        );
         smoke_eq!(json!(shown_view(session)?), json!(view), "view_reads_back");
         let (rendering, image) = capture(session)?;
         smoke_check!(
@@ -146,8 +162,12 @@ fn views(session: &mut dyn SmokeSession, shaded: &(Value, Value)) -> Result<Vec<
 }
 
 fn probes(session: &mut dyn SmokeSession, rendering: &Value) -> SmokeResult {
-    let width = rendering["resolution"]["display_width"].as_u64().unwrap_or(0);
-    let height = rendering["resolution"]["display_height"].as_u64().unwrap_or(0);
+    let width = rendering["resolution"]["display_width"]
+        .as_u64()
+        .unwrap_or(0);
+    let height = rendering["resolution"]["display_height"]
+        .as_u64()
+        .unwrap_or(0);
     let mut kinds = Vec::new();
     for fraction in [0.3, 0.4, 0.5, 0.6, 0.7] {
         let x = (width as f64 * fraction).floor() as u64;
@@ -155,15 +175,27 @@ fn probes(session: &mut dyn SmokeSession, rendering: &Value) -> SmokeResult {
         let probed = control(session, "probe", json!({"x": x, "y": y, "alpha": 0}))?;
         smoke_eq!(json!(probed["pixel"]), json!([x, y]), "probe_names_pixel");
         let kind = probed["kind"].as_str().unwrap_or_default().to_owned();
-        smoke_check!(KINDS.contains(&kind.as_str()), "probe_kind", json!(probed), json!(KINDS));
         smoke_check!(
-            probed["shaded"].as_array().is_some_and(|shaded| shaded.len() == 3),
+            KINDS.contains(&kind.as_str()),
+            "probe_kind",
+            json!(probed),
+            json!(KINDS)
+        );
+        smoke_check!(
+            probed["shaded"]
+                .as_array()
+                .is_some_and(|shaded| shaded.len() == 3),
             "probe_shaded",
             json!(probed),
             json!({"shaded": [0, 0, 0]})
         );
         if kind != "sky" {
-            smoke_check!(surface(&probed), "probe_surface", json!(probed), json!("surface"));
+            smoke_check!(
+                surface(&probed),
+                "probe_surface",
+                json!(probed),
+                json!("surface")
+            );
         }
         if SLOTTED.contains(&kind.as_str()) {
             smoke_check!(
@@ -181,14 +213,24 @@ fn probes(session: &mut dyn SmokeSession, rendering: &Value) -> SmokeResult {
         json!(kinds),
         json!(SLOTTED)
     );
-    let sky = control(session, "probe", json!({"x": width / 2, "y": 2, "alpha": 0}))?;
+    let sky = control(
+        session,
+        "probe",
+        json!({"x": width / 2, "y": 2, "alpha": 0}),
+    )?;
     smoke_check!(
-        sky["kind"].as_str().is_some_and(|kind| KINDS.contains(&kind)),
+        sky["kind"]
+            .as_str()
+            .is_some_and(|kind| KINDS.contains(&kind)),
         "probe_top",
         json!(sky),
         json!(KINDS)
     );
-    let outside = refuse(session, "control", json!({"name": "probe", "args": {"x": width, "y": 0}}))?;
+    let outside = refuse(
+        session,
+        "control",
+        json!({"name": "probe", "args": {"x": width, "y": 0}}),
+    )?;
     smoke_eq!(
         json!({"code": outside["code"], "path": outside["path"]}),
         json!({"code": "out_of_range", "path": "$.args.x"}),
@@ -199,9 +241,11 @@ fn probes(session: &mut dyn SmokeSession, rendering: &Value) -> SmokeResult {
 
 fn surface(probed: &Value) -> bool {
     let depth = probed["depth"].as_f64().unwrap_or(0.0);
-    let world = probed["world"]
-        .as_array()
-        .is_some_and(|world| world.iter().all(|value| value.as_f64().is_some_and(f64::is_finite)));
+    let world = probed["world"].as_array().is_some_and(|world| {
+        world
+            .iter()
+            .all(|value| value.as_f64().is_some_and(f64::is_finite))
+    });
     let normal = probed["normal"].as_array().map_or(0.0, |normal| {
         normal
             .iter()
@@ -225,7 +269,12 @@ fn settle(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
             break;
         }
     }
-    smoke_check!(!compiling, "pipelines_compile", json!(compiling), json!(false));
+    smoke_check!(
+        !compiling,
+        "pipelines_compile",
+        json!(compiling),
+        json!(false)
+    );
     let (mut previous, mut stable, mut rendering) = (Value::Null, 0, Value::Null);
     for frame in 1..=600_u64 {
         if frame > 8 && stable >= 5 {
@@ -242,10 +291,19 @@ fn settle(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
         let current = rendering["read_back_age"]
             .as_u64()
             .is_some_and(|age| age < frame);
-        stable = if current && counts == previous { stable + 1 } else { 0 };
+        stable = if current && counts == previous {
+            stable + 1
+        } else {
+            0
+        };
         previous = if current { counts } else { Value::Null };
     }
-    smoke_check!(stable >= 5, "read_back_settles", json!(rendering), json!({"stable": 5}));
+    smoke_check!(
+        stable >= 5,
+        "read_back_settles",
+        json!(rendering),
+        json!({"stable": 5})
+    );
     Ok(rendering)
 }
 
@@ -257,7 +315,12 @@ fn capture(session: &mut dyn SmokeSession) -> Result<(Value, Value), SmokeFailur
     settle(session)?;
     let captured = ask(session, "capture", json!({"alpha": 0}))?;
     let image = captured["artifact"]["sha256"].clone();
-    smoke_check!(image.is_string(), "capture_keeps_image", json!(captured["artifact"]), json!("sha256"));
+    smoke_check!(
+        image.is_string(),
+        "capture_keeps_image",
+        json!(captured["artifact"]),
+        json!("sha256")
+    );
     Ok((captured["rendering"].clone(), image))
 }
 
@@ -271,7 +334,12 @@ fn exact(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
         }
         previous = image;
     }
-    smoke_check!(false, "exact_captures_agree", json!(previous), json!("two equal captures"));
+    smoke_check!(
+        false,
+        "exact_captures_agree",
+        json!(previous),
+        json!("two equal captures")
+    );
     Ok(previous)
 }
 
@@ -299,15 +367,30 @@ fn control(session: &mut dyn SmokeSession, name: &str, args: Value) -> Result<Va
 fn ask(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Result<Value, SmokeFailure> {
     let sent = json!({"verb": verb, "body": body});
     let reply = session.request(verb, body);
-    smoke_check!(reply.is_ok(), "request_accepted", json!(reply.as_ref().err()), sent);
-    Ok(reply.map(|reply| reply["result"].clone()).unwrap_or_default())
+    smoke_check!(
+        reply.is_ok(),
+        "request_accepted",
+        json!(reply.as_ref().err()),
+        sent
+    );
+    Ok(reply
+        .map(|reply| reply["result"].clone())
+        .unwrap_or_default())
 }
 
 fn refuse(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Result<Value, SmokeFailure> {
     let sent = json!({"verb": verb, "body": body});
     let reply = session.request(verb, body);
-    smoke_check!(reply.is_err(), "request_refused", json!(reply.as_ref().ok()), sent);
-    Ok(reply.err().map(|reply| reply["error"].clone()).unwrap_or_default())
+    smoke_check!(
+        reply.is_err(),
+        "request_refused",
+        json!(reply.as_ref().ok()),
+        sent
+    );
+    Ok(reply
+        .err()
+        .map(|reply| reply["error"].clone())
+        .unwrap_or_default())
 }
 
 fn checker() -> Vec<u8> {

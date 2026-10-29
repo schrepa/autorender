@@ -37,10 +37,15 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     let source = fixture();
     let (mut scene, _) = SceneFixture::load(session, &source)?;
     ask(session, "control", json!({"name": "pause"}))?;
-    control(session, "environment", json!({"terrain": {"samples_per_frame": 50_000_000}}))?;
+    control(
+        session,
+        "environment",
+        json!({"terrain": {"samples_per_frame": 50_000_000}}),
+    )?;
     let mut rendering = look(session, 0.0, 0.0)?;
     for _ in 0..400 {
-        if rendering["terrain"]["loading_tiles"] == 0 && rendering["terrain"]["fallback_tiles"] == 0 {
+        if rendering["terrain"]["loading_tiles"] == 0 && rendering["terrain"]["fallback_tiles"] == 0
+        {
             break;
         }
         rendering = render(session)?;
@@ -59,16 +64,31 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     );
     let streamed = &rendering["world_streaming"];
     smoke_eq!(
-        json!([streamed["cells"], streamed["loaded"], streamed["pending"], streamed["entities"]]),
+        json!([
+            streamed["cells"],
+            streamed["loaded"],
+            streamed["pending"],
+            streamed["entities"]
+        ]),
         json!([5, 4, 0, 7]),
         "binning_stats"
     );
-    smoke_check!(!loaded(session, "crate-mid")?, "middle_crate_out_of_range", json!("crate-mid"), json!("unloaded"));
+    smoke_check!(
+        !loaded(session, "crate-mid")?,
+        "middle_crate_out_of_range",
+        json!("crate-mid"),
+        json!("unloaded")
+    );
     grounded(session)?;
     let post = component(session, "lamp-far.post", "Hierarchy")?;
     smoke_eq!(json!(post["parent"]), json!("lamp-far"), "items");
     look(session, 1000.0, 0.0)?;
-    smoke_check!(!loaded(session, "crate-near")?, "far_crate_goes", json!("crate-near"), json!("unloaded"));
+    smoke_check!(
+        !loaded(session, "crate-near")?,
+        "far_crate_goes",
+        json!("crate-near"),
+        json!("unloaded")
+    );
     let missed = query(session, "raycast", down())?;
     smoke_check!(
         missed["hit"]["entity"]["id"] != "crate-near",
@@ -81,7 +101,12 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
         items.truncate(1);
     }
     let reloaded = scene.reload(session, &fewer);
-    smoke_check!(reloaded.is_ok(), "reload_accepted", json!(reloaded.as_ref().err()), json!(null));
+    smoke_check!(
+        reloaded.is_ok(),
+        "reload_accepted",
+        json!(reloaded.as_ref().err()),
+        json!(null)
+    );
     let cells = ask(session, "inspect", json!({"component": "WorldCells"}))?["value"].clone();
     smoke_eq!(json!(cells["items"]), json!(1), "reload");
     refusals(session, &mut scene, &source)
@@ -101,7 +126,11 @@ fn grounded(session: &mut dyn SmokeSession) -> SmokeResult {
         json!({"y": height + 0.5})
     );
     let held = component(session, "crate-near", "Grounded")?;
-    let level = if ground["level"].is_null() { json!(0) } else { ground["level"].clone() };
+    let level = if ground["level"].is_null() {
+        json!(0)
+    } else {
+        ground["level"].clone()
+    };
     smoke_eq!(
         json!({"offset": held["offset"], "level": held["level"]}),
         json!({"offset": 0.5, "level": level}),
@@ -116,11 +145,23 @@ fn grounded(session: &mut dyn SmokeSession) -> SmokeResult {
     Ok(())
 }
 
-fn refusals(session: &mut dyn SmokeSession, scene: &mut SceneFixture, source: &Value) -> SmokeResult {
+fn refusals(
+    session: &mut dyn SmokeSession,
+    scene: &mut SceneFixture,
+    source: &Value,
+) -> SmokeResult {
     for (case, code, path) in [
         ("terrain", "invalid_streamed", "$.streamed[6].terrain"),
-        ("parent_across_lists", "unknown_parent", "$.streamed[5].parent"),
-        ("grounded_child", "invalid_grounded", "$.streamed[3].grounded"),
+        (
+            "parent_across_lists",
+            "unknown_parent",
+            "$.streamed[5].parent",
+        ),
+        (
+            "grounded_child",
+            "invalid_grounded",
+            "$.streamed[3].grounded",
+        ),
         ("duplicate_id", "duplicate_id", "$.streamed[0].id"),
     ] {
         let mut broken = source.clone();

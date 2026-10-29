@@ -44,7 +44,14 @@ settings! {
 impl ExtraRules for GivenRiver {
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         if !(2..=MAX_RIVER_POINTS).contains(&self.points.len()) {
-            return Err(InvalidSetting::new("points", engine_settings::Expected::Array).allowed(engine_settings::Allowed::Range { min: 2.0, max: MAX_RIVER_POINTS as f64 }));
+            return Err(
+                InvalidSetting::new("points", engine_settings::Expected::Array).allowed(
+                    engine_settings::Allowed::Range {
+                        min: 2.0,
+                        max: MAX_RIVER_POINTS as f64,
+                    },
+                ),
+            );
         }
         for (field, values) in [
             ("width", &self.width),
@@ -52,7 +59,10 @@ impl ExtraRules for GivenRiver {
             ("discharge", &self.discharge),
         ] {
             if !(values.len() <= 1 || values.len() == self.points.len()) {
-                return Err(InvalidSetting::new(field, engine_settings::Expected::Matching));
+                return Err(InvalidSetting::new(
+                    field,
+                    engine_settings::Expected::Matching,
+                ));
             }
         }
         if self
@@ -60,7 +70,13 @@ impl ExtraRules for GivenRiver {
             .as_ref()
             .is_some_and(|name| name.chars().count() > MAX_CREDIT)
         {
-            return Err(InvalidSetting::new("name", engine_settings::Expected::String).allowed(engine_settings::Allowed::AtMost { max: MAX_CREDIT as u64 }));
+            return Err(
+                InvalidSetting::new("name", engine_settings::Expected::String).allowed(
+                    engine_settings::Allowed::AtMost {
+                        max: MAX_CREDIT as u64,
+                    },
+                ),
+            );
         }
         Ok(())
     }
@@ -88,14 +104,27 @@ settings! {
 impl ExtraRules for RiversLayer {
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         if !(1..=MAX_GIVEN_RIVERS).contains(&self.lines.len()) {
-            return Err(InvalidSetting::new("lines", engine_settings::Expected::Array).allowed(engine_settings::Allowed::Range { min: 1.0, max: MAX_GIVEN_RIVERS as f64 }));
+            return Err(
+                InvalidSetting::new("lines", engine_settings::Expected::Array).allowed(
+                    engine_settings::Allowed::Range {
+                        min: 1.0,
+                        max: MAX_GIVEN_RIVERS as f64,
+                    },
+                ),
+            );
         }
         for (field, text) in [("source", &self.source), ("attribution", &self.attribution)] {
             if text
                 .as_ref()
                 .is_some_and(|text| text.chars().count() > MAX_CREDIT)
             {
-                return Err(InvalidSetting::new(field, engine_settings::Expected::String).allowed(engine_settings::Allowed::AtMost { max: MAX_CREDIT as u64 }));
+                return Err(
+                    InvalidSetting::new(field, engine_settings::Expected::String).allowed(
+                        engine_settings::Allowed::AtMost {
+                            max: MAX_CREDIT as u64,
+                        },
+                    ),
+                );
             }
         }
         Ok(())

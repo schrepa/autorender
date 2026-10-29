@@ -21,8 +21,11 @@ pub fn check(mut engine: Engine) -> Result<(), String> {
         });
         if let Err(error) = schedule.initialize(world) {
             problems.push(
-                engine_core::Error::new(engine_core::ErrorCode::ScheduleAmbiguity, format!("{label:?}"))
-                    .got(error.to_string(schedule.graph(), world)),
+                engine_core::Error::new(
+                    engine_core::ErrorCode::ScheduleAmbiguity,
+                    format!("{label:?}"),
+                )
+                .got(error.to_string(schedule.graph(), world)),
             );
         }
         world.resource_mut::<Schedules>().insert(schedule);

@@ -63,7 +63,9 @@ impl PackIndex {
             })
             .collect();
         if !entries.windows(2).all(|pair| pair[0].key < pair[1].key) {
-            return Err(Error::new(ErrorCode::InvalidPack, "$.directory").expected(Expected::Sorted));
+            return Err(
+                Error::new(ErrorCode::InvalidPack, "$.directory").expected(Expected::Sorted)
+            );
         }
         Ok(Self { entries })
     }

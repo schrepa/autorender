@@ -32,12 +32,7 @@ fn accepted(session: &mut dyn SmokeSession, verb: &str, body: Value, check: &'st
     Ok(reply)
 }
 
-fn refused(
-    session: &mut dyn SmokeSession,
-    body: Value,
-    code: &str,
-    check: &'static str,
-) -> Asked {
+fn refused(session: &mut dyn SmokeSession, body: Value, code: &str, check: &'static str) -> Asked {
     let reply = reply(session, "control", body);
     crate::smoke_check!(
         reply["error"]["code"] == code,
@@ -48,12 +43,7 @@ fn refused(
     Ok(reply)
 }
 
-fn control(
-    session: &mut dyn SmokeSession,
-    name: &str,
-    args: Value,
-    check: &'static str,
-) -> Asked {
+fn control(session: &mut dyn SmokeSession, name: &str, args: Value, check: &'static str) -> Asked {
     accepted(
         session,
         "control",
@@ -288,7 +278,12 @@ fn sturdier(session: &mut dyn SmokeSession) -> SmokeResult {
         "sturdier_resolve_runs"
     );
     let beyond = json!({ "name": "environment", "args": { "temporal_antialiasing": { "enabled": true, "particle_response": 9 } } });
-    refused(session, beyond, "invalid_environment", "particle_response_bounded")?;
+    refused(
+        session,
+        beyond,
+        "invalid_environment",
+        "particle_response_bounded",
+    )?;
     let on = json!({ "temporal_antialiasing": { "enabled": true } });
     control(session, "environment", on, "restores_resolve")?;
     crate::smoke_eq!(
@@ -394,7 +389,12 @@ pub(crate) fn culling_settings(session: &mut dyn SmokeSession) -> SmokeResult {
         json!("no occlusion_test")
     );
     let phases = json!({ "name": "environment", "args": { "occlusion_culling": { "enabled": true, "phases": 2 } } });
-    refused(session, phases, "unknown_field", "culling_settings_validated")?;
+    refused(
+        session,
+        phases,
+        "unknown_field",
+        "culling_settings_validated",
+    )?;
     let both = json!({ "occlusion_culling": on.clone(), "subpixel_culling": on });
     control(session, "environment", both, "turns_culling_on")?;
     let rendering = previewed(session, "previews_with_culling_again")?;

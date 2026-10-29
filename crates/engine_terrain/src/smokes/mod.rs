@@ -39,7 +39,9 @@ pub fn ask(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Checked<V
         &reply.as_ref().err().map(|refused| &refused["error"]),
         &verb
     );
-    Ok(reply.map(|mut answered| answered["result"].take()).unwrap_or_default())
+    Ok(reply
+        .map(|mut answered| answered["result"].take())
+        .unwrap_or_default())
 }
 
 pub fn control(session: &mut dyn SmokeSession, name: &str, args: Value) -> Checked<Value> {
@@ -63,7 +65,10 @@ pub fn refuse(
         &reply.as_ref().ok().map(|answered| &answered["result"]),
         &name
     );
-    Ok(reply.err().map(|mut refused| refused["error"].take()).unwrap_or_default())
+    Ok(reply
+        .err()
+        .map(|mut refused| refused["error"].take())
+        .unwrap_or_default())
 }
 
 pub fn environment(session: &mut dyn SmokeSession, sections: Value) -> Checked<Value> {

@@ -2,9 +2,7 @@ use engine_core::smoke::{SmokeFailure, SmokeResult, SmokeSession};
 use engine_core::{smoke_check, smoke_eq};
 use serde_json::{Value, json};
 
-use super::scene_kit::{
-    SceneFixture, ask, capture, component, control, query, render, residency,
-};
+use super::scene_kit::{SceneFixture, ask, capture, component, control, query, render, residency};
 
 const TEXTURES: [(&str, u32, u32); 2] = [("bark", 16, 16), ("leaf", 8, 8)];
 
@@ -37,7 +35,9 @@ fn base64(bytes: &[u8]) -> String {
         let bits = (byte(0) << 16) | (byte(1) << 8) | byte(2);
         for index in 0..4 {
             if index <= chunk.len() {
-                encoded.push(char::from(TABLE[((bits >> (18 - 6 * index)) & 63) as usize]));
+                encoded.push(char::from(
+                    TABLE[((bits >> (18 - 6 * index)) & 63) as usize],
+                ));
             } else {
                 encoded.push('=');
             }
@@ -89,14 +89,28 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     render(session)?;
     let initial = residency(session)?;
     smoke_eq!(
-        json!([initial["textures"], initial["texture_cpu"], initial["gpu_textures"], initial["texture_gpu"]]),
-        json!([TEXTURES.len(), texture_bytes(), TEXTURES.len(), texture_bytes()]),
+        json!([
+            initial["textures"],
+            initial["texture_cpu"],
+            initial["gpu_textures"],
+            initial["texture_gpu"]
+        ]),
+        json!([
+            TEXTURES.len(),
+            texture_bytes(),
+            TEXTURES.len(),
+            texture_bytes()
+        ]),
         "authored_texture_readiness"
     );
     textured_entity(session)?;
     for _ in 0..3 {
         let warmed = render(session)?;
-        smoke_eq!(json!(warmed["texture_upload_bytes"]), json!(0), "warm_upload_reuse");
+        smoke_eq!(
+            json!(warmed["texture_upload_bytes"]),
+            json!(0),
+            "warm_upload_reuse"
+        );
     }
     control(session, "input", json!({"forward": 1, "held": 1}))?;
     control(session, "step", json!({"ticks": 6}))?;
@@ -112,18 +126,32 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     invalid["textures"][0]["rgba8"] = json!("!invalid-base64!");
     let refused = scene.reload(session, &invalid).err().unwrap_or_default();
     smoke_check!(
-        refused["path"].as_str().is_some_and(|path| path.starts_with("$.textures[0]")),
+        refused["path"]
+            .as_str()
+            .is_some_and(|path| path.starts_with("$.textures[0]")),
         "invalid_reload_path",
         json!(refused),
         json!({"path": "$.textures[0]"})
     );
-    smoke_eq!(component(session, "player", "Transform")?, player, "invalid_reload_preservation");
-    smoke_eq!(residency(session)?, initial.clone(), "invalid_reload_keeps_assets");
+    smoke_eq!(
+        component(session, "player", "Transform")?,
+        player,
+        "invalid_reload_preservation"
+    );
+    smoke_eq!(
+        residency(session)?,
+        initial.clone(),
+        "invalid_reload_keeps_assets"
+    );
     replacement(session, &mut scene, &source, &initial)
 }
 
 fn textured_entity(session: &mut dyn SmokeSession) -> SmokeResult {
-    let page = ask(session, "inspect", json!({"component": "Mesh3d", "limit": 100}))?;
+    let page = ask(
+        session,
+        "inspect",
+        json!({"component": "Mesh3d", "limit": 100}),
+    )?;
     let textured = page["entities"].as_array().and_then(|rows| {
         rows.iter()
             .find(|row| {
@@ -133,7 +161,12 @@ fn textured_entity(session: &mut dyn SmokeSession) -> SmokeResult {
             })
             .and_then(|row| row["id"].as_str().map(str::to_owned))
     });
-    smoke_check!(textured.is_some(), "textured_material_used", json!(page["entities"]), json!("a textured entity"));
+    smoke_check!(
+        textured.is_some(),
+        "textured_material_used",
+        json!(page["entities"]),
+        json!("a textured entity")
+    );
     let id = textured.unwrap_or_default();
     let view = component(session, &id, "Mesh3d")?;
     let texture = &view["textures"][0];
@@ -164,7 +197,11 @@ fn replacement(
         json!(texture_bytes()),
         "replacement_uploads_once"
     );
-    smoke_eq!(residency(session)?, initial.clone(), "replacement_keeps_residency");
+    smoke_eq!(
+        residency(session)?,
+        initial.clone(),
+        "replacement_keeps_residency"
+    );
     let changed_capture = capture(session)?;
     smoke_check!(
         changed_capture != baseline,
@@ -174,11 +211,23 @@ fn replacement(
     );
     for _ in 0..3 {
         reloaded(scene, session, &changed)?;
-        smoke_eq!(residency(session)?, initial.clone(), "repeated_reload_residency");
+        smoke_eq!(
+            residency(session)?,
+            initial.clone(),
+            "repeated_reload_residency"
+        );
         let warmed = render(session)?;
-        smoke_eq!(json!(warmed["texture_upload_bytes"]), json!(0), "repeated_reload_reuses_uploads");
+        smoke_eq!(
+            json!(warmed["texture_upload_bytes"]),
+            json!(0),
+            "repeated_reload_reuses_uploads"
+        );
     }
-    smoke_eq!(capture(session)?, changed_capture, "equivalent_replacement_image");
+    smoke_eq!(
+        capture(session)?,
+        changed_capture,
+        "equivalent_replacement_image"
+    );
     let mut untextured = changed.clone();
     untextured["textures"] = json!([]);
     if let Some(materials) = untextured["materials"].as_array_mut() {
@@ -190,7 +239,10 @@ fn replacement(
     }
     reloaded(scene, session, &untextured)?;
     let retired = query(session, "assets", json!({}))?;
-    let cpu = initial["cpu"].as_u64().unwrap_or(0).saturating_sub(texture_bytes());
+    let cpu = initial["cpu"]
+        .as_u64()
+        .unwrap_or(0)
+        .saturating_sub(texture_bytes());
     smoke_eq!(
         json!({
             "textures": retired["textures"], "texture_cpu": retired["texture_cpu_bytes"],
@@ -210,6 +262,11 @@ fn reloaded(
     document: &Value,
 ) -> Result<Value, SmokeFailure> {
     let reloaded = scene.reload(session, document);
-    smoke_check!(reloaded.is_ok(), "reload_accepted", json!(reloaded.as_ref().err()), json!(null));
+    smoke_check!(
+        reloaded.is_ok(),
+        "reload_accepted",
+        json!(reloaded.as_ref().err()),
+        json!(null)
+    );
     Ok(reloaded.unwrap_or_default())
 }

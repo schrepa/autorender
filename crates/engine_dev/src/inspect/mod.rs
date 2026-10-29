@@ -34,8 +34,8 @@ use crate::results::{
     StatusResult, TextureAsset, TextureState, TypeKind, result,
 };
 use crate::{
-    BrowserControl, MAX_INSPECTOR_BYTES, MAX_INSPECTORS, MAX_PAGE_SIZE,
-    MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
+    BrowserControl, MAX_INSPECTOR_BYTES, MAX_INSPECTORS, MAX_PAGE_SIZE, MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
     views::{
         CameraView, GlobalTransformView, HierarchyView, InputView, InterpolateTransformView,
         LodLevelView, Mesh3dView, MeshBoundsView, MeshRenderView, MeshView, PresentationModeView,
@@ -331,8 +331,7 @@ impl DevTools {
                 ok: false,
                 result: None,
                 error: Some(
-                    Error::new(ErrorCode::ResponseTooLarge, "$")
-                        .at_most(MAX_RESPONSE_BYTES as u64),
+                    Error::new(ErrorCode::ResponseTooLarge, "$").at_most(MAX_RESPONSE_BYTES as u64),
                 ),
                 ..reply
             };
@@ -507,11 +506,7 @@ impl DevTools {
         }
     }
 
-    fn describe(
-        &self,
-        world: &World,
-        request: &DescribeRequest,
-    ) -> Result<DescribeResult, Error> {
+    fn describe(&self, world: &World, request: &DescribeRequest) -> Result<DescribeResult, Error> {
         let bricks = self.brick_inspectors(world);
         let registry = world.get_resource::<BrickRegistry>();
         let full = request.detail == Detail::Full;
@@ -718,7 +713,9 @@ impl DevTools {
             limit,
         } = selector;
         if entity.is_some() && parent.is_some() {
-            return Err(Error::new(ErrorCode::InvalidSelector, "$.parent").expected(Expected::Absent));
+            return Err(
+                Error::new(ErrorCode::InvalidSelector, "$.parent").expected(Expected::Absent)
+            );
         }
         if !(1..=MAX_PAGE_SIZE).contains(&limit) {
             return Err(Error::new(ErrorCode::InvalidPage, "$.limit")

@@ -73,10 +73,9 @@ fn import_primitive(
         mesh.index(),
         primitive.index()
     );
-    let material_index = primitive
-        .material()
-        .index()
-        .ok_or_else(|| unsupported(format!("{primitive_path}.material")).expected(Expected::Present))?;
+    let material_index = primitive.material().index().ok_or_else(|| {
+        unsupported(format!("{primitive_path}.material")).expected(Expected::Present)
+    })?;
     let material = &output.materials[material_index];
     let textured = material.texture.is_some()
         || material.metallic_roughness_texture.is_some()
@@ -218,13 +217,17 @@ fn primitive_data(
             || accessor.count() % 3 != 0
             || accessor.view().is_some_and(|view| view.stride().is_some())
         {
-            return Err(Error::new(ErrorCode::InvalidMesh, format!("{path}.indices")));
+            return Err(Error::new(
+                ErrorCode::InvalidMesh,
+                format!("{path}.indices"),
+            ));
         }
     } else if positions.count() % 3 != 0 {
-        return Err(
-            Error::new(ErrorCode::InvalidMesh, format!("{path}.attributes.POSITION"))
-                .got(positions.count()),
-        );
+        return Err(Error::new(
+            ErrorCode::InvalidMesh,
+            format!("{path}.attributes.POSITION"),
+        )
+        .got(positions.count()));
     }
     let reader = primitive.reader(|buffer| {
         if buffer.index() == 0 {
@@ -276,9 +279,11 @@ fn primitive_data(
         .iter()
         .find(|index| **index as usize >= position_data.len())
     {
-        return Err(Error::new(ErrorCode::InvalidMesh, format!("{path}.indices"))
-            .at_most(position_data.len().saturating_sub(1) as u64)
-            .got(index));
+        return Err(
+            Error::new(ErrorCode::InvalidMesh, format!("{path}.indices"))
+                .at_most(position_data.len().saturating_sub(1) as u64)
+                .got(index),
+        );
     }
     let (sources, local_normals): (Vec<u32>, Vec<Vec3>) = match &normal_data {
         Some(normals) => ((0..position_data.len() as u32).collect(), normals.clone()),
@@ -311,9 +316,11 @@ fn primitive_data(
             || normal.length_squared() < 0.000_000_000_001
             || uv.iter().any(|value| !value.is_finite())
         {
-            return Err(Error::new(ErrorCode::InvalidMesh, format!("{path}.attributes"))
-                .expected(Expected::Finite)
-                .got(source));
+            return Err(
+                Error::new(ErrorCode::InvalidMesh, format!("{path}.attributes"))
+                    .expected(Expected::Finite)
+                    .got(source),
+            );
         }
         let color = color_data.as_ref().map(|colors| colors[source as usize]);
         let uv1 = uv1_data.as_ref().map(|uv1| uv1[source as usize]);
@@ -323,9 +330,11 @@ fn primitive_data(
                 .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
         }) || uv1.is_some_and(|uv1| uv1.iter().any(|value| !value.is_finite()))
         {
-            return Err(Error::new(ErrorCode::InvalidMesh, format!("{path}.attributes"))
-                .range(0.0, 1.0)
-                .got(source));
+            return Err(
+                Error::new(ErrorCode::InvalidMesh, format!("{path}.attributes"))
+                    .range(0.0, 1.0)
+                    .got(source),
+            );
         }
         vertices.push(SceneVertex {
             position: position.to_array(),

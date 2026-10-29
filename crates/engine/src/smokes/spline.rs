@@ -57,7 +57,12 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     let listed = listing["types"]
         .as_array()
         .is_some_and(|types| types.iter().any(|kind| kind["name"] == "SplineMesh"));
-    smoke_check!(listed, "describe_lists_spline", json!(listing["types"]), json!("SplineMesh"));
+    smoke_check!(
+        listed,
+        "describe_lists_spline",
+        json!(listing["types"]),
+        json!("SplineMesh")
+    );
     let first = render(session)?;
     let built = component(session, "rail", "SplineMesh")?;
     let flat: Vec<f64> = CURVE.iter().flatten().copied().collect();
@@ -73,11 +78,20 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
         json!(built["points"]),
         json!(CURVE)
     );
-    smoke_check!(built["error"].is_null(), "built_without_error", json!(built["error"]), json!(null));
+    smoke_check!(
+        built["error"].is_null(),
+        "built_without_error",
+        json!(built["error"]),
+        json!(null)
+    );
     lengths(&built, &CURVE)?;
     let copies = built["copies"].as_u64().unwrap_or(0);
     smoke_eq!(
-        json!([built["chunks"], built["vertices"], first["render_candidates"]]),
+        json!([
+            built["chunks"],
+            built["vertices"],
+            first["render_candidates"]
+        ]),
         json!([1, copies * 24, 3]),
         "built"
     );
@@ -89,9 +103,18 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     }
     reloaded(&mut scene, session, &bare)?;
     let without = capture(session)?;
-    smoke_check!(without != with_rail, "draws_and_goes", json!(without), json!({"not": with_rail}));
+    smoke_check!(
+        without != with_rail,
+        "draws_and_goes",
+        json!(without),
+        json!({"not": with_rail})
+    );
     let removed = render(session)?;
-    smoke_eq!(json!(removed["render_candidates"]), json!(2), "removing_the_field_removes_its_chunks");
+    smoke_eq!(
+        json!(removed["render_candidates"]),
+        json!(2),
+        "removing_the_field_removes_its_chunks"
+    );
 
     let longer_points: Vec<[f64; 3]> = CURVE.iter().chain(&FARTHER).copied().collect();
     reloaded(&mut scene, session, &fixture(&longer_points))?;
@@ -99,7 +122,11 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     let rebuilt = component(session, "rail", "SplineMesh")?;
     lengths(&rebuilt, &longer_points)?;
     let copies = rebuilt["copies"].as_u64().unwrap_or(0);
-    smoke_eq!(json!(rebuilt["chunks"]), json!(copies.div_ceil(256)), "rebuilds");
+    smoke_eq!(
+        json!(rebuilt["chunks"]),
+        json!(copies.div_ceil(256)),
+        "rebuilds"
+    );
 
     let mut invalid = fixture(&longer_points);
     invalid["entities"][2]["spline"]["points"] = json!([[0, 0, 0]]);
@@ -140,6 +167,11 @@ fn reloaded(
     document: &Value,
 ) -> Result<Value, SmokeFailure> {
     let reloaded = scene.reload(session, document);
-    smoke_check!(reloaded.is_ok(), "reload_accepted", json!(reloaded.as_ref().err()), json!(null));
+    smoke_check!(
+        reloaded.is_ok(),
+        "reload_accepted",
+        json!(reloaded.as_ref().err()),
+        json!(null)
+    );
     Ok(reloaded.unwrap_or_default())
 }

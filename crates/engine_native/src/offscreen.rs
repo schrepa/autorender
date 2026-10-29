@@ -287,10 +287,7 @@ impl<G: Game> Offscreen<G> {
     }
 
     pub fn image(&self) -> engine::Result<Image> {
-        let (width, height, pixels) = self
-            .host
-            .read_offscreen()?
-            .expect("offscreen_target");
+        let (width, height, pixels) = self.host.read_offscreen()?.expect("offscreen_target");
         Ok(Image {
             width,
             height,

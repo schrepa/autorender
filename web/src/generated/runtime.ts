@@ -3,16 +3,12 @@ import type { Distribution } from "./host";
 import type { Reply, Step } from "./reply";
 import type { FrameStats } from "./stats";
 
-/** JSON text the engine wrote of a `T`, which `parseJson` reads. */
 export type Json<T> = string & { readonly json?: T };
 
-/** The value the engine wrote as `json`. */
 export function parseJson<T>(json: Json<T>): T {
   return JSON.parse(json) as T;
 }
 
-/** The methods every game the engine exports has; those of development
- * and profiling builds are optional. */
 export interface Runtime {
   frame(timestamp: number, width: number, height: number): void;
   key(code: string, down: boolean): boolean;
@@ -54,7 +50,7 @@ export interface Runtime {
   dev_request?(line: string, context: string): Json<Step>;
   dev_resume?(outcome: string, context: string): Json<Step>;
   dev_reloaded?(source: string, context: string, files?: unknown): Json<Step>;
-  dev_refusal?(code: string, path: string, message: string): Json<Reply>;
+  dev_refusal?(error: string): Json<Reply>;
   profiling_start?(max_events: number): void;
   profiling_stop?(): string;
   profiling_poll?(): void;

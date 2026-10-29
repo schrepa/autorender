@@ -197,7 +197,10 @@ fn authoring_commands() -> Vec<Command> {
     vec![
         Command::new("build", []),
         Command::new("profile", [CommandOption::flag("--attribution")]),
-        Command::new("dev", [CommandOption::taking("--port", "N").defaults_to(DEV_PORT)]),
+        Command::new(
+            "dev",
+            [CommandOption::taking("--port", "N").defaults_to(DEV_PORT)],
+        ),
         Command::new(
             "agent iterate",
             [
@@ -216,7 +219,10 @@ fn authoring_commands() -> Vec<Command> {
                 CommandOption::taking("--file", "PATH"),
             ],
         ),
-        Command::new("scene validate", [CommandOption::taking("--file", "PATH").required()]),
+        Command::new(
+            "scene validate",
+            [CommandOption::taking("--file", "PATH").required()],
+        ),
         Command::new(
             "scene save",
             [
@@ -240,7 +246,10 @@ fn authoring_commands() -> Vec<Command> {
         ),
         Command::new("assets", []),
         Command::new("schema", []),
-        Command::new("new app", [CommandOption::taking("--project", "DIR").required()]),
+        Command::new(
+            "new app",
+            [CommandOption::taking("--project", "DIR").required()],
+        ),
         Command::new(
             "new brick",
             [
@@ -332,7 +341,10 @@ fn checking_commands() -> Vec<Command> {
         ),
         Command::new(
             "selfcheck",
-            [CommandOption::taking("KIND", format!("{}...", selfcheck::KINDS.join("|")))],
+            [CommandOption::taking(
+                "KIND",
+                format!("{}...", selfcheck::KINDS.join("|")),
+            )],
         ),
         Command::new(
             "verify",

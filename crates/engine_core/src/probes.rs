@@ -66,7 +66,7 @@ impl ReflectionProbe {
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         if !(self.extent.is_finite() && self.extent.cmpgt(Vec3::ZERO).all()) {
             return Err(
-                InvalidSetting::broken("extent", Rule::above(0.0)).got(self.extent.to_array()),
+                InvalidSetting::broken("extent", Rule::above(0.0)).got(self.extent.to_array())
             );
         }
         if !(self.blend.is_finite() && self.blend >= 0.0) {

@@ -81,8 +81,11 @@ impl SceneCollider {
     }
 
     pub(crate) fn validate_world(self, matrix: Mat4, path: &str) -> Result<(), Error> {
-        validate_collider_transform(self.shape.runtime(), matrix)
-            .map_err(|error| error.coded(ErrorCode::InvalidColliderTransform).within(path))
+        validate_collider_transform(self.shape.runtime(), matrix).map_err(|error| {
+            error
+                .coded(ErrorCode::InvalidColliderTransform)
+                .within(path)
+        })
     }
 }
 

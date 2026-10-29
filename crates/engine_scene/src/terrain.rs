@@ -483,7 +483,11 @@ impl SceneTerrain {
                 .iter()
                 .position(|candidate| candidate.id == id)
                 .ok_or_else(|| {
-                    unknown(invalid(field), id, meshes.iter().map(|mesh| mesh.id.as_str()))
+                    unknown(
+                        invalid(field),
+                        id,
+                        meshes.iter().map(|mesh| mesh.id.as_str()),
+                    )
                 })
         };
         for (index, asset) in surface.assets.iter().enumerate() {
@@ -606,7 +610,9 @@ impl SceneTerrain {
         let invalid =
             |field: &str| Error::new(ErrorCode::InvalidTerrain, format!("{path}.{field}"));
         if !self.origin.iter().all(|value| value.is_finite()) {
-            return Err(invalid("origin").expected(Expected::Finite).got(self.origin));
+            return Err(invalid("origin")
+                .expected(Expected::Finite)
+                .got(self.origin));
         }
         let origin = Vec3::from_array(self.origin);
         let surroundings = self.surroundings.map(|surroundings| Surroundings {
@@ -621,7 +627,11 @@ impl SceneTerrain {
         }
         let source = self.layers(path, files)?;
         let (Some(tiles), Some(spacing)) = (self.tiles, self.spacing) else {
-            let field = if self.tiles.is_none() { "tiles" } else { "spacing" };
+            let field = if self.tiles.is_none() {
+                "tiles"
+            } else {
+                "spacing"
+            };
             return Err(invalid(field).expected(Expected::Present));
         };
         let pyramid = Pyramid::new(tiles, spacing)

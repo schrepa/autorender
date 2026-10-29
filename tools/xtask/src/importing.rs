@@ -85,7 +85,13 @@ struct Options {
     as_prefab: bool,
 }
 
-const VALUED: [&str; 5] = ["--file", "--id", "--output", "--into", "--expected-revision"];
+const VALUED: [&str; 5] = [
+    "--file",
+    "--id",
+    "--output",
+    "--into",
+    "--expected-revision",
+];
 
 fn argument(flag: &str) -> Error {
     Error::new(
@@ -120,9 +126,9 @@ impl Options {
                 continue;
             }
             if !VALUED.contains(&flag.as_str()) {
-                return Err(argument("arguments").got(flag).variants(
-                    VALUED.into_iter().chain(["--replace", "--as-prefab"]),
-                ));
+                return Err(argument("arguments")
+                    .got(flag)
+                    .variants(VALUED.into_iter().chain(["--replace", "--as-prefab"])));
             }
             let value = arguments
                 .next()

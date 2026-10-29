@@ -47,19 +47,39 @@ fn fixture() -> Value {
 pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     let source = fixture();
     let (mut scene, loaded) = SceneFixture::load(session, &source)?;
-    smoke_eq!(json!(loaded["rendering"]["invalid_transforms"]), json!(0), "fixture_transforms_valid");
+    smoke_eq!(
+        json!(loaded["rendering"]["invalid_transforms"]),
+        json!(0),
+        "fixture_transforms_valid"
+    );
     ask(session, "control", json!({"name": "pause"}))?;
     discovery(session)?;
     children(session)?;
     let initial = residency(session)?;
     let rendering = query(session, "assets", json!({}))?["rendering"].clone();
     let entities = total(session, json!({"limit": 1}))?;
-    smoke_eq!(json!(rendering["invalid_transforms"]), json!(0), "initial_transforms_valid");
+    smoke_eq!(
+        json!(rendering["invalid_transforms"]),
+        json!(0),
+        "initial_transforms_valid"
+    );
     motion(session)?;
     refusals(session, &mut scene, &source, &initial)?;
     let transformed = matrices(session, &mut scene, &source, &initial)?;
-    instances(session, &mut scene, &transformed, &initial, (&rendering, entities))?;
-    removal(session, &mut scene, &transformed, &initial, (&rendering, entities))?;
+    instances(
+        session,
+        &mut scene,
+        &transformed,
+        &initial,
+        (&rendering, entities),
+    )?;
+    removal(
+        session,
+        &mut scene,
+        &transformed,
+        &initial,
+        (&rendering, entities),
+    )?;
     reload(session, &mut scene, &source)?;
     smoke_eq!(residency(session)?, initial, "repeated_reload_residency");
     Ok(())
@@ -80,7 +100,8 @@ fn discovery(session: &mut dyn SmokeSession) -> SmokeResult {
             json!({"schema": {}})
         );
     }
-    let schema = ask(session, "describe", json!({"name": "Hierarchy"}))?["descriptor"]["schema"].clone();
+    let schema =
+        ask(session, "describe", json!({"name": "Hierarchy"}))?["descriptor"]["schema"].clone();
     for field in [
         "parent",
         "parent_scene",
@@ -108,7 +129,9 @@ fn children(session: &mut dyn SmokeSession) -> SmokeResult {
         json!({"parent": "west-lantern", "component": "Hierarchy", "limit": 1}),
     )?;
     smoke_check!(
-        first["total"] == 2 && first["entities"].as_array().map(Vec::len) == Some(1) && first["next_offset"] == 1,
+        first["total"] == 2
+            && first["entities"].as_array().map(Vec::len) == Some(1)
+            && first["next_offset"] == 1,
         "direct_children_pagination",
         json!({"total": first["total"], "next_offset": first["next_offset"]}),
         json!({"total": 2, "next_offset": 1})
@@ -130,7 +153,11 @@ fn children(session: &mut dyn SmokeSession) -> SmokeResult {
         .collect();
     rows.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
     let ids: Vec<Value> = rows.iter().map(|row| row["id"].clone()).collect();
-    smoke_eq!(json!(ids), json!(["west-lantern.lantern", "west-lantern.planter"]), "direct_children");
+    smoke_eq!(
+        json!(ids),
+        json!(["west-lantern.lantern", "west-lantern.planter"]),
+        "direct_children"
+    );
     for row in &rows {
         let hierarchy = &row["components"]["Hierarchy"];
         let local = hierarchy["prefab_local_id"].as_str().unwrap_or_default();
@@ -149,16 +176,31 @@ fn children(session: &mut dyn SmokeSession) -> SmokeResult {
             "prefab_metadata"
         );
     }
-    let selector = refuse(session, "inspect", json!({"entity": "player", "parent": "player"}))?;
-    smoke_eq!(json!(selector["code"]), json!("invalid_selector"), "invalid_selector");
+    let selector = refuse(
+        session,
+        "inspect",
+        json!({"entity": "player", "parent": "player"}),
+    )?;
+    smoke_eq!(
+        json!(selector["code"]),
+        json!("invalid_selector"),
+        "invalid_selector"
+    );
     let carried = ask(session, "inspect", json!({"parent": "player", "limit": 10}))?;
     let carries = carried["entities"]
         .as_array()
         .is_some_and(|rows| rows.iter().any(|row| row["id"] == "player-accessory"));
-    smoke_check!(carries, "player_children", json!(carried["entities"]), json!(["player-accessory"]));
+    smoke_check!(
+        carries,
+        "player_children",
+        json!(carried["entities"]),
+        json!(["player-accessory"])
+    );
     let root = component(session, "west-lantern", "Hierarchy")?;
     smoke_check!(
-        root["parent"].is_null() && root["parent_alive"].is_null() && root["parent_in_active_scene"].is_null(),
+        root["parent"].is_null()
+            && root["parent_alive"].is_null()
+            && root["parent_in_active_scene"].is_null(),
         "root_hierarchy",
         json!(root),
         json!({"parent": null, "parent_alive": null, "parent_in_active_scene": null})
@@ -166,7 +208,9 @@ fn children(session: &mut dyn SmokeSession) -> SmokeResult {
     let placement = ask(session, "inspect", json!({"entity": "west-lantern"}))?;
     let components = &placement["entity"]["components"];
     smoke_check!(
-        components.as_array().is_some_and(|names| !names.iter().any(|name| name == "Mesh3d")),
+        components
+            .as_array()
+            .is_some_and(|names| !names.iter().any(|name| name == "Mesh3d")),
         "placement_root_draws_nothing",
         json!(components),
         json!("no Mesh3d")
@@ -201,8 +245,17 @@ fn motion(session: &mut dyn SmokeSession) -> SmokeResult {
     };
     let player_delta = delta(&player_after, &player_before);
     let accessory_delta = delta(&accessory_after, &accessory_before);
-    let length = player_delta.iter().map(|value| value * value).sum::<f64>().sqrt();
-    smoke_check!(length > 0.1, "player_displaced", json!(player_delta), json!({"length": 0.1}));
+    let length = player_delta
+        .iter()
+        .map(|value| value * value)
+        .sum::<f64>()
+        .sqrt();
+    smoke_check!(
+        length > 0.1,
+        "player_displaced",
+        json!(player_delta),
+        json!({"length": 0.1})
+    );
     smoke_check!(
         near_all(&json!(accessory_delta), &player_delta, EPSILON),
         "exact_step_parent_motion",
@@ -237,7 +290,8 @@ fn refusals(
             "cycle" => entities[3]["parent"] = json!("west-lantern.lantern"),
             "missing_parent" => entities[2]["parent"] = json!("absent-parent"),
             "parented_body" => {
-                entities[2]["collider"] = json!({"shape": {"kind": "cuboid", "half_extents": [0.5, 0.5, 0.5]}});
+                entities[2]["collider"] =
+                    json!({"shape": {"kind": "cuboid", "half_extents": [0.5, 0.5, 0.5]}});
                 entities[2]["rigid_body"] = json!({});
             }
             _ => {
@@ -249,18 +303,28 @@ fn refusals(
         let refused = scene.reload(session, &broken).err().unwrap_or_default();
         smoke_eq!(json!(refused["code"]), json!(code), "invalid_reload_code");
         smoke_check!(
-            refused["path"].as_str().is_some_and(|path| path.starts_with('$')),
+            refused["path"]
+                .as_str()
+                .is_some_and(|path| path.starts_with('$')),
             "invalid_reload_path",
             json!(refused),
             json!({"path": "$"})
         );
-        smoke_eq!(component(session, "player", "Transform")?, player.clone(), "invalid_reload_preservation");
+        smoke_eq!(
+            component(session, "player", "Transform")?,
+            player.clone(),
+            "invalid_reload_preservation"
+        );
         smoke_eq!(
             component(session, "player-accessory", "GlobalTransform")?,
             accessory.clone(),
             "invalid_reload_keeps_children"
         );
-        smoke_eq!(residency(session)?, initial.clone(), "invalid_reload_keeps_assets");
+        smoke_eq!(
+            residency(session)?,
+            initial.clone(),
+            "invalid_reload_keeps_assets"
+        );
     }
     Ok(())
 }
@@ -315,13 +379,31 @@ fn matrices(
     let dot = shear.get(0..3).zip(shear.get(4..7)).map_or(0.0, |(x, y)| {
         x.iter().zip(y).map(|(x, y)| x * y).sum::<f64>()
     });
-    smoke_check!(dot.abs() > 0.01, "fixture_exercises_shear", json!(dot), json!({"more_than": 0.01}));
+    smoke_check!(
+        dot.abs() > 0.01,
+        "fixture_exercises_shear",
+        json!(dot),
+        json!({"more_than": 0.01})
+    );
     for (id, before) in east.iter().zip(east_before) {
-        smoke_eq!(component(session, id, "GlobalTransform")?, before, "independent_instances");
+        smoke_eq!(
+            component(session, id, "GlobalTransform")?,
+            before,
+            "independent_instances"
+        );
     }
-    smoke_eq!(residency(session)?, initial.clone(), "transform_keeps_assets");
+    smoke_eq!(
+        residency(session)?,
+        initial.clone(),
+        "transform_keeps_assets"
+    );
     let moved = capture(session)?;
-    smoke_check!(moved != original, "transform_changes_image", json!(moved), json!({"not": original}));
+    smoke_check!(
+        moved != original,
+        "transform_changes_image",
+        json!(moved),
+        json!({"not": original})
+    );
     Ok(transformed)
 }
 
@@ -340,11 +422,18 @@ fn instances(
     let parts = PARTS.len() as u64;
     reload(session, scene, &triple)?;
     smoke_eq!(
-        json!(total(session, json!({"parent": "third-lantern", "component": "Hierarchy", "limit": 10}))?),
+        json!(total(
+            session,
+            json!({"parent": "third-lantern", "component": "Hierarchy", "limit": 10})
+        )?),
         json!(parts),
         "third_placement_children"
     );
-    smoke_eq!(json!(total(session, json!({"limit": 1}))?), json!(entities + parts + 1), "third_placement_entities");
+    smoke_eq!(
+        json!(total(session, json!({"limit": 1}))?),
+        json!(entities + parts + 1),
+        "third_placement_entities"
+    );
     for replacement in 0..4 {
         if replacement > 0 {
             reload(session, scene, &triple)?;
@@ -353,13 +442,20 @@ fn instances(
         let assets = query(session, "assets", json!({}))?["rendering"].clone();
         smoke_eq!(
             json!([assets["draw_calls"], assets["instances"]]),
-            json!([rendering["draw_calls"], rendering["instances"].as_u64().unwrap_or(0) + parts]),
+            json!([
+                rendering["draw_calls"],
+                rendering["instances"].as_u64().unwrap_or(0) + parts
+            ]),
             "shared_assets_and_draws"
         );
         if replacement > 0 {
             let warm = ask(session, "control", json!({"name": "render"}))?["rendering"].clone();
             smoke_eq!(
-                json!([warm["mesh_upload_bytes"], warm["texture_upload_bytes"], warm["invalid_transforms"]]),
+                json!([
+                    warm["mesh_upload_bytes"],
+                    warm["texture_upload_bytes"],
+                    warm["invalid_transforms"]
+                ]),
                 json!([0, 0, 0]),
                 "warm_upload_reuse"
             );
@@ -378,10 +474,22 @@ fn removal(
 ) -> SmokeResult {
     let parts = PARTS.len() as u64;
     reload(session, scene, transformed)?;
-    smoke_eq!(residency(session)?, initial.clone(), "instance_removal_assets");
-    smoke_eq!(json!(total(session, json!({"limit": 1}))?), json!(entities), "instance_removal");
+    smoke_eq!(
+        residency(session)?,
+        initial.clone(),
+        "instance_removal_assets"
+    );
+    smoke_eq!(
+        json!(total(session, json!({"limit": 1}))?),
+        json!(entities),
+        "instance_removal"
+    );
     let gone = refuse(session, "inspect", json!({"entity": "third-lantern"}))?;
-    smoke_eq!(json!(gone["code"]), json!("unknown_entity"), "instance_removal_unknown");
+    smoke_eq!(
+        json!(gone["code"]),
+        json!("unknown_entity"),
+        "instance_removal_unknown"
+    );
     let mut removed = transformed.clone();
     if let Some(list) = removed["entities"].as_array_mut() {
         list.retain(|entity| entity["id"] != "west-lantern" && entity["id"] != "east-lantern");
@@ -391,7 +499,12 @@ fn removal(
     let drawn = &retired["rendering"];
     smoke_eq!(
         json!(drawn["instances"]),
-        json!(rendering["instances"].as_u64().unwrap_or(0).saturating_sub(parts * 2)),
+        json!(
+            rendering["instances"]
+                .as_u64()
+                .unwrap_or(0)
+                .saturating_sub(parts * 2)
+        ),
         "removed_instances"
     );
     smoke_eq!(
@@ -399,11 +512,23 @@ fn removal(
         json!(entities.saturating_sub((parts + 1) * 2)),
         "removed_entities"
     );
-    for id in ["west-lantern", "west-lantern.lantern", "east-lantern.planter"] {
+    for id in [
+        "west-lantern",
+        "west-lantern.lantern",
+        "east-lantern.planter",
+    ] {
         let gone = refuse(session, "inspect", json!({"entity": id}))?;
-        smoke_eq!(json!(gone["code"]), json!("unknown_entity"), "removed_unknown");
+        smoke_eq!(
+            json!(gone["code"]),
+            json!("unknown_entity"),
+            "removed_unknown"
+        );
     }
-    smoke_eq!(json!(retired["resident_cpu_bytes"]), json!(initial["cpu"]), "removed_cpu_assets_stay");
+    smoke_eq!(
+        json!(retired["resident_cpu_bytes"]),
+        json!(initial["cpu"]),
+        "removed_cpu_assets_stay"
+    );
     smoke_check!(
         drawn["resident_meshes"].as_u64() < initial["gpu_meshes"].as_u64()
             && drawn["resident_mesh_bytes"].as_u64() < initial["mesh_gpu"].as_u64(),
@@ -412,7 +537,11 @@ fn removal(
         json!({"fewer_than": initial})
     );
     smoke_eq!(
-        json!([drawn["resident_textures"], drawn["resident_texture_bytes"], drawn["invalid_transforms"]]),
+        json!([
+            drawn["resident_textures"],
+            drawn["resident_texture_bytes"],
+            drawn["invalid_transforms"]
+        ]),
         json!([0, 0, 0]),
         "removed_textures_and_transforms"
     );
@@ -426,14 +555,25 @@ fn reload(
     document: &Value,
 ) -> Result<Value, SmokeFailure> {
     let reloaded = scene.reload(session, document);
-    smoke_check!(reloaded.is_ok(), "reload_accepted", json!(reloaded.as_ref().err()), json!(null));
+    smoke_check!(
+        reloaded.is_ok(),
+        "reload_accepted",
+        json!(reloaded.as_ref().err()),
+        json!(null)
+    );
     let rendering = reloaded.unwrap_or_default()["rendering"].clone();
-    smoke_eq!(json!(rendering["invalid_transforms"]), json!(0), "reload_transforms_valid");
+    smoke_eq!(
+        json!(rendering["invalid_transforms"]),
+        json!(0),
+        "reload_transforms_valid"
+    );
     Ok(rendering)
 }
 
 fn total(session: &mut dyn SmokeSession, selector: Value) -> Result<u64, SmokeFailure> {
-    Ok(ask(session, "inspect", selector)?["total"].as_u64().unwrap_or(0))
+    Ok(ask(session, "inspect", selector)?["total"]
+        .as_u64()
+        .unwrap_or(0))
 }
 
 fn tick(session: &mut dyn SmokeSession) -> Result<u64, SmokeFailure> {

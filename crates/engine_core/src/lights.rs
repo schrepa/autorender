@@ -46,8 +46,9 @@ settings! {
 impl ExtraRules for Spot {
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         if self.direction.length_squared() == 0.0 {
-            return Err(InvalidSetting::new("direction", Expected::Nonzero)
-                .got(self.direction.to_array()));
+            return Err(
+                InvalidSetting::new("direction", Expected::Nonzero).got(self.direction.to_array())
+            );
         }
         if self.outer_angle < self.inner_angle {
             return Err(InvalidSetting::new("outer_angle", Expected::Sorted)

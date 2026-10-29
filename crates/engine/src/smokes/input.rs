@@ -112,12 +112,7 @@ pub(crate) fn input_camera(session: &mut dyn SmokeSession) -> SmokeResult {
     steps(session, json!({}), 10)?;
     let still = camera(session)?;
     let drift = dot(moved(&forward, &still), moved(&forward, &still)).sqrt();
-    engine_core::smoke_check!(
-        drift < 1e-3,
-        "release_stops",
-        json!(drift),
-        json!(1e-3)
-    );
+    engine_core::smoke_check!(drift < 1e-3, "release_stops", json!(drift), json!(1e-3));
     steps(session, json!({ "yaw": 120, "pitch": 40 }), 10)?;
     let turned = camera(session)?;
     let cosine = dot(direction(&still), direction(&turned));

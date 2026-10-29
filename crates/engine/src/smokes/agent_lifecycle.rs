@@ -38,7 +38,12 @@ pub(crate) fn agent_lifecycle(session: &mut dyn SmokeSession) -> SmokeResult {
         "replacement_adds_standard_bricks"
     );
     session.restart(&["physics"]);
-    control(session, "pause", json!({}), "pauses_runtime_without_physics")?;
+    control(
+        session,
+        "pause",
+        json!({}),
+        "pauses_runtime_without_physics",
+    )?;
     let without = status(session, "runtime_without_physics_answers")?;
     let kept: Vec<&str> = standard
         .iter()

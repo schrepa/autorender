@@ -217,7 +217,10 @@ fn attempt(
         .and_then(|client| client.page.clone())
         .ok_or_else(|| format!("{}: page", project.package))?;
     let mut child = Command::new("node")
-        .args(["scripts/smoke-browser.mjs", &format!("{url}/{page}?smoke={name}")])
+        .args([
+            "scripts/smoke-browser.mjs",
+            &format!("{url}/{page}?smoke={name}"),
+        ])
         .current_dir(web)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -384,7 +387,10 @@ pub fn check_task(root: &Path, arguments: &[String]) -> Result<(), String> {
             }
         }
     }
-    println!("{}", json!({"event": "written", "file": out.display().to_string()}));
+    println!(
+        "{}",
+        json!({"event": "written", "file": out.display().to_string()})
+    );
     match found.remove("formats") {
         Some(formats) => crate::measure::check_format(&report, &formats, "check"),
         None => Ok(()),

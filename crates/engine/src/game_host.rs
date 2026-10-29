@@ -319,16 +319,12 @@ impl<G: Game> GameHost<G> {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn stop_debugger_capture(&mut self) -> crate::Result<()> {
-        self.app
-            .renderer
-            .stop_debugger_capture()
+        self.app.renderer.stop_debugger_capture()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_gpu(&self) -> crate::Result<()> {
-        self.app
-            .renderer
-            .wait_for_gpu()
+        self.app.renderer.wait_for_gpu()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -338,16 +334,12 @@ impl<G: Game> GameHost<G> {
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn wait_for_mark(&self, mark: crate::GpuMark) -> crate::Result<()> {
-        self.app
-            .renderer
-            .wait_for_mark(mark)
+        self.app.renderer.wait_for_mark(mark)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn read_offscreen(&self) -> crate::Result<Option<(u32, u32, Vec<u8>)>> {
-        self.app
-            .renderer
-            .read_offscreen()
+        self.app.renderer.read_offscreen()
     }
 
     pub fn frame_stats(&self) -> engine_core::FrameStats {

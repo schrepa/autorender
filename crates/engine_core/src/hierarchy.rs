@@ -5,8 +5,8 @@ use crate::{NodePose, Transform, entity_indices::EntityIndices};
 use bevy_ecs::change_detection::ContiguousRef;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
-use glam::{Mat4, Vec4};
 use engine_settings::{Error, ErrorCode, Expected};
+use glam::{Mat4, Vec4};
 use std::convert::Infallible;
 
 mod global;

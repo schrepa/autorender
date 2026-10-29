@@ -64,8 +64,9 @@ settings! {
 impl ExtraRules for ParticleEmitter {
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         if self.direction.length_squared() == 0.0 {
-            return Err(InvalidSetting::new("direction", Expected::Nonzero)
-                .got(self.direction.to_array()));
+            return Err(
+                InvalidSetting::new("direction", Expected::Nonzero).got(self.direction.to_array())
+            );
         }
         let particles = f64::from(self.rate) * f64::from(self.lifetime);
         if particles > f64::from(MAX_EMITTER_PARTICLES) {

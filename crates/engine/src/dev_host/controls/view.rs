@@ -20,11 +20,7 @@ pub(super) fn present(
     }))
 }
 
-pub(super) fn culling(
-    app: &mut AppHost,
-    enabled: bool,
-    size: (u32, u32),
-) -> Result<Value, Error> {
+pub(super) fn culling(app: &mut AppHost, enabled: bool, size: (u32, u32)) -> Result<Value, Error> {
     app.engine.set_frustum_culling(enabled);
     then_render(
         app,
@@ -65,13 +61,11 @@ pub(super) fn render(app: &mut AppHost, (width, height): (u32, u32)) -> Result<V
 }
 
 pub(super) fn fault(app: &mut AppHost, feature: &str, size: (u32, u32)) -> Result<Value, Error> {
-    app.renderer
-        .inject_fault(feature)
-        .map_err(|error| Error {
-            code: ErrorCode::InvalidValue,
-            path: "$.feature".to_owned(),
-            detail: error.detail,
-        })?;
+    app.renderer.inject_fault(feature).map_err(|error| Error {
+        code: ErrorCode::InvalidValue,
+        path: "$.feature".to_owned(),
+        detail: error.detail,
+    })?;
     then_render(
         app,
         size,

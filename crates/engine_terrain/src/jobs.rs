@@ -924,7 +924,8 @@ fn advance(running: &mut Running, mut budget: u64) -> Result<Option<Vec<u8>>, Er
         }
         Running::Macro(colors) => {
             let (layers, pyramid, causes, job) = &**colors;
-            macro_colors(layers, pyramid, job.level, job.size, causes).ok_or_else(invalid_heights)?
+            macro_colors(layers, pyramid, job.level, job.size, causes)
+                .ok_or_else(invalid_heights)?
         }
         Running::Steadied(steadying) => match steadying.advance(budget)? {
             Some(water) => codec::encode(&water),

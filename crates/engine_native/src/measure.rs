@@ -65,11 +65,12 @@ impl Method {
         let mut below = BTreeMap::new();
         for (metric, threshold) in settle["metrics"].as_object().into_iter().flatten() {
             if !metric.starts_with("cpu:") {
-                return Err(
-                    Error::new(ErrorCode::InvalidValue, format!("$.settle.metrics.{metric}"))
-                        .expected(Expected::Supported)
-                        .got(metric),
-                );
+                return Err(Error::new(
+                    ErrorCode::InvalidValue,
+                    format!("$.settle.metrics.{metric}"),
+                )
+                .expected(Expected::Supported)
+                .got(metric));
             }
             below.insert(
                 metric.clone(),
@@ -177,8 +178,7 @@ pub fn run<G: Game, E: Into<engine::Error>>(
         frame += 1;
     }
     mark("serialized-end");
-    let mut work: Value =
-        serde_json::from_str(&game.host().stats()).expect("stats_json");
+    let mut work: Value = serde_json::from_str(&game.host().stats()).expect("stats_json");
     work["loading"] = loading.into();
     work["pipelines_compiling"] = compiling.into();
     let capture = match &method.capture {
@@ -262,8 +262,7 @@ fn settle<G: Game>(
         } else {
             spans_of_frame(game)?
         };
-        let stats: Value =
-            serde_json::from_str(&game.host().stats()).expect("stats_json");
+        let stats: Value = serde_json::from_str(&game.host().stats()).expect("stats_json");
         let holds =
             rule.stats
                 .iter()
@@ -435,8 +434,7 @@ fn timings<G: Game>(
 
 #[cfg(not(feature = "profiling"))]
 fn timings<G: Game>(_: &mut Offscreen<G>, _: u32, _: &mut u32) -> engine::Result<Timings> {
-    let reason =
-        Error::new(ErrorCode::ProfilingUnavailable, "$").expected(Expected::Supported);
+    let reason = Error::new(ErrorCode::ProfilingUnavailable, "$").expected(Expected::Supported);
     Ok(Timings {
         metrics: Map::new(),
         gpu: false,

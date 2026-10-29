@@ -75,17 +75,15 @@ macro_rules! smoke_check {
 
 #[macro_export]
 macro_rules! smoke_eq {
-    ($got:expr, $expected:expr, $check:expr $(,)?) => {
-        {
-            let (got, expected) = (&$got, &$expected);
-            if *got != *expected {
-                return ::core::result::Result::Err($crate::smoke::SmokeFailure::new(
-                    $check,
-                    got,
-                    expected,
-                    ::core::concat!(::core::file!(), ":", ::core::line!()),
-                ));
-            }
+    ($got:expr, $expected:expr, $check:expr $(,)?) => {{
+        let (got, expected) = (&$got, &$expected);
+        if *got != *expected {
+            return ::core::result::Result::Err($crate::smoke::SmokeFailure::new(
+                $check,
+                got,
+                expected,
+                ::core::concat!(::core::file!(), ":", ::core::line!()),
+            ));
         }
-    };
+    }};
 }

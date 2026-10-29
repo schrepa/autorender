@@ -3,8 +3,7 @@ use engine_core::collections::HashMap;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::{SystemParam, SystemState};
 use engine_core::{
-    Error, FixedTime, FrameTime, GlobalTransforms, Transform, TransformIndex,
-    propagate_transforms,
+    Error, FixedTime, FrameTime, GlobalTransforms, Transform, TransformIndex, propagate_transforms,
 };
 use glam::{Mat4, Vec3};
 

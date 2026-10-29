@@ -14,7 +14,12 @@ impl SceneFixture {
     ) -> Result<(Self, Value), SmokeFailure> {
         let mut fixture = Self { instance: None };
         let loaded = fixture.reload(session, document);
-        smoke_check!(loaded.is_ok(), "fixture_loads", json!(loaded.as_ref().err()), json!(null));
+        smoke_check!(
+            loaded.is_ok(),
+            "fixture_loads",
+            json!(loaded.as_ref().err()),
+            json!(null)
+        );
         Ok((fixture, loaded.unwrap_or_default()))
     }
 
@@ -46,8 +51,15 @@ pub(super) fn ask(
 ) -> Result<Value, SmokeFailure> {
     let sent = json!({"verb": verb, "body": body});
     let reply = session.request(verb, body);
-    smoke_check!(reply.is_ok(), "request_accepted", json!(reply.as_ref().err()), sent);
-    Ok(reply.map(|reply| reply["result"].clone()).unwrap_or_default())
+    smoke_check!(
+        reply.is_ok(),
+        "request_accepted",
+        json!(reply.as_ref().err()),
+        sent
+    );
+    Ok(reply
+        .map(|reply| reply["result"].clone())
+        .unwrap_or_default())
 }
 
 pub(super) fn refuse(
@@ -57,8 +69,16 @@ pub(super) fn refuse(
 ) -> Result<Value, SmokeFailure> {
     let sent = json!({"verb": verb, "body": body});
     let reply = session.request(verb, body);
-    smoke_check!(reply.is_err(), "request_refused", json!(reply.as_ref().ok()), sent);
-    Ok(reply.err().map(|reply| reply["error"].clone()).unwrap_or_default())
+    smoke_check!(
+        reply.is_err(),
+        "request_refused",
+        json!(reply.as_ref().ok()),
+        sent
+    );
+    Ok(reply
+        .err()
+        .map(|reply| reply["error"].clone())
+        .unwrap_or_default())
 }
 
 pub(super) fn control(
@@ -82,7 +102,11 @@ pub(super) fn component(
     id: &str,
     component: &str,
 ) -> Result<Value, SmokeFailure> {
-    let inspected = ask(session, "inspect", json!({"entity": id, "component": component}))?;
+    let inspected = ask(
+        session,
+        "inspect",
+        json!({"entity": id, "component": component}),
+    )?;
     Ok(inspected["entity"]["components"][component].clone())
 }
 
@@ -93,7 +117,12 @@ pub(super) fn render(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailu
 pub(super) fn capture(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
     let captured = ask(session, "capture", json!({}))?;
     let image = captured["artifact"]["sha256"].clone();
-    smoke_check!(image.is_string(), "capture_keeps_image", json!(captured["artifact"]), json!("sha256"));
+    smoke_check!(
+        image.is_string(),
+        "capture_keeps_image",
+        json!(captured["artifact"]),
+        json!("sha256")
+    );
     Ok(image)
 }
 

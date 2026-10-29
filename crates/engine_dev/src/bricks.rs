@@ -154,8 +154,8 @@ impl DevTools {
             if let Some(fields) = sections.as_object_mut() {
                 fields.remove("merge");
             }
-            let environment: SceneEnvironment = engine_core::parse_value(sections)
-                .map_err(|error| error.within("$.args"))?;
+            let environment: SceneEnvironment =
+                engine_core::parse_value(sections).map_err(|error| error.within("$.args"))?;
             environment
                 .check(world, "$")
                 .map_err(|error| self.named_brick(error).within("$.args"))?;

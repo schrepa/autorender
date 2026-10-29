@@ -911,7 +911,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "serde_path_to_error",
 ]
 
 [[package]]
@@ -939,6 +938,7 @@ version = "0.1.0"
 dependencies = [
  "engine_assets",
  "engine_math",
+ "engine_settings",
  "glam 0.30.9",
 ]
 
@@ -1005,6 +1005,7 @@ dependencies = [
  "rapier3d",
  "schemars",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1091,9 +1092,12 @@ version = "0.1.0"
 dependencies = [
  "engine_math",
  "glam 0.30.9",
+ "js-sys",
  "schemars",
  "serde",
  "serde_json",
+ "serde_path_to_error",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1137,6 +1141,7 @@ version = "0.1.0"
 dependencies = [
  "engine_assets",
  "engine_math",
+ "engine_settings",
  "engine_sources",
  "libm",
 ]
@@ -1161,6 +1166,7 @@ dependencies = [
  "engine_math",
  "engine_navigation",
  "engine_panic",
+ "engine_settings",
  "engine_sources",
  "engine_tables",
  "engine_terrain",

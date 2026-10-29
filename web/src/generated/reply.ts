@@ -1,12 +1,14 @@
 import type { ErrorCode } from "./errors";
 
 export interface Reply {
-  error?: DevError | null;
+  error?: Error | null;
   observation?: Observation | null;
   ok: boolean;
   result?: Record<string, unknown> | null;
   version?: number | null;
 }
+
+export type Allowed = { kind: "range"; max: number; min: number } | { kind: "at_most"; max: number } | { kind: "at_least"; min: number } | { kind: "variants"; values: string[] };
 
 export interface Artifact {
   bytes: number;
@@ -26,7 +28,6 @@ export interface AssetsResult {
   meshes: number;
   missing: MissingAsset[];
   missing_total: number;
-  ownership: string;
   readiness: string;
   resident_cpu_bytes: number;
   texture_assets: TextureAsset[];
@@ -99,15 +100,6 @@ export interface DetailShares {
   detailed: number;
 }
 
-export interface DevError {
-  allowed?: string[];
-  code: ErrorCode;
-  expected?: string | null;
-  message: string;
-  nearest?: string | null;
-  path: string;
-}
-
 export interface DigestEntry {
   count: number;
   hash: string;
@@ -151,6 +143,17 @@ export interface EnvironmentResult {
   environment_changed: string[];
   temporary: boolean;
 }
+
+export interface Error {
+  allowed?: Allowed | null;
+  code: ErrorCode;
+  expected?: Expected | null;
+  got?: unknown;
+  nearest?: unknown;
+  path: string;
+}
+
+export type Expected = "number" | "integer" | "string" | "boolean" | "object" | "array" | "id" | "path" | "file" | "entity" | "unique" | "present" | "absent" | "finite" | "normalized" | "sorted" | "nonzero" | "above" | "power_of_two" | "multiple" | "json" | "utf8" | "uri" | "base64" | "image" | "paused" | "running" | "gpu" | "live" | "non_empty" | "readable" | "writable" | "matching" | "supported" | "acyclic" | "opaque" | "triangles" | "invertible";
 
 export interface ExplainResult {
   about: string;

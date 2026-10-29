@@ -42,10 +42,12 @@ impl SceneSpline {
 
     pub(crate) fn validate(&self, path: &str) -> Result<(), Error> {
         if !(2..=MAX_SPLINE_POINTS).contains(&self.points.len()) {
-            return Err(Error::new(ErrorCode::InvalidSpline, format!("{path}.points"))
-                .expected(Expected::Array)
-                .range(2.0, MAX_SPLINE_POINTS as f64)
-                .got(self.points.len()));
+            return Err(
+                Error::new(ErrorCode::InvalidSpline, format!("{path}.points"))
+                    .expected(Expected::Array)
+                    .range(2.0, MAX_SPLINE_POINTS as f64)
+                    .got(self.points.len()),
+            );
         }
         if let Some(index) = self.points.iter().position(|point| {
             !point

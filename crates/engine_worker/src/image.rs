@@ -137,9 +137,7 @@ fn decode_jpeg(bytes: &[u8]) -> Result<Image, String> {
         options,
     );
     let pixels = decoder.decode().map_err(|error| error.to_string())?;
-    let (width, height) = decoder
-        .dimensions()
-        .ok_or("dimensions")?;
+    let (width, height) = decoder.dimensions().ok_or("dimensions")?;
     Ok(Image {
         width: width as u32,
         height: height as u32,

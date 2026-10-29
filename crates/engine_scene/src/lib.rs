@@ -27,6 +27,7 @@ pub use document::{
     SceneSurface, SceneTransform, SceneVertex,
 };
 pub use engine_core::EnvironmentSection;
+pub use engine_core::{parse_json, parse_value};
 #[cfg(feature = "schema")]
 pub use environment::section_schemas;
 pub use environment::{AtmospherePreset, SceneAtmosphere, SceneEnvironment};
@@ -35,7 +36,6 @@ pub use files::{
     decode_mesh_buffer, encode_mesh_buffer, encode_mesh_buffer_with,
 };
 pub use instance::{MeshOrigin, SceneEntity, SceneInstance, authored_id};
-pub use engine_core::{parse_json, parse_value};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
 pub use material::{
     SceneAlphaMode, SceneFilter, SceneGrounding, SceneMap, SceneMaterial, SceneMipmapFilter,

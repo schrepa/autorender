@@ -106,8 +106,11 @@ impl NavigationWorker {
         reader.finish()?;
         gait.validate(&pyramid)?;
         if !pyramid.contains(key) || u32::from(key.level) != gait.level {
-            return Err(Error::new(ErrorCode::OutOfRange, "$.key")
-                .got([u16::from(key.level), key.x, key.z]));
+            return Err(Error::new(ErrorCode::OutOfRange, "$.key").got([
+                u16::from(key.level),
+                key.x,
+                key.z,
+            ]));
         }
         let layers = terrain
             .stack(&stack)

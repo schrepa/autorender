@@ -57,8 +57,16 @@ fn fixture() -> Value {
 pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     let (_scene, _) = SceneFixture::load(session, &fixture())?;
     ask(session, "control", json!({"name": "pause"}))?;
-    let opened = control(session, "environment", json!({"terrain": {"samples_per_frame": 50_000_000}}))?;
-    smoke_eq!(json!(opened["environment_changed"]), json!(["terrain"]), "terrain_settings_open");
+    let opened = control(
+        session,
+        "environment",
+        json!({"terrain": {"samples_per_frame": 50_000_000}}),
+    )?;
+    smoke_eq!(
+        json!(opened["environment_changed"]),
+        json!(["terrain"]),
+        "terrain_settings_open"
+    );
     control(
         session,
         "camera",
@@ -68,7 +76,11 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     settle(session)?;
     let shaded = shown(session)?;
     for view in VIEWS {
-        control(session, "environment", json!({"debug_view": {"view": view}}))?;
+        control(
+            session,
+            "environment",
+            json!({"debug_view": {"view": view}}),
+        )?;
         let image = shown(session)?;
         smoke_check!(
             image != shaded,
@@ -78,8 +90,12 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
         );
     }
     let rendering = render(session)?;
-    let width = rendering["resolution"]["display_width"].as_f64().unwrap_or(0.0);
-    let height = rendering["resolution"]["display_height"].as_f64().unwrap_or(0.0);
+    let width = rendering["resolution"]["display_width"]
+        .as_f64()
+        .unwrap_or(0.0);
+    let height = rendering["resolution"]["display_height"]
+        .as_f64()
+        .unwrap_or(0.0);
     let mut ground = Value::Null;
     for [x, y] in GROUND_POINTS {
         let probed = control(
@@ -92,7 +108,12 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
             break;
         }
     }
-    smoke_check!(ground.is_object(), "probe_finds_ground", json!(ground), json!({"kind": "terrain"}));
+    smoke_check!(
+        ground.is_object(),
+        "probe_finds_ground",
+        json!(ground),
+        json!({"kind": "terrain"})
+    );
     terrain_probe(&ground)?;
     let above = control(session, "probe", json!({"x": (width / 2.0) as u64, "y": 1}))?;
     smoke_eq!(
@@ -100,7 +121,11 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
         json!({"terrain": null, "water": null}),
         "probe_above_ground"
     );
-    control(session, "environment", json!({"debug_view": {"view": "off"}}))?;
+    control(
+        session,
+        "environment",
+        json!({"debug_view": {"view": "off"}}),
+    )?;
     Ok(())
 }
 
@@ -114,7 +139,12 @@ fn terrain_probe(ground: &Value) -> SmokeResult {
             .iter()
             .all(|value| value.as_u64().is_some_and(|value| value < 16))
     });
-    smoke_check!(tile && patch, "terrain_probe_tile", json!(made), json!({"patch": "below 16"}));
+    smoke_check!(
+        tile && patch,
+        "terrain_probe_tile",
+        json!(made),
+        json!({"patch": "below 16"})
+    );
     smoke_check!(
         ground["level"].as_u64().is_some_and(|level| level < 8),
         "terrain_probe_level",
@@ -145,7 +175,12 @@ fn terrain_probe(ground: &Value) -> SmokeResult {
         json!({"sky": made["sky"], "detail": made["detail"]}),
         json!({"sky": [0, 1], "detailed": "at least averaged"})
     );
-    smoke_check!(ground["water"].is_null(), "terrain_probe_dry", json!(ground["water"]), json!(null));
+    smoke_check!(
+        ground["water"].is_null(),
+        "terrain_probe_dry",
+        json!(ground["water"]),
+        json!(null)
+    );
     Ok(())
 }
 
@@ -163,7 +198,12 @@ fn settle(session: &mut dyn SmokeSession) -> SmokeResult {
             return Ok(());
         }
     }
-    smoke_check!(false, "terrain_settles", json!(rendering["terrain"]), json!({"loading_tiles": 0}));
+    smoke_check!(
+        false,
+        "terrain_settles",
+        json!(rendering["terrain"]),
+        json!({"loading_tiles": 0})
+    );
     Ok(())
 }
 
@@ -175,6 +215,11 @@ fn shown(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
             break;
         }
     }
-    smoke_check!(!compiling, "pipelines_compile", json!(compiling), json!(false));
+    smoke_check!(
+        !compiling,
+        "pipelines_compile",
+        json!(compiling),
+        json!(false)
+    );
     capture(session)
 }

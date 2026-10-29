@@ -34,7 +34,8 @@ pub(crate) fn container(bytes: &[u8]) -> Result<Value, Error> {
     if !binary_len.is_multiple_of(4) || json_end + 8 + binary_len != bytes.len() {
         return Err(invalid());
     }
-    serde_json::from_slice(&bytes[20..json_end]).map_err(|_| Error::new(ErrorCode::InvalidJson, "$"))
+    serde_json::from_slice(&bytes[20..json_end])
+        .map_err(|_| Error::new(ErrorCode::InvalidJson, "$"))
 }
 
 fn number(bytes: &[u8], offset: usize) -> Option<u32> {
@@ -109,18 +110,15 @@ pub(crate) fn structure(json: &Value) -> Result<Vec<String>, Error> {
     }
     for (index, mesh) in json["meshes"].as_array().into_iter().flatten().enumerate() {
         if mesh.get("weights").is_some() {
-            return Err(unsupported(format!("$.meshes[{index}].weights")).expected(Expected::Absent));
+            return Err(
+                unsupported(format!("$.meshes[{index}].weights")).expected(Expected::Absent)
+            );
         }
     }
     Ok(ignored)
 }
 
-fn visit(
-    value: &Value,
-    nodes: &[Value],
-    visited: &mut [bool],
-    depth: usize,
-) -> Result<(), Error> {
+fn visit(value: &Value, nodes: &[Value], visited: &mut [bool], depth: usize) -> Result<(), Error> {
     if depth > MAX_DEPTH {
         return Err(Error::new(ErrorCode::HierarchyDepth, "$.nodes")
             .at_most(MAX_DEPTH as u64)
@@ -158,11 +156,12 @@ fn visit(
                 (items.iter().map(|value| value * value).sum::<f64>() - 1.0).abs() <= 0.00001
             });
         if !unit {
-            return Err(
-                Error::new(ErrorCode::InvalidRotation, format!("$.nodes[{index}].rotation"))
-                    .expected(Expected::Normalized)
-                    .got(rotation),
-            );
+            return Err(Error::new(
+                ErrorCode::InvalidRotation,
+                format!("$.nodes[{index}].rotation"),
+            )
+            .expected(Expected::Normalized)
+            .got(rotation));
         }
     }
     if node.get("weights").is_some() {

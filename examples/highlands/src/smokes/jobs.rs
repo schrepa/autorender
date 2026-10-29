@@ -68,11 +68,7 @@ fn alike(workers: &Looked, page: &Looked) -> Checked<()> {
         &answered,
         &above(workers.samples.len() / 2)
     );
-    smoke_eq!(
-        &workers.samples,
-        &page.samples,
-        "samples_match_bit_for_bit"
-    );
+    smoke_eq!(&workers.samples, &page.samples, "samples_match_bit_for_bit");
     smoke_check!(
         number(&workers.drawn["placed_objects"]) > 0.0,
         "objects_stand_on_the_tiles",
@@ -182,10 +178,6 @@ fn settle(session: &mut dyn SmokeSession) -> Checked<Value> {
         &terrains,
         &json!({"resident_tiles": above(0), "baking": 0, "loading_tiles": 0, "fallback_tiles": 0})
     );
-    smoke_eq!(
-        &terrains["failed_jobs"],
-        &json!(0),
-        "no_terrain_job_failed"
-    );
+    smoke_eq!(&terrains["failed_jobs"], &json!(0), "no_terrain_job_failed");
     Ok(terrains)
 }

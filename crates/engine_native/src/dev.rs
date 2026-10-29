@@ -10,10 +10,10 @@ use engine::{Error, ErrorCode, Expected, Game, GameHost};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::{file_error, files};
 #[cfg(feature = "profiling")]
 use crate::{Frames, PixRecord, ProfileRecord, Record};
 use crate::{Offscreen, Pix};
+use crate::{file_error, files};
 
 const FRAME: Duration = Duration::from_micros(16_667);
 const TIMING: &str = "offscreen_gpu_waited";
@@ -408,9 +408,8 @@ impl<G: Game> DevSession<G> {
             );
         }
         if !self.paused {
-            return self.error(
-                &Error::new(ErrorCode::PauseRequired, "$").expected(Expected::Paused),
-            );
+            return self
+                .error(&Error::new(ErrorCode::PauseRequired, "$").expected(Expected::Paused));
         }
         let before = self.status();
         self.captures += 1;

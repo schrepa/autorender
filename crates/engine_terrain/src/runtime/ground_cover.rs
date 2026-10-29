@@ -22,7 +22,10 @@ impl ExtraRules for Cover {
         if self.height[0] <= self.height[1] {
             Ok(())
         } else {
-            Err(InvalidSetting::new("height", engine_settings::Expected::Sorted))
+            Err(InvalidSetting::new(
+                "height",
+                engine_settings::Expected::Sorted,
+            ))
         }
     }
 

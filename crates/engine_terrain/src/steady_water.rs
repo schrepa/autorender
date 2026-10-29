@@ -1660,10 +1660,7 @@ impl Sum {
     }
 }
 
-fn kept_cells(
-    pyramid: &Pyramid,
-    region: &SettleRegion,
-) -> Result<Vec<(TileKey, [u32; 4])>, Error> {
+fn kept_cells(pyramid: &Pyramid, region: &SettleRegion) -> Result<Vec<(TileKey, [u32; 4])>, Error> {
     let size = pyramid.tile_size(0);
     let [nx, nz] = region.cells.map(i64::from);
     region
@@ -2300,10 +2297,7 @@ impl Steadying {
         }
     }
 
-    pub(crate) fn advance(
-        &mut self,
-        budget: &mut u64,
-    ) -> Result<Option<Option<TileWater>>, Error> {
+    pub(crate) fn advance(&mut self, budget: &mut u64) -> Result<Option<Option<TileWater>>, Error> {
         let Some(made) = self.generator.advance(budget) else {
             if self.generator.failed() {
                 return Err(crate::jobs::invalid_heights());

@@ -9,7 +9,12 @@ use super::{
 };
 use crate::PathStats;
 
-const ROAD: [[f64; 2]; 4] = [[100.0, 300.0], [250.0, 260.0], [400.0, 150.0], [450.0, 60.0]];
+const ROAD: [[f64; 2]; 4] = [
+    [100.0, 300.0],
+    [250.0, 260.0],
+    [400.0, 150.0],
+    [450.0, 60.0],
+];
 
 const SIDE: usize = 513;
 
@@ -40,10 +45,20 @@ fn inspection(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
         .terrain
         .as_ref()
         .map(|terrain| terrain.pyramid.extent().to_array());
-    smoke_eq!(&extent, &Some([1024.0, 1024.0]), "the_tiles_span_the_extent");
-    smoke_check!(state.resident > 0, "tiles_reside", &state.resident, &above(0));
+    smoke_eq!(
+        &extent,
+        &Some([1024.0, 1024.0]),
+        "the_tiles_span_the_extent"
+    );
     smoke_check!(
-        state.errors
+        state.resident > 0,
+        "tiles_reside",
+        &state.resident,
+        &above(0)
+    );
+    smoke_check!(
+        state
+            .errors
             .split_last()
             .is_some_and(|(_, rest)| rest.iter().all(|&error| error > 0.0)),
         "levels_measure_their_error",
@@ -116,7 +131,10 @@ fn path(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
             let (dx, dz) = (pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]);
             let run = dx.hypot(dz);
             let (nx, nz) = (-dz / run, dx / run);
-            let center = [pair[0][0] + dx * along - 512.0, pair[0][1] + dz * along - 512.0];
+            let center = [
+                pair[0][0] + dx * along - 512.0,
+                pair[0][1] + dz * along - 512.0,
+            ];
             across.extend([
                 center,
                 [center[0] + 2.0 * nx, center[1] + 2.0 * nz],
@@ -210,7 +228,11 @@ fn tunnel(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
         &json!({"layer": 6, "tunnels": 1, "tunneled": above(40)})
     );
     let terrains = inspect(session, "Terrains")?;
-    smoke_eq!(&terrains["tunnels"], &json!(1), "the_terrains_count_the_tunnel");
+    smoke_eq!(
+        &terrains["tunnels"],
+        &json!(1),
+        "the_terrains_count_the_tunnel"
+    );
     let summit = [750.0 - 512.0, 200.0 - 512.0];
     let mound = height_at(session, summit)?;
     smoke_check!(
@@ -380,8 +402,7 @@ fn collision(session: &mut dyn SmokeSession) -> Checked<()> {
         &above(0)
     );
     smoke_check!(
-        number(&layered["compared"]) > 100.0
-            && number(&layered["worst"]["max_difference"]) < 5e-3,
+        number(&layered["compared"]) > 100.0 && number(&layered["worst"]["max_difference"]) < 5e-3,
         "layers_match_the_drawn_ground",
         layered,
         &json!({"compared": above(100), "worst": {"max_difference": below(5e-3)}})
@@ -421,9 +442,15 @@ fn edits(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
         &json!(false),
         "repeating_an_edit_leaves_it_alone"
     );
-    let listed: Vec<String> = seen(session, ground).terrain.map_or_else(Vec::new, |terrain| {
-        terrain.edits.iter().map(|edit| edit.id.to_string()).collect()
-    });
+    let listed: Vec<String> = seen(session, ground)
+        .terrain
+        .map_or_else(Vec::new, |terrain| {
+            terrain
+                .edits
+                .iter()
+                .map(|edit| edit.id.to_string())
+                .collect()
+        });
     smoke_eq!(
         &listed,
         &vec!["smoke-mound".to_owned()],
@@ -439,7 +466,11 @@ fn history(
     mound: &Value,
 ) -> Checked<()> {
     let undone = control(session, "terrain_undo", json!({}))?;
-    smoke_eq!(&undone["undone"], &json!("smoke-mound"), "undo_names_the_edit");
+    smoke_eq!(
+        &undone["undone"],
+        &json!("smoke-mound"),
+        "undo_names_the_edit"
+    );
     let height = reaches(session, spot, authored)?;
     smoke_check!(
         (height - authored).abs() < 0.05,
@@ -448,7 +479,11 @@ fn history(
         &near(authored, 0.05)
     );
     let redone = control(session, "terrain_redo", json!({}))?;
-    smoke_eq!(&redone["redone"], &json!("smoke-mound"), "redo_names_the_edit");
+    smoke_eq!(
+        &redone["redone"],
+        &json!("smoke-mound"),
+        "redo_names_the_edit"
+    );
     let height = reaches(session, spot, authored + 8.0)?;
     smoke_check!(
         (height - (authored + 8.0)).abs() < 0.05,
@@ -462,9 +497,17 @@ fn history(
         "terrain_edit",
         with(mound, json!({"id": "no spaces"})),
     )?;
-    smoke_eq!(&refused["path"], &json!("$.args.id"), "spaced_ids_are_refused");
+    smoke_eq!(
+        &refused["path"],
+        &json!("$.args.id"),
+        "spaced_ids_are_refused"
+    );
     let last = control(session, "terrain_undo", json!({}))?;
-    smoke_eq!(&last["undone"], &json!("smoke-mound"), "undo_takes_the_edit_back");
+    smoke_eq!(
+        &last["undone"],
+        &json!("smoke-mound"),
+        "undo_takes_the_edit_back"
+    );
     let height = reaches(session, spot, authored)?;
     smoke_check!(
         (height - authored).abs() < 0.05,
@@ -507,9 +550,15 @@ fn rivers(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
         &json!(false),
         "drawing_the_same_river_again_leaves_it_alone"
     );
-    let listed: Vec<String> = seen(session, ground).terrain.map_or_else(Vec::new, |terrain| {
-        terrain.rivers.iter().map(|drawn| drawn.id.to_string()).collect()
-    });
+    let listed: Vec<String> = seen(session, ground)
+        .terrain
+        .map_or_else(Vec::new, |terrain| {
+            terrain
+                .rivers
+                .iter()
+                .map(|drawn| drawn.id.to_string())
+                .collect()
+        });
     smoke_eq!(
         &listed,
         &vec!["smoke-river".to_owned()],
@@ -536,9 +585,9 @@ fn authored(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
         hit,
         &json!({"placed": {"layer": 65534}, "point": near(floor + 1.5, 0.3)})
     );
-    let placed = seen(session, ground).terrain.map_or(0, |terrain| {
-        terrain.surface.rules.authored().placed.len()
-    });
+    let placed = seen(session, ground)
+        .terrain
+        .map_or(0, |terrain| terrain.surface.rules.authored().placed.len());
     smoke_eq!(&placed, &2_usize, "the_terrain_lists_its_authored_objects");
     Ok(())
 }

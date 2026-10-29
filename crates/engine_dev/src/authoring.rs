@@ -50,9 +50,11 @@ pub fn read_scene_source(path: &Path) -> Result<String, Error> {
         .map_err(|error| io_error(path, &error))?
         .len();
     if length > MAX_SOURCE_BYTES as u64 {
-        return Err(Error::new(ErrorCode::SourceTooLarge, path.display().to_string())
-            .at_most(MAX_SOURCE_BYTES as u64)
-            .got(length));
+        return Err(
+            Error::new(ErrorCode::SourceTooLarge, path.display().to_string())
+                .at_most(MAX_SOURCE_BYTES as u64)
+                .got(length),
+        );
     }
     let mut bytes = Vec::new();
     file.take((MAX_SOURCE_BYTES + 1) as u64)
@@ -76,8 +78,7 @@ pub fn save_scene(
 ) -> Result<SaveReport, Error> {
     let candidate_scene = SceneDocument::from_json(candidate)?;
     let next = expected_revision.checked_add(1).ok_or_else(|| {
-        Error::new(ErrorCode::RevisionExhausted, "$.revision")
-            .got(expected_revision.to_string())
+        Error::new(ErrorCode::RevisionExhausted, "$.revision").got(expected_revision.to_string())
     })?;
     if candidate_scene.revision != next {
         return Err(Error::new(ErrorCode::InvalidRevision, "$.revision")
@@ -143,7 +144,10 @@ pub fn save_scene(
         .map_err(|error| io_error(&temporary.path, &error))?;
     temporary.file.take();
     if read_scene_source(&path)? != original {
-        return Err(Error::new(ErrorCode::SourceChanged, path.display().to_string()));
+        return Err(Error::new(
+            ErrorCode::SourceChanged,
+            path.display().to_string(),
+        ));
     }
     fs::rename(&temporary.path, &path).map_err(|error| io_error(&path, &error))?;
     Ok(SaveReport {

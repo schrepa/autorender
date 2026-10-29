@@ -33,9 +33,9 @@ thread_local! {
 }
 
 pub fn enable(selection: Selection) -> Result<(), Error> {
-    SELECTION.set(selection).map_err(|_| {
-        Error::new(ErrorCode::ProfilingUnavailable, "$").expected(Expected::Absent)
-    })?;
+    SELECTION
+        .set(selection)
+        .map_err(|_| Error::new(ErrorCode::ProfilingUnavailable, "$").expected(Expected::Absent))?;
     if engine::start_native_instances_with(start) {
         Ok(())
     } else {
@@ -129,13 +129,15 @@ fn start_vulkan(descriptor: &wgpu::InstanceDescriptor) -> Result<wgpu::Instance,
         .map_err(|error| failed("$.vulkan.version", error))?
         .unwrap_or(vk::API_VERSION_1_0);
     if version < vk::API_VERSION_1_1 {
-        return Err(Error::new(ErrorCode::ProfilingUnavailable, "$.vulkan.version")
-            .expected(Expected::Supported)
-            .got(format!(
-                "{}.{}",
-                vk::api_version_major(version),
-                vk::api_version_minor(version)
-            )));
+        return Err(
+            Error::new(ErrorCode::ProfilingUnavailable, "$.vulkan.version")
+                .expected(Expected::Supported)
+                .got(format!(
+                    "{}.{}",
+                    vk::api_version_major(version),
+                    vk::api_version_minor(version)
+                )),
+        );
     }
     let flags = descriptor.flags | wgpu::InstanceFlags::DEBUG;
     let extensions = wgpu::hal::vulkan::Instance::desired_extensions(&entry, version, flags)

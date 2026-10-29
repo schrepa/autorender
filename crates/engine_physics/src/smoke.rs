@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::{Entity, World};
 use engine_collision::{Collider, ColliderShape};
-use engine_core::{Error, ErrorCode};
 use engine_core::smoke::{SmokeFailure, SmokeResult, SmokeSession};
 use engine_core::{AuthoredId, OperationScene, Transform, set_parent, smoke_check, smoke_eq};
+use engine_core::{Error, ErrorCode};
 use glam::Vec3;
 use serde_json::{Value, json};
 
@@ -45,7 +45,11 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     parented(session)?;
     session.restart(&["collision", "physics"]);
     let missing = refuse(session, "inspect", json!({"component": "PhysicsWorld"}))?;
-    smoke_eq!(json!(missing["code"]), json!("missing_plugin"), "left_out_without_collision");
+    smoke_eq!(
+        json!(missing["code"]),
+        json!("missing_plugin"),
+        "left_out_without_collision"
+    );
     Ok(())
 }
 
@@ -88,7 +92,11 @@ fn rests(session: &mut dyn SmokeSession) -> SmokeResult {
         json!({"bodies": 2, "held": 0, "solids": 2})
     );
     let status = ask(session, "query", json!({"name": "status"}))?;
-    smoke_eq!(json!(status["rendering"]["physics"]["bodies"]), json!(2), "frames_observe");
+    smoke_eq!(
+        json!(status["rendering"]["physics"]["bodies"]),
+        json!(2),
+        "frames_observe"
+    );
     Ok(())
 }
 
@@ -100,7 +108,11 @@ fn toggles(session: &mut dyn SmokeSession) -> SmokeResult {
     )?;
     let held = component(session, "stone", "Transform")?;
     seconds(session, 1);
-    smoke_eq!(component(session, "stone", "Transform")?, held, "physics_off_holds");
+    smoke_eq!(
+        component(session, "stone", "Transform")?,
+        held,
+        "physics_off_holds"
+    );
     ask(
         session,
         "control",
@@ -129,7 +141,11 @@ fn parented(session: &mut dyn SmokeSession) -> SmokeResult {
         json!(parented),
         json!({"problem": "not_root", "simulated": false})
     );
-    smoke_eq!(component(session, "crate", "Transform")?, before, "parented_body_leaves_world");
+    smoke_eq!(
+        component(session, "crate", "Transform")?,
+        before,
+        "parented_body_leaves_world"
+    );
     Ok(())
 }
 
@@ -217,10 +233,7 @@ fn name(world: &mut World, entities: BTreeMap<String, Entity>) {
 
 fn authored(world: &World, entity: Entity) -> Option<AuthoredId> {
     let scene = world.get_resource::<OperationScene>()?;
-    let (id, _) = scene
-        .entities
-        .iter()
-        .find(|&(_, &named)| named == entity)?;
+    let (id, _) = scene.entities.iter().find(|&(_, &named)| named == entity)?;
     Some(AuthoredId {
         scene: scene.id.clone(),
         id: id.clone(),
@@ -245,20 +258,39 @@ fn component(
     id: &str,
     component: &str,
 ) -> Result<Value, SmokeFailure> {
-    let inspected = ask(session, "inspect", json!({"entity": id, "component": component}))?;
+    let inspected = ask(
+        session,
+        "inspect",
+        json!({"entity": id, "component": component}),
+    )?;
     Ok(inspected["entity"]["components"][component].clone())
 }
 
 fn ask(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Result<Value, SmokeFailure> {
     let sent = json!({"verb": verb, "body": body});
     let reply = session.request(verb, body);
-    smoke_check!(reply.is_ok(), "request_accepted", json!(reply.as_ref().err()), sent);
-    Ok(reply.map(|reply| reply["result"].clone()).unwrap_or_default())
+    smoke_check!(
+        reply.is_ok(),
+        "request_accepted",
+        json!(reply.as_ref().err()),
+        sent
+    );
+    Ok(reply
+        .map(|reply| reply["result"].clone())
+        .unwrap_or_default())
 }
 
 fn refuse(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Result<Value, SmokeFailure> {
     let sent = json!({"verb": verb, "body": body});
     let reply = session.request(verb, body);
-    smoke_check!(reply.is_err(), "request_refused", json!(reply.as_ref().ok()), sent);
-    Ok(reply.err().map(|reply| reply["error"].clone()).unwrap_or_default())
+    smoke_check!(
+        reply.is_err(),
+        "request_refused",
+        json!(reply.as_ref().ok()),
+        sent
+    );
+    Ok(reply
+        .err()
+        .map(|reply| reply["error"].clone())
+        .unwrap_or_default())
 }

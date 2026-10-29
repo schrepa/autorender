@@ -120,7 +120,10 @@ fn ray() -> Value {
 
 fn request(name: &str) -> (&'static str, Value) {
     match name {
-        "terrain" => ("query", json!({ "name": "terrain_height", "args": { "points": [[0, 0]] } })),
+        "terrain" => (
+            "query",
+            json!({ "name": "terrain_height", "args": { "points": [[0, 0]] } }),
+        ),
         "world_streaming" => ("inspect", json!({ "component": "WorldCells" })),
         "navigation" => ("inspect", json!({ "component": "NavAgents" })),
         "time_of_day" => ("inspect", json!({ "component": "TimeOfDay" })),
@@ -131,14 +134,27 @@ fn request(name: &str) -> (&'static str, Value) {
 
 fn refusal(name: &str) -> (&'static str, Value) {
     match name {
-        "world_streaming" => ("control", json!({ "name": "world_changes", "args": { "clear": true } })),
-        "time_of_day" => ("control", json!({ "name": "environment", "args": { "time_of_day": {} } })),
-        "physics" => ("control", json!({ "name": "environment", "args": { "physics": { "enabled": true } } })),
+        "world_streaming" => (
+            "control",
+            json!({ "name": "world_changes", "args": { "clear": true } }),
+        ),
+        "time_of_day" => (
+            "control",
+            json!({ "name": "environment", "args": { "time_of_day": {} } }),
+        ),
+        "physics" => (
+            "control",
+            json!({ "name": "environment", "args": { "physics": { "enabled": true } } }),
+        ),
         _ => request(name),
     }
 }
 
-fn restarted(session: &mut dyn SmokeSession, without: &[&str], standard: &[&'static str]) -> SmokeResult {
+fn restarted(
+    session: &mut dyn SmokeSession,
+    without: &[&str],
+    standard: &[&'static str],
+) -> SmokeResult {
     session.restart(without);
     control(session, "pause", json!({}), "pauses")?;
     let added: Vec<&str> = standard
@@ -155,7 +171,12 @@ fn restarted(session: &mut dyn SmokeSession, without: &[&str], standard: &[&'sta
     Ok(())
 }
 
-fn left_out(session: &mut dyn SmokeSession, name: &str, reads: &Reads, standard: &[&'static str]) -> SmokeResult {
+fn left_out(
+    session: &mut dyn SmokeSession,
+    name: &str,
+    reads: &Reads,
+    standard: &[&'static str],
+) -> SmokeResult {
     let without: Vec<&str> = standard
         .iter()
         .copied()
@@ -181,7 +202,13 @@ fn left_out(session: &mut dyn SmokeSession, name: &str, reads: &Reads, standard:
     Ok(())
 }
 
-fn alone(session: &mut dyn SmokeSession, name: &str, reads: &Reads, features: &[&str], standard: &[&'static str]) -> SmokeResult {
+fn alone(
+    session: &mut dyn SmokeSession,
+    name: &str,
+    reads: &Reads,
+    features: &[&str],
+    standard: &[&'static str],
+) -> SmokeResult {
     let needed = needs(reads, name);
     let others: Vec<&str> = features
         .iter()

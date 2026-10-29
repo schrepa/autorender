@@ -116,7 +116,14 @@ impl Setting for PlacedCollider {
         if self.is_usable() {
             Ok(())
         } else {
-            Err(InvalidSetting::new(field, engine_settings::Expected::Finite).allowed(engine_settings::Allowed::Range { min: MIN_COLLIDER_EXTENT as f64, max: MAX_COLLIDER_EXTENT as f64 }))
+            Err(
+                InvalidSetting::new(field, engine_settings::Expected::Finite).allowed(
+                    engine_settings::Allowed::Range {
+                        min: MIN_COLLIDER_EXTENT as f64,
+                        max: MAX_COLLIDER_EXTENT as f64,
+                    },
+                ),
+            )
         }
     }
 }
@@ -232,10 +239,16 @@ impl TerrainSurface {
 
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         if self.materials.len() != self.rules.authored().materials.len() {
-            return Err(InvalidSetting::new("materials", engine_settings::Expected::Matching));
+            return Err(InvalidSetting::new(
+                "materials",
+                engine_settings::Expected::Matching,
+            ));
         }
         if self.assets.len() != self.rules.authored().assets.len() {
-            return Err(InvalidSetting::new("assets", engine_settings::Expected::Matching));
+            return Err(InvalidSetting::new(
+                "assets",
+                engine_settings::Expected::Matching,
+            ));
         }
         for material in &self.materials {
             material
@@ -379,7 +392,10 @@ impl Terrain {
 
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         if !self.origin.is_finite() {
-            return Err(InvalidSetting::new("origin", engine_settings::Expected::Finite));
+            return Err(InvalidSetting::new(
+                "origin",
+                engine_settings::Expected::Finite,
+            ));
         }
         self.surface
             .validate()

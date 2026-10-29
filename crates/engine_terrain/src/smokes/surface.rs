@@ -25,10 +25,7 @@ fn materials(session: &mut dyn SmokeSession) -> Checked<()> {
     settle(session)?;
     environment(session, json!({ "terrain": fast() }))?;
     settle(session)?;
-    camera(
-        session,
-        view([380.0, 90.0, -420.0], [300.0, 30.0, -300.0]),
-    )?;
+    camera(session, view([380.0, 90.0, -420.0], [300.0, 30.0, -300.0]))?;
     let mut controls = 0.0;
     for _ in 0..SETTLE_FRAMES {
         let rendering = render(session)?;

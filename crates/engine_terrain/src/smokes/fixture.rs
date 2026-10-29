@@ -151,10 +151,7 @@ pub fn name(world: &mut World, id: &str, entity: Entity) {
 
 fn authored(world: &World, entity: Entity) -> Option<AuthoredId> {
     let scene = world.get_resource::<OperationScene>()?;
-    let (id, _) = scene
-        .entities
-        .iter()
-        .find(|&(_, &named)| named == entity)?;
+    let (id, _) = scene.entities.iter().find(|&(_, &named)| named == entity)?;
     Some(AuthoredId {
         scene: scene.id.clone(),
         id: id.clone(),
@@ -217,7 +214,12 @@ fn layers() -> Vec<Layer> {
         }),
         stamp([430.0, 96.0], 10.0, 10.0, StampOp::Lower(12.0)),
         path(
-            vec![[100.0, 300.0], [250.0, 260.0], [400.0, 150.0], [450.0, 60.0]],
+            vec![
+                [100.0, 300.0],
+                [250.0, 260.0],
+                [400.0, 150.0],
+                [450.0, 60.0],
+            ],
             60.0,
             25.0,
         ),
@@ -294,7 +296,9 @@ fn biomes() -> Biomes {
         weight: 1.0,
     };
     Biomes {
-        materials: ["meadow", "rock", "snow", "gravel"].map(String::from).to_vec(),
+        materials: ["meadow", "rock", "snow", "gravel"]
+            .map(String::from)
+            .to_vec(),
         biomes: vec![
             Biome {
                 id: "lowland".to_owned(),

@@ -49,9 +49,11 @@ impl SceneDocument {
             .collect();
         for entity in &streamed.entities {
             if known.contains(entity.source.id.as_str()) {
-                return Err(Error::new(ErrorCode::DuplicateId, format!("{}.id", entity.path))
-                    .expected(Expected::Unique)
-                    .got(&entity.source.id));
+                return Err(
+                    Error::new(ErrorCode::DuplicateId, format!("{}.id", entity.path))
+                        .expected(Expected::Unique)
+                        .got(&entity.source.id),
+                );
             }
         }
         Ok([entities, streamed])
@@ -79,9 +81,11 @@ impl SceneDocument {
             for (local_index, entity) in prefab.entities.iter().enumerate() {
                 let path = format!("{path}[{local_index}]");
                 if let Some(nested) = &entity.prefab {
-                    return Err(Error::new(ErrorCode::NestedPrefab, format!("{path}.prefab"))
-                        .expected(Expected::Absent)
-                        .got(nested));
+                    return Err(
+                        Error::new(ErrorCode::NestedPrefab, format!("{path}.prefab"))
+                            .expected(Expected::Absent)
+                            .got(nested),
+                    );
                 }
                 transforms.push(validate_object(
                     entity,
@@ -164,9 +168,11 @@ fn expand_list(
     let mut ids = BTreeSet::new();
     for entity in &entities {
         if !ids.insert(entity.source.id.as_str()) {
-            return Err(Error::new(ErrorCode::DuplicateId, format!("{}.id", entity.path))
-                .expected(Expected::Unique)
-                .got(&entity.source.id));
+            return Err(
+                Error::new(ErrorCode::DuplicateId, format!("{}.id", entity.path))
+                    .expected(Expected::Unique)
+                    .got(&entity.source.id),
+            );
         }
         entity.source.check_placement(&entity.path)?;
     }

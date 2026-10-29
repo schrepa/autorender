@@ -177,7 +177,11 @@ pub(crate) fn idle(milliseconds: f64) {
     }
 }
 
-pub(crate) fn serve(session: &mut dyn SmokeSession, document: &Value, without: &[&str]) -> SmokeResult {
+pub(crate) fn serve(
+    session: &mut dyn SmokeSession,
+    document: &Value,
+    without: &[&str],
+) -> SmokeResult {
     session.source(&document.to_string());
     session.restart(without);
     control(session, "pause", json!({}), "pauses")?;
@@ -256,7 +260,8 @@ pub(crate) fn grid(side: usize, moving: bool) -> Value {
             }));
         }
     }
-    let mut materials = vec![json!({ "id": "ground", "color": [0.55, 0.58, 0.52, 1.0], "texture": "checker" })];
+    let mut materials =
+        vec![json!({ "id": "ground", "color": [0.55, 0.58, 0.52, 1.0], "texture": "checker" })];
     materials.extend(paints.iter().enumerate().map(|(index, color)| {
         json!({ "id": format!("paint-{index}"), "color": color, "texture": "checker" })
     }));
@@ -292,15 +297,14 @@ pub(crate) fn base64(bytes: &[u8]) -> String {
     const LETTERS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
-        let joined = chunk
-            .iter()
-            .enumerate()
-            .fold(0_u32, |joined, (at, &byte)| {
-                joined | (u32::from(byte) << (16 - 8 * at))
-            });
+        let joined = chunk.iter().enumerate().fold(0_u32, |joined, (at, &byte)| {
+            joined | (u32::from(byte) << (16 - 8 * at))
+        });
         for at in 0..4 {
             if at <= chunk.len() {
-                text.push(char::from(LETTERS[((joined >> (18 - 6 * at)) & 63) as usize]));
+                text.push(char::from(
+                    LETTERS[((joined >> (18 - 6 * at)) & 63) as usize],
+                ));
             } else {
                 text.push('=');
             }
@@ -356,8 +360,7 @@ pub(crate) fn differing(a: &Pixels, b: &Pixels, tolerance: u8) -> Result<usize, 
         json!([a.width, a.height]),
         "capture_size_kept"
     );
-    Ok(a
-        .rgba
+    Ok(a.rgba
         .chunks_exact(4)
         .zip(b.rgba.chunks_exact(4))
         .filter(|(a, b)| (0..3).any(|channel| a[channel].abs_diff(b[channel]) > tolerance))

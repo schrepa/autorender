@@ -247,8 +247,7 @@ fn section_of<'w>(world: &'w World, key: &str, path: &str) -> Result<&'w Setting
             Error::new(ErrorCode::MissingPlugin, path)
                 .got(key)
                 .variants(
-                    std::iter::once(ATMOSPHERE)
-                        .chain(registered(world).map(|section| section.key)),
+                    std::iter::once(ATMOSPHERE).chain(registered(world).map(|section| section.key)),
                 )
         })
 }

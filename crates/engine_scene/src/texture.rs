@@ -73,11 +73,12 @@ impl SceneTexture {
             (None, Some(width), Some(height), Some(rgba8)) => {
                 for (field, size) in [("width", width), ("height", height)] {
                     if !(1..=MAX_TEXTURE_DIMENSION).contains(&size) {
-                        return Err(
-                            Error::new(ErrorCode::InvalidTexture, format!("{path}.{field}"))
-                                .range(1.0, f64::from(MAX_TEXTURE_DIMENSION))
-                                .got(size),
-                        );
+                        return Err(Error::new(
+                            ErrorCode::InvalidTexture,
+                            format!("{path}.{field}"),
+                        )
+                        .range(1.0, f64::from(MAX_TEXTURE_DIMENSION))
+                        .got(size));
                     }
                 }
                 let bytes = width as usize * height as usize * 4;

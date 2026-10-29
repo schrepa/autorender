@@ -58,6 +58,9 @@
         "terrain_resolve",
         "water"
       ],
+      "paths": [
+        "crates/engine_terrain/**"
+      ],
       "reads": [],
       "records": [
         "terrain_tile",
@@ -106,10 +109,28 @@
         }
       ],
       "slot": null,
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "terrain_draws"
+        },
+        {
+          "gpu": true,
+          "name": "terrain_shapes"
+        },
+        {
+          "gpu": true,
+          "name": "terrain_surface"
+        },
+        {
+          "gpu": true,
+          "name": "terrain_water_sky"
+        }
+      ],
       "stats": [],
       "system_set": "terrain",
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "88f92a9c264de188c9028e94c653440b3b0d7d887faa4e4bdd1a3ebbbabaf78a"
+      "version": "ca1e84123509e2da3f3e619282b832f30aea1ad5fdb1620930f5909c194bfa55"
     },
     {
       "components": [],
@@ -132,6 +153,9 @@
         }
       ],
       "passes": [],
+      "paths": [
+        "crates/engine_world_streaming/**"
+      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -148,12 +172,18 @@
         }
       ],
       "slot": null,
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "world_streaming"
+        }
+      ],
       "stats": [
         "world_streaming"
       ],
       "system_set": "world_streaming",
       "type": "engine_world_streaming::WorldStreamingBrick",
-      "version": "d04d89ab1633330aace7fa6ec34ea69b768fecf586c95f4cd10095012b24df84"
+      "version": "6dcd7d1695907d6e069f44cc59d93d2070c3ea429b9c670860b60328e8c2674d"
     },
     {
       "components": [],
@@ -181,6 +211,9 @@
         }
       ],
       "passes": [],
+      "paths": [
+        "crates/engine_navigation/**"
+      ],
       "reads": [
         "terrain"
       ],
@@ -200,12 +233,18 @@
         }
       ],
       "slot": null,
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "navigation_walks"
+        }
+      ],
       "stats": [
         "navigation"
       ],
       "system_set": "navigation",
       "type": "engine_navigation::agents::NavigationBrick",
-      "version": "805701ea7276ceaa5d0b4e0a310892f936e060ba29de7fb99afa7e72784c14e1"
+      "version": "bf0b60fc244b6eb124fc207db7074c01cf4612eb4d653acbb82331c3c51e4095"
     },
     {
       "components": [],
@@ -219,6 +258,9 @@
       "name": "time_of_day",
       "operations": [],
       "passes": [],
+      "paths": [
+        "crates/engine_time_of_day/**"
+      ],
       "reads": [
         "sky"
       ],
@@ -234,10 +276,11 @@
         }
       ],
       "slot": null,
+      "smokes": [],
       "stats": [],
       "system_set": "time_of_day",
       "type": "engine_time_of_day::TimeOfDayBrick",
-      "version": "d0e5199c8f8c1e359298c299b335f04dd0ebb5d284e23d36ee7b98431a021039"
+      "version": "ece76e734c6402e4dc53e352db3642c78180dc5fa2def5a611f058030cfc9a9e"
     },
     {
       "components": [],
@@ -276,6 +319,9 @@
         }
       ],
       "passes": [],
+      "paths": [
+        "crates/engine_collision/**"
+      ],
       "reads": [
         "terrain"
       ],
@@ -287,10 +333,16 @@
       ],
       "settings": [],
       "slot": null,
+      "smokes": [
+        {
+          "gpu": false,
+          "name": "collision"
+        }
+      ],
       "stats": [],
       "system_set": "collision",
       "type": "engine_collision::Collision",
-      "version": "ff0c59eb1c7d81a2b6c8f865e5bc4a365d0bade8d1a4a7b65188095e55359c1a"
+      "version": "b300bda206651d34fff3918f3beb87ad54c3f7d9e826814ff13c2a3d4402de5f"
     },
     {
       "components": [],
@@ -309,6 +361,9 @@
       "name": "physics",
       "operations": [],
       "passes": [],
+      "paths": [
+        "crates/engine_physics/**"
+      ],
       "reads": [
         "collision",
         "terrain"
@@ -327,12 +382,18 @@
         }
       ],
       "slot": null,
+      "smokes": [
+        {
+          "gpu": false,
+          "name": "physics"
+        }
+      ],
       "stats": [
         "physics"
       ],
       "system_set": "physics",
       "type": "engine_physics::PhysicsBrick",
-      "version": "07356183969d024cd2e10165a0bac0ffd1d760d9ccf38e8a7d7f6875d85db9cb"
+      "version": "784b66b7d1ac2fb2f6a15940b3b92d6e87732261732cca96c094eaca08fff786"
     },
     {
       "components": [],
@@ -353,6 +414,10 @@
       "passes": [
         "lights"
       ],
+      "paths": [
+        "crates/engine_core/src/lights.rs",
+        "crates/engine_core/src/lights/**"
+      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -367,10 +432,11 @@
         }
       ],
       "slot": null,
+      "smokes": [],
       "stats": [],
       "system_set": "lights",
       "type": "engine_core::lights::Lights",
-      "version": "8c4b54b183d944503a7531e0ae31f031499d08491d44c31471ae67b94f3c284e"
+      "version": "68989b9b1d28f43e0ecd99910af134be380e4167cb1209903243bfc93530532b"
     },
     {
       "components": [],
@@ -389,6 +455,10 @@
       "name": "particles",
       "operations": [],
       "passes": [],
+      "paths": [
+        "crates/engine_core/src/particles.rs",
+        "crates/engine_core/src/particles/**"
+      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -403,10 +473,11 @@
         }
       ],
       "slot": null,
+      "smokes": [],
       "stats": [],
       "system_set": "particles",
       "type": "engine_core::particles::Particles",
-      "version": "8c4b54b183d944503a7531e0ae31f031499d08491d44c31471ae67b94f3c284e"
+      "version": "68989b9b1d28f43e0ecd99910af134be380e4167cb1209903243bfc93530532b"
     },
     {
       "components": [],
@@ -427,6 +498,10 @@
       "passes": [
         "probe_captures"
       ],
+      "paths": [
+        "crates/engine_core/src/probes.rs",
+        "crates/engine_core/src/probes/**"
+      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -441,10 +516,11 @@
         }
       ],
       "slot": null,
+      "smokes": [],
       "stats": [],
       "system_set": "reflection_probes",
       "type": "engine_core::probes::ReflectionProbes",
-      "version": "8c4b54b183d944503a7531e0ae31f031499d08491d44c31471ae67b94f3c284e"
+      "version": "68989b9b1d28f43e0ecd99910af134be380e4167cb1209903243bfc93530532b"
     },
     {
       "components": [],
@@ -466,6 +542,10 @@
         "cloud_dome",
         "cloud_march",
         "cloud_composite"
+      ],
+      "paths": [
+        "crates/engine_core/src/sky.rs",
+        "crates/engine_core/src/sky/**"
       ],
       "reads": [],
       "records": [],
@@ -499,10 +579,11 @@
         }
       ],
       "slot": null,
+      "smokes": [],
       "stats": [],
       "system_set": "sky",
       "type": "engine_core::sky::Sky",
-      "version": "8c4b54b183d944503a7531e0ae31f031499d08491d44c31471ae67b94f3c284e"
+      "version": "68989b9b1d28f43e0ecd99910af134be380e4167cb1209903243bfc93530532b"
     },
     {
       "components": [],
@@ -525,6 +606,10 @@
         "shadow_maps",
         "shadow_marks"
       ],
+      "paths": [
+        "crates/engine_core/src/effects.rs",
+        "crates/engine_core/src/effects/**"
+      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -544,10 +629,11 @@
         }
       ],
       "slot": null,
+      "smokes": [],
       "stats": [],
       "system_set": "shadows",
       "type": "engine_core::effects::Shadows",
-      "version": "8c4b54b183d944503a7531e0ae31f031499d08491d44c31471ae67b94f3c284e"
+      "version": "68989b9b1d28f43e0ecd99910af134be380e4167cb1209903243bfc93530532b"
     },
     {
       "components": [],
@@ -570,6 +656,10 @@
         "effects",
         "composite",
         "temporal_resolve"
+      ],
+      "paths": [
+        "crates/engine_core/src/effects.rs",
+        "crates/engine_core/src/effects/**"
       ],
       "reads": [],
       "records": [],
@@ -614,10 +704,16 @@
         }
       ],
       "slot": null,
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "temporal_antialiasing"
+        }
+      ],
       "stats": [],
       "system_set": "post_effects",
       "type": "engine_core::effects::PostEffects",
-      "version": "8c4b54b183d944503a7531e0ae31f031499d08491d44c31471ae67b94f3c284e"
+      "version": "68989b9b1d28f43e0ecd99910af134be380e4167cb1209903243bfc93530532b"
     },
     {
       "components": [],
@@ -636,6 +732,10 @@
       "name": "level_of_detail",
       "operations": [],
       "passes": [],
+      "paths": [
+        "crates/engine_core/src/level_of_detail.rs",
+        "crates/engine_core/src/level_of_detail/**"
+      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -649,10 +749,11 @@
         }
       ],
       "slot": null,
+      "smokes": [],
       "stats": [],
       "system_set": "level_of_detail",
       "type": "engine_core::level_of_detail::LevelOfDetail",
-      "version": "8c4b54b183d944503a7531e0ae31f031499d08491d44c31471ae67b94f3c284e"
+      "version": "68989b9b1d28f43e0ecd99910af134be380e4167cb1209903243bfc93530532b"
     },
     {
       "components": [],
@@ -674,6 +775,10 @@
         "occlusion_test",
         "opaque_phase_two"
       ],
+      "paths": [
+        "crates/engine_core/src/gpu_culling.rs",
+        "crates/engine_core/src/gpu_culling/**"
+      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -693,10 +798,16 @@
         }
       ],
       "slot": null,
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "culling_settings"
+        }
+      ],
       "stats": [],
       "system_set": "culling",
       "type": "engine_core::gpu_culling::Culling",
-      "version": "8c4b54b183d944503a7531e0ae31f031499d08491d44c31471ae67b94f3c284e"
+      "version": "68989b9b1d28f43e0ecd99910af134be380e4167cb1209903243bfc93530532b"
     },
     {
       "components": [],
@@ -715,6 +826,10 @@
       "name": "resolution",
       "operations": [],
       "passes": [],
+      "paths": [
+        "crates/engine_core/src/resolution.rs",
+        "crates/engine_core/src/resolution/**"
+      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -734,10 +849,11 @@
         }
       ],
       "slot": null,
+      "smokes": [],
       "stats": [],
       "system_set": "resolution",
       "type": "engine_core::resolution::Resolution",
-      "version": "8c4b54b183d944503a7531e0ae31f031499d08491d44c31471ae67b94f3c284e"
+      "version": "68989b9b1d28f43e0ecd99910af134be380e4167cb1209903243bfc93530532b"
     },
     {
       "components": [],
@@ -758,6 +874,10 @@
       "passes": [
         "debug_view"
       ],
+      "paths": [
+        "crates/engine_core/src/debug_view.rs",
+        "crates/engine_core/src/debug_view/**"
+      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -771,10 +891,16 @@
         }
       ],
       "slot": null,
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "debug_view"
+        }
+      ],
       "stats": [],
       "system_set": "debug_view",
       "type": "engine_core::debug_view::DebugView",
-      "version": "8c4b54b183d944503a7531e0ae31f031499d08491d44c31471ae67b94f3c284e"
+      "version": "68989b9b1d28f43e0ecd99910af134be380e4167cb1209903243bfc93530532b"
     },
     {
       "components": [],
@@ -793,6 +919,10 @@
       "name": "lighting_model",
       "operations": [],
       "passes": [],
+      "paths": [
+        "crates/engine_core/src/foliage.rs",
+        "crates/engine_core/src/foliage/**"
+      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -812,10 +942,16 @@
         }
       ],
       "slot": null,
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "foliage_settings"
+        }
+      ],
       "stats": [],
       "system_set": "lighting_model",
       "type": "engine_core::foliage::LightingModel",
-      "version": "8c4b54b183d944503a7531e0ae31f031499d08491d44c31471ae67b94f3c284e"
+      "version": "68989b9b1d28f43e0ecd99910af134be380e4167cb1209903243bfc93530532b"
     }
   ]
 }

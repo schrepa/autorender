@@ -173,7 +173,10 @@ pub(crate) fn recommended(adapter: &engine::AdapterInfo, shallow_stacks: bool) -
         layers.push(highly(layer(
             "gpu_counters_per_draw",
             &["pixtool"],
-            installed("pixtool", &[r"C:\Program Files\Microsoft PIX\*/pixtool.exe"]),
+            installed(
+                "pixtool",
+                &[r"C:\Program Files\Microsoft PIX\*/pixtool.exe"],
+            ),
             &["--offscreen N --vendor pix --vendor-dir DIR"],
         )));
     }
@@ -181,7 +184,8 @@ pub(crate) fn recommended(adapter: &engine::AdapterInfo, shallow_stacks: bool) -
         "amd" => layers.push(highly(layer(
             "gpu_cost_per_instruction",
             &["RadeonDeveloperPanelCLI", "RadeonGPUProfiler"],
-            installed("RadeonDeveloperPanelCLI", &[]).or_else(|| installed("RadeonGPUProfiler", &[])),
+            installed("RadeonDeveloperPanelCLI", &[])
+                .or_else(|| installed("RadeonGPUProfiler", &[])),
             &[
                 "RadeonDeveloperPanelCLI --rgp-instruction-tracing",
                 "MESA_VK_TRACE=rgp",

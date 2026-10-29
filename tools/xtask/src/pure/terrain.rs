@@ -520,19 +520,22 @@ fn pack(records: &[(&str, Vec<u8>)], observed: &mut Observations) -> Result<Vec<
     let header = pack
         .get(..engine_worker::PACK_HEADER)
         .ok_or("the pack has no header")?;
-    let (offset, stored, _) = engine_worker::pack_directory(header)?;
+    let (offset, stored, _) =
+        engine_worker::pack_directory(header).map_err(|error| error.to_string())?;
     let range = |offset: u64, length: u64| {
         let start = usize::try_from(offset).map_err(|error| error.to_string())?;
         let end = start + usize::try_from(length).map_err(|error| error.to_string())?;
         pack.get(start..end)
             .ok_or_else(|| "a range past the pack's end".to_owned())
     };
-    let index = engine_worker::PackIndex::open(header, range(offset, stored)?)?;
+    let index = engine_worker::PackIndex::open(header, range(offset, stored)?)
+        .map_err(|error| error.to_string())?;
     observed.record("pack records", index.len());
     for (key, bytes, _) in &keyed {
         let hex: String = key.iter().map(|byte| format!("{byte:02x}")).collect();
         let entry = index.find(&hex).ok_or("a record missing from the pack")?;
-        let read = engine_worker::unpack(&entry, range(entry.offset, u64::from(entry.stored))?)?;
+        let read = engine_worker::unpack(&entry, range(entry.offset, u64::from(entry.stored))?)
+            .map_err(|error| error.to_string())?;
         observed.check(read == *bytes, || {
             format!("record {hex} reads back from the pack as other bytes")
         });

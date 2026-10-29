@@ -314,9 +314,7 @@ impl<G: Game> GameHost<G> {
             }
             Pending::Shown { mut reply } => {
                 if let Some(failed) = outcome.failed {
-                    return self.dev_refused(
-                        Error::new(ErrorCode::CaptureFailed, "$").got(failed),
-                    );
+                    return self.dev_refused(Error::new(ErrorCode::CaptureFailed, "$").got(failed));
                 }
                 if let Some(artifact) = outcome.artifact {
                     let observation = &reply["observation"];
@@ -342,9 +340,8 @@ impl<G: Game> GameHost<G> {
                     );
                 }
                 if let Some(failed) = outcome.failed {
-                    return self.dev_refused(
-                        Error::new(ErrorCode::GameRule, "$.args.args").got(failed),
-                    );
+                    return self
+                        .dev_refused(Error::new(ErrorCode::GameRule, "$.args.args").got(failed));
                 }
                 let mut rendered = self.dev_invoke(&control("render", json!({})), context);
                 if rendered["ok"] == true {
@@ -370,8 +367,7 @@ impl<G: Game> GameHost<G> {
             Pending::Benchmark(run) => self.dev_benchmark(run, &outcome, context),
             Pending::Probe { reply, waits } => {
                 if let Some(failed) = outcome.failed {
-                    return self
-                        .dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(failed));
+                    return self.dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(failed));
                 }
                 self.dev_probe(reply, waits, context)
             }
@@ -384,8 +380,7 @@ impl<G: Game> GameHost<G> {
                 waits,
             } => {
                 if let Some(failed) = outcome.failed {
-                    return self
-                        .dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(failed));
+                    return self.dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(failed));
                 }
                 self.dev_explain_wait((id, entity), slot, waits, context)
             }
@@ -489,8 +484,7 @@ impl<G: Game> GameHost<G> {
                 revision,
             }) => {
                 let reply = self.dev_reload(source, &expected_revision, &revision, files);
-                let mut reply: Value =
-                    serde_json::from_str(&reply).expect("reply_json");
+                let mut reply: Value = serde_json::from_str(&reply).expect("reply_json");
                 if reply["ok"] == true {
                     let rendered = self.dev_invoke(&control("render", json!({})), context);
                     if rendered["ok"] != true {
@@ -518,8 +512,8 @@ impl<G: Game> GameHost<G> {
 
     pub fn dev_refusal(&mut self, error: &Error) -> Value {
         let status = engine_dev::named(engine_dev::Verb::Query, "status", json!({}));
-        let status: Value = serde_json::from_str(&self.dev_command(&status, 1, 1, true))
-            .expect("reply_json");
+        let status: Value =
+            serde_json::from_str(&self.dev_command(&status, 1, 1, true)).expect("reply_json");
         json!({"ok": false, "observation": status["observation"], "error": error})
     }
 
@@ -675,9 +669,8 @@ impl<G: Game> GameHost<G> {
             .get_resource::<engine_core::BrickCosts>()
             .cloned()
         else {
-            return self.dev_refused(
-                Error::new(ErrorCode::ProfilingUnavailable, "$").got("BrickCosts"),
-            );
+            return self
+                .dev_refused(Error::new(ErrorCode::ProfilingUnavailable, "$").got("BrickCosts"));
         };
         run.frames.push(costs);
         run.ran += 1;

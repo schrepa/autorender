@@ -5,7 +5,7 @@ use glam::Vec3;
 use serde_json::{Value, json};
 
 use super::{
-    Checked, FAST, SETTLE_FRAMES, WAIT_FRAMES, above, at_most, ask, below, camera, capture,
+    Checked, FAST, SETTLE_FRAMES, WAIT_FRAMES, above, ask, at_most, below, camera, capture,
     control, environment, fast, heights, inspect, name, not, number, open, overview, present,
     query, refuse, render, renders_until, seen, settle, subdivided, view, with,
 };
@@ -51,10 +51,19 @@ fn streams(session: &mut dyn SmokeSession, settled: &Value) -> Checked<()> {
     environment(session, json!({ "shadows": shadows }))?;
     settle(session)?;
     smoke_eq!(&terrain["dropped_tiles"], &json!(0), "no_tile_dropped");
-    smoke_eq!(&terrain["dropped_materials"], &json!(0), "no_material_dropped");
+    smoke_eq!(
+        &terrain["dropped_materials"],
+        &json!(0),
+        "no_material_dropped"
+    );
     let placed = number(&terrain["placed_objects"]);
     let far = number(&terrain["placed_far_objects"]);
-    smoke_check!(placed > 0.0, "crates_stand_on_the_meadow", &placed, &above(0));
+    smoke_check!(
+        placed > 0.0,
+        "crates_stand_on_the_meadow",
+        &placed,
+        &above(0)
+    );
     smoke_check!(
         far > 0.0 && far < placed,
         "far_crates_place",
@@ -85,7 +94,12 @@ fn listed(session: &mut dyn SmokeSession) -> Checked<()> {
     let listing = ask(session, "describe", json!({}))?;
     let names: Vec<&str> = listing["types"]
         .as_array()
-        .map(|types| types.iter().filter_map(|kind| kind["name"].as_str()).collect())
+        .map(|types| {
+            types
+                .iter()
+                .filter_map(|kind| kind["name"].as_str())
+                .collect()
+        })
         .unwrap_or_default();
     for wanted in ["Terrain", "Terrains", "TerrainSettings"] {
         smoke_check!(

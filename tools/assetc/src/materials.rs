@@ -158,8 +158,10 @@ fn texture_map(
     path: &str,
 ) -> Result<SceneMap, Error> {
     let Some(image) = texture.source().map(|image| image.index()) else {
-        return Err(unsupported(format!("$.textures[{}].source", texture.index()))
-            .expected(Expected::Present));
+        return Err(
+            unsupported(format!("$.textures[{}].source", texture.index()))
+                .expected(Expected::Present),
+        );
     };
     let transform = &info["extensions"]["KHR_texture_transform"];
     let tex_coord = transform["texCoord"]

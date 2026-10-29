@@ -395,9 +395,15 @@ impl SceneMaterial {
                         scale: map.scale.unwrap_or([1.0; 2]),
                     };
                     let unfinite = [
-                        ("offset", transform.offset.iter().all(|value| value.is_finite())),
+                        (
+                            "offset",
+                            transform.offset.iter().all(|value| value.is_finite()),
+                        ),
                         ("rotation", transform.rotation.is_finite()),
-                        ("scale", transform.scale.iter().all(|value| value.is_finite())),
+                        (
+                            "scale",
+                            transform.scale.iter().all(|value| value.is_finite()),
+                        ),
                     ]
                     .into_iter()
                     .find(|&(_, finite)| !finite);

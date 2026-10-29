@@ -72,7 +72,11 @@ struct Selection {
 impl Selection {
     fn add(&mut self, root: &Path, bricks: &[Recorded], path: &str) {
         for brick in bricks {
-            if brick.paths.iter().any(|pattern| map::matches(pattern, path)) {
+            if brick
+                .paths
+                .iter()
+                .any(|pattern| map::matches(pattern, path))
+            {
                 self.smokes
                     .extend(brick.smokes.iter().map(|(smoke, _)| smoke.clone()));
             }
@@ -508,7 +512,6 @@ pub(crate) fn check(root: &Path) -> Result<(), String> {
         let record = serde_json::json!({
             "event": "path_map_covers",
             "files": tracked.lines().count(),
-            "smokes": smokes.len(),
         });
         println!("{record}");
         return Ok(());

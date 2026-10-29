@@ -31,12 +31,7 @@ impl ScenePlayer {
         Ok((engine, player))
     }
 
-    fn load(
-        &mut self,
-        engine: &mut Engine,
-        source: &str,
-        files: &SceneFiles,
-    ) -> Result<(), Error> {
+    fn load(&mut self, engine: &mut Engine, source: &str, files: &SceneFiles) -> Result<(), Error> {
         let document = SceneDocument::from_json(source)?;
         let expanded = document.expanded_entities()?;
         let players: Vec<_> = expanded

@@ -10,10 +10,11 @@ pub struct LightingModel;
 
 impl Brick for LightingModel {
     fn register(bricks: &mut Bricks<'_>) {
-        bricks
-            .settings::<Highlights>()
-            .settings::<Foliage>()
-            .smoke("foliage_settings", true, crate::brick_smokes::foliage_settings);
+        bricks.settings::<Highlights>().settings::<Foliage>().smoke(
+            "foliage_settings",
+            true,
+            crate::brick_smokes::foliage_settings,
+        );
     }
 }
 

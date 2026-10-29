@@ -110,18 +110,16 @@ fn sweep(world: &mut World, center: Vec2, half_extent: f32, samples: u32) -> Res
             }
             if collision {
                 let mut hits = Vec::new();
-                world
-                    .resource::<CollisionWorld>()
-                    .raycast_all(
-                        CollisionRay {
-                            origin: Vec3::new(point.x, sample.height + 1000.0, point.y),
-                            direction: Vec3::NEG_Y,
-                            max_distance: 2000.0,
-                        },
-                        QueryFilter::default(),
-                        &mut hits,
-                        PLACED_RAY_HITS,
-                    )?;
+                world.resource::<CollisionWorld>().raycast_all(
+                    CollisionRay {
+                        origin: Vec3::new(point.x, sample.height + 1000.0, point.y),
+                        direction: Vec3::NEG_Y,
+                        max_distance: 2000.0,
+                    },
+                    QueryFilter::default(),
+                    &mut hits,
+                    PLACED_RAY_HITS,
+                )?;
                 placed_first += usize::from(hits.first().is_some_and(|hit| hit.placed.is_some()));
                 let hit = hits.into_iter().find(|hit| hit.placed.is_none());
                 match hit.filter(|hit| hit.entity == sample.terrain) {

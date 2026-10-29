@@ -94,10 +94,11 @@ impl Native {
                     engine::smokes::standard_engine(without)?,
                     Highlands::new(self.options.clone()),
                 )),
-                Some(_) => Err(
-                    engine::Error::new(engine::ErrorCode::UnsupportedCommand, "$.source")
-                        .expected(engine::Expected::Absent),
-                ),
+                Some(_) => Err(engine::Error::new(
+                    engine::ErrorCode::UnsupportedCommand,
+                    "$.source",
+                )
+                .expected(engine::Expected::Absent)),
             };
             return engine_native::smoke::run::<Highlands>(
                 &self.host,

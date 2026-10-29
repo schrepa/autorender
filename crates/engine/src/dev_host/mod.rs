@@ -133,8 +133,7 @@ impl DevHost {
         if !status {
             return response;
         }
-        let mut envelope: Value =
-            serde_json::from_str(&response).expect("reply_json");
+        let mut envelope: Value = serde_json::from_str(&response).expect("reply_json");
         if envelope["ok"] == true {
             envelope["result"]["build"] = build_identity();
             envelope["result"]["adapter"] =
@@ -188,8 +187,7 @@ impl DevHost {
 
     fn observation(&mut self, app: &mut AppHost, scene: Option<&SceneInstance>) -> Value {
         let status = engine_dev::named(Verb::Query, "status", json!({}));
-        serde_json::from_str(&execute(&self.tools, app, scene, &status))
-            .expect("envelope_object")
+        serde_json::from_str(&execute(&self.tools, app, scene, &status)).expect("envelope_object")
     }
 }
 

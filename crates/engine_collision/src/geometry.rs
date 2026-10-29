@@ -419,9 +419,7 @@ impl Narrow {
             return Err(Fault::NumericalFailure);
         }
         if let Some((_p1, p2, outward)) = contact {
-            let normal = (-outward)
-                .try_normalize()
-                .ok_or(Fault::NumericalFailure)?;
+            let normal = (-outward).try_normalize().ok_or(Fault::NumericalFailure)?;
             if !normal.is_finite() || !p2.is_finite() {
                 return Err(Fault::NumericalFailure);
             }

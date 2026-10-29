@@ -33,11 +33,19 @@ fn partition(rendering: &Value) -> SmokeResult {
     Ok(())
 }
 
-fn read_back(session: &mut dyn SmokeSession, alpha: f64) -> Result<(Value, Option<Pixels>), SmokeFailure> {
+fn read_back(
+    session: &mut dyn SmokeSession,
+    alpha: f64,
+) -> Result<(Value, Option<Pixels>), SmokeFailure> {
     let mut reply = Value::Null;
     for _ in 0..50 {
         control(session, "present", json!({ "alpha": alpha }), "presents")?;
-        reply = accepted(session, "capture", json!({ "alpha": alpha }), "read_back_capture")?;
+        reply = accepted(
+            session,
+            "capture",
+            json!({ "alpha": alpha }),
+            "read_back_capture",
+        )?;
         if number(&reply["result"]["rendering"]["read_back_age"]) <= 1.0 {
             break;
         }
@@ -74,7 +82,12 @@ fn equivalent(reference: Option<&Pixels>, read_back: Option<&Pixels>) -> SmokeRe
 }
 
 fn compared(session: &mut dyn SmokeSession, alpha: f64) -> Result<Case, SmokeFailure> {
-    let first = accepted(session, "capture", json!({ "alpha": alpha }), "preview_capture")?;
+    let first = accepted(
+        session,
+        "capture",
+        json!({ "alpha": alpha }),
+        "preview_capture",
+    )?;
     let reference = first["result"]["rendering"].clone();
     partition(&reference)?;
     let reference_pixels = pixels(&first)?;
@@ -132,10 +145,18 @@ fn cases(session: &mut dyn SmokeSession) -> Result<Vec<Case>, SmokeFailure> {
     }
     let views: Vec<Value> = cases
         .iter()
-        .map(|case| json!([case.candidates, case.reference_visible, case.read_back_visible]))
+        .map(|case| {
+            json!([
+                case.candidates,
+                case.reference_visible,
+                case.read_back_visible
+            ])
+        })
         .collect();
     engine_core::smoke_check!(
-        cases.iter().any(|case| case.reference_visible < case.candidates),
+        cases
+            .iter()
+            .any(|case| case.reference_visible < case.candidates),
         "gpu_culling_exercised",
         json!(views),
         json!("a view culls")
@@ -162,10 +183,19 @@ fn presented(session: &mut dyn SmokeSession, moving: bool) -> SmokeResult {
     let cases = cases(session)?;
     if moving && let (Some(first), Some(last)) = (&cases[0].pixels, &cases[2].pixels) {
         let changed = differing(first, last, 8)?;
-        engine_core::smoke_check!(changed > 0, "fractional_motion", json!(changed), json!("> 0"));
+        engine_core::smoke_check!(
+            changed > 0,
+            "fractional_motion",
+            json!(changed),
+            json!("> 0")
+        );
     }
     let after = status(session, "status_after_previews")?;
-    engine_core::smoke_eq!(json!(tick(&after)), json!(tick(&overview)), "previews_keep_ticks");
+    engine_core::smoke_eq!(
+        json!(tick(&after)),
+        json!(tick(&overview)),
+        "previews_keep_ticks"
+    );
     materialized(session)
 }
 

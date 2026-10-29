@@ -47,10 +47,23 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
         json!({"extent": [12, 6, 12]})
     );
     let camera = ask(session, "inspect", json!({"component": "Camera"}))?["value"].clone();
-    smoke_check!(camera["position"].is_array(), "camera_inspects", json!(camera), json!({"position": []}));
+    smoke_check!(
+        camera["position"].is_array(),
+        "camera_inspects",
+        json!(camera),
+        json!({"position": []})
+    );
     environment(session)?;
-    let benchmark = control(session, "benchmark", json!({"mode": "render", "warmup": 1, "samples": 3}))?;
-    smoke_eq!(json!(benchmark["benchmark"]["samples"]), json!(3), "benchmark_samples");
+    let benchmark = control(
+        session,
+        "benchmark",
+        json!({"mode": "render", "warmup": 1, "samples": 3}),
+    )?;
+    smoke_eq!(
+        json!(benchmark["benchmark"]["samples"]),
+        json!(3),
+        "benchmark_samples"
+    );
     errors(session)
 }
 
@@ -70,9 +83,21 @@ fn environment(session: &mut dyn SmokeSession) -> SmokeResult {
         json!({"changed": ["particles"], "before": true, "after": true, "budget": 1}),
         "merging_keeps_the_omitted_field"
     );
-    let off = control(session, "environment", json!({"merge": true, "particles": {"enabled": false}}))?;
-    smoke_eq!(json!(off["after"]["particles"]["max_particles"]), json!(1), "merging_keeps_the_budget");
-    control(session, "environment", json!({"particles": {"enabled": true}}))?;
+    let off = control(
+        session,
+        "environment",
+        json!({"merge": true, "particles": {"enabled": false}}),
+    )?;
+    smoke_eq!(
+        json!(off["after"]["particles"]["max_particles"]),
+        json!(1),
+        "merging_keeps_the_budget"
+    );
+    control(
+        session,
+        "environment",
+        json!({"particles": {"enabled": true}}),
+    )?;
     Ok(())
 }
 
@@ -93,14 +118,25 @@ fn errors(session: &mut dyn SmokeSession) -> SmokeResult {
         json!({"name": "camera", "args": {"position": [0, 1, "x"], "target": [0, 0, 0], "vertical_fov_radians": 1, "near": 0.1, "far": 100}}),
     )?;
     smoke_eq!(json!(mistyped["code"]), json!("invalid_type"), "mistyped");
-    let game = refuse(session, "control", json!({"name": "game", "args": {"name": "workload"}}))?;
-    smoke_eq!(json!(game["code"]), json!("unsupported_command"), "no_game_controls");
+    let game = refuse(
+        session,
+        "control",
+        json!({"name": "game", "args": {"name": "workload"}}),
+    )?;
+    smoke_eq!(
+        json!(game["code"]),
+        json!("unsupported_command"),
+        "no_game_controls"
+    );
     let catalog = ask(session, "describe", json!({"name": "ErrorCodes"}))?["codes"].clone();
     for code in [&unknown["code"], &mistyped["code"], &game["code"]] {
-        let described = catalog
-            .as_array()
-            .is_some_and(|codes| codes.contains(code));
-        smoke_check!(described, "catalog_describes_codes", json!(code), json!("described"));
+        let described = catalog.as_array().is_some_and(|codes| codes.contains(code));
+        smoke_check!(
+            described,
+            "catalog_describes_codes",
+            json!(code),
+            json!("described")
+        );
     }
     Ok(())
 }

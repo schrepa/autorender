@@ -129,10 +129,10 @@ impl Claims {
             let after = |ahead: usize| tokens.get(at + ahead);
             match token {
                 Token::Text(value) => {
-                    let keyed = after(1) == Some(&Token::Mark(':'))
-                        && after(2) != Some(&Token::Mark(':'));
-                    let indexed = before(1) == Some(&Token::Mark('['))
-                        && after(1) == Some(&Token::Mark(']'));
+                    let keyed =
+                        after(1) == Some(&Token::Mark(':')) && after(2) != Some(&Token::Mark(':'));
+                    let indexed =
+                        before(1) == Some(&Token::Mark('[')) && after(1) == Some(&Token::Mark(']'));
                     if keyed || indexed {
                         claims.properties.insert(value.clone());
                     }
@@ -278,19 +278,24 @@ fn registrations(tokens: &[Token]) -> Vec<(String, Vec<String>)> {
                 let end = closing(tokens, at + 1);
                 let fields = &tokens[at + 2..end];
                 let named = fields.windows(3).find_map(|window| match window {
-                    [Token::Name(field), Token::Mark(':'), Token::Text(value)] if field == "name" => {
+                    [Token::Name(field), Token::Mark(':'), Token::Text(value)]
+                        if field == "name" =>
+                    {
                         Some(value.clone())
                     }
                     _ => None,
                 });
-                let run = fields.windows(3).enumerate().find_map(|(index, window)| {
-                    match window {
-                        [Token::Name(field), Token::Mark(':'), Token::Name(_)] if field == "run" => {
+                let run = fields
+                    .windows(3)
+                    .enumerate()
+                    .find_map(|(index, window)| match window {
+                        [Token::Name(field), Token::Mark(':'), Token::Name(_)]
+                            if field == "run" =>
+                        {
                             Some(path_at(fields, index + 2))
                         }
                         _ => None,
-                    }
-                });
+                    });
                 if let (Some(name), Some(run)) = (named, run) {
                     found.push((name, run));
                 }
@@ -334,17 +339,22 @@ fn closing(tokens: &[Token], open: usize) -> usize {
 }
 
 fn defines(tokens: &[Token], function: &str) -> bool {
-    tokens.windows(3).enumerate().any(|(at, window)| match window {
-        [Token::Name(keyword), Token::Name(name), Token::Mark('(' | '<')]
-            if keyword == "fn" && name == function =>
-        {
-            let end = closing(tokens, at + 2);
-            tokens[at + 2..end]
-                .iter()
-                .any(|token| matches!(token, Token::Name(name) if name == "SmokeSession"))
-        }
-        _ => false,
-    })
+    tokens
+        .windows(3)
+        .enumerate()
+        .any(|(at, window)| match window {
+            [
+                Token::Name(keyword),
+                Token::Name(name),
+                Token::Mark('(' | '<'),
+            ] if keyword == "fn" && name == function => {
+                let end = closing(tokens, at + 2);
+                tokens[at + 2..end]
+                    .iter()
+                    .any(|token| matches!(token, Token::Name(name) if name == "SmokeSession"))
+            }
+            _ => false,
+        })
 }
 
 fn enclosing_call(tokens: &[Token], at: usize) -> Option<&str> {
@@ -397,7 +407,10 @@ fn tokens(source: &str) -> Vec<Token> {
             at = quoted_end(&chars, at);
         } else if c.is_alphanumeric() || c == '_' {
             let start = at;
-            while chars.get(at).is_some_and(|&c| c.is_alphanumeric() || c == '_') {
+            while chars
+                .get(at)
+                .is_some_and(|&c| c.is_alphanumeric() || c == '_')
+            {
                 at += 1;
             }
             tokens.push(Token::Name(chars[start..at].iter().collect()));
@@ -456,7 +469,13 @@ fn literal(chars: &[char], start: usize) -> Option<(String, usize)> {
     while at < chars.len() {
         match chars[at] {
             '\\' if !raw => at += 2,
-            '"' if chars[at + 1..].iter().take(hashes).filter(|&&c| c == '#').count() == hashes => {
+            '"' if chars[at + 1..]
+                .iter()
+                .take(hashes)
+                .filter(|&&c| c == '#')
+                .count()
+                == hashes =>
+            {
                 let text = chars[open..at].iter().collect();
                 return Some((text, at + 1 + hashes));
             }

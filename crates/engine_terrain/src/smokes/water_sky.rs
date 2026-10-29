@@ -60,8 +60,7 @@ fn hydrology(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
     );
     let watered = height_at(session, [-300.0, -300.0])?;
     smoke_check!(
-        number(&watered["water"]["flow"]) > 0.0
-            && number(&watered["water"]["wetness"]).is_finite(),
+        number(&watered["water"]["flow"]) > 0.0 && number(&watered["water"]["wetness"]).is_finite(),
         "queries_report_water",
         &watered,
         &json!({"water": {"flow": above(0), "wetness": "finite"}})
@@ -78,12 +77,7 @@ fn hydrology(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
 fn lakes(session: &mut dyn SmokeSession) -> Checked<()> {
     let grid: Vec<[f64; 2]> = (0..25)
         .flat_map(|row| {
-            (0..25).map(move |column| {
-                [
-                    f64::from(-480 + column * 40),
-                    f64::from(-480 + row * 40),
-                ]
-            })
+            (0..25).map(move |column| [f64::from(-480 + column * 40), f64::from(-480 + row * 40)])
         })
         .collect();
     let found = heights(session, &grid)?;
@@ -171,7 +165,10 @@ fn eye(position: [f64; 3], target: [f64; 3], far: f64) -> Value {
 }
 
 fn clouds(session: &mut dyn SmokeSession) -> Checked<()> {
-    camera(session, eye([0.0, 60.0, 0.0], [300.0, 400.0, 200.0], 4000.0))?;
+    camera(
+        session,
+        eye([0.0, 60.0, 0.0], [300.0, 400.0, 200.0], 4000.0),
+    )?;
     let clear = capture(session)?;
     let clouded = environment(session, json!({ "clouds": layer() }))?;
     smoke_eq!(
@@ -210,7 +207,10 @@ fn clouds(session: &mut dyn SmokeSession) -> Checked<()> {
 }
 
 fn clouds_around(session: &mut dyn SmokeSession) -> Checked<()> {
-    camera(session, eye([0.0, 1900.0, 1.0], [400.0, 0.0, 300.0], 8000.0))?;
+    camera(
+        session,
+        eye([0.0, 1900.0, 1.0], [400.0, 0.0, 300.0], 8000.0),
+    )?;
     let over = environment(session, json!({ "clouds": layer() }))?;
     smoke_check!(
         number(&over["rendering"]["clouds"]["view_pixels"]) > 0.0,
@@ -264,7 +264,10 @@ fn clouds_around(session: &mut dyn SmokeSession) -> Checked<()> {
 }
 
 fn sky(session: &mut dyn SmokeSession) -> Checked<Value> {
-    camera(session, eye([0.0, 60.0, 0.0], [300.0, 200.0, 200.0], 4000.0))?;
+    camera(
+        session,
+        eye([0.0, 60.0, 0.0], [300.0, 200.0, 200.0], 4000.0),
+    )?;
     let authored = capture(session)?;
     let first = environment(session, json!({"sky": {}, "time_of_day": {"hours": 12.0}}))?;
     smoke_eq!(
@@ -294,7 +297,11 @@ fn sky(session: &mut dyn SmokeSession) -> Checked<Value> {
     environment(session, json!({"time_of_day": {"hours": 23.0}}))?;
     let starry = capture(session)?;
     let stars = inspect(session, "NightSky")?;
-    smoke_eq!(&stars["stars"], &json!(1.0), "the_night_sky_shows_its_stars");
+    smoke_eq!(
+        &stars["stars"],
+        &json!(1.0),
+        "the_night_sky_shows_its_stars"
+    );
     let haze = inspect(session, "Haze")?;
     smoke_eq!(&haze["enabled"], &json!(true), "haze_is_on");
     environment(
@@ -513,11 +520,11 @@ fn bounce(session: &mut dyn SmokeSession) -> Checked<()> {
 }
 
 fn aerial(session: &mut dyn SmokeSession, current: &Value, atmosphere: &Value) -> Checked<()> {
-    let clear_air = with(atmosphere, json!({"aerial_start": 0.0, "aerial_density": 0.0}));
-    environment(
-        session,
-        json!({"terrain": fast(), "atmosphere": clear_air}),
-    )?;
+    let clear_air = with(
+        atmosphere,
+        json!({"aerial_start": 0.0, "aerial_density": 0.0}),
+    );
+    environment(session, json!({"terrain": fast(), "atmosphere": clear_air}))?;
     settle(session)?;
     let clear = capture(session)?;
     let thick_air = with(

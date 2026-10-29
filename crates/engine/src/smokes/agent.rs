@@ -50,14 +50,24 @@ fn discovered(session: &mut dyn SmokeSession, revision: u64) -> Asked {
         json!(revision.to_string()),
         "scene_revision_observed"
     );
-    let transform = accepted(session, "describe", json!({ "name": "Transform" }), "describes")?;
+    let transform = accepted(
+        session,
+        "describe",
+        json!({ "name": "Transform" }),
+        "describes",
+    )?;
     engine_core::smoke_check!(
         transform["result"]["descriptor"]["schema"].is_object(),
         "description",
         transform["result"].clone(),
         json!({ "descriptor": { "schema": "object" } })
     );
-    let scene = accepted(session, "describe", json!({ "name": "SceneDocument" }), "describes_scenes")?;
+    let scene = accepted(
+        session,
+        "describe",
+        json!({ "name": "SceneDocument" }),
+        "describes_scenes",
+    )?;
     let definitions = names(&scene["result"]["schema"]["definitions"]);
     engine_core::smoke_check!(
         definitions.iter().any(|name| name == "SceneEnvironment"),
@@ -75,7 +85,12 @@ fn discovered(session: &mut dyn SmokeSession, revision: u64) -> Asked {
     );
     let body = json!({ "entity": PLAYER, "component": "Transform" });
     let before = accepted(session, "inspect", body, "inspection")?;
-    let invalid = refused(session, "inspect", json!({ "limit": 101 }), "page_limit_refused")?;
+    let invalid = refused(
+        session,
+        "inspect",
+        json!({ "limit": 101 }),
+        "page_limit_refused",
+    )?;
     engine_core::smoke_eq!(
         json!(tick(&invalid)),
         json!(tick(&before)),
@@ -117,7 +132,8 @@ fn walked(session: &mut dyn SmokeSession, before: &Value) -> Asked {
     let walked = query(session, "digest", json!({}), "digests_walk")?["result"].clone();
     engine_core::smoke_check!(
         walked["hash"] != still["hash"]
-            && walked["components"]["Transform"]["hash"] != still["components"]["Transform"]["hash"],
+            && walked["components"]["Transform"]["hash"]
+                != still["components"]["Transform"]["hash"],
         "walk_changes_digest",
         walked["hash"].clone(),
         json!({ "differs_from": still["hash"] })
@@ -134,7 +150,12 @@ fn walked(session: &mut dyn SmokeSession, before: &Value) -> Asked {
         "digest_changes_nothing"
     );
     control(session, "input", json!({ "forward": 0 }), "input_released")?;
-    let bad = refused(session, "control", named("step", json!({ "ticks": 0 })), "zero_step_refused")?;
+    let bad = refused(
+        session,
+        "control",
+        named("step", json!({ "ticks": 0 })),
+        "zero_step_refused",
+    )?;
     engine_core::smoke_eq!(
         json!(tick(&bad)),
         json!(tick(&after)),
@@ -168,7 +189,12 @@ fn captured(session: &mut dyn SmokeSession, after: &Value) -> Asked {
         json!([true, true, true]),
         "effects_drawn"
     );
-    let schema = accepted(session, "describe", json!({ "name": "FrameStats" }), "describes_stats")?;
+    let schema = accepted(
+        session,
+        "describe",
+        json!({ "name": "FrameStats" }),
+        "describes_stats",
+    )?;
     let schema = &schema["result"]["schema"];
     stats_described(schema, schema, &capture["result"]["rendering"], "rendering")?;
     Ok(capture)
@@ -184,7 +210,10 @@ fn stats_described(root: &Value, schema: &Value, stats: &Value, path: &str) -> S
         json!({ "path": path, "fields": wanted })
     );
     for (field, property) in object(properties) {
-        let Some(definition) = property["$ref"].as_str().and_then(|at| at.rsplit('/').next()) else {
+        let Some(definition) = property["$ref"]
+            .as_str()
+            .and_then(|at| at.rsplit('/').next())
+        else {
             continue;
         };
         let inner = format!("{path}.{field}");
@@ -201,7 +230,13 @@ fn looked(session: &mut dyn SmokeSession, after: &Value, day: &Value) -> Asked {
         .flatten()
         .filter_map(|described| described["name"].as_str().map(str::to_owned))
         .collect();
-    for name in ["Atmosphere", "Shadows", "AmbientOcclusion", "Bloom", "Environment"] {
+    for name in [
+        "Atmosphere",
+        "Shadows",
+        "AmbientOcclusion",
+        "Bloom",
+        "Environment",
+    ] {
         engine_core::smoke_check!(
             types.iter().any(|listed| listed == name),
             "environment_types_listed",
@@ -211,7 +246,9 @@ fn looked(session: &mut dyn SmokeSession, after: &Value, day: &Value) -> Asked {
     }
     let build = status(session, "status_names_build")?["result"].clone();
     engine_core::smoke_check!(
-        names(&build["build"]["features"]).iter().any(|feature| feature == "dev")
+        names(&build["build"]["features"])
+            .iter()
+            .any(|feature| feature == "dev")
             && build["build"]["version"].is_string()
             && build.get("adapter").is_some(),
         "status_names_build_and_adapter",
@@ -225,10 +262,17 @@ fn looked(session: &mut dyn SmokeSession, after: &Value, day: &Value) -> Asked {
         look["atmosphere"].clone(),
         "atmosphere_inside_environment"
     );
-    let described = accepted(session, "describe", json!({ "name": "Environment" }), "describes_environment")?;
+    let described = accepted(
+        session,
+        "describe",
+        json!({ "name": "Environment" }),
+        "describes_environment",
+    )?;
     engine_core::smoke_eq!(
         json!(sorted_keys(&look)),
-        json!(sorted_keys(&described["result"]["descriptor"]["schema"]["properties"])),
+        json!(sorted_keys(
+            &described["result"]["descriptor"]["schema"]["properties"]
+        )),
         "environment_sections_described"
     );
     let mesh = component(session, PLAYER, "Mesh3d", "inspects_mesh")?;
@@ -238,7 +282,12 @@ fn looked(session: &mut dyn SmokeSession, after: &Value, day: &Value) -> Asked {
         mesh["material"].clone(),
         json!({ "surface": { "roughness": "number" } })
     );
-    let interpolation = component(session, PLAYER, "InterpolateTransform", "inspects_interpolation")?;
+    let interpolation = component(
+        session,
+        PLAYER,
+        "InterpolateTransform",
+        "inspects_interpolation",
+    )?;
     engine_core::smoke_eq!(
         interpolation["enabled"].clone(),
         json!(true),
@@ -253,7 +302,13 @@ fn looked(session: &mut dyn SmokeSession, after: &Value, day: &Value) -> Asked {
         json!({ "cache_hits": "number", "failed_jobs": "number" })
     );
     let body = named("environment", json!({ "shadows": { "tile_texels": 100 } }));
-    let invalid = refused_with(session, "control", body, "invalid_environment", "environment_validated")?;
+    let invalid = refused_with(
+        session,
+        "control",
+        body,
+        "invalid_environment",
+        "environment_validated",
+    )?;
     engine_core::smoke_eq!(
         json!([invalid["error"]["path"], tick(&invalid)]),
         json!(["$.args.shadows.tile_texels", tick(after)]),
@@ -266,7 +321,10 @@ fn looked(session: &mut dyn SmokeSession, after: &Value, day: &Value) -> Asked {
     );
     let rendering = &day["result"]["rendering"];
     engine_core::smoke_eq!(
-        json!([rendering["haze"]["active"], rendering["reflections"]["active"]]),
+        json!([
+            rendering["haze"]["active"],
+            rendering["reflections"]["active"]
+        ]),
         json!([true, false]),
         "day_haze_without_reflections"
     );
@@ -288,7 +346,17 @@ fn darkened(session: &mut dyn SmokeSession, after: &Value, day: &Value, look: &V
     changed.sort();
     engine_core::smoke_eq!(
         json!([result["temporary"], changed]),
-        json!([true, ["atmosphere", "bloom", "haze", "highlights", "reflections", "sky_occlusion"]]),
+        json!([
+            true,
+            [
+                "atmosphere",
+                "bloom",
+                "haze",
+                "highlights",
+                "reflections",
+                "sky_occlusion"
+            ]
+        ]),
         "night_changes_sections"
     );
     let rendering = &result["rendering"];
@@ -299,9 +367,17 @@ fn darkened(session: &mut dyn SmokeSession, after: &Value, day: &Value, look: &V
         rendering["shadows"].clone(),
         json!({ "sky_maps": "<= 26", "sky_drawn": "<= 1" })
     );
-    engine_core::smoke_eq!(effects(rendering), json!([true, true, false]), "night_effects");
     engine_core::smoke_eq!(
-        json!([rendering["haze"]["active"], rendering["reflections"]["active"], tick(&night)]),
+        effects(rendering),
+        json!([true, true, false]),
+        "night_effects"
+    );
+    engine_core::smoke_eq!(
+        json!([
+            rendering["haze"]["active"],
+            rendering["reflections"]["active"],
+            tick(&night)
+        ]),
         json!([false, true, tick(after)]),
         "night_reflects_without_haze"
     );
@@ -370,7 +446,10 @@ fn validates(document: &Value) -> bool {
 
 fn reloaded(session: &mut dyn SmokeSession, source: &Value, revision: u64) -> SmokeResult {
     let next = (revision + 1).to_string();
-    let stale = named("reload", json!({ "expected_revision": "0", "revision": next }));
+    let stale = named(
+        "reload",
+        json!({ "expected_revision": "0", "revision": next }),
+    );
     let rejected = refused(session, "control", stale, "stale_reload_refused")?;
     engine_core::smoke_eq!(
         rejected["observation"]["scene"]["revision"].clone(),
@@ -403,7 +482,10 @@ fn reloaded(session: &mut dyn SmokeSession, source: &Value, revision: u64) -> Sm
     );
     let rendering = &reloaded["result"]["rendering"];
     engine_core::smoke_eq!(
-        json!([rendering["haze"]["active"], rendering["reflections"]["active"]]),
+        json!([
+            rendering["haze"]["active"],
+            rendering["reflections"]["active"]
+        ]),
         json!([true, false]),
         "reloaded_haze_without_reflections"
     );
@@ -414,7 +496,11 @@ fn reloaded(session: &mut dyn SmokeSession, source: &Value, revision: u64) -> Sm
         json!({ "local_lights": rendering["local_lights"], "particles": rendering["particles"] }),
         json!({ "shaded": ">= 1", "drawn": "> 0" })
     );
-    engine_core::smoke_eq!(effects(rendering), json!([true, false, true]), "saved_effects");
+    engine_core::smoke_eq!(
+        effects(rendering),
+        json!([true, false, true]),
+        "saved_effects"
+    );
     Ok(())
 }
 
@@ -437,7 +523,15 @@ fn saved(session: &mut dyn SmokeSession, look: &Value, night: &Value) -> SmokeRe
             saved["highlights"]["enabled"],
             saved["highlights"]["capped"],
         ]),
-        json!([0.0, look["bloom"], look["shadows"], look["haze"], 0.0, true, true]),
+        json!([
+            0.0,
+            look["bloom"],
+            look["shadows"],
+            look["haze"],
+            0.0,
+            true,
+            true
+        ]),
         "saved_environment"
     );
     engine_core::smoke_check!(
@@ -475,7 +569,10 @@ fn saved(session: &mut dyn SmokeSession, look: &Value, night: &Value) -> SmokeRe
 }
 
 fn records(reply: &Value) -> Vec<Value> {
-    reply["result"]["records"].as_array().cloned().unwrap_or_default()
+    reply["result"]["records"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn explained(session: &mut dyn SmokeSession) -> SmokeResult {
@@ -489,15 +586,24 @@ fn explained(session: &mut dyn SmokeSession) -> SmokeResult {
     let costs = accepted(session, "profile", json!({ "frames": 4 }), "profiles")?;
     let result = &costs["result"];
     engine_core::smoke_check!(
-        result["bricks"].as_array().is_some_and(|bricks| !bricks.is_empty())
+        result["bricks"]
+            .as_array()
+            .is_some_and(|bricks| !bricks.is_empty())
             && number(&result["artifact"]["bytes"]) > 0.0,
         "profile_measures_bricks",
         json!({ "bricks": result["bricks"], "artifact": result["artifact"] }),
         json!({ "bricks": "measured", "artifact": "a file" })
     );
-    let slow = accepted(session, "explain", json!({ "about": "frame", "top": 2 }), "explains_frame")?;
+    let slow = accepted(
+        session,
+        "explain",
+        json!({ "about": "frame", "top": 2 }),
+        "explains_frame",
+    )?;
     engine_core::smoke_check!(
-        records(&slow).iter().any(|record| record["decided"] == "cost"),
+        records(&slow)
+            .iter()
+            .any(|record| record["decided"] == "cost"),
         "frame_explained",
         json!(records(&slow)),
         json!({ "decided": "cost" })
@@ -518,7 +624,12 @@ fn explained(session: &mut dyn SmokeSession) -> SmokeResult {
         watched["result"].clone(),
         json!({ "records": ">= 1" })
     );
-    let raycast = accepted(session, "describe", json!({ "name": "raycast" }), "describes_raycast")?;
+    let raycast = accepted(
+        session,
+        "describe",
+        json!({ "name": "raycast" }),
+        "describes_raycast",
+    )?;
     let raycast = &raycast["result"];
     engine_core::smoke_eq!(
         json!([raycast["kind"], raycast["verb"], raycast["brick"]]),
@@ -532,7 +643,13 @@ fn explained(session: &mut dyn SmokeSession) -> SmokeResult {
         "resume_pause"
     );
     let step = named("step", json!({ "ticks": 1 }));
-    refused_with(session, "control", step, "pause_required", "step_needs_pause")?;
+    refused_with(
+        session,
+        "control",
+        step,
+        "pause_required",
+        "step_needs_pause",
+    )?;
     control(session, "pause", json!({}), "pauses_again")?;
     Ok(())
 }

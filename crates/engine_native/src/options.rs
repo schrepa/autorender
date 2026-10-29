@@ -64,8 +64,7 @@ pub fn options() -> Vec<CommandOption> {
         CommandOption::taking("--settings", "FILE"),
         CommandOption::flag("--dev"),
         CommandOption::taking("--smoke", "NAME,...|all|list"),
-        CommandOption::taking("--dev-artifacts", "DIR")
-            .defaults_to(default_artifacts().display()),
+        CommandOption::taking("--dev-artifacts", "DIR").defaults_to(default_artifacts().display()),
         CommandOption::flag("--help"),
         CommandOption::flag("--json"),
     ]);
@@ -135,13 +134,15 @@ impl Arguments {
             .map_err(|error| file_error(name, Path::new(&path), &error))?;
         let file: serde_json::Value =
             engine::bricks::parse_json(&text).map_err(|error| error.within(name))?;
-        let fields = file.as_object().ok_or_else(|| {
-            Error::new(ErrorCode::InvalidType, name).expected(Expected::Object)
-        })?;
+        let fields = file
+            .as_object()
+            .ok_or_else(|| Error::new(ErrorCode::InvalidType, name).expected(Expected::Object))?;
         if let Some(field) = fields.keys().find(|field| *field != "options") {
-            return Err(Error::new(ErrorCode::UnknownField, format!("{name}.{field}"))
-                .got(field)
-                .variants(["options"]));
+            return Err(
+                Error::new(ErrorCode::UnknownField, format!("{name}.{field}"))
+                    .got(field)
+                    .variants(["options"]),
+            );
         }
         let options = fields
             .get("options")
@@ -442,8 +443,9 @@ impl HostOptions {
         if let Some((option, _)) = profiling.iter().find(|(_, given)| *given)
             && !cfg!(feature = "profiling")
         {
-            return Err(Error::new(ErrorCode::ProfilingUnavailable, *option)
-                .expected(Expected::Supported));
+            return Err(
+                Error::new(ErrorCode::ProfilingUnavailable, *option).expected(Expected::Supported)
+            );
         }
         if self.dev && !cfg!(feature = "dev") {
             return Err(
@@ -462,7 +464,10 @@ impl HostOptions {
             ("--vendor", self.vendor.is_some()),
             ("--counters", self.counters.is_some()),
         ];
-        let other = others.iter().find(|(_, given)| *given).map(|(option, _)| *option);
+        let other = others
+            .iter()
+            .find(|(_, given)| *given)
+            .map(|(option, _)| *option);
         if self.smoke.is_some()
             && let Some(other) = other
                 .or(self.cook.is_some().then_some("--cook"))
@@ -594,7 +599,8 @@ impl HostOptions {
                 "on" => Selection::First,
                 names => Selection::Named(names.split(',').map(str::to_owned).collect()),
             };
-            engine_profiler::counters::enable(selection).map_err(|error| error.within("--counters"))?;
+            engine_profiler::counters::enable(selection)
+                .map_err(|error| error.within("--counters"))?;
         }
         Ok(())
     }
@@ -819,8 +825,7 @@ fn distribution(values: &[f64]) -> serde_json::Value {
 }
 
 fn window_report(report: &WindowReport) -> serde_json::Value {
-    let stats: serde_json::Value =
-        serde_json::from_str(&report.stats).expect("stats_json");
+    let stats: serde_json::Value = serde_json::from_str(&report.stats).expect("stats_json");
     json!({
         "size": [report.size.0, report.size.1],
         "window": [report.window.0, report.window.1],

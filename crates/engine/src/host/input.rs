@@ -101,9 +101,11 @@ impl InputGatherer {
         let mut bits = [0; KEYS.len()];
         for (at, &(name, action)) in actions.iter().enumerate() {
             if action >= MAX_ACTIONS {
-                return Err(Error::new(ErrorCode::InvalidInput, format!("$.actions[{at}]"))
-                    .at_most(u64::from(MAX_ACTIONS - 1))
-                    .got(action));
+                return Err(
+                    Error::new(ErrorCode::InvalidInput, format!("$.actions[{at}]"))
+                        .at_most(u64::from(MAX_ACTIONS - 1))
+                        .got(action),
+                );
             }
             let index = index(name).ok_or_else(|| {
                 Error::new(ErrorCode::InvalidInput, format!("$.actions[{at}]"))

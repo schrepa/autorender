@@ -75,7 +75,10 @@ impl RenderDoc {
                 ((*self.api).set_capture_file_path_template)(template.as_ptr().cast());
                 ((*self.api).start_frame_capture)(std::ptr::null_mut(), std::ptr::null_mut());
                 if ((*self.api).is_frame_capturing)() == 0 {
-                    return Err(engine::Error::new(engine::ErrorCode::CaptureFailed, "$.start"));
+                    return Err(engine::Error::new(
+                        engine::ErrorCode::CaptureFailed,
+                        "$.start",
+                    ));
                 }
             }
             Ok(())
@@ -95,7 +98,10 @@ impl RenderDoc {
                 ((*self.api).end_frame_capture)(std::ptr::null_mut(), std::ptr::null_mut())
             };
             if ended == 0 {
-                return Err(engine::Error::new(engine::ErrorCode::CaptureFailed, "$.end"));
+                return Err(engine::Error::new(
+                    engine::ErrorCode::CaptureFailed,
+                    "$.end",
+                ));
             }
             Ok(())
         }

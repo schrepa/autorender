@@ -192,10 +192,7 @@ impl Renderer {
         }
     }
 
-    pub fn render_display_frame(
-        &mut self,
-        frame: RenderFrame<'_>,
-    ) -> Result<RenderStats, Error> {
+    pub fn render_display_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, Error> {
         self.render_inner(frame, true)
     }
 

@@ -76,10 +76,7 @@ const UNREACHED: &[(&str, &str)] = &[
     ("face_missing", CHECKS),
     ("file_too_long", CHECKS),
     ("forbidden_code", CHECKS),
-    (
-        "game_rule",
-        "a game's own refusal (ErrorCode::GameRule)",
-    ),
+    ("game_rule", "a game's own refusal (ErrorCode::GameRule)"),
     ("generated_stale", CHECKS),
     (
         "invalid_arguments",

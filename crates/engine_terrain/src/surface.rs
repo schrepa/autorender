@@ -147,7 +147,10 @@ impl ExtraRules for SteepLayer {
         if self.slope[0] < self.slope[1] {
             Ok(())
         } else {
-            Err(InvalidSetting::new("slope", engine_settings::Expected::Sorted))
+            Err(InvalidSetting::new(
+                "slope",
+                engine_settings::Expected::Sorted,
+            ))
         }
     }
 }
@@ -889,11 +892,7 @@ impl Biomes {
                     .iter()
                     .position(|id| *id == layer.material)
                     .ok_or_else(|| {
-                        unknown(
-                            format!("{path}.material"),
-                            &layer.material,
-                            &self.materials,
-                        )
+                        unknown(format!("{path}.material"), &layer.material, &self.materials)
                     })?;
                 if let Err(invalid) = layer.validate() {
                     return Err(setting_error(invalid, &path));
@@ -928,9 +927,7 @@ impl Biomes {
                     .materials
                     .iter()
                     .position(|id| *id == layer.material)
-                    .ok_or_else(|| {
-                        unknown("$.steep.material", &layer.material, &self.materials)
-                    })?;
+                    .ok_or_else(|| unknown("$.steep.material", &layer.material, &self.materials))?;
                 let steep = Steep {
                     material: material as u8,
                     gradient: layer.slope.map(tangent),

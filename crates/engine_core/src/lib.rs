@@ -544,11 +544,7 @@ impl Engine {
         self.extract_retained(aspect, false)
     }
 
-    pub fn extract_gpu_frame(
-        &mut self,
-        aspect: f32,
-        alpha: f32,
-    ) -> Result<RenderFrame<'_>, Error> {
+    pub fn extract_gpu_frame(&mut self, aspect: f32, alpha: f32) -> Result<RenderFrame<'_>, Error> {
         let _profile = engine_profile::span("cpu", "extraction");
         PresentationMode::Interpolated { alpha }.validate()?;
         self.finalize_plugins();

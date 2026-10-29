@@ -11,9 +11,7 @@ use serde_json::Value;
 impl BrowserControl {
     pub fn parse(name: &str, args: Value, paused: bool) -> Result<Self, Error> {
         let control: Self = crate::protocol::parse_named(name, args)?;
-        control
-            .validate()
-            .map_err(|error| error.within("$.args"))?;
+        control.validate().map_err(|error| error.within("$.args"))?;
         if control.needs_pause() && !paused {
             return Err(Error::new(ErrorCode::PauseRequired, "$")
                 .expected(Expected::Paused)
@@ -181,10 +179,12 @@ impl WatchRequest {
                     byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_.".contains(&byte)
                 });
             if !valid {
-                return Err(Error::new(ErrorCode::InvalidName, format!("$.stats[{index}]"))
-                    .expected(Expected::Path)
-                    .at_most(128)
-                    .got(stat));
+                return Err(
+                    Error::new(ErrorCode::InvalidName, format!("$.stats[{index}]"))
+                        .expected(Expected::Path)
+                        .at_most(128)
+                        .got(stat),
+                );
             }
         }
         Ok(())

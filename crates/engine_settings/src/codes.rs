@@ -43,8 +43,7 @@ impl serde::Serialize for ErrorCode {
 impl<'de> serde::Deserialize<'de> for ErrorCode {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let name = String::deserialize(deserializer)?;
-        Self::named(&name)
-            .ok_or_else(|| serde::de::Error::unknown_variant(&name, Self::NAMES))
+        Self::named(&name).ok_or_else(|| serde::de::Error::unknown_variant(&name, Self::NAMES))
     }
 }
 

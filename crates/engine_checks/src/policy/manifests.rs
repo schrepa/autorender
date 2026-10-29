@@ -144,7 +144,8 @@ fn check_member(path: &str, manifest: &Item, inherited_keys: &[&str], problems: 
     for (kind, dependencies) in tables {
         for (name, dependency) in dependencies.iter() {
             if !inherited(dependency) {
-                problems.push(Error::new(ErrorCode::NotInherited, path).got(format!("{kind}.{name}")));
+                problems
+                    .push(Error::new(ErrorCode::NotInherited, path).got(format!("{kind}.{name}")));
             }
         }
     }

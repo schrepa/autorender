@@ -645,11 +645,7 @@ fn run() -> Result<(), String> {
     if rasters.iter().any(|raster| raster.geographic != geographic) {
         return Err("inputs mix geographic and projected coordinates".into());
     }
-    if rasters.len() > 1
-        && !rasters
-            .iter()
-            .all(|raster| raster.crs.starts_with("EPSG:"))
-    {
+    if rasters.len() > 1 && !rasters.iter().all(|raster| raster.crs.starts_with("EPSG:")) {
         return Err("only georeferenced inputs mosaic; import heightmaps one at a time".into());
     }
     let center = match options.center {

@@ -30,14 +30,20 @@ fn described(session: &mut dyn SmokeSession) -> Asked {
     let adapter = &result["adapter"];
     engine_core::smoke_check!(
         result["paused"] == true
-            && adapter["name"].as_str().is_some_and(|name| !name.is_empty())
-            && adapter["backend"].as_str().is_some_and(|backend| !backend.is_empty()),
+            && adapter["name"]
+                .as_str()
+                .is_some_and(|name| !name.is_empty())
+            && adapter["backend"]
+                .as_str()
+                .is_some_and(|backend| !backend.is_empty()),
         "adapter_named",
         json!({ "paused": result["paused"], "adapter": adapter }),
         json!({ "paused": true, "adapter": { "name": "named", "backend": "named" } })
     );
     engine_core::smoke_check!(
-        names(&result["build"]["features"]).iter().any(|feature| feature == "dev"),
+        names(&result["build"]["features"])
+            .iter()
+            .any(|feature| feature == "dev"),
         "build_features",
         result["build"].clone(),
         json!({ "features": ["dev"] })
@@ -45,14 +51,22 @@ fn described(session: &mut dyn SmokeSession) -> Asked {
     let listing = accepted(session, "describe", json!({}), "lists")?;
     engine_core::smoke_eq!(
         json!(names(&listing["result"]["verbs"])),
-        json!(["describe", "inspect", "query", "control", "capture", "profile", "explain", "watch", "check"]),
+        json!([
+            "describe", "inspect", "query", "control", "capture", "profile", "explain", "watch",
+            "check"
+        ]),
         "nine_verbs"
     );
     let culling = listing["result"]["bricks"]
         .as_array()
         .into_iter()
         .flatten()
-        .any(|brick| brick["name"] == "culling" && brick["explains"].as_array().is_some_and(|explains| !explains.is_empty()));
+        .any(|brick| {
+            brick["name"] == "culling"
+                && brick["explains"]
+                    .as_array()
+                    .is_some_and(|explains| !explains.is_empty())
+        });
     engine_core::smoke_check!(
         culling,
         "bricks_listed_with_explainers",
@@ -70,8 +84,13 @@ fn described(session: &mut dyn SmokeSession) -> Asked {
 
 fn sized(rendering: &Value) -> [f64; 4] {
     let resolution = &rendering["resolution"];
-    ["display_width", "display_height", "render_width", "render_height"]
-        .map(|field| number(&resolution[field]))
+    [
+        "display_width",
+        "display_height",
+        "render_width",
+        "render_height",
+    ]
+    .map(|field| number(&resolution[field]))
 }
 
 fn resolved(session: &mut dyn SmokeSession) -> SmokeResult {
@@ -133,7 +152,13 @@ fn lit(session: &mut dyn SmokeSession) -> SmokeResult {
         );
     }
     let weather = named("game", json!({ "name": "weather", "args": {} }));
-    refused_with(session, "control", weather, "unsupported_command", "unknown_game_control")?;
+    refused_with(
+        session,
+        "control",
+        weather,
+        "unsupported_command",
+        "unknown_game_control",
+    )?;
     Ok(())
 }
 
@@ -163,7 +188,9 @@ fn measured(session: &mut dyn SmokeSession, status: &Value) -> SmokeResult {
     let costs = accepted(session, "profile", json!({ "frames": 8 }), "profiles")?;
     let costs = &costs["result"];
     engine_core::smoke_check!(
-        costs["bricks"].as_array().is_some_and(|bricks| !bricks.is_empty())
+        costs["bricks"]
+            .as_array()
+            .is_some_and(|bricks| !bricks.is_empty())
             && number(&costs["cpu_ms"]) > 0.0
             && number(&costs["frames"]) == 8.0
             && number(&costs["artifact"]["bytes"]) > 0.0,
@@ -175,7 +202,10 @@ fn measured(session: &mut dyn SmokeSession, status: &Value) -> SmokeResult {
 }
 
 fn records(reply: &Value) -> Vec<Value> {
-    reply["result"]["records"].as_array().cloned().unwrap_or_default()
+    reply["result"]["records"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
 }
 
 fn look(session: &mut dyn SmokeSession, position: [f64; 3], target: [f64; 3]) -> SmokeResult {
@@ -188,18 +218,27 @@ fn explained(session: &mut dyn SmokeSession) -> SmokeResult {
     let body = json!({ "about": "frame", "top": 3 });
     let slow = accepted(session, "explain", body, "explains_frame")?;
     engine_core::smoke_check!(
-        records(&slow).iter().any(|record| record["decided"] == "cost" && record["cpu_ms"].is_number()),
+        records(&slow)
+            .iter()
+            .any(|record| record["decided"] == "cost" && record["cpu_ms"].is_number()),
         "frame_costs_explained",
         json!(records(&slow)),
         json!({ "decided": "cost", "cpu_ms": "number" })
     );
     let about = json!({ "about": "entity", "entity": CRYSTAL });
     look(session, [0.0, 20.0, 60.0], [0.0, 20.0, 120.0])?;
-    let culled = records(&accepted(session, "explain", about.clone(), "explains_culled")?);
+    let culled = records(&accepted(
+        session,
+        "explain",
+        about.clone(),
+        "explains_culled",
+    )?);
     let core = culled.iter().find(|record| record["brick"] == "core");
     engine_core::smoke_check!(
         core.is_some_and(|record| record["decided"] == "culled")
-            && culled.iter().any(|record| record["brick"] == "culling" && record["decided"] == "culled"),
+            && culled
+                .iter()
+                .any(|record| record["brick"] == "culling" && record["decided"] == "culled"),
         "culled_entity_explained",
         json!(culled),
         json!({ "core": "culled", "culling": "culled" })
@@ -207,12 +246,19 @@ fn explained(session: &mut dyn SmokeSession) -> SmokeResult {
     look(session, [17.0, 21.0, 26.0], [0.0, 0.0, 0.0])?;
     let drawn = records(&accepted(session, "explain", about, "explains_drawn")?);
     engine_core::smoke_check!(
-        drawn.iter().any(|record| record["brick"] == "level_of_detail" && record["level"].is_u64()),
+        drawn
+            .iter()
+            .any(|record| record["brick"] == "level_of_detail" && record["level"].is_u64()),
         "drawn_entity_explained",
         json!(drawn),
         json!({ "brick": "level_of_detail", "level": "integer" })
     );
-    let scene = accepted(session, "explain", json!({ "about": "scene" }), "explains_scene")?;
+    let scene = accepted(
+        session,
+        "explain",
+        json!({ "about": "scene" }),
+        "explains_scene",
+    )?;
     engine_core::smoke_eq!(json!(records(&scene)), json!([]), "scene_explained");
     let body = json!({ "stats": ["tick"], "entities": [{ "entity": PLAYER, "component": "Transform" }], "frames": 3 });
     let watched = accepted(session, "watch", body, "watches")?;

@@ -48,7 +48,9 @@ impl Operation for RaycastQuery {
         let ray = ray(origin, direction, max_distance)?;
         let filter = query_filter(world, &filter)?;
         refresh_collision_world(world)?;
-        let hit = world.resource_mut::<CollisionWorld>().raycast(ray, filter)?;
+        let hit = world
+            .resource_mut::<CollisionWorld>()
+            .raycast(ray, filter)?;
         let world = &*world;
         Ok(reply(RaycastResult {
             snapshot: CollisionWorldView::of(world.resource::<CollisionWorld>()),
@@ -106,9 +108,13 @@ impl Operation for OverlapQuery {
         let filter = query_filter(world, &filter)?;
         refresh_collision_world(world)?;
         let mut entities = Vec::new();
-        world
-            .resource_mut::<CollisionWorld>()
-            .overlap(shape, matrix, filter, &mut entities, limit)?;
+        world.resource_mut::<CollisionWorld>().overlap(
+            shape,
+            matrix,
+            filter,
+            &mut entities,
+            limit,
+        )?;
         let world = &*world;
         let mut hits: Vec<_> = entities
             .into_iter()

@@ -57,7 +57,11 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
         .flatten()
         .map(|grid| json!([grid["cells"], grid["loaded"]]))
         .collect();
-    smoke_eq!(json!(grids), json!([[3, 2], [1, 1], [1, 1]]), "binning_grids");
+    smoke_eq!(
+        json!(grids),
+        json!([[3, 2], [1, 1], [1, 1]]),
+        "binning_grids"
+    );
     let streamed = &rendering["world_streaming"];
     smoke_check!(
         streamed["cells"] == 5
@@ -75,7 +79,11 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
         json!("unloaded")
     );
     let marked = component(session, "spinner", "StreamedId")?;
-    smoke_eq!(json!(marked["id"]), json!("streaming-fixture/spinner"), "root_carries_id");
+    smoke_eq!(
+        json!(marked["id"]),
+        json!("streaming-fixture/spinner"),
+        "root_carries_id"
+    );
     hysteresis(session)?;
     settings(session)?;
     removals(session)?;
@@ -89,8 +97,18 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
 
 fn hysteresis(session: &mut dyn SmokeSession) -> SmokeResult {
     look(session, 850.0, 0.0)?;
-    smoke_check!(loaded(session, "crate-near")?, "hysteresis_keeps", json!("crate-near"), json!("loaded"));
-    smoke_check!(loaded(session, "crate-mid")?, "hysteresis_loads", json!("crate-mid"), json!("loaded"));
+    smoke_check!(
+        loaded(session, "crate-near")?,
+        "hysteresis_keeps",
+        json!("crate-near"),
+        json!("loaded")
+    );
+    smoke_check!(
+        loaded(session, "crate-mid")?,
+        "hysteresis_loads",
+        json!("crate-mid"),
+        json!("loaded")
+    );
     let rendering = look(session, 1000.0, 0.0)?;
     smoke_check!(
         !loaded(session, "crate-near")?,
@@ -99,7 +117,10 @@ fn hysteresis(session: &mut dyn SmokeSession) -> SmokeResult {
         json!("unloaded")
     );
     smoke_check!(
-        rendering["world_streaming"]["despawned"].as_u64().unwrap_or(0) > 0,
+        rendering["world_streaming"]["despawned"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
         "hysteresis_despawns",
         json!(rendering["world_streaming"]),
         json!({"despawned": 1})
@@ -118,7 +139,10 @@ fn settings(session: &mut dyn SmokeSession) -> SmokeResult {
     streaming(session, json!({"spawns_per_frame": 1}))?;
     let rendering = look(session, 0.0, 0.0)?;
     smoke_check!(
-        rendering["world_streaming"]["spawned"].as_u64().unwrap_or(0) > 0
+        rendering["world_streaming"]["spawned"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0
             && rendering["world_streaming"]["pending"] == 1,
         "budget_defers",
         json!(rendering["world_streaming"]),
@@ -134,26 +158,47 @@ fn settings(session: &mut dyn SmokeSession) -> SmokeResult {
 
     streaming(session, json!({"frozen": true}))?;
     let rendering = look(session, 3000.0, 3000.0)?;
-    smoke_eq!(json!(rendering["world_streaming"]["loaded"]), json!(4), "frozen_cells_stay");
+    smoke_eq!(
+        json!(rendering["world_streaming"]["loaded"]),
+        json!(4),
+        "frozen_cells_stay"
+    );
     let rendering = streaming(session, json!({"frozen": false}))?;
-    smoke_eq!(json!(rendering["world_streaming"]["loaded"]), json!(2), "unfrozen_small_cells_go");
+    smoke_eq!(
+        json!(rendering["world_streaming"]["loaded"]),
+        json!(2),
+        "unfrozen_small_cells_go"
+    );
     let rendering = look(session, 0.0, 0.0)?;
-    smoke_eq!(json!(rendering["world_streaming"]["loaded"]), json!(4), "returning_loads");
+    smoke_eq!(
+        json!(rendering["world_streaming"]["loaded"]),
+        json!(4),
+        "returning_loads"
+    );
     let rendering = streaming(session, json!({"enabled": false}))?;
     smoke_check!(
-        rendering["world_streaming"]["loaded"] == 0 && rendering["world_streaming"]["entities"] == 0,
+        rendering["world_streaming"]["loaded"] == 0
+            && rendering["world_streaming"]["entities"] == 0,
         "disabled_unloads",
         json!(rendering["world_streaming"]),
         json!({"loaded": 0, "entities": 0})
     );
     let rendering = streaming(session, json!({"enabled": true}))?;
-    smoke_eq!(json!(rendering["world_streaming"]["loaded"]), json!(4), "enabled_loads");
+    smoke_eq!(
+        json!(rendering["world_streaming"]["loaded"]),
+        json!(4),
+        "enabled_loads"
+    );
     let refused = refuse(
         session,
         "control",
         json!({"name": "environment", "args": {"world_streaming": {"unload": 0.5}}}),
     )?;
-    smoke_eq!(json!(refused["path"]), json!("$.args.world_streaming.unload"), "setting_refused");
+    smoke_eq!(
+        json!(refused["path"]),
+        json!("$.args.world_streaming.unload"),
+        "setting_refused"
+    );
     Ok(())
 }
 
@@ -169,10 +214,19 @@ fn removals(session: &mut dyn SmokeSession) -> SmokeResult {
         json!(cells["velocity"]),
         json!([100, 0, 0])
     );
-    smoke_check!(loaded(session, "crate-mid")?, "prefetch_loads_ahead", json!("crate-mid"), json!("loaded"));
+    smoke_check!(
+        loaded(session, "crate-mid")?,
+        "prefetch_loads_ahead",
+        json!("crate-mid"),
+        json!("loaded")
+    );
 
     look(session, 0.0, 0.0)?;
-    let removal = control(session, "world_changes", json!({"remove": ["streaming-fixture/crate-near"]}))?;
+    let removal = control(
+        session,
+        "world_changes",
+        json!({"remove": ["streaming-fixture/crate-near"]}),
+    )?;
     smoke_eq!(json!(removal["newly_removed"]), json!(1), "removal_counts");
     smoke_check!(
         !loaded(session, "crate-near")?,
@@ -194,10 +248,27 @@ fn removals(session: &mut dyn SmokeSession) -> SmokeResult {
         json!("crate-near"),
         json!("unloaded")
     );
-    control(session, "world_changes", json!({"restore": ["streaming-fixture/crate-near"]}))?;
-    smoke_check!(loaded(session, "crate-near")?, "restored_spawns", json!("crate-near"), json!("loaded"));
-    let empty = refuse(session, "control", json!({"name": "world_changes", "args": {"remove": [""]}}))?;
-    smoke_eq!(json!(empty["path"]), json!("$.args.remove[0]"), "empty_id_refused");
+    control(
+        session,
+        "world_changes",
+        json!({"restore": ["streaming-fixture/crate-near"]}),
+    )?;
+    smoke_check!(
+        loaded(session, "crate-near")?,
+        "restored_spawns",
+        json!("crate-near"),
+        json!("loaded")
+    );
+    let empty = refuse(
+        session,
+        "control",
+        json!({"name": "world_changes", "args": {"remove": [""]}}),
+    )?;
+    smoke_eq!(
+        json!(empty["path"]),
+        json!("$.args.remove[0]"),
+        "empty_id_refused"
+    );
     Ok(())
 }
 
@@ -285,7 +356,11 @@ fn component(
     id: &str,
     component: &str,
 ) -> Result<Value, SmokeFailure> {
-    let inspected = ask(session, "inspect", json!({"entity": id, "component": component}))?;
+    let inspected = ask(
+        session,
+        "inspect",
+        json!({"entity": id, "component": component}),
+    )?;
     Ok(inspected["entity"]["components"][component].clone())
 }
 
@@ -296,13 +371,28 @@ fn control(session: &mut dyn SmokeSession, name: &str, args: Value) -> Result<Va
 fn ask(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Result<Value, SmokeFailure> {
     let sent = json!({"verb": verb, "body": body});
     let reply = session.request(verb, body);
-    smoke_check!(reply.is_ok(), "request_accepted", json!(reply.as_ref().err()), sent);
-    Ok(reply.map(|reply| reply["result"].clone()).unwrap_or_default())
+    smoke_check!(
+        reply.is_ok(),
+        "request_accepted",
+        json!(reply.as_ref().err()),
+        sent
+    );
+    Ok(reply
+        .map(|reply| reply["result"].clone())
+        .unwrap_or_default())
 }
 
 fn refuse(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Result<Value, SmokeFailure> {
     let sent = json!({"verb": verb, "body": body});
     let reply = session.request(verb, body);
-    smoke_check!(reply.is_err(), "request_refused", json!(reply.as_ref().ok()), sent);
-    Ok(reply.err().map(|reply| reply["error"].clone()).unwrap_or_default())
+    smoke_check!(
+        reply.is_err(),
+        "request_refused",
+        json!(reply.as_ref().ok()),
+        sent
+    );
+    Ok(reply
+        .err()
+        .map(|reply| reply["error"].clone())
+        .unwrap_or_default())
 }

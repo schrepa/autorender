@@ -33,9 +33,9 @@ fn fixture() -> Value {
     let ribbon: Vec<Value> = [0.0_f32, 1.0, 2.0]
         .into_iter()
         .flat_map(|y| {
-            [-0.3_f32, 0.3].map(|x| {
-                json!({"position": [x, y, 0], "normal": [0, 0, 1], "uv": [x + 0.3, y / 2.0]})
-            })
+            [-0.3_f32, 0.3].map(
+                |x| json!({"position": [x, y, 0], "normal": [0, 0, 1], "uv": [x + 0.3, y / 2.0]}),
+            )
         })
         .collect();
     json!({
@@ -81,7 +81,12 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     );
     let near_level = drawn_level(session, "near-ball")?;
     let far_level = drawn_level(session, "far-ball")?;
-    smoke_check!(near_level < 3, "near_ball_draws_as_mesh", json!(near_level), json!({"below": 3}));
+    smoke_check!(
+        near_level < 3,
+        "near_ball_draws_as_mesh",
+        json!(near_level),
+        json!({"below": 3})
+    );
     smoke_check!(
         far_level > near_level,
         "far_ball_draws_coarser",
@@ -99,6 +104,11 @@ fn drawn_level(session: &mut dyn SmokeSession, entity: &str) -> Result<u64, Smok
             return Ok(level);
         }
     }
-    smoke_check!(false, "drawn_level_reads_back", json!(entity), json!("a drawn level"));
+    smoke_check!(
+        false,
+        "drawn_level_reads_back",
+        json!(entity),
+        json!("a drawn level")
+    );
     Ok(0)
 }
