@@ -1,10 +1,10 @@
 use engine_core::collections::{HashMap, HashSet};
 
 use engine_core::{AlphaMode, MaterialHandle, MeshHandle, RenderFrame};
+use engine_render::batches::BatchPlan;
+use engine_render::gpu_data::{BatchData, CandidateData};
 
 use super::Source;
-use crate::batches::BatchPlan;
-use crate::gpu_data::{BatchData, CandidateData};
 
 #[derive(Clone, Copy)]
 pub(crate) struct ShadowGroup {

@@ -1,10 +1,10 @@
-use crate::cached::{Bound, Versioned};
-use crate::gpu_data::ShadowUniform;
-use crate::gpu_layouts::constants::{SHADOW_APRON, SHADOW_REGIONS};
-use crate::pipelines::{sampler, view};
+use engine_faces::shadows::SHADOW_FORMAT;
+use engine_render::cached::{Bound, Versioned};
+use engine_render::pipelines::{sampler, view};
+
+use crate::gpu_layouts::{SHADOW_APRON, SHADOW_REGIONS, ShadowUniform};
 use crate::shadow_fit::{LEVEL_TEXELS, region_tiles};
 
-pub(crate) const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 const TABLE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,26 +75,26 @@ impl Drop for MapTextures {
 impl MapTextures {
     fn new(device: &wgpu::Device, key: TexturesKey) -> Self {
         let (width, height) = key.atlas.size();
-        let atlas = crate::targets::texture_2d(
+        let atlas = engine_render::targets::texture_2d(
             device,
             "engine/shadow-atlas",
             (width, height),
             1,
             1,
             SHADOW_FORMAT,
-            crate::targets::RENDER_TARGET,
+            engine_render::targets::RENDER_TARGET,
         );
         let side = region_tiles(key.tile_texels) * key.tile_texels + 2 * SHADOW_APRON;
-        let regions = crate::targets::texture_2d(
+        let regions = engine_render::targets::texture_2d(
             device,
             "engine/shadow-regions",
             (side, side),
             SHADOW_REGIONS as u32,
             1,
             SHADOW_FORMAT,
-            crate::targets::RENDER_TARGET,
+            engine_render::targets::RENDER_TARGET,
         );
-        let table = crate::targets::texture_2d(
+        let table = engine_render::targets::texture_2d(
             device,
             "engine/shadow-tiles",
             (key.side, key.side * key.levels),
@@ -145,7 +145,7 @@ pub(super) struct ShadowMaps {
 
 impl ShadowMaps {
     pub(super) fn new(device: &wgpu::Device) -> Self {
-        let uniform = crate::buffers::uniform(
+        let uniform = engine_render::buffers::uniform(
             device,
             "engine/shadow-uniform",
             size_of::<ShadowUniform>() as u64,
@@ -166,7 +166,7 @@ impl ShadowMaps {
             ..Default::default()
         });
         let placeholder = |label, format, layers| {
-            crate::targets::texture_2d(
+            engine_render::targets::texture_2d(
                 device,
                 label,
                 (1, 1),
@@ -278,7 +278,7 @@ impl ShadowMaps {
 
     pub(super) fn write_uniform(
         &mut self,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         uniform: ShadowUniform,
     ) {
         if self.written != Some(uniform) {
@@ -287,19 +287,9 @@ impl ShadowMaps {
         }
     }
 
-    pub(super) fn write_horizon_records(&mut self, queue: &crate::gpu_calls::Queue, count: f32) {
-        if let Some(written) = &mut self.written
-            && written.level_state[3] != count
-        {
-            written.level_state[3] = count;
-            let offset = std::mem::offset_of!(ShadowUniform, level_state) + 12;
-            queue.write_buffer(&self.uniform, offset as u64, bytemuck::bytes_of(&count));
-        }
-    }
-
     pub(super) fn write_table(
         &self,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         table: &[u32],
         changed: &[usize],
     ) {

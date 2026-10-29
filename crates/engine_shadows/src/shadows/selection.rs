@@ -5,16 +5,18 @@ use std::{
     rc::Rc,
 };
 
+use engine_render::buffers::{ReadbackRing, entry};
+use engine_render::cached::Cached;
+use engine_render::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES};
+use engine_render::gpu_presentation::Presented;
+use engine_render::profiling::{GpuProfiler, Span};
+use engine_render::renderer::FramePoses;
+
 use super::casters::CasterGroups;
 use super::pipelines::ShadowPipelines;
-use super::{GROUP, MAPS, MOVING_MAP, Presented, ShadowFrame, Source};
+use super::{GROUP, MAPS, MOVING_MAP, ShadowFrame, Source};
 use crate::bindings::SHADOW_SELECT;
-use crate::buffers::{ReadbackRing, entry};
-use crate::cached::Cached;
-use crate::gpu_data::{BatchData, CandidateData, DRAW_ARGS_BYTES};
-use crate::gpu_layouts::constants::{MOVING_PAIRS, SHADOW_TOTALS};
-use crate::profiling::{GpuProfiler, Span};
-use crate::renderer::FramePoses;
+use crate::gpu_layouts::{MOVING_PAIRS, SHADOW_TOTALS};
 
 const MIN_STORAGE_BYTES: u64 = 256;
 const STILLNESS_BYTES: u64 = 16;
@@ -48,7 +50,7 @@ fn storage(
     bytes: u64,
     extra: wgpu::BufferUsages,
 ) -> wgpu::Buffer {
-    crate::buffers::storage(device, label, bytes.max(MIN_STORAGE_BYTES), extra)
+    engine_render::buffers::storage(device, label, bytes.max(MIN_STORAGE_BYTES), extra)
 }
 
 #[derive(Default)]
@@ -165,7 +167,7 @@ impl Selection {
             return false;
         }
         self.stillness_capacity = slots.next_power_of_two();
-        crate::memory::release_buffer(&self.stillness);
+        engine_render::memory::release_buffer(&self.stillness);
         self.stillness = storage(
             device,
             "engine/shadow-stillness",
@@ -186,7 +188,7 @@ impl Selection {
         if ids > self.id_capacity {
             self.id_capacity = ids.next_power_of_two();
             self.template_stale = true;
-            crate::memory::release_buffer(&self.ids);
+            engine_render::memory::release_buffer(&self.ids);
             self.ids = storage(
                 device,
                 "engine/shadow-ids",
@@ -198,14 +200,14 @@ impl Selection {
         if groups > self.arg_capacity {
             self.arg_capacity = groups.next_power_of_two();
             let bytes = (MAPS * self.arg_capacity) as u64 * DRAW_ARGS_BYTES;
-            crate::memory::release_buffer(&self.args);
+            engine_render::memory::release_buffer(&self.args);
             self.args = storage(
                 device,
                 "engine/shadow-args",
                 bytes,
                 wgpu::BufferUsages::INDIRECT,
             );
-            crate::memory::release_buffer(&self.args_template);
+            engine_render::memory::release_buffer(&self.args_template);
             self.args_template = storage(
                 device,
                 "engine/shadow-args-template",
@@ -221,7 +223,7 @@ impl Selection {
         self.mask_words = mask_words;
         self.starts_capacity = self.starts_capacity.max(groups.next_power_of_two());
         let words = self.readback_words() + self.starts_capacity;
-        crate::memory::release_buffer(&self.counters);
+        engine_render::memory::release_buffer(&self.counters);
         self.counters = storage(
             device,
             "engine/shadow-counters",
@@ -237,7 +239,7 @@ impl Selection {
     pub(super) fn update_template(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         casters: &CasterGroups,
         levels: Vec<u8>,
         ranges: impl Fn(usize, u8) -> (u32, u32, i32),
@@ -283,14 +285,14 @@ impl Selection {
             let group_bytes = (groups.len().max(1) * size_of::<BatchData>()) as u64;
             if listed > self.listed_capacity || group_bytes > self.listed_groups.size() {
                 self.listed_capacity = listed.next_power_of_two();
-                crate::memory::release_buffer(&self.listed);
+                engine_render::memory::release_buffer(&self.listed);
                 self.listed = storage(
                     device,
                     "engine/shadow-casters",
                     (self.listed_capacity * size_of::<CandidateData>()) as u64,
                     wgpu::BufferUsages::empty(),
                 );
-                crate::memory::release_buffer(&self.listed_groups);
+                engine_render::memory::release_buffer(&self.listed_groups);
                 self.listed_groups = storage(
                     device,
                     "engine/shadow-caster-groups",
@@ -336,7 +338,7 @@ impl Selection {
                 }
                 _ => (&self.listed, &self.listed_groups, &self.no_flags),
             };
-            let group = crate::pipelines::group(
+            let group = engine_render::pipelines::group(
                 device,
                 "engine/shadow-select-group",
                 &SHADOW_SELECT,
@@ -351,7 +353,7 @@ impl Selection {
                     entry("ids", &self.ids),
                     entry("args", &self.args),
                     entry("counters", &self.counters),
-                    ("tile_slots", crate::pipelines::view(tiles)),
+                    ("tile_slots", engine_render::pipelines::view(tiles)),
                 ],
             );
             self.select_groups[poses.parity].set(key, group);

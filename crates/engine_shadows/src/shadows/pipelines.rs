@@ -1,20 +1,25 @@
-use super::{SHADOW_FORMAT, VIEWS_BYTES};
-use crate::bindings::{SHADOW_MARKS, SHADOW_POSES, SHADOW_SELECT, SHADOW_VIEW};
-use crate::gpu_data::Vertex;
-use crate::gpu_data::{ComposeData, RouteData, ShadowCullUniform};
+use engine_faces::shadows::{SHADOW_FORMAT, SHADOW_POSES, SHADOW_VIEW};
+use engine_render::gpu_data::Vertex;
+use engine_render::pipeline_layouts::PipelineLayout;
+use engine_render::pipelines::{group, layout};
+use engine_render::shaders::Entry;
+use engine_render::vertex_attributes;
+
+use super::VIEWS_BYTES;
+use crate::bindings::{SHADOW_MARKS, SHADOW_SELECT};
+use crate::gpu_layouts::{ComposeData, RouteData, ShadowCullUniform};
 use crate::pipeline_layouts::{
-    CASTER_PIPELINES, IMPOSTOR_CASTER_PIPELINES, MASKED_CASTER_PIPELINES, PipelineLayout,
+    CASTER_PIPELINES, IMPOSTOR_CASTER_PIPELINES, MASKED_CASTER_PIPELINES, SHADOW_MARKS_PIPELINES,
+    SHADOW_SELECT_PIPELINES,
 };
-use crate::pipelines::{group, layout, vertex_attributes};
-use crate::shaders::Entry;
 use crate::shaders::entry::{shadow, shadow_marks};
 
 pub(super) struct ShadowPipelines {
     pub(super) select: wgpu::ComputePipeline,
     pub(super) count: wgpu::ComputePipeline,
-    pub(super) select_layout: crate::pipelines::GroupLayout,
+    pub(super) select_layout: engine_render::pipelines::GroupLayout,
     pub(super) marks: wgpu::ComputePipeline,
-    pub(super) marks_layout: crate::pipelines::GroupLayout,
+    pub(super) marks_layout: engine_render::pipelines::GroupLayout,
     pub(super) casters: [wgpu::RenderPipeline; 2],
     pub(super) moving: [wgpu::RenderPipeline; 2],
     pub(super) impostor_casters: Option<wgpu::RenderPipeline>,
@@ -23,7 +28,7 @@ pub(super) struct ShadowPipelines {
     pub(super) view_buffer: wgpu::Buffer,
     pub(super) routes: wgpu::Buffer,
     pub(super) view_group: wgpu::BindGroup,
-    pub(super) pose_layout: crate::pipelines::GroupLayout,
+    pub(super) pose_layout: engine_render::pipelines::GroupLayout,
     pub(super) cull: wgpu::Buffer,
 }
 
@@ -36,10 +41,10 @@ fn caster_pipeline(
     overwrite: bool,
     fragment: Option<Entry>,
 ) -> wgpu::RenderPipeline {
-    let layout = crate::pipelines::layout_of(device, declared);
-    crate::pipelines::geometry(
+    let layout = engine_render::pipelines::layout_of(device, declared);
+    engine_render::pipelines::geometry(
         device,
-        &crate::pipelines::Geometry {
+        &engine_render::pipelines::Geometry {
             label,
             layout: &layout,
             vertex_constants: &[],
@@ -65,7 +70,7 @@ fn caster_pipeline(
                     }
                 },
             }),
-            fragment: fragment.map(|entry| crate::pipelines::Fragment {
+            fragment: fragment.map(|entry| engine_render::pipelines::Fragment {
                 entry,
                 constants: &[],
                 targets: &[],
@@ -81,17 +86,16 @@ impl ShadowPipelines {
     )]
     pub(super) fn new(device: &wgpu::Device) -> Self {
         let select_layout = layout(device, &SHADOW_SELECT);
-        let compute_layout =
-            crate::pipelines::layout_of(device, &crate::pipeline_layouts::SHADOW_SELECT_PIPELINES);
-        let compute = |entry: crate::shaders::Entry| {
-            crate::pipelines::compute_entry(device, &compute_layout, entry)
+        let compute_layout = engine_render::pipelines::layout_of(device, &SHADOW_SELECT_PIPELINES);
+        let compute = |entry: engine_render::shaders::Entry| {
+            engine_render::pipelines::compute_entry(device, &compute_layout, entry)
         };
         let select = compute(shadow::select_casters);
         let count = compute(shadow::count_casters);
         let marks_layout = layout(device, &SHADOW_MARKS);
         let marks_pipeline_layout =
-            crate::pipelines::layout_of(device, &crate::pipeline_layouts::SHADOW_MARKS_PIPELINES);
-        let marks = crate::pipelines::compute_entry(
+            engine_render::pipelines::layout_of(device, &SHADOW_MARKS_PIPELINES);
+        let marks = engine_render::pipelines::compute_entry(
             device,
             &marks_pipeline_layout,
             shadow_marks::mark_shadow_tiles,
@@ -178,8 +182,9 @@ impl ShadowPipelines {
             true,
             Some(shadow::fs_compose),
         );
-        let view_buffer = crate::buffers::uniform(device, "engine/shadow-views", VIEWS_BYTES);
-        let routes = crate::buffers::storage(
+        let view_buffer =
+            engine_render::buffers::uniform(device, "engine/shadow-views", VIEWS_BYTES);
+        let routes = engine_render::buffers::storage(
             device,
             "engine/shadow-routes",
             size_of::<RouteData>() as u64,
@@ -202,7 +207,7 @@ impl ShadowPipelines {
                 ("routes", routes.as_entire_binding()),
             ],
         );
-        let cull = crate::buffers::uniform(
+        let cull = engine_render::buffers::uniform(
             device,
             "engine/shadow-select-uniform",
             size_of::<ShadowCullUniform>() as u64,

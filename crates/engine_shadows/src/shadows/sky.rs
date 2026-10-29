@@ -1,10 +1,9 @@
 use engine_core::SkyOcclusion;
 use engine_core::glam::{Mat4, Vec3, Vec4};
+use engine_faces::shadows::SHADOW_FORMAT;
+use engine_render::cached::{Bound, Versioned};
 
-use super::maps::SHADOW_FORMAT;
-use crate::cached::{Bound, Versioned};
-use crate::gpu_data::SkyUniform;
-use crate::gpu_layouts::constants::{SKY_DIRECTIONS, SKY_LAYERS};
+use crate::gpu_layouts::{SKY_DIRECTIONS, SKY_LAYERS, SkyUniform};
 
 const RESOLUTION: u32 = 512;
 const SPAN: f32 = 4.0 / 3.0;
@@ -84,7 +83,7 @@ pub(crate) struct SkyMaps {
 
 impl SkyMaps {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let placeholder = crate::targets::texture_2d(
+        let placeholder = engine_render::targets::texture_2d(
             device,
             "engine/sky-placeholder",
             (1, 1),
@@ -106,7 +105,7 @@ impl SkyMaps {
             key: None,
             frames: 0,
             since_stale: 0,
-            uniform: crate::buffers::uniform(
+            uniform: engine_render::buffers::uniform(
                 device,
                 "engine/sky-uniform",
                 size_of::<SkyUniform>() as u64,
@@ -152,7 +151,7 @@ impl SkyMaps {
             .and_then(|textures| textures.layers.get(layer))
     }
 
-    pub(crate) fn release(&mut self, queue: &crate::gpu_calls::Queue) {
+    pub(crate) fn release(&mut self, queue: &engine_render::gpu_calls::Queue) {
         if self.textures.is_some() {
             self.textures.replace(None);
         }
@@ -166,7 +165,7 @@ impl SkyMaps {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         settings: &SkyOcclusion,
         eye: Vec3,
         changed: bool,
@@ -176,14 +175,14 @@ impl SkyMaps {
             return None;
         }
         if self.textures.is_none() {
-            let texture = crate::targets::texture_2d(
+            let texture = engine_render::targets::texture_2d(
                 device,
                 "engine/sky-maps",
                 (RESOLUTION, RESOLUTION),
                 SKY_LAYERS as u32,
                 1,
                 SHADOW_FORMAT,
-                crate::targets::RENDER_TARGET,
+                engine_render::targets::RENDER_TARGET,
             );
             let array = texture.create_view(&wgpu::TextureViewDescriptor {
                 label: Some("engine/sky-maps"),
@@ -317,7 +316,7 @@ impl SkyMaps {
         }
     }
 
-    fn write(&mut self, queue: &crate::gpu_calls::Queue, uniform: SkyUniform) {
+    fn write(&mut self, queue: &engine_render::gpu_calls::Queue, uniform: SkyUniform) {
         if self.written != Some(uniform) {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
             self.written = Some(uniform);

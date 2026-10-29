@@ -1,3 +1,4 @@
+import package::face::shadows::KeptLift;
 import package::frame::view::{DetailLevel, PI, detail_across, detail_level, fade_noise};
 
 struct Shadow {
@@ -110,10 +111,6 @@ fn slot_texel(slot: u32, across: vec2<f32>) -> vec2<f32> {
     return corner + vec2<f32>(f32(SHADOW_APRON)) + vec2<f32>(across.x, 1.0 - across.y) * texels;
 }
 
-struct KeptLift {
-    first: u32,
-    lifts: vec4<f32>,
-}
 var<private> kept_lift: KeptLift;
 
 fn level_lift(level: u32) -> f32 {
@@ -213,4 +210,28 @@ fn map_lookup(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>)
 
 fn map_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>) -> f32 {
     return map_lookup(world, normal, dx, dy).x;
+}
+
+fn air_visibility(world: vec3<f32>) -> f32 {
+    let pick = shadow_level(world);
+    let light = light_space(world);
+    for (var level = pick.level; level < u32(shadow.level_state.x); level++) {
+        let at = level_point(level, light);
+        if !at.inside {
+            continue;
+        }
+        let slots = level_slots(level, at);
+        if slots.x == 0u {
+            continue;
+        }
+        let still = slot_texel(slots.x - 1u, at.across) * shadow.atlas.zw;
+        var visible = textureSampleCompareLevel(shadow_atlas, shadow_sampler, still, at.depth);
+        if slots.y != 0u {
+            let moving = slot_texel(slots.y - 1u, at.across) * shadow.atlas.zw;
+            visible = min(visible,
+                textureSampleCompareLevel(shadow_atlas, shadow_sampler, moving, at.depth));
+        }
+        return visible;
+    }
+    return 1.0;
 }
