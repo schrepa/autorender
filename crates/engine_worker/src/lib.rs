@@ -17,8 +17,8 @@ mod pack;
 pub use cache::JobCache;
 pub use image::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 pub use pack::{
-    PACK_HEADER, PackEntry, PackIndex, key_from_hex, pack_bytes, pack_directory, unpack,
-    unpack_bytes,
+    LISTING_KIND, PACK_HEADER, PackEntry, PackIndex, key_from_hex, listing_bytes, listing_key,
+    pack_bytes, pack_directory, read_listing, unpack, unpack_bytes,
 };
 
 include!(concat!(env!("OUT_DIR"), "/source.rs"));

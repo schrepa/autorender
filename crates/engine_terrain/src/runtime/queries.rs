@@ -313,7 +313,7 @@ impl WalkedTerrain {
             stamps: self.reaching(key),
         };
         let input = job.identity();
-        let record = RecordKey::new(&crate::sources::TILES, TileJob::KIND.name(), &input);
+        let record = RecordKey::new(&crate::SOURCE, TileJob::KIND.name(), &input);
         (input, record)
     }
 }

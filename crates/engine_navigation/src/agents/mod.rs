@@ -537,7 +537,7 @@ fn portals_record(terrain: &WalkedTerrain, key: TileKey, gait: &Gait) -> (Vec<u8
         gait: *gait,
     };
     let input = job.identity();
-    let record = RecordKey::new(&crate::sources::PORTALS, PortalsJob::KIND, &input);
+    let record = RecordKey::new(&crate::SOURCE, PortalsJob::KIND, &input);
     (input, record)
 }
 
@@ -579,6 +579,7 @@ impl Brick for NavigationBrick {
     fn register(bricks: &mut Bricks) {
         bricks
             .settings::<Navigation>()
+            .records(&[PortalsJob::KIND])
             .resource::<NavAgents>()
             .resource::<NavStats>()
             .stats::<NavStats>()

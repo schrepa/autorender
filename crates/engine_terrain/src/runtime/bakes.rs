@@ -55,7 +55,7 @@ pub(super) fn bake(
         }
         .input();
         let identity = content_hash(&input).to_le_bytes();
-        let record = RecordKey::new(&crate::sources::BAKES, BakeJob::KIND.name(), &identity);
+        let record = RecordKey::new(&crate::SOURCE, BakeJob::KIND.name(), &identity);
         state.bake.key = Some(record);
         state.bake.drawn = Some(state.terrain.rivers.clone());
         state.bake.job = Some(slots.jobs.submit_record(

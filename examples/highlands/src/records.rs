@@ -4,13 +4,13 @@ use engine::host::RecordKey;
 use engine::prelude::*;
 use engine::scene::{MeshStreams, decode_mesh_buffer, encode_mesh_buffer_with};
 
-pub(crate) fn key(kind: &str, identity: &[u8]) -> RecordKey {
+pub(crate) fn key(kind: &'static str, identity: &[u8]) -> RecordKey {
     RecordKey::new(&crate::SOURCE, kind, identity)
 }
 
 pub(crate) fn mesh(
     world: &mut World,
-    kind: &str,
+    kind: &'static str,
     identity: &[u8],
     make: impl FnOnce() -> engine::Result<Mesh> + Send + Sync + 'static,
 ) -> engine::Result<MeshHandle> {
@@ -19,7 +19,7 @@ pub(crate) fn mesh(
 
 pub(crate) fn mesh_then(
     world: &mut World,
-    kind: &str,
+    kind: &'static str,
     identity: &[u8],
     make: impl FnOnce() -> engine::Result<Mesh> + Send + Sync + 'static,
     then: impl FnOnce(&mut World, MeshHandle, &Mesh) -> engine::Result<()> + Send + Sync + 'static,

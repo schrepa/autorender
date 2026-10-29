@@ -215,6 +215,15 @@ impl Bricks<'_> {
         self
     }
 
+    pub fn records(&mut self, kinds: &[&'static str]) -> &mut Self {
+        for &kind in kinds {
+            if !self.record.records.contains(&kind) {
+                self.record.records.push(kind);
+            }
+        }
+        self
+    }
+
     pub fn slot<S: Slot>(&mut self) -> &mut Self {
         self.record.slot = Some(S::NAME);
         self

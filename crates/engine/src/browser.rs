@@ -173,15 +173,17 @@ impl<G: Game> PageHost<G> {
                     set(&object, "cancel", &id(job));
                     set(&object, "worker", &JsValue::from(worker));
                 }
-                JobOrder::Lookup { id: job, key } => {
+                JobOrder::Lookup { id: job, key, .. } => {
                     set(&object, "lookup", &id(job));
                     set(&object, "key", &JsValue::from_str(&key));
                 }
-                JobOrder::Keep { key, output } => {
+                JobOrder::Keep { key, output, .. } => {
                     set(&object, "keep", &JsValue::from_str(&key));
                     set(&object, "output", &bytes(&output));
                 }
-                JobOrder::Mismatch { key } => set(&object, "mismatch", &JsValue::from_str(&key)),
+                JobOrder::Mismatch { key, .. } => {
+                    set(&object, "mismatch", &JsValue::from_str(&key));
+                }
             }
             out.push(&object);
         }

@@ -21,7 +21,7 @@ pub use engine::GpuPreference;
 pub use engine_profiler as profiler;
 pub use engine_profiler::{Pix, RenderDoc};
 pub use job_cache::JobStore;
-pub use jobs::{CacheOptions, JobOptions, JobPool};
+pub use jobs::{CacheOptions, JobOptions, JobPool, Written};
 pub use measure::{Method, Settle};
 pub use offscreen::{Frames, Offscreen, PixRecord, ProfileRecord, Record, Recorded};
 pub use options::{Argument, Arguments, HostOptions, PARAMETERS, Vendor, usage};

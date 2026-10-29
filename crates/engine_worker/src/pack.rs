@@ -1,4 +1,7 @@
+use std::collections::BTreeMap;
+
 pub const PACK_HEADER: usize = 32;
+pub const LISTING_KIND: &str = "pack_listing";
 const MAGIC: &[u8; 4] = b"EPAK";
 const ENTRY: usize = 48;
 
@@ -63,6 +66,10 @@ impl PackIndex {
             .binary_search_by(|entry| entry.key.cmp(&key))
             .ok()
             .map(|at| self.entries[at])
+    }
+
+    pub fn entries(&self) -> &[PackEntry] {
+        &self.entries
     }
 
     pub fn len(&self) -> usize {
@@ -153,4 +160,34 @@ pub fn key_from_hex(hex: &str) -> Option<[u8; 32]> {
         key[at] = digit(pair[0])? << 4 | digit(pair[1])?;
     }
     Some(key)
+}
+
+pub fn listing_key() -> [u8; 32] {
+    engine_sources::record_key(&[0; 32], LISTING_KIND, &[])
+}
+
+pub fn listing_bytes<'a>(records: impl IntoIterator<Item = (&'a [u8; 32], &'a str)>) -> Vec<u8> {
+    let mut kinds: BTreeMap<&str, Vec<String>> = BTreeMap::new();
+    for (key, kind) in records {
+        kinds.entry(kind).or_default().push(hex(key));
+    }
+    serde_json::to_vec(&kinds).unwrap_or_default()
+}
+
+pub fn read_listing(bytes: &[u8]) -> Result<BTreeMap<[u8; 32], String>, String> {
+    let kinds: BTreeMap<String, Vec<String>> = serde_json::from_slice(bytes)
+        .map_err(|error| format!("the pack's listing is not JSON: {error}"))?;
+    let mut listed = BTreeMap::new();
+    for (kind, keys) in kinds {
+        for key in keys {
+            let parsed = key_from_hex(&key)
+                .ok_or_else(|| format!("the pack's listing names {key}, not a record key"))?;
+            listed.insert(parsed, kind.clone());
+        }
+    }
+    Ok(listed)
+}
+
+fn hex(key: &[u8; 32]) -> String {
+    key.iter().map(|byte| format!("{byte:02x}")).collect()
 }

@@ -250,11 +250,7 @@ impl TerrainState {
                 .filter(|stamp| reaches(stamp, &pyramid, key))
                 .collect(),
         };
-        let record = RecordKey::new(
-            &crate::sources::TILES,
-            TileJob::KIND.name(),
-            &job.identity(),
-        );
+        let record = RecordKey::new(&crate::SOURCE, TileJob::KIND.name(), &job.identity());
         (job, record)
     }
 

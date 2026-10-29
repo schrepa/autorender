@@ -148,6 +148,7 @@ pub fn slashed(path: &Path) -> String {
 pub struct Project {
     pub package: String,
     pub native: String,
+    pub scenes: Vec<String>,
 }
 
 impl Project {
@@ -182,15 +183,34 @@ impl Project {
             .and_then(|package| package.get("name"))
             .and_then(toml_edit::Item::as_str)
             .ok_or_else(|| format!("{manifest}: [package] has no name"))?;
-        let native = package
+        let engine = package
             .and_then(|package| package.get("metadata"))
-            .and_then(|metadata| metadata.get("engine"))
+            .and_then(|metadata| metadata.get("engine"));
+        let native = engine
             .and_then(|engine| engine.get("native"))
             .and_then(toml_edit::Item::as_str)
             .ok_or_else(|| format!("{manifest}: [package.metadata.engine] declares no native"))?;
+        let scenes = match engine.and_then(|engine| engine.get("scenes")) {
+            None => Vec::new(),
+            Some(listed) => listed
+                .as_array()
+                .and_then(|scenes| {
+                    scenes
+                        .iter()
+                        .map(|scene| scene.as_str().map(str::to_owned))
+                        .collect::<Option<Vec<_>>>()
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "{manifest}: [package.metadata.engine] scenes lists scene files by \
+                         paths relative to the project's folder"
+                    )
+                })?,
+        };
         Ok(Self {
             package: name.to_owned(),
             native: native.to_owned(),
+            scenes,
         })
     }
 

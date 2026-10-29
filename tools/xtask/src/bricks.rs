@@ -161,6 +161,7 @@ fn record(
         "version": version,
         "slot": brick.slot,
         "lists": brick.lists,
+        "records": brick.records,
         "settings": brick
             .settings
             .iter()

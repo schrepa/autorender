@@ -669,7 +669,7 @@ impl HostOptions {
                 eprintln!("Cooking: {left} records left, {held} jobs held: {features:?}");
             }
         }
-        let (records, bytes) = game.jobs_mut().write_pack(path).map_err(|reason| {
+        let written = game.jobs_mut().write_pack(path).map_err(|reason| {
             host_error(
                 &format!("The pack {} was not written", path.display()),
                 reason,
@@ -681,8 +681,9 @@ impl HostOptions {
             "{:#}",
             json!({
                 "pack": path.display().to_string(),
-                "records": records,
-                "bytes": bytes,
+                "records": written.records,
+                "kinds": written.kinds,
+                "bytes": written.bytes,
                 "packed_before": read,
                 "frames": frame,
                 "seconds": started.elapsed().as_secs_f64(),
@@ -736,6 +737,12 @@ impl HostOptions {
         }
         let stats: serde_json::Value =
             serde_json::from_str(&game.host().stats()).expect("frame statistics are JSON");
+        let mismatched: Vec<serde_json::Value> = game
+            .jobs_mut()
+            .mismatched()
+            .iter()
+            .map(|(kind, key)| json!({ "kind": kind, "key": key }))
+            .collect();
         let adapter = game.host().adapter();
         let report = json!({
             "size": [size.0, size.1],
@@ -756,6 +763,7 @@ impl HostOptions {
                 "backend": adapter.backend,
             })),
             "main_stack_peak_bytes": engine_profiler::stack::peak(),
+            "mismatched": mismatched,
             "stats": stats,
         });
         println!("{report:#}");

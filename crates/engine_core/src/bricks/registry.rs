@@ -34,6 +34,7 @@ pub struct BrickRecord {
     pub crate_name: &'static str,
     pub slot: Option<&'static str>,
     pub lists: Vec<&'static str>,
+    pub records: Vec<&'static str>,
     pub settings: Vec<SettingsEntry>,
     pub stats: Vec<StatsEntry>,
     pub operations: Vec<OperationEntry>,
@@ -51,6 +52,7 @@ impl BrickRecord {
             crate_name: crate_of::<B>(),
             slot: None,
             lists: Vec::new(),
+            records: Vec::new(),
             settings: Vec::new(),
             stats: Vec::new(),
             operations: Vec::new(),
@@ -131,6 +133,12 @@ impl BrickRegistry {
         })
     }
 
+    pub fn record_owner(&self, kind: &str) -> Option<&BrickRecord> {
+        self.bricks
+            .iter()
+            .find(|brick| brick.records.iter().any(|&claimed| claimed == kind))
+    }
+
     pub fn sections(&self) -> impl Iterator<Item = &SettingsEntry> + '_ {
         self.bricks.iter().flat_map(|brick| &brick.settings)
     }
@@ -200,6 +208,11 @@ impl BrickRegistry {
         for stats in &record.stats {
             if let Some(known) = self.stats().find(|known| known.key == stats.key) {
                 return Err(taken("stats", stats.key, known.brick));
+            }
+        }
+        for &kind in &record.records {
+            if let Some(known) = self.record_owner(kind) {
+                return Err(taken("records", kind, known.name));
             }
         }
         for operation in &record.operations {
