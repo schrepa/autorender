@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::mem::offset_of;
 use std::rc::Rc;
 
-use engine_core::{AutoExposure, RenderSnapshot};
+use engine_core::{AutoExposure, RenderSnapshot, RenderStats};
 
 use crate::bindings::EXPOSURE;
 use crate::buffers::{ReadbackRing, storage, uniform};
@@ -12,9 +12,15 @@ use crate::gpu_layouts::constants::{
 };
 use crate::gpu_layouts::exposure::{ExposureState, ExposureUniform};
 use crate::gpu_layouts::scene::LightingUniform;
-use crate::profiling::Span;
-use crate::render_features::{Encode, FeaturePass, RenderFeature};
-use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
+use crate::graph::{
+    FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
+};
+use crate::lazy::Lazy;
+use crate::parts::{
+    Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, PreludeStage, Step, UniformsOut, View,
+};
+use crate::post::PostPass;
+use crate::profiling::{GpuProfiler, Span};
 use crate::shaders::entry::exposure;
 
 const STATE_BYTES: u64 = size_of::<ExposureState>() as u64;
@@ -24,7 +30,47 @@ const BIN_BYTES: u64 = EXPOSURE_BINS as u64 * 4;
 const DUSK: f32 = 0.069_756;
 const NIGHT: f32 = 0.241_922;
 
+pub(crate) static PART: PartEntry = PartEntry {
+    decl: PartDecl {
+        name: "exposure",
+        brick: "post_effects",
+        passes: &[PassDecl {
+            name: "exposure",
+            stage: Stage::Exposure,
+        }],
+        resources: &[ResourceDecl {
+            name: "exposure",
+            lifetime: Lifetime::Kept,
+        }],
+        hooks: &[],
+        contributes: &[],
+        effects: &[],
+        labels: &["engine/exposure"],
+        lazy: true,
+    },
+    create,
+};
+
+fn create(_: &Create<'_>) -> Box<dyn GpuPart> {
+    Box::new(ExposurePass::default())
+}
+
+#[derive(Clone, Copy, Default)]
+struct Ids {
+    pass: Option<PassId>,
+    scene: Option<ResourceId>,
+    depth: Option<ResourceId>,
+    exposure: Option<ResourceId>,
+}
+
+#[derive(Default)]
 pub(crate) struct ExposurePass {
+    meter: Lazy<Meter>,
+    frame: Option<ExposureFrame>,
+    ids: Ids,
+}
+
+struct Meter {
     meter: wgpu::ComputePipeline,
     adapt: wgpu::ComputePipeline,
     layout: crate::pipelines::GroupLayout,
@@ -42,22 +88,14 @@ pub(crate) struct ExposurePass {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct ExposureFrame;
+struct ExposureFrame;
 
-impl ExposurePass {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/exposure.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(crate::gpu_data::EXPOSURE_SHADER.into()),
-        });
+impl Meter {
+    fn new(device: &wgpu::Device) -> Self {
         let layout = crate::pipelines::layout(device, &EXPOSURE);
-        let pipeline_layout = crate::pipelines::pipeline_layout(
-            device,
-            &crate::pipeline_layouts::EXPOSURE_PIPELINES,
-            &[&layout],
-        );
-        let pipeline =
-            |entry| crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry);
+        let pipeline_layout =
+            crate::pipelines::layout_of(device, &crate::pipeline_layouts::EXPOSURE_PIPELINES);
+        let pipeline = |entry| crate::pipelines::compute_entry(device, &pipeline_layout, entry);
         let copied = wgpu::BufferUsages::COPY_SRC;
         Self {
             meter: pipeline(exposure::meter_exposure),
@@ -82,7 +120,7 @@ impl ExposurePass {
         }
     }
 
-    pub(crate) fn prepare(
+    fn prepare(
         &mut self,
         (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
         snapshot: &RenderSnapshot,
@@ -167,7 +205,7 @@ impl ExposurePass {
         ExposureFrame
     }
 
-    pub(crate) fn show(&mut self, encoder: &mut wgpu::CommandEncoder, lighting: &wgpu::Buffer) {
+    fn show(&mut self, encoder: &mut wgpu::CommandEncoder, lighting: &wgpu::Buffer) {
         self.showing = true;
         let exposure = offset_of!(LightingUniform, horizon) + 12;
         encoder.copy_buffer_to_buffer(
@@ -179,44 +217,28 @@ impl ExposurePass {
         );
     }
 
-    pub(crate) fn stop_showing(&mut self) -> bool {
+    fn stop_showing(&mut self) -> bool {
         std::mem::take(&mut self.showing)
     }
 
-    pub(crate) fn capacity_bytes(&self) -> u64 {
+    fn capacity_bytes(&self) -> u64 {
         UNIFORM_BYTES + BIN_BYTES + STATE_BYTES
-    }
-}
-
-impl RenderFeature for ExposurePass {
-    type Frame = ExposureFrame;
-    type Stats = engine_core::ExposureStats;
-
-    const LABELS: &'static [&'static str] = &["engine/exposure"];
-
-    fn declare(_frame: &ExposureFrame, _shape: &FrameShape, graph: &mut RenderGraph) {
-        graph
-            .add(Pass::Feature(FeaturePass::Exposure))
-            .read(Resource::Scene)
-            .read(Resource::Depth)
-            .write(Resource::Exposure);
     }
 
     fn encode(
         &self,
-        _frame: &ExposureFrame,
-        _node: &Node,
-        encode: &Encode<'_>,
+        device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-    ) -> u32 {
+        profiler: &GpuProfiler,
+    ) {
         let Some(group) = self.group.get() else {
-            return 0;
+            return;
         };
         encoder.clear_buffer(&self.bins, 0, None);
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("engine/exposure"),
-                timestamp_writes: encode.profiler.span("auto_exposure").map(Span::compute),
+                timestamp_writes: profiler.span("auto_exposure").map(Span::compute),
             });
             pass.set_bind_group(0, group, &[]);
             pass.set_pipeline(&self.meter);
@@ -226,39 +248,139 @@ impl RenderFeature for ExposurePass {
             pass.dispatch_workgroups(1, 1, 1);
         }
         self.readbacks
-            .record(encode.device, encoder, &self.state, STATE_BYTES, ());
-        0
+            .record(device, encoder, &self.state, STATE_BYTES, ());
     }
 
-    fn after_submit(&mut self, frame: Option<&ExposureFrame>) {
-        if frame.is_none() {
-            return;
-        }
+    fn after_submit(&mut self) {
         let read = Rc::clone(&self.read);
         self.readbacks.after_submit(move |words, ()| {
             read.set(Some([1, 2, 4].map(|word| f32::from_bits(words.get(word)))));
         });
     }
+}
 
-    fn capacity_bytes(&self) -> u64 {
-        ExposurePass::capacity_bytes(self)
+impl GpuPart for ExposurePass {
+    fn install(&mut self, table: &GraphTable) {
+        self.ids = Ids {
+            pass: table.pass_named("exposure"),
+            scene: table.resource("scene"),
+            depth: table.resource("depth"),
+            exposure: table.resource("exposure"),
+        };
     }
 
-    fn stats(
-        this: Option<&Self>,
-        frame: Option<&ExposureFrame>,
-        _snapshot: &RenderSnapshot,
-    ) -> engine_core::ExposureStats {
-        let [stops, metered, view] = this
-            .and_then(|this| this.read.get())
-            .filter(|_| frame.is_some())
+    fn uniforms(
+        &mut self,
+        cx: &mut Step<'_>,
+        _lighting: &mut LightingUniform,
+        out: &mut UniformsOut,
+    ) {
+        if !cx.frame.snapshot.environment.auto_exposure.enabled
+            && self.meter.get_mut().is_some_and(Meter::stop_showing)
+        {
+            out.forget_lighting = true;
+        }
+    }
+
+    fn prepare(&mut self, cx: &mut Step<'_>, prelude: &mut Prelude) {
+        let snapshot = cx.frame.snapshot;
+        let post = cx.parts.get::<PostPass>();
+        let needs =
+            post.is_some_and(PostPass::active) && snapshot.environment.auto_exposure.enabled;
+        if !needs {
+            self.frame = None;
+            return;
+        }
+        let core = &*cx.core;
+        let (device, queue) = (&core.device, &core.queue);
+        let lighting = core.camera.lighting_buffer();
+        let drawn = core.display.region.render.pixels();
+        self.meter.create(device, "engine/exposure", || Meter::new(device));
+        self.frame = self.meter.get_mut().and_then(|meter| {
+            let targets = (post?.scene()?, &core.depth.view, drawn);
+            let frame = meter.prepare((device, queue), snapshot, targets, lighting);
+            let encoder = prelude.encoder(
+                device,
+                PreludeStage::Inputs,
+                "pre_inputs",
+                "engine/exposure-copy",
+            );
+            meter.show(encoder, lighting);
+            Some(frame)
+        });
+    }
+
+    fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
+        let (Some(_), Some(pass)) = (self.frame, self.ids.pass) else {
+            return;
+        };
+        let _ = graph
+            .add(cx.table, pass)
+            .read(self.ids.scene)
+            .read(self.ids.depth)
+            .write(self.ids.exposure);
+    }
+
+    fn encode(
+        &mut self,
+        _pass: usize,
+        cx: &mut Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        if let Some(meter) = self.meter.get() {
+            meter.encode(&cx.core.device, encoder, &cx.core.profiler);
+        }
+        0
+    }
+
+    fn after_submit(&mut self) {
+        if self.frame.is_none() {
+            return;
+        }
+        if let Some(meter) = self.meter.get_mut() {
+            meter.after_submit();
+        }
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        self.meter.get().map_or(0, Meter::capacity_bytes)
+    }
+
+    fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
+        let [stops, metered, view] = self
+            .meter
+            .get()
+            .and_then(|meter| meter.read.get())
+            .filter(|_| self.frame.is_some())
             .unwrap_or_default();
         let hundredths = |stops: f32| (stops * 100.0).round() as i32;
-        engine_core::ExposureStats {
-            active: frame.is_some(),
+        stats.sky.exposure = engine_core::ExposureStats {
+            active: self.frame.is_some(),
             stops: hundredths(stops),
             metered: hundredths(metered),
             view: hundredths(view),
-        }
+        };
+    }
+
+    fn poll(&mut self) -> bool {
+        self.meter.poll()
+    }
+
+    fn disable(&mut self) -> bool {
+        self.meter.disable()
+    }
+
+    fn disabled(&self) -> bool {
+        self.meter.disabled()
+    }
+
+    #[cfg(feature = "dev")]
+    fn inject(&mut self) -> bool {
+        self.meter.inject()
+    }
+
+    #[cfg(feature = "dev")]
+    fn encode_fault(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.meter.encode_fault(encoder);
     }
 }

@@ -111,7 +111,6 @@ mod gpu {
     use crate::bindings::PARTICLES;
     use crate::buffers::Growable;
     use crate::cached::{Bound, GroupCache, Versioned};
-    use crate::gpu_data::PARTICLE_SHADER;
 
     pub(crate) struct ParticleFrame {
         pub alpha: u32,
@@ -123,7 +122,6 @@ mod gpu {
     pub(crate) struct ParticlePass {
         layout: crate::pipelines::GroupLayout,
         pipeline_layout: wgpu::PipelineLayout,
-        module: wgpu::ShaderModule,
         alpha: wgpu::RenderPipeline,
         mist: Option<wgpu::RenderPipeline>,
         transparent_targets: Vec<Option<wgpu::ColorTargetState>>,
@@ -145,25 +143,16 @@ mod gpu {
     impl ParticlePass {
         pub(crate) fn new(
             device: &wgpu::Device,
-            camera_layout: &crate::pipelines::GroupLayout,
             surface_format: wgpu::TextureFormat,
             depth_format: wgpu::TextureFormat,
             transparent_targets: &[Option<wgpu::ColorTargetState>],
         ) -> Self {
             let layout = crate::pipelines::layout(device, &PARTICLES);
-            let pipeline_layout = crate::pipelines::pipeline_layout(
-                device,
-                &crate::pipeline_layouts::PARTICLE_PIPELINES,
-                &[camera_layout, &layout],
-            );
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("engine/particles.wgsl"),
-                source: wgpu::ShaderSource::Wgsl(PARTICLE_SHADER.into()),
-            });
+            let pipeline_layout =
+                crate::pipelines::layout_of(device, &crate::pipeline_layouts::PARTICLE_PIPELINES);
             let alpha = pipeline(
                 device,
                 &pipeline_layout,
-                &module,
                 particles::fs_particle,
                 transparent_targets,
                 depth_format,
@@ -172,7 +161,6 @@ mod gpu {
             Self {
                 layout,
                 pipeline_layout,
-                module,
                 alpha,
                 mist: None,
                 transparent_targets: transparent_targets.to_vec(),
@@ -234,7 +222,6 @@ mod gpu {
                 self.mist = Some(pipeline(
                     device,
                     &self.pipeline_layout,
-                    &self.module,
                     particles::fs_particle_mist,
                     &self.transparent_targets,
                     self.depth_format,
@@ -329,7 +316,6 @@ mod gpu {
                 pipeline(
                     device,
                     &self.pipeline_layout,
-                    &self.module,
                     particles::fs_particle_add_post,
                     &[
                         target(crate::post::SCENE_FORMAT, add),
@@ -342,7 +328,6 @@ mod gpu {
                 pipeline(
                     device,
                     &self.pipeline_layout,
-                    &self.module,
                     particles::fs_particle_add,
                     &[target(self.surface_format, add)],
                     self.depth_format,
@@ -393,7 +378,6 @@ mod gpu {
     fn pipeline(
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
-        module: &wgpu::ShaderModule,
         fragment: crate::shaders::Entry,
         targets: &[Option<wgpu::ColorTargetState>],
         depth_format: wgpu::TextureFormat,
@@ -404,7 +388,6 @@ mod gpu {
             &crate::pipelines::Geometry {
                 label: "engine/particles",
                 layout,
-                module,
                 vertex_constants: &[],
                 vertex: particles::vs_particle,
                 buffers: &[],

@@ -1,6 +1,6 @@
 use engine_core::Environment;
 
-use crate::render_graph::{NodeBuilder, Resource};
+use crate::graph::{GraphTable, PassBuilder};
 
 pub(crate) struct UniformFrame {
     pub(crate) haze_turn: f32,
@@ -28,7 +28,7 @@ macro_rules! screen_effects {
         $effect:ident {
             gate: |$environment:ident| $gate:expr,
             uniform: |$settings:ident, $on:ident, $frame:pat_param| $uniform:expr,
-            reads: [$($read:ident),*],
+            reads: [$($read:literal),*],
         },
     )*) => {
         #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -54,9 +54,13 @@ macro_rules! screen_effects {
                 false $(|| self.$effect)*
             }
 
-            pub(crate) fn reads(self, mut node: NodeBuilder<'_>) -> NodeBuilder<'_> {
+            pub(crate) fn reads<'g>(
+                self,
+                table: &GraphTable,
+                mut node: PassBuilder<'g>,
+            ) -> PassBuilder<'g> {
                 $(if self.$effect {
-                    $(node = node.read(Resource::$read);)*
+                    $(node = node.read(table.resource($read));)*
                 })*
                 node
             }
@@ -89,12 +93,12 @@ screen_effects! {
             let share = crate::occupancy::texel_share(&frame.occupancy);
             [occlusion.radius, occlusion.intensity, share, on]
         },
-        reads: [Depth],
+        reads: ["depth"],
     },
     bloom {
         gate: |environment| environment.bloom.sanitized().enabled(),
         uniform: |settings, on, _| [settings.bloom.sanitized().intensity, on, 0.0, 0.0],
-        reads: [Scene, Glow],
+        reads: ["scene", "glow"],
     },
     reflections {
         gate: |environment| environment.reflections.sanitized().enabled(),
@@ -107,7 +111,7 @@ screen_effects! {
                 frame.world_terrains as f32,
             ]
         },
-        reads: [Depth, Scene, Glow, Surface],
+        reads: ["depth", "scene", "glow", "surface"],
     },
     haze {
         gate: |environment| haze_runs(environment),
@@ -115,7 +119,7 @@ screen_effects! {
             let [across, down] = frame.haze_history;
             [frame.haze_turn, across, down, on]
         },
-        reads: [Depth, ShadowMaps, CloudDome, Bounce, Haze],
+        reads: ["depth", "shadow_maps", "cloud_dome", "bounce", "haze"],
     },
     sky {
         gate: |environment| {
@@ -125,6 +129,6 @@ screen_effects! {
             let sky = settings.sky_occlusion.sanitized();
             [sky.strength, sky.floor, 0.0, on]
         },
-        reads: [Depth, ShadowMaps],
+        reads: ["depth", "shadow_maps"],
     },
 }

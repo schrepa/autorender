@@ -1,3 +1,6 @@
+import package::engine::color::{luminance, unfilmic};
+import package::sky::common::SKY_PI;
+
 struct ExposureUniform {
     frame: vec4<f32>,
     reach: vec4<f32>,

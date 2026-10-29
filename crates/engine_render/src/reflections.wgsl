@@ -1,12 +1,25 @@
-@group(1) @binding(0) var<uniform> post: Post;
-@group(1) @binding(1) var depth_texture: texture_depth_2d;
-@group(1) @binding(3) var glow: texture_2d<f32>;
-@group(1) @binding(7) var linear: sampler;
+import package::engine::color::decode_srgb;
+import package::engine::screen_points::{depth_normal, world_at};
+import package::frame::encode::grade;
+import package::frame::view::{camera, lighting, stable_normalize};
+import package::meshes::impostor_frames::{
+    IMPOSTOR_CUTOFF, IMPOSTOR_HEMISPHERE, ImpostorRecord, impostor_basis, impostor_facing,
+    impostor_frame_direction, impostor_frames, impostor_grid, impostor_met,
+};
+import package::post::frame::{depth_texture, drawn_uv, glow, linear, post};
+import package::shadows::sample::{SHADOW_MAPS, shadow};
+import package::sky::air::{atmospheric, cloud_passing, sky_above, sky_average};
+import package::terrain::bounce::bounce_light;
+import package::terrain::ground::{
+    GroundTerrain, LevelTile, NOT_RESIDENT, directory, heights, level_tile, tile_height,
+    triangle_height,
+};
+import package::terrain::horizons::terrain_visibility;
+import package::terrain::variety::{cover_growth, cover_seen, macro_tint};
+
 @group(1) @binding(10) var nearest_depth: texture_2d<f32>;
 @group(1) @binding(13) var surface_texture: texture_2d<u32>;
 @group(1) @binding(14) var scene_levels: texture_2d<f32>;
-@group(1) @binding(20) var heights: texture_2d_array<f32>;
-@group(1) @binding(21) var<storage, read> directory: array<u32>;
 @group(1) @binding(23) var control: texture_2d_array<u32>;
 const PALETTE_ENTRIES: u32 = 113u;
 @group(1) @binding(24) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;

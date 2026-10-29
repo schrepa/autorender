@@ -18,9 +18,26 @@ pub(crate) struct PixelEffect {
 pub(crate) const PIXEL_MODULE: &str = "post::pixel";
 pub(crate) const COLOR_MODULE: &str = "engine::color";
 pub(crate) const COMPOSITE_ENTRY: &str = "fs_composite";
+pub(crate) const PLAIN_RESOLVE: &str = "post::resolve_plain";
+pub(crate) const TAA_RESOLVE: &str = "post::taa";
+pub(crate) const RESOLVES: [&str; 2] = [PLAIN_RESOLVE, TAA_RESOLVE];
 
 pub(crate) fn composite_path(resolve: &str) -> String {
     format!("generated::composite::{}", resolve.replace("::", "_"))
+}
+
+pub(crate) fn composite_entry(resolve: &str) -> crate::shaders::Entry {
+    crate::shaders::Entry {
+        module: Box::leak(composite_path(resolve).into_boxed_str()),
+        name: COMPOSITE_ENTRY,
+        stage: crate::shaders::Stage::Fragment,
+    }
+}
+
+pub(crate) fn pixel_effects(parts: &crate::parts::Parts) -> Vec<PixelEffect> {
+    (0..parts.len())
+        .flat_map(|index| parts.decl(index).effects.iter().copied())
+        .collect()
 }
 
 pub(crate) fn composite_source(

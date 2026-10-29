@@ -1,3 +1,13 @@
+import package::engine::color::encode_srgb;
+import package::engine::math::{pcg, unit};
+import package::frame::encode::{glow_weight, grade};
+import package::frame::view::{camera, lighting};
+import package::lighting::sun::sun_visibility;
+import package::shadows::sample::{SHADOW_MAPS, map_visibility, shadow};
+import package::sky::air::{atmospheric, atmospheric_cover, cloud_passing, sky_average};
+import package::terrain::horizons::terrain_visibility;
+import package::transparent::weighted::{TransparentTargets, weighted_particle};
+
 struct Particles {
     right: vec4<f32>,
     up: vec4<f32>,
