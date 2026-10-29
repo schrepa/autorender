@@ -8,6 +8,7 @@ mod geometry;
 mod placed;
 mod queries;
 pub mod results;
+mod smoke;
 mod solids;
 mod terrain;
 mod terrain_sweep;
@@ -67,7 +68,8 @@ impl Brick for Collision {
             .operation::<OverlapQuery>()
             .operation::<ShapeCastQuery>()
             .operation::<CollisionEventsQuery>()
-            .operation::<TerrainSweepQuery>();
+            .operation::<TerrainSweepQuery>()
+            .smoke("collision", false, smoke::run);
     }
 }
 

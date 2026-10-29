@@ -13,6 +13,7 @@ mod clouds;
 pub mod command_line;
 mod commands;
 mod debug_view;
+mod debug_view_smoke;
 mod detail_eye;
 mod effects;
 mod entity_indices;

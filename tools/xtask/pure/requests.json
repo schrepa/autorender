@@ -16,7 +16,7 @@
     {"rule": "unknown_inspector", "path": "$.component", "request": {"verb": "inspect", "component": "Weather"}},
     {"rule": "invalid_name", "path": "$.component", "request": {"verb": "inspect", "component": "not a name!"}},
     {"rule": "unknown_definition", "path": "$.definition", "request": {"verb": "describe", "name": "SceneDocument", "definition": "Weather"}},
-    {"rule": "no_scene", "path": "$.entity", "scene": "none", "request": {"verb": "inspect", "entity": "ground"}},
+    {"rule": "no_scene", "path": "$.entity", "engine": "bare", "request": {"verb": "inspect", "entity": "ground"}},
     {"rule": "unknown_entity", "path": "$.entity", "request": {"verb": "inspect", "entity": "nobody"}},
     {"rule": "entity_removed", "path": "$.args.filter.exclude", "scene": "without ground", "request": {"verb": "query", "name": "raycast", "args": {"origin": [0, 10, 0], "direction": [0, -1, 0], "max_distance": 20, "filter": {"exclude": "ground"}}}},
     {"rule": "wrong_world", "path": "$.scene", "scene": "foreign", "request": {"verb": "query", "name": "status"}},

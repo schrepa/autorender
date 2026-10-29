@@ -8,6 +8,7 @@ mod coupling;
 mod obstacles;
 mod settings;
 mod shapes;
+mod smoke;
 mod solver;
 mod statics;
 mod views;
@@ -48,6 +49,7 @@ impl Brick for PhysicsBrick {
                     obstacles::obstruct.in_set(PhysicsSystems::Obstruct),
                 ),
             )
-            .inspector::<PhysicsWorld, PhysicsWorldView>(|_, world| PhysicsWorldView::of(world));
+            .inspector::<PhysicsWorld, PhysicsWorldView>(|_, world| PhysicsWorldView::of(world))
+            .smoke("physics", false, smoke::run);
     }
 }

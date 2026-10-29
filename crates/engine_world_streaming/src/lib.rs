@@ -4,6 +4,7 @@
 )]
 
 mod dev;
+mod smoke;
 
 pub use dev::{
     MAX_CHANGES, StreamedCellView, StreamingGridView, WorldCellsView, WorldChangesControl,
@@ -614,6 +615,7 @@ impl Brick for WorldStreamingBrick {
             .systems(WorldSync, stream_cells.in_set(WorldSyncSystems::Stream))
             .inspector::<WorldCells, WorldCellsView>(|_, cells| dev::world_cells(cells))
             .inspector::<WorldChanges, WorldChangesView>(|_, changes| dev::world_changes(changes))
-            .operation::<WorldChangesControl>();
+            .operation::<WorldChangesControl>()
+            .smoke("world_streaming", true, smoke::run);
     }
 }

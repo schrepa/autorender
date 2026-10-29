@@ -2,11 +2,19 @@ mod agent;
 mod agent_lifecycle;
 mod frame_loop;
 mod gpu_presentation;
+mod hierarchy;
 mod host_parity;
 mod input;
+mod meshes;
 mod native;
 mod plugins;
 mod requests;
+mod scene_kit;
+mod spline;
+mod streamed_scene;
+mod surfaces;
+mod terrain_views;
+mod texture;
 
 use engine_core::smoke::{SmokeEntry, SmokeFailure, SmokeResult, SmokeSession};
 use engine_core::{AddBrick, BrickRegistry, Engine, ErrorCode, MAX_DEV_TICKS};
@@ -46,6 +54,13 @@ pub fn core() -> Vec<SmokeEntry> {
         core_smoke("native", true, native::native),
         core_smoke("plugins", true, plugins::plugins),
         core_smoke("gpu_presentation", true, gpu_presentation::gpu_presentation),
+        core_smoke("hierarchy", true, hierarchy::run),
+        core_smoke("spline", true, spline::run),
+        core_smoke("meshes", true, meshes::run),
+        core_smoke("surfaces", true, surfaces::run),
+        core_smoke("texture", true, texture::run),
+        core_smoke("streamed_scene", true, streamed_scene::run),
+        core_smoke("debug_view_terrain", true, terrain_views::run),
     ]
 }
 

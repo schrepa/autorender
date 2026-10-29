@@ -72,14 +72,23 @@ fn hierarchy_view(world: &World, entity: Option<Entity>, context: &Context<'_>) 
         parent: parent_metadata.map(|metadata| metadata.authored_id.clone()),
         parent_scene: parent_metadata.map(|metadata| metadata.scene_id.clone()),
         parent_alive: parent.map(|parent| world.get_entity(parent).is_ok()),
-        parent_in_active_scene: parent.map(|parent| parent_metadata.is_some_and(|metadata| scene
-            .and_then(|scene| scene.entity(&metadata.authored_id))
-            == Some(parent))),
+        parent_in_active_scene: parent.map(|parent| parent_metadata.is_some_and(|metadata| {
+            active_entity(world, scene, &metadata.authored_id) == Some(parent)
+        })),
         authored_parent: metadata.and_then(|metadata| metadata.authored_parent.clone()),
         prefab_id: metadata.and_then(|metadata| metadata.prefab_id.clone()),
         prefab_instance: metadata.and_then(|metadata| metadata.prefab_instance.clone()),
         prefab_local_id: metadata.and_then(|metadata| metadata.prefab_local_id.clone()),
     }))
+}
+
+fn active_entity(world: &World, scene: Option<&SceneInstance>, id: &str) -> Option<Entity> {
+    match scene {
+        Some(scene) => scene.entity(id),
+        None => world
+            .get_resource::<OperationScene>()
+            .and_then(|active| active.entities.get(id).copied()),
+    }
 }
 
 pub(super) fn transform_value(value: &Transform) -> Value {
