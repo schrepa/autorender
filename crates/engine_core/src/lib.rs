@@ -101,7 +101,7 @@ pub use spline_mesh::*;
 pub use statistics::{Distribution, median};
 pub use tables::*;
 pub use transform_edits::*;
-pub use water::{WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource, WaterSources};
+pub use water::{WaterKind, WaterObstacle, WaterObstacles, WaterSample};
 
 use bevy_app::PluginsState;
 use bevy_ecs::{
@@ -274,7 +274,6 @@ impl Engine {
             .init_resource::<PresentedTime>()
             .init_resource::<Camera>()
             .init_resource::<BrickRegistry>()
-            .init_resource::<WaterSources>()
             .init_resource::<Jobs>()
             .init_resource::<Records>()
             .init_resource::<mesh_lods::MeshLevels>()

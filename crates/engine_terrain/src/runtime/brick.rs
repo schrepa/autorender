@@ -1,14 +1,12 @@
-use super::ground_face::TerrainGround;
+use super::ground_face::{TerrainGround, check_live_water};
 use super::*;
 use crate::jobs::{ShadingJob, SteadiedJob, TerrainWorker};
 use crate::layer::{AddTerrainLayers, TerrainLayerKinds};
 use engine_core::{
     Brick, Bricks, EnvironmentSection, ExplainRecord, ExplainRequest, FixedSimulation,
     FixedSimulationSystems, GlobalTransforms, Ground, GroundSlot, JobWorker, TerrainDebug,
-    ViewSync, ViewSyncSystems, WaterSources, WorldSync, WorldSyncSystems,
+    ViewSync, ViewSyncSystems, WorldSync, WorldSyncSystems,
 };
-
-const WATER_SOURCE: &str = "terrain";
 
 pub struct TerrainBrick;
 
@@ -109,11 +107,7 @@ pub(crate) fn join(world: &mut World) {
     if !world.contains_resource::<Terrains>() {
         return;
     }
-    if let Some(mut sources) = world.get_resource_mut::<WaterSources>()
-        && !sources.names().any(|name| name == WATER_SOURCE)
-    {
-        sources.register(WATER_SOURCE, water_source::terrain_water);
-    }
+    check_live_water(world);
     if let Some(mut jobs) = world.get_resource_mut::<Jobs>()
         && !jobs.works_here()
     {

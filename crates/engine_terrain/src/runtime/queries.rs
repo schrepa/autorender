@@ -100,79 +100,6 @@ impl Terrains {
         Some(base.with_stamps(&stamps).map_or(base, Arc::new))
     }
 
-    pub fn walked_terrain(&self, from: Vec2, to: Vec2) -> Walked {
-        let Some(state) = self.walked(from, to) else {
-            return Walked::Off;
-        };
-        let (Some(recipe), Some(layers)) = (state.recipe.as_ref(), self.layers(state.entity))
-        else {
-            return Walked::Baking;
-        };
-        let Some(stack) = self
-            .stacks
-            .iter()
-            .find(|(stack, _)| Arc::ptr_eq(stack, &recipe.stack))
-            .map(|(_, key)| key.clone())
-        else {
-            return Walked::Baking;
-        };
-        Walked::Ready(WalkedTerrain {
-            entity: state.entity,
-            origin: state.terrain.origin,
-            pyramid: state.terrain.pyramid,
-            layers,
-            stack,
-            recipe: recipe.key.clone(),
-            edits: state.terrain.edits.iter().map(|edit| edit.stamp).collect(),
-        })
-    }
-
-    pub fn walk_obstacles(&self, entity: Entity) -> Vec<Obstacle> {
-        self.entries
-            .iter()
-            .find(|state| state.entity == entity && state.around.is_none())
-            .map_or_else(Vec::new, Self::obstacles)
-    }
-
-    fn walked(&self, from: Vec2, to: Vec2) -> Option<&TerrainState> {
-        self.entries.iter().find(|state| {
-            if state.around.is_some() {
-                return false;
-            }
-            let pyramid = &state.terrain.pyramid;
-            let [x, z] = pyramid.tiles(0);
-            let size =
-                Vec2::new(x as f32, z as f32) * crate::TILE_QUADS as f32 * pyramid.spacing(0);
-            let corner = Vec2::new(state.terrain.origin.x, state.terrain.origin.z);
-            [from, to].iter().all(|&point| {
-                let local = point - corner;
-                local.cmpge(Vec2::ZERO).all() && local.cmple(size).all()
-            })
-        })
-    }
-
-    fn obstacles(state: &TerrainState) -> Vec<Obstacle> {
-        let assets = &state.terrain.surface.assets;
-        state
-            .store
-            .tiles()
-            .flat_map(|tile| tile.placed().iter())
-            .filter_map(|placed| {
-                let collider = assets.get(usize::from(placed.asset))?.collider?;
-                let reach = match collider.shape {
-                    PlacedShape::Sphere { radius } => radius,
-                    PlacedShape::Cuboid { half_extents } => {
-                        engine_core::math::max(half_extents[0], half_extents[2])
-                    }
-                };
-                Some(Obstacle {
-                    center: Vec2::new(placed.position[0], placed.position[2]),
-                    radius: reach * placed.scale,
-                })
-            })
-            .collect()
-    }
-
     pub fn route(
         &self,
         entity: Entity,
@@ -227,18 +154,6 @@ impl Terrains {
             .flat_map(|state| state.store.tiles())
     }
 
-    pub fn collision_tiles(&self) -> impl Iterator<Item = (Entity, Vec3, &Arc<Tile>)> {
-        self.entries
-            .iter()
-            .filter(|state| state.terrain.collision)
-            .flat_map(|state| {
-                state.collision.iter().filter_map(move |key| {
-                    let tile = state.store.get(key)?;
-                    Some((state.entity, state.terrain.origin, tile))
-                })
-            })
-    }
-
     pub fn bridges(&self, entity: Entity) -> &[Bridge] {
         self.entries
             .iter()
@@ -270,54 +185,10 @@ impl Terrains {
             .map(|state| (state.entity, state.falls.clone(), state.terrain.origin))
     }
 
-    pub fn colliding_bridges(&self) -> impl Iterator<Item = (Entity, Vec3, &[Bridge])> {
-        self.entries
-            .iter()
-            .filter(|state| state.terrain.collision && !state.bridges.is_empty())
-            .map(|state| (state.entity, state.terrain.origin, &*state.bridges))
-    }
-
     pub fn revision(&self) -> u64 {
         self.entries
             .iter()
             .map(TerrainState::revision)
             .fold(self.entries.len() as u64, u64::wrapping_add)
-    }
-}
-
-pub struct WalkedTerrain {
-    pub entity: Entity,
-    pub origin: Vec3,
-    pub pyramid: Pyramid,
-    pub layers: Arc<Layers>,
-    pub stack: String,
-    pub recipe: String,
-    pub edits: Vec<Stamp>,
-}
-
-pub enum Walked {
-    Ready(WalkedTerrain),
-    Baking,
-    Off,
-}
-
-impl WalkedTerrain {
-    pub fn reaching(&self, key: TileKey) -> Vec<Stamp> {
-        self.edits
-            .iter()
-            .copied()
-            .filter(|stamp| reaches(stamp, &self.pyramid, key))
-            .collect()
-    }
-
-    pub fn tile_record(&self, key: TileKey) -> (Vec<u8>, RecordKey) {
-        let job = TileJob {
-            recipe: self.recipe.clone(),
-            key,
-            stamps: self.reaching(key),
-        };
-        let input = job.identity();
-        let record = RecordKey::new(&crate::SOURCE, TileJob::KIND.name(), &input);
-        (input, record)
     }
 }

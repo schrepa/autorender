@@ -1,4 +1,3 @@
-use bevy_ecs::prelude::World;
 use glam::{Vec2, Vec3};
 
 use super::Terrains;
@@ -8,10 +7,6 @@ use engine_core::math::{max, min};
 use engine_core::{WaterKind, WaterSample};
 
 const SHEET: f32 = 1.0;
-
-pub(crate) fn terrain_water(world: &World, point: Vec3) -> Option<WaterSample> {
-    world.get_resource::<Terrains>()?.water_at(point)
-}
 
 impl Terrains {
     pub fn waters(&self) -> impl Iterator<Item = (bevy_ecs::entity::Entity, Vec3, &Layers)> {

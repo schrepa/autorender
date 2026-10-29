@@ -50,7 +50,7 @@ pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
 }
 
 fn surface_under(world: &World, eye: glam::Vec3) -> Option<f32> {
-    let water = crate::WaterSources::sample_in(world, eye);
+    let water = crate::Ground::water_in(world, eye);
     if let Some(water) = water.filter(|water| water.depth > 0.0) {
         return Some(water.surface);
     }
