@@ -1,5 +1,4 @@
 engine_render::shader_modules! {
-    "face::meshes" in "meshes" = "faces/meshes.wgsl";
     "meshes::shade" in "meshes" = "shade.wgsl";
     "meshes::forward" in "meshes" = "forward.wgsl";
     "meshes::impostors" in "meshes" = "impostors.wgsl";

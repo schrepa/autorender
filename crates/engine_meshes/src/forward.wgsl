@@ -1,8 +1,8 @@
-import package::face::dither::encoded;
-import package::face::meshes::{scene_targets, temporal_targets};
+import package::face::dither::{encoded, stored};
 import package::meshes::declarations::{SceneTargets, TemporalOutput, TemporalTargets, VertexOutput};
 import package::meshes::shade::{extended_fragment, extended_temporal_output, fragment,
     masked_depth, shade, temporal_output};
+import package::meshes::surface::{scene_targets, temporal_targets};
 import package::meshes::vertex::{ExtendedOutput, ExtendedTemporalOutput};
 
 @fragment
@@ -27,12 +27,14 @@ fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location
 
 @fragment
 fn fs_post(input: VertexOutput, @builtin(front_facing) front: bool) -> SceneTargets {
-    return scene_targets(shade(fragment(input), front), input.clip_position.xy);
+    let shaded = shade(fragment(input), front);
+    return scene_targets(shaded, stored(shaded.color, input.clip_position.xy));
 }
 
 @fragment
 fn fs_temporal(input: TemporalOutput, @builtin(front_facing) front: bool) -> TemporalTargets {
-    return temporal_targets(shade(fragment(temporal_output(input)), front),
+    let shaded = shade(fragment(temporal_output(input)), front);
+    return temporal_targets(shaded, stored(shaded.color, input.clip_position.xy),
         input.clip_position, input.previous);
 }
 
@@ -57,12 +59,15 @@ fn fs_probe_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
 @fragment
 fn fs_post_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
         -> SceneTargets {
-    return scene_targets(shade(extended_fragment(input), front), input.clip_position.xy);
+    let shaded = shade(extended_fragment(input), front);
+    return scene_targets(shaded, stored(shaded.color, input.clip_position.xy));
 }
 
 @fragment
 fn fs_temporal_extended(input: ExtendedTemporalOutput, @builtin(front_facing) front: bool)
         -> TemporalTargets {
     let values = extended_fragment(extended_temporal_output(input));
-    return temporal_targets(shade(values, front), input.clip_position, input.previous);
+    let shaded = shade(values, front);
+    return temporal_targets(shaded, stored(shaded.color, input.clip_position.xy),
+        input.clip_position, input.previous);
 }

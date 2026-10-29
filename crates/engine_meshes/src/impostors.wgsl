@@ -1,8 +1,8 @@
 import package::engine::math::maximum_abs;
 import package::engine::wind::slot_sway;
-import package::face::dither::encoded;
-import package::face::lighting::{BODY_SOLID, BODY_THIN, Shaded, SurfacePoint, finish, local_light};
-import package::face::meshes::{scene_targets, temporal_targets, widened};
+import package::face::dither::{encoded, stored};
+import package::face::lighting::{BODY_SOLID, BODY_THIN, SurfacePoint, finish, local_light,
+    widened};
 import package::face::sun::sun_direction;
 import package::frame::view::{camera, fade_noise, material_detail, stable_normalize};
 import package::meshes::declarations::{
@@ -19,6 +19,7 @@ import package::meshes::shade::{
     MASK_MIP_SCALE, MaterialTexels, alpha_cutoff, fragment_pixel, geometric_normal, leafiness,
     mapped_normal, material_texels, plant_tint, rippled, top_layer_amount
 };
+import package::meshes::surface::{Shaded, scene_targets, temporal_targets};
 import package::meshes::vertex::{octahedral_normal, origin_key, pose_matrix, slot_wind};
 
 const IMPOSTOR_FOLIAGE: u32 = 0x1000000u;
@@ -581,13 +582,15 @@ fn impostor_color(shaded: ImpostorShaded, input: ImpostorOutput) -> ImpostorColo
 
 fn impostor_scene_targets(shaded: ImpostorShaded, input: ImpostorOutput)
         -> ImpostorSceneTargets {
-    let targets = scene_targets(shaded.shaded, input.clip_position.xy);
+    let targets = scene_targets(shaded.shaded,
+        stored(shaded.shaded.color, input.clip_position.xy));
     return ImpostorSceneTargets(targets.color, targets.glow, targets.surface, shaded.depth);
 }
 
 fn impostor_temporal_targets(shaded: ImpostorShaded, input: ImpostorTemporalOutput)
         -> ImpostorTemporalTargets {
-    let targets = temporal_targets(shaded.shaded, input.clip_position, input.previous);
+    let targets = temporal_targets(shaded.shaded,
+        stored(shaded.shaded.color, input.clip_position.xy), input.clip_position, input.previous);
     return ImpostorTemporalTargets(targets.color, targets.motion, targets.glow, targets.surface,
         shaded.depth);
 }

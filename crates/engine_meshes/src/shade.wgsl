@@ -1,6 +1,5 @@
 import package::engine::noise::variety_noise;
-import package::face::lighting::{BODY_THIN, Shaded, SurfacePoint, finish, local_light};
-import package::face::meshes::widened;
+import package::face::lighting::{BODY_THIN, SurfacePoint, finish, local_light, widened};
 import package::face::occupancy::foliage;
 import package::frame::view::{camera, fade_noise, material_bias, material_detail,
     stable_normalize};
@@ -13,7 +12,7 @@ import package::meshes::declarations::{ALPHA_MASK, DOUBLE_SIDED, EMISSIVE_MAP, F
     emissive_sampler, emissive_texture, fade_hidden, grounds, material_flag, material_maps,
     metallic_roughness_sampler, metallic_roughness_texture, normal_sampler, normal_texture,
     occlusion_sampler, occlusion_texture, poses};
-import package::meshes::surface::world_plane;
+import package::meshes::surface::{Shaded, world_plane};
 import package::meshes::vertex::{ExtendedOutput, ExtendedTemporalOutput, output_color};
 
 fn rippled(normal: vec3<f32>, world: vec3<f32>, strength: f32) -> vec3<f32> {
