@@ -13,34 +13,37 @@ mod sky;
 
 use std::cell::Cell;
 
-use engine_core::{MeshHandle, RenderFrame, RenderSnapshot, RenderStats, ShadowStats, glam::Vec3};
-use engine_terrain::Pyramid;
-
-use crate::batches::BatchPlan;
-use crate::bindings::{
-    Contribution, SHADOW_POSES, Sample, Sampling, Stages, sampler, texture, uniform_of,
+use engine_core::{
+    MeshHandle, Pyramid, RenderFrame, RenderSnapshot, RenderStats, ShadowStats, glam::Vec3,
 };
-use crate::cached::{Bound, GroupCache};
-use crate::gpu_data::{ComposeData, DRAW_ARGS_BYTES, RouteData, ShadowCullUniform, ShadowUniform};
-use crate::graph::{
+use engine_faces::heightfield::HeightfieldFace;
+use engine_faces::placed::PlacedFace;
+use engine_faces::shadows::{KeptRefresh, SHADOW_POSES, ShadowCastersFace, ground_level};
+use engine_render::batches::BatchPlan;
+use engine_render::bindings::{Contribution, Sample, Sampling, Stages, sampler, texture, uniform_of};
+use engine_render::cached::{Bound, GroupCache};
+use engine_render::gpu_data::DRAW_ARGS_BYTES;
+use engine_render::gpu_presentation::Presented;
+use engine_render::graph::{
     FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
 };
-use crate::mesh_arena::{Bindings, Ids, MeshDraw};
-use crate::parts::{
-    Begin, BeginOut, Create, DrawAt, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View,
+use engine_render::mesh_arena::{Bindings, Ids, MeshDraw};
+use engine_render::parts::{
+    Begin, BeginOut, Create, DrawAt, Encode, GpuPart, PartAssets, PartDecl, PartEntry, Prelude,
+    Shading, Step, View,
 };
-use crate::profiling::GpuProfiler;
-use crate::renderer::FramePoses;
-use crate::shadow_fit::{ClipPlan, ClipSettings, ClipStats, Clipmap, LightBasis, ground_level};
+use engine_render::profiling::GpuProfiler;
+use engine_render::renderer::{Core, FramePoses};
 
-use crate::gpu_layouts::constants::MOVING_MAP;
-use crate::gpu_layouts::constants::SHADOW_GROUP as GROUP;
-use crate::gpu_layouts::constants::SHADOW_REGIONS;
-use crate::gpu_layouts::constants::SKY_MAP;
-use crate::gpu_layouts::constants::SKY_REFRESH;
+use crate::gpu_layouts::{ComposeData, RouteData, ShadowCullUniform, ShadowUniform, SkyUniform};
+use crate::shadow_fit::{ClipPlan, ClipSettings, ClipStats, Clipmap, LightBasis};
+
+use crate::gpu_layouts::MOVING_MAP;
+use crate::gpu_layouts::SHADOW_GROUP as GROUP;
+use crate::gpu_layouts::SHADOW_REGIONS;
+use crate::gpu_layouts::SKY_MAP;
+use crate::gpu_layouts::SKY_REFRESH;
 use casters::CasterGroups;
-pub(crate) use casters::ShadowGroup;
-pub(crate) use maps::SHADOW_FORMAT;
 use maps::{ShadowMaps, map_pass};
 use marks::Marks;
 use pipelines::ShadowPipelines;
@@ -68,13 +71,13 @@ pub(crate) const FRAME_SHADOWS: Contribution = Contribution {
         texture(
             "shadow_atlas",
             Sample::Depth,
-            crate::bindings::View::D2,
+            engine_render::bindings::View::D2,
             Stages::VERTEX_FRAGMENT,
         ),
         texture(
             "shadow_tiles",
             Sample::Uint,
-            crate::bindings::View::D2,
+            engine_render::bindings::View::D2,
             Stages::VERTEX_FRAGMENT,
         ),
         sampler("shadow_sampler", Sampling::Comparison, Stages::FRAGMENT),
@@ -83,6 +86,21 @@ pub(crate) const FRAME_SHADOWS: Contribution = Contribution {
             Sampling::NonFiltering,
             Stages::VERTEX_FRAGMENT,
         ),
+    ],
+};
+
+pub(crate) const AMBIENT_SKY_OCCLUSION: Contribution = Contribution {
+    group: "ambient",
+    set: "sky_occlusion",
+    bindings: &[
+        texture(
+            "sky_maps",
+            Sample::Depth,
+            engine_render::bindings::View::D2Array,
+            Stages::FRAGMENT,
+        ),
+        sampler("sky_sampler", Sampling::Comparison, Stages::FRAGMENT),
+        uniform_of("sky", size_of::<SkyUniform>(), Stages::FRAGMENT),
     ],
 };
 
@@ -119,11 +137,11 @@ pub(crate) static PART: PartEntry = PartEntry {
             },
         ],
         hooks: &[],
-        contributes: &[FRAME_SHADOWS],
+        contributes: &[FRAME_SHADOWS, AMBIENT_SKY_OCCLUSION],
         effects: &[],
         labels: &[],
         lazy: false,
-        faces: &[],
+        faces: &[engine_render::offer_face!(ShadowPass => dyn ShadowCastersFace)],
         needs: &[],
         piece: None,
     },
@@ -138,14 +156,6 @@ fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
 enum Source {
     Presented,
     Listed,
-}
-
-pub(crate) struct Presented<'a> {
-    pub candidates: &'a wgpu::Buffer,
-    pub batches: &'a wgpu::Buffer,
-    pub flags: &'a wgpu::Buffer,
-    pub count: u32,
-    pub generation: u64,
 }
 
 pub(crate) struct CasterDraw {
@@ -174,6 +184,39 @@ impl CasterDraw {
     }
 }
 
+fn caster_draw(core: &Core, mesh: MeshHandle, levels: bool) -> CasterDraw {
+    core.meshes.get(&mesh).map_or(
+        CasterDraw {
+            index_count: 0,
+            first_index: 0,
+            base_vertex: 0,
+            lods: Vec::new(),
+        },
+        |mesh| {
+            let draw = mesh.draw(&core.mesh_arena);
+            let lods = if !levels {
+                Vec::new()
+            } else {
+                mesh.lods
+                    .iter()
+                    .enumerate()
+                    .map(|(level, &(offset, count, error))| {
+                        let (offset, count) = mesh.caster_range(level + 1, (offset, count));
+                        (draw.first_index + offset, count, error)
+                    })
+                    .collect()
+            };
+            let (offset, count) = mesh.caster_range(0, (0, draw.index_count));
+            CasterDraw {
+                index_count: count,
+                first_index: draw.first_index + offset,
+                base_vertex: draw.base_vertex,
+                lods,
+            }
+        },
+    )
+}
+
 struct ShadowInputs<'a> {
     snapshot: &'a RenderSnapshot,
     presented: Option<Presented<'a>>,
@@ -183,12 +226,6 @@ struct ShadowInputs<'a> {
     placement: &'a dyn Fn(MeshHandle) -> CasterDraw,
     terrain: bool,
     pixel_angle: f32,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct KeptRefresh {
-    pub planes: [[f32; 4]; 6],
-    pub texel: f32,
 }
 
 struct Caster<'m> {
@@ -237,7 +274,6 @@ struct GraphIds {
 pub(crate) struct ShadowPass {
     pipelines: Option<ShadowPipelines>,
     maps: ShadowMaps,
-    horizon_records: f32,
     clipmap: Clipmap,
     plan: ClipPlan,
     region_views: Vec<(usize, KeptRefresh)>,
@@ -253,7 +289,7 @@ pub(crate) struct ShadowPass {
     written_cull: Option<ShadowCullUniform>,
     written_routes: Option<Box<RouteData>>,
     composes: Vec<ComposeData>,
-    compose_buffer: crate::buffers::Growable,
+    compose_buffer: engine_render::buffers::Growable,
     caster_storage: Cell<Vec<Caster<'static>>>,
     sky: SkyMaps,
     sky_groups: u64,
@@ -265,11 +301,10 @@ pub(crate) struct ShadowPass {
 
 impl ShadowPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let _owner = crate::memory::owned("shadows");
+        let _owner = engine_render::memory::owned("shadows");
         Self {
             pipelines: None,
             maps: ShadowMaps::new(device),
-            horizon_records: 0.0,
             clipmap: Clipmap::default(),
             plan: ClipPlan::default(),
             region_views: Vec::new(),
@@ -285,7 +320,7 @@ impl ShadowPass {
             written_cull: None,
             written_routes: None,
             composes: Vec::new(),
-            compose_buffer: crate::buffers::Growable::new(
+            compose_buffer: engine_render::buffers::Growable::new(
                 device,
                 "engine/shadow-composes",
                 size_of::<ComposeData>() as u64,
@@ -301,28 +336,8 @@ impl ShadowPass {
         }
     }
 
-    pub(crate) fn sky_bindings(&self) -> [(&'static str, crate::cached::Bound<'_>); 3] {
-        self.sky.bindings()
-    }
-
     fn sky_counts(&self) -> (u32, u32) {
         self.sky.counts()
-    }
-
-    pub(crate) fn groups_generation(&self) -> u64 {
-        self.groups_generation
-    }
-
-    pub(crate) fn groups(&self) -> &[ShadowGroup] {
-        self.casters.groups()
-    }
-
-    pub(crate) fn batch_group(&self, index: usize) -> u32 {
-        self.casters.batch_group(index)
-    }
-
-    pub(crate) fn region_views(&self) -> &[(usize, KeptRefresh)] {
-        &self.region_views
     }
 
     fn dirty_ground(&mut self, (min, max): (Vec3, Vec3), (pyramid, level): (&Pyramid, u32)) {
@@ -359,7 +374,7 @@ impl ShadowPass {
     fn prepare_maps(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         inputs: &ShadowInputs<'_>,
     ) -> Option<ShadowFrame> {
         let ShadowInputs {
@@ -550,8 +565,6 @@ impl ShadowPass {
             queue.write_buffer(&pipelines.cull, 0, bytemuck::bytes_of(&cull));
             self.written_cull = Some(cull);
         }
-        let mut lookup = lookup;
-        lookup.level_state[3] = self.horizon_records;
         self.maps.write_uniform(queue, lookup);
         let (table, changed) = self.clipmap.take_table();
         self.maps.write_table(queue, table, &changed);
@@ -663,11 +676,6 @@ impl ShadowPass {
         {
             pipelines.impostor_casters = Some(pipelines.impostor_caster(device));
         }
-    }
-
-    fn set_horizon_records(&mut self, queue: &crate::gpu_calls::Queue, count: u32) {
-        self.horizon_records = count as f32;
-        self.maps.write_horizon_records(queue, self.horizon_records);
     }
 
     #[expect(
@@ -849,8 +857,8 @@ impl GpuPart for ShadowPass {
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         if cx
             .parts
-            .get::<crate::scatter::ScatterPass>()
-            .is_some_and(crate::scatter::ScatterPass::restyled)
+            .face::<dyn PlacedFace>()
+            .is_some_and(|placed| placed.restyled())
         {
             self.clipmap.dirty_all();
         }
@@ -860,7 +868,7 @@ impl GpuPart for ShadowPass {
         let parity = cx.frame.temporal.as_ref().map_or(0, |frame| frame.parity);
         let core = &*cx.core;
         let levels = snapshot.environment.level_of_detail.enabled;
-        let placement = |mesh| core.caster_draw(mesh, levels);
+        let placement = |mesh| caster_draw(core, mesh, levels);
         self.frame = self.prepare_maps(
             &core.device,
             &core.queue,
@@ -875,7 +883,7 @@ impl GpuPart for ShadowPass {
                     .terrains
                     .iter()
                     .any(|terrain| terrain.drawn),
-                pixel_angle: crate::gpu_data::pixel_angle(
+                pixel_angle: engine_render::gpu_data::pixel_angle(
                     snapshot.view_projection,
                     core.display.region.display.height,
                 ),
@@ -888,10 +896,10 @@ impl GpuPart for ShadowPass {
             .frame
             .passes
             .is_some_and(|passes| passes.impostor_pass.is_some());
-        let scatter = cx.parts.get::<crate::scatter::ScatterPass>();
+        let placed = cx.parts.face::<dyn PlacedFace>();
         if impostor_pass
-            && scatter.is_some_and(|scatter| {
-                scatter
+            && placed.is_some_and(|placed| {
+                placed
                     .impostors()
                     .iter()
                     .any(|record| record.sphere[3] > 0.0)
@@ -899,19 +907,16 @@ impl GpuPart for ShadowPass {
         {
             self.prepare_impostor_casters(&cx.core.device);
         }
-        if let Some(scatter) = scatter {
-            for &(min, max) in scatter.moved() {
+        if let Some(placed) = placed {
+            for &(min, max) in placed.moved() {
                 self.clipmap.dirty_box(min, max);
             }
         }
-        let terrain = cx.parts.get::<crate::terrain::TerrainPass>();
-        if let Some(terrain) = terrain {
-            for change in terrain.ground_changes() {
+        if let Some(heightfield) = cx.parts.face::<dyn HeightfieldFace>() {
+            for change in heightfield.ground_changes() {
                 self.dirty_ground((change.min, change.max), (&change.pyramid, change.level));
             }
         }
-        let horizon_records = terrain.map_or(0, crate::terrain::TerrainPass::horizon_records);
-        self.set_horizon_records(&cx.core.queue, horizon_records);
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
@@ -967,6 +972,9 @@ impl GpuPart for ShadowPass {
         if group == "frame" {
             out.extend(self.maps.entries());
         }
+        if group == "ambient" {
+            out.extend(self.sky.bindings());
+        }
     }
 
     fn after_submit(&mut self) {
@@ -998,5 +1006,34 @@ impl GpuPart for ShadowPass {
             sky_maps,
             sky_drawn,
         };
+        engine_profile::counter("render.shadow_groups", self.casters.groups().len() as f64);
+    }
+
+    fn shading(&self, snapshot: &RenderSnapshot, shading: &mut Shading) {
+        let enabled = snapshot.environment.shadows.sanitized().enabled;
+        shading.set("SHADOW_MAPS", if enabled { 1.0 } else { 0.0 });
+    }
+
+    fn asset_generation(&self) -> u64 {
+        self.groups_generation
+    }
+
+    fn assets<'s>(&self, snapshot: &'s RenderSnapshot, assets: &mut PartAssets<'s>) {
+        assets.meshes.extend(
+            self.casters
+                .groups()
+                .iter()
+                .map(|group| (group.mesh, &snapshot.meshes[group.source_index])),
+        );
+    }
+
+    fn batch_group(&self, batch: usize) -> Option<u32> {
+        Some(self.casters.batch_group(batch))
+    }
+}
+
+impl ShadowCastersFace for ShadowPass {
+    fn region_views(&self) -> &[(usize, KeptRefresh)] {
+        &self.region_views
     }
 }

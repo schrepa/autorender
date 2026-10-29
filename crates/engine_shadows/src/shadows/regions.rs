@@ -1,11 +1,11 @@
 use engine_core::glam::{Mat4, Vec3, Vec4};
+use engine_faces::shadows::KeptRefresh;
 
 use super::maps::AtlasLayout;
-use super::{
-    COMPOSE_VIEW, KeptRefresh, MAPS, MOVING_MAP, MOVING_VIEW, SKY_MAP, SKY_VIEW, VIEW_STRIDE,
+use super::{COMPOSE_VIEW, MAPS, MOVING_MAP, MOVING_VIEW, SKY_MAP, SKY_VIEW, VIEW_STRIDE};
+use crate::gpu_layouts::{
+    ComposeData, MAX_LEVELS, RouteData, SHADOW_REGIONS, STILLNESS, ShadowCullUniform, ShadowUniform,
 };
-use crate::gpu_data::{ComposeData, MAX_LEVELS, RouteData, ShadowCullUniform, ShadowUniform};
-use crate::gpu_layouts::constants::{SHADOW_REGIONS, STILLNESS};
 use crate::shadow_fit::{ClipPlan, Clipmap, LightBasis, MapRegion, Region, region_tiles};
 
 const NORMAL_OFFSET_TEXELS: f32 = 0.5;

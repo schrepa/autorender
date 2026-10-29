@@ -2,9 +2,8 @@ use engine_core::{
     glam::{Mat4, Vec3, Vec4},
     math,
 };
-use engine_terrain::Pyramid;
 
-use crate::gpu_layouts::constants::{GROUND_TEXELS, SHADOW_APRON, SHADOW_REGIONS};
+use crate::gpu_layouts::{SHADOW_APRON, SHADOW_REGIONS};
 
 const LOW_SUN: f32 = 0.1;
 
@@ -82,13 +81,6 @@ impl MapRegion {
         )
         .transpose()
     }
-}
-
-pub(crate) fn ground_level(pyramid: &Pyramid, texel: f32) -> u32 {
-    let coarsest = pyramid.levels().saturating_sub(1);
-    (0..coarsest)
-        .find(|&level| pyramid.spacing(level) >= GROUND_TEXELS * texel)
-        .unwrap_or(coarsest)
 }
 
 pub(crate) fn region_tiles(tile_texels: u32) -> u32 {

@@ -1,11 +1,12 @@
 use std::{cell::RefCell, rc::Rc};
 
+use engine_render::buffers::ReadbackRing;
+use engine_render::cached::{Bound, GroupCache};
+use engine_render::profiling::{GpuProfiler, Span};
+
 use super::pipelines::ShadowPipelines;
 use crate::bindings::SHADOW_MARKS;
-use crate::buffers::ReadbackRing;
-use crate::cached::{Bound, GroupCache};
-use crate::gpu_layouts::constants::SHADOW_MARKS_GROUP;
-use crate::profiling::{GpuProfiler, Span};
+use crate::gpu_layouts::SHADOW_MARKS_GROUP;
 
 #[derive(Default)]
 struct MarksRead {
@@ -14,7 +15,7 @@ struct MarksRead {
 }
 
 pub(super) struct Marks {
-    buffer: crate::cached::Versioned<wgpu::Buffer>,
+    buffer: engine_render::cached::Versioned<wgpu::Buffer>,
     words: usize,
     group: GroupCache<4>,
     readbacks: ReadbackRing<u64>,
@@ -24,7 +25,7 @@ pub(super) struct Marks {
 impl Marks {
     pub(super) fn new(device: &wgpu::Device) -> Self {
         Self {
-            buffer: crate::cached::Versioned::new(Self::mask(device, 1)),
+            buffer: engine_render::cached::Versioned::new(Self::mask(device, 1)),
             words: 0,
             group: GroupCache::default(),
             readbacks: ReadbackRing::new("engine/shadow-marks-readback"),
@@ -33,7 +34,7 @@ impl Marks {
     }
 
     fn mask(device: &wgpu::Device, words: usize) -> wgpu::Buffer {
-        crate::buffers::storage(
+        engine_render::buffers::storage(
             device,
             "engine/shadow-marks",
             (words * 4) as u64,
