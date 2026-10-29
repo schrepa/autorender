@@ -69,7 +69,7 @@ const STAGES: &[Stage<App>] = &[
     Stage {
         name: "dependencies",
         needs: &["generated files"],
-        run: |app| crate::dependencies::check(&app.repository, &Exceptions::NONE),
+        run: |app| crate::dependencies::check(&app.repository, &Exceptions::NONE, &app.engine()?),
     },
     Stage {
         name: "faces",

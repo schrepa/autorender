@@ -1,16 +1,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine_render::bindings::{
-    Format, GroupRef, Kind, ResolvedLayout, Sample, Sampling, SharedGroups, StageCounts, Stages,
-    TABLES, View,
+    Format, GroupRef, Kind, ResolvedLayout, Sample, Sampling, StageCounts, Stages, View,
 };
 use engine_render::linker::declared_bindings;
 use engine_render::pipeline_layouts::{
-    LAYOUT_BUDGET, PIPELINE_LAYOUTS, REQUIRED_LIMITS, StageLimits, UNIFORM_BINDING_BYTES,
+    LAYOUT_BUDGET, REQUIRED_LIMITS, StageLimits, UNIFORM_BINDING_BYTES,
 };
-use engine_render::shaders::MODULES;
+use serde_json::{Map, Value, json};
 
-use super::{Checked, plain, stage_of};
+use super::{Checked, Installed, plain, stage_of};
 
 pub(super) struct Resolved {
     name: &'static str,
@@ -18,11 +17,11 @@ pub(super) struct Resolved {
     layout: ResolvedLayout,
 }
 
-pub(super) fn resolve(shared: &SharedGroups) -> (Vec<Resolved>, Vec<String>) {
+pub(super) fn resolve(installed: &Installed) -> (Vec<Resolved>, Vec<String>) {
     let mut resolved = Vec::new();
     let mut errors = Vec::new();
-    for &(name, layout) in PIPELINE_LAYOUTS {
-        match ResolvedLayout::resolve(layout.label, layout.groups, shared) {
+    for &(name, layout) in &installed.layouts {
+        match ResolvedLayout::resolve(layout.label, layout.groups, &installed.shared) {
             Ok(found) => resolved.push(Resolved {
                 name,
                 limits: layout.limits,
@@ -214,13 +213,14 @@ fn judge<'r>(
     (resolved, wrong, sized)
 }
 
-fn declared_everywhere(shared: &SharedGroups) -> Vec<String> {
-    let declared: BTreeSet<&str> = MODULES
+fn declared_everywhere(installed: &Installed) -> Vec<String> {
+    let declared: BTreeSet<&str> = installed
+        .sources
         .iter()
         .flat_map(|module| declared_bindings(module.source))
         .collect();
     let mut errors = Vec::new();
-    for &(table_name, table) in TABLES {
+    for &(table_name, table) in &installed.tables {
         for binding in table.bindings {
             if !declared.contains(binding.name) {
                 errors.push(format!(
@@ -230,7 +230,7 @@ fn declared_everywhere(shared: &SharedGroups) -> Vec<String> {
             }
         }
     }
-    for (group, bindings) in shared.groups() {
+    for (group, bindings) in installed.shared.groups() {
         for binding in bindings {
             if !declared.contains(binding.decl.name) {
                 errors.push(format!(
@@ -246,9 +246,9 @@ fn declared_everywhere(shared: &SharedGroups) -> Vec<String> {
 pub(super) fn check(
     modules: &[Checked],
     resolved: &[Resolved],
-    shared: &SharedGroups,
+    installed: &Installed,
 ) -> Result<usize, String> {
-    let mut errors = declared_everywhere(shared);
+    let mut errors = declared_everywhere(installed);
     let mut fits: BTreeMap<(&str, &str), Vec<Fit>> = BTreeMap::new();
     let mut entry_points = 0;
     for checked in modules {
@@ -352,14 +352,14 @@ fn same(a: &GroupRef, b: &GroupRef) -> bool {
     }
 }
 
-fn views(shared: &SharedGroups) -> Vec<String> {
+fn views(installed: &Installed) -> Vec<String> {
     let mut errors = Vec::new();
-    for &(name, layout) in PIPELINE_LAYOUTS {
+    for &(name, layout) in &installed.layouts {
         for group in layout.groups {
             let GroupRef::Shared { group, without } = *group else {
                 continue;
             };
-            let Some(bindings) = shared.group(group) else {
+            let Some(bindings) = installed.shared.group(group) else {
                 errors.push(format!(
                     "{name}: no part contributes the shared group {group}"
                 ));
@@ -377,10 +377,11 @@ fn views(shared: &SharedGroups) -> Vec<String> {
     errors
 }
 
-fn tables() -> Vec<String> {
+fn tables(installed: &Installed) -> Vec<String> {
     let mut errors = Vec::new();
-    for (index, &(name, table)) in TABLES.iter().enumerate() {
-        if let Some((earlier, _)) = TABLES[..index]
+    let layouts = &installed.layouts;
+    for (index, &(name, table)) in installed.tables.iter().enumerate() {
+        if let Some((earlier, _)) = installed.tables[..index]
             .iter()
             .find(|(_, other)| other.label == table.label)
         {
@@ -389,7 +390,7 @@ fn tables() -> Vec<String> {
                 table.label
             ));
         }
-        let placed = PIPELINE_LAYOUTS.iter().any(|(_, layout)| {
+        let placed = layouts.iter().any(|(_, layout)| {
             layout
                 .groups
                 .iter()
@@ -397,12 +398,13 @@ fn tables() -> Vec<String> {
         });
         if !placed {
             errors.push(format!(
-                "{name} is in no pipeline layout (engine_render::pipeline_layouts)"
+                "{name} is in no pipeline layout (a pipeline_layouts! row an installed brick \
+                 registers)"
             ));
         }
     }
-    for (index, &(name, layout)) in PIPELINE_LAYOUTS.iter().enumerate() {
-        if let Some((earlier, _)) = PIPELINE_LAYOUTS[..index].iter().find(|(_, other)| {
+    for (index, &(name, layout)) in layouts.iter().enumerate() {
+        if let Some((earlier, _)) = layouts[..index].iter().find(|(_, other)| {
             other.groups.len() == layout.groups.len()
                 && other
                     .groups
@@ -453,11 +455,11 @@ const RESOURCES: [Resource; 5] = [
 pub(super) fn check_layouts(
     resolved: &[Resolved],
     unresolved: Vec<String>,
-    shared: &SharedGroups,
+    installed: &Installed,
 ) -> Result<usize, String> {
     let mut errors = unresolved;
-    errors.extend(views(shared));
-    errors.extend(tables());
+    errors.extend(views(installed));
+    errors.extend(tables(installed));
     for layout in resolved {
         if let Err(error) = layout.layout.check(&layout.limits) {
             errors.push(format!(
@@ -480,15 +482,39 @@ pub(super) fn check_layouts(
             }
         }
     }
-    if PIPELINE_LAYOUTS.len() != LAYOUT_BUDGET {
+    if installed.layouts.len() != LAYOUT_BUDGET {
         errors.push(format!(
             "{} pipeline layouts, against a budget of {LAYOUT_BUDGET}: each distinct layout costs Firefox's D3D12 backend about 150 ms of startup, so the budget follows the layouts only deliberately (engine_render::pipeline_layouts::LAYOUT_BUDGET)",
-            PIPELINE_LAYOUTS.len()
+            installed.layouts.len()
         ));
     }
     if errors.is_empty() {
-        Ok(PIPELINE_LAYOUTS.len())
+        Ok(installed.layouts.len())
     } else {
         Err(errors.join("\n"))
     }
+}
+
+pub(super) fn sums(resolved: &[Resolved]) -> Value {
+    let mut sums = Map::new();
+    for layout in resolved {
+        let mut stages = Map::new();
+        for (stage, mask) in [
+            ("vertex", Stages::VERTEX),
+            ("fragment", Stages::FRAGMENT),
+            ("compute", Stages::COMPUTE),
+        ] {
+            let counts = layout.layout.counts(mask);
+            let counted: Map<String, Value> = RESOURCES
+                .iter()
+                .map(|&(what, count, _)| (what.to_owned(), json!(count(&counts))))
+                .filter(|(_, value)| value != &json!(0))
+                .collect();
+            if !counted.is_empty() {
+                stages.insert(stage.to_owned(), Value::Object(counted));
+            }
+        }
+        sums.insert(layout.name.to_owned(), Value::Object(stages));
+    }
+    Value::Object(sums)
 }

@@ -16,6 +16,13 @@ const BRICK_TEMPLATE: &str = "crates/engine_core/examples/brick_template.rs";
 
 const TEMPLATE_GAME: &str = "#[path = \"../../engine/examples/app_template.rs\"]\nmod app;";
 
+const TEMPLATE_IMPORTS: &str = "use engine_settings::{InvalidSetting, settings};\n";
+
+const GPU_IMPORTS: &str = "use engine_render::linker::ShaderModule;
+use engine_render::parts::{Create, GpuPart, PartDecl, PartEntry};
+use engine_render::render_bricks::AddRenderParts;
+";
+
 pub fn new(root: &Path, options: &[String]) -> Result<(), String> {
     match options.split_first() {
         Some((kind, rest)) if kind == "app" => app(root, rest),
@@ -61,7 +68,9 @@ fn write_files(root: &Path, files: &[(std::path::PathBuf, String)]) -> Result<()
 }
 
 fn template(root: &Path, path: &str) -> Result<String, String> {
-    fs::read_to_string(root.join(path)).map_err(|error| format!("cannot read {path}: {error}"))
+    fs::read_to_string(root.join(path))
+        .map(|text| text.replace("\r\n", "\n"))
+        .map_err(|error| format!("cannot read {path}: {error}"))
 }
 
 fn app(root: &Path, options: &[String]) -> Result<(), String> {
@@ -293,11 +302,8 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
                     claim.path
                 ),
             );
-            if claim.package != "engine_core" {
-                dependencies = format!("{}.workspace = true\n", claim.package);
-            }
-            if let Some(replaced) = &claim.replaces {
-                metadata = format!("\n[package.metadata.engine]\nreplaces = \"{replaced}\"\n");
+            if claim.gpu {
+                source = gpu_source(&source, &pascal, name, &stats);
             }
         }
         Some(claim) => {
@@ -305,17 +311,22 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
                 &stats,
                 &format!("{stats}\n            .{}::<{}>()", claim.kind, claim.path),
             );
-            if claim.package != "engine_core" {
-                dependencies = format!("{}.workspace = true\n", claim.package);
-            }
-            if let Some(replaced) = &claim.replaces {
-                metadata = format!("\n[package.metadata.engine]\nreplaces = \"{replaced}\"\n");
-            }
         }
         None => println!(
             "{}",
             json!({"event": "part_undeclared", "part": part, "brick": name})
         ),
+    }
+    if let Some(claim) = &claim {
+        if claim.package != "engine_core" {
+            dependencies = format!("{}.workspace = true\n", claim.package);
+        }
+        if claim.gpu {
+            dependencies.push_str("engine_render.workspace = true\n");
+        }
+        if let Some(replaced) = &claim.replaces {
+            metadata = format!("\n[package.metadata.engine]\nreplaces = \"{replaced}\"\n");
+        }
     }
     let manifest = format!(
         r#"[package]
@@ -380,6 +391,49 @@ struct Claim {
     path: String,
     package: String,
     replaces: Option<String>,
+    gpu: bool,
+}
+
+fn gpu_source(source: &str, pascal: &str, name: &str, stats: &str) -> String {
+    let part = format!(
+        r#"
+pub const MODULES: &[ShaderModule] = &[];
+
+struct {pascal}Part;
+
+impl GpuPart for {pascal}Part {{}}
+
+fn create(_: &Create<'_>) -> Box<dyn GpuPart> {{
+    Box::new({pascal}Part)
+}}
+
+pub static PART: PartEntry = PartEntry {{
+    decl: PartDecl {{
+        name: "{name}",
+        brick: "{name}",
+        passes: &[],
+        resources: &[],
+        hooks: &[],
+        contributes: &[],
+        effects: &[],
+        labels: &[],
+        lazy: false,
+        faces: &[],
+        needs: &[],
+        piece: None,
+    }},
+    create,
+}};
+"#
+    );
+    let registered = format!(
+        "{stats}\n            .render_part(&PART)\n            .shaders(MODULES)\n            \
+         .face_defaults(engine_faces::defaults::MODULES)"
+    );
+    source
+        .replace(TEMPLATE_IMPORTS, &format!("{GPU_IMPORTS}{TEMPLATE_IMPORTS}"))
+        .replace(stats, &registered)
+        + &part
 }
 
 fn part_claim(
@@ -420,7 +474,7 @@ fn part_claim(
                 } else {
                     format!("{module}::{name}")
                 };
-                let replaces = if kind == "slot" {
+                let filler = if kind == "slot" {
                     let engine = crate::bricks::standard_engine();
                     engine
                         .app
@@ -431,7 +485,11 @@ fn part_claim(
                                 .bricks()
                                 .iter()
                                 .find(|brick| brick.slot == Some(part))
-                                .map(|brick| brick.crate_name.to_owned())
+                                .map(|brick| {
+                                    let render = brick
+                                        .extension::<engine_render::render_bricks::RenderBrick>();
+                                    (brick.crate_name.to_owned(), render.is_some())
+                                })
                         })
                 } else {
                     None
@@ -440,7 +498,8 @@ fn part_claim(
                     kind,
                     path: format!("{}::{inner}", package.crate_name()),
                     package: package.name.clone(),
-                    replaces,
+                    gpu: filler.as_ref().is_some_and(|&(_, gpu)| gpu),
+                    replaces: filler.map(|(replaced, _)| replaced),
                 }));
             }
         }

@@ -14,16 +14,16 @@ const ALLOWED: &[(&str, &str)] = &[
         "the camera's uniform (transforms)",
     ),
     (
-        "crates/engine_render/src/sky.rs",
+        "crates/engine_render/src/temporal.rs",
+        "temporally antialiased frames' camera uniform (transforms)",
+    ),
+    (
+        "crates/engine_sky/src/sky.rs",
         "haze, the clouds and the sky",
     ),
     (
-        "crates/engine_render/src/terrain/part.rs",
+        "crates/engine_terrain_shading/src/terrain/part.rs",
         "terrain's eye-relative frame and culling, and water's view",
-    ),
-    (
-        "crates/engine_render/src/temporal.rs",
-        "temporally antialiased frames' camera uniform (transforms)",
     ),
 ];
 

@@ -7,6 +7,10 @@ use engine::bevy_ecs::schedule::graph::Direction;
 use engine::bevy_ecs::schedule::{NodeId, Schedules, SystemSet};
 use engine::bevy_ecs::system::System;
 use engine::bricks::{BrickRecord, BrickRegistry, BrickSet};
+use engine_render::faces::face_of;
+use engine_render::linker::face_imports;
+use engine_render::pieces::{PieceDecl, place};
+use engine_render::render_bricks::{RenderBrick, render_bricks};
 use serde_json::{Value, json};
 
 use crate::workspace::joined;
@@ -20,6 +24,7 @@ pub struct Recorded {
     pub reads: Vec<String>,
     pub paths: Vec<String>,
     pub smokes: Vec<(String, bool)>,
+    pub parts: Vec<String>,
 }
 
 pub fn recorded(repository: &Repository) -> Result<Vec<Recorded>, String> {
@@ -58,6 +63,7 @@ pub fn recorded(repository: &Repository) -> Result<Vec<Recorded>, String> {
                     Some((name, smoke["gpu"] == true))
                 })
                 .collect(),
+            parts: strings(&brick["parts"]),
         })
         .collect())
 }
@@ -176,6 +182,138 @@ fn paths(brick: &BrickRecord, package: &Package) -> Vec<String> {
     }
 }
 
+struct Rendered {
+    faces: Vec<&'static str>,
+    needs: Vec<Value>,
+    defaults: Vec<&'static str>,
+    pieces: Vec<Value>,
+    parts: Vec<&'static str>,
+}
+
+impl Rendered {
+    fn of(render: Option<&RenderBrick>) -> Self {
+        let mut faces: Vec<&'static str> = Vec::new();
+        for face in render.into_iter().flat_map(RenderBrick::faces) {
+            if !faces.contains(&face) {
+                faces.push(face);
+            }
+        }
+        let parts = render.map_or(&[][..], |render| render.parts.as_slice());
+        Self {
+            needs: needs(render, &faces),
+            defaults: render
+                .into_iter()
+                .flat_map(RenderBrick::defaults)
+                .filter_map(|module| face_of(module.path))
+                .collect(),
+            pieces: parts
+                .iter()
+                .filter_map(|part| part.decl.piece)
+                .map(|piece| json!({ "name": piece.name, "size": piece.size }))
+                .collect(),
+            parts: parts.iter().map(|part| part.decl.name).collect(),
+            faces,
+        }
+    }
+}
+
+fn needs(render: Option<&RenderBrick>, offered: &[&str]) -> Vec<Value> {
+    let Some(render) = render else {
+        return Vec::new();
+    };
+    let mut needs: Vec<(String, bool)> = Vec::new();
+    for module in render.modules() {
+        for face in face_imports(module.source) {
+            if offered.contains(&face.as_str()) || needs.iter().any(|(known, _)| *known == face) {
+                continue;
+            }
+            let default = render
+                .defaults()
+                .any(|default| face_of(default.path) == Some(face.as_str()));
+            needs.push((face, default));
+        }
+    }
+    for part in &render.parts {
+        for &name in part.decl.needs {
+            if !needs.iter().any(|(known, _)| known == name) {
+                needs.push((name.to_owned(), false));
+            }
+        }
+    }
+    needs
+        .into_iter()
+        .map(|(face, default)| json!({ "face": face, "default": default }))
+        .collect()
+}
+
+fn slots(registry: &BrickRegistry) -> Vec<Value> {
+    let mut names: Vec<&'static str> = Vec::new();
+    for slot in registry.bricks().iter().filter_map(|brick| brick.slot) {
+        if !names.contains(&slot) {
+            names.push(slot);
+        }
+    }
+    names
+        .into_iter()
+        .map(|slot| {
+            json!({
+                "name": slot,
+                "filler": registry.filler(slot).map(|brick| brick.name),
+                "fillers": registry.fillers(slot),
+            })
+        })
+        .collect()
+}
+
+fn lists(registry: &BrickRegistry) -> Vec<Value> {
+    let mut names: Vec<&'static str> = Vec::new();
+    for &list in registry.bricks().iter().flat_map(|brick| &brick.lists) {
+        if !names.contains(&list) {
+            names.push(list);
+        }
+    }
+    names
+        .into_iter()
+        .map(|list| {
+            let members: Vec<&str> = registry
+                .bricks()
+                .iter()
+                .filter(|brick| brick.lists.contains(&list))
+                .map(|brick| brick.name)
+                .collect();
+            json!({ "name": list, "members": members })
+        })
+        .collect()
+}
+
+pub fn pieces(registry: &BrickRegistry) -> Vec<(&'static str, PieceDecl)> {
+    render_bricks(registry)
+        .flat_map(|(_, render)| render.parts.iter())
+        .filter_map(|part| Some((part.decl.brick, part.decl.piece?)))
+        .collect()
+}
+
+fn frame(registry: &BrickRegistry) -> Result<Value, String> {
+    let pieces = pieces(registry);
+    let (placed, size) = place(&pieces).map_err(|error| error.to_string())?;
+    let listed: Vec<Value> = pieces
+        .iter()
+        .zip(&placed)
+        .map(|((brick, piece), at)| {
+            json!({ "name": piece.name, "brick": brick, "offset": at.offset, "size": at.size })
+        })
+        .collect();
+    Ok(json!({ "pieces": listed, "size": size }))
+}
+
+pub fn installed_passes(registry: &BrickRegistry) -> Vec<&'static str> {
+    engine_render::parts::installed_parts(registry)
+        .iter()
+        .flat_map(|part| part.decl.passes)
+        .map(|pass| pass.name)
+        .collect()
+}
+
 fn record(
     brick: &BrickRecord,
     registry: &BrickRegistry,
@@ -199,6 +337,7 @@ fn record(
         .map(|owner| owner.name)
         .filter(|&owner| owner != brick.name)
         .collect();
+    let rendered = Rendered::of(brick.extension::<RenderBrick>());
     Ok(json!({
         "name": brick.name,
         "type": brick.type_path,
@@ -226,6 +365,11 @@ fn record(
             }))
             .collect::<Vec<_>>(),
         "inspectors": brick.inspectors.iter().map(|inspector| inspector.name).collect::<Vec<_>>(),
+        "faces": rendered.faces,
+        "needs": rendered.needs,
+        "defaults": rendered.defaults,
+        "pieces": rendered.pieces,
+        "parts": rendered.parts,
         "passes": brick.passes,
         "smokes": brick
             .smokes
@@ -254,14 +398,19 @@ pub fn bricks_json(repository: &Repository, engine: &mut Engine) -> Result<Strin
             + "\n");
     };
     registry
-        .check_passes(&engine_render::standard_passes())
+        .check_passes(&installed_passes(registry))
         .map_err(|error| error.to_string())?;
     let bricks = registry
         .bricks()
         .iter()
         .map(|brick| record(brick, registry, repository, accessed.get(brick.name)))
         .collect::<Result<Vec<_>, _>>()?;
-    let text = serde_json::to_string_pretty(&json!({ "bricks": bricks }))
-        .map_err(|error| format!("cannot write {FILE}: {error}"))?;
+    let text = serde_json::to_string_pretty(&json!({
+        "bricks": bricks,
+        "slots": slots(registry),
+        "lists": lists(registry),
+        "frame": frame(registry)?,
+    }))
+    .map_err(|error| format!("cannot write {FILE}: {error}"))?;
     Ok(text + "\n")
 }
