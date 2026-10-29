@@ -1,4 +1,4 @@
-import package::frame::view::lighting;
+import package::generated::pieces::pieces;
 import package::sky::air::{CloudDomes, behind_clouds, cloud_dome_direction, cloud_dome_uv, haze};
 import package::sky::common::{SkyUniform, air_sky};
 
@@ -14,7 +14,7 @@ const EYE_LAYER: u32 = 0u;
 const MIRROR_LAYER: u32 = 1u;
 
 fn physical_sky() -> bool {
-    return lighting.grade.z > 0.5;
+    return pieces.sky.state.x > 0.5;
 }
 
 fn sky_air_light(direction: vec3<f32>) -> vec3<f32> {
@@ -54,9 +54,4 @@ fn clouded(light: vec3<f32>, start: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
 
 fn sky_along(start: vec3<f32>, direction: vec3<f32>) -> vec3<f32> {
     return clouded(sky_air_light(direction), start, direction);
-}
-
-fn mirrored_along(start: vec3<f32>, direction: vec3<f32>) -> vec3<f32> {
-    return behind_clouds(sky_air_light(direction), sky_cloud(MIRROR_LAYER, start, direction),
-        direction);
 }

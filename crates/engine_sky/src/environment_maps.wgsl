@@ -1,5 +1,5 @@
+import package::face::lighting::distribution;
 import package::frame::view::PI;
-import package::lighting::brdf::distribution;
 import package::sky::light::{sky_along, sky_domes};
 
 @group(0) @binding(20) var level_source: texture_cube<f32>;

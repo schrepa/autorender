@@ -1,6 +1,10 @@
 import package::engine::color::{dither_hash, luminance};
-import package::frame::encode::{dithering, encoded, glow_weight, grade, stored};
-import package::frame::view::{camera, lighting, stable_normalize};
+import package::face::bloom::glow_weight;
+import package::face::dither::{dithering, encoded, stored};
+import package::face::sun::{sun_color, sun_direction};
+import package::face::tonemap::{exposure, tonemap};
+import package::frame::view::{camera, stable_normalize};
+import package::generated::pieces::pieces;
 import package::meshes::declarations::{SceneTargets, TemporalTargets};
 import package::sky::air::sun_disc;
 import package::sky::common::{air_disc, air_radius, air_transmittance, sunlight_over};
@@ -194,7 +198,7 @@ fn star_field(star: vec3<f32>, cells: f32, share: f32, fall: f32, light: f32, sa
 }
 
 fn star_light(star: vec3<f32>, spread: f32) -> vec3<f32> {
-    let share = STAR_SHARE * lighting.night_shape.w * (0.6 + 0.8 * exp(-6.0 * star.z * star.z));
+    let share = STAR_SHARE * pieces.sky.night_shape.w * (0.6 + 0.8 * exp(-6.0 * star.z * star.z));
     return star_field(star, STAR_CELLS, share, 8.0, STAR_LIGHT, 0u, spread);
 }
 
@@ -237,11 +241,11 @@ fn moon_albedo(place: vec3<f32>, local: vec2<f32>) -> f32 {
 }
 
 fn moon_disc(ray: vec3<f32>, moon: vec3<f32>, sun: vec3<f32>) -> vec4<f32> {
-    let radius = MOON_RADIUS * lighting.moon.w;
+    let radius = MOON_RADIUS * pieces.sky.moon.w;
     if dot(ray, moon) < cos(radius * 1.1) {
         return vec4<f32>(0.0);
     }
-    let back = vec4<f32>(-lighting.star_turn.xyz, lighting.star_turn.w);
+    let back = vec4<f32>(-pieces.sky.star_turn.xyz, pieces.sky.star_turn.w);
     let pole = turned(back, CELESTIAL_POLE);
     var up = pole - moon * dot(pole, moon);
     if dot(up, up) < 1.0e-8 {
@@ -259,7 +263,7 @@ fn moon_disc(ray: vec3<f32>, moon: vec3<f32>, sun: vec3<f32>) -> vec4<f32> {
     let normal = local.x * right + local.y * up - facing * moon;
     let lit = saturate(dot(normal, sun) * 2.0);
     let albedo = moon_albedo(vec3<f32>(local.x, local.y, facing), local);
-    let shown = min(MOON_LIGHT, MOON_SHOWN / max(lighting.horizon.w, 1.0e-3));
+    let shown = min(MOON_LIGHT, MOON_SHOWN / max(exposure(), 1.0e-3));
     let light = vec3<f32>(1.0, 0.96, 0.9) * (albedo * (lit + 0.02) * shown);
     return vec4<f32>(light, cover);
 }
@@ -292,9 +296,9 @@ fn cirrus_cover(ray: vec3<f32>, coverage: f32, seconds: f32) -> f32 {
     if ray.y <= 0.02 {
         return 0.0;
     }
-    let along = lighting.night_shape.x / ray.y;
+    let along = pieces.sky.night_shape.x / ray.y;
     let fade = 1.0 - smoothstep(0.35 * CIRRUS_REACH, CIRRUS_REACH, along);
-    var p = (ray.xz * along + lighting.night_shape.yz * seconds)
+    var p = (ray.xz * along + pieces.sky.night_shape.yz * seconds)
         * vec2<f32>(1.0 / 7000.0, 1.0 / 1700.0);
     var sum = 0.0;
     var weight = 0.5;
@@ -308,39 +312,39 @@ fn cirrus_cover(ray: vec3<f32>, coverage: f32, seconds: f32) -> f32 {
 }
 
 fn cirrus_light(ray: vec3<f32>) -> vec3<f32> {
-    let sun = lighting.sun.xyz;
-    var sunlight = lighting.sun_color.rgb;
+    let sun = sun_direction();
+    var sunlight = sun_color();
     if physical_sky() {
-        let height = lighting.night_shape.x;
+        let height = pieces.sky.night_shape.x;
         let along = height / max(ray.y, 0.02);
         sunlight = sunlight_over(sky_transmittance_table, sky_table_sampler, sky_air,
             ray.xz * (along * 0.001), sky_air.radii.w + height * 0.001, sun);
     }
     let toward = max(dot(ray, sun), 0.0);
     let forward = 0.25 + 1.4 * pow(toward, 6.0);
-    let moonlight = vec3<f32>(0.8, 0.85, 1.0) * (0.02 * MOON_LIGHT * lighting.night.y
-        * lighting.night.w * saturate(lighting.moon.y * 4.0));
-    return sunlight * (0.3 * forward) + moonlight + 0.5 * (lighting.zenith.rgb + lighting.horizon.rgb);
+    let moonlight = vec3<f32>(0.8, 0.85, 1.0) * (0.02 * MOON_LIGHT * pieces.sky.night.y
+        * pieces.sky.night.w * saturate(pieces.sky.moon.y * 4.0));
+    return sunlight * (0.3 * forward) + moonlight + 0.5 * (pieces.sky.zenith.rgb + pieces.sky.horizon.rgb);
 }
 
 fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
-    let night = lighting.night;
+    let night = pieces.sky.night;
     if all(night.xyz == vec3<f32>(0.0)) {
         return light;
     }
     var dark = 1.0 - smoothstep(0.4 * STAR_SKY, STAR_SKY, luminance(light));
     if physical_sky() {
-        dark *= 1.0 - smoothstep(-0.1, 0.0, lighting.sun.y);
+        dark *= 1.0 - smoothstep(-0.1, 0.0, sun_direction().y);
     }
     var beyond = vec3<f32>(0.0);
     if night.x > 0.0 && dark > 0.0 {
-        let galactic = turned(lighting.star_turn, ray);
+        let galactic = turned(pieces.sky.star_turn, ray);
         let spread = max(0.8 * camera.options.y, 1.0e-5);
         beyond = star_light(galactic, spread) * (night.x * dark);
-        var deep = dark * (1.0 - 0.85 * night.w * saturate(lighting.moon.y * 4.0)
+        var deep = dark * (1.0 - 0.85 * night.w * saturate(pieces.sky.moon.y * 4.0)
             * min(night.y, 1.0));
         if physical_sky() {
-            deep *= 1.0 - smoothstep(-0.26, -0.14, lighting.sun.y);
+            deep *= 1.0 - smoothstep(-0.26, -0.14, sun_direction().y);
         }
         if deep > 0.0 {
             let band = milky_way(galactic);
@@ -354,9 +358,9 @@ fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
     }
     var glow = vec3<f32>(0.0);
     if night.y > 0.0 {
-        let disc = moon_disc(ray, lighting.moon.xyz, lighting.sun.xyz);
+        let disc = moon_disc(ray, pieces.sky.moon.xyz, sun_direction());
         beyond = mix(beyond, disc.rgb * night.y, disc.a);
-        glow = moon_glow(ray, lighting.moon.xyz, night.w) * (night.y * dark);
+        glow = moon_glow(ray, pieces.sky.moon.xyz, night.w) * (night.y * dark);
     }
     var sky = light;
     if any(beyond + glow > vec3<f32>(0.0)) {
@@ -378,7 +382,7 @@ fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(grade(clouded_sky(sky_ray(input.ndc))), input.clip_position.xy),
+    return vec4<f32>(encoded(tonemap(clouded_sky(sky_ray(input.ndc))), input.clip_position.xy),
         1.0);
 }
 
@@ -397,7 +401,7 @@ fn view_cloud_layer(position: vec2<f32>) -> vec4<f32> {
     if covering <= 1.0e-4 {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
-    return vec4<f32>(grade(cloud.rgb / covering) * covering, cloud.a);
+    return vec4<f32>(tonemap(cloud.rgb / covering) * covering, cloud.a);
 }
 
 @fragment
@@ -427,7 +431,7 @@ fn fs_view_clouds_post(input: SkyOutput) -> @location(0) vec4<f32> {
 fn fs_sky_post(input: SkyOutput) -> SceneTargets {
     let light = clouded_sky(sky_ray(input.ndc));
     var targets: SceneTargets;
-    targets.color = vec4<f32>(stored(grade(light), input.clip_position.xy), 0.0);
+    targets.color = vec4<f32>(stored(tonemap(light), input.clip_position.xy), 0.0);
     targets.glow = vec2<f32>(glow_weight(light), 0.0);
     targets.surface = SKY_SURFACE;
     return targets;
@@ -438,7 +442,7 @@ fn fs_sky_temporal(input: SkyOutput) -> TemporalTargets {
     let ray = sky_ray(input.ndc);
     let light = clouded_sky(ray);
     var targets: TemporalTargets;
-    targets.color = vec4<f32>(stored(grade(light), input.clip_position.xy), 0.0);
+    targets.color = vec4<f32>(stored(tonemap(light), input.clip_position.xy), 0.0);
     targets.glow = vec2<f32>(glow_weight(light), 0.0);
     targets.surface = SKY_SURFACE;
     let previous = camera.previous_view_projection * vec4<f32>(ray, 0.0);

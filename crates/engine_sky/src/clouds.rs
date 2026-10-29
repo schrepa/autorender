@@ -1,20 +1,24 @@
-use crate::shaders::entry::{clouds, meshes};
+use crate::shaders::entry::{clouds, draw};
 use engine_core::collections::HashMap;
 
 use engine_core::Clouds;
 use engine_core::StaticTable;
 use engine_core::math::min;
 use engine_core::table_data::clouds::CloudNoise;
+use engine_render::cached::{Bound, Cached, GroupCache, Versioned};
+use engine_render::gpu_calls::Queue;
+use engine_render::profiling::GpuProfiler;
+use engine_render::targets::FrameRegion;
+use engine_render::{buffers, memory, pipelines};
 
 use crate::bindings::{CLOUD_COMPOSITE, CLOUD_MARCH, CLOUD_VIEW};
-use crate::cached::{Bound, Cached, GroupCache, Versioned};
-use crate::gpu_data::LightingUniform;
-use crate::gpu_layouts::constants::CLOUD_GROUP;
+use crate::gpu_layouts::CLOUD_GROUP;
+use crate::sky::CloudLight;
 
 const DOME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DOME_LAYERS: u32 = MIRROR_LAYER + 1;
 const ENVIRONMENT_EVERY: u64 = 16;
-use crate::gpu_layouts::clouds::{
+use crate::gpu_layouts::{
     CLOUD_LIGHT_BYTES, CLOUD_SHADOW_BYTES, LIGHT_TEXELS, MIRROR_LAYER, SHADOW_CELLS,
 };
 const SHADOW_EXTENT: f32 = 8192.0;
@@ -23,15 +27,15 @@ const LIGHT_EXTENT: f32 = 24_000.0;
 const LIGHT_RECENTER: f32 = 2_000.0;
 const LIGHT_ROWS: u32 = 48;
 
-use crate::gpu_layouts::clouds::CloudUniform;
+use crate::gpu_layouts::CloudUniform;
 
 pub(crate) const CLOUD_UNIFORM_BYTES: usize = size_of::<CloudUniform>();
 
-use crate::gpu_layouts::clouds::DomeUniform;
+use crate::gpu_layouts::DomeUniform;
 
 pub(crate) const DOME_UNIFORM_BYTES: usize = size_of::<DomeUniform>();
 
-use crate::gpu_layouts::clouds::ViewUniform;
+use crate::gpu_layouts::ViewUniform;
 
 pub(crate) const CLOUD_VIEW_BYTES: usize = size_of::<ViewUniform>();
 
@@ -120,13 +124,9 @@ fn levels_below(side: u32, texels: &[u8]) -> Vec<Vec<u8>> {
 }
 
 impl NoiseVolumes {
-    fn new(
-        device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
-        noise: &StaticTable<CloudNoise>,
-    ) -> Self {
+    fn new(device: &wgpu::Device, queue: &Queue, noise: &StaticTable<CloudNoise>) -> Self {
         let volume = |label, side: u32, levels: &[&[u8]]| {
-            let texture = crate::memory::texture(
+            let texture = memory::texture(
                 device,
                 &wgpu::TextureDescriptor {
                     label: Some(label),
@@ -194,7 +194,7 @@ impl NoiseVolumes {
 }
 
 pub(crate) struct CloudPass {
-    march_layout: crate::pipelines::GroupLayout,
+    march_layout: pipelines::GroupLayout,
     pipelines: Option<[wgpu::ComputePipeline; 3]>,
     light: LightMap,
     noise: Option<NoiseVolumes>,
@@ -223,8 +223,8 @@ pub(crate) struct CloudPass {
     frame: u64,
     active: bool,
     pub(crate) rows: u32,
-    view_layout: crate::pipelines::GroupLayout,
-    composite_layout: crate::pipelines::GroupLayout,
+    view_layout: pipelines::GroupLayout,
+    composite_layout: pipelines::GroupLayout,
     view_clouds: wgpu::Buffer,
     view_uniform: wgpu::Buffer,
     composite_args: wgpu::Buffer,
@@ -247,12 +247,8 @@ type CloudInputs<'a> = (
 );
 
 impl CloudPass {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
-    pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
-        let clear = crate::memory::texture(
+    pub(crate) fn new(device: &wgpu::Device, queue: &Queue) -> Self {
+        let clear = memory::texture(
             device,
             &wgpu::TextureDescriptor {
                 label: Some("engine/cloud-clear"),
@@ -307,7 +303,7 @@ impl CloudPass {
             ..Default::default()
         });
         Self {
-            march_layout: crate::pipelines::layout(device, &CLOUD_MARCH),
+            march_layout: pipelines::layout(device, &CLOUD_MARCH),
             pipelines: None,
             light: LightMap::default(),
             noise: None,
@@ -319,17 +315,9 @@ impl CloudPass {
             clear: (clear, clear_view),
             sampler,
             noise_sampler,
-            uniform: crate::buffers::uniform(
-                device,
-                "engine/cloud-uniform",
-                CLOUD_UNIFORM_BYTES as u64,
-            ),
-            dome_uniform: crate::buffers::uniform(
-                device,
-                "engine/cloud-domes",
-                DOME_UNIFORM_BYTES as u64,
-            ),
-            shadow_cells: crate::buffers::storage(
+            uniform: buffers::uniform(device, "engine/cloud-uniform", CLOUD_UNIFORM_BYTES as u64),
+            dome_uniform: buffers::uniform(device, "engine/cloud-domes", DOME_UNIFORM_BYTES as u64),
+            shadow_cells: buffers::storage(
                 device,
                 "engine/cloud-shadow-cells",
                 CLOUD_SHADOW_BYTES as u64,
@@ -349,19 +337,15 @@ impl CloudPass {
             frame: 0,
             active: false,
             rows: 0,
-            view_layout: crate::pipelines::layout(device, &CLOUD_VIEW),
-            composite_layout: crate::pipelines::layout(device, &CLOUD_COMPOSITE),
-            view_clouds: crate::buffers::uniform(
+            view_layout: pipelines::layout(device, &CLOUD_VIEW),
+            composite_layout: pipelines::layout(device, &CLOUD_COMPOSITE),
+            view_clouds: buffers::uniform(
                 device,
                 "engine/cloud-view-march",
                 CLOUD_UNIFORM_BYTES as u64,
             ),
-            view_uniform: crate::buffers::uniform(
-                device,
-                "engine/cloud-view",
-                CLOUD_VIEW_BYTES as u64,
-            ),
-            composite_args: crate::buffers::storage(
+            view_uniform: buffers::uniform(device, "engine/cloud-view", CLOUD_VIEW_BYTES as u64),
+            composite_args: buffers::storage(
                 device,
                 "engine/cloud-composite-draw",
                 16,
@@ -386,7 +370,7 @@ impl CloudPass {
         whole: bool,
     ) -> [u32; 4] {
         self.light.cells.get_or_insert_with(|| {
-            crate::buffers::storage(
+            buffers::storage(
                 device,
                 "engine/cloud-light",
                 CLOUD_LIGHT_BYTES as u64,
@@ -526,9 +510,9 @@ impl CloudPass {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &Queue,
         (settings, noise, (eye, surface), seconds): CloudInputs<'_>,
-        (lighting, air): (&LightingUniform, crate::sky::AirBindings<'_>),
+        (light, air): (CloudLight<'_>, crate::sky::AirBindings<'_>),
         whole: bool,
     ) {
         self.rows = 0;
@@ -602,7 +586,7 @@ impl CloudPass {
         };
         self.job = Some((target, first, count));
         self.rows = count;
-        let mut uniform = march_uniform(&settings, (origin.eye, at), lighting);
+        let mut uniform = march_uniform(&settings, (origin.eye, at), light);
         uniform.mirror = origin.mirror.extend(0.0).to_array();
         uniform.dome = [size[0], size[1], first, count];
         uniform.shadow = shadow_grid(eye).map_or([0.0; 4], |(first, cell)| {
@@ -632,22 +616,22 @@ impl CloudPass {
         };
         self.march_groups.get_or_insert_with(self.generation, || {
             std::array::from_fn(|index| {
-                crate::pipelines::group(
+                pipelines::group(
                     device,
                     "engine/cloud-march",
                     &CLOUD_MARCH,
                     layout,
                     &[
-                        crate::buffers::entry("clouds", uniform),
-                        ("noise_shape", crate::pipelines::view(&noise.shape)),
-                        ("noise_sampler", crate::pipelines::sampler(noise_sampler)),
-                        ("dome", crate::pipelines::view(&domes[index].1)),
-                        ("noise_detail", crate::pipelines::view(&noise.detail)),
-                        crate::buffers::entry("shadow_cells", cells),
-                        crate::buffers::entry("cloud_air", air.0),
-                        ("cloud_transmittance", crate::pipelines::view(air.2)),
-                        ("cloud_table_sampler", crate::pipelines::sampler(air.3)),
-                        crate::buffers::entry("light_cells", light),
+                        buffers::entry("clouds", uniform),
+                        ("noise_shape", pipelines::view(&noise.shape)),
+                        ("noise_sampler", pipelines::sampler(noise_sampler)),
+                        ("dome", pipelines::view(&domes[index].1)),
+                        ("noise_detail", pipelines::view(&noise.detail)),
+                        buffers::entry("shadow_cells", cells),
+                        buffers::entry("cloud_air", air.0),
+                        ("cloud_transmittance", pipelines::view(air.2)),
+                        ("cloud_table_sampler", pipelines::sampler(air.3)),
+                        buffers::entry("light_cells", light),
                     ],
                 )
             })
@@ -658,11 +642,11 @@ impl CloudPass {
     pub(crate) fn prepare_view(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &Queue,
         (settings, eye, seconds): (&Clouds, glam::Vec3, f64),
         view_projection: glam::Mat4,
-        region: crate::targets::FrameRegion,
-        (lighting, air): (&LightingUniform, crate::sky::AirBindings<'_>),
+        region: FrameRegion,
+        (light, air): (CloudLight<'_>, crate::sky::AirBindings<'_>),
         depth: &Versioned<wgpu::TextureView>,
     ) {
         let settings = settings.sanitized();
@@ -689,7 +673,7 @@ impl CloudPass {
                 size,
             }));
         }
-        let mut uniform = march_uniform(&settings, (eye, seconds), lighting);
+        let mut uniform = march_uniform(&settings, (eye, seconds), light);
         uniform.light = self.light_uniform();
         queue.write_buffer(&self.view_clouds, 0, bytemuck::bytes_of(&uniform));
         let view = ViewUniform {
@@ -731,18 +715,12 @@ impl CloudPass {
             (&CLOUD_VIEW, layout),
             [
                 ("clouds", Bound::fixed(self.view_clouds.as_entire_binding())),
-                (
-                    "noise_shape",
-                    Bound::fixed(crate::pipelines::view(&noise.shape)),
-                ),
+                ("noise_shape", Bound::fixed(pipelines::view(&noise.shape))),
                 (
                     "noise_sampler",
-                    Bound::fixed(crate::pipelines::sampler(&self.noise_sampler)),
+                    Bound::fixed(pipelines::sampler(&self.noise_sampler)),
                 ),
-                (
-                    "noise_detail",
-                    Bound::fixed(crate::pipelines::view(&noise.detail)),
-                ),
+                ("noise_detail", Bound::fixed(pipelines::view(&noise.detail))),
                 (
                     "cloud_view",
                     Bound::fixed(self.view_uniform.as_entire_binding()),
@@ -750,31 +728,24 @@ impl CloudPass {
                 ("view_depth", depth.bound()),
                 (
                     "view_out",
-                    Bound::of(targets, crate::pipelines::view(&targets.clouds.1)),
+                    Bound::of(targets, pipelines::view(&targets.clouds.1)),
                 ),
                 (
                     "composite_draw",
                     Bound::fixed(self.composite_args.as_entire_binding()),
                 ),
                 ("cloud_air", Bound::fixed(air.0.as_entire_binding())),
-                (
-                    "cloud_transmittance",
-                    Bound::fixed(crate::pipelines::view(air.2)),
-                ),
+                ("cloud_transmittance", Bound::fixed(pipelines::view(air.2))),
                 (
                     "cloud_table_sampler",
-                    Bound::fixed(crate::pipelines::sampler(air.3)),
+                    Bound::fixed(pipelines::sampler(air.3)),
                 ),
                 ("light_cells", Bound::fixed(light.as_entire_binding())),
             ],
         );
     }
 
-    pub(crate) fn encode_view(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        profiler: &crate::profiling::GpuProfiler,
-    ) {
+    pub(crate) fn encode_view(&self, encoder: &mut wgpu::CommandEncoder, profiler: &GpuProfiler) {
         let (Some(pixels), Some(pipeline), Some(group)) =
             (self.view_job, &self.view_pipeline, self.view_group.get())
         else {
@@ -806,7 +777,7 @@ impl CloudPass {
             return;
         };
         let layout = self.composite_pipeline_layout.get_or_insert_with(|| {
-            crate::pipelines::layout_of(device, &crate::pipeline_layouts::CLOUD_COMPOSITE_PIPELINES)
+            pipelines::layout_of(device, &crate::pipeline_layouts::CLOUD_COMPOSITE_PIPELINES)
         });
         self.composite_pipelines
             .entry((format, canvas))
@@ -817,7 +788,7 @@ impl CloudPass {
             (&CLOUD_COMPOSITE, &self.composite_layout),
             [(
                 "view_clouds",
-                Bound::of(targets, crate::pipelines::view(&targets.clouds.1)),
+                Bound::of(targets, pipelines::view(&targets.clouds.1)),
             )],
         );
     }
@@ -857,7 +828,7 @@ impl CloudPass {
         self.ready = true;
     }
 
-    fn write_domes(&self, queue: &crate::gpu_calls::Queue, eye: glam::Vec3, settings: &Clouds) {
+    fn write_domes(&self, queue: &Queue, eye: glam::Vec3, settings: &Clouds) {
         let shows = if self.active && self.ready { 1.0 } else { 0.0 };
         let [old, new, _] = self.roles;
         let (older, newer) = (self.origins[old], self.origins[new]);
@@ -874,11 +845,7 @@ impl CloudPass {
         queue.write_buffer(&self.dome_uniform, 0, bytemuck::bytes_of(&uniform));
     }
 
-    pub(crate) fn encode_dome(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        profiler: &crate::profiling::GpuProfiler,
-    ) {
+    pub(crate) fn encode_dome(&self, encoder: &mut wgpu::CommandEncoder, profiler: &GpuProfiler) {
         let (Some((target, _, count)), Some(domes), Some([march, shade, light]), Some(groups)) = (
             self.job,
             &self.domes,
@@ -980,13 +947,13 @@ impl CloudPass {
 fn march_uniform(
     settings: &Clouds,
     (origin, at): (glam::Vec3, f64),
-    lighting: &LightingUniform,
+    (sun, piece): CloudLight<'_>,
 ) -> CloudUniform {
     let wrap = f64::from(settings.scale) * 43.0;
     let drift = |speed: f32| ((f64::from(speed) * at) % wrap) as f32;
     let seed = (f64::from(settings.seed) * 7919.0 % wrap) as f32;
     CloudUniform {
-        eye: origin.extend(lighting.grade[2]).to_array(),
+        eye: origin.extend(piece.state[0]).to_array(),
         mirror: [0.0; 4],
         layer: [
             settings.base,
@@ -1001,10 +968,10 @@ fn march_uniform(
             seed,
         ],
         dome: [0; 4],
-        sun: lighting.sun,
-        sun_color: lighting.sun_color,
-        zenith: lighting.zenith,
-        horizon: lighting.horizon,
+        sun: sun.direction,
+        sun_color: sun.color,
+        zenith: piece.zenith,
+        horizon: piece.horizon,
         shadow: [0.0; 4],
         shadow_rows: [0; 4],
         light: [0.0; 4],
@@ -1013,7 +980,7 @@ fn march_uniform(
 }
 
 fn view_texture(device: &wgpu::Device, size: [u32; 2]) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = crate::memory::texture(
+    let texture = memory::texture(
         device,
         &wgpu::TextureDescriptor {
             label: Some("engine/cloud-view"),
@@ -1035,9 +1002,8 @@ fn view_texture(device: &wgpu::Device, size: [u32; 2]) -> (wgpu::Texture, wgpu::
 }
 
 fn view_pipeline(device: &wgpu::Device) -> wgpu::ComputePipeline {
-    let layout =
-        crate::pipelines::layout_of(device, &crate::pipeline_layouts::CLOUD_VIEW_PIPELINES);
-    crate::pipelines::compute_entry(device, &layout, clouds::march_view)
+    let layout = pipelines::layout_of(device, &crate::pipeline_layouts::CLOUD_VIEW_PIPELINES);
+    pipelines::compute_entry(device, &layout, clouds::march_view)
 }
 
 fn composite_pipeline(
@@ -1046,21 +1012,21 @@ fn composite_pipeline(
     format: wgpu::TextureFormat,
     canvas: bool,
 ) -> wgpu::RenderPipeline {
-    crate::pipelines::geometry(
+    pipelines::geometry(
         device,
-        &crate::pipelines::Geometry {
+        &pipelines::Geometry {
             label: "engine/cloud-composite",
             layout,
             vertex_constants: &[],
-            vertex: crate::entries::SKY_VERTEX,
+            vertex: crate::sky::SKY_VERTEX,
             buffers: &[],
             primitive: wgpu::PrimitiveState::default(),
             depth: None,
-            fragment: Some(crate::pipelines::Fragment {
+            fragment: Some(pipelines::Fragment {
                 entry: if canvas {
-                    meshes::fs_view_clouds
+                    draw::fs_view_clouds
                 } else {
-                    meshes::fs_view_clouds_post
+                    draw::fs_view_clouds_post
                 },
                 constants: &[],
                 targets: &[Some(wgpu::ColorTargetState {
@@ -1085,7 +1051,7 @@ fn composite_pipeline(
 }
 
 fn dome_texture(device: &wgpu::Device, size: [u32; 2]) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = crate::memory::texture(
+    let texture = memory::texture(
         device,
         &wgpu::TextureDescriptor {
             label: Some("engine/cloud-dome"),
@@ -1130,8 +1096,8 @@ pub(crate) fn shadow_lighting(clouds: &Clouds, eye: glam::Vec3) -> ([f32; 4], [f
     }
 }
 
-fn shadow_uniform(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> wgpu::Buffer {
-    let buffer = crate::buffers::storage(
+fn shadow_uniform(device: &wgpu::Device, queue: &Queue) -> wgpu::Buffer {
+    let buffer = buffers::storage(
         device,
         "engine/cloud-shadows",
         CLOUD_SHADOW_BYTES as u64,
@@ -1143,12 +1109,11 @@ fn shadow_uniform(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> wgp
 }
 
 fn pipelines(device: &wgpu::Device) -> [wgpu::ComputePipeline; 3] {
-    let march =
-        crate::pipelines::layout_of(device, &crate::pipeline_layouts::CLOUD_MARCH_PIPELINES);
+    let march = pipelines::layout_of(device, &crate::pipeline_layouts::CLOUD_MARCH_PIPELINES);
     [
-        crate::pipelines::compute_entry(device, &march, clouds::march_clouds),
-        crate::pipelines::compute_entry(device, &march, clouds::shadow_clouds),
-        crate::pipelines::compute_entry(device, &march, clouds::light_clouds),
+        pipelines::compute_entry(device, &march, clouds::march_clouds),
+        pipelines::compute_entry(device, &march, clouds::shadow_clouds),
+        pipelines::compute_entry(device, &march, clouds::light_clouds),
     ]
 }
 

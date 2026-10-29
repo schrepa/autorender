@@ -1,0 +1,17 @@
+struct SkyPiece {
+    zenith: vec4<f32>,
+    horizon: vec4<f32>,
+    ground: vec4<f32>,
+    fog: vec4<f32>,
+    aerial: vec4<f32>,
+    aerial_color: vec4<f32>,
+    cloud_shadow: vec4<f32>,
+    cloud_layer: vec4<f32>,
+    night: vec4<f32>,
+    star_turn: vec4<f32>,
+    moon: vec4<f32>,
+    night_shape: vec4<f32>,
+    haze_march: vec4<f32>,
+    sun_light: vec4<f32>,
+    state: vec4<f32>,
+}
