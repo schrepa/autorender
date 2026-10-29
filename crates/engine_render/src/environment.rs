@@ -1,9 +1,9 @@
+use std::cell::OnceCell;
+
 use crate::bindings::{ENVIRONMENT_DOWN, ENVIRONMENT_PREFILTER, ENVIRONMENT_SKY};
 use crate::cached::{Bound, Versioned};
-use crate::gpu_data::{ENVIRONMENT_SHADER, LightingUniform, mip_levels};
+use crate::gpu_data::{LightingUniform, mip_levels};
 use crate::probes::FACES;
-use crate::render_features::{Encode, RenderFeature};
-use crate::render_graph::{FrameShape, Node, RenderGraph};
 use crate::shaders::entry::environment;
 
 pub(crate) const ENVIRONMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -20,7 +20,7 @@ struct Maps {
     prefilter_group: wgpu::BindGroup,
     maps: wgpu::Texture,
     maps_view: Versioned<wgpu::TextureView>,
-    cube_targets: Vec<Option<Vec<wgpu::TextureView>>>,
+    cube_targets: Vec<OnceCell<Vec<wgpu::TextureView>>>,
 }
 
 struct Layouts {
@@ -56,11 +56,6 @@ impl Environment {
         clouds: crate::clouds::DomeBinding<'_>,
         air: crate::sky::AirBindings<'_>,
     ) -> Self {
-        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::CloudDome);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/environment.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(ENVIRONMENT_SHADER.into()),
-        });
         let layouts = Layouts {
             sky: crate::pipelines::layout(device, &ENVIRONMENT_SKY),
             down: crate::pipelines::layout(device, &ENVIRONMENT_DOWN),
@@ -69,17 +64,13 @@ impl Environment {
         let targets: [Option<wgpu::ColorTargetState>; FACES_PER_PASS] =
             std::array::from_fn(|_| Some(ENVIRONMENT_FORMAT.into()));
         let pipeline = |entry: crate::shaders::Entry,
-                        (declared, group): (
-            &crate::pipeline_layouts::PipelineLayout,
-            &crate::pipelines::GroupLayout,
-        )| {
-            let layout = crate::pipelines::pipeline_layout(device, declared, &[group]);
+                        declared: &'static crate::pipeline_layouts::PipelineLayout| {
+            let layout = crate::pipelines::layout_of(device, declared);
             crate::pipelines::fullscreen(
                 device,
                 &crate::pipelines::Fullscreen {
                     label: entry.name,
                     layout: &layout,
-                    module: &module,
                     vertex: environment::vs_environment,
                     fragment: entry,
                     constants: &[],
@@ -90,24 +81,15 @@ impl Environment {
         };
         let sky = pipeline(
             environment::fs_environment_sky,
-            (
-                &crate::pipeline_layouts::ENVIRONMENT_SKY_PIPELINES,
-                &layouts.sky,
-            ),
+            &crate::pipeline_layouts::ENVIRONMENT_SKY_PIPELINES,
         );
         let down = pipeline(
             environment::fs_environment_down,
-            (
-                &crate::pipeline_layouts::ENVIRONMENT_DOWN_PIPELINES,
-                &layouts.down,
-            ),
+            &crate::pipeline_layouts::ENVIRONMENT_DOWN_PIPELINES,
         );
         let prefilter = pipeline(
             environment::fs_environment_prefilter,
-            (
-                &crate::pipeline_layouts::ENVIRONMENT_PREFILTER_PIPELINES,
-                &layouts.prefilter,
-            ),
+            &crate::pipeline_layouts::ENVIRONMENT_PREFILTER_PIPELINES,
         );
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/environment-sampler"),
@@ -253,8 +235,8 @@ impl Environment {
         &self.maps.radiance_targets[0][face]
     }
 
-    pub(crate) fn finish(&mut self, encoder: &mut wgpu::CommandEncoder, cube: u32) {
-        let maps = &mut self.maps;
+    pub(crate) fn finish(&self, encoder: &mut wgpu::CommandEncoder, cube: u32) {
+        let maps = &self.maps;
         for level in 1..maps.levels as usize {
             for first in (0..FACES).step_by(FACES_PER_PASS) {
                 faces_pass(
@@ -267,7 +249,7 @@ impl Environment {
             }
         }
         let (texture, levels) = (&maps.maps, maps.levels);
-        let targets = maps.cube_targets[cube as usize].get_or_insert_with(|| {
+        let targets = maps.cube_targets[cube as usize].get_or_init(|| {
             (0..levels)
                 .flat_map(|level| {
                     (0..FACES as u32).map(move |face| {
@@ -398,7 +380,7 @@ fn create_maps(
         prefilter_group,
         maps,
         maps_view: Versioned::new(maps_view),
-        cube_targets: std::iter::repeat_with(|| None)
+        cube_targets: std::iter::repeat_with(OnceCell::new)
             .take(cubes as usize)
             .collect(),
     }
@@ -473,27 +455,4 @@ fn sky_group(
             crate::buffers::entry("sky_domes", clouds.uniform),
         ],
     )
-}
-
-impl RenderFeature for Environment {
-    type Frame = ();
-    type Stats = ();
-
-    fn declare(_frame: &(), _shape: &FrameShape, _graph: &mut RenderGraph) {}
-
-    fn encode(
-        &self,
-        _frame: &(),
-        _node: &Node,
-        _encode: &Encode<'_>,
-        _encoder: &mut wgpu::CommandEncoder,
-    ) -> u32 {
-        0
-    }
-
-    fn capacity_bytes(&self) -> u64 {
-        Environment::capacity_bytes(self)
-    }
-
-    fn stats(_this: Option<&Self>, _frame: Option<&()>, _snapshot: &engine_core::RenderSnapshot) {}
 }

@@ -10,8 +10,6 @@ use crate::bindings::{CLOUD_COMPOSITE, CLOUD_MARCH, CLOUD_VIEW};
 use crate::cached::{Bound, Cached, GroupCache, Versioned};
 use crate::gpu_data::LightingUniform;
 use crate::gpu_layouts::constants::CLOUD_GROUP;
-use crate::render_features::{Encode, FeaturePass, RenderFeature};
-use crate::render_graph::{Access, FrameShape, Node, Pass, RenderGraph, Resource};
 
 const DOME_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const DOME_LAYERS: u32 = MIRROR_LAYER + 1;
@@ -622,9 +620,7 @@ impl CloudPass {
         let (Some(domes), Some(noise)) = (&self.domes, &self.noise) else {
             return;
         };
-        let march_layout = &self.march_layout;
-        self.pipelines
-            .get_or_insert_with(|| pipelines(device, march_layout));
+        self.pipelines.get_or_insert_with(|| pipelines(device));
         let (layout, uniform, noise_sampler, cells) = (
             &self.march_layout,
             &self.uniform,
@@ -728,7 +724,7 @@ impl CloudPass {
         };
         let layout = &self.view_layout;
         self.view_pipeline
-            .get_or_insert_with(|| view_pipeline(device, layout));
+            .get_or_insert_with(|| view_pipeline(device));
         self.view_group.bind(
             device,
             "engine/cloud-view",
@@ -774,7 +770,7 @@ impl CloudPass {
         );
     }
 
-    fn encode_view(
+    pub(crate) fn encode_view(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         profiler: &crate::profiling::GpuProfiler,
@@ -800,8 +796,6 @@ impl CloudPass {
     pub(crate) fn prepare_composite(
         &mut self,
         device: &wgpu::Device,
-        shader: &wgpu::ShaderModule,
-        camera_layout: &crate::pipelines::GroupLayout,
         (format, canvas): (wgpu::TextureFormat, bool),
     ) {
         let Some(targets) = self
@@ -811,17 +805,12 @@ impl CloudPass {
         else {
             return;
         };
-        let layouts = (camera_layout, &self.composite_layout);
         let layout = self.composite_pipeline_layout.get_or_insert_with(|| {
-            crate::pipelines::pipeline_layout(
-                device,
-                &crate::pipeline_layouts::CLOUD_COMPOSITE_PIPELINES,
-                &[layouts.0, layouts.1],
-            )
+            crate::pipelines::layout_of(device, &crate::pipeline_layouts::CLOUD_COMPOSITE_PIPELINES)
         });
         self.composite_pipelines
             .entry((format, canvas))
-            .or_insert_with(|| composite_pipeline(device, shader, layout, format, canvas));
+            .or_insert_with(|| composite_pipeline(device, layout, format, canvas));
         self.composite_group.bind(
             device,
             "engine/cloud-composite",
@@ -839,7 +828,7 @@ impl CloudPass {
         (dome || view.is_some()).then_some(CloudFrame { dome, view })
     }
 
-    fn draw_composite(
+    pub(crate) fn draw_composite(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         camera: &wgpu::BindGroup,
@@ -885,7 +874,7 @@ impl CloudPass {
         queue.write_buffer(&self.dome_uniform, 0, bytemuck::bytes_of(&uniform));
     }
 
-    fn encode_dome(
+    pub(crate) fn encode_dome(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         profiler: &crate::profiling::GpuProfiler,
@@ -972,6 +961,20 @@ impl CloudPass {
         let light = self.light.cells.as_ref().map_or(0, wgpu::Buffer::size);
         noise + domes + view + light
     }
+
+    pub(crate) fn after_submit(&mut self, frame: Option<&CloudFrame>) {
+        if frame.is_some_and(|frame| frame.dome) {
+            self.recorded = self.completed;
+            self.recorded_generation = Some(self.generation);
+        }
+    }
+
+    pub(crate) fn stats(&self) -> engine_core::CloudStats {
+        engine_core::CloudStats {
+            rows: self.rows,
+            view_pixels: self.view_pixels,
+        }
+    }
 }
 
 fn march_uniform(
@@ -1031,25 +1034,14 @@ fn view_texture(device: &wgpu::Device, size: [u32; 2]) -> (wgpu::Texture, wgpu::
     (texture, view)
 }
 
-fn view_pipeline(
-    device: &wgpu::Device,
-    layout: &crate::pipelines::GroupLayout,
-) -> wgpu::ComputePipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("engine/clouds.wgsl"),
-        source: wgpu::ShaderSource::Wgsl(crate::gpu_data::CLOUDS_SHADER.into()),
-    });
-    let layout = crate::pipelines::pipeline_layout(
-        device,
-        &crate::pipeline_layouts::CLOUD_VIEW_PIPELINES,
-        &[layout],
-    );
-    crate::pipelines::compute_entry(device, &layout, &module, clouds::march_view)
+fn view_pipeline(device: &wgpu::Device) -> wgpu::ComputePipeline {
+    let layout =
+        crate::pipelines::layout_of(device, &crate::pipeline_layouts::CLOUD_VIEW_PIPELINES);
+    crate::pipelines::compute_entry(device, &layout, clouds::march_view)
 }
 
 fn composite_pipeline(
     device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     format: wgpu::TextureFormat,
     canvas: bool,
@@ -1059,7 +1051,6 @@ fn composite_pipeline(
         &crate::pipelines::Geometry {
             label: "engine/cloud-composite",
             layout,
-            module: shader,
             vertex_constants: &[],
             vertex: crate::entries::SKY_VERTEX,
             buffers: &[],
@@ -1151,99 +1142,28 @@ fn shadow_uniform(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> wgp
     buffer
 }
 
-fn pipelines(
-    device: &wgpu::Device,
-    march_layout: &crate::pipelines::GroupLayout,
-) -> [wgpu::ComputePipeline; 3] {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("engine/clouds.wgsl"),
-        source: wgpu::ShaderSource::Wgsl(crate::gpu_data::CLOUDS_SHADER.into()),
-    });
-    let march = crate::pipelines::pipeline_layout(
-        device,
-        &crate::pipeline_layouts::CLOUD_MARCH_PIPELINES,
-        &[march_layout],
-    );
+fn pipelines(device: &wgpu::Device) -> [wgpu::ComputePipeline; 3] {
+    let march =
+        crate::pipelines::layout_of(device, &crate::pipeline_layouts::CLOUD_MARCH_PIPELINES);
     [
-        crate::pipelines::compute_entry(device, &march, &module, clouds::march_clouds),
-        crate::pipelines::compute_entry(device, &march, &module, clouds::shadow_clouds),
-        crate::pipelines::compute_entry(device, &march, &module, clouds::light_clouds),
+        crate::pipelines::compute_entry(device, &march, clouds::march_clouds),
+        crate::pipelines::compute_entry(device, &march, clouds::shadow_clouds),
+        crate::pipelines::compute_entry(device, &march, clouds::light_clouds),
     ]
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct CloudFrame {
     dome: bool,
     view: Option<(wgpu::TextureFormat, bool)>,
 }
 
-impl RenderFeature for CloudPass {
-    type Frame = CloudFrame;
-    type Stats = engine_core::CloudStats;
-
-    fn declare(frame: &CloudFrame, shape: &FrameShape, graph: &mut RenderGraph) {
-        if frame.dome {
-            graph
-                .add(Pass::Feature(FeaturePass::CloudDome))
-                .write(Resource::CloudDome);
-        }
-        if frame.view.is_some() {
-            graph
-                .add(Pass::Feature(FeaturePass::CloudMarch))
-                .read(Resource::Depth)
-                .write(Resource::CloudView);
-            graph
-                .add(Pass::Feature(FeaturePass::CloudComposite))
-                .read(Resource::CloudView)
-                .color(shape.scene(), Access::Load);
-        }
+impl CloudFrame {
+    pub(crate) fn dome(&self) -> bool {
+        self.dome
     }
 
-    fn encode(
-        &self,
-        frame: &CloudFrame,
-        node: &Node,
-        encode: &Encode<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-    ) -> u32 {
-        let pass = node.pass();
-        if pass == Pass::Feature(FeaturePass::CloudDome) {
-            self.encode_dome(encoder, encode.profiler);
-        } else if pass == Pass::Feature(FeaturePass::CloudMarch) {
-            self.encode_view(encoder, encode.profiler);
-        } else if let Some(target) = frame.view {
-            let mut pass = encode.render_pass(
-                encoder,
-                node,
-                "engine/cloud-composite",
-                encode
-                    .profiler
-                    .span("cloud_composite")
-                    .map(crate::profiling::Span::render),
-            );
-            self.draw_composite(&mut pass, encode.camera, target);
-        }
-        0
-    }
-
-    fn after_submit(&mut self, frame: Option<&CloudFrame>) {
-        if frame.is_some_and(|frame| frame.dome) {
-            self.recorded = self.completed;
-            self.recorded_generation = Some(self.generation);
-        }
-    }
-
-    fn capacity_bytes(&self) -> u64 {
-        CloudPass::capacity_bytes(self)
-    }
-
-    fn stats(
-        this: Option<&Self>,
-        _frame: Option<&CloudFrame>,
-        _snapshot: &engine_core::RenderSnapshot,
-    ) -> engine_core::CloudStats {
-        engine_core::CloudStats {
-            rows: this.map_or(0, |clouds| clouds.rows),
-            view_pixels: this.map_or(0, |clouds| clouds.view_pixels),
-        }
+    pub(crate) fn view(&self) -> Option<(wgpu::TextureFormat, bool)> {
+        self.view
     }
 }

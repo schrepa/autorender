@@ -1,3 +1,7 @@
+import package::frame::view::PI;
+import package::lighting::brdf::distribution;
+import package::sky::light::{sky_along, sky_domes};
+
 @group(0) @binding(20) var level_source: texture_cube<f32>;
 @group(0) @binding(21) var radiance: texture_cube<f32>;
 @group(0) @binding(22) var cube_sampler: sampler;

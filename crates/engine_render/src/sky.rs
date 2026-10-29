@@ -1,14 +1,30 @@
-use crate::render_features::{Encode, RenderFeature};
-use crate::render_graph::{FrameShape, Node, RenderGraph};
 use crate::shaders::entry::sky;
 use engine_core::table_data::sky::SkyTables;
 use engine_core::table_data::sky::{MULTIPLE_SIZE, TRANSMITTANCE_SIZE};
-use engine_core::{RenderSnapshot, Sky, StaticTable};
+use engine_core::{RenderSnapshot, RenderStats, Sky, StaticTable};
 use engine_time_of_day::TimeOfDay;
 use glam::Vec3;
 
-use crate::bindings::{SKY_TABLES, SKY_TRANSMITTANCE};
+use crate::bindings::{
+    Contribution, SKY_TABLES, SKY_TRANSMITTANCE, Sample, Sampling, Stages, read_of, sampler,
+    texture, uniform_of,
+};
+use crate::cached::Bound;
+use crate::clouds::{CloudFrame, CloudPass};
+use crate::environment::{ENVIRONMENT_FORMAT, Environment};
+use crate::gpu_data::LightingUniform;
+use crate::gpu_layouts::clouds::{CLOUD_SHADOW_BYTES, DomeUniform};
 use crate::gpu_layouts::constants::SKY_TABLE_GROUP;
+use crate::graph::{
+    Access, FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
+    Targets,
+};
+use crate::parts::{
+    Create, DrawAt, Encode, GpuPart, Hook, OpaqueSlot, PartDecl, PartEntry, Prelude,
+    PreludeStage, Step, UniformsOut, View,
+};
+use crate::probes::FACES;
+use crate::renderer::Core;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const VIEW_SIZE: (u32, u32) = (192, 108);
@@ -73,10 +89,9 @@ struct Passes {
     groups: [wgpu::BindGroup; 2],
 }
 
-pub(crate) struct SkyPass {
+pub(crate) struct AirTables {
     layout: crate::pipelines::GroupLayout,
     passes: Option<Passes>,
-    pass_layout: crate::pipelines::GroupLayout,
     pass_group: wgpu::BindGroup,
     transmittance: Table,
     multiple: Table,
@@ -95,9 +110,8 @@ pub(crate) struct SkyPass {
     pub(crate) built: u32,
 }
 
-impl SkyPass {
+impl AirTables {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::CloudDome);
         let uploaded = wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING;
         let transmittance = table(
             device,
@@ -119,7 +133,6 @@ impl SkyPass {
         Self {
             layout: crate::pipelines::layout(device, &SKY_TABLES),
             passes: None,
-            pass_layout,
             pass_group,
             transmittance,
             multiple: table(device, "engine/sky-multiple", MULTIPLE_SIZE, uploaded),
@@ -168,10 +181,6 @@ impl SkyPass {
             active: false,
             built: 0,
         }
-    }
-
-    pub(crate) fn pass_layout(&self) -> &crate::pipelines::GroupLayout {
-        &self.pass_layout
     }
 
     pub(crate) fn pass_group(&self) -> &wgpu::BindGroup {
@@ -386,17 +395,10 @@ fn passes(
     uniform: &wgpu::Buffer,
     derived: &wgpu::Buffer,
 ) -> Passes {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("engine/sky.wgsl"),
-        source: wgpu::ShaderSource::Wgsl(crate::gpu_data::SKY_SHADER.into()),
-    });
-    let pipeline_layout = crate::pipelines::pipeline_layout(
-        device,
-        &crate::pipeline_layouts::SKY_TABLE_PIPELINES,
-        &[layout],
-    );
+    let pipeline_layout =
+        crate::pipelines::layout_of(device, &crate::pipeline_layouts::SKY_TABLE_PIPELINES);
     let pipeline = |entry: crate::shaders::Entry| {
-        crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry)
+        crate::pipelines::compute_entry(device, &pipeline_layout, entry)
     };
     let group = |reads: [&Table; 3], out: &Table| {
         crate::pipelines::group(
@@ -425,38 +427,6 @@ fn passes(
             group([transmittance, multiple, blank], view),
             group([transmittance, multiple, view], blank_out),
         ],
-    }
-}
-
-impl RenderFeature for SkyPass {
-    type Frame = ();
-    type Stats = engine_core::SkyStats;
-
-    fn declare(_frame: &(), _shape: &FrameShape, _graph: &mut RenderGraph) {}
-
-    fn encode(
-        &self,
-        _frame: &(),
-        _node: &Node,
-        _encode: &Encode<'_>,
-        _encoder: &mut wgpu::CommandEncoder,
-    ) -> u32 {
-        0
-    }
-
-    fn capacity_bytes(&self) -> u64 {
-        SkyPass::capacity_bytes(self)
-    }
-
-    fn stats(
-        this: Option<&Self>,
-        _frame: Option<&()>,
-        _snapshot: &engine_core::RenderSnapshot,
-    ) -> engine_core::SkyStats {
-        engine_core::SkyStats {
-            tables: this.map_or(0, |sky| sky.built),
-            ..engine_core::SkyStats::default()
-        }
     }
 }
 
@@ -527,4 +497,636 @@ pub(crate) fn apply_haze(
     if marches {
         lighting.haze_march = [haze.reach, haze.forward, haze.spread, 1.0 / haze.size];
     }
+}
+
+const CAMERA_VIEW: &[&str] = &["refraction"];
+const DOME_PASS: usize = 0;
+const MARCH_PASS: usize = 1;
+const FRAGMENT: Stages = Stages::FRAGMENT;
+
+pub(crate) const FRAME_CLOUDS: Contribution = Contribution {
+    group: "frame",
+    set: "clouds",
+    bindings: &[read_of("cloud_shadows", CLOUD_SHADOW_BYTES, FRAGMENT)],
+};
+
+pub(crate) const FRAME_SKY_TABLES: Contribution = Contribution {
+    group: "frame",
+    set: "sky_tables",
+    bindings: &[
+        uniform_of("sky_air", size_of::<SkyUniform>(), FRAGMENT),
+        texture(
+            "sky_view_table",
+            Sample::Float,
+            crate::bindings::View::D2,
+            FRAGMENT,
+        ),
+        sampler("sky_table_sampler", Sampling::Filtering, FRAGMENT),
+        texture(
+            "sky_clouds",
+            Sample::Float,
+            crate::bindings::View::D2Array,
+            FRAGMENT,
+        ),
+        texture(
+            "sky_clouds_old",
+            Sample::Float,
+            crate::bindings::View::D2Array,
+            FRAGMENT,
+        ),
+        sampler("sky_cloud_sampler", Sampling::Filtering, FRAGMENT),
+        uniform_of("sky_domes", size_of::<DomeUniform>(), FRAGMENT),
+    ],
+};
+
+pub(crate) const FRAME_ENVIRONMENT: Contribution = Contribution {
+    group: "frame",
+    set: "environment",
+    bindings: &[
+        texture(
+            "environment_maps",
+            Sample::Float,
+            crate::bindings::View::CubeArray,
+            FRAGMENT,
+        ),
+        sampler("environment_sampler", Sampling::Filtering, FRAGMENT),
+    ],
+};
+
+pub(crate) static PART: PartEntry = PartEntry {
+    decl: PartDecl {
+        name: "sky",
+        brick: "sky",
+        passes: &[
+            PassDecl {
+                name: "cloud_dome",
+                stage: Stage::Prepare,
+            },
+            PassDecl {
+                name: "cloud_march",
+                stage: Stage::Sky,
+            },
+            PassDecl {
+                name: "cloud_composite",
+                stage: Stage::Sky,
+            },
+        ],
+        resources: &[
+            ResourceDecl {
+                name: "cloud_dome",
+                lifetime: Lifetime::Kept,
+            },
+            ResourceDecl {
+                name: "cloud_view",
+                lifetime: Lifetime::Frame,
+            },
+        ],
+        hooks: &[Hook::Opaque(OpaqueSlot::Sky), Hook::ProbeFace],
+        contributes: &[FRAME_CLOUDS, FRAME_SKY_TABLES, FRAME_ENVIRONMENT],
+        effects: &[],
+        labels: &[],
+        lazy: false,
+    },
+    create,
+};
+
+fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
+    let _owner = crate::memory::owned("sky");
+    Box::new(SkyPass::new(cx.core))
+}
+
+#[derive(Clone, Copy, Default)]
+struct Ids {
+    passes: [Option<PassId>; 3],
+    cloud_dome: Option<ResourceId>,
+    cloud_view: Option<ResourceId>,
+    depth: Option<ResourceId>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct EnvironmentPlan {
+    pub cubes: u32,
+    pub most_cubes: u32,
+    pub lost: bool,
+    pub sky_changed: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SkyTargets {
+    Frame(Targets),
+    Probe,
+}
+
+impl SkyTargets {
+    fn index(self) -> usize {
+        match self {
+            Self::Frame(Targets::Canvas) => 0,
+            Self::Frame(Targets::Post) => 1,
+            Self::Frame(Targets::Temporal) => 2,
+            Self::Frame(Targets::Debug) => 3,
+            Self::Probe => 4,
+        }
+    }
+}
+
+pub(crate) struct SkyPass {
+    tables: AirTables,
+    clouds: CloudPass,
+    environment: Environment,
+    pipelines: [Option<wgpu::RenderPipeline>; 5],
+    ids: Ids,
+    frame: Option<CloudFrame>,
+    plan: EnvironmentPlan,
+}
+
+impl SkyPass {
+    fn new(core: &Core) -> Self {
+        let device = &core.device;
+        let clouds = CloudPass::new(device, &core.queue);
+        let tables = AirTables::new(device);
+        let environment = Environment::new(
+            device,
+            core.camera.lighting_buffer(),
+            engine_core::ReflectionProbeSettings::default().resolution,
+            clouds.dome(),
+            tables.bindings(),
+        );
+        Self {
+            tables,
+            clouds,
+            environment,
+            pipelines: Default::default(),
+            ids: Ids::default(),
+            frame: None,
+            plan: EnvironmentPlan::default(),
+        }
+    }
+
+    pub(crate) fn environment(&self) -> &Environment {
+        &self.environment
+    }
+
+    pub(crate) fn environment_plan(&self) -> EnvironmentPlan {
+        self.plan
+    }
+
+    pub(crate) fn cloud_shadows(&self) -> &wgpu::Buffer {
+        self.clouds.shadows()
+    }
+
+    fn prepare_clouds(
+        &mut self,
+        core: &Core,
+        snapshot: &RenderSnapshot,
+        gpu_mode: bool,
+        lighting: &LightingUniform,
+    ) {
+        self.clouds.prepare(
+            &core.device,
+            &core.queue,
+            (
+                &snapshot.environment.clouds,
+                snapshot.tables.cloud_noise.as_ref(),
+                (snapshot.camera_position, snapshot.surface_under_eye),
+                snapshot.presented_seconds,
+            ),
+            (lighting, self.tables.bindings()),
+            !gpu_mode,
+        );
+        self.clouds.prepare_view(
+            &core.device,
+            &core.queue,
+            (
+                &snapshot.environment.clouds,
+                snapshot.camera_position,
+                snapshot.presented_seconds,
+            ),
+            snapshot.view_projection,
+            core.display.region,
+            (lighting, self.tables.bindings()),
+            &core.depth.view,
+        );
+        self.environment
+            .set_clouds(&core.device, self.clouds.environment_dome());
+    }
+
+    fn prepare_tables(
+        &mut self,
+        core: &Core,
+        snapshot: &RenderSnapshot,
+    ) -> Option<wgpu::CommandEncoder> {
+        use std::mem::offset_of;
+        let lighting = core.camera.lighting_buffer();
+        let at = |offset: usize| offset as u64;
+        let mut copies = vec![
+            (
+                DERIVED_SUN,
+                lighting,
+                at(offset_of!(LightingUniform, sun_color)),
+                12,
+            ),
+            (
+                DERIVED_ZENITH,
+                lighting,
+                at(offset_of!(LightingUniform, zenith)),
+                12,
+            ),
+            (
+                DERIVED_HORIZON,
+                lighting,
+                at(offset_of!(LightingUniform, horizon)),
+                16,
+            ),
+            (
+                DERIVED_GROUND,
+                lighting,
+                at(offset_of!(LightingUniform, ground)),
+                12,
+            ),
+            (
+                DERIVED_AIR,
+                lighting,
+                at(offset_of!(LightingUniform, aerial_color)),
+                12,
+            ),
+            (
+                DERIVED_GLOW,
+                lighting,
+                at(offset_of!(LightingUniform, aerial)) + 12,
+                4,
+            ),
+        ];
+        copies.extend(self.clouds.sky_copies());
+        let sun = snapshot.environment.atmosphere.sun_direction;
+        let [night, _, moon] = night_lighting(snapshot, sun);
+        self.tables.encode(
+            &core.device,
+            &core.queue,
+            (&snapshot.environment.sky, snapshot.tables.sky.as_ref()),
+            (
+                sun,
+                snapshot.camera_position,
+                snapshot.environment.atmosphere.exposure,
+                snapshot.presented_seconds,
+                [moon[0], moon[1], moon[2], night[1] * night[3]],
+            ),
+            &copies,
+            &core.profiler,
+        )
+    }
+
+    fn prepare_environment(
+        &mut self,
+        core: &Core,
+        snapshot: &RenderSnapshot,
+        lighting: &LightingUniform,
+    ) -> Option<wgpu::CommandEncoder> {
+        let probe_settings = snapshot.environment.reflection_probes;
+        let probe_list = probe_list(snapshot);
+        let most_cubes = (core.display.max_layers / FACES as u32).max(1);
+        let wanted_cubes = 1 + (probe_list.len() as u32).min(most_cubes - 1);
+        let cubes = if wanted_cubes == 1 {
+            1
+        } else if wanted_cubes > self.environment.cubes() {
+            wanted_cubes.next_power_of_two().min(most_cubes)
+        } else {
+            self.environment.cubes()
+        };
+        let keys = (
+            self.clouds.environment_key(),
+            self.tables.environment_key(),
+        );
+        let mut environment_encoder = self
+            .environment
+            .needs_encoding(probe_settings.resolution, cubes, lighting, keys)
+            .then(|| {
+                core.device
+                    .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                        label: Some("engine/environment-encoder"),
+                    })
+            });
+        let (lost, sky_changed) = match environment_encoder.as_mut() {
+            Some(encoder) => (
+                self.environment.ensure(
+                    &core.device,
+                    encoder,
+                    probe_settings.resolution,
+                    cubes,
+                ),
+                self.environment.encode_sky(encoder, lighting, keys).1,
+            ),
+            None => (false, false),
+        };
+        self.plan = EnvironmentPlan {
+            cubes,
+            most_cubes,
+            lost,
+            sky_changed,
+        };
+        environment_encoder
+    }
+
+    fn ensure_sky(
+        &mut self,
+        device: &wgpu::Device,
+        canvas: wgpu::TextureFormat,
+        targets: SkyTargets,
+    ) {
+        let index = targets.index();
+        if self.pipelines[index].is_some() {
+            return;
+        }
+        let (fragment, color_targets) = match targets {
+            SkyTargets::Frame(targets) => (
+                crate::entries::sky_fragment(Some(targets)),
+                targets.color_targets(canvas),
+            ),
+            SkyTargets::Probe => (
+                crate::entries::sky_fragment(None),
+                vec![Some(ENVIRONMENT_FORMAT.into())],
+            ),
+        };
+        self.pipelines[index] = Some(sky_pipeline(device, fragment, &color_targets));
+    }
+}
+
+impl GpuPart for SkyPass {
+    fn install(&mut self, table: &GraphTable) {
+        self.ids = Ids {
+            passes: std::array::from_fn(|index| {
+                PART.decl
+                    .passes
+                    .get(index)
+                    .and_then(|pass| table.pass_named(pass.name))
+            }),
+            cloud_dome: table.resource("cloud_dome"),
+            cloud_view: table.resource("cloud_view"),
+            depth: table.resource("depth"),
+        };
+    }
+
+    fn forget_targets(&mut self, targets: Targets) {
+        self.pipelines[SkyTargets::Frame(targets).index()] = None;
+    }
+
+    fn uniforms(
+        &mut self,
+        cx: &mut Step<'_>,
+        lighting: &mut LightingUniform,
+        _out: &mut UniformsOut,
+    ) {
+        let frame = cx.frame;
+        let snapshot = frame.snapshot;
+        apply_night(lighting, snapshot);
+        let post_disabled = cx
+            .parts
+            .iter()
+            .any(|(decl, part)| decl.name == "post" && part.disabled());
+        apply_haze(
+            lighting,
+            &snapshot.environment.haze,
+            snapshot.view_projection,
+            snapshot.camera_position,
+            !frame.kind.debug
+                && !post_disabled
+                && crate::screen_effects::haze_runs(&snapshot.environment),
+        );
+        (lighting.cloud_shadow, lighting.cloud_layer) =
+            crate::clouds::shadow_lighting(&snapshot.environment.clouds, snapshot.camera_position);
+    }
+
+    fn prepare(&mut self, cx: &mut Step<'_>, prelude: &mut Prelude) {
+        let frame = cx.frame;
+        let core = &*cx.core;
+        let Some(lighting) = frame.lighting.as_ref() else {
+            return;
+        };
+        let snapshot = frame.snapshot;
+        self.prepare_clouds(core, snapshot, frame.kind.gpu_mode, lighting);
+        if let Some(encoder) = self.prepare_tables(core, snapshot) {
+            prelude.push_encoder(PreludeStage::Tables, "pre_sky", encoder);
+        }
+        if let Some(encoder) = self.prepare_environment(core, snapshot, lighting) {
+            prelude.push_encoder(PreludeStage::Derived, "pre_environment", encoder);
+        }
+    }
+
+    fn finish(&mut self, cx: &mut Step<'_>) {
+        let frame = cx.frame;
+        let core = &*cx.core;
+        self.frame = None;
+        let Some(shape) = frame.shape else {
+            return;
+        };
+        let canvas = core.canvas_format();
+        self.ensure_sky(&core.device, canvas, SkyTargets::Frame(shape.targets));
+        if frame.kind.gpu_mode && !frame.kind.debug && !probe_list(frame.snapshot).is_empty() {
+            self.ensure_sky(&core.device, canvas, SkyTargets::Probe);
+        }
+        if shape.targets == Targets::Debug {
+            return;
+        }
+        let target = if shape.targets == Targets::Canvas {
+            (canvas, true)
+        } else {
+            (crate::post::SCENE_FORMAT, false)
+        };
+        if self.clouds.marches_view() {
+            self.clouds.prepare_composite(&core.device, target);
+        }
+        self.frame = self.clouds.frame(target);
+    }
+
+    fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
+        let Some(frame) = self.frame else {
+            return;
+        };
+        let table = cx.table;
+        let [dome, march, composite] = self.ids.passes;
+        if let Some(dome) = dome.filter(|_| frame.dome()) {
+            let _ = graph.add(table, dome).write(self.ids.cloud_dome);
+        }
+        if frame.view().is_none() {
+            return;
+        }
+        if let Some(march) = march {
+            let _ = graph
+                .add(table, march)
+                .read(self.ids.depth)
+                .write(self.ids.cloud_view);
+        }
+        if let Some(composite) = composite {
+            let node = graph.add(table, composite).read(self.ids.cloud_view);
+            let scene = cx
+                .frame
+                .shape
+                .as_ref()
+                .and_then(|shape| crate::parts::scene_target(table, shape));
+            let _ = match scene {
+                Some(scene) => node.color(scene, Access::Load),
+                None => node,
+            };
+        }
+    }
+
+    fn encode(
+        &mut self,
+        pass: usize,
+        cx: &mut Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        let profiler = &cx.core.profiler;
+        match pass {
+            DOME_PASS => self.clouds.encode_dome(encoder, profiler),
+            MARCH_PASS => self.clouds.encode_view(encoder, profiler),
+            _ => {
+                if let Some(target) = self.frame.and_then(|frame| frame.view()) {
+                    let mut render = cx.render_pass(
+                        encoder,
+                        "engine/cloud-composite",
+                        profiler
+                            .span("cloud_composite")
+                            .map(crate::profiling::Span::render),
+                    );
+                    self.clouds.draw_composite(
+                        &mut render,
+                        cx.core.shared_group("frame", CAMERA_VIEW),
+                        target,
+                    );
+                }
+            }
+        }
+        0
+    }
+
+    fn draw(&self, at: DrawAt<'_>, cx: &View<'_>, pass: &mut wgpu::RenderPass<'_>) -> u32 {
+        let (targets, group) = match at {
+            DrawAt::Opaque {
+                slot: OpaqueSlot::Sky,
+                ..
+            } => {
+                let Some(shape) = cx.frame.shape else {
+                    return 0;
+                };
+                (
+                    SkyTargets::Frame(shape.targets),
+                    cx.core.shared_group("frame", CAMERA_VIEW),
+                )
+            }
+            DrawAt::ProbeFace { face, .. } => {
+                (SkyTargets::Probe, cx.core.probe_group(face, CAMERA_VIEW))
+            }
+            DrawAt::Opaque { .. } | DrawAt::ShadowCasters { .. } => return 0,
+        };
+        let Some(pipeline) = &self.pipelines[targets.index()] else {
+            return 0;
+        };
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, group, &[]);
+        pass.set_bind_group(1, self.tables.pass_group(), &[]);
+        pass.draw(0..3, 0..1);
+        0
+    }
+
+    fn contribute<'s>(&'s self, group: &str, out: &mut Vec<(&'static str, Bound<'s>)>) {
+        if group != "frame" {
+            return;
+        }
+        let (air, view_table, _, table_sampler) = self.tables.bindings();
+        let clouds = self.clouds.dome();
+        let (environment, environment_sampler) = self.environment.binding();
+        out.extend([
+            (
+                "cloud_shadows",
+                Bound::fixed(self.clouds.shadows().as_entire_binding()),
+            ),
+            ("sky_air", Bound::fixed(air.as_entire_binding())),
+            (
+                "sky_view_table",
+                Bound::fixed(crate::pipelines::view(view_table)),
+            ),
+            (
+                "sky_table_sampler",
+                Bound::fixed(crate::pipelines::sampler(table_sampler)),
+            ),
+            (
+                "sky_clouds",
+                Bound::counted(
+                    shown_dome(clouds.key, 1),
+                    crate::pipelines::view(clouds.new),
+                ),
+            ),
+            (
+                "sky_clouds_old",
+                Bound::counted(
+                    shown_dome(clouds.key, 0),
+                    crate::pipelines::view(clouds.old),
+                ),
+            ),
+            (
+                "sky_cloud_sampler",
+                Bound::fixed(crate::pipelines::sampler(clouds.sampler)),
+            ),
+            (
+                "sky_domes",
+                Bound::fixed(clouds.uniform.as_entire_binding()),
+            ),
+            ("environment_maps", environment),
+            ("environment_sampler", environment_sampler),
+        ]);
+    }
+
+    fn after_submit(&mut self) {
+        let frame = self.frame.take();
+        self.clouds.after_submit(frame.as_ref());
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        self.environment.capacity_bytes()
+            + self.clouds.capacity_bytes()
+            + self.tables.capacity_bytes()
+    }
+
+    fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
+        stats.clouds = self.clouds.stats();
+        stats.sky.tables = self.tables.built;
+    }
+}
+
+fn probe_list(snapshot: &RenderSnapshot) -> &[engine_core::RenderReflectionProbe] {
+    if snapshot.environment.reflection_probes.enabled {
+        &snapshot.reflection_probes.list
+    } else {
+        &[]
+    }
+}
+
+fn shown_dome((generation, roles, shown): (u64, [u8; 2], bool), role: usize) -> u64 {
+    (generation * 4 + u64::from(roles[role])) * 2 + u64::from(shown)
+}
+
+fn sky_pipeline(
+    device: &wgpu::Device,
+    fragment: crate::shaders::Entry,
+    targets: &[Option<wgpu::ColorTargetState>],
+) -> wgpu::RenderPipeline {
+    let layout = crate::pipelines::layout_of(device, &crate::pipeline_layouts::SKY_PIPELINES);
+    crate::pipelines::fullscreen(
+        device,
+        &crate::pipelines::Fullscreen {
+            label: "engine/sky",
+            layout: &layout,
+            vertex: crate::entries::SKY_VERTEX,
+            fragment,
+            constants: &[],
+            targets,
+            depth: Some(wgpu::DepthStencilState {
+                format: crate::renderer::DEPTH_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+        },
+    )
 }

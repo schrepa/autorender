@@ -1,3 +1,9 @@
+import package::engine::color::luminance;
+import package::sky::common::{
+    SKY_MULTIPLE_SIZE, SKY_PI, SkyUniform, air_radius, air_sky, air_transmittance,
+    sky_view_parameters, sphere_hit, to_sub_uv, transmittance_uv
+};
+
 @group(0) @binding(0) var<uniform> air: SkyUniform;
 @group(0) @binding(1) var transmittance_table: texture_2d<f32>;
 @group(0) @binding(2) var multiple_table: texture_2d<f32>;

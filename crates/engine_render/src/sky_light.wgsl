@@ -1,3 +1,7 @@
+import package::frame::view::lighting;
+import package::sky::air::{CloudDomes, behind_clouds, cloud_dome_direction, cloud_dome_uv, haze};
+import package::sky::common::{SkyUniform, air_sky};
+
 @group(0) @binding(23) var<uniform> sky_air: SkyUniform;
 @group(0) @binding(24) var sky_view_table: texture_2d<f32>;
 @group(0) @binding(25) var sky_table_sampler: sampler;
