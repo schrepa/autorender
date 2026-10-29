@@ -79,7 +79,7 @@ fn check_request(arguments: &[String]) -> Result<CheckRequest, Error> {
                 .variants(["--json", "--file"]));
         }
     };
-    Ok(engine_scene::parse_json(&source)?)
+    engine_scene::parse_json(&source)
 }
 
 fn check(root: &Path, arguments: &[String]) -> Result<(), Failure> {

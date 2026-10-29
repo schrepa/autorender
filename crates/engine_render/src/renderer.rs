@@ -9,7 +9,7 @@ use engine_core::{
 };
 
 use crate::platform::{RenderTarget, failed, failed_with};
-use engine_core::{Error, ErrorCode, Expected};
+use engine_core::{Error, Expected};
 
 use crate::RenderStats;
 use crate::batches::{BatchPlan, DrawBatch};

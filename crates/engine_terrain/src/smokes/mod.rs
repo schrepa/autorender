@@ -84,6 +84,15 @@ pub fn inspect(session: &mut dyn SmokeSession, component: &str) -> Checked<Value
     Ok(inspected["value"].take())
 }
 
+pub fn component(session: &mut dyn SmokeSession, id: &str, component: &str) -> Checked<Value> {
+    let mut inspected = ask(
+        session,
+        "inspect",
+        json!({"entity": id, "component": component}),
+    )?;
+    Ok(inspected["entity"]["components"][component].take())
+}
+
 pub fn render(session: &mut dyn SmokeSession) -> Checked<Value> {
     let mut rendered = control(session, "render", json!({}))?;
     Ok(rendered["rendering"].take())

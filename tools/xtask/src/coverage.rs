@@ -14,5 +14,8 @@ pub fn coverage(
 pub fn check(root: &Path) -> Result<(), String> {
     let engine = crate::bricks::standard_engine();
     let development = engine_dev::schemas::generated(engine.app.world())?;
-    engine_checks::coverage::check(&coverage(root, &development)?)
+    engine_checks::coverage::check(
+        &coverage(root, &development)?,
+        crate::rules::RULES.exceptions.unsmoked,
+    )
 }

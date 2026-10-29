@@ -47,7 +47,7 @@ export function runBuild({ executable, root, output, signal, timeoutMs = 600_000
       signal?.removeEventListener("abort", abort);
       resolve(result);
     }
-    child.once("error", error => finish({ ok: false, diagnostics: [], error: { code: "build_worker_unavailable", path: executable, got: String(error?.code ?? error?.message ?? error) } }));
+    child.once("error", error => finish({ ok: false, diagnostics: [], error: { code: "build_worker_unavailable", path: executable, got: String("code" in error ? error.code : error) } }));
     child.once("close", code => {
       if (cancelled) { finish({ ok: false, diagnostics: [], error: { code: cancelled, path: "$" } }); return; }
       if (!overflow) {

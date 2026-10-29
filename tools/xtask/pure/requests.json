@@ -26,7 +26,7 @@
     {"rule": "missing_plugin", "path": "$.name", "engine": "bare", "request": {"verb": "query", "name": "terrain_height", "args": {"points": [[0, 0]]}}},
     {"rule": "out_of_range", "path": "$.args.points", "request": {"verb": "query", "name": "terrain_height", "args": {"points": []}}},
     {"rule": "invalid_request", "path": "$.args.from", "request": {"verb": "query", "name": "terrain_route", "args": {"from": [0, 0], "to": [10, 10]}}},
-    {"rule": "unknown_terrain", "path": "$", "request": {"verb": "query", "name": "nav_path", "args": {"from": [0, 0], "to": [10, 10]}}},
+    {"rule": "unknown_terrain", "path": "$.args", "request": {"verb": "query", "name": "nav_path", "args": {"from": [0, 0], "to": [10, 10]}}},
     {"rule": "invalid_ray", "path": "$.args.direction", "request": {"verb": "query", "name": "raycast", "args": {"origin": [0, 10, 0], "direction": [0, 0, 0], "max_distance": 10}}},
     {"rule": "invalid_position", "path": "$.args.position", "request": {"verb": "query", "name": "overlap", "args": {"shape": {"kind": "sphere", "radius": 1}, "position": [0, 2000000, 0]}}},
     {"rule": "invalid_rotation", "path": "$.args.rotation", "request": {"verb": "query", "name": "overlap", "args": {"shape": {"kind": "sphere", "radius": 1}, "position": [0, 0, 0], "rotation": [0, 0, 0, 0]}}},

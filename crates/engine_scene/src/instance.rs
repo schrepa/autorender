@@ -119,7 +119,7 @@ fn insert_each<T, H>(
         let handle = insert(item).map_err(|error| {
             error
                 .coded(ErrorCode::AssetBudgetExceeded)
-                .within(&format!("$.{field}[{index}]"))
+                .at(format!("$.{field}[{index}]"))
         })?;
         handles.push(handle);
     }

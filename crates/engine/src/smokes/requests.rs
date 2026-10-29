@@ -361,8 +361,10 @@ pub(crate) fn differing(a: &Pixels, b: &Pixels, tolerance: u8) -> Result<usize, 
         "capture_size_kept"
     );
     Ok(a.rgba
-        .chunks_exact(4)
-        .zip(b.rgba.chunks_exact(4))
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.rgba.as_chunks::<4>().0)
         .filter(|(a, b)| (0..3).any(|channel| a[channel].abs_diff(b[channel]) > tolerance))
         .count())
 }

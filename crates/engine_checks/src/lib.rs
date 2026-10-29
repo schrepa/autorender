@@ -60,6 +60,7 @@ pub struct Exceptions {
     pub wide_structs: &'static [(&'static str, &'static str, usize)],
     pub unsafe_files: &'static [&'static str],
     pub core_uses_brick: &'static [(&'static str, &'static str)],
+    pub unsmoked: &'static [&'static str],
 }
 
 impl Exceptions {
@@ -68,6 +69,7 @@ impl Exceptions {
         wide_structs: &[],
         unsafe_files: &[],
         core_uses_brick: &[],
+        unsmoked: &[],
     };
 }
 

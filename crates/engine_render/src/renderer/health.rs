@@ -64,8 +64,10 @@ impl Renderer {
         if self.features.inject(feature) {
             return Ok(());
         }
-        Err(Error::new(ErrorCode::UnknownVariant, "$.feature")
-            .got(feature)
-            .variants(RenderFeatures::lazy_names()))
+        Err(
+            Error::new(engine_core::ErrorCode::UnknownVariant, "$.feature")
+                .got(feature)
+                .variants(RenderFeatures::lazy_names()),
+        )
     }
 }

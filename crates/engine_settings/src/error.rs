@@ -146,6 +146,12 @@ impl Error {
     }
 
     #[must_use]
+    pub fn at(mut self, path: impl Into<String>) -> Self {
+        self.path = path.into();
+        self
+    }
+
+    #[must_use]
     pub fn within(mut self, prefix: &str) -> Self {
         self.path = joined(prefix, &self.path);
         self

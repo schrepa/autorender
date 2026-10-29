@@ -24,6 +24,7 @@ const CHECKS: &str = "the checks report it (crates/engine_checks)";
 const IMPORT: &str = "the glTF importer answers it (tools/assetc)";
 const RECORDS: &str = "records that do not decode answer it (crates/engine_terrain/src/codec.rs)";
 const LAYERS: &str = "terrain layer stacks answer it (crates/engine_terrain/src/layers.rs)";
+const PACKS: &str = "packs that do not read answer it (crates/engine_worker/src/pack.rs)";
 const COLLISION: &str = "engine_collision's own check, after the development tools' and scenes' bounds, \
                          or its budgets, which overflow only with more colliders than the corpora load";
 
@@ -93,6 +94,7 @@ const UNREACHED: &[(&str, &str)] = &[
         "the host checks it while it runs the control (crates/engine/src/dev_host/controls/input.rs): host-parity's invalid input case reaches it",
     ),
     ("invalid_measurement", PAGE),
+    ("invalid_pack", PACKS),
     ("invalid_record", RECORDS),
     ("invalid_request_id", BRIDGE),
     ("invalid_session", BRIDGE),

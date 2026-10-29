@@ -7,10 +7,10 @@ use engine_core::{Error, Expected, MaterialHandle, MeshHandle};
 use engine_settings::{Rule, Setting};
 use engine_terrain::{
     Biome, Biomes, Blend, Cover, ErosionLayer, ErosionStage, HeightImage, HeightmapLayer,
-    HummocksLayer, HydrologyLayer, HydrologyStage, Layer, Layers, MAX_CREDIT, MAX_PLACEMENT_LODS,
-    MAX_PLACEMENT_PARTS, NoiseLayer, PathLayer, PathStage, PlacedCollider, PlacedShape,
-    PlacementAsset, PlacementLayer, PlacementLod, PlacementPart, Pyramid, RiversLayer, Stamp,
-    StepsLayer, SurfaceMaterial, SurfaceProjection, Surroundings, Terrain, TerrainSurface,
+    HummocksLayer, HydrologyLayer, HydrologyStage, Layer, Layers, MAX_CREDIT, NoiseLayer,
+    PathLayer, PathStage, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
+    PlacementLod, PlacementPart, Pyramid, RiversLayer, Stamp, StepsLayer, SurfaceMaterial,
+    SurfaceProjection, Surroundings, Terrain, TerrainSurface,
 };
 use serde::{Deserialize, Serialize};
 
@@ -307,7 +307,7 @@ fn prepared_parts(
     let counts: Vec<usize> = prepared.iter().map(|(_, meshes)| meshes.len()).collect();
     let levels = 1 + asset.lods.len();
     if let Err(error) = PlacementPart::check(&counts, levels) {
-        return Err(error.within(&at));
+        return Err(error.within(at));
     }
     Ok(prepared)
 }

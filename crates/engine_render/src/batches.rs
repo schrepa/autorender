@@ -32,6 +32,26 @@ fn snapshot_camera() -> Error {
     refused("$.snapshot.view_projection", Expected::Finite)
 }
 
+fn index_by_handle<H: Ord>(
+    indices: &mut Vec<usize>,
+    count: usize,
+    handle: impl Fn(usize) -> H,
+    field: &str,
+) -> Result<(), Error> {
+    indices.reserve_exact(count);
+    indices.extend(0..count);
+    indices.sort_unstable_by_key(|index| handle(*index));
+    for pair in indices.windows(2) {
+        if handle(pair[0]) == handle(pair[1]) {
+            return Err(refused(
+                format!("$.snapshot.{field}[{}]", pair[1]),
+                Expected::Unique,
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Default)]
 pub(crate) struct BatchPlan {
     pub ordered_instances: Vec<usize>,
@@ -204,52 +224,30 @@ impl BatchPlan {
         }
         drop(profile_validation);
         let profile_sources = engine_profile::span("render", "batch_source_index");
-        self.source_indices.reserve_exact(snapshot.meshes.len());
-        self.source_indices.extend(0..snapshot.meshes.len());
-        self.source_indices
-            .sort_unstable_by_key(|index| snapshot.meshes[*index].handle);
-        for pair in self.source_indices.windows(2) {
-            if snapshot.meshes[pair[0]].handle == snapshot.meshes[pair[1]].handle {
-                return Err(refused(
-                    format!("$.snapshot.meshes[{}]", pair[1]),
-                    Expected::Unique,
-                ));
-            }
-        }
+        index_by_handle(
+            &mut self.source_indices,
+            snapshot.meshes.len(),
+            |index| snapshot.meshes[index].handle,
+            "meshes",
+        )?;
         self.mesh_handles.reserve_exact(snapshot.meshes.len());
         self.mesh_handles.extend(
             self.source_indices
                 .iter()
                 .map(|index| snapshot.meshes[*index].handle),
         );
-        self.material_source_indices
-            .reserve_exact(snapshot.materials.len());
-        self.material_source_indices
-            .extend(0..snapshot.materials.len());
-        self.material_source_indices
-            .sort_unstable_by_key(|index| snapshot.materials[*index].handle);
-        for pair in self.material_source_indices.windows(2) {
-            if snapshot.materials[pair[0]].handle == snapshot.materials[pair[1]].handle {
-                return Err(refused(
-                    format!("$.snapshot.materials[{}]", pair[1]),
-                    Expected::Unique,
-                ));
-            }
-        }
-        self.texture_source_indices
-            .reserve_exact(snapshot.textures.len());
-        self.texture_source_indices
-            .extend(0..snapshot.textures.len());
-        self.texture_source_indices
-            .sort_unstable_by_key(|index| snapshot.textures[*index].handle);
-        for pair in self.texture_source_indices.windows(2) {
-            if snapshot.textures[pair[0]].handle == snapshot.textures[pair[1]].handle {
-                return Err(refused(
-                    format!("$.snapshot.textures[{}]", pair[1]),
-                    Expected::Unique,
-                ));
-            }
-        }
+        index_by_handle(
+            &mut self.material_source_indices,
+            snapshot.materials.len(),
+            |index| snapshot.materials[index].handle,
+            "materials",
+        )?;
+        index_by_handle(
+            &mut self.texture_source_indices,
+            snapshot.textures.len(),
+            |index| snapshot.textures[index].handle,
+            "textures",
+        )?;
         for (index, source) in snapshot.materials.iter().enumerate() {
             for handle in source.material.textures() {
                 if self

@@ -415,7 +415,7 @@ fn timings<G: Game>(
             "metric": "gpu:*",
             "reason": Error::new(ErrorCode::ProfilingUnavailable, "$.gpu.timestamps")
                 .expected(Expected::Supported)
-                .got(game.host().adapter().backend),
+                .got(&game.host().adapter().backend),
         }));
     }
     if !complete {

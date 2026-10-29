@@ -2202,6 +2202,7 @@
         "fn smokes::capture(session: &mut dyn SmokeSession) -> Checked<Value>",
         "fn smokes::compiled(session: &mut dyn SmokeSession) -> Checked<Value>",
         "fn smokes::compiling(rendering: &Value) -> bool",
+        "fn smokes::component(session: &mut dyn SmokeSession, id: &str, component: &str) -> Checked<Value>",
         "fn smokes::control(session: &mut dyn SmokeSession, name: &str, args: Value) -> Checked<Value>",
         "fn smokes::environment(session: &mut dyn SmokeSession, sections: Value) -> Checked<Value>",
         "fn smokes::fast() -> Value",

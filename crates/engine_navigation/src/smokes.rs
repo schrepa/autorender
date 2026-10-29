@@ -2,8 +2,8 @@ use bevy_ecs::prelude::Entity;
 use engine_core::smoke::{SmokeResult, SmokeSession};
 use engine_core::{Bricks, Mesh3d, Transform, smoke_check, smoke_eq};
 use engine_terrain::smokes::{
-    Checked, Fixture, SETTLE_FRAMES, above, control, height_at, inspect, name, near, number, open,
-    query, refuse, render,
+    Checked, Fixture, SETTLE_FRAMES, above, component, control, height_at, inspect, name, near,
+    number, open, query, refuse, render,
 };
 use glam::Vec3;
 use serde_json::{Value, json};
@@ -141,6 +141,12 @@ fn hikes(session: &mut dyn SmokeSession, hiker: Entity) -> Checked<()> {
         "its_walk_was_searched",
         &json!({"searched": walked.searched, "length": walked.length}),
         &json!({"searched": above(0), "length": above(40)})
+    );
+    let seen = component(session, "hiker", "NavAgent")?;
+    smoke_eq!(
+        &seen["status"],
+        &json!(NavStatus::Arrived),
+        "the_hiker_inspects_as_arrived"
     );
     let at = session
         .app()

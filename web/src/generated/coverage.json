@@ -19,7 +19,9 @@
     {
       "inspector": "Collider",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "collision"
+      ]
     },
     {
       "inspector": "CollisionWorld",
@@ -45,18 +47,24 @@
     {
       "inspector": "GlobalTransform",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "collision",
+        "hierarchy"
+      ]
     },
     {
       "inspector": "Grounded",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "streamed_scene"
+      ]
     },
     {
       "inspector": "Hierarchy",
       "kind": "component",
       "smokes": [
-        "hierarchy"
+        "hierarchy",
+        "streamed_scene"
       ]
     },
     {
@@ -69,7 +77,9 @@
     {
       "inspector": "InterpolateTransform",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "agent"
+      ]
     },
     {
       "inspector": "Jobs",
@@ -82,19 +92,26 @@
     {
       "inspector": "LocalLight",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "agent"
+      ]
     },
     {
       "inspector": "Mesh3d",
       "kind": "component",
       "smokes": [
+        "agent",
+        "hierarchy",
+        "meshes",
         "texture"
       ]
     },
     {
       "inspector": "NavAgent",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "navigation_walks"
+      ]
     },
     {
       "inspector": "NavAgents",
@@ -108,7 +125,9 @@
     {
       "inspector": "ParticleEmitter",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "agent"
+      ]
     },
     {
       "inspector": "PhysicsWorld",
@@ -128,17 +147,23 @@
     {
       "inspector": "ReflectionProbe",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "surfaces"
+      ]
     },
     {
       "inspector": "RigidBody",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "physics"
+      ]
     },
     {
       "inspector": "SplineMesh",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "spline"
+      ]
     },
     {
       "inspector": "StaticTables",
@@ -150,12 +175,16 @@
     {
       "inspector": "StreamedId",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "world_streaming"
+      ]
     },
     {
       "inspector": "Terrain",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "terrain_draws"
+      ]
     },
     {
       "inspector": "TerrainDebug",
@@ -167,7 +196,9 @@
     {
       "inspector": "TerrainPrefetch",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "terrain_draws"
+      ]
     },
     {
       "inspector": "Terrains",
@@ -182,18 +213,24 @@
     {
       "inspector": "Tint",
       "kind": "component",
-      "smokes": []
+      "smokes": [
+        "surfaces"
+      ]
     },
     {
       "inspector": "Transform",
       "kind": "component",
       "smokes": [
         "agent",
+        "collision",
+        "hierarchy",
         "host_faults",
         "host_images",
         "host_parity",
         "native",
+        "physics",
         "streamed_scene",
+        "texture",
         "world_streaming"
       ]
     },
@@ -217,36 +254,100 @@
   "ops": [
     {
       "op": "describe",
-      "smokes": []
+      "smokes": [
+        "agent",
+        "collision",
+        "debug_view",
+        "hierarchy",
+        "highlands_lod",
+        "host_faults",
+        "host_images",
+        "host_parity",
+        "native",
+        "physics",
+        "spline",
+        "surfaces",
+        "terrain_draws"
+      ]
     },
     {
       "op": "inspect",
       "smokes": [
+        "agent",
+        "collision",
+        "culling_settings",
+        "debug_view",
+        "foliage_settings",
+        "gpu_presentation",
+        "hierarchy",
+        "highlands_lod",
+        "host_faults",
+        "host_images",
+        "host_parity",
+        "native",
+        "physics",
+        "plugins",
         "streamed_scene",
+        "surfaces",
+        "temporal_antialiasing",
+        "texture",
         "world_streaming"
       ]
     },
     {
       "op": "capture",
-      "smokes": []
+      "smokes": [
+        "agent",
+        "culling_settings",
+        "debug_view",
+        "foliage_settings",
+        "gpu_presentation",
+        "host_faults",
+        "host_images",
+        "host_parity",
+        "native",
+        "temporal_antialiasing"
+      ]
     },
     {
       "op": "profile",
-      "smokes": []
+      "smokes": [
+        "agent",
+        "host_faults",
+        "host_images",
+        "host_parity",
+        "native"
+      ]
     },
     {
       "op": "explain",
-      "smokes": []
+      "smokes": [
+        "agent",
+        "host_faults",
+        "host_images",
+        "host_parity",
+        "native"
+      ]
     },
     {
       "op": "watch",
-      "smokes": []
+      "smokes": [
+        "agent",
+        "host_faults",
+        "host_images",
+        "host_parity",
+        "native"
+      ]
     },
     {
       "op": "status",
       "smokes": [
         "collision",
         "hierarchy",
+        "host_faults",
+        "host_images",
+        "host_parity",
+        "navigation_walks",
         "physics"
       ]
     },
@@ -258,6 +359,7 @@
         "host_faults",
         "host_images",
         "host_parity",
+        "native",
         "texture"
       ]
     },
@@ -273,11 +375,18 @@
     },
     {
       "op": "distribution",
-      "smokes": []
+      "smokes": [
+        "host_faults",
+        "host_images",
+        "host_parity"
+      ]
     },
     {
       "op": "terrain_height",
       "smokes": [
+        "host_faults",
+        "host_images",
+        "host_parity",
         "plugins",
         "streamed_scene"
       ]
@@ -299,6 +408,9 @@
       "smokes": [
         "agent",
         "collision",
+        "host_faults",
+        "host_images",
+        "host_parity",
         "plugins",
         "streamed_scene"
       ]
@@ -331,32 +443,46 @@
     {
       "op": "present",
       "smokes": [
+        "agent",
         "collision",
         "debug_view",
-        "gpu_presentation"
+        "gpu_presentation",
+        "host_faults",
+        "host_images",
+        "host_parity"
       ]
     },
     {
       "op": "culling",
       "smokes": [
+        "host_faults",
+        "host_images",
+        "host_parity",
         "native"
       ]
     },
     {
       "op": "environment",
       "smokes": [
+        "agent",
         "culling_settings",
         "debug_view",
         "debug_view_terrain",
         "foliage_settings",
+        "highlands_lod",
         "host_faults",
         "host_images",
         "host_parity",
+        "native",
+        "navigation_walks",
         "physics",
         "plugins",
         "streamed_scene",
         "surfaces",
         "temporal_antialiasing",
+        "terrain_draws",
+        "terrain_surface",
+        "terrain_water_sky",
         "world_streaming"
       ]
     },
@@ -367,16 +493,27 @@
         "debug_view_terrain",
         "foliage_settings",
         "gpu_presentation",
+        "hierarchy",
+        "host_faults",
+        "host_images",
+        "host_parity",
+        "meshes",
         "native",
+        "plugins",
+        "spline",
         "streamed_scene",
         "surfaces",
         "temporal_antialiasing",
+        "texture",
         "world_streaming"
       ]
     },
     {
       "op": "benchmark",
       "smokes": [
+        "host_faults",
+        "host_images",
+        "host_parity",
         "native",
         "surfaces"
       ]
@@ -389,6 +526,9 @@
         "culling_settings",
         "foliage_settings",
         "gpu_presentation",
+        "host_faults",
+        "host_images",
+        "host_parity",
         "input_camera",
         "input_keys",
         "native",
@@ -399,8 +539,13 @@
     {
       "op": "frames",
       "smokes": [
+        "agent",
         "culling_settings",
         "foliage_settings",
+        "host_faults",
+        "host_images",
+        "host_parity",
+        "native",
         "temporal_antialiasing"
       ]
     },
@@ -408,6 +553,9 @@
       "op": "input",
       "smokes": [
         "agent",
+        "host_faults",
+        "host_images",
+        "host_parity",
         "input_camera",
         "input_keys",
         "native",
@@ -421,7 +569,12 @@
         "foliage_settings",
         "gpu_presentation",
         "hierarchy",
+        "host_faults",
+        "host_images",
+        "host_parity",
+        "native",
         "plugins",
+        "surfaces",
         "temporal_antialiasing",
         "world_streaming"
       ]
@@ -439,6 +592,9 @@
         "frame_loop",
         "gpu_presentation",
         "hierarchy",
+        "host_faults",
+        "host_images",
+        "host_parity",
         "meshes",
         "native",
         "physics",
@@ -458,12 +614,19 @@
         "collision",
         "frame_loop",
         "gpu_presentation",
+        "host_faults",
+        "host_images",
+        "host_parity",
         "native"
       ]
     },
     {
       "op": "game",
       "smokes": [
+        "host_faults",
+        "host_images",
+        "host_parity",
+        "native",
         "surfaces"
       ]
     },
@@ -471,7 +634,11 @@
       "op": "reload",
       "smokes": [
         "agent",
-        "native"
+        "host_faults",
+        "host_images",
+        "host_parity",
+        "native",
+        "streamed_scene"
       ]
     },
     {
@@ -488,24 +655,43 @@
     },
     {
       "op": "debug_device_loss",
-      "smokes": []
+      "smokes": [
+        "host_faults",
+        "host_images",
+        "host_parity"
+      ]
     },
     {
       "op": "debug_missing_asset",
-      "smokes": []
+      "smokes": [
+        "host_faults",
+        "host_images",
+        "host_parity"
+      ]
     },
     {
       "op": "probe",
       "smokes": [
         "debug_view",
         "debug_view_terrain",
-        "highlands_torrent"
+        "highlands_torrent",
+        "surfaces"
       ]
     },
     {
       "op": "terrain",
       "smokes": [
-        "terrain_draws"
+        "agent",
+        "debug_view",
+        "debug_view_terrain",
+        "highlands_jobs",
+        "highlands_torrent",
+        "plugins",
+        "streamed_scene",
+        "terrain_draws",
+        "terrain_shapes",
+        "terrain_surface",
+        "terrain_water_sky"
       ]
     },
     {

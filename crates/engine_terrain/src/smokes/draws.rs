@@ -6,8 +6,8 @@ use serde_json::{Value, json};
 
 use super::{
     Checked, FAST, SETTLE_FRAMES, WAIT_FRAMES, above, ask, at_most, below, camera, capture,
-    control, environment, fast, heights, inspect, name, not, number, open, overview, present,
-    query, refuse, render, renders_until, seen, settle, subdivided, view, with,
+    component, control, environment, fast, heights, inspect, name, not, number, open, overview,
+    present, query, refuse, render, renders_until, seen, settle, subdivided, view, with,
 };
 use crate::TerrainPrefetch;
 
@@ -504,6 +504,12 @@ fn prefetch(session: &mut dyn SmokeSession) -> Checked<()> {
             .id();
         name(world, "spawn-point", place);
     }
+    let reach = component(session, "spawn-point", "TerrainPrefetch")?;
+    smoke_eq!(
+        &reach["reach"],
+        &json!(TerrainPrefetch::default().reach),
+        "the_place_inspects_its_reach"
+    );
     let mut stored = inspect(session, "Terrains")?;
     for _ in 0..SETTLE_FRAMES {
         if number(&stored["cached_tiles"]) > 0.0 && stored["prefetching_tiles"] == 0 {

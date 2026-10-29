@@ -45,232 +45,536 @@
   "requests": {
     "refusal duplicate_inspector at $.name": {
       "code": "duplicate_inspector",
-      "message": "inspector name is already registered",
+      "expected": "unique",
+      "got": "Transform",
       "path": "$.name"
     },
     "refusal entity_removed at $.args.filter.exclude": {
       "code": "entity_removed",
-      "message": "the authored entity is no longer alive",
+      "got": "ground",
       "path": "$.args.filter.exclude"
     },
     "refusal inspector_limit at $.name": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 64
+      },
       "code": "inspector_limit",
-      "message": "a game may register at most 64 inspectors",
+      "got": "Probe64",
       "path": "$.name"
     },
     "refusal inspector_too_large at $.schema": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 16384
+      },
       "code": "inspector_too_large",
-      "message": "descriptor must fit 16384 bytes",
       "path": "$.schema"
     },
     "refusal invalid_benchmark at $.args.samples": {
+      "allowed": {
+        "kind": "range",
+        "max": 240.0,
+        "min": 1.0
+      },
       "code": "invalid_benchmark",
-      "message": "must be in [1, 240]",
+      "got": 0,
+      "nearest": 1,
       "path": "$.args.samples"
     },
     "refusal invalid_json at $": {
       "code": "invalid_json",
-      "message": "EOF while parsing a value at line 1 column 17",
+      "expected": "json",
+      "got": {
+        "column": 17,
+        "line": 1
+      },
       "path": "$"
     },
     "refusal invalid_name at $.component": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 64
+      },
       "code": "invalid_name",
-      "message": "names require 1..64 ASCII letters, digits, underscores, dots, or hyphens",
+      "expected": "id",
+      "got": "not a name!",
       "path": "$.component"
     },
     "refusal invalid_page at $.limit": {
+      "allowed": {
+        "kind": "range",
+        "max": 100.0,
+        "min": 1.0
+      },
       "code": "invalid_page",
-      "message": "limit must be 1..100 and offset 0..10000",
+      "got": 0,
       "path": "$.limit"
     },
     "refusal invalid_path at FILE": {
       "code": "invalid_path",
-      "message": "source must name a file",
+      "expected": "file",
       "path": "FILE"
     },
     "refusal invalid_position at $.args.position": {
+      "allowed": {
+        "kind": "range",
+        "max": 1000000.0,
+        "min": -1000000.0
+      },
       "code": "invalid_position",
-      "message": "must be in [-1000000, 1000000]",
+      "got": 2000000.0,
       "path": "$.args.position"
     },
     "refusal invalid_presentation_alpha at $.args.alpha": {
+      "allowed": {
+        "kind": "range",
+        "max": 1.0,
+        "min": 0.0
+      },
       "code": "invalid_presentation_alpha",
-      "message": "must be in [0, 1]",
+      "got": 2.0,
       "path": "$.args.alpha"
     },
     "refusal invalid_ray at $.args.direction": {
       "code": "invalid_ray",
-      "message": "direction must be a finite nonzero vector",
+      "expected": "finite",
+      "got": [
+        0.0,
+        0.0,
+        0.0
+      ],
       "path": "$.args.direction"
     },
     "refusal invalid_request at $.args.from": {
       "code": "invalid_request",
-      "message": "no resident terrain lies under from",
+      "got": [
+        0.0,
+        0.0
+      ],
       "path": "$.args.from"
     },
     "refusal invalid_revision at $.args.revision": {
       "code": "invalid_revision",
-      "message": "revisions are unsigned decimal strings without leading zeros",
+      "expected": "integer",
+      "got": "02",
       "path": "$.args.revision"
     },
     "refusal invalid_rotation at $.args.rotation": {
       "code": "invalid_rotation",
-      "message": "rotation must be a finite normalized XYZW quaternion (squared length within 0.001 of one)",
+      "expected": "normalized",
+      "got": [
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
       "path": "$.args.rotation"
     },
     "refusal invalid_selector at $.parent": {
       "code": "invalid_selector",
-      "message": "entity and parent selectors are mutually exclusive",
+      "expected": "absent",
       "path": "$.parent"
     },
     "refusal invalid_shape at $.args.shape": {
+      "allowed": {
+        "kind": "range",
+        "max": 10000.0,
+        "min": 0.0001
+      },
       "code": "invalid_shape",
-      "message": "must be in [0.0001, 10000]",
+      "got": 0.0,
       "path": "$.args.shape"
     },
     "refusal invalid_type at $.limit": {
       "code": "invalid_type",
-      "message": "invalid type: string \"three\", expected usize",
+      "expected": "integer",
+      "got": "three",
       "path": "$.limit"
     },
     "refusal invalid_type at $.version": {
       "code": "invalid_type",
-      "message": "invalid type: string \"1\", expected u32",
+      "expected": "integer",
+      "got": "1",
       "path": "$.version"
     },
     "refusal invalid_utf8 at FILE": {
       "code": "invalid_utf8",
-      "message": "invalid utf-8 sequence of 1 bytes from index 1",
+      "expected": "utf8",
       "path": "FILE"
     },
     "refusal invalid_value at $.limit": {
       "code": "invalid_value",
-      "message": "invalid value: integer `-1`, expected usize",
+      "expected": "integer",
+      "got": -1,
       "path": "$.limit"
     },
     "refusal missing_component at $.component": {
       "code": "missing_component",
-      "message": "selected component or resource is absent",
+      "expected": "present",
+      "got": "Collider",
       "path": "$.component"
     },
     "refusal missing_field at $.args.origin": {
       "code": "missing_field",
-      "message": "missing field `origin`",
+      "expected": "present",
       "path": "$.args.origin"
     },
     "refusal missing_field at $.version": {
+      "allowed": {
+        "kind": "range",
+        "max": 1.0,
+        "min": 1.0
+      },
       "code": "missing_field",
-      "message": "missing field `version`",
+      "expected": "present",
       "path": "$.version"
     },
     "refusal missing_plugin at $.name": {
       "code": "missing_plugin",
-      "message": "the terrain brick is not added: add it, or the standard bricks, to the engine",
+      "expected": "present",
+      "got": "terrain",
       "path": "$.name"
     },
     "refusal missing_resource at $.assets": {
       "code": "missing_resource",
-      "message": "AssetLibrary is not installed",
+      "expected": "present",
+      "got": "AssetLibrary",
       "path": "$.assets"
     },
     "refusal no_scene at $.entity": {
       "code": "no_scene",
-      "message": "authored entity inspection requires an active scene instance",
+      "expected": "entity",
       "path": "$.entity"
     },
     "refusal out_of_range at $.args.points": {
+      "allowed": {
+        "kind": "range",
+        "max": 256.0,
+        "min": 1.0
+      },
       "code": "out_of_range",
-      "message": "name 1 to 256 points",
+      "got": 0,
       "path": "$.args.points"
     },
     "refusal pause_required at $": {
       "code": "pause_required",
-      "message": "pause the host before step",
+      "expected": "paused",
+      "got": "step",
       "path": "$"
     },
     "refusal request_too_large at $": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 16384
+      },
       "code": "request_too_large",
-      "message": "request must fit 16384 UTF-8 bytes",
+      "got": 16446,
       "path": "$"
     },
     "refusal reserved_inspector at $.name": {
       "code": "reserved_inspector",
-      "message": "describe answers FrameStats itself: choose another inspector name",
+      "expected": "unique",
+      "got": "FrameStats",
       "path": "$.name"
     },
     "refusal revision_conflict at $.revision": {
       "code": "revision_conflict",
-      "message": "expected revision 1, saved source is 3",
+      "got": "1",
+      "nearest": "3",
       "path": "$.revision"
     },
     "refusal revision_exhausted at $.revision": {
       "code": "revision_exhausted",
-      "message": "scene revision cannot advance past u64::MAX",
+      "got": "18446744073709551615",
       "path": "$.revision"
     },
     "refusal scan_limit at $.args.scene": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 10000
+      },
       "code": "scan_limit",
-      "message": "collision identity lookup admits at most 10000 authored entities",
+      "got": 10001,
       "path": "$.args.scene"
     },
     "refusal scene_id_mismatch at $.id": {
       "code": "scene_id_mismatch",
-      "message": "candidate must retain the saved scene ID",
+      "got": "renamed",
+      "nearest": "saved",
       "path": "$.id"
     },
     "refusal source_io at FILE": {
       "code": "source_io",
-      "message": "the operating system's message",
       "path": "FILE"
     },
     "refusal source_locked at FILE": {
       "code": "source_locked",
-      "message": "another save owns this source lock; after a crashed save, confirm no writer is running before removing the lock",
+      "expected": "absent",
       "path": "FILE"
     },
     "refusal unknown_definition at $.definition": {
+      "allowed": {
+        "kind": "variants",
+        "values": [
+          "AtmospherePreset",
+          "AuthoredPlacement",
+          "Biome",
+          "BiomeLayer",
+          "Blend",
+          "BodyMotion",
+          "Cover",
+          "DebugViewMode",
+          "ErosionLayer",
+          "Facing",
+          "FarPlacement",
+          "GivenRiver",
+          "Grounded",
+          "HummocksLayer",
+          "HydrologyLayer",
+          "Interior",
+          "MacroCauses",
+          "Mask",
+          "MeshSource",
+          "NavAgent",
+          "NoiseLayer",
+          "NoiseMask",
+          "PathLayer",
+          "PlacementChoice",
+          "PlacementLayer",
+          "Remap",
+          "RiversLayer",
+          "SceneAlphaMode",
+          "SceneAmbientOcclusion",
+          "SceneAtmosphere",
+          "SceneAutoExposure",
+          "SceneBloom",
+          "SceneCamera",
+          "SceneClouds",
+          "SceneCollider",
+          "SceneColliderShape",
+          "SceneDebugView",
+          "SceneDither",
+          "SceneDynamicResolution",
+          "SceneEmitter",
+          "SceneEnvironment",
+          "SceneFilter",
+          "SceneFoliage",
+          "SceneGroundCover",
+          "SceneGrounding",
+          "SceneHaze",
+          "SceneHeightmap",
+          "SceneHighlights",
+          "SceneLevelOfDetail",
+          "SceneLight",
+          "SceneLightRegion",
+          "SceneLocalLights",
+          "SceneMap",
+          "SceneMaterial",
+          "SceneMesh",
+          "SceneMipmapFilter",
+          "SceneNavigation",
+          "SceneNightSky",
+          "SceneObject",
+          "SceneOcclusionCulling",
+          "SceneOccupancy",
+          "SceneParticleBlend",
+          "SceneParticles",
+          "ScenePhysics",
+          "ScenePrefab",
+          "SceneReflectionProbe",
+          "SceneReflectionProbes",
+          "SceneReflections",
+          "SceneResolution",
+          "SceneRigidBody",
+          "SceneShadows",
+          "SceneSky",
+          "SceneSkyOcclusion",
+          "SceneSpline",
+          "SceneSpot",
+          "SceneSubpixelCulling",
+          "SceneSurface",
+          "SceneSurroundings",
+          "SceneTemporalAntialiasing",
+          "SceneTerrain",
+          "SceneTerrainAsset",
+          "SceneTerrainCollider",
+          "SceneTerrainLayer",
+          "SceneTerrainLod",
+          "SceneTerrainMaterial",
+          "SceneTerrainMotionDetail",
+          "SceneTerrainPart",
+          "SceneTerrainSettings",
+          "SceneTerrainSurface",
+          "SceneTexture",
+          "SceneTextureMap",
+          "SceneTimeOfDay",
+          "SceneTopLayer",
+          "SceneTransform",
+          "SceneVertex",
+          "SceneWater",
+          "SceneWind",
+          "SceneWorldStreaming",
+          "SceneWrap",
+          "Stamp",
+          "StampOp",
+          "SteepLayer",
+          "StepsLayer",
+          "SurfaceProjection",
+          "TerrainPrefetch"
+        ]
+      },
       "code": "unknown_definition",
-      "message": "not a definition of the scene schema; describe SceneDocument lists them",
+      "got": "Weather",
       "path": "$.definition"
     },
     "refusal unknown_entity at $.entity": {
       "code": "unknown_entity",
-      "message": "authored ID does not exist in the active scene (streamed entities only while their cell is loaded)",
+      "expected": "entity",
+      "got": "nobody",
       "path": "$.entity"
     },
     "refusal unknown_field at $.args.sky": {
+      "allowed": {
+        "kind": "variants",
+        "values": []
+      },
       "code": "unknown_field",
-      "message": "unknown field `sky`, there are no fields",
+      "expected": "absent",
+      "got": "sky",
       "path": "$.args.sky"
     },
     "refusal unknown_inspector at $.component": {
+      "allowed": {
+        "kind": "variants",
+        "values": [
+          "AmbientOcclusion",
+          "Atmosphere",
+          "AutoExposure",
+          "Bloom",
+          "Camera",
+          "Clouds",
+          "Collider",
+          "CollisionWorld",
+          "DebugView",
+          "Dither",
+          "DynamicResolution",
+          "Environment",
+          "Foliage",
+          "GlobalTransform",
+          "GroundCover",
+          "Grounded",
+          "Haze",
+          "Hierarchy",
+          "Highlights",
+          "Input",
+          "InterpolateTransform",
+          "Jobs",
+          "LevelOfDetail",
+          "LocalLight",
+          "LocalLightSettings",
+          "Mesh3d",
+          "NavAgent",
+          "NavAgents",
+          "Navigation",
+          "NightSky",
+          "OcclusionCulling",
+          "Occupancy",
+          "ParticleEmitter",
+          "ParticleSettings",
+          "Physics",
+          "PhysicsWorld",
+          "PresentationState",
+          "ReflectionProbe",
+          "ReflectionProbeSettings",
+          "Reflections",
+          "Resolution",
+          "RigidBody",
+          "Shadows",
+          "Sky",
+          "SkyOcclusion",
+          "SplineMesh",
+          "StaticTables",
+          "StreamedId",
+          "SubpixelCulling",
+          "TemporalAntialiasing",
+          "Terrain",
+          "TerrainDebug",
+          "TerrainPrefetch",
+          "TerrainSettings",
+          "Terrains",
+          "TimeOfDay",
+          "Tint",
+          "Transform",
+          "Water",
+          "Wind",
+          "WorldCells",
+          "WorldChanges",
+          "WorldStreaming"
+        ]
+      },
       "code": "unknown_inspector",
-      "message": "Weather",
+      "got": "Weather",
+      "nearest": "Water",
       "path": "$.component"
     },
-    "refusal unknown_terrain at $": {
+    "refusal unknown_terrain at $.args": {
       "code": "unknown_terrain",
-      "message": "no terrain",
-      "path": "$"
+      "path": "$.args"
     },
     "refusal unknown_variant at $.name": {
+      "allowed": {
+        "kind": "variants",
+        "values": [
+          "status",
+          "assets",
+          "digest",
+          "distribution",
+          "terrain_height",
+          "terrain_route",
+          "nav_path",
+          "raycast",
+          "overlap",
+          "shape_cast",
+          "collision_events",
+          "terrain_sweep"
+        ]
+      },
       "code": "unknown_variant",
-      "message": "weather",
+      "got": "weather",
       "path": "$.name"
     },
     "refusal unknown_variant at $.verb": {
+      "allowed": {
+        "kind": "variants",
+        "values": [
+          "describe",
+          "inspect",
+          "query",
+          "control",
+          "capture",
+          "profile",
+          "explain",
+          "watch",
+          "check"
+        ]
+      },
       "code": "unknown_variant",
-      "message": "weather",
+      "got": "weather",
       "path": "$.verb"
     },
     "refusal unsupported_version at $.version": {
+      "allowed": {
+        "kind": "range",
+        "max": 1.0,
+        "min": 1.0
+      },
       "code": "unsupported_version",
-      "message": "accepted protocol version: 1",
+      "got": 2,
       "path": "$.version"
     },
     "refusal wrong_world at $.scene": {
       "code": "wrong_world",
-      "message": "scene instance belongs to a different engine world",
       "path": "$.scene"
     }
   },
@@ -316,203 +620,336 @@
       "textures": 1
     },
     "refusal asset_budget_exceeded at $.meshes[0]": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 0
+      },
       "code": "asset_budget_exceeded",
-      "message": "mesh capacity of 0 reached",
       "path": "$.meshes[0]"
     },
     "refusal duplicate_id at $.materials[1].id": {
       "code": "duplicate_id",
-      "message": "authored ID 'm' is already used in this collection",
+      "expected": "unique",
+      "got": "m",
       "path": "$.materials[1].id"
     },
     "refusal duplicate_tag at $.entities[0].tags[1]": {
       "code": "duplicate_tag",
-      "message": "tag 't' is repeated",
+      "expected": "unique",
+      "got": "t",
       "path": "$.entities[0].tags[1]"
     },
     "refusal hierarchy_cycle at $.entities[0].parent": {
       "code": "hierarchy_cycle",
-      "message": "parent references form a cycle",
+      "expected": "acyclic",
+      "got": "a2",
       "path": "$.entities[0].parent"
     },
     "refusal hierarchy_depth at $.entities[65].parent": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 64
+      },
       "code": "hierarchy_depth",
-      "message": "hierarchies allow at most 64 parent edges",
+      "got": 65,
       "path": "$.entities[65].parent"
     },
     "refusal hierarchy_install_failed at $.entities": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 1
+      },
       "code": "hierarchy_install_failed",
-      "message": "world exceeds its transform-node limit (TransformNodeLimit)",
+      "got": 2,
       "path": "$.entities"
     },
     "refusal invalid_camera at $.camera.near": {
+      "allowed": {
+        "kind": "range",
+        "max": 1000000.0,
+        "min": 0.001
+      },
       "code": "invalid_camera",
-      "message": "must be in [0.001, 1000000]",
+      "got": 0.0,
       "path": "$.camera.near"
     },
     "refusal invalid_collider at $.entities[0].collider.shape": {
+      "allowed": {
+        "kind": "range",
+        "max": 10000.0,
+        "min": 0.0001
+      },
       "code": "invalid_collider",
-      "message": "collider dimensions must be finite and within [1e-4,1e4]",
       "path": "$.entities[0].collider.shape"
     },
     "refusal invalid_collider_transform at $.entities[0].collider": {
       "code": "invalid_collider_transform",
-      "message": "collider requires valid affine world transform, center within +/-1e6, effective basis lengths [1e-4,1e4], and normalized inverse infinity norm <=1000",
       "path": "$.entities[0].collider"
     },
     "refusal invalid_environment at $.environment.bloom.intensity": {
+      "allowed": {
+        "kind": "range",
+        "max": 4.0,
+        "min": 0.0
+      },
       "code": "invalid_environment",
-      "message": "must be in [0, 4]",
+      "got": -1.0,
       "path": "$.environment.bloom.intensity"
     },
     "refusal invalid_grounded at $.entities[1].grounded": {
       "code": "invalid_grounded",
-      "message": "only roots stand on the ground; ground the placement or root instead",
+      "expected": "absent",
       "path": "$.entities[1].grounded"
     },
     "refusal invalid_id at $.id": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 64
+      },
       "code": "invalid_id",
-      "message": "IDs must contain 1 to 64 ASCII letters, digits, underscores, hyphens or periods",
+      "expected": "id",
+      "got": "has space",
       "path": "$.id"
     },
     "refusal invalid_json at $": {
       "code": "invalid_json",
-      "message": "EOF while parsing a value at line 1 column 16",
+      "expected": "json",
+      "got": {
+        "column": 16,
+        "line": 1
+      },
       "path": "$"
     },
     "refusal invalid_material at $.materials[0].opacity": {
+      "allowed": {
+        "kind": "range",
+        "max": 1.0,
+        "min": 0.0
+      },
       "code": "invalid_material",
-      "message": "material opacity must be finite and in (0, 1]",
+      "expected": "above",
+      "got": 0.0,
       "path": "$.materials[0].opacity"
     },
-    "refusal invalid_mesh at $.meshes[0].source": {
+    "refusal invalid_mesh at $.meshes[0].source.indices[2]": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 0
+      },
       "code": "invalid_mesh",
-      "message": "mesh index 2 is 1, outside 1 vertices",
-      "path": "$.meshes[0].source"
+      "got": 1,
+      "path": "$.meshes[0].source.indices[2]"
     },
     "refusal invalid_name at $.entities[0].name": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 128
+      },
       "code": "invalid_name",
-      "message": "names must be at most 128 UTF-8 bytes without control characters",
+      "got": "line\nbreak",
       "path": "$.entities[0].name"
     },
     "refusal invalid_nav_agent at $.entities[1].nav_agent": {
       "code": "invalid_nav_agent",
-      "message": "only roots walk; give the placement or root the agent instead",
+      "expected": "absent",
       "path": "$.entities[1].nav_agent"
     },
     "refusal invalid_number at $.meshes[0].source.vertices[0].position[0]": {
+      "allowed": {
+        "kind": "range",
+        "max": 1000000.0,
+        "min": -1000000.0
+      },
       "code": "invalid_number",
-      "message": "value must be finite and within ±1000000",
+      "expected": "finite",
+      "got": 2000000.0,
       "path": "$.meshes[0].source.vertices[0].position[0]"
     },
-    "refusal invalid_renderable at $.entities[0]": {
+    "refusal invalid_renderable at $.entities[0].material": {
       "code": "invalid_renderable",
-      "message": "an entity requires both mesh and material, or neither; prefab instance roots cannot also render",
-      "path": "$.entities[0]"
+      "expected": "present",
+      "path": "$.entities[0].material"
     },
     "refusal invalid_rigid_body at $.entities[1].rigid_body": {
       "code": "invalid_rigid_body",
-      "message": "only roots move as bodies; give the placement or root the body instead",
+      "expected": "absent",
       "path": "$.entities[1].rigid_body"
     },
     "refusal invalid_spline at $.entities[0].spline.points": {
+      "allowed": {
+        "kind": "range",
+        "max": 4096.0,
+        "min": 2.0
+      },
       "code": "invalid_spline",
-      "message": "a curve names 2 to 4096 points",
+      "expected": "array",
+      "got": 1,
       "path": "$.entities[0].spline.points"
     },
     "refusal invalid_streamed at $.streamed[0].terrain": {
       "code": "invalid_streamed",
-      "message": "terrains stream their own tiles; author them in entities",
+      "expected": "absent",
       "path": "$.streamed[0].terrain"
     },
     "refusal invalid_terrain at $.entities[0].terrain.layers": {
       "code": "invalid_terrain",
-      "message": "a terrain needs layers",
+      "expected": "non_empty",
       "path": "$.entities[0].terrain.layers"
     },
     "refusal invalid_texture at $.textures[0].rgba8": {
       "code": "invalid_texture",
-      "message": "Invalid symbol 33, offset 0.",
+      "expected": "base64",
       "path": "$.textures[0].rgba8"
     },
     "refusal invalid_type at $.revision": {
       "code": "invalid_type",
-      "message": "invalid type: string \"one\", expected u64 at line 1 column 67",
+      "expected": "integer",
+      "got": "one",
       "path": "$.revision"
     },
     "refusal invalid_uri at $.textures[0].uri": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 256
+      },
       "code": "invalid_uri",
-      "message": "must be a relative path of letters, digits, '_', '.', '-' and '/' inside the scene's folder",
+      "expected": "uri",
+      "got": "../outside.png",
       "path": "$.textures[0].uri"
     },
     "refusal invalid_value at $.entities[0].tags": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 16
+      },
       "code": "invalid_value",
-      "message": "must hold at most 16 values",
+      "expected": "array",
+      "got": 17,
       "path": "$.entities[0].tags"
     },
-    "refusal invalid_value at $.entities[0].tint": {
+    "refusal invalid_value at $.entities[0].tint[0]": {
+      "allowed": {
+        "kind": "range",
+        "max": 1.0,
+        "min": 0.0
+      },
       "code": "invalid_value",
-      "message": "each value must be in [0, 1]",
-      "path": "$.entities[0].tint"
+      "got": 2.0,
+      "path": "$.entities[0].tint[0]"
     },
     "refusal invalid_value at $.prefabs[0].entities": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 10000
+      },
       "code": "invalid_value",
-      "message": "must hold at most 10000 values",
+      "expected": "array",
+      "got": 10001,
       "path": "$.prefabs[0].entities"
     },
     "refusal invalid_world_transform at $.entities[1].transform": {
       "code": "invalid_world_transform",
-      "message": "composed transform for 'c' must be finite and invertible, with finite normal data and normalized normal-matrix inverse infinity norm <= 10000; reduce extreme anisotropy or shear",
+      "expected": "invertible",
+      "got": {
+        "rotation_degrees": [
+          0.0,
+          0.0,
+          0.0
+        ],
+        "scale": [
+          100.0,
+          0.009999999776482582,
+          1.0
+        ],
+        "translation": [
+          0.0,
+          0.0,
+          0.0
+        ]
+      },
       "path": "$.entities[1].transform"
     },
     "refusal missing_asset_library at $": {
       "code": "missing_asset_library",
-      "message": "install AssetLibrary in the world before instantiating a scene",
       "path": "$"
     },
     "refusal missing_field at $.revision": {
       "code": "missing_field",
-      "message": "missing field `revision` at line 1 column 51",
+      "expected": "present",
       "path": "$.revision"
     },
     "refusal missing_file at $.textures[0].uri": {
       "code": "missing_file",
-      "message": "the scene references absent.png, which was not supplied",
+      "expected": "file",
+      "got": "absent.png",
       "path": "$.textures[0].uri"
     },
     "refusal missing_plugin at $.entities[0].prefetch": {
       "code": "missing_plugin",
-      "message": "the terrain brick is not added: add it, or the standard bricks, to the engine",
+      "expected": "present",
+      "got": "terrain",
       "path": "$.entities[0].prefetch"
     },
     "refusal nested_prefab at $.prefabs[1].entities[0].prefab": {
       "code": "nested_prefab",
-      "message": "prefab definitions cannot reference another prefab",
+      "expected": "absent",
+      "got": "inner",
       "path": "$.prefabs[1].entities[0].prefab"
     },
     "refusal source_too_large at $": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 67108864
+      },
       "code": "source_too_large",
-      "message": "scene source must be at most 67108864 bytes",
+      "got": 67108865,
       "path": "$"
     },
     "refusal unknown_field at $.version": {
+      "allowed": {
+        "kind": "variants",
+        "values": [
+          "id",
+          "revision",
+          "camera",
+          "environment",
+          "textures",
+          "materials",
+          "meshes",
+          "prefabs",
+          "entities",
+          "streamed"
+        ]
+      },
       "code": "unknown_field",
-      "message": "unknown field `version`, expected one of `id`, `revision`, `camera`, `environment`, `textures`, `materials`, `meshes`, `prefabs`, `entities`, `streamed` at line 1 column 73",
+      "expected": "absent",
+      "got": "version",
+      "nearest": "revision",
       "path": "$.version"
     },
     "refusal unknown_parent at $.entities[0].parent": {
       "code": "unknown_parent",
-      "message": "no entity in this scope has ID 'nobody'",
+      "got": "nobody",
       "path": "$.entities[0].parent"
     },
     "refusal unknown_reference at $.entities[0].material": {
       "code": "unknown_reference",
-      "message": "no authored object in this collection has ID 'missing'",
+      "got": "missing",
       "path": "$.entities[0].material"
     },
     "refusal unknown_variant at $.meshes[0].source.kind": {
+      "allowed": {
+        "kind": "variants",
+        "values": [
+          "cube",
+          "plane",
+          "octahedron",
+          "inline",
+          "buffer"
+        ]
+      },
       "code": "unknown_variant",
-      "message": "unknown variant `teapot`, expected one of `cube`, `plane`, `octahedron`, `inline`, `buffer` at line 1 column 84",
+      "got": "teapot",
       "path": "$.meshes[0].source.kind"
     }
   },

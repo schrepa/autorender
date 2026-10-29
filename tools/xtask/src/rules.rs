@@ -64,13 +64,13 @@ pub const RULES: Rules = Rules {
             ("engine_scene", "engine_terrain"),
             ("engine_scene", "engine_world_streaming"),
         ],
+        unsmoked: &["debug_panic"],
     },
     facade: Some(Facade {
         package: "engine",
         inner: "engine_core",
         internal: &[
             "CHUNK_LENGTH",
-            "DevStepError",
             "GroundedAt",
             "JobBudget",
             "JobFailures",
@@ -82,6 +82,7 @@ pub const RULES: Rules = Rules {
             "StaticTable",
             "StaticTables",
             "atmosphere_fields",
+            "check_dev_ticks",
             "job_output",
             "lod_input",
             "state_atmosphere_rules",

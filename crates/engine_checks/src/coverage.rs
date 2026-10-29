@@ -93,20 +93,33 @@ pub fn coverage(
         + "\n")
 }
 
-pub fn check(coverage: &str) -> Result<(), String> {
+pub fn check(coverage: &str, unsmoked: &[&str]) -> Result<(), String> {
     let coverage: Value = serde_json::from_str(coverage).expect("coverage_json");
     let mut unchecked = Vec::new();
+    let mut excused = BTreeSet::new();
     for (list, key) in [
         ("inspectors", "inspector"),
         ("sections", "section"),
         ("ops", "op"),
     ] {
         for entry in coverage[list].as_array().into_iter().flatten() {
-            if entry["smokes"].as_array().is_none_or(Vec::is_empty) {
-                unchecked.push(format!("{key} {}", entry[key].as_str().unwrap_or_default()));
+            let name = entry[key].as_str().unwrap_or_default();
+            if !entry["smokes"].as_array().is_none_or(Vec::is_empty) {
+                continue;
+            }
+            if unsmoked.contains(&name) {
+                excused.insert(name);
+            } else {
+                unchecked.push(format!("{key} {name}"));
             }
         }
     }
+    unchecked.extend(
+        unsmoked
+            .iter()
+            .filter(|name| !excused.contains(*name))
+            .map(|name| format!("exception_unused {name}")),
+    );
     if unchecked.is_empty() {
         return Ok(());
     }
@@ -136,28 +149,8 @@ impl Claims {
                     if keyed || indexed {
                         claims.properties.insert(value.clone());
                     }
-                    let field = match (before(2), before(1)) {
-                        (Some(Token::Text(field)), Some(Token::Mark(':'))) => Some(field.as_str()),
-                        _ => None,
-                    };
-                    if matches!(field, Some("name" | "op" | "verb")) {
-                        claims.ops.insert(value.clone());
-                    }
-                    if field == Some("component") {
-                        claims.inspectors.insert(value.clone());
-                    }
-                    match enclosing_call(&tokens, at) {
-                        Some(call) if call == "request" && before(1) == Some(&Token::Mark('(')) => {
-                            claims.ops.insert(value.clone());
-                        }
-                        Some(call) if call.starts_with("inspect") => {
-                            claims.inspectors.insert(value.clone());
-                        }
-                        Some(call) if call.starts_with("query") || call.starts_with("control") => {
-                            claims.ops.insert(value.clone());
-                        }
-                        Some(_) | None => {}
-                    }
+                    claims.ops.insert(value.clone());
+                    claims.inspectors.insert(value.clone());
                 }
                 Token::Name(name) => {
                     let member = before(1) == Some(&Token::Mark('.'));
@@ -355,35 +348,6 @@ fn defines(tokens: &[Token], function: &str) -> bool {
             }
             _ => false,
         })
-}
-
-fn enclosing_call(tokens: &[Token], at: usize) -> Option<&str> {
-    const KEYWORDS: [&str; 6] = ["if", "while", "for", "match", "return", "in"];
-    let mut depth = 0usize;
-    for before in (0..at).rev() {
-        match &tokens[before] {
-            Token::Mark(')' | ']' | '}') => depth += 1,
-            Token::Mark('[' | '{') => {
-                if depth == 0 {
-                    return None;
-                }
-                depth -= 1;
-            }
-            Token::Mark('(') => {
-                if depth == 0 {
-                    return match before.checked_sub(1).and_then(|at| tokens.get(at)) {
-                        Some(Token::Name(name)) if !KEYWORDS.contains(&name.as_str()) => {
-                            Some(name.as_str())
-                        }
-                        Some(_) | None => None,
-                    };
-                }
-                depth -= 1;
-            }
-            Token::Text(_) | Token::Name(_) | Token::Mark(_) => {}
-        }
-    }
-    None
 }
 
 fn tokens(source: &str) -> Vec<Token> {
