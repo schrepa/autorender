@@ -1,26 +1,29 @@
-use crate::bindings::{BindingDecl, Contribution, Stages, Table, read, uniform};
-use crate::gpu_layouts::constants::GROUP_LIGHTS as LIGHTS;
-pub(crate) use crate::gpu_layouts::constants::LIGHT_BYTES;
-use crate::gpu_layouts::constants::{
-    KEPT_REGIONS, LIGHT_EXTERIOR, LIGHT_INTERIOR, NO_SLOT, SHAPED_LIGHTS,
-};
-use crate::graph::{Lifetime, PassDecl, ResourceDecl, Stage};
-use crate::parts::{PartDecl, PartEntry};
-use crate::shaders::entry::lights;
 use engine_core::{LightRegion, RenderLight, glam::Mat4};
+use engine_faces::lights::LightListFace;
+use engine_render::bindings::{BindingDecl, Contribution, Stages, Table, read, uniform, write};
+use engine_render::graph::{Lifetime, PassDecl, ResourceDecl, Stage};
+use engine_render::parts::{PartDecl, PartEntry};
+
+use crate::gpu_layouts::GROUP_LIGHTS as LIGHTS;
+use crate::gpu_layouts::{
+    KEPT_REGIONS, LIGHT_BYTES, LIGHT_EXTERIOR, LIGHT_INTERIOR, NO_SLOT, SHAPED_LIGHTS,
+};
+use crate::shaders::entry::lights;
 
 pub(crate) const TILES_X: u32 = 16;
 pub(crate) const TILES_Y: u32 = 9;
 pub(crate) const SLICES: u32 = 24;
 const CLUSTERS: u64 = (TILES_X * TILES_Y * SLICES) as u64;
+const RANGES_BYTES: u64 = CLUSTERS * 8;
+const SECTION_ALIGN: u64 = 256;
+const INDEX_START: u64 = RANGES_BYTES.next_multiple_of(SECTION_ALIGN);
 const TOTALS_BYTES: u64 = 16;
 pub(crate) const NO_BUDGET: u32 = u32::MAX;
+const LOCAL_LIGHTS: &str = "LOCAL_LIGHTS";
 
 const SHADING: &[BindingDecl] = &[
     uniform("clusters", Stages::FRAGMENT),
-    read("lights", Stages::FRAGMENT),
-    read("cluster_ranges", Stages::FRAGMENT),
-    read("cluster_lights", Stages::FRAGMENT),
+    read("light_data", Stages::FRAGMENT),
 ];
 
 pub(crate) const LIGHTS_LIGHTS: Contribution = Contribution {
@@ -32,6 +35,21 @@ pub(crate) const LIGHTS_LIGHTS: Contribution = Contribution {
 const PROBE_SHADING: Table = Table {
     label: "engine/light-shading-layout",
     bindings: SHADING,
+};
+
+pub(crate) const LIGHT_BINNING: Table = Table {
+    label: "engine/light-binning-layout",
+    bindings: &[
+        uniform("clusters", Stages::COMPUTE),
+        read("inputs", Stages::COMPUTE),
+        read("poses", Stages::COMPUTE),
+        write("lights", Stages::COMPUTE),
+        write("counts", Stages::COMPUTE),
+        write("indices", Stages::COMPUTE),
+        write("totals", Stages::COMPUTE),
+        write("ranges", Stages::COMPUTE),
+        read("still_frames", Stages::COMPUTE),
+    ],
 };
 
 const LABELS: &[&str] = &["engine/light-", "engine/lights"];
@@ -53,14 +71,14 @@ pub(crate) static PART: PartEntry = PartEntry {
         effects: &[],
         labels: LABELS,
         lazy: true,
-        faces: &[],
+        faces: &[engine_render::offer_face!(gpu::LightPass => dyn LightListFace)],
         needs: &[],
         piece: None,
     },
     create: gpu::create,
 };
 
-pub(crate) use crate::gpu_layouts::lights::ClusterUniform;
+pub(crate) use crate::gpu_layouts::ClusterUniform;
 
 impl ClusterUniform {
     pub(crate) fn new(
@@ -104,11 +122,12 @@ impl ClusterUniform {
             ],
             counts: [TILES_X, TILES_Y, SLICES, budget.unwrap_or(NO_BUDGET)],
             lights: [lights, 0, capacity, 0],
+            offsets: [0; 4],
         }
     }
 }
 
-pub(crate) use crate::gpu_layouts::lights::LightInput;
+pub(crate) use crate::gpu_layouts::LightInput;
 
 fn shading_flags(snapshot: &engine_core::RenderSnapshot, regions: bool) -> u32 {
     let mut flags = 0;
@@ -149,21 +168,25 @@ mod gpu {
     };
 
     use engine_core::{LightStats, RenderSnapshot, RenderStats};
+    use engine_render::buffers::{ReadbackRing, entry, storage};
+    use engine_render::cached::{Bound, Versioned};
+    use engine_render::gpu_calls::Queue;
+    use engine_render::graph::{FrameGraph, GraphTable, PassId, ResourceId};
+    use engine_render::lazy::Lazy;
+    use engine_render::parts::{Create, Encode, GpuPart, Prelude, Shading, Step, View};
+    use engine_render::profiling::Span;
 
     use super::*;
-    use crate::bindings::LIGHT_BINNING;
-    use crate::buffers::{Growable, ReadbackRing, entry, storage};
-    use crate::cached::Bound;
-    use crate::graph::{FrameGraph, GraphTable, PassId, ResourceId};
-    use crate::lazy::Lazy;
-    use crate::parts::{Create, Encode, GpuPart, Prelude, Step, View};
-    use crate::profiling::Span;
-    use crate::renderer::FramePoses;
+
+    const DATA_LABEL: &str = "engine/light-data";
 
     struct LightFrame {
         count: u32,
         group: usize,
         flags: u32,
+        settings: (f32, Option<u32>),
+        poses: (wgpu::Buffer, u64, usize),
+        still: (wgpu::Buffer, u64),
     }
 
     type ProbeLightGroups = (
@@ -182,16 +205,16 @@ mod gpu {
         count: wgpu::ComputePipeline,
         scan: wgpu::ComputePipeline,
         fill: wgpu::ComputePipeline,
-        compute_layout: crate::pipelines::GroupLayout,
-        shading_layout: crate::pipelines::GroupLayout,
+        compute_layout: engine_render::pipelines::GroupLayout,
+        shading_layout: engine_render::pipelines::GroupLayout,
         uniform: wgpu::Buffer,
         written: Option<ClusterUniform>,
         inputs: wgpu::Buffer,
-        lights: wgpu::Buffer,
+        data: Versioned<wgpu::Buffer>,
         capacity: usize,
+        index_bytes: u64,
+        room: u64,
         counts: wgpu::Buffer,
-        ranges: wgpu::Buffer,
-        indices: Growable,
         totals: wgpu::Buffer,
         staged: Vec<LightInput>,
         uploaded_revision: Option<(u64, u64)>,
@@ -199,41 +222,54 @@ mod gpu {
         compute_groups: Vec<((u64, usize, u64), wgpu::BindGroup)>,
         probes: RefCell<ProbeLights>,
         no_still: wgpu::Buffer,
-        buffers_generation: u64,
         readbacks: ReadbackRing<()>,
         totals_read: Rc<Cell<Option<[u32; 3]>>>,
     }
 
     impl LightBins {
         fn new(device: &wgpu::Device) -> Self {
-            let compute_layout = crate::pipelines::layout(device, &LIGHT_BINNING);
-            let shading_layout = crate::pipelines::layout(device, &PROBE_SHADING);
-            let layout = crate::pipelines::layout_of(
+            let compute_layout = engine_render::pipelines::layout(device, &LIGHT_BINNING);
+            let shading_layout = engine_render::pipelines::layout(device, &PROBE_SHADING);
+            let layout = engine_render::pipelines::layout_of(
                 device,
                 &crate::pipeline_layouts::LIGHT_BINNING_PIPELINES,
             );
-            let pipeline = |entry: crate::shaders::Entry| {
-                crate::pipelines::compute_entry(device, &layout, entry)
+            let pipeline = |entry: engine_render::shaders::Entry| {
+                engine_render::pipelines::compute_entry(device, &layout, entry)
             };
             let none = wgpu::BufferUsages::empty();
+            let limits = device.limits();
+            let room = limits
+                .max_storage_buffer_binding_size
+                .min(limits.max_buffer_size)
+                / 16
+                * 16;
+            let index_bytes = (CLUSTERS * 4)
+                .next_multiple_of(SECTION_ALIGN)
+                .min(index_room(room, 1));
             Self {
                 count: pipeline(lights::count_lights),
                 scan: pipeline(lights::scan_clusters),
                 fill: pipeline(lights::bin_lights),
                 compute_layout,
                 shading_layout,
-                uniform: crate::buffers::uniform(
+                uniform: engine_render::buffers::uniform(
                     device,
                     "engine/light-clusters-uniform",
                     size_of::<ClusterUniform>() as u64,
                 ),
                 written: None,
                 inputs: storage(device, "engine/light-inputs", 64, none),
-                lights: storage(device, "engine/lights", LIGHT_BYTES, none),
+                data: Versioned::new(storage(
+                    device,
+                    DATA_LABEL,
+                    data_bytes(index_bytes, 1),
+                    none,
+                )),
                 capacity: 1,
+                index_bytes,
+                room,
                 counts: storage(device, "engine/light-cluster-counts", CLUSTERS * 4, none),
-                ranges: storage(device, "engine/light-cluster-ranges", CLUSTERS * 8, none),
-                indices: Growable::new(device, "engine/light-cluster-indices", CLUSTERS * 4, none),
                 totals: storage(
                     device,
                     "engine/light-totals",
@@ -246,7 +282,6 @@ mod gpu {
                 compute_groups: Vec::new(),
                 probes: RefCell::default(),
                 no_still: storage(device, "engine/light-no-still", 16, none),
-                buffers_generation: 0,
                 readbacks: ReadbackRing::new("engine/light-totals-readback"),
                 totals_read: Rc::new(Cell::new(None)),
             }
@@ -259,49 +294,71 @@ mod gpu {
         }
 
         fn capacity_bytes(&self) -> u64 {
+            self.inputs.size() + self.data.size() + self.counts.size()
+        }
+
+        fn lights_offset(&self) -> u64 {
+            INDEX_START + self.index_bytes
+        }
+
+        fn lights_bytes(&self) -> u64 {
+            self.capacity as u64 * LIGHT_BYTES
+        }
+
+        fn offsets(&self) -> [u32; 4] {
             [
-                &self.inputs,
-                &self.lights,
-                &self.counts,
-                &self.ranges,
-                &self.indices,
+                (self.lights_offset() / 16) as u32,
+                0,
+                (INDEX_START / 16) as u32,
+                0,
             ]
-            .iter()
-            .map(|buffer| buffer.size())
-            .sum()
+        }
+
+        fn sections(&self) -> [(&'static str, wgpu::BindingResource<'_>); 3] {
+            let data: &wgpu::Buffer = &self.data;
+            [
+                ("lights", section(data, self.lights_offset(), self.lights_bytes())),
+                ("indices", section(data, INDEX_START, self.index_bytes)),
+                ("ranges", section(data, 0, RANGES_BYTES)),
+            ]
+        }
+
+        fn grow_indices(&mut self, bytes: u64) -> bool {
+            let size = bytes
+                .next_power_of_two()
+                .min(index_room(self.room, self.capacity));
+            if bytes <= self.index_bytes || size <= self.index_bytes {
+                return false;
+            }
+            self.index_bytes = size;
+            true
         }
 
         fn prepare(
             &mut self,
-            device: &wgpu::Device,
-            queue: &crate::gpu_calls::Queue,
+            (device, queue): (&wgpu::Device, &Queue),
             snapshot: &RenderSnapshot,
             (width, height): (u32, u32),
-            poses: FramePoses<'_>,
+            (poses, poses_generation, parity): (&wgpu::Buffer, u64, usize),
+            still: (&wgpu::Buffer, u64),
             revision: (u64, u64),
         ) -> Option<LightFrame> {
             if !snapshot.environment.local_lights.active() || snapshot.lights.list.is_empty() {
                 return None;
             }
             let count = snapshot.lights.list.len();
+            let mut grown = false;
             if count > self.capacity {
                 self.capacity = count.next_power_of_two();
-                crate::memory::release_buffer(&self.inputs);
+                engine_render::memory::release_buffer(&self.inputs);
                 self.inputs = storage(
                     device,
                     "engine/light-inputs",
                     self.capacity as u64 * 64,
                     wgpu::BufferUsages::empty(),
                 );
-                crate::memory::release_buffer(&self.lights);
-                self.lights = storage(
-                    device,
-                    "engine/lights",
-                    self.capacity as u64 * LIGHT_BYTES,
-                    wgpu::BufferUsages::empty(),
-                );
                 self.uploaded_revision = None;
-                self.buffers_generation += 1;
+                grown = true;
             }
             if self.uploaded_revision != Some(revision) {
                 self.staged.clear();
@@ -316,8 +373,13 @@ mod gpu {
                 .get()
                 .map_or(0, |[_, _, needed]| u64::from(needed))
                 .max(count as u64 * 32);
-            if self.indices.grow(device, needed * 4) {
-                self.buffers_generation += 1;
+            if self.grow_indices(needed * 4) || grown {
+                self.data.replace(storage(
+                    device,
+                    DATA_LABEL,
+                    data_bytes(self.index_bytes, self.capacity),
+                    wgpu::BufferUsages::empty(),
+                ));
             }
             let mut uniform = ClusterUniform::new(
                 snapshot.view_projection,
@@ -329,11 +391,12 @@ mod gpu {
                 self.index_capacity(),
             );
             uniform.lights[1] = shading_flags(snapshot, self.regions);
+            uniform.offsets = self.offsets();
             if self.written != Some(uniform) {
                 queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
                 self.written = Some(uniform);
             }
-            let key = (poses.generation(), poses.parity, self.buffers_generation);
+            let key = (poses_generation, parity, self.data.generation());
             let group = match self
                 .compute_groups
                 .iter()
@@ -344,7 +407,8 @@ mod gpu {
                     self.compute_groups.retain(|((generation, _, buffers), _)| {
                         *generation == key.0 && *buffers == key.2
                     });
-                    let group = crate::pipelines::group(
+                    let [lights, indices, ranges] = self.sections();
+                    let group = engine_render::pipelines::group(
                         device,
                         "engine/light-binning-group",
                         &LIGHT_BINNING,
@@ -352,12 +416,12 @@ mod gpu {
                         &[
                             entry("clusters", &self.uniform),
                             entry("inputs", &self.inputs),
-                            entry("poses", poses.current()),
-                            entry("lights", &self.lights),
+                            entry("poses", poses),
+                            lights,
                             entry("counts", &self.counts),
-                            entry("indices", &self.indices),
+                            indices,
                             entry("totals", &self.totals),
-                            entry("ranges", &self.ranges),
+                            ranges,
                             entry("still_frames", &self.no_still),
                         ],
                     );
@@ -369,25 +433,23 @@ mod gpu {
                 count: count as u32,
                 group,
                 flags: uniform.lights[1],
+                settings: (
+                    snapshot.environment.local_lights.distance,
+                    snapshot.environment.local_lights.lights_per_cluster,
+                ),
+                poses: (poses.clone(), poses_generation, parity),
+                still: (still.0.clone(), still.1),
             })
         }
 
         fn index_capacity(&self) -> u32 {
-            (self.indices.size() / 4).min(u64::from(u32::MAX)) as u32
+            (self.index_bytes / 4).min(u64::from(u32::MAX)) as u32
         }
 
-        fn shading(&self) -> [(&'static str, Bound<'_>); 4] {
+        fn shading(&self) -> [(&'static str, Bound<'_>); 2] {
             [
                 ("clusters", Bound::fixed(self.uniform.as_entire_binding())),
-                (
-                    "lights",
-                    Bound::counted(self.buffers_generation, self.lights.as_entire_binding()),
-                ),
-                (
-                    "cluster_ranges",
-                    Bound::fixed(self.ranges.as_entire_binding()),
-                ),
-                ("cluster_lights", self.indices.bound()),
+                ("light_data", self.data.bound()),
             ]
         }
 
@@ -419,26 +481,19 @@ mod gpu {
                 .record(device, encoder, &self.totals, TOTALS_BYTES, ());
         }
 
-        #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
         fn encode_probe_face(
             &self,
-            device: &wgpu::Device,
-            queue: &crate::gpu_calls::Queue,
+            (device, queue): (&wgpu::Device, &Queue),
             encoder: &mut wgpu::CommandEncoder,
-            face: usize,
-            view_projection: Mat4,
-            size: u32,
-            settings: &engine_core::LocalLightSettings,
+            (face, view_projection, size): (usize, Mat4, u32),
             frame: &LightFrame,
-            poses: FramePoses<'_>,
-            still: (&wgpu::Buffer, u64),
         ) {
             let mut probes = self.probes.borrow_mut();
             let probes = &mut *probes;
             if probes.uniforms.is_empty() {
                 probes.uniforms = (0..6)
                     .map(|_| {
-                        crate::buffers::uniform(
+                        engine_render::buffers::uniform(
                             device,
                             "engine/light-clusters-probe",
                             size_of::<ClusterUniform>() as u64,
@@ -446,23 +501,27 @@ mod gpu {
                     })
                     .collect();
             }
+            let (distance, budget) = frame.settings;
             let mut uniform = ClusterUniform::new(
                 view_projection,
                 size,
                 size,
-                settings.distance,
+                distance,
                 frame.count,
-                settings.lights_per_cluster,
+                budget,
                 self.index_capacity(),
             );
             uniform.lights[1] = frame.flags;
             uniform.lights[3] = 1;
+            uniform.offsets = self.offsets();
             queue.write_buffer(&probes.uniforms[face], 0, bytemuck::bytes_of(&uniform));
+            let (poses, poses_generation, parity) = &frame.poses;
+            let (still, still_generation) = &frame.still;
             let key = (
-                poses.generation(),
-                poses.parity,
-                self.buffers_generation,
-                still.1,
+                *poses_generation,
+                *parity,
+                self.data.generation(),
+                *still_generation,
             );
             if let Some(index) = probes.groups.iter().position(|(built, _)| *built == key) {
                 probes.current = index;
@@ -476,7 +535,8 @@ mod gpu {
                     .uniforms
                     .iter()
                     .map(|uniform| {
-                        let compute = crate::pipelines::group(
+                        let [lights, indices, ranges] = self.sections();
+                        let compute = engine_render::pipelines::group(
                             device,
                             "engine/light-binning-probe-group",
                             &LIGHT_BINNING,
@@ -484,26 +544,21 @@ mod gpu {
                             &[
                                 entry("clusters", uniform),
                                 entry("inputs", &self.inputs),
-                                entry("poses", poses.current()),
-                                entry("lights", &self.lights),
+                                entry("poses", poses),
+                                lights,
                                 entry("counts", &self.counts),
-                                entry("indices", &self.indices),
+                                indices,
                                 entry("totals", &self.totals),
-                                entry("ranges", &self.ranges),
-                                entry("still_frames", still.0),
+                                ranges,
+                                entry("still_frames", still),
                             ],
                         );
-                        let fragment = crate::pipelines::group(
+                        let fragment = engine_render::pipelines::group(
                             device,
                             "engine/light-shading-probe-group",
                             &PROBE_SHADING,
                             &self.shading_layout,
-                            &[
-                                entry("clusters", uniform),
-                                entry("lights", &self.lights),
-                                entry("cluster_ranges", &self.ranges),
-                                entry("cluster_lights", &self.indices),
-                            ],
+                            &[entry("clusters", uniform), entry("light_data", &self.data)],
                         );
                         (compute, fragment)
                     })
@@ -529,18 +584,55 @@ mod gpu {
             pass.dispatch_workgroups(columns, rows, 1);
         }
 
-        fn probe_group(&self, face: usize) -> wgpu::BindGroup {
+        fn probe_group(&self, face: usize) -> Option<wgpu::BindGroup> {
             let probes = self.probes.borrow();
-            probes.groups[probes.current].1[face].1.clone()
+            Some(probes.groups.get(probes.current)?.1.get(face)?.1.clone())
         }
     }
 
-    pub(super) fn create(_cx: &Create<'_>) -> Box<dyn GpuPart> {
-        Box::new(LightPass::default())
+    fn index_room(room: u64, capacity: usize) -> u64 {
+        room.saturating_sub(INDEX_START + capacity as u64 * LIGHT_BYTES) / SECTION_ALIGN
+            * SECTION_ALIGN
     }
 
-    #[derive(Default)]
+    fn data_bytes(index_bytes: u64, capacity: usize) -> u64 {
+        INDEX_START + index_bytes + capacity as u64 * LIGHT_BYTES
+    }
+
+    fn section(buffer: &wgpu::Buffer, offset: u64, bytes: u64) -> wgpu::BindingResource<'_> {
+        wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+            buffer,
+            offset,
+            size: wgpu::BufferSize::new(bytes),
+        })
+    }
+
+    pub(super) fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
+        let device = &cx.core.device;
+        Box::new(LightPass {
+            idle: (
+                engine_render::buffers::uniform(
+                    device,
+                    "engine/light-clusters-idle",
+                    size_of::<ClusterUniform>() as u64,
+                ),
+                Versioned::new(storage(
+                    device,
+                    "engine/light-data-idle",
+                    16,
+                    wgpu::BufferUsages::empty(),
+                )),
+            ),
+            bins: Lazy::default(),
+            frame: None,
+            pass: None,
+            poses: None,
+            lights: None,
+        })
+    }
+
     pub(crate) struct LightPass {
+        idle: (wgpu::Buffer, Versioned<wgpu::Buffer>),
         bins: Lazy<LightBins>,
         frame: Option<LightFrame>,
         pass: Option<PassId>,
@@ -548,42 +640,23 @@ mod gpu {
         lights: Option<ResourceId>,
     }
 
-    impl LightPass {
-        pub(crate) fn created(&self) -> bool {
-            self.bins.get().is_some()
+    impl LightListFace for LightPass {
+        fn probe_group(&self, face: usize) -> Option<wgpu::BindGroup> {
+            self.frame
+                .as_ref()
+                .and(self.bins.get())?
+                .probe_group(face)
         }
 
-        pub(crate) fn lit(&self) -> bool {
-            self.frame.is_some() && self.created()
-        }
-
-        pub(crate) fn encode_probe_face(
+        fn encode_probe_face(
             &self,
-            (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
+            gpu: (&wgpu::Device, &Queue),
             encoder: &mut wgpu::CommandEncoder,
-            (face, view_projection, size): (usize, Mat4, u32),
-            settings: &engine_core::LocalLightSettings,
-            poses: FramePoses<'_>,
-            still: (&wgpu::Buffer, u64),
+            view: (usize, Mat4, u32),
         ) {
             if let (Some(bins), Some(frame)) = (self.bins.get(), &self.frame) {
-                bins.encode_probe_face(
-                    device,
-                    queue,
-                    encoder,
-                    face,
-                    view_projection,
-                    size,
-                    settings,
-                    frame,
-                    poses,
-                    still,
-                );
+                bins.encode_probe_face(gpu, encoder, view, frame);
             }
-        }
-
-        pub(crate) fn probe_group(&self, face: usize) -> Option<wgpu::BindGroup> {
-            self.bins.get().map(|bins| bins.probe_group(face))
         }
     }
 
@@ -614,12 +687,13 @@ mod gpu {
                 return;
             };
             let parity = cx.frame.temporal.as_ref().map_or(0, |frame| frame.parity);
+            let poses = core.frame_poses(parity);
             self.frame = bins.prepare(
-                device,
-                &core.queue,
+                (device, &core.queue),
                 snapshot,
                 core.render_pixels(),
-                core.frame_poses(parity),
+                (poses.current(), poses.generation(), poses.parity),
+                core.gpu_presentation.still_frames(),
                 (frame.identity(), frame.lights_revision()),
             );
         }
@@ -654,8 +728,21 @@ mod gpu {
             if group != "lights" {
                 return;
             }
-            if let Some(bins) = self.bins.get() {
-                out.extend(bins.shading());
+            match self.bins.get() {
+                Some(bins) => out.extend(bins.shading()),
+                None => out.extend([
+                    ("clusters", Bound::fixed(self.idle.0.as_entire_binding())),
+                    ("light_data", self.idle.1.bound()),
+                ]),
+            }
+        }
+
+        fn shading(&self, _snapshot: &RenderSnapshot, shading: &mut Shading) {
+            let created = self.bins.get().is_some();
+            let lit = self.frame.is_some() && created;
+            shading.set(LOCAL_LIGHTS, f64::from(u8::from(lit)));
+            if created {
+                shading.warm(LOCAL_LIGHTS, f64::from(u8::from(!lit)));
             }
         }
 
@@ -717,5 +804,3 @@ mod gpu {
         }
     }
 }
-
-pub(crate) use gpu::LightPass;

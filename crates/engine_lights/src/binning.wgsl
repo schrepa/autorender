@@ -1,11 +1,4 @@
-struct Clusters {
-    view_projection: mat4x4<f32>,
-    depth: vec4<f32>,
-    projection: vec4<f32>,
-    grid: vec4<f32>,
-    counts: vec4<u32>,
-    lights: vec4<u32>,
-}
+import package::lights::clusters::{SHAPED_LIGHTS, clusters};
 
 struct Input {
     position: vec3<f32>,
@@ -33,8 +26,6 @@ struct Light {
     pad: u32,
 }
 
-const SHAPED_LIGHTS: u32 = 1u;
-
 struct Rows {
     r0: vec4<f32>,
     r1: vec4<f32>,
@@ -43,7 +34,6 @@ struct Rows {
 
 const NO_SLOT: u32 = 0xffffffffu;
 
-@group(0) @binding(0) var<uniform> clusters: Clusters;
 @group(0) @binding(1) var<storage, read> inputs: array<Input>;
 @group(0) @binding(2) var<storage, read> poses: array<Rows>;
 @group(0) @binding(3) var<storage, read_write> lights: array<Light>;
