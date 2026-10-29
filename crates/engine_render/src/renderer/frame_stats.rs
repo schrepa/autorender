@@ -1,13 +1,27 @@
-use super::frame::{EncodeReport, FrameKind, FrameState};
+use super::frame::{EncodeReport, Uploaded};
 use super::*;
-use crate::clouds::CloudPass;
-use crate::gpu_presentation::GpuPrepared;
-use crate::ground_cover::GroundCoverPass;
-use crate::occupancy::OccupancyPass;
-use crate::transparent::Transparency;
-use crate::water::WaterPass;
+use crate::gpu_presentation::{GpuPrepared, PresentationPart};
+use crate::shadows::ShadowPass;
 
-use engine_core::{CullingStats, DetailStats, ShadowStats, TerrainBounceStats, TerrainRenderStats};
+use engine_core::{CullingStats, DetailStats};
+
+const RAN_ORDERS: usize = 256;
+
+const MEMORY: [(&str, &str); 13] = [
+    ("shadows", "memory.gpu_shadow_bytes"),
+    ("post", "memory.gpu_post_bytes"),
+    ("exposure", "memory.gpu_post_bytes"),
+    ("sky", "memory.gpu_environment_bytes"),
+    ("probes", "memory.gpu_environment_bytes"),
+    ("lights", "memory.gpu_light_bytes"),
+    ("terrain", "memory.gpu_terrain_bytes"),
+    ("ground_cover", "memory.gpu_terrain_bytes"),
+    ("scatter", "memory.gpu_terrain_bytes"),
+    ("occupancy", "memory.gpu_terrain_bytes"),
+    ("water", "memory.gpu_terrain_bytes"),
+    ("transparency", "memory.gpu_transparent_bytes"),
+    ("temporal", "memory.gpu_temporal_bytes"),
+];
 
 #[cfg(feature = "profiling")]
 #[expect(clippy::expect_used, reason = "render stats always serialize")]
@@ -52,59 +66,36 @@ fn stat_counters(stats: &RenderStats) {
 fn stat_counters(_: &RenderStats) {}
 
 impl Renderer {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub(super) fn frame_stats(
         &mut self,
-        state: &FrameState<'_>,
+        info: &FrameInfo<'_>,
+        uploaded: &Uploaded,
         report: &EncodeReport,
     ) -> RenderStats {
         let FrameKind {
             gpu_mode,
             instance_count,
             ..
-        } = state.kind;
-        let (snapshot, frame) = (state.snapshot, state.frame);
-        let shadow_draws = report.shadow_draws;
-        let features = &state.features;
-        let shadow_frame = &features.shadow_frame;
-        let effects = PostPass::stats(
-            self.features.post.get(),
-            features.frames.post.as_ref().map(Ready::frame),
-            snapshot,
+        } = info.kind;
+        let (snapshot, frame) = (info.snapshot, info.frame);
+        let (mesh_upload_bytes, texture_upload_bytes) = (
+            uploaded.assets.mesh_bytes,
+            uploaded.assets.texture_bytes,
         );
-        let water = WaterPass::stats(
-            Some(self.features.water.get()),
-            features.frames.water.as_ref().map(Ready::frame),
-            snapshot,
+        let (camera_upload_bytes, instance_upload_bytes) = (
+            uploaded.writes.camera_bytes,
+            uploaded.writes.instance_bytes,
         );
-        let (mesh_upload_bytes, texture_upload_bytes) =
-            (state.assets.mesh_bytes, state.assets.texture_bytes);
-        let (camera_upload_bytes, instance_upload_bytes) =
-            (state.writes.camera_bytes, state.writes.instance_bytes);
-
+        let pipelines_created = self.core.pipeline_counts.frame_submitted(&self.core.queue);
+        let render_passes = self.ran_passes();
+        let core = &self.core;
         let gpu_visible = if gpu_mode {
-            self.gpu_presentation.visible()
+            core.gpu_presentation.visible()
         } else {
             None
         };
-        let pipelines_created = self.pipeline_counts.frame_submitted(&self.queue);
-        let lod_instances = if gpu_mode && snapshot.environment.level_of_detail.enabled {
-            self.gpu_presentation.lod_instances()
-        } else {
-            None
-        };
-        let shadow_casters = shadow_frame.as_ref().and(self.shadows.caster_counts());
-        let tiles = shadow_frame
-            .as_ref()
-            .map(crate::shadows::ShadowFrame::tiles)
-            .unwrap_or_default();
-        let surface = self.terrain.surface.stats();
-        let terrain_stats = engine_terrain::RenderTerrains::of(snapshot).stats;
-        let residency = self.residency();
-        let stats = RenderStats {
+        let residency = core.residency();
+        let mut stats = RenderStats {
             draw_calls: report.draws,
             upload_bytes: camera_upload_bytes
                 + instance_upload_bytes
@@ -119,16 +110,16 @@ impl Renderer {
             },
             gpu_visible,
             triangles: if gpu_mode {
-                self.gpu_presentation.triangles()
+                core.gpu_presentation.triangles()
             } else {
-                let triangles: u64 = self
+                let triangles: u64 = core
                     .plan
                     .batches
                     .iter()
                     .map(|batch| {
                         u64::from(batch.instances.end - batch.instances.start)
                             * u64::from(
-                                self.meshes
+                                core.meshes
                                     .get(&batch.mesh)
                                     .map_or(0, |mesh| mesh.index_count)
                                     / 3,
@@ -138,7 +129,7 @@ impl Renderer {
                 Some(triangles.min(u64::from(u32::MAX)) as u32)
             },
             read_back_age: if gpu_mode {
-                self.gpu_presentation
+                core.gpu_presentation
                     .read_back_age()
                     .map(|age| age.min(u64::from(u32::MAX)) as u32)
             } else {
@@ -151,165 +142,81 @@ impl Renderer {
             texture_upload_bytes,
             resident_texture_bytes: residency.texture_bytes,
             submitted: true,
-            pipelines: self.pipeline_counts.created(),
+            pipelines: core.pipeline_counts.created(),
             pipelines_created,
-            render_passes: crate::render_graph::render_passes(report.passes),
-            shadows: ShadowStats {
-                active: shadow_frame.is_some(),
-                draws: if shadow_frame.is_some() {
-                    shadow_draws
-                } else {
-                    0
-                },
-                tiles_marked: tiles.marked,
-                tiles_resident: tiles.resident,
-                tiles_drawn: tiles.drawn,
-                tiles_reclaimed: tiles.reclaimed,
-                tiles_missing: tiles.missing,
-                moving_tiles: tiles.moving,
-                casters: shadow_casters.map(|casters| casters[0]),
-                moving_casters: shadow_casters.map(|casters| casters[1]),
-                moving_left_out: shadow_casters.map(|casters| casters[2]),
-                sky_maps: self.shadows.sky_counts().0,
-                sky_drawn: self.shadows.sky_counts().1,
-            },
-            ambient_occlusion: effects.ambient_occlusion,
-            bloom: effects.bloom,
-            local_lights: LightPass::stats(
-                self.features.lights.get(),
-                features.light_frame(),
-                snapshot,
-            ),
-            haze: effects.haze,
-            reflections: effects.reflections,
-            particles: Transparency::stats(
-                Some(self.features.transparency.get()),
-                features.frames.transparency.as_ref().map(Ready::frame),
-                snapshot,
-            ),
-            reflection_probes: ProbePass::stats(Some(self.features.probes.get()), None, snapshot),
-            level_of_detail: DetailStats {
-                lod0_instances: lod_instances.map(|levels| levels[0]),
-                lod1_instances: lod_instances.map(|levels| levels[1]),
-                lod2_instances: lod_instances.map(|levels| levels[2]),
-                impostor_instances: lod_instances.map(|levels| levels[3]),
-                impostors: self.impostors.live(),
-                dropped_impostors: self.impostors.dropped,
-                meshes_without_levels: self
-                    .meshes
-                    .values()
-                    .filter(|mesh| mesh.without_levels)
-                    .count() as u32,
-            },
-            terrain: TerrainRenderStats {
-                leaves: surface.leaves,
-                triangles: surface.triangles,
-                refused_splits: surface.refused,
-                shallow_subdivisions: surface.shallow,
-                shadow_patches: self.terrain.patches.frame.shadow_patches,
-                tiles: self.terrain.resident(),
-                loading_tiles: terrain_stats.loading_tiles,
-                gpu_controls: self.terrain.atlas.controls,
-                dropped_tiles: terrain_stats.dropped_tiles + self.terrain.atlas.dropped,
-                fallback_tiles: terrain_stats.fallback_tiles,
-                horizons: self.terrain.horizons.count(),
-                sky_maps: self.terrain.sky.count(),
-                lighting_uploads: self.terrain.horizons.uploaded + self.terrain.sky.uploaded,
-                bounce: TerrainBounceStats {
-                    relit: self.terrain.bounce.relit,
-                    probes: self.terrain.bounce.relit_probes,
-                    levels: self.terrain.bounce.levels,
-                    dropped: self.terrain.bounce.dropped,
-                },
-                macro_maps: self.terrain.macro_maps.count(),
-                dropped_materials: self.terrain.tables.dropped_materials,
-                placed_objects: self.features.scatter.get().resident,
-                placed_far_objects: self.scatter_draws.far_objects(),
-                placed_impostors: self.impostors.placed.live(),
-                dropped_placed_objects: self.features.scatter.get().left_out(),
-                white_water: terrain_stats.white_water,
-            },
-            ground_cover: GroundCoverPass::stats(
-                Some(self.features.ground_cover.get()),
-                features.frames.ground_cover.as_ref().map(Ready::frame),
-                snapshot,
-            ),
-            occupancy: OccupancyPass::stats(
-                Some(self.features.occupancy.get()),
-                features.frames.occupancy.as_ref().map(Ready::frame),
-                snapshot,
-            ),
-            water,
-            clouds: CloudPass::stats(
-                Some(self.features.clouds.get()),
-                features.frames.clouds.as_ref().map(Ready::frame),
-                snapshot,
-            ),
-            sky: engine_core::SkyStats {
-                exposure: crate::exposure::ExposurePass::stats(
-                    self.features.exposure.get(),
-                    features.frames.exposure.as_ref().map(Ready::frame),
-                    snapshot,
-                ),
-                ..crate::sky::SkyPass::stats(Some(self.features.sky.get()), None, snapshot)
-            },
-            occlusion_culling: CullingStats {
-                active: gpu_mode && self.gpu_presentation.occlusion(),
-                instances: if gpu_mode && snapshot.environment.occlusion_culling.enabled {
-                    self.gpu_presentation.occluded()
-                } else {
-                    None
-                },
-            },
-            subpixel_culling: CullingStats {
-                active: gpu_mode && self.gpu_presentation.culls_subpixel(),
-                instances: if gpu_mode && snapshot.environment.subpixel_culling.enabled {
-                    self.gpu_presentation.subpixel()
-                } else {
-                    None
-                },
-            },
-            temporal_antialiasing: TemporalPass::stats(
-                self.features.temporal.get(),
-                features.frames.temporal.as_ref().map(Ready::frame),
-                snapshot,
-            ),
+            render_passes,
+            ..RenderStats::default()
         };
-        let immediate = self.queue.take_immediate();
-        self.profile_counters(state, &stats, gpu_visible, immediate);
+        core.culling_stats(snapshot, gpu_mode, &mut stats);
+        let view = self.view(info);
+        for (decl, part) in self.parts.iter() {
+            let _owner = crate::memory::owned(decl.brick);
+            part.stats(&view, &mut stats);
+        }
+        stats.terrain.placed_impostors = core.impostors.placed.live();
+        let immediate = core.queue.take_immediate();
+        self.profile_counters(info, uploaded, &stats, (gpu_visible, immediate));
         stats
+    }
+
+    fn ran_passes(&mut self) -> engine_core::Names {
+        let ran: Vec<&'static str> = self
+            .graph
+            .kept_passes()
+            .map(|node| self.table.entry(node.pass()).name)
+            .collect();
+        let names = match self.ran.iter().find(|&&known| known == ran.as_slice()) {
+            Some(&known) => known,
+            None if self.ran.len() < RAN_ORDERS => {
+                let leaked: &'static [&'static str] = Box::leak(ran.into_boxed_slice());
+                self.ran.push(leaked);
+                leaked
+            }
+            None => return self.table.names_of(self.graph.kept()),
+        };
+        engine_core::Names {
+            bits: 1_u64
+                .checked_shl(names.len() as u32)
+                .map_or(u64::MAX, |bit| bit - 1),
+            names,
+        }
     }
 
     fn profile_counters(
         &self,
-        state: &FrameState<'_>,
+        info: &FrameInfo<'_>,
+        uploaded: &Uploaded,
         stats: &RenderStats,
-        gpu_visible: Option<u32>,
-        immediate: u32,
+        (gpu_visible, immediate): (Option<u32>, u32),
     ) {
         if !engine_profile::active() {
             return;
         }
         stat_counters(stats);
         engine_profile::counter("render.immediate_submissions", f64::from(immediate));
-        self.upload_counters(state);
-        if let Some(prepared) = &state.features.gpu_prepared {
+        self.upload_counters(info, uploaded);
+        if let Some(prepared) = self
+            .parts
+            .get::<PresentationPart>()
+            .and_then(PresentationPart::prepared)
+        {
             gpu_counters(prepared, gpu_visible);
         }
         self.memory_counters(stats);
     }
 
-    fn upload_counters(&self, state: &FrameState<'_>) {
+    fn upload_counters(&self, info: &FrameInfo<'_>, uploaded: &Uploaded) {
         let FrameKind {
             gpu_mode,
             instance_count,
             ..
-        } = state.kind;
-        let (writes, packing) = (&state.writes, &state.packing);
-        engine_profile::counter("render.instance_capacity", self.instances.capacity as f64);
+        } = info.kind;
+        let (writes, packing) = (&uploaded.writes, &uploaded.packing);
+        let core = &self.core;
+        engine_profile::counter("render.instance_capacity", core.instances.capacity as f64);
         engine_profile::counter(
             "render.texture_mip_levels",
-            f64::from(state.assets.mip_levels),
+            f64::from(uploaded.assets.mip_levels),
         );
         engine_profile::counter("render.camera_write_bytes", writes.camera_bytes as f64);
         engine_profile::counter("render.instance_write_bytes", writes.instance_bytes as f64);
@@ -317,8 +224,13 @@ impl Renderer {
         engine_profile::counter("render.color_write_bytes", writes.color_bytes as f64);
         engine_profile::counter("render.instance_id_write_bytes", writes.slot_bytes as f64);
         engine_profile::counter("render.gpu_presentation", f64::from(u8::from(gpu_mode)));
-        engine_profile::counter("render.shadow_groups", self.shadows.groups().len() as f64);
-        if let Some(frame) = &packing.temporal_frame {
+        engine_profile::counter(
+            "render.shadow_groups",
+            self.parts
+                .get::<ShadowPass>()
+                .map_or(0, |shadows| shadows.groups().len()) as f64,
+        );
+        if let Some(frame) = &info.temporal {
             engine_profile::counter(
                 "render.taa_history",
                 f64::from(u8::from(frame.history_valid)),
@@ -350,64 +262,44 @@ impl Renderer {
         engine_profile::counter("render.colors_repacked", packing.colors_repacked as f64);
     }
 
+    fn part_bytes(&self, counter: &str) -> u64 {
+        self.parts
+            .iter()
+            .filter(|(decl, _)| {
+                MEMORY
+                    .iter()
+                    .any(|&(part, named)| part == decl.name && named == counter)
+            })
+            .map(|(_, part)| part.capacity_bytes())
+            .sum()
+    }
+
     fn memory_counters(&self, stats: &RenderStats) {
-        engine_profile::counter(
+        let core = &self.core;
+        for counter in [
             "memory.gpu_shadow_bytes",
-            self.shadows.capacity_bytes() as f64,
-        );
-        engine_profile::counter(
             "memory.gpu_post_bytes",
-            (self.features.post.get().map_or(0, PostPass::capacity_bytes)
-                + self
-                    .features
-                    .exposure
-                    .get()
-                    .map_or(0, crate::exposure::ExposurePass::capacity_bytes)) as f64,
-        );
-        engine_profile::counter(
             "memory.gpu_environment_bytes",
-            (self.features.environment.get().capacity_bytes()
-                + self.features.probes.get().capacity_bytes()
-                + self.features.clouds.get().capacity_bytes()
-                + self.features.sky.get().capacity_bytes()) as f64,
-        );
-        engine_profile::counter(
             "memory.gpu_light_bytes",
-            self.features
-                .lights
-                .get()
-                .map_or(0, LightPass::capacity_bytes) as f64,
-        );
+        ] {
+            engine_profile::counter(counter, self.part_bytes(counter) as f64);
+        }
         engine_profile::counter(
             "memory.gpu_impostor_bytes",
-            self.impostors.capacity_bytes() as f64,
+            core.impostors.capacity_bytes() as f64,
         );
-        engine_profile::counter(
-            "memory.gpu_terrain_bytes",
-            (self.terrain.capacity_bytes()
-                + self.features.ground_cover.get().capacity_bytes()
-                + self.features.scatter.get().capacity_bytes()
-                + self.features.occupancy.get().capacity_bytes()
-                + self.features.water.get().capacity_bytes()
-                + self.water_settle.capacity_bytes()) as f64,
-        );
-        engine_profile::counter(
-            "memory.gpu_transparent_bytes",
-            self.features.transparency.get().capacity_bytes() as f64,
-        );
+        for counter in ["memory.gpu_terrain_bytes", "memory.gpu_transparent_bytes"] {
+            engine_profile::counter(counter, self.part_bytes(counter) as f64);
+        }
         engine_profile::counter(
             "memory.gpu_temporal_bytes",
-            (self
-                .features
-                .temporal
-                .get()
-                .map_or(0, TemporalPass::capacity_bytes)
-                + self.instances.alternate_bytes()) as f64,
+            (self.part_bytes("memory.gpu_temporal_bytes") + core.instances.alternate_bytes())
+                as f64,
         );
         engine_profile::counter(
             "memory.gpu_presentation_bytes",
-            (self.gpu_presentation.capacity_bytes()
-                + self
+            (core.gpu_presentation.capacity_bytes()
+                + core
                     .culling
                     .pyramid
                     .as_ref()
@@ -415,7 +307,7 @@ impl Renderer {
         );
         engine_profile::counter(
             "memory.render_upload_cache_bytes",
-            (size_of::<UploadCache>() + self.instances.retained_uploads.capacity_bytes()) as f64,
+            (size_of::<UploadCache>() + core.instances.retained_uploads.capacity_bytes()) as f64,
         );
         engine_profile::counter(
             "memory.render_upload_range_bytes",
@@ -423,18 +315,18 @@ impl Renderer {
         );
         engine_profile::counter(
             "memory.render_staging_capacity_bytes",
-            (self.instances.color_staging.capacity() * size_of::<ColorData>()
-                + self.instances.slot_staging.capacity() * size_of::<u32>()
-                + self.mesh_uploads.staging.capacity() * size_of::<Vertex>()) as f64,
+            (core.instances.color_staging.capacity() * size_of::<ColorData>()
+                + core.instances.slot_staging.capacity() * size_of::<u32>()
+                + core.mesh_uploads.staging.capacity() * size_of::<Vertex>()) as f64,
         );
         engine_profile::counter(
             "memory.gpu_pose_staging_bytes",
-            self.instances.pose_uploads.capacity_bytes() as f64,
+            core.instances.pose_uploads.capacity_bytes() as f64,
         );
         engine_profile::counter(
             "memory.gpu_instance_buffer_bytes",
-            (self.instances.capacity * (size_of::<PoseData>() + size_of::<ColorData>())
-                + self.instances.slot_capacity * size_of::<u32>()) as f64,
+            (core.instances.capacity * (size_of::<PoseData>() + size_of::<ColorData>())
+                + core.instances.slot_capacity * size_of::<u32>()) as f64,
         );
         engine_profile::counter(
             "memory.gpu_mesh_payload_bytes",
@@ -442,7 +334,7 @@ impl Renderer {
         );
         engine_profile::counter(
             "memory.gpu_mesh_arena_bytes",
-            self.mesh_arena.capacity_bytes() as f64,
+            core.mesh_arena.capacity_bytes() as f64,
         );
         engine_profile::counter(
             "memory.gpu_texture_payload_bytes",
@@ -450,8 +342,47 @@ impl Renderer {
         );
         engine_profile::counter(
             "memory.gpu_texture_mip_bytes",
-            self.materials.texture_totals().2 as f64,
+            core.materials.texture_totals().2 as f64,
         );
+    }
+}
+
+impl Core {
+    fn culling_stats(&self, snapshot: &RenderSnapshot, gpu_mode: bool, stats: &mut RenderStats) {
+        let lod_instances = if gpu_mode && snapshot.environment.level_of_detail.enabled {
+            self.gpu_presentation.lod_instances()
+        } else {
+            None
+        };
+        stats.level_of_detail = DetailStats {
+            lod0_instances: lod_instances.map(|levels| levels[0]),
+            lod1_instances: lod_instances.map(|levels| levels[1]),
+            lod2_instances: lod_instances.map(|levels| levels[2]),
+            impostor_instances: lod_instances.map(|levels| levels[3]),
+            impostors: self.impostors.live(),
+            dropped_impostors: self.impostors.dropped,
+            meshes_without_levels: self
+                .meshes
+                .values()
+                .filter(|mesh| mesh.without_levels)
+                .count() as u32,
+        };
+        stats.occlusion_culling = CullingStats {
+            active: gpu_mode && self.gpu_presentation.occlusion(),
+            instances: if gpu_mode && snapshot.environment.occlusion_culling.enabled {
+                self.gpu_presentation.occluded()
+            } else {
+                None
+            },
+        };
+        stats.subpixel_culling = CullingStats {
+            active: gpu_mode && self.gpu_presentation.culls_subpixel(),
+            instances: if gpu_mode && snapshot.environment.subpixel_culling.enabled {
+                self.gpu_presentation.subpixel()
+            } else {
+                None
+            },
+        };
     }
 }
 

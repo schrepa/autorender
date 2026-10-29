@@ -199,7 +199,7 @@ mod app_host;
 mod dev_host;
 mod game_host;
 pub use engine_render::shaders::MODULES as SHADER_MODULES;
-pub use engine_render::{AdapterInfo, RENDER_PASSES, RenderTarget};
+pub use engine_render::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine_render::{GpuMark, GpuPreference, NativeWindow, start_native_instances_with};
 pub use game_host::GameHost;

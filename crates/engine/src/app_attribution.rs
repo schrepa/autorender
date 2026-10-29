@@ -12,10 +12,8 @@ impl AppHost {
         let Some(registry) = world.get_resource::<engine_core::BrickRegistry>() else {
             return Ok(());
         };
-        registry.check_passes(engine_render::RENDER_PASSES)?;
-        #[cfg(any(feature = "dev", feature = "profiling"))]
-        self.renderer
-            .set_pass_owners(|pass| registry.pass_owner(pass));
+        self.renderer.install(registry)?;
+        registry.check_passes(self.renderer.installed_passes())?;
         Ok(())
     }
 }
@@ -138,7 +136,9 @@ mod measured {
                 let index = engine_profile::brick_index(brick);
                 let slot = usize::from(index).min(MAX_BRICKS - 1);
                 let heap = engine_profile::brick_heap(index);
-                let owned = memory.iter().filter(|memory| owner(memory.pass) == brick);
+                let owned = memory
+                    .iter()
+                    .filter(|memory| memory.brick.unwrap_or(CORE_ROW) == brick);
                 rows.push(BrickCost {
                     brick,
                     cpu_ms: spent[slot],

@@ -1,5 +1,4 @@
 use crate::bindings::MIPMAPS;
-use crate::gpu_data::MIPMAP_SHADER;
 use crate::shaders::entry::mipmaps;
 
 pub(crate) struct MipGenerator {
@@ -11,15 +10,8 @@ pub(crate) struct MipGenerator {
 impl MipGenerator {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let layout = crate::pipelines::layout(device, &MIPMAPS);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/mipmaps.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(MIPMAP_SHADER.into()),
-        });
-        let pipeline_layout = crate::pipelines::pipeline_layout(
-            device,
-            &crate::pipeline_layouts::MIPMAP_PIPELINES,
-            &[&layout],
-        );
+        let pipeline_layout =
+            crate::pipelines::layout_of(device, &crate::pipeline_layouts::MIPMAP_PIPELINES);
         let pipelines = [
             wgpu::TextureFormat::Rgba8UnormSrgb,
             wgpu::TextureFormat::Rgba8Unorm,
@@ -30,7 +22,6 @@ impl MipGenerator {
                 &crate::pipelines::Fullscreen {
                     label: "engine/texture-mips",
                     layout: &pipeline_layout,
-                    module: &module,
                     vertex: mipmaps::vs_mip,
                     fragment: mipmaps::fs_mip,
                     constants: &[],

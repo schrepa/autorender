@@ -133,6 +133,39 @@ impl<const N: usize> GroupCache<N> {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct GrowableGroupCache {
+    cached: Cached<Vec<u64>, wgpu::BindGroup>,
+}
+
+impl GrowableGroupCache {
+    pub(crate) fn bind_with(
+        &mut self,
+        entries: &[(u32, Bound<'_>)],
+        build: impl FnOnce(&[wgpu::BindGroupEntry<'_>]) -> wgpu::BindGroup,
+    ) -> &wgpu::BindGroup {
+        let key: Vec<u64> = entries.iter().map(|(_, bound)| bound.generation).collect();
+        self.cached.get_or_insert_with(key, || {
+            let entries: Vec<wgpu::BindGroupEntry<'_>> = entries
+                .iter()
+                .map(|(binding, bound)| wgpu::BindGroupEntry {
+                    binding: *binding,
+                    resource: bound.resource.clone(),
+                })
+                .collect();
+            build(&entries)
+        })
+    }
+
+    pub(crate) fn get(&self) -> Option<&wgpu::BindGroup> {
+        self.cached.get()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.cached.clear();
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Cached<K, V> {
     entry: Option<(K, V)>,

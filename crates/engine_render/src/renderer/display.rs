@@ -5,25 +5,25 @@ use super::*;
 use crate::buffers::ReadbackRing;
 use crate::targets::FrameRegion;
 
-pub(super) struct Display {
+pub(crate) struct Display {
     instance: wgpu::Instance,
     surface: Option<wgpu::Surface<'static>>,
     offscreen: Option<wgpu::Texture>,
     target: RenderTarget,
     configuration: wgpu::SurfaceConfiguration,
-    pub(super) max_dimension: u32,
-    pub(super) max_layers: u32,
-    pub(super) suspended: bool,
+    pub(crate) max_dimension: u32,
+    pub(crate) max_layers: u32,
+    pub(crate) suspended: bool,
     reconfigure_next_frame: bool,
     asked: Option<(u32, u32)>,
-    pub(super) region: FrameRegion,
+    pub(crate) region: FrameRegion,
     timer: Option<Rc<FrameTimer>>,
     #[cfg(feature = "dev")]
-    pub(super) probe: super::probe::Probe,
+    pub(crate) probe: super::probe::Probe,
 }
 
 impl Display {
-    pub(super) fn new(
+    pub(crate) fn new(
         instance: wgpu::Instance,
         surface: Option<wgpu::Surface<'static>>,
         target: RenderTarget,
@@ -70,7 +70,7 @@ impl Display {
         })
     }
 
-    pub(super) fn configure(&mut self, device: &wgpu::Device) {
+    pub(crate) fn configure(&mut self, device: &wgpu::Device) {
         self.timer = FrameTimer::new(device).map(Rc::new);
         if !self.suspended {
             self.target
@@ -99,22 +99,22 @@ impl Display {
         }
     }
 
-    pub(super) fn size(&self) -> FrameSize {
+    pub(crate) fn size(&self) -> FrameSize {
         FrameSize {
             width: self.configuration.width,
             height: self.configuration.height,
         }
     }
 
-    pub(super) fn format(&self) -> wgpu::TextureFormat {
+    pub(crate) fn format(&self) -> wgpu::TextureFormat {
         self.configuration.format
     }
 
-    pub(super) fn ask_render_size(&mut self, width: u32, height: u32) {
+    pub(crate) fn ask_render_size(&mut self, width: u32, height: u32) {
         self.asked = Some((width, height));
     }
 
-    pub(super) fn plan_region(&mut self, drawn: bool) -> FrameRegion {
+    pub(crate) fn plan_region(&mut self, drawn: bool) -> FrameRegion {
         let display = self.size();
         #[cfg(feature = "dev")]
         let drawn = drawn && self.probe.forces().is_none();
@@ -125,27 +125,27 @@ impl Display {
         self.region
     }
 
-    pub(super) fn times_frames(&self) -> bool {
+    pub(crate) fn times_frames(&self) -> bool {
         self.timer.is_some()
     }
 
-    pub(super) fn take_frame_time(&self) -> Option<(f64, (u32, u32))> {
+    pub(crate) fn take_frame_time(&self) -> Option<(f64, (u32, u32))> {
         self.timer.as_ref()?.read.take()
     }
 
-    pub(super) fn time_begin(&self, encoder: &mut wgpu::CommandEncoder) {
+    pub(crate) fn time_begin(&self, encoder: &mut wgpu::CommandEncoder) {
         if let Some(timer) = &self.timer {
             timer.begin(encoder);
         }
     }
 
-    pub(super) fn time_end(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
+    pub(crate) fn time_end(&self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder) {
         if let Some(timer) = &self.timer {
             timer.end(device, encoder, self.region.render.pixels());
         }
     }
 
-    pub(super) fn resize(&mut self, width: u32, height: u32) {
+    pub(crate) fn resize(&mut self, width: u32, height: u32) {
         let Some((width, height)) = clamped_extent(width, height, self.max_dimension) else {
             self.suspended = true;
             return;
@@ -163,7 +163,7 @@ impl Display {
         self.reconfigure_next_frame = true;
     }
 
-    pub(super) fn acquire(
+    pub(crate) fn acquire(
         &mut self,
         device: &wgpu::Device,
         depth: &mut DepthTarget,
@@ -213,12 +213,12 @@ impl Display {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) fn offscreen(&self) -> Option<&wgpu::Texture> {
+    pub(crate) fn offscreen(&self) -> Option<&wgpu::Texture> {
         self.offscreen.as_ref()
     }
 }
 
-pub(super) struct DisplayFrame {
+pub(crate) struct DisplayFrame {
     shown: Shown,
     timer: Option<Rc<FrameTimer>>,
 }
@@ -229,14 +229,14 @@ enum Shown {
 }
 
 impl DisplayFrame {
-    pub(super) fn texture(&self) -> &wgpu::Texture {
+    pub(crate) fn texture(&self) -> &wgpu::Texture {
         match &self.shown {
             Shown::Surface(frame) => &frame.texture,
             Shown::Offscreen(texture) => texture,
         }
     }
 
-    pub(super) fn present(self, queue: &crate::gpu_calls::Queue) {
+    pub(crate) fn present(self, queue: &crate::gpu_calls::Queue) {
         if let Some(timer) = &self.timer {
             timer.after_submit(queue.get_timestamp_period());
         }
@@ -246,7 +246,7 @@ impl DisplayFrame {
     }
 }
 
-pub(super) struct FrameTimer {
+pub(crate) struct FrameTimer {
     queries: wgpu::QuerySet,
     resolved: wgpu::Buffer,
     readbacks: ReadbackRing<(u32, u32)>,
@@ -321,13 +321,13 @@ impl FrameTimer {
     }
 }
 
-pub(super) struct DepthTarget {
-    pub(super) texture: wgpu::Texture,
-    pub(super) view: Versioned<wgpu::TextureView>,
+pub(crate) struct DepthTarget {
+    pub(crate) texture: wgpu::Texture,
+    pub(crate) view: Versioned<wgpu::TextureView>,
 }
 
 impl DepthTarget {
-    pub(super) fn new(device: &wgpu::Device, size: FrameSize) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, size: FrameSize) -> Self {
         let texture = crate::targets::texture_2d(
             device,
             "engine/depth",

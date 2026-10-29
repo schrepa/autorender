@@ -2,6 +2,7 @@ mod fades;
 mod groups;
 mod inputs;
 mod layouts;
+mod part;
 mod probes;
 mod totals;
 
@@ -26,6 +27,7 @@ use groups::{DrawGroups, PHASE_ONE, PHASE_TWO};
 use inputs::NodeInputs;
 pub(crate) use inputs::Staging;
 use layouts::Shaders;
+pub(crate) use part::{PART, PresentationPart};
 use probes::{ProbeFaces, Stillness};
 use totals::Totals;
 

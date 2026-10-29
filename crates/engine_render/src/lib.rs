@@ -32,8 +32,6 @@ mod particles;
 mod parts;
 mod pipelines;
 mod probes;
-mod render_features;
-mod render_graph;
 mod retained_uploads;
 pub mod shaders;
 mod shadow_fit;
@@ -81,6 +79,5 @@ pub use platform::{AdapterInfo, RenderTarget, read_range};
 pub use platform::{GpuPreference, NativeWindow, start_native_instances_with};
 #[cfg(not(target_arch = "wasm32"))]
 pub use renderer::GpuMark;
+pub use parts::{standard_features, standard_passes, standard_shared};
 pub use renderer::{GpuPassTimes, Renderer, StartingRenderer};
-
-pub const RENDER_PASSES: &[&str] = render_graph::PASS_NAMES;

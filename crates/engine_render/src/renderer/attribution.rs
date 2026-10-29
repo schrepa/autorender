@@ -8,25 +8,8 @@ pub struct GpuPassTimes {
     pub passes: Vec<(&'static str, f64)>,
 }
 
-#[cfg(feature = "profiling")]
-const PRELUDE: [(&str, &str); 5] = [
-    ("pre_sky", "cloud_dome"),
-    ("pre_mips", "opaque"),
-    ("pre_poses", "presentation"),
-    ("pre_inputs", "presentation"),
-    ("pre_environment", "cloud_dome"),
-];
-
 #[cfg(any(feature = "dev", feature = "profiling"))]
 impl Renderer {
-    pub fn set_pass_owners(&mut self, owner: impl Fn(&str) -> Option<&'static str>) {
-        let bricks = crate::render_graph::PASS_NAMES
-            .iter()
-            .map(|&pass| owner(pass).map_or(engine_profile::CORE, engine_profile::brick_index))
-            .collect();
-        crate::memory::set_owners(bricks);
-    }
-
     pub fn take_gpu_memory(&mut self) -> Vec<crate::GpuMemory> {
         crate::memory::take()
     }
@@ -37,11 +20,11 @@ impl Renderer {
 
     #[cfg(feature = "profiling")]
     pub fn gpu_pass_times(&self) -> Option<GpuPassTimes> {
-        let latest = self.profiler.latest()?;
+        let latest = self.core.profiler.latest()?;
         let mut passes: Vec<(&'static str, f64)> = Vec::new();
         for &(span, ms) in &latest.spans {
             let pass = span.strip_prefix("stage_").or_else(|| {
-                PRELUDE
+                self.prelude_owners
                     .iter()
                     .find(|&&(prelude, _)| prelude == span)
                     .map(|&(_, pass)| pass)

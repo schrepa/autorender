@@ -107,6 +107,11 @@ impl Renderer {
                 device_limits.max_texture_array_layers,
             ),
         )?;
+        crate::pipelines::install(
+            &device,
+            &crate::parts::standard_shared(),
+            crate::parts::standard_features(),
+        );
         let pipeline_counts = PipelineCounts::new(&device, display.format());
         let scope = crate::gpu_calls::validation_scope(&device);
         display.configure(&device);
@@ -117,39 +122,7 @@ impl Renderer {
             size_of::<LightingUniform>() as u64,
         );
         let materials = MaterialStore::new(&device, &queue);
-        let shadows = ShadowPass::new(&device, materials.layout());
-        let clouds = crate::clouds::CloudPass::new(&device, &queue);
-        let sky = crate::sky::SkyPass::new(&device);
-        let environment = Environment::new(
-            &device,
-            &lighting_buffer,
-            engine_core::ReflectionProbeSettings::default().resolution,
-            clouds.dome(),
-            sky.bindings(),
-        );
-        let probes = ProbePass::new(&device, size_of::<CameraUniform>() as u64);
-        let terrain = crate::terrain::TerrainPass::new(&device, &queue);
-        let ground_cover = crate::ground_cover::GroundCoverPass::new(&device);
-        let water = crate::water::WaterPass::new(&device);
-        let scatter = crate::scatter::ScatterPass::new(&device);
-        let occupancy = crate::occupancy::OccupancyPass::new(&device);
-        let camera = CameraBindings::new(
-            &device,
-            (lighting_buffer, clouds.shadows().clone()),
-            &camera::GroupSources {
-                shadows: &shadows,
-                environment: &environment,
-                probes: &probes,
-                horizons: &terrain.horizons,
-                occupancy: &occupancy,
-                sky: sky.bindings(),
-                clouds: clouds.dome(),
-            },
-        );
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/meshes"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
-        });
+        let camera = CameraBindings::new(&device, lighting_buffer);
         let instances = Instances::new(&device);
         let mesh_pipelines = MeshPipelines::new(&device);
         let impostor_pipelines =
@@ -169,8 +142,7 @@ impl Renderer {
             &device,
             [size_of::<Vertex>(), size_of::<ExtraVertex>()].map(|bytes| bytes as u64),
         );
-        let water_settle = crate::water_settle::WaterSettle::new(&device);
-        let renderer = Self {
+        let core = Core {
             device,
             queue,
             adapter: adapter_info,
@@ -178,7 +150,6 @@ impl Renderer {
             debugger_capture: false,
             display,
             depth,
-            terrain_ids: ScreenTarget::default(),
             meshes: BTreeMap::new(),
             mesh_arena,
             mesh_layout: 0,
@@ -189,13 +160,11 @@ impl Renderer {
             structure_keys: StructureKeys::default(),
             instances,
             uploads: UploadCache::default(),
-            mesh_shader: shader,
             camera,
             mesh_pipelines,
             pipeline_counts,
             gpu_presentation,
             culling: Culling { pyramid: None },
-            shadows,
             impostors: ImpostorDraws {
                 atlas: impostor_atlases.0,
                 placed: impostor_atlases.1,
@@ -204,33 +173,22 @@ impl Renderer {
                 records: Vec::new(),
                 dropped: 0,
             },
-            water_settle,
-            terrain,
-
-            scatter_meshes: (BTreeSet::new(), 0),
-            scatter_draws: scatter_draws::ScatterDraws::default(),
             switch_fades: frame::SwitchFades::default(),
             last_seconds: None,
-            features: RenderFeatures {
-                scatter: Eager::new(scatter),
-                occupancy: Eager::new(occupancy),
-                lights: Lazy::default(),
-                ground_cover: Eager::new(ground_cover),
-                clouds: Eager::new(clouds),
-                water: Eager::new(water),
-                transparency: Eager::new(crate::transparent::Transparency::default()),
-                post: Lazy::default(),
-                temporal: Lazy::default(),
-                debug_view: Lazy::default(),
-                sky: Eager::new(sky),
-                environment: Eager::new(environment),
-                probes: Eager::new(probes),
-                exposure: Lazy::default(),
-            },
-            graph: Default::default(),
             gpu_frame: false,
             health,
             profiler,
+            shared: crate::bindings::SharedGroups::default(),
+        };
+        let renderer = Self {
+            core,
+            parts: Parts::default(),
+            table: GraphTable::default(),
+            graph: FrameGraph::default(),
+            installing: None,
+            ran: Vec::new(),
+            #[cfg(feature = "profiling")]
+            prelude_owners: Vec::new(),
         };
         crate::platform::yield_now().await;
         Ok(StartingRenderer {

@@ -7,44 +7,46 @@ pub struct GpuMark(wgpu::SubmissionIndex);
 
 impl Renderer {
     pub fn start_debugger_capture(&mut self) -> bool {
-        if self.debugger_capture {
+        if self.core.debugger_capture {
             return false;
         }
-        self.debugger_capture = true;
+        self.core.debugger_capture = true;
         // SAFETY: no other capture is active (the flag pairs every start
         // with one stop); the debugger's own rules are its documentation's.
         unsafe {
-            self.device.start_graphics_debugger_capture();
+            self.core.device.start_graphics_debugger_capture();
         }
         true
     }
 
     pub fn stop_debugger_capture(&mut self) -> Result<(), Error> {
-        if !self.debugger_capture {
+        if !self.core.debugger_capture {
             return Ok(());
         }
         self.wait_for_gpu()?;
-        self.debugger_capture = false;
+        self.core.debugger_capture = false;
         // SAFETY: the capture started above is the one active.
         unsafe {
-            self.device.stop_graphics_debugger_capture();
+            self.core.device.stop_graphics_debugger_capture();
         }
         Ok(())
     }
 
     pub fn wait_for_gpu(&self) -> Result<(), Error> {
-        self.device
+        self.core
+            .device
             .poll(wgpu::PollType::wait_indefinitely())
             .map(drop)
             .map_err(|error| failed_with("$.gpu", error))
     }
 
     pub fn gpu_mark(&self) -> GpuMark {
-        GpuMark(self.queue.submit([]))
+        GpuMark(self.core.queue.submit([]))
     }
 
     pub fn wait_for_mark(&self, mark: GpuMark) -> Result<(), Error> {
-        self.device
+        self.core
+            .device
             .poll(wgpu::PollType::Wait {
                 submission_index: Some(mark.0),
                 timeout: None,
@@ -54,13 +56,13 @@ impl Renderer {
     }
 
     pub fn read_offscreen(&self) -> Result<Option<(u32, u32, Vec<u8>)>, Error> {
-        let Some(texture) = self.display.offscreen() else {
+        let Some(texture) = self.core.display.offscreen() else {
             return Ok(None);
         };
         let (width, height) = (texture.width(), texture.height());
         let row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
         let buffer = crate::memory::buffer(
-            &self.device,
+            &self.core.device,
             &wgpu::BufferDescriptor {
                 label: Some("engine/offscreen-readback"),
                 size: u64::from(row) * u64::from(height),
@@ -69,6 +71,7 @@ impl Renderer {
             },
         );
         let mut encoder = self
+            .core
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("engine/offscreen-readback"),
@@ -85,7 +88,7 @@ impl Renderer {
             },
             texture.size(),
         );
-        self.queue.submit([encoder.finish()]);
+        self.core.queue.submit([encoder.finish()]);
         let mapped = std::sync::Arc::new(std::sync::OnceLock::new());
         let result = std::sync::Arc::clone(&mapped);
         buffer
@@ -93,7 +96,8 @@ impl Renderer {
             .map_async(wgpu::MapMode::Read, move |outcome| {
                 let _ = result.set(outcome);
             });
-        self.device
+        self.core
+            .device
             .poll(wgpu::PollType::wait_indefinitely())
             .map_err(|error| failed_with("$.offscreen", error))?;
         match mapped.get() {

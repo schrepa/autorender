@@ -2,6 +2,7 @@ use std::any::Any;
 
 use engine_core::{Error, ErrorCode, Expected, RenderFrame, RenderSnapshot, RenderStats};
 
+use crate::bindings::SharedGroups;
 use crate::cached::Bound;
 use crate::entries::PassKind;
 use crate::gpu_calls::Recorded;
@@ -36,6 +37,15 @@ pub(crate) struct FrameInfo<'s> {
     pub lighting: Option<LightingUniform>,
     pub passes: Option<Passes>,
     pub shape: Option<FrameShape>,
+    pub kept: u64,
+}
+
+impl FrameInfo<'_> {
+    pub(crate) fn runs(&self, table: &GraphTable, pass: &str) -> bool {
+        table
+            .pass_named(pass)
+            .is_some_and(|pass| self.kept & (1 << pass.index()) != 0)
+    }
 }
 
 pub(crate) fn scene_target(table: &GraphTable, shape: &FrameShape) -> Option<ResourceId> {
@@ -283,6 +293,8 @@ pub(crate) struct Prelude {
     encoders: Vec<(PreludeStage, &'static str, wgpu::CommandEncoder)>,
     buffers: Vec<(PreludeStage, &'static str, wgpu::CommandBuffer)>,
     order: Vec<(PreludeStage, &'static str, bool)>,
+    spans: Vec<(&'static str, &'static str)>,
+    owner: &'static str,
 }
 
 impl Prelude {
@@ -293,6 +305,7 @@ impl Prelude {
         span: &'static str,
         label: &'static str,
     ) -> &mut wgpu::CommandEncoder {
+        self.note(span);
         let found = self
             .encoders
             .iter()
@@ -313,6 +326,7 @@ impl Prelude {
         span: &'static str,
         encoder: wgpu::CommandEncoder,
     ) {
+        self.note(span);
         self.encoders.push((stage, span, encoder));
         self.order.push((stage, span, true));
     }
@@ -323,14 +337,35 @@ impl Prelude {
         span: &'static str,
         buffer: wgpu::CommandBuffer,
     ) {
+        self.note(span);
         self.buffers.push((stage, span, buffer));
         self.order.push((stage, span, false));
+    }
+
+    pub(crate) fn reserve(&mut self, span: &'static str) {
+        self.note(span);
+    }
+
+    pub(crate) fn attribute(&mut self, owner: &'static str) {
+        self.owner = owner;
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn owners(&self) -> &[(&'static str, &'static str)] {
+        &self.spans
+    }
+
+    fn note(&mut self, span: &'static str) {
+        if !self.spans.iter().any(|&(known, _)| known == span) {
+            self.spans.push((span, self.owner));
+        }
     }
 
     pub(crate) fn take(self) -> Vec<(&'static str, Recorded)> {
         let mut encoders = self.encoders.into_iter();
         let mut buffers = self.buffers.into_iter();
-        let mut parts: Vec<(PreludeStage, &'static str, Recorded)> = self
+        let spans = self.spans;
+        let mut parts: Vec<(PreludeStage, usize, &'static str, Recorded)> = self
             .order
             .into_iter()
             .filter_map(|(stage, span, encoder)| {
@@ -339,13 +374,17 @@ impl Prelude {
                 } else {
                     Recorded::Buffer(buffers.next()?.2)
                 };
-                Some((stage, span, recorded))
+                let rank = spans
+                    .iter()
+                    .position(|&(known, _)| known == span)
+                    .unwrap_or(spans.len());
+                Some((stage, rank, span, recorded))
             })
             .collect();
-        parts.sort_by_key(|&(stage, _, _)| stage);
+        parts.sort_by_key(|&(stage, rank, _, _)| (stage, rank));
         parts
             .into_iter()
-            .map(|(_, span, recorded)| (span, recorded))
+            .map(|(_, _, span, recorded)| (span, recorded))
             .collect()
     }
 }
@@ -493,10 +532,13 @@ impl Parts {
                 .map(|index| kept.swap_remove(index));
             let slot = match reused {
                 Some(slot) => slot,
-                None => Slot {
-                    entry,
-                    part: Some((entry.create)(&Create { core, parts: self })),
-                },
+                None => {
+                    let _owner = crate::memory::owned(entry.decl.brick);
+                    Slot {
+                        entry,
+                        part: Some((entry.create)(&Create { core, parts: self })),
+                    }
+                }
             };
             self.slots.push(slot);
         }
@@ -539,6 +581,10 @@ impl Parts {
 
     pub(crate) fn names(&self) -> &'static [&'static str] {
         self.names
+    }
+
+    pub(crate) fn part(&self, index: usize) -> Option<&dyn GpuPart> {
+        self.slots.get(index)?.part.as_deref()
     }
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = (&'static PartDecl, &dyn GpuPart)> {
@@ -640,8 +686,72 @@ impl Parts {
     pub(crate) fn after_submit(&mut self) {
         for slot in &mut self.slots {
             if let Some(part) = slot.part.as_mut() {
+                let _owner = crate::memory::owned(slot.entry.decl.brick);
                 part.after_submit();
             }
         }
     }
+}
+
+pub(crate) const CORE_BRICK: &str = "core";
+
+pub(crate) fn standard() -> [&'static PartEntry; 17] {
+    [
+        &crate::gpu_presentation::PART,
+        &crate::renderer::OPAQUE_PART,
+        &crate::depth_pyramid::PART,
+        &crate::terrain::PART,
+        &crate::scatter::PART,
+        &crate::occupancy::PART,
+        &crate::shadows::PART,
+        &crate::lights::PART,
+        &crate::sky::PART,
+        &crate::probes::PART,
+        &crate::ground_cover::PART,
+        &crate::water::PART,
+        &crate::post::PART,
+        &crate::transparent::PART,
+        &crate::temporal::PART,
+        &crate::exposure::PART,
+        &crate::debug_view::PART,
+    ]
+}
+
+pub(crate) fn installed(bricks: &engine_core::BrickRegistry) -> Vec<&'static PartEntry> {
+    standard()
+        .into_iter()
+        .filter(|entry| entry.decl.brick == CORE_BRICK || bricks.has(entry.decl.brick))
+        .collect()
+}
+
+pub(crate) fn shared_of(entries: &[&'static PartEntry]) -> Result<SharedGroups, Error> {
+    let mut shared = SharedGroups::default();
+    for entry in entries {
+        for contribution in entry.decl.contributes {
+            shared.add(entry.decl.brick, contribution)?;
+        }
+    }
+    Ok(shared)
+}
+
+pub fn standard_passes() -> Vec<&'static str> {
+    standard()
+        .iter()
+        .flat_map(|entry| entry.decl.passes)
+        .map(|pass| pass.name)
+        .collect()
+}
+
+pub fn standard_shared() -> SharedGroups {
+    shared_of(&standard()).unwrap_or_default()
+}
+
+pub fn standard_features() -> Vec<(&'static str, bool)> {
+    let mut features: Vec<(&'static str, bool)> = Vec::new();
+    for entry in standard() {
+        if !features.iter().any(|&(brick, _)| brick == entry.decl.brick) {
+            features.push((entry.decl.brick, true));
+        }
+    }
+    features
 }
