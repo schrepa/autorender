@@ -101,7 +101,7 @@ pub use spline_mesh::*;
 pub use statistics::{Distribution, median};
 pub use tables::*;
 pub use transform_edits::*;
-pub use water::{WaterKind, WaterObstacle, WaterObstacles, WaterSample};
+pub use water::{WaterBodies, WaterFace, WaterKind, WaterObstacle, WaterObstacles, WaterSample};
 
 use bevy_app::PluginsState;
 use bevy_ecs::{

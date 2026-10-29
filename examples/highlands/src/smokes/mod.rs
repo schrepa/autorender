@@ -1,6 +1,7 @@
 mod jobs;
 mod lod;
 mod toon_lighting;
+mod pond;
 mod torrent;
 
 use engine::host::Jobs;
@@ -40,6 +41,12 @@ pub fn smokes() -> Vec<SmokeEntry> {
             brick: GAME,
             gpu: true,
             run: toon_lighting::run,
+        },
+        SmokeEntry {
+            name: "highlands_pond",
+            brick: GAME,
+            gpu: true,
+            run: pond::run,
         },
     ]
 }
