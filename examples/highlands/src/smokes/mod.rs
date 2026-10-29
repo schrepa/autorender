@@ -1,5 +1,6 @@
 mod jobs;
 mod lod;
+mod toon_lighting;
 mod torrent;
 
 use engine::host::Jobs;
@@ -33,6 +34,12 @@ pub fn smokes() -> Vec<SmokeEntry> {
             brick: GAME,
             gpu: true,
             run: torrent::run,
+        },
+        SmokeEntry {
+            name: "highlands_toon_lighting",
+            brick: GAME,
+            gpu: true,
+            run: toon_lighting::run,
         },
     ]
 }
