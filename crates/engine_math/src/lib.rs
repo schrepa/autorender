@@ -107,6 +107,11 @@ pub fn pow(x: f32, y: f32) -> f32 {
     libm::powf(x, y)
 }
 
+#[inline]
+pub fn atan(x: f32) -> f32 {
+    libm::atanf(x)
+}
+
 #[cold]
 #[inline(never)]
 fn large(x: f32) -> (f32, f32) {

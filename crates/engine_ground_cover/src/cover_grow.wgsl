@@ -1,9 +1,8 @@
 import package::engine::math::unit;
-import package::terrain::ground::{GroundTerrain, LevelTile, NOT_RESIDENT, directory, level_tile,
-    tile_height, true_height};
-import package::terrain::variety::{COVER_CLUMP_HEIGHT, COVER_LEAF_STEPS, COVER_LEAVES, CoverLaw,
-    cover_clump, cover_clump_lean, cover_clumped, cover_growth, cover_share, cover_tuft,
-    macro_tint};
+import package::face::heightfield::{COVER_CLUMP_HEIGHT, COVER_LEAF_STEPS, COVER_LEAVES, CoverLaw,
+    GroundTerrain, LevelTile, NOT_RESIDENT, cover_clump, cover_clump_lean, cover_clumped,
+    cover_growth, cover_share, cover_tuft, directory, level_tile, macro_tint, tile_height,
+    true_height};
 
 struct Grow {
     origin: vec4<f32>,
