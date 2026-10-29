@@ -5,8 +5,23 @@
 
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
-use engine_core::{Brick, Bricks};
-use engine_terrain::layer::{AddTerrainLayers, LayerKind};
+mod bake;
+mod erosion;
+
+use std::any::Any;
+use std::sync::Arc;
+
+use engine_core::{Brick, Bricks, Pyramid};
+use engine_settings::{ErrorCode, parse_value};
+use engine_terrain::codec::{Reader, Writer};
+use engine_terrain::layer::{
+    AddTerrainLayers, Below, ChangeMap, LayerBake, LayerFiles, LayerKind, Made, Row,
+    TerrainLayer, maps, no_files, same_as,
+};
+use serde_json::Value;
+
+use crate::bake::ErosionWork;
+pub use crate::erosion::{Erosion, ErosionLayer, ErosionStats};
 
 pub struct LayerErosionBrick;
 
@@ -16,4 +31,118 @@ impl Brick for LayerErosionBrick {
     }
 }
 
-pub static KINDS: &[&LayerKind] = &[];
+pub static EROSION: LayerKind = LayerKind {
+    name: "erosion",
+    source: SOURCE,
+    from_json,
+    read,
+    files: no_files,
+    #[cfg(feature = "schema")]
+    schema,
+};
+
+pub static KINDS: &[&LayerKind] = &[&EROSION];
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ErosionStage {
+    pub layer: ErosionLayer,
+    pub baked: Option<Arc<Erosion>>,
+}
+
+engine_terrain::codec::record!(ErosionStage { layer, baked });
+
+fn made(stage: ErosionStage) -> Made {
+    stage
+        .layer
+        .validate()
+        .map_err(|invalid| invalid.error(ErrorCode::InvalidTerrain, "$"))?;
+    Ok(Arc::new(stage))
+}
+
+fn from_json(value: &Value, _files: &dyn LayerFiles) -> Made {
+    made(ErosionStage {
+        layer: parse_value(value.clone())?,
+        baked: None,
+    })
+}
+
+fn read(input: &mut Reader<'_>) -> Made {
+    made(input.get()?)
+}
+
+#[cfg(feature = "schema")]
+fn schema() -> schemars::Schema {
+    schemars::schema_for!(ErosionLayer)
+}
+
+impl TerrainLayer for ErosionStage {
+    fn kind(&self) -> &'static LayerKind {
+        &EROSION
+    }
+
+    fn write(&self, out: &mut Writer) {
+        out.put(self);
+    }
+
+    fn settings(&self) -> Value {
+        serde_json::to_value(self.layer).expect("erosion_settings_serialize")
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn same(&self, other: &dyn TerrainLayer) -> bool {
+        same_as(self, other)
+    }
+
+    fn bakes(&self) -> bool {
+        true
+    }
+
+    fn outputs(&self) -> Vec<String> {
+        maps::CHANGE.map(str::to_owned).to_vec()
+    }
+
+    fn apply_row(&self, below: Below<'_>, row: &Row<'_>, heights: &mut [f32]) {
+        let Some(baked) = &self.baked else {
+            return;
+        };
+        let before = heights.to_vec();
+        baked.wear_row(row.xs, row.z, row.spacing, &before, |index, worn| {
+            heights[index] += worn * below.shown(row.xs[index], row.z);
+        });
+    }
+
+    fn needs_bake(&self) -> bool {
+        self.baked.is_none()
+    }
+
+    fn bake(&self, pyramid: &Pyramid) -> Option<Box<dyn LayerBake>> {
+        if !self.needs_bake() {
+            return None;
+        }
+        Some(Box::new(ErosionWork::new(&self.layer, pyramid)))
+    }
+
+    fn unbaked(&self) -> Option<Arc<dyn TerrainLayer>> {
+        Some(Arc::new(Self {
+            layer: self.layer,
+            baked: None,
+        }))
+    }
+
+    fn change(&self) -> Option<ChangeMap<'_>> {
+        self.baked.as_deref().map(|baked| ChangeMap {
+            spacing: baked.spacing,
+            image: &baked.change,
+            range: baked.range,
+        })
+    }
+
+    fn stats(&self) -> Option<Value> {
+        self.baked.as_deref().map(|baked| {
+            serde_json::to_value(baked.stats).expect("erosion_stats_serialize")
+        })
+    }
+}

@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
-use super::{Bake, Gather};
-use crate::Pyramid;
-use crate::erosion::{Erosion, ErosionLayer, Scratch, erode_round, finish};
-use crate::layers::Layers;
+use engine_core::Pyramid;
+use engine_terrain::Layers;
+use engine_terrain::bake::Gather;
+use engine_terrain::layer::{LayerBake, TerrainLayer};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ErosionBake;
+use crate::ErosionStage;
+use crate::erosion::{ErosionLayer, Scratch, erode_round, finish};
 
 pub struct ErosionWork {
     layer: ErosionLayer,
@@ -16,13 +16,9 @@ pub struct ErosionWork {
     scratch: Scratch,
 }
 
-impl Bake for ErosionBake {
-    type Layer = ErosionLayer;
-    type Found = Erosion;
-    type Work = ErosionWork;
-
-    fn start(layer: &ErosionLayer, pyramid: &Pyramid) -> ErosionWork {
-        ErosionWork {
+impl ErosionWork {
+    pub(crate) fn new(layer: &ErosionLayer, pyramid: &Pyramid) -> Self {
+        Self {
             layer: *layer,
             gather: Gather::new(layer.level, pyramid),
             original: None,
@@ -30,23 +26,25 @@ impl Bake for ErosionBake {
             scratch: Scratch::default(),
         }
     }
+}
 
+impl LayerBake for ErosionWork {
     fn advance(
-        work: &mut ErosionWork,
+        &mut self,
         below: &Arc<Layers>,
         pyramid: &Pyramid,
         budget: &mut u64,
-    ) -> Option<Erosion> {
-        if !work.gather.advance(below, pyramid, budget) {
+    ) -> Option<Arc<dyn TerrainLayer>> {
+        if !self.gather.advance(below, pyramid, budget) {
             return None;
         }
-        let ErosionWork {
+        let Self {
             layer,
             gather,
             original,
             rounds,
             scratch,
-        } = work;
+        } = self;
         let spacing = pyramid.spacing(gather.level);
         let original = original.get_or_insert_with(|| gather.heights.clone());
         let cost = gather.heights.len() as u64 * 8;
@@ -64,12 +62,15 @@ impl Bake for ErosionBake {
             *rounds += 1;
             *budget = budget.saturating_sub(cost);
         }
-        Some(finish(
-            original,
-            &gather.heights,
-            gather.width,
-            spacing,
-            *rounds,
-        ))
+        Some(Arc::new(ErosionStage {
+            layer: *layer,
+            baked: Some(Arc::new(finish(
+                original,
+                &gather.heights,
+                gather.width,
+                spacing,
+                *rounds,
+            ))),
+        }))
     }
 }
