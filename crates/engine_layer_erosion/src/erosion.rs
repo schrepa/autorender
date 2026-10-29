@@ -1,10 +1,9 @@
-use crate::MAX_LEVEL;
 use engine_math::{max, min};
 use engine_settings::settings;
+use engine_terrain::hydrology::{Drainage, Flood};
+use engine_terrain::layer::image_row;
+use engine_terrain::{HeightImage, MAX_LEVEL};
 use serde::{Deserialize, Serialize};
-
-use crate::hydrology::{Drainage, Flood, image_level};
-use crate::layers::HeightImage;
 
 settings! {
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -38,24 +37,6 @@ pub struct Erosion {
 }
 
 impl Erosion {
-    #[inline]
-    pub(crate) fn change_row(
-        &self,
-        xs: impl IntoIterator<Item = f32>,
-        z: f32,
-        spacing: f32,
-        each: impl FnMut(usize, f32),
-    ) {
-        Self::read_row(
-            &self.change,
-            self.range,
-            (self.spacing, spacing),
-            xs,
-            z,
-            each,
-        );
-    }
-
     pub(crate) fn wear_row(
         &self,
         xs: &[f32],
@@ -66,7 +47,7 @@ impl Erosion {
     ) {
         let count = heights.len().min(xs.len());
         let mut started = vec![0.0_f32; count];
-        Self::read_row(
+        image_row(
             &self.ground,
             self.ground_range,
             (self.spacing, spacing),
@@ -74,27 +55,17 @@ impl Erosion {
             z,
             |index, ground| started[index] = ground,
         );
-        self.change_row(xs[..count].iter().copied(), z, spacing, |index, change| {
-            let filled = min(max(change, 0.0), max(started[index] - heights[index], 0.0));
-            each(index, change + filled);
-        });
-    }
-
-    #[inline]
-    fn read_row(
-        image: &HeightImage,
-        [low, high]: [f32; 2],
-        (own, spacing): (f32, f32),
-        xs: impl IntoIterator<Item = f32>,
-        z: f32,
-        mut each: impl FnMut(usize, f32),
-    ) {
-        let level = image_level(own, image.levels(), spacing);
-        let scale = 1.0 / own;
-        let us = xs.into_iter().map(|x| x * scale);
-        image.sample_smooth_row(us, z * scale, level, |index, sample| {
-            each(index, low + (high - low) * sample * (1.0 / 65_535.0));
-        });
+        image_row(
+            &self.change,
+            self.range,
+            (self.spacing, spacing),
+            xs[..count].iter().copied(),
+            z,
+            |index, change| {
+                let filled = min(max(change, 0.0), max(started[index] - heights[index], 0.0));
+                each(index, change + filled);
+            },
+        );
     }
 }
 
@@ -210,20 +181,20 @@ pub(crate) fn finish(
     }
 }
 
-crate::codec::record!(ErosionLayer {
+engine_terrain::codec::record!(ErosionLayer {
     level,
     rounds,
     incision,
     debris,
     creep,
 });
-crate::codec::record!(ErosionStats {
+engine_terrain::codec::record!(ErosionStats {
     samples,
     rounds,
     deepest,
     highest,
 });
-crate::codec::record!(Erosion {
+engine_terrain::codec::record!(Erosion {
     spacing,
     change,
     range,
