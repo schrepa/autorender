@@ -228,7 +228,10 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
             shown = record.state & 7u;
             previous = (record.state >> 3u) & 7u;
             progress = record.state >> 6u;
-            let wanted = max(nearer, min(shown, farther));
+            var wanted = max(nearer, min(shown, farther));
+            if shown == SHOWN_NONE && previous == SHOWN_NONE && !hidden {
+                wanted = shown_at(record, group, retires, rank, away);
+            }
             if progress >= FADED {
                 if wanted != shown {
                     previous = shown;

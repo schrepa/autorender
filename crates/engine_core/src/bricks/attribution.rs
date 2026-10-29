@@ -2,6 +2,7 @@ use bevy_ecs::prelude::Resource;
 
 pub const CORE_ROW: &str = "core";
 pub const UNATTRIBUTED_ROW: &str = "unattributed";
+pub const GPU_IDLE_ROW: &str = "gpu_idle";
 pub const CORE_PASSES: &[&str] = &[
     "presentation",
     "opaque",
@@ -15,6 +16,7 @@ pub const WARMUP_FRAMES: u64 = 120;
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct BrickCosts {
     pub frame: u64,
+    pub measuring_ms: f64,
     pub rows: Vec<BrickCost>,
 }
 
@@ -37,6 +39,7 @@ pub struct BrickTable {
     pub frames: usize,
     pub cpu_ms: f64,
     pub gpu_ms: Option<f64>,
+    pub measuring_ms: f64,
     pub rows: Vec<BrickRow>,
 }
 
@@ -112,10 +115,12 @@ impl BrickCosts {
         });
         let totals: Vec<f64> = frames.iter().map(Self::cpu_ms).collect();
         let gpu: Vec<f64> = frames.iter().filter_map(Self::gpu_ms).collect();
+        let measuring: Vec<f64> = frames.iter().map(|frame| frame.measuring_ms).collect();
         BrickTable {
             frames: count,
             cpu_ms: mean(&totals),
             gpu_ms: (!gpu.is_empty()).then(|| mean(&gpu)),
+            measuring_ms: mean(&measuring),
             rows,
         }
     }

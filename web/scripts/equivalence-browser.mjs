@@ -16,7 +16,7 @@ const plan = JSON.parse(await readFile(planPath, "utf8"));
 const QUIET = 3;
 const TAIL = 30;
 const SETTLE_MS = 300_000;
-const NOT_WORK = new Set(["frame", "tick", "read_back_age", "simulation_ms", "extraction_ms", "render_ms"]);
+const NOT_WORK = new Set(["frame", "tick", "read_back_age", "simulation_ms", "extraction_ms", "render_ms", "bricks_cost.measuring_ms"]);
 
 function work(stats, prefix = "", out = {}) {
   for (const [key, value] of Object.entries(stats ?? {})) {

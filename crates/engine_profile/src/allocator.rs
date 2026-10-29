@@ -4,14 +4,17 @@
 )]
 
 use serde::Serialize;
-use std::alloc::{GlobalAlloc, Layout};
+use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 use std::sync::{Mutex, PoisonError};
 
-use crate::bricks::{HEAP_ALLOCATIONS, HEAP_LIVE, HEAP_PEAK, current_brick, slot};
+use crate::bricks::{
+    CALIBRATION_PAIRS, HEAP_ALLOCATIONS, HEAP_LIVE, HEAP_PEAK, current_brick, slot,
+};
 
 pub const SAMPLE_EVERY: u32 = 1021;
+const CALIBRATION_BLOCK: Layout = Layout::new::<[u64; 8]>();
 
 static AVAILABLE: AtomicBool = AtomicBool::new(false);
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
@@ -239,4 +242,35 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for TrackingAllocator<A> {
         // SAFETY: the reallocated block kept its header, copied with the bytes.
         unsafe { block.add(header) }
     }
+}
+
+pub(crate) fn tracking_calibration(clock: fn() -> f64) -> f64 {
+    if !AVAILABLE.load(Relaxed) {
+        return 0.0;
+    }
+    let owner = slot(current_brick());
+    let (tracked, counted) = paired(&TrackingAllocator::new(System), clock);
+    let (plain, _) = paired(&System, clock);
+    let bytes = counted * CALIBRATION_BLOCK.size() as u64;
+    ALLOCATIONS.fetch_sub(counted, Relaxed);
+    DEALLOCATIONS.fetch_sub(counted, Relaxed);
+    REQUESTED.fetch_sub(bytes, Relaxed);
+    FREED.fetch_sub(bytes, Relaxed);
+    HEAP_ALLOCATIONS[owner].fetch_sub(counted, Relaxed);
+    ((tracked - plain) / f64::from(CALIBRATION_PAIRS)).max(0.0)
+}
+
+fn paired<A: GlobalAlloc>(allocator: &A, clock: fn() -> f64) -> (f64, u64) {
+    let mut done = 0;
+    let start = clock();
+    for _ in 0..CALIBRATION_PAIRS {
+        // SAFETY: the calibration block's layout has a nonzero size.
+        let pointer = std::hint::black_box(unsafe { allocator.alloc(CALIBRATION_BLOCK) });
+        if !pointer.is_null() {
+            // SAFETY: the pointer came from this allocator with this same layout.
+            unsafe { allocator.dealloc(pointer, CALIBRATION_BLOCK) };
+            done += 1;
+        }
+    }
+    (clock() - start, done)
 }

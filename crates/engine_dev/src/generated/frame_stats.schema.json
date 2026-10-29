@@ -77,6 +77,10 @@
           "minimum": 0,
           "type": "integer"
         },
+        "measuring_ms": {
+          "format": "double",
+          "type": "number"
+        },
         "rows": {
           "items": {
             "$ref": "#/$defs/BrickCost"
@@ -86,6 +90,7 @@
       },
       "required": [
         "frame",
+        "measuring_ms",
         "rows"
       ],
       "type": "object"

@@ -8,7 +8,6 @@ use super::requests::{
 };
 
 const CRYSTAL: &str = "crystal-6";
-const READ_BACK_FRAMES: u32 = 3;
 
 pub(crate) fn native(session: &mut dyn SmokeSession) -> SmokeResult {
     let source = garden()?;
@@ -214,8 +213,6 @@ fn read_back(
     about: &Value,
     check: &'static str,
 ) -> Result<Vec<Value>, SmokeFailure> {
-    accepted(session, "explain", about.clone(), check)?;
-    frames(session, READ_BACK_FRAMES, "frames_read_back")?;
     Ok(records(&accepted(
         session,
         "explain",

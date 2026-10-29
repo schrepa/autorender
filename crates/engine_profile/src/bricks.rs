@@ -8,9 +8,12 @@ pub const MAX_BRICKS: usize = 64;
 pub const CORE: u16 = 0;
 pub const CORE_NAME: &str = "core";
 const DEPTH: usize = 32;
+pub(crate) const CALIBRATION_PAIRS: u32 = 4_096;
 
 static NAMES: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 static CLOCK: OnceLock<fn() -> f64> = OnceLock::new();
+static SCOPE_MS: OnceLock<f64> = OnceLock::new();
+static ALLOCATION_MS: OnceLock<f64> = OnceLock::new();
 
 pub(crate) static HEAP_LIVE: [AtomicU64; MAX_BRICKS] = [const { AtomicU64::new(0) }; MAX_BRICKS];
 pub(crate) static HEAP_PEAK: [AtomicU64; MAX_BRICKS] = [const { AtomicU64::new(0) }; MAX_BRICKS];
@@ -24,10 +27,12 @@ struct Open {
     nested: f64,
 }
 
+#[derive(Clone, Copy)]
 struct Clocked {
     open: [Open; DEPTH],
     depth: usize,
     spent: [f64; MAX_BRICKS],
+    scopes: u64,
 }
 
 impl Clocked {
@@ -40,6 +45,7 @@ impl Clocked {
             }; DEPTH],
             depth: 0,
             spent: [0.0; MAX_BRICKS],
+            scopes: 0,
         }
     }
 
@@ -53,6 +59,7 @@ impl Clocked {
             nested: 0.0,
         };
         self.depth += 1;
+        self.scopes += 1;
         true
     }
 
@@ -80,7 +87,29 @@ pub(crate) fn slot(brick: u16) -> usize {
 }
 
 pub fn install_clock(clock: fn() -> f64) {
-    CLOCK.get_or_init(|| clock);
+    let clock = *CLOCK.get_or_init(|| clock);
+    SCOPE_MS.get_or_init(|| scope_calibration(clock));
+    #[cfg(feature = "enabled")]
+    ALLOCATION_MS.get_or_init(|| crate::allocator::tracking_calibration(clock));
+}
+
+fn scope_calibration(clock: fn() -> f64) -> f64 {
+    let saved = CLOCKED.with_borrow(|clocked| *clocked);
+    let start = clock();
+    for _ in 0..CALIBRATION_PAIRS {
+        drop(std::hint::black_box(enter(CORE)));
+    }
+    let elapsed = clock() - start;
+    CLOCKED.with_borrow_mut(|clocked| *clocked = saved);
+    (elapsed / f64::from(CALIBRATION_PAIRS)).max(0.0)
+}
+
+pub fn scope_cost_ms() -> f64 {
+    SCOPE_MS.get().copied().unwrap_or(0.0)
+}
+
+pub fn allocation_cost_ms() -> f64 {
+    ALLOCATION_MS.get().copied().unwrap_or(0.0)
 }
 
 pub fn brick_index(name: &'static str) -> u16 {
@@ -146,6 +175,10 @@ impl Drop for BrickScope {
 
 pub fn take_spent() -> [f64; MAX_BRICKS] {
     CLOCKED.with_borrow_mut(|clocked| std::mem::replace(&mut clocked.spent, [0.0; MAX_BRICKS]))
+}
+
+pub fn take_scopes() -> u64 {
+    CLOCKED.with_borrow_mut(|clocked| std::mem::take(&mut clocked.scopes))
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

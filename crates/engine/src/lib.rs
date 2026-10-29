@@ -84,10 +84,10 @@ pub mod bricks {
         AddBrick, AuthoredId, Brick, BrickCost, BrickCosts, BrickList, BrickRecord, BrickRegistry,
         BrickRow, BrickSet, BrickStats, BrickTable, Bricks, CORE_PASSES, CORE_ROW, DrawState,
         ExplainEntry, ExplainRecord, ExplainRequest, ExplainedEntity, Explainer, Extracted,
-        InspectedKind, InspectorEntry, List, Operation, OperationEntry, OperationScene, Owned,
-        SettingsEntry, Slot, StatsEntry, UNATTRIBUTED_ROW, WARMUP_FRAMES, authored_entity,
-        authored_id, bounds, brick_name, missing_brick, parse_json, parse_value, parse_value_at,
-        source_line,
+        GPU_IDLE_ROW, InspectedKind, InspectorEntry, List, Operation, OperationEntry,
+        OperationScene, Owned, SettingsEntry, Slot, StatsEntry, UNATTRIBUTED_ROW, WARMUP_FRAMES,
+        authored_entity, authored_id, bounds, brick_name, missing_brick, parse_json, parse_value,
+        parse_value_at, source_line,
     };
 
     pub fn standard() -> BrickList {

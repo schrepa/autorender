@@ -44,6 +44,7 @@ pub const NOT_WORK: &[&str] = &[
     "extraction_ms",
     "render_ms",
     "resolution.gpu_ms",
+    "bricks_cost.measuring_ms",
 ];
 
 const SCENE_FIELDS: &[&str] = &["project", "options"];

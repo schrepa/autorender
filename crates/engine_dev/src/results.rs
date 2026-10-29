@@ -405,6 +405,7 @@ pub struct ProfileResult {
     pub interval_ms: f64,
     pub cpu_ms: f64,
     pub gpu_ms: Option<f64>,
+    pub measuring_ms: f64,
     pub bricks: Vec<ProfiledBrick>,
     pub total: usize,
     pub temporary: bool,

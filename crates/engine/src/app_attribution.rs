@@ -43,7 +43,8 @@ mod unmeasured {
 #[cfg(any(feature = "dev", feature = "profiling"))]
 mod measured {
     use engine_core::{
-        BrickCost, BrickCosts, BrickRegistry, CORE_ROW, UNATTRIBUTED_ROW, WARMUP_FRAMES,
+        BrickCost, BrickCosts, BrickRegistry, CORE_ROW, GPU_IDLE_ROW, UNATTRIBUTED_ROW,
+        WARMUP_FRAMES,
     };
     use engine_profile::MAX_BRICKS;
 
@@ -85,6 +86,7 @@ mod measured {
         pub(in crate::app_host) fn begin_attribution(&mut self) {
             engine_profile::install_clock(now_ms);
             engine_profile::take_spent();
+            engine_profile::take_scopes();
             self.attribution.started = Some(now_ms());
         }
 
@@ -115,7 +117,9 @@ mod measured {
         }
 
         fn brick_costs(&mut self, frame_ms: f64) -> BrickCosts {
+            let begun = now_ms();
             let spent = engine_profile::take_spent();
+            let scopes = engine_profile::take_scopes();
             let gpu = self.renderer.gpu_pass_times();
             let memory = self.renderer.take_gpu_memory();
             let world = self.engine.app.world();
@@ -129,7 +133,7 @@ mod measured {
                 .map(|registry| registry.names().collect())
                 .unwrap_or_default();
             names.push(CORE_ROW);
-            let mut rows: Vec<BrickCost> = Vec::with_capacity(names.len() + 1);
+            let mut rows: Vec<BrickCost> = Vec::with_capacity(names.len() + 2);
             for brick in names {
                 let index = engine_profile::brick_index(brick);
                 let slot = usize::from(index).min(MAX_BRICKS - 1);
@@ -161,16 +165,31 @@ mod measured {
             }
             let measured: f64 = rows.iter().map(|row| row.cpu_ms).sum();
             let drawn: Option<f64> = rows.iter().map(|row| row.gpu_ms).sum();
+            let allocations: u64 = rows.iter().map(|row| row.allocations).sum();
+            let gpu = gpu.zip(drawn);
             rows.push(BrickCost {
                 brick: UNATTRIBUTED_ROW,
                 cpu_ms: (frame_ms - measured).max(0.0),
                 gpu_ms: gpu
                     .as_ref()
-                    .zip(drawn)
-                    .map(|(gpu, drawn)| (gpu.frame_ms - drawn).max(0.0)),
+                    .map(|(gpu, drawn)| (gpu.frame_ms - gpu.idle_ms - drawn).max(0.0)),
                 ..BrickCost::default()
             });
-            BrickCosts { frame, rows }
+            if let Some((gpu, _)) = &gpu {
+                rows.push(BrickCost {
+                    brick: GPU_IDLE_ROW,
+                    gpu_ms: Some(gpu.idle_ms),
+                    ..BrickCost::default()
+                });
+            }
+            let measuring_ms = scopes as f64 * engine_profile::scope_cost_ms()
+                + allocations as f64 * engine_profile::allocation_cost_ms()
+                + (now_ms() - begun);
+            BrickCosts {
+                frame,
+                measuring_ms,
+                rows,
+            }
         }
     }
 }

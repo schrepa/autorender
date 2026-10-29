@@ -4,11 +4,13 @@ use super::Renderer;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GpuPassTimes {
     pub frame_ms: f64,
+    pub idle_ms: f64,
     pub passes: Vec<(&'static str, f64)>,
 }
 
 #[cfg(feature = "profiling")]
-const PRELUDE: [(&str, &str); 4] = [
+const PRELUDE: [(&str, &str); 5] = [
+    ("pre_sky", "cloud_dome"),
     ("pre_mips", "opaque"),
     ("pre_poses", "presentation"),
     ("pre_inputs", "presentation"),
@@ -54,6 +56,7 @@ impl Renderer {
         }
         Some(GpuPassTimes {
             frame_ms: latest.frame_ms,
+            idle_ms: latest.idle_ms,
             passes,
         })
     }

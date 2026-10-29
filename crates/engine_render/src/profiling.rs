@@ -95,6 +95,11 @@ impl GpuProfiler {
     }
 
     #[inline(always)]
+    pub(crate) fn busy(&self, _name: &'static str) -> Option<Span<'_>> {
+        None
+    }
+
+    #[inline(always)]
     pub(crate) fn end_frame(&mut self, _encoder: &mut wgpu::CommandEncoder) {}
 
     #[inline(always)]
@@ -126,6 +131,7 @@ mod capture {
     const DRAW_STATISTICS_AT: u64 = DRAW_STAMPS_AT + 2 * DRAWS as u64 * 8;
     const SLOT_BYTES: u64 = DRAW_STATISTICS_AT + DRAWS as u64 * 24;
     const OPAQUE: &str = "opaque_meshes";
+    const BUSY: &str = "busy";
 
     #[derive(Clone, Copy)]
     struct Origin {
@@ -201,6 +207,53 @@ mod capture {
                 draws: RefCell::new(Vec::new()),
             }
         }
+
+        fn read(&self, spans: usize, draws: usize) -> Option<Readback> {
+            let bytes = self.readback.get_mapped_range(..).ok()?;
+            let word = |at: usize| {
+                bytes
+                    .get(at..at + 8)
+                    .and_then(|word| word.try_into().ok())
+                    .map_or(0, u64::from_le_bytes)
+            };
+            let stamp = |query: usize| word(query * 8);
+            let draw_stamp = |query: usize| word(DRAW_STAMPS_AT as usize + query * 8);
+            let statistic = |draw: usize, counter: usize| {
+                word(DRAW_STATISTICS_AT as usize + draw * 24 + counter * 8)
+            };
+            Some((
+                (0..spans)
+                    .map(|span| (stamp(2 * span), stamp(2 * span + 1)))
+                    .collect(),
+                (0..draws)
+                    .map(|draw| (draw_stamp(2 * draw), draw_stamp(2 * draw + 1)))
+                    .collect(),
+                (0..draws)
+                    .map(|draw| [0, 1, 2].map(|counter| statistic(draw, counter)))
+                    .collect(),
+            ))
+        }
+    }
+
+    fn idle(
+        recorded: &[(&'static str, Option<&'static str>)],
+        stamps: &[(u64, u64)],
+        (first, last): (u64, u64),
+    ) -> Option<u64> {
+        let mut busy: Vec<(u64, u64)> = recorded
+            .iter()
+            .zip(stamps)
+            .filter(|((_, group), _)| *group == Some(BUSY))
+            .map(|(_, &stamps)| stamps)
+            .filter(|&(begin, end)| begin != 0 && end >= begin)
+            .collect();
+        busy.sort_unstable();
+        let (mut reach, mut covered) = (first, 0);
+        for &(begin, end) in &busy {
+            covered += end.saturating_sub(begin.max(reach));
+            reach = reach.max(end);
+        }
+        (!busy.is_empty()).then(|| last.saturating_sub(first).saturating_sub(covered))
     }
 
     #[derive(Clone, Copy)]
@@ -227,18 +280,21 @@ mod capture {
 
     pub(crate) struct Latest {
         pub(crate) frame_ms: f64,
+        pub(crate) idle_ms: f64,
         pub(crate) spans: Vec<(&'static str, f64)>,
     }
 
     impl Latest {
         fn of(
             frame_ms: f64,
+            idle_ms: Option<f64>,
             names: &[&'static str],
             stamps: &[(u64, u64)],
             duration: impl Fn((u64, u64)) -> Option<f64>,
         ) -> Self {
             Self {
                 frame_ms,
+                idle_ms: idle_ms.unwrap_or(0.0),
                 spans: names
                     .iter()
                     .zip(stamps)
@@ -393,6 +449,10 @@ mod capture {
             self.recorded(Some(group), name)
         }
 
+        pub(crate) fn busy(&self, name: &'static str) -> Option<Span<'_>> {
+            self.recorded(Some(BUSY), name)
+        }
+
         fn recorded(&self, group: Option<&'static str>, name: &'static str) -> Option<Span<'_>> {
             let slot = &self.slots[self.current?];
             let mut spans = slot.spans.borrow_mut();
@@ -526,33 +586,11 @@ mod capture {
                 let names: Vec<&'static str> = recorded.iter().map(|&(name, _)| name).collect();
                 let mut groups: Vec<&'static str> = Vec::new();
                 for group in recorded.iter().filter_map(|&(_, group)| group) {
-                    if !groups.contains(&group) {
+                    if group != BUSY && !groups.contains(&group) {
                         groups.push(group);
                     }
                 }
-                let read: Option<Readback> = slot.readback.get_mapped_range(..).ok().map(|bytes| {
-                    let word = |at: usize| {
-                        bytes
-                            .get(at..at + 8)
-                            .and_then(|word| word.try_into().ok())
-                            .map_or(0, u64::from_le_bytes)
-                    };
-                    let stamp = |query: usize| word(query * 8);
-                    let spans = (0..names.len())
-                        .map(|span| (stamp(2 * span), stamp(2 * span + 1)))
-                        .collect();
-                    let draw_stamp = |query: usize| word(DRAW_STAMPS_AT as usize + query * 8);
-                    let draws = (0..labels.len())
-                        .map(|draw| (draw_stamp(2 * draw), draw_stamp(2 * draw + 1)))
-                        .collect();
-                    let statistic = |draw: usize, counter: usize| {
-                        word(DRAW_STATISTICS_AT as usize + draw * 24 + counter * 8)
-                    };
-                    let statistics = (0..labels.len())
-                        .map(|draw| [0, 1, 2].map(|counter| statistic(draw, counter)))
-                        .collect();
-                    (spans, draws, statistics)
-                });
+                let read = slot.read(names.len(), labels.len());
                 slot.readback.unmap();
                 let Some((stamps, draw_stamps, draw_statistics)) = read else {
                     self.errors = self.errors.saturating_add(1);
@@ -601,7 +639,8 @@ mod capture {
                 if let Some((first, last)) = span {
                     self.last_span = Some((origin.frame, first, last));
                 }
-                self.latest = frame_ms.map(|ms| Latest::of(ms, &names, &stamps, duration));
+                let idle_ms = span.and_then(|span| idle(&recorded, &stamps, span).map(to_ms));
+                self.latest = frame_ms.map(|ms| Latest::of(ms, idle_ms, &names, &stamps, duration));
                 if Some(origin.capture) != self.capture {
                     continue;
                 }
@@ -646,6 +685,7 @@ mod capture {
                     spans.push(("stage_gaps", gaps));
                 }
                 spans.extend(frame_ms.map(|frame| ("frame_gpu", frame)));
+                spans.extend(idle_ms.map(|idle| ("gpu_idle", idle)));
                 spans.extend(
                     gap_ms
                         .filter(|value| value.is_finite())

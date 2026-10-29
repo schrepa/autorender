@@ -2,6 +2,8 @@ use super::*;
 use crate::gpu_calls::{Handover, Recorded};
 use crate::profiling::Span;
 
+const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
+
 pub(super) fn batch(pass: Pass) -> u8 {
     let first_opaque = Pass::Opaque { phase: Phase::One }.index();
     let last_opaque = Pass::Opaque { phase: Phase::Two }.index();
@@ -37,7 +39,7 @@ impl Renderer {
             let Some(part) = part else {
                 continue;
             };
-            let span = span.filter(|_| capturing);
+            let span = capturing.then_some(span);
             self.mark_prelude(&mut handover, open, span);
             handover.push(part);
             open = span;
@@ -54,7 +56,7 @@ impl Renderer {
         end: Option<&'static str>,
         begin: Option<&'static str>,
     ) {
-        let span = |name: Option<&'static str>| self.profiler.span(name?);
+        let span = |name: Option<&'static str>| self.profiler.busy(name?);
         let (end, begin) = (span(end), span(begin));
         if end.is_none() && begin.is_none() {
             return;
@@ -68,16 +70,34 @@ impl Renderer {
         handover.push(Recorded::Encoder(encoder));
     }
 
-    pub(super) fn frame_encoder(&self) -> wgpu::CommandEncoder {
-        self.device
+    pub(super) fn frame_encoder(&self, batch: u8) -> wgpu::CommandEncoder {
+        let mut encoder = self
+            .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("engine/frame-encoder"),
-            })
+            });
+        self.mark_batch(&mut encoder, None, Some(batch));
+        encoder
     }
 
-    pub(super) fn hand_batch(&self, encoder: wgpu::CommandEncoder) -> wgpu::CommandEncoder {
+    fn mark_batch(&self, encoder: &mut wgpu::CommandEncoder, end: Option<u8>, begin: Option<u8>) {
+        let span = |batch: Option<u8>| self.profiler.busy(BATCHES.get(usize::from(batch?))?);
+        mark_between(encoder, span(end), span(begin));
+    }
+
+    pub(super) fn hand_batch(
+        &self,
+        mut encoder: wgpu::CommandEncoder,
+        (ended, next): (u8, u8),
+    ) -> wgpu::CommandEncoder {
+        self.mark_batch(&mut encoder, Some(ended), None);
         self.queue.hand(Handover::from(encoder));
-        self.frame_encoder()
+        self.frame_encoder(next)
+    }
+
+    pub(super) fn close_frame(&mut self, encoder: &mut wgpu::CommandEncoder, batch: u8) {
+        self.mark_batch(encoder, Some(batch), None);
+        self.profiler.end_frame(encoder);
     }
 
     pub(super) fn submit_frame(

@@ -52,10 +52,11 @@ fn read_back(
         }
     }
     let rendering = reply["result"]["rendering"].clone();
-    engine_core::smoke_eq!(
+    engine_core::smoke_check!(
+        number(&rendering["read_back_age"]) <= 1.0,
+        "preview_count_arrives",
         rendering["read_back_age"].clone(),
-        json!(1),
-        "preview_count_arrives"
+        json!({ "at_most": 1 })
     );
     let pending = status(session, "status_after_preview")?;
     engine_core::smoke_eq!(

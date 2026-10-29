@@ -339,6 +339,7 @@ export interface ProfileResult {
   frames: number;
   gpu_ms?: number | null;
   interval_ms: number;
+  measuring_ms: number;
   temporary: boolean;
   total: number;
 }

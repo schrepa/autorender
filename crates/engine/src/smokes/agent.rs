@@ -597,7 +597,12 @@ fn explained(session: &mut dyn SmokeSession) -> SmokeResult {
         assets["result"]["meshes"].clone(),
         json!(">= 4")
     );
-    let costs = accepted(session, "profile", json!({ "frames": 4 }), "profiles")?;
+    let costs = accepted(
+        session,
+        "profile",
+        json!({ "frames": 4, "detail": "full" }),
+        "profiles",
+    )?;
     let result = &costs["result"];
     engine_core::smoke_check!(
         result["bricks"]
@@ -607,6 +612,26 @@ fn explained(session: &mut dyn SmokeSession) -> SmokeResult {
         "profile_measures_bricks",
         json!({ "bricks": result["bricks"], "artifact": result["artifact"] }),
         json!({ "bricks": "measured", "artifact": "a file" })
+    );
+    engine_core::smoke_check!(
+        number(&result["measuring_ms"]) >= 0.0,
+        "profile_reports_measuring_cost",
+        result["measuring_ms"].clone(),
+        json!(">= 0")
+    );
+    let unattributed = result["bricks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|brick| brick["brick"] == engine_core::UNATTRIBUTED_ROW)
+        .cloned()
+        .unwrap_or_default();
+    let share = |field: &str| number(&unattributed[field]) / number(&result[field]);
+    engine_core::smoke_check!(
+        share("cpu_ms") <= 0.05 && (result["gpu_ms"].is_null() || share("gpu_ms") <= 0.05),
+        "profile_rows_sum_to_frame",
+        json!({ "row": unattributed, "cpu_ms": result["cpu_ms"], "gpu_ms": result["gpu_ms"] }),
+        json!({ "unattributed_share": "<= 0.05" })
     );
     let slow = accepted(
         session,

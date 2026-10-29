@@ -77,6 +77,7 @@ export interface BrickCost {
 
 export interface BrickCosts {
   frame: number;
+  measuring_ms: number;
   rows: BrickCost[];
 }
 

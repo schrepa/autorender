@@ -59,6 +59,8 @@ const PROBE_WAITS: u32 = 120;
 
 const READ_BACK_WAITS: u32 = 120;
 
+const EXPLAIN_FRAMES: u32 = 2;
+
 pub(crate) struct ProfileRun {
     request: ProfileRequest,
     ran: u32,
@@ -732,13 +734,16 @@ impl<G: Game> GameHost<G> {
                     return self.dev_explained((id, entity), slot, DrawState::Unread, context);
                 };
                 self.read_back(slot);
-                for _ in 0..2 {
-                    let reply = self.dev_invoke(&control("render", json!({})), context);
-                    if reply["ok"] != true {
-                        return self.dev_done(reply, context);
-                    }
-                }
-                self.dev_explain_wait((id, entity), slot, 0, context)
+                self.suspend();
+                self.dev_effect(
+                    Pending::Explain {
+                        id,
+                        entity,
+                        slot,
+                        waits: 1,
+                    },
+                    Effect::Frame { timestamp: 0.0 },
+                )
             }
         }
     }
@@ -751,7 +756,7 @@ impl<G: Game> GameHost<G> {
         context: &HostContext,
     ) -> Step {
         match self.read_back(slot) {
-            Some((level, 0)) => {
+            Some((level, 0)) if waits >= EXPLAIN_FRAMES => {
                 let drawn = level.map_or(DrawState::Culled, DrawState::Level);
                 self.dev_explained((id, entity), Some(slot), drawn, context)
             }
@@ -765,7 +770,7 @@ impl<G: Game> GameHost<G> {
                     slot,
                     waits: waits + 1,
                 },
-                Effect::Wait { within_ms: 1000.0 },
+                Effect::Frame { timestamp: 0.0 },
             ),
         }
     }

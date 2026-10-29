@@ -329,7 +329,7 @@ impl GpuPresentationPass {
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("engine/presentation-shift"),
-                timestamp_writes: profiler.span("presentation_shift").map(Span::compute),
+                timestamp_writes: profiler.busy("presentation_shift").map(Span::compute),
             });
             pass.set_pipeline(&self.shaders.pipelines.shift_previous);
             pass.set_bind_group(0, &groups.shift_previous, &[]);

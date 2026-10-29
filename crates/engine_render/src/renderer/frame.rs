@@ -54,12 +54,12 @@ pub(super) struct Prelude {
 }
 
 impl Prelude {
-    const SPANS: [Option<&'static str>; 5] = [
-        None,
-        Some("pre_mips"),
-        Some("pre_poses"),
-        Some("pre_inputs"),
-        Some("pre_environment"),
+    const SPANS: [&str; 5] = [
+        "pre_sky",
+        "pre_mips",
+        "pre_poses",
+        "pre_inputs",
+        "pre_environment",
     ];
 
     fn parts(self) -> [Option<Recorded>; 5] {
@@ -276,7 +276,7 @@ impl Renderer {
         let view = surface
             .texture()
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self.frame_encoder();
+        let mut encoder = self.frame_encoder(0);
         self.display.time_begin(&mut encoder);
         let passes = self.prepare_pipelines(kind, &packing.temporal_frame, &features);
         let terrain = self.prepare_terrain(
@@ -345,9 +345,9 @@ impl Renderer {
             let pass = node.pass();
             let next = submit::batch(pass);
             if next != batch {
-                batch = next;
                 self.mark_stages(&mut encoder, timed.take(), None);
-                encoder = self.hand_batch(encoder);
+                encoder = self.hand_batch(encoder, (batch, next));
+                batch = next;
             }
             self.mark_stages(&mut encoder, timed.replace(pass), Some(pass));
             #[cfg(any(not(target_arch = "wasm32"), feature = "profiling"))]
@@ -361,7 +361,7 @@ impl Renderer {
         #[cfg(feature = "dev")]
         self.encode_probe(&state, &mut encoder, surface.texture());
         self.display.time_end(&self.device, &mut encoder);
-        self.profiler.end_frame(&mut encoder);
+        self.close_frame(&mut encoder, batch);
         drop(profile_encoding);
         self.submit_frame(&state, surface, encoder);
         Ok(self.frame_stats(&state, &report))

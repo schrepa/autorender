@@ -6,8 +6,8 @@ mod scene;
 
 pub(crate) use attribution::under;
 pub use attribution::{
-    BrickCost, BrickCosts, BrickRow, BrickTable, CORE_PASSES, CORE_ROW, UNATTRIBUTED_ROW,
-    WARMUP_FRAMES,
+    BrickCost, BrickCosts, BrickRow, BrickTable, CORE_PASSES, CORE_ROW, GPU_IDLE_ROW,
+    UNATTRIBUTED_ROW, WARMUP_FRAMES,
 };
 pub use engine_settings::{
     Allowed, Detail, Error, Expected, parse_json, parse_value, parse_value_at,
