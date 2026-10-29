@@ -69,7 +69,13 @@ impl SceneTexture {
     }
 
     pub(crate) fn texture(&self, path: &str, files: Option<&SceneFiles>) -> Result<Texture, Error> {
-        match (&self.provided, &self.uri, self.width, self.height, &self.rgba8) {
+        match (
+            &self.provided,
+            &self.uri,
+            self.width,
+            self.height,
+            &self.rgba8,
+        ) {
             (Some(name), None, None, None, None) => {
                 identifier(name, &format!("{path}.provided"))?;
                 Ok(Texture::new(1, 1, vec![255; 4]).expect("opaque_texel_valid"))
@@ -110,20 +116,22 @@ impl SceneTexture {
                 Texture::from_rgba(width, height, pixels)
                     .map_err(|error| error.coded(ErrorCode::InvalidTexture).within(path))
             }
-            (provided, uri, width, height, rgba8) => Err(Error::new(ErrorCode::InvalidTexture, path)
-                .got(
-                    [
-                        ("provided", provided.is_some()),
-                        ("uri", uri.is_some()),
-                        ("width", width.is_some()),
-                        ("height", height.is_some()),
-                        ("rgba8", rgba8.is_some()),
-                    ]
-                    .into_iter()
-                    .filter_map(|(field, given)| given.then_some(field))
-                    .collect::<Vec<_>>(),
-                )
-                .variants(["uri", "width,height,rgba8", "provided"])),
+            (provided, uri, width, height, rgba8) => {
+                Err(Error::new(ErrorCode::InvalidTexture, path)
+                    .got(
+                        [
+                            ("provided", provided.is_some()),
+                            ("uri", uri.is_some()),
+                            ("width", width.is_some()),
+                            ("height", height.is_some()),
+                            ("rgba8", rgba8.is_some()),
+                        ]
+                        .into_iter()
+                        .filter_map(|(field, given)| given.then_some(field))
+                        .collect::<Vec<_>>(),
+                    )
+                    .variants(["uri", "width,height,rgba8", "provided"]))
+            }
         }
     }
 }

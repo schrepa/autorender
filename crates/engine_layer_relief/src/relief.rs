@@ -64,8 +64,7 @@ pub static STEPS: LayerKind = LayerKind {
     from_json: steps_from_json,
     read: read_steps,
     files: no_files,
-    #[cfg(feature = "schema")]
-    schema: steps_schema,
+    schema: engine_terrain::layer_schema!(steps_schema),
 };
 
 pub static HUMMOCKS: LayerKind = LayerKind {
@@ -74,8 +73,7 @@ pub static HUMMOCKS: LayerKind = LayerKind {
     from_json: hummocks_from_json,
     read: read_hummocks,
     files: no_files,
-    #[cfg(feature = "schema")]
-    schema: hummocks_schema,
+    schema: engine_terrain::layer_schema!(hummocks_schema),
 };
 
 fn repose() -> f32 {

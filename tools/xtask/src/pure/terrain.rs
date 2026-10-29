@@ -14,7 +14,7 @@ use engine_terrain::jobs::{
 use engine_terrain::lighting::{self, Ground};
 use engine_terrain::macro_colors;
 use engine_terrain::{
-    BiomeRules, Generator, Layers, Obstacle, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, SettleRegion,
+    BiomeRules, Generator, Layers, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, SettleRegion,
     SettleStart, Stamp, StampOp, TILE_QUADS, Terrain, Tile, TileKey, TileShading, WaterPart, codec,
 };
 use glam::Vec2;
@@ -281,7 +281,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     observed.check(count > 0, || "no tile has portals".into());
 
     let route = (Vec2::new(212.0, 262.0), Vec2::new(412.0, 262.0));
-    let obstacles = [Obstacle {
+    let obstacles = [engine_core::GroundObstacle {
         center: Vec2::new(312.0, 262.0),
         radius: 12.0,
     }];
@@ -597,9 +597,8 @@ fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> engine_core::Gr
         }
     }
     let first = pyramid.first_sample(key);
-    let at = |x: i64, z: i64| {
-        glam::Vec2::new((first[0] + x) as f32, (first[1] + z) as f32) * spacing
-    };
+    let at =
+        |x: i64, z: i64| glam::Vec2::new((first[0] + x) as f32, (first[1] + z) as f32) * spacing;
     let quads = i64::from(engine_terrain::TILE_QUADS);
     let mut holes = None;
     if layers.holes_reach(at(0, 0), at(quads, quads)) {
@@ -656,7 +655,7 @@ impl Graph {
         &self,
         pyramid: &Pyramid,
         route: (Vec2, Vec2),
-        obstacles: &[Obstacle],
+        obstacles: &[engine_core::GroundObstacle],
         slice: u64,
     ) -> Result<Option<NavPath>, String> {
         let mut search =

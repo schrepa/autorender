@@ -319,7 +319,9 @@ type Agents = QueryState<
 fn ground_source(world: &World, from: Vec2, to: Vec2) -> GroundRead<GroundSource> {
     world
         .get_resource::<Ground>()
-        .map_or(GroundRead::Off, |ground| ground.face().source(world, from, to))
+        .map_or(GroundRead::Off, |ground| {
+            ground.face().source(world, from, to)
+        })
 }
 
 fn ground_obstacles(world: &World, entity: Entity) -> Vec<GroundObstacle> {
@@ -347,7 +349,13 @@ pub(crate) fn walk_agents(world: &mut World, agents: &mut Agents) {
     let stats = world.resource_scope(|world, mut navigation: Mut<NavAgents>| {
         scoped::<Jobs, _>(world, |world, jobs| {
             scoped::<Cooking, _>(world, |world, cooking| {
-                walk(world, agents, (&settings, time), &mut navigation, (jobs, cooking))
+                walk(
+                    world,
+                    agents,
+                    (&settings, time),
+                    &mut navigation,
+                    (jobs, cooking),
+                )
             })
         })
     });
@@ -391,7 +399,13 @@ fn walk(
         navigation.searches.push((entity, search));
         walk.status = NavStatus::Searching;
     }
-    search(settings, world, jobs.as_deref_mut(), (&mut *navigation, &mut stats), agents);
+    search(
+        settings,
+        world,
+        jobs.as_deref_mut(),
+        (&mut *navigation, &mut stats),
+        agents,
+    );
     if let (Some(jobs), Some(cooking)) = (jobs, cooking.as_deref_mut()) {
         navigation.cook(world, agents, jobs, cooking);
     }
@@ -496,8 +510,8 @@ struct Step {
 impl Step {
     fn settle(&mut self, world: &World) {
         let walked = self.walked;
-        let ground = Ground::sample_in(world, self.position.x, self.position.z)
-            .map_or(walked, |point| {
+        let ground =
+            Ground::sample_in(world, self.position.x, self.position.z).map_or(walked, |point| {
                 if walked > point.height + DECK_ABOVE {
                     walked
                 } else {

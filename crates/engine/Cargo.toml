@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-dev = ["dep:engine_dev", "engine_core/dev", "engine_render/dev"]
+dev = ["dep:engine_dev", "engine_core/dev", "engine_render/dev", "schema"]
 profiling = ["engine_profile/enabled", "engine_core/profiling", "engine_collision/profiling", "engine_physics/profiling", "engine_render/profiling", "engine_terrain/profiling"]
 attribution = ["engine_core/attribution", "engine_collision/attribution"]
 schema = ["engine_core/schema", "engine_settings/schema", "engine_panic/schema", "engine_scene/schema", "engine_terrain/schema", "engine_layer_noise/schema", "engine_layer_stamps/schema", "engine_layer_heightmap/schema", "engine_layer_paths/schema", "engine_layer_erosion/schema", "engine_layer_hydrology/schema", "engine_layer_relief/schema", "engine_world_streaming/schema", "engine_navigation/schema", "engine_time_of_day/schema", "engine_collision/schema", "engine_physics/schema", "dep:schemars"]

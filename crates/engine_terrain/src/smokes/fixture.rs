@@ -171,9 +171,7 @@ fn placed(translation: Vec3) -> Transform {
 }
 
 fn layers() -> Vec<Arc<dyn TerrainLayer>> {
-    let stamp = |center: [f32; 2], radius: f32, falloff: f32, op: Value| {
-        json!({"type": "stamp", "center": center, "radius": radius, "falloff": falloff, "op": op})
-    };
+    let stamp = |center: [f32; 2], radius: f32, falloff: f32, op: Value| json!({"type": "stamp", "center": center, "radius": radius, "falloff": falloff, "op": op});
     let path = |points: Value, smoothing: f32, tunnel_cut: f32| {
         json!({
             "type": "path",
@@ -197,7 +195,12 @@ fn layers() -> Vec<Arc<dyn TerrainLayer>> {
         json!({"type": "hydrology", "level": 1}),
         stamp([430.0, 96.0], 10.0, 10.0, json!({"lower": 12.0})),
         path(
-            json!([[100.0, 300.0], [250.0, 260.0], [400.0, 150.0], [450.0, 60.0]]),
+            json!([
+                [100.0, 300.0],
+                [250.0, 260.0],
+                [400.0, 150.0],
+                [450.0, 60.0]
+            ]),
             60.0,
             25.0,
         ),

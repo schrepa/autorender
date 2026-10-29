@@ -41,8 +41,7 @@ pub static PATH_KIND: LayerKind = LayerKind {
     from_json,
     read,
     files: layer::no_files,
-    #[cfg(feature = "schema")]
-    schema,
+    schema: engine_terrain::layer_schema!(schema),
 };
 
 #[derive(Clone, Debug, PartialEq)]

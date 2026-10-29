@@ -37,8 +37,7 @@ pub static HEIGHTMAP: LayerKind = LayerKind {
     from_json,
     read,
     files,
-    #[cfg(feature = "schema")]
-    schema,
+    schema: engine_terrain::layer_schema!(schema),
 };
 
 pub static KINDS: &[&LayerKind] = &[&HEIGHTMAP];
@@ -286,7 +285,9 @@ impl TerrainLayer for HeightmapLayer {
         let level = self.level_for(row.spacing);
         for (height, &x) in heights.iter_mut().zip(row.xs) {
             let (value, weight) = self.at(x, row.z, level);
-            *height = self.blend.apply(*height, value, weight * below.shown(x, row.z));
+            *height = self
+                .blend
+                .apply(*height, value, weight * below.shown(x, row.z));
         }
     }
 

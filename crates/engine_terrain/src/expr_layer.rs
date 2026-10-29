@@ -25,8 +25,7 @@ pub static EXPRESSION: LayerKind = LayerKind {
     from_json,
     read,
     files: no_files,
-    #[cfg(feature = "schema")]
-    schema,
+    schema: crate::layer_schema!(schema),
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -92,8 +91,9 @@ impl ExpressionLayer {
                     .got(level));
             }
             None if shaped => {
-                return Err(Error::new(ErrorCode::MissingField, "$.level")
-                    .expected(Expected::Present));
+                return Err(
+                    Error::new(ErrorCode::MissingField, "$.level").expected(Expected::Present)
+                );
             }
             Some(_) | None => {}
         }
@@ -155,13 +155,12 @@ impl ExpressionLayer {
         for ((&x, &height), erosion) in xs.iter().zip(heights).zip(&mut erosion) {
             let shown = below.shown(x, z);
             let sample = match water {
-                Some(water) if shown > 0.0 => {
-                    RiverInputs::at(&water.rivers, [x, z], (height, row.spacing)).with_maps(
-                        water,
-                        [x, z],
-                        row.spacing,
-                    )
-                }
+                Some(water) if shown > 0.0 => RiverInputs::at(
+                    &water.rivers,
+                    [x, z],
+                    (height, row.spacing),
+                )
+                .with_maps(water, [x, z], row.spacing),
                 Some(_) | None => HydrologySample::default(),
             };
             waters.push(HydrologySample {
@@ -182,7 +181,14 @@ impl ExpressionLayer {
         let maps: Vec<Vec<f32>> = (self.users.iter())
             .map(|(name, _)| {
                 let mut values = vec![0.0_f32; len];
-                read_map(stack, producer(under, name), name, row, heights, &mut values);
+                read_map(
+                    stack,
+                    producer(under, name),
+                    name,
+                    row,
+                    heights,
+                    &mut values,
+                );
                 values
             })
             .collect();
@@ -433,9 +439,10 @@ pub(crate) fn read_map(
     out: &mut [f32],
 ) {
     let read = match producer {
-        Some(index) => stack.layers().get(index).is_some_and(|layer| {
-            layer.map_row(name, Below::new(stack, index), row, heights, out)
-        }),
+        Some(index) => stack
+            .layers()
+            .get(index)
+            .is_some_and(|layer| layer.map_row(name, Below::new(stack, index), row, heights, out)),
         None => false,
     };
     if !read {

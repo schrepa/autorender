@@ -425,9 +425,8 @@ impl Layers {
     pub fn with_stamps(&self, stamps: &[Stamp]) -> Result<Self, Error> {
         let mut layers = self.layers.clone();
         if !stamps.is_empty() {
-            let kind = layer_kind(STAMP).ok_or_else(|| {
-                Error::new(ErrorCode::MissingLayer, "$.stamps").variants([STAMP])
-            })?;
+            let kind = layer_kind(STAMP)
+                .ok_or_else(|| Error::new(ErrorCode::MissingLayer, "$.stamps").variants([STAMP]))?;
             for (offset, stamp) in stamps.iter().enumerate() {
                 let at = format!("$.layers[{}]", self.layers.len() + offset);
                 stamp.validate().map_err(|invalid| {
@@ -531,12 +530,15 @@ impl Layers {
         self.layers
             .get(index)?
             .water()
-            .map(|water| &water.rivers)
+            .map(|water| &*water.rivers)
             .filter(|rivers| !rivers.is_empty())
     }
 
     pub fn bridges(&self) -> Vec<Bridge> {
-        self.layers.iter().flat_map(|layer| layer.bridges()).collect()
+        self.layers
+            .iter()
+            .flat_map(|layer| layer.bridges())
+            .collect()
     }
 
     pub fn path_at(&self, x: f32, z: f32) -> PathSample {

@@ -415,8 +415,11 @@ fn map_at(state: &TerrainState, name: &str, level: u32, local: Vec2) -> Option<f
             .hydrology()
             .filter(|_| shown > 0.0)
             .map_or_else(HydrologySample::default, |water| {
-                RiverInputs::at(&water.rivers, [x, z], (height, spacing))
-                    .with_maps(water, [x, z], spacing)
+                RiverInputs::at(&water.rivers, [x, z], (height, spacing)).with_maps(
+                    water,
+                    [x, z],
+                    spacing,
+                )
             })
     };
     let change = || {

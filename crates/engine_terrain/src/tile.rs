@@ -804,10 +804,6 @@ impl Generator {
         );
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub fn advance(&mut self, budget: &mut u64) -> Option<Tile> {
         loop {
             if *budget == 0 {

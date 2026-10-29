@@ -34,8 +34,7 @@ pub static STAMP: LayerKind = LayerKind {
     from_json,
     read,
     files: no_files,
-    #[cfg(feature = "schema")]
-    schema,
+    schema: engine_terrain::layer_schema!(schema),
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]

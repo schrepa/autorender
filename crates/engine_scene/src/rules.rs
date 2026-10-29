@@ -54,7 +54,11 @@ pub fn resolve_values(
             }
         }
         Value::Array(items) => {
-            for (index, item) in items.iter_mut().enumerate().filter(|(_, item)| nested(item)) {
+            for (index, item) in items
+                .iter_mut()
+                .enumerate()
+                .filter(|(_, item)| nested(item))
+            {
                 resolve_values(item, named, pyramid, &format!("{path}[{index}]"))?;
             }
         }

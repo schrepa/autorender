@@ -44,8 +44,22 @@ pub struct LayerKind {
     pub from_json: fn(&Value, &dyn LayerFiles) -> Made,
     pub read: fn(&mut Reader<'_>) -> Made,
     pub files: fn(&Value) -> Vec<String>,
-    #[cfg(feature = "schema")]
-    pub schema: fn() -> schemars::Schema,
+    pub schema: fn() -> Value,
+}
+
+#[macro_export]
+macro_rules! layer_schema {
+    ($schema:path) => {{
+        #[cfg(feature = "schema")]
+        fn layer_schema() -> ::serde_json::Value {
+            ::serde_json::to_value($schema()).unwrap_or(::serde_json::Value::Null)
+        }
+        #[cfg(not(feature = "schema"))]
+        fn layer_schema() -> ::serde_json::Value {
+            ::serde_json::Value::Null
+        }
+        layer_schema
+    }};
 }
 
 impl Debug for LayerKind {

@@ -473,10 +473,7 @@ pub(crate) fn compile(
     Ok(compiled)
 }
 
-pub(crate) fn check_maps(
-    layers: &[CompiledPlacement],
-    stack: &crate::Layers,
-) -> Result<(), Error> {
+pub(crate) fn check_maps(layers: &[CompiledPlacement], stack: &crate::Layers) -> Result<(), Error> {
     let published: Vec<String> = (stack.layers().iter())
         .flat_map(|layer| layer.outputs())
         .collect();
@@ -630,7 +627,7 @@ impl MaskInputs {
 
     fn push_maps(
         &mut self,
-        (stack, users, producers): (&crate::Layers, &[(String, String)], &[Option<usize>]),
+        (stack, users, producers): MapSources<'_>,
         ([x, z], spacing, height): ([f32; 2], f32, f32),
     ) {
         let at = glam::Vec2::new(x, z);
@@ -796,11 +793,16 @@ pub(crate) fn place_row(
             share_of_materials,
         });
         inputs.push((tile, stack, layer.reads), (point, local, nearest), &sample);
-        inputs.push_maps((stack, &layer.users, &producers), (point, spacing, sample.height));
+        inputs.push_maps(
+            (stack, &layer.users, &producers),
+            (point, spacing, sample.height),
+        );
     }
     values.clear();
     values.resize(candidates.len(), 0.0);
-    layer.mask.evaluate_row(&inputs.row(spacing), &inputs.maps, values, rows);
+    layer
+        .mask
+        .evaluate_row(&inputs.row(spacing), &inputs.maps, values, rows);
     for (candidate, &mask) in candidates.iter().zip(values.iter()) {
         let Candidate {
             square,
@@ -921,3 +923,9 @@ crate::codec::record!(Placed {
     near_level,
     rank,
 });
+
+type MapSources<'a> = (
+    &'a crate::Layers,
+    &'a [(String, String)],
+    &'a [Option<usize>],
+);

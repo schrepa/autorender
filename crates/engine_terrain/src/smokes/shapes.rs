@@ -107,7 +107,8 @@ fn path(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
     let paths = seen(session, ground).paths;
     let road = paths.first().cloned();
     smoke_check!(
-        road.as_ref().is_some_and(|(layer, stats)| *layer == 4 && stats.is_some()),
+        road.as_ref()
+            .is_some_and(|(layer, stats)| *layer == 4 && stats.is_some()),
         "the_path_bakes",
         &paths,
         &json!({"layer": 4, "baked": true})
@@ -233,9 +234,9 @@ fn tunnel(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
     smoke_check!(
         bore.as_ref().is_some_and(|(layer, stats)| {
             *layer == 6
-                && stats.as_ref().is_some_and(|stats| {
-                    stats["tunnels"] == 1 && number(&stats["tunneled"]) > 40.0
-                })
+                && stats
+                    .as_ref()
+                    .is_some_and(|stats| stats["tunnels"] == 1 && number(&stats["tunneled"]) > 40.0)
         }),
         "the_road_tunnels_the_mound",
         &bore,

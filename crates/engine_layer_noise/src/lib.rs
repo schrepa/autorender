@@ -28,8 +28,7 @@ pub static NOISE_KIND: LayerKind = LayerKind {
     from_json: layer::from_json,
     read: layer::read,
     files: no_files,
-    #[cfg(feature = "schema")]
-    schema: layer::schema,
+    schema: engine_terrain::layer_schema!(layer::schema),
 };
 
 pub static KINDS: &[&LayerKind] = &[&NOISE_KIND];

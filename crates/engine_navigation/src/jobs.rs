@@ -119,7 +119,11 @@ impl NavigationWorker {
                 .to_string());
         };
         let ground = WalkGround::new(&job.grid, &job.pyramid);
-        Ok(Some(codec::encode(&TilePortals::new(&ground, &job.pyramid, &job.gait))))
+        Ok(Some(codec::encode(&TilePortals::new(
+            &ground,
+            &job.pyramid,
+            &job.gait,
+        ))))
     }
 
     pub fn cancel(&mut self, id: u64) {

@@ -193,13 +193,18 @@ impl SceneDocument {
         along: &SceneAlong,
         path: &str,
     ) -> Result<(&SceneTerrain, Vec<[f32; 2]>), Error> {
-        let Some((at, terrain)) = self.entities.iter().enumerate().find_map(|(index, entity)| {
-            entity
-                .terrain
-                .as_ref()
-                .filter(|_| entity.id == along.terrain)
-                .map(|terrain| (index, terrain))
-        }) else {
+        let Some((at, terrain)) = self
+            .entities
+            .iter()
+            .enumerate()
+            .find_map(|(index, entity)| {
+                entity
+                    .terrain
+                    .as_ref()
+                    .filter(|_| entity.id == along.terrain)
+                    .map(|terrain| (index, terrain))
+            })
+        else {
             return Err(
                 Error::new(ErrorCode::UnknownReference, format!("{path}.terrain"))
                     .got(&along.terrain)
@@ -256,7 +261,13 @@ fn expand_list(
     }
     let mut expanded_count = list.len();
     for entry in list {
-        validate_object(entry.object, &entry.path, mesh_ids, material_ids, prefab_ids)?;
+        validate_object(
+            entry.object,
+            &entry.path,
+            mesh_ids,
+            material_ids,
+            prefab_ids,
+        )?;
         if let Some(id) = &entry.object.prefab {
             expanded_count += prefab_lookup[id.as_str()].1.entities.len();
         }

@@ -100,9 +100,7 @@ impl NoiseTile {
         let (tables, grid) = (&self.tables, &mut self.grid);
         let len = state_len(coarse);
         let (first, spacing) = (self.first[0], self.spacing);
-        let x = |column: usize| {
-            (first + (GRID_FIRST + column as i64) * GRID_STEP) as f32 * spacing
-        };
+        let x = |column: usize| (first + (GRID_FIRST + column as i64) * GRID_STEP) as f32 * spacing;
         let mut column = 0;
         while column < GRID {
             let at = (row * GRID + column) * len;
@@ -170,9 +168,9 @@ impl LayerTile for NoiseTile {
                 index += 4;
             } else {
                 interpolate(sum, QUARTER_WEIGHTS[quarter], taps);
-                self.values[index] = self
-                    .tables
-                    .finish(line.xs[index], z, sum, octaves, fine.clone());
+                self.values[index] =
+                    self.tables
+                        .finish(line.xs[index], z, sum, octaves, fine.clone());
                 index += 1;
             }
         }

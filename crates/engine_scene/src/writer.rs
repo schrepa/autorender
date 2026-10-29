@@ -74,7 +74,13 @@ impl<'a> Canonical<'a> {
         out
     }
 
-    fn same(&self, value: &Value, default: &Value, schema: Option<&'a Value>, depth: usize) -> bool {
+    fn same(
+        &self,
+        value: &Value,
+        default: &Value,
+        schema: Option<&'a Value>,
+        depth: usize,
+    ) -> bool {
         if value == default {
             return true;
         }
@@ -86,9 +92,13 @@ impl<'a> Canonical<'a> {
         }
         if let (Value::Array(items), Value::Array(defaults)) = (value, default) {
             return items.len() == defaults.len()
-                && items.iter().zip(defaults).enumerate().all(|(index, (item, default))| {
-                    self.same(item, default, item_schema(&parts, index), depth + 1)
-                });
+                && items
+                    .iter()
+                    .zip(defaults)
+                    .enumerate()
+                    .all(|(index, (item, default))| {
+                        self.same(item, default, item_schema(&parts, index), depth + 1)
+                    });
         }
         if let (Value::Object(fields), Value::Object(defaults)) = (value, default) {
             return fields.len() == defaults.len()
@@ -162,7 +172,10 @@ impl<'a> Canonical<'a> {
             if let Some(Value::Object(properties)) = schema.get("properties")
                 && properties.iter().any(|(name, property)| {
                     let constant = self.resolve(property).get("const");
-                    constant.is_some() && fields.get(name).is_some_and(|field| Some(field) != constant)
+                    constant.is_some()
+                        && fields
+                            .get(name)
+                            .is_some_and(|field| Some(field) != constant)
                 })
             {
                 return false;
@@ -175,19 +188,21 @@ impl<'a> Canonical<'a> {
         {
             return false;
         }
-        ["anyOf", "oneOf"].into_iter().all(|key| match schema.get(key) {
-            Some(Value::Array(branches)) => branches
-                .iter()
-                .any(|branch| self.matches(value, branch, depth + 1)),
-            Some(
-                Value::Null
-                | Value::Bool(_)
-                | Value::Number(_)
-                | Value::String(_)
-                | Value::Object(_),
-            )
-            | None => true,
-        })
+        ["anyOf", "oneOf"]
+            .into_iter()
+            .all(|key| match schema.get(key) {
+                Some(Value::Array(branches)) => branches
+                    .iter()
+                    .any(|branch| self.matches(value, branch, depth + 1)),
+                Some(
+                    Value::Null
+                    | Value::Bool(_)
+                    | Value::Number(_)
+                    | Value::String(_)
+                    | Value::Object(_),
+                )
+                | None => true,
+            })
     }
 
     fn resolve(&self, schema: &'a Value) -> &'a Value {

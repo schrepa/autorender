@@ -376,7 +376,7 @@ pub(crate) fn layer_sweep(
             let difference = (height - sample.height).abs();
             compared += 1;
             if difference > worst || at.is_none() {
-                worst = worst.max(difference);
+                worst = engine_math::max(worst, difference);
                 at = Some(point.to_array());
             }
         }

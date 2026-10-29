@@ -47,8 +47,8 @@ mod games {
         SubpixelCulling, Surface, TemporalAntialiasing, Texture, TextureHandle, TextureRef,
         TextureSet, TextureSource, TextureUsage, Tint, TopLayer, Transform, UvTransform, ViewSync,
         ViewSyncSystems, WaterKind, WaterObstacle, WaterObstacles, WaterSample, WorldSync,
-        WorldSyncSystems, Wrap, edit_transform, math,
-        reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
+        WorldSyncSystems, Wrap, edit_transform, math, reset_all_interpolation, reset_interpolation,
+        set_parent, set_parents, trim_cards,
     };
     pub use engine_core::{
         Culling, LightingModel, Lights, Particles, PostEffects, ReflectionProbes,

@@ -8,8 +8,8 @@ use engine_settings::{Rule, Setting};
 use engine_terrain::layer::{self, LayerFiles, TerrainLayer, TerrainLayerKinds};
 use engine_terrain::{
     Biome, Biomes, Cover, Layers, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
-    PlacementLod, PlacementPart, Pyramid, SurfaceMaterial, SurfaceProjection, Surroundings, Terrain,
-    TerrainSurface,
+    PlacementLod, PlacementPart, Pyramid, SurfaceMaterial, SurfaceProjection, Surroundings,
+    Terrain, TerrainSurface,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -374,7 +374,10 @@ fn layer_list_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Sch
             })
         })
         .collect();
-    definitions.insert(LAYER_DEFINITION.to_owned(), serde_json::json!({ "oneOf": variants }));
+    definitions.insert(
+        LAYER_DEFINITION.to_owned(),
+        serde_json::json!({ "oneOf": variants }),
+    );
     schemars::json_schema!({
         "type": "array",
         "items": { "$ref": format!("#/$defs/{LAYER_DEFINITION}") },

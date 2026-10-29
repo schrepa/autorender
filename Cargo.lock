@@ -846,6 +846,7 @@ name = "engine_assetc"
 version = "0.1.0"
 dependencies = [
  "engine_core",
+ "engine_layer_hydrology",
  "engine_lodbuild",
  "engine_scene",
  "engine_terrain",
@@ -893,7 +894,6 @@ dependencies = [
  "engine_core",
  "engine_profile",
  "engine_settings",
- "engine_terrain",
  "glam 0.30.9",
  "parry3d",
  "schemars",
@@ -965,7 +965,6 @@ dependencies = [
  "engine_sources",
  "engine_terrain",
  "glam 0.30.9",
- "libm",
  "schemars",
  "serde",
  "serde_json",

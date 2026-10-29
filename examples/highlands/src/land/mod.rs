@@ -174,9 +174,7 @@ fn scene_terrain(document: &SceneDocument) -> engine::Result<(String, &SceneTerr
             let path = format!("$.entities[{index}].terrain");
             entity.terrain.as_ref().map(|terrain| (path, terrain))
         })
-        .ok_or_else(|| {
-            Error::new(ErrorCode::GameRule, "$.entities").expected(Expected::Present)
-        })
+        .ok_or_else(|| Error::new(ErrorCode::GameRule, "$.entities").expected(Expected::Present))
 }
 
 fn scene_layer<'a>(
@@ -238,10 +236,17 @@ fn open_cave(world: &mut World) {
     if world.contains_resource::<CaveOpened>() {
         return;
     }
-    let (Some(CaveMouth { center: mouth, radius }), Some(rock)) = (
+    let (
+        Some(CaveMouth {
+            center: mouth,
+            radius,
+        }),
+        Some(rock),
+    ) = (
         world.get_resource::<CaveMouth>().copied(),
         world.get_resource::<CaveRock>().cloned(),
-    ) else {
+    )
+    else {
         return;
     };
     let Some((terrain, layers, bake)) = ({

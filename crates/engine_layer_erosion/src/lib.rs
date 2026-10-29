@@ -15,8 +15,8 @@ use engine_core::{Brick, Bricks, Pyramid};
 use engine_settings::{ErrorCode, parse_value};
 use engine_terrain::codec::{Reader, Writer};
 use engine_terrain::layer::{
-    AddTerrainLayers, Below, ChangeMap, LayerBake, LayerFiles, LayerKind, Made, Row,
-    TerrainLayer, maps, no_files, same_as,
+    AddTerrainLayers, Below, ChangeMap, LayerBake, LayerFiles, LayerKind, Made, Row, TerrainLayer,
+    maps, no_files, same_as,
 };
 use serde_json::Value;
 
@@ -37,8 +37,7 @@ pub static EROSION: LayerKind = LayerKind {
     from_json,
     read,
     files: no_files,
-    #[cfg(feature = "schema")]
-    schema,
+    schema: engine_terrain::layer_schema!(schema),
 };
 
 pub static KINDS: &[&LayerKind] = &[&EROSION];
@@ -141,8 +140,8 @@ impl TerrainLayer for ErosionStage {
     }
 
     fn stats(&self) -> Option<Value> {
-        self.baked.as_deref().map(|baked| {
-            serde_json::to_value(baked.stats).expect("erosion_stats_serialize")
-        })
+        self.baked
+            .as_deref()
+            .map(|baked| serde_json::to_value(baked.stats).expect("erosion_stats_serialize"))
     }
 }

@@ -132,11 +132,7 @@ impl Terrains {
             .map_or_else(TerrainBakes::default, |state| TerrainBakes {
                 baking: state.bake.job.is_some(),
                 hydrology: state.hydrology.stats,
-                layers: state
-                    .baked
-                    .as_deref()
-                    .map(layer_stats)
-                    .unwrap_or_default(),
+                layers: state.baked.as_deref().map(layer_stats).unwrap_or_default(),
             })
     }
 

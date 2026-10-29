@@ -17,8 +17,8 @@ use engine_core::{Brick, Bricks, Error, ErrorCode, parse_value};
 use engine_settings::InvalidSetting;
 use engine_terrain::codec::{Codec, Reader, Writer};
 use engine_terrain::layer::{
-    AddTerrainLayers, LayerBake, LayerFiles, LayerKind, Made, Place, TerrainLayer, maps,
-    no_files, same_as,
+    AddTerrainLayers, LayerBake, LayerFiles, LayerKind, Made, Place, TerrainLayer, maps, no_files,
+    same_as,
 };
 use engine_terrain::{GivenRiver, Hydrology, Pyramid};
 use glam::Vec2;
@@ -43,8 +43,7 @@ pub static HYDROLOGY: LayerKind = LayerKind {
     from_json: hydrology_from_json,
     read: hydrology_read,
     files: no_files,
-    #[cfg(feature = "schema")]
-    schema: hydrology_schema,
+    schema: engine_terrain::layer_schema!(hydrology_schema),
 };
 
 pub static RIVERS: LayerKind = LayerKind {
@@ -53,8 +52,7 @@ pub static RIVERS: LayerKind = LayerKind {
     from_json: rivers_from_json,
     read: rivers_read,
     files: no_files,
-    #[cfg(feature = "schema")]
-    schema: rivers_schema,
+    schema: engine_terrain::layer_schema!(rivers_schema),
 };
 
 pub static KINDS: &[&LayerKind] = &[&HYDROLOGY, &RIVERS];
