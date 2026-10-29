@@ -874,7 +874,7 @@ impl Generator {
                     let (coarse, _, gullies) = self.bands[layer].clone().unwrap_or_default();
                     let z = (self.first[1] + (GRID_FIRST + row as i64) * GRID_STEP) as f32
                         * self.spacing;
-                    let grid = self.grids[layer].as_mut().expect("noise layers have grids");
+                    let grid = self.grids[layer].as_mut().expect("noise_layer_grid");
                     let len = state_len(coarse);
                     let (first, spacing) = (self.first[0], self.spacing);
                     let x = |column: usize| {
@@ -924,7 +924,7 @@ impl Generator {
                 Stage::Beds => self.stage = self.beds(budget),
                 Stage::Holes { row } => {
                     let z = ((self.first[1] + i64::from(row)) as f32 + 0.5) * self.spacing;
-                    let bits = self.holes.as_mut().expect("holes stage has bits");
+                    let bits = self.holes.as_mut().expect("holes_stage_bits");
                     for column in 0..HOLE_CELLS as u32 {
                         let x = ((self.first[0] + i64::from(column)) as f32 + 0.5) * self.spacing;
                         if self.layers.hole_at(x, z) {
@@ -1077,7 +1077,7 @@ impl Generator {
             };
             let (octaves, fine, _) = self.bands[layer].clone().unwrap_or_default();
             let len = state_len(octaves);
-            let grid = self.grids[layer].as_ref().expect("noise layers have grids");
+            let grid = self.grids[layer].as_ref().expect("noise_layer_grid");
             let base = (coarse_row - 1 - GRID_FIRST) as usize;
             let tap = |row: usize, column: usize| {
                 let at = ((base + row) * GRID + column) * len;

@@ -17,7 +17,7 @@ pub(crate) fn import(
     output: &mut SceneDocument,
     files: &mut Vec<ImportedFile>,
 ) -> Result<(), ImportError> {
-    let source = document.scenes().next().expect("validated single scene");
+    let source = document.scenes().next().expect("single_scene");
     let mut stack: Vec<_> = source.nodes().map(|node| (node, Mat4::IDENTITY)).collect();
     stack.reverse();
     while let Some((node, parent)) = stack.pop() {
@@ -73,7 +73,7 @@ fn import_primitive(
     matrix: Mat4,
     normal_matrix: Mat3,
 ) -> Result<(SceneObject, SceneMesh, ImportedFile), ImportError> {
-    let mesh = node.mesh().expect("mesh nodes");
+    let mesh = node.mesh().expect("node_has_mesh");
     let primitive_path = format!(
         "$.meshes[{}].primitives[{}]",
         mesh.index(),

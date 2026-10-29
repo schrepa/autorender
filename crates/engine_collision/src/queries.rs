@@ -338,7 +338,7 @@ fn identity_rotation() -> [f64; 4] {
 }
 
 pub(crate) fn reply(result: impl Serialize) -> Value {
-    serde_json::to_value(result).expect("results serialize")
+    serde_json::to_value(result).expect("results_serialize")
 }
 
 pub(crate) fn bounded<T: Setting>(

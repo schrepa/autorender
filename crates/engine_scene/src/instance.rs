@@ -207,7 +207,7 @@ impl SceneInstance {
     }
 
     pub fn despawn(self, world: &mut World) {
-        assert_eq!(self.world_id, world.id(), "scene belongs to another world");
+        assert_eq!(self.world_id, world.id(), "scene_world_matches");
         if world
             .get_resource::<engine_core::OperationScene>()
             .is_some_and(|scene| Arc::ptr_eq(&scene.entities, &self.entities))
@@ -495,7 +495,7 @@ impl Streamed for StreamedTree {
                 .entities
                 .iter()
                 .position(|&own| own == index)
-                .expect("references stay within an item")]
+                .expect("reference_within_item")]
         };
         let parents: Vec<_> = item
             .entities

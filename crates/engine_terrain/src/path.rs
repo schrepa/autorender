@@ -654,7 +654,7 @@ impl Layers {
                 let mut unlimited = u64::MAX;
                 let tile = Generator::new(layers.clone(), pyramid, key)
                     .advance(&mut unlimited)
-                    .expect("an unlimited budget finishes the tile");
+                    .expect("unlimited_budget_finishes");
                 let rows = (first[1] - tz * quads).max(0)..=(end[1] - tz * quads).min(samples - 1);
                 let columns =
                     (first[0] - tx * quads).max(0)..=(end[0] - tx * quads).min(samples - 1);
@@ -860,7 +860,7 @@ pub fn route(
         let way = STEPS
             .iter()
             .position(|&candidate| candidate == step)
-            .expect("walks take steps");
+            .expect("walk_step_known");
         let run = distance(pair[0], pair[1]);
         length += run;
         let grade = (grid.heights[index(pair[1])] - grid.heights[index(pair[0])]).abs() / run;

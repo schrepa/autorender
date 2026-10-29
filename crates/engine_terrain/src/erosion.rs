@@ -177,7 +177,7 @@ fn encoded(values: &[f32], width: usize) -> (HeightImage, [f32; 2]) {
         })
         .collect();
     let image = HeightImage::new(width as u32, (values.len() / width) as u32, samples)
-        .expect("grids hold two samples each way");
+        .expect("grid_two_samples_each_way");
     (image, [range[0], range[0] + span])
 }
 

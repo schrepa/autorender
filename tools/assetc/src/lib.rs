@@ -125,7 +125,7 @@ pub fn import_glb_prefab(bytes: &[u8], id: &str) -> Result<Imported, ImportError
     let local = |value: &mut String| {
         *value = value
             .strip_prefix(&prefix)
-            .expect("imported entity IDs use the requested namespace")
+            .expect("entity_id_in_namespace")
             .to_owned();
     };
     let mut entities = std::mem::take(&mut scene.entities);

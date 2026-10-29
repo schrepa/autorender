@@ -62,13 +62,13 @@ impl SceneDocument {
             return Err(source_too_large());
         }
         output.bytes.push(b'\n');
-        Ok(String::from_utf8(output.bytes).expect("JSON serializer writes UTF-8"))
+        Ok(String::from_utf8(output.bytes).expect("json_utf8"))
     }
 
     #[cfg(feature = "schema")]
     pub fn schema_json(registry: &engine_core::BrickRegistry) -> String {
         let mut schema =
-            serde_json::to_value(schemars::schema_for!(Self)).expect("JSON schema is serializable");
+            serde_json::to_value(schemars::schema_for!(Self)).expect("schema_serializes");
         if let Some(definitions) = schema
             .get_mut("$defs")
             .and_then(serde_json::Value::as_object_mut)
@@ -82,8 +82,7 @@ impl SceneDocument {
                 properties.extend(sections);
             }
         }
-        let mut source =
-            serde_json::to_string_pretty(&schema).expect("JSON schema is serializable");
+        let mut source = serde_json::to_string_pretty(&schema).expect("schema_serializes");
         source.push('\n');
         source
     }

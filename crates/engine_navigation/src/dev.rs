@@ -163,7 +163,7 @@ impl Operation for NavGoControl {
                     format!("no navigation agent {id} in the scene"),
                 )
             })?;
-        let mut agent = world.get_mut::<NavAgent>(entity).expect("checked above");
+        let mut agent = world.get_mut::<NavAgent>(entity).expect("agent_found");
         agent.destination = destination;
         Ok(json!(NavGoResult {
             temporary: true,

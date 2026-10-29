@@ -9,7 +9,7 @@ use tiff::tags::Tag;
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("terrain_import: {error}");
+        eprintln!("{}", json!({"event": "import_failed", "error": error}));
         std::process::exit(1);
     }
 }
@@ -642,10 +642,14 @@ fn run() -> Result<(), String> {
     let samples = ((size / wanted).ceil() as usize + 1).clamp(2, 16_384);
     let spacing = size / (samples - 1) as f64;
     let sub = ((spacing / resolution).ceil() as usize).clamp(1, 16);
-    println!(
-        "{} input(s), {samples} by {samples} samples {spacing:.2} m apart, {sub} by {sub} reads each",
-        rasters.len()
-    );
+    let record = json!({
+        "event": "import_sampling",
+        "inputs": rasters.len(),
+        "samples": [samples, samples],
+        "spacing_m": spacing,
+        "reads": [sub, sub],
+    });
+    println!("{record}");
     let mut heights = vec![f64::NAN; samples * samples];
     for row in 0..samples {
         for column in 0..samples {
@@ -742,9 +746,7 @@ fn run() -> Result<(), String> {
         }
     );
     if geographic && options.attribution.is_none() {
-        eprintln!(
-            "terrain_import: warning: no --attribution; elevation data licences usually require one"
-        );
+        eprintln!("{}", json!({"event": "attribution_missing", "option": "--attribution"}));
     }
     let rivers = match &options.rivers {
         Some(path) => {
@@ -758,10 +760,12 @@ fn run() -> Result<(), String> {
             let mut lines = read_rivers(path, &place, size)?;
             let most = engine_terrain::MAX_GIVEN_RIVERS;
             if lines.len() > most {
-                eprintln!(
-                    "terrain_import: warning: {} rivers on the terrain; keeping the {most} longest",
-                    lines.len()
-                );
+                let record = json!({
+                    "event": "rivers_truncated",
+                    "rivers": lines.len(),
+                    "kept": most,
+                });
+                eprintln!("{record}");
                 let length = |river: &GivenRiver| -> f64 {
                     river
                         .points
@@ -776,16 +780,19 @@ fn run() -> Result<(), String> {
                 lines.truncate(most);
             }
             if lines.is_empty() {
-                eprintln!(
-                    "terrain_import: warning: no river of {} lies on the terrain",
-                    path.display()
-                );
+                let record = json!({
+                    "event": "rivers_off_terrain",
+                    "file": path.display().to_string(),
+                });
+                eprintln!("{record}");
                 None
             } else {
                 if options.river_attribution.is_none() {
-                    eprintln!(
-                        "terrain_import: warning: no --river-attribution; waterway data licences usually require one"
-                    );
+                    let record = json!({
+                        "event": "attribution_missing",
+                        "option": "--river-attribution",
+                    });
+                    eprintln!("{record}");
                 }
                 let described = format!(
                     "{} ({} lines); {}",
@@ -840,7 +847,7 @@ fn run() -> Result<(), String> {
     let scene_file = options.out.join(format!("{}.scene.json", options.id));
     std::fs::write(
         &scene_file,
-        serde_json::to_string_pretty(&scene).expect("scenes serialize"),
+        serde_json::to_string_pretty(&scene).expect("scene_serializes"),
     )
     .map_err(|error| format!("{}: {error}", scene_file.display()))?;
     let river_lines = rivers.as_ref().map(|layer| layer.lines.len());
@@ -874,13 +881,10 @@ fn run() -> Result<(), String> {
     let report_file = folder.join("import.json");
     std::fs::write(
         &report_file,
-        serde_json::to_string_pretty(&report).expect("reports serialize"),
+        serde_json::to_string_pretty(&report).expect("report_serializes"),
     )
     .map_err(|error| format!("{}: {error}", report_file.display()))?;
-    println!(
-        "{}",
-        serde_json::to_string(&report).expect("reports serialize")
-    );
+    println!("{report}");
     Ok(())
 }
 
@@ -930,7 +934,7 @@ fn seabed(heights: &mut [f64], samples: usize, spacing: f64, level: f64) -> usiz
     };
     for row in 0..samples as isize {
         for column in 0..samples as isize {
-            let here = at(column, row).expect("inside");
+            let here = at(column, row).expect("sample_inside");
             for (dx, dy, step) in [
                 (-1, 0, 1.0),
                 (0, -1, 1.0),
@@ -945,7 +949,7 @@ fn seabed(heights: &mut [f64], samples: usize, spacing: f64, level: f64) -> usiz
     }
     for row in (0..samples as isize).rev() {
         for column in (0..samples as isize).rev() {
-            let here = at(column, row).expect("inside");
+            let here = at(column, row).expect("sample_inside");
             for (dx, dy, step) in [
                 (1, 0, 1.0),
                 (0, 1, 1.0),
@@ -1103,7 +1107,7 @@ fn scene(
         .iter()
         .enumerate()
         .max_by(|a, b| a.1.total_cmp(b.1))
-        .expect("imports hold samples");
+        .expect("import_has_samples");
     let peak = [
         (peak % samples) as f64 * spacing - half,
         (peak / samples) as f64 * spacing - half,

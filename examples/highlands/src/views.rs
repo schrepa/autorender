@@ -184,7 +184,7 @@ struct AwaitingBodies;
 
 fn aim_when_bodies_come(world: &mut World) {
     if world.contains_resource::<AwaitingBodies>() && bodies_view(world).is_some() {
-        aim(world, "bodies").expect("known view");
+        aim(world, "bodies").expect("view_known");
     }
 }
 
@@ -211,9 +211,7 @@ fn bodies_view(world: &mut World) -> Option<Camera> {
 }
 
 fn ground(world: &World, x: f32, z: f32) -> f32 {
-    let mut terrains = world
-        .try_query::<&Terrain>()
-        .expect("terrain is registered");
+    let mut terrains = world.try_query::<&Terrain>().expect("terrain_registered");
     terrains
         .iter(world)
         .next()

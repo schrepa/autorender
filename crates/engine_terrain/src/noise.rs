@@ -53,11 +53,11 @@ const _: () = {
         let z = MAGNITUDES[magnitude_z(i) as usize].to_bits() ^ (sign_z(i) << 31);
         assert!(
             GRADIENTS[i as usize][0].to_bits() == x,
-            "the rules give every gradient's x"
+            "gradient_x_matches"
         );
         assert!(
             GRADIENTS[i as usize][1].to_bits() == z,
-            "the rules give every gradient's z"
+            "gradient_z_matches"
         );
         i += 1;
     }

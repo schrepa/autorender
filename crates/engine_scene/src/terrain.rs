@@ -398,7 +398,7 @@ pub struct SceneHeightmap {
 fn state_heightmap_rules(schema: &mut schemars::Schema) {
     for field in ["min", "size", "low", "high", "falloff"] {
         let rule =
-            engine_terrain::HeightmapLayer::rule_of(field).expect("heightmaps declare the field");
+            engine_terrain::HeightmapLayer::rule_of(field).expect("heightmap_rule_declared");
         engine_settings::state(schema, field, rule);
     }
 }
@@ -839,7 +839,7 @@ impl SceneHeightmap {
                 self.height,
                 vec![0; self.width as usize * self.height as usize],
             )
-            .expect("declared dimensions checked above"),
+            .expect("dimensions_checked"),
         };
         Ok(HeightmapLayer {
             image: Arc::new(image),

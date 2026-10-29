@@ -28,7 +28,7 @@ pub struct TerrainControlResult {
 }
 
 fn terrain_setting(value: f32, name: &'static str) -> Result<f32, Error> {
-    let rule = TerrainSettings::rule_of(name).expect("terrain settings declare it");
+    let rule = TerrainSettings::rule_of(name).expect("terrain_rule_declared");
     Setting::check(&value, name, rule)
         .map(|()| value)
         .map_err(|invalid| {
@@ -85,7 +85,7 @@ impl Operation for TerrainControl {
             subdivision_error: settings.map(|settings| settings.subdivision_error),
             pixel_error: settings.map(|settings| settings.pixel_error),
         };
-        Ok(serde_json::to_value(result).expect("results serialize"))
+        Ok(serde_json::to_value(result).expect("results_serialize"))
     }
 
     #[cfg(feature = "schema")]
@@ -128,5 +128,5 @@ pub(super) fn terrains(world: &World) -> Result<&Terrains, Error> {
 }
 
 pub(super) fn reply(result: impl Serialize) -> serde_json::Value {
-    serde_json::to_value(result).expect("results serialize")
+    serde_json::to_value(result).expect("results_serialize")
 }

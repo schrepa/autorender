@@ -187,9 +187,7 @@ impl Layers {
     #[must_use]
     pub fn with_baked(&self, index: usize, baked: Baked) -> Self {
         let mut layers = self.clone();
-        let layer = layers
-            .layer_mut(index)
-            .expect("a bake's layer is in the stack it baked");
+        let layer = layers.layer_mut(index).expect("bake_layer_in_stack");
         match (layer, baked) {
             (Layer::Hydrology(stage), Baked::Hydrology(found)) => {
                 stage.baked = Some(Arc::new(found));
@@ -211,7 +209,7 @@ impl Layers {
                 | Layer::Steps(_)
                 | Layer::Hummocks(_),
                 Baked::Hydrology(_) | Baked::Erosion(_) | Baked::Path(_),
-            ) => unreachable!("a bake's result goes to the layer of its kind that it baked"),
+            ) => unreachable!("bake_matches_layer_kind"),
         }
         layers
     }
@@ -224,7 +222,7 @@ impl Layers {
             let mut budget = u64::MAX;
             let baked = bake
                 .advance(pyramid, &mut budget)
-                .expect("an unlimited budget finishes the bake");
+                .expect("unlimited_budget_finishes");
             layers = layers.with_baked(index, baked);
         }
         layers

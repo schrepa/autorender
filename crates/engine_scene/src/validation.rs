@@ -204,7 +204,7 @@ impl SceneDocument {
                     local.translation,
                 );
                 worlds[index] = Some(parents[index].map_or(local, |parent| {
-                    worlds[parent].expect("parent composed before child") * local
+                    worlds[parent].expect("parent_composed_first") * local
                 }));
             }
         }
@@ -221,7 +221,7 @@ impl SceneDocument {
                 items.push(PreparedItem {
                     entities: Vec::new(),
                     position: worlds[root]
-                        .expect("every world matrix is composed")
+                        .expect("world_matrix_composed")
                         .w_axis
                         .truncate(),
                     reach: 0.0,
@@ -230,7 +230,7 @@ impl SceneDocument {
             });
             items[item].entities.push(index);
             let position = items[item].position;
-            let world = worlds[index].expect("every world matrix is composed");
+            let world = worlds[index].expect("world_matrix_composed");
             let from = world.w_axis.truncate().distance(position);
             let standing = Reach {
                 world,

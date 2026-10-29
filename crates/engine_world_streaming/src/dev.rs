@@ -162,7 +162,7 @@ fn change_world(
         restored,
         removed: changes.removed().len(),
     })
-    .expect("results serialize"))
+    .expect("results_serialize"))
 }
 
 #[derive(Serialize)]

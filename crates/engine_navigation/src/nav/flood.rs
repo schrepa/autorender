@@ -63,7 +63,7 @@ impl Buckets {
     pub(super) fn push(&mut self, key: u64, item: u32) {
         debug_assert!(
             key >= self.at && key - self.at < WINDOW as u64,
-            "a key outside the queue's window"
+            "key_in_window"
         );
         self.lists[(key % WINDOW as u64) as usize].push(item);
         self.len += 1;

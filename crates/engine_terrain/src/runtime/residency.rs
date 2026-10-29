@@ -298,10 +298,7 @@ impl TerrainState {
     pub(super) fn check(&self) {
         self.store.check();
         for key in self.dispatched.keys() {
-            assert!(
-                self.store.loads(&key),
-                "R3: the record of tile {key:?} is asked for, which no longer loads"
-            );
+            assert!(self.store.loads(&key), "dispatched_tile_loads {key:?}");
         }
     }
 

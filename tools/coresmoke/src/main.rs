@@ -59,7 +59,7 @@ fn main() -> ExitCode {
     let options = match options() {
         Ok(options) => options,
         Err(error) => {
-            eprintln!("coresmoke: {error}");
+            eprintln!("{}", json!({"event": "arguments_rejected", "error": error}));
             return ExitCode::FAILURE;
         }
     };
@@ -67,7 +67,7 @@ fn main() -> ExitCode {
     let run = caches::run(options.seed, &mut report)
         .and_then(|()| streaming::run(options.trace.as_deref(), &mut report));
     if let Err(error) = run {
-        eprintln!("coresmoke: {error}");
+        eprintln!("{}", json!({"event": "smoke_failed", "error": error}));
         return ExitCode::FAILURE;
     }
     println!(

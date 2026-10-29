@@ -6,7 +6,7 @@ use crate::options::CONTROLS;
 use crate::views::set_view;
 use crate::{Options, RockMaps, scene};
 
-const FREEZE_DETAIL: ActionId = ActionId::new(2).expect("an action's index");
+const FREEZE_DETAIL: ActionId = ActionId::new(2).expect("action_index_valid");
 
 pub struct Highlands {
     options: Options,
@@ -85,7 +85,7 @@ impl Game for Highlands {
     }
 
     fn reset_camera(&mut self, engine: &mut Engine) {
-        set_view(engine, "overview").expect("known view");
+        set_view(engine, "overview").expect("view_known");
     }
 
     fn content(&self, _engine: &Engine) -> Option<Vec<u8>> {

@@ -112,7 +112,7 @@ pub(super) fn place(world: &mut World) {
     };
     world.insert_resource(Dammed);
     if let Err(error) = build(world, &site, water, (count, SEED), boulder) {
-        eprintln!("The highlands' rivers hold no bodies: {}", error.message);
+        super::report_failure("highlands_bodies_failed", &error);
     }
 }
 

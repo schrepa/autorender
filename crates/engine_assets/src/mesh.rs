@@ -200,7 +200,7 @@ impl Mesh {
                 offset + 3,
             ]);
         }
-        Self::new(vertices, indices).expect("built-in cube is valid")
+        Self::new(vertices, indices).expect("cube_valid")
     }
 
     pub fn plane() -> Self {
@@ -217,7 +217,7 @@ impl Mesh {
             uv: [position[0] + 0.5, position[2] + 0.5],
         })
         .collect();
-        Self::new(vertices, vec![0, 1, 2, 0, 2, 3]).expect("built-in plane is valid")
+        Self::new(vertices, vec![0, 1, 2, 0, 2, 3]).expect("plane_valid")
     }
 
     pub fn octahedron() -> Self {
@@ -247,6 +247,6 @@ impl Mesh {
                 }
             }
         }
-        Self::new(vertices, indices).expect("built-in octahedron is valid")
+        Self::new(vertices, indices).expect("octahedron_valid")
     }
 }

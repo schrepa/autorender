@@ -55,7 +55,7 @@ const KTX2_IDENTIFIER: [u8; 12] = [
 const RGBA8_FORMATS: [u32; 2] = [37, 43];
 
 fn word(bytes: &[u8], at: usize) -> u32 {
-    u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four bytes"))
+    u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four_bytes"))
 }
 
 fn read_rgba8_ktx2(uri: &str, bytes: &[u8]) -> Result<Image, String> {

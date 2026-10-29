@@ -136,7 +136,7 @@ impl SceneEnvironment {
             .unwrap_or_default();
         let mut sections = BTreeMap::new();
         let atmosphere = serde_json::to_value(SceneAtmosphere::from(&atmosphere))
-            .expect("atmospheres serialize");
+            .expect("atmosphere_serializes");
         sections.insert(ATMOSPHERE.to_owned(), atmosphere);
         for section in registered(world) {
             sections.insert(section.key.to_owned(), section.current(world));
@@ -292,7 +292,7 @@ pub fn section_schemas(
 ) -> serde_json::Map<String, Value> {
     let mut properties = serde_json::Map::new();
     for section in registry.sections() {
-        let mut schema = serde_json::to_value(section.schema()).expect("schemas serialize");
+        let mut schema = serde_json::to_value(section.schema()).expect("schema_serializes");
         let Some(fields) = schema.as_object_mut() else {
             continue;
         };

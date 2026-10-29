@@ -312,7 +312,7 @@ fn validate_graph<'a>(
         while let Some(index) = path.pop() {
             let (parent_matrix, depth) = parents[index].map_or((Mat4::IDENTITY, 0), |parent| {
                 (
-                    worlds[parent].expect("parent resolved before child"),
+                    worlds[parent].expect("parent_resolved_first"),
                     depths[parent] + 1,
                 )
             });

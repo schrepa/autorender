@@ -208,7 +208,7 @@ impl PreparedMaterial {
             })
         });
         let mut material = self.material;
-        let valid = "prepared material maps are valid";
+        let valid = "prepared_maps_valid";
         if let Some(map) = base {
             material = material.with_base_color_texture(map).expect(valid);
         }
