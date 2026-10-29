@@ -191,7 +191,7 @@ impl DebugTargets {
     }
 }
 
-pub(crate) struct DebugFrame {
+pub struct DebugFrame {
     pub(crate) records: DrawRecords,
     targets: ScreenTarget<DebugTargets>,
 }

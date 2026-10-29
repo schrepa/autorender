@@ -1,3 +1,4 @@
+pub use crate::renderer::installed_parts;
 use std::any::{Any, TypeId};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
@@ -320,9 +321,11 @@ pub enum DrawAt<'a> {
     View {
         view: usize,
         center: glam::Vec3,
+        relative: glam::Mat4,
     },
     Transparent {
         targets: Targets,
+        accumulated: bool,
     },
 }
 

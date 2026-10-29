@@ -4,8 +4,8 @@ use engine_render::bindings::Sample::{Float, Uint, Unfilterable};
 use engine_render::bindings::Sampling::Filtering;
 use engine_render::bindings::View::{D2, D2Array};
 use engine_render::bindings::{
-    Kind, Stages, Table, bind, dynamic_uniform, read, read_of, sampler, texture, uniform, uniform_of,
-    write,
+    Kind, Stages, Table, bind, dynamic_uniform, read, read_of, sampler, texture, uniform,
+    uniform_of, write,
 };
 use engine_render::gpu_layouts::scene::CameraUniform;
 

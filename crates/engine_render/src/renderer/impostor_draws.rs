@@ -149,7 +149,12 @@ impl Core {
     pub fn ensure_card_pipeline(&mut self, targets: Targets) -> Option<&wgpu::RenderPipeline> {
         let entries = self.mesh_entries?;
         let shading = self.mesh_pipelines.shading();
-        if self.impostors.pipelines.pipeline(targets, shading).is_none() {
+        if self
+            .impostors
+            .pipelines
+            .pipeline(targets, shading)
+            .is_none()
+        {
             let declared = if targets == Targets::Temporal {
                 &LIT_TEMPORAL_IMPOSTOR_PIPELINES
             } else {

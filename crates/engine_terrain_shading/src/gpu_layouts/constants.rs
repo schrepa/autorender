@@ -1,5 +1,5 @@
 engine_render::gpu_consts! {
-    pub(crate) const GROUND_TEXELS: f32 = 2.0 => ["KEPT_GROUND_TEXELS" in "terrain::draw"];
+    pub(crate) const GROUND_TEXELS: f32 = engine_faces::shadows::GROUND_TEXELS => ["KEPT_GROUND_TEXELS" in "terrain::draw"];
 
     pub(crate) const NOT_RESIDENT: u32 = u32::MAX => ["NOT_RESIDENT"];
     pub(crate) const ERROR_MIPS: u32 = engine_terrain::ERROR_MIPS => ["SURFACE_ERROR_MIPS", "PEAK_MIPS" in "post::reflections"];

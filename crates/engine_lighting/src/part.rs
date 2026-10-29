@@ -1,7 +1,7 @@
 use engine_render::parts::{Begin, BeginOut, Create, GpuPart, PartDecl, PartEntry};
 use engine_render::pieces::PieceDecl;
 
-use crate::piece::LightingPiece;
+use crate::gpu_layouts::LightingPiece;
 
 pub(crate) static PART: PartEntry = PartEntry {
     decl: PartDecl {
@@ -46,7 +46,12 @@ impl GpuPart for LightingPart {
         let sky = environment.sky.sanitized();
         let highlights = environment.highlights.sanitized();
         self.piece = LightingPiece {
-            model: [atmosphere.rim, atmosphere.emission, atmosphere.specular, 0.0],
+            model: [
+                atmosphere.rim,
+                atmosphere.emission,
+                atmosphere.specular,
+                0.0,
+            ],
             highlights: sized_highlights(&highlights, &sky),
         };
     }

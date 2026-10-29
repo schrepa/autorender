@@ -103,6 +103,7 @@ impl ProbePass {
                     DrawAt::View {
                         view: face,
                         center: probe.center,
+                        relative: face_view_projection(engine_core::glam::Vec3::ZERO, face),
                     },
                     &mut pass,
                 );

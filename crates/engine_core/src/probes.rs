@@ -112,7 +112,7 @@ pub struct RenderReflectionProbes {
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct ProbeExtractor(Mutex<ProbeExtraction>);
+pub struct ProbeExtractor(Mutex<ProbeExtraction>);
 
 pub fn extract_probes(world: &World, snapshot: &mut RenderSnapshot) {
     world

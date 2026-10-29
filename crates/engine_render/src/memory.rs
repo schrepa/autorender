@@ -10,10 +10,7 @@ pub struct GpuMemory {
     clippy::disallowed_methods,
     reason = "the renderer's one buffer creation, which records its owner"
 )]
-pub fn buffer(
-    device: &wgpu::Device,
-    descriptor: &wgpu::BufferDescriptor<'_>,
-) -> wgpu::Buffer {
+pub fn buffer(device: &wgpu::Device, descriptor: &wgpu::BufferDescriptor<'_>) -> wgpu::Buffer {
     let buffer = device.create_buffer(descriptor);
     #[cfg(any(feature = "dev", feature = "profiling"))]
     ledger::created(ledger::id_of(&buffer), descriptor.size);
@@ -38,10 +35,7 @@ pub fn buffer_init(
     clippy::disallowed_methods,
     reason = "the renderer's one texture creation, which records its owner"
 )]
-pub fn texture(
-    device: &wgpu::Device,
-    descriptor: &wgpu::TextureDescriptor<'_>,
-) -> wgpu::Texture {
+pub fn texture(device: &wgpu::Device, descriptor: &wgpu::TextureDescriptor<'_>) -> wgpu::Texture {
     let texture = device.create_texture(descriptor);
     #[cfg(any(feature = "dev", feature = "profiling"))]
     ledger::created(ledger::id_of(&texture), texture_bytes(descriptor));

@@ -2,7 +2,7 @@ use engine_faces::sun::{Sun, SunFace};
 use engine_render::parts::{Begin, BeginOut, Create, GpuPart, PartDecl, PartEntry};
 use engine_render::pieces::PieceDecl;
 
-use crate::piece::SunPiece;
+use crate::gpu_layouts::SunPiece;
 
 pub(crate) static PART: PartEntry = PartEntry {
     decl: PartDecl {
@@ -53,11 +53,7 @@ impl GpuPart for SunPart {
     fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
         let atmosphere = cx.snapshot.environment.atmosphere.sanitized();
         self.piece = SunPiece {
-            direction: atmosphere
-                .sun_direction
-                .normalize()
-                .extend(0.0)
-                .to_array(),
+            direction: atmosphere.sun_direction.normalize().extend(0.0).to_array(),
             color: atmosphere.sun_color.extend(0.0).to_array(),
         };
     }

@@ -359,10 +359,7 @@ fn bind_group(
     )
 }
 
-pub fn gpu_format(
-    format: TextureFormat,
-    srgb: bool,
-) -> (wgpu::TextureFormat, wgpu::Features) {
+pub fn gpu_format(format: TextureFormat, srgb: bool) -> (wgpu::TextureFormat, wgpu::Features) {
     use wgpu::TextureFormat as Gpu;
     match format {
         TextureFormat::Rgba8 => (

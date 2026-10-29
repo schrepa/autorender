@@ -45,6 +45,8 @@ gpu_consts! {
     pub const VARIANT_FOLIAGE: u32 = 65536 => ["VARIANT_FOLIAGE" in "meshes::declarations"];
 
     pub const DEBUG_SPAN_STEPS: f32 = 254.0 => ["DEBUG_SPAN_STEPS"];
+    pub const WATER_SPAN_LEAST: f32 = 0.25 => ["WATER_SPAN_LEAST" in "face::heightfield"];
+    pub const WATER_SPAN_MOST: f32 = 4096.0 => ["WATER_SPAN_MOST" in "face::heightfield"];
     pub const DEBUG_KIND_MESH: u32 = 1 => ["DEBUG_KIND_MESH"];
     pub const DEBUG_KIND_PLACED: u32 = 2 => ["DEBUG_KIND_PLACED"];
     pub const DEBUG_KIND_CARD: u32 = 3 => ["DEBUG_KIND_CARD"];

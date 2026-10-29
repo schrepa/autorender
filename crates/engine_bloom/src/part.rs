@@ -12,10 +12,10 @@ use engine_render::pipelines::{self, Fullscreen, GroupLayout, fullscreen};
 use engine_render::profiling::GpuProfiler;
 use engine_render::targets::{FrameRegion, FrameSize, ScreenTarget, draw_within};
 
+use crate::gpu_layouts::BloomPiece;
 use crate::layouts::{
     BLOOM_FIRST, BLOOM_FIRST_PIPELINES, BLOOM_LEVEL, BLOOM_LEVEL_PIPELINES, COMPOSITE_BLOOM,
 };
-use crate::piece::BloomPiece;
 use crate::shaders::entry::bloom;
 
 const BLOOM_LEVELS: u32 = 6;
@@ -289,15 +289,10 @@ impl Bloom {
             down_pipeline: pipeline(
                 "engine/bloom-down",
                 &level_pipelines,
-                bloom::fs_bloom_down,
+                engine_render::shaders::entry::post::fs_levels_down,
                 None,
             ),
-            up_pipeline: pipeline(
-                "engine/bloom-up",
-                &level_pipelines,
-                bloom::fs_bloom_up,
-                add,
-            ),
+            up_pipeline: pipeline("engine/bloom-up", &level_pipelines, bloom::fs_bloom_up, add),
             format,
             sampler,
             targets: ScreenTarget::default(),

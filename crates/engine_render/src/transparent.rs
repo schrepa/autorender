@@ -227,8 +227,7 @@ impl TransparentPass {
             }));
         }
         let constants = [("TARGET_IS_SRGB", if format.is_srgb() { 1.0 } else { 0.0 })];
-        let pipeline_layout =
-            crate::pipelines::layout_of(device, &TRANSPARENT_COMPOSITE_PIPELINES);
+        let pipeline_layout = crate::pipelines::layout_of(device, &TRANSPARENT_COMPOSITE_PIPELINES);
         self.composite[index] = Some(crate::pipelines::fullscreen(
             device,
             &crate::pipelines::Fullscreen {
@@ -256,11 +255,7 @@ impl TransparentPass {
         shared: &[(u32, &wgpu::BindGroup)],
     ) {
         let targets = self.targets.get().expect("sized_in_begin");
-        pass.set_pipeline(
-            self.composite[usize::from(post)]
-                .as_ref()
-                .expect("ensured"),
-        );
+        pass.set_pipeline(self.composite[usize::from(post)].as_ref().expect("ensured"));
         pass.set_bind_group(0, &targets.group, &[]);
         for &(index, group) in shared {
             pass.set_bind_group(index, group, &[]);
@@ -327,9 +322,10 @@ impl GpuPart for Transparency {
             self.drawn = false;
             return;
         }
-        self.drawn = self.ids.accumulated.is_some_and(|accumulated| {
-            cx.parts.iter().any(|(_, part)| part.wants(accumulated))
-        });
+        self.drawn = self
+            .ids
+            .accumulated
+            .is_some_and(|accumulated| cx.parts.iter().any(|(_, part)| part.wants(accumulated)));
         if !self.drawn {
             if let Some(surfaces) = self.surfaces.as_mut() {
                 surfaces.release_targets();

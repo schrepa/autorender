@@ -270,7 +270,9 @@ impl Core {
         if cx.frame.kind.gpu_mode
             && let Some(targets) = cx.frame.passes.and_then(|passes| passes.impostor_pass)
             && let (Some(pipeline), Some(group)) = (
-                self.impostors.pipelines.pipeline(targets),
+                self.impostors
+                    .pipelines
+                    .pipeline(targets, self.mesh_pipelines.shading()),
                 self.impostors.atlas.group(),
             )
         {
@@ -341,7 +343,7 @@ impl Core {
             let bound = if prepass {
                 self.bind_prepass(pass, &mut binds, opaque_kind, batch)
             } else {
-                Some(self.bind_batch(pass, &mut binds, (opaque_kind, false), batch))
+                self.bind_batch(pass, &mut binds, (opaque_kind, false), batch)
             };
             let Some((mesh, draw)) = bound else {
                 continue;

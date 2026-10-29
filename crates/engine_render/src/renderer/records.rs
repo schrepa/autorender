@@ -22,9 +22,11 @@ impl Renderer {
             impostors.atlas.answer(record, bytes);
             return;
         }
-        let Some(index) = (0..self.parts.len())
-            .find(|&index| self.parts.part(index).is_some_and(|part| part.asks_record(record)))
-        else {
+        let Some(index) = (0..self.parts.len()).find(|&index| {
+            self.parts
+                .part(index)
+                .is_some_and(|part| part.asks_record(record))
+        }) else {
             return;
         };
         let _owner = crate::memory::owned(self.parts.decl(index).brick);

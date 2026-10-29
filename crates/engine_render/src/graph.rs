@@ -610,9 +610,9 @@ impl FrameGraph {
     }
 
     pub fn written(&self) -> u128 {
-        let Set([low, high]) = self
-            .kept_passes()
-            .fold(Set::default(), |written, node| written.union(node.outputs()));
+        let Set([low, high]) = self.kept_passes().fold(Set::default(), |written, node| {
+            written.union(node.outputs())
+        });
         u128::from(low) | (u128::from(high) << 64)
     }
 }

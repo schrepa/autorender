@@ -77,9 +77,9 @@ engine_render::gpu_consts! {
     pub(crate) const EYE_LAYER: u32 = 0 => ["EYE_LAYER"];
     pub(crate) const MIRROR_LAYER: u32 = 1 => ["MIRROR_LAYER"];
 
-    pub(crate) const NOON_LIGHT: f32 = 1.1 => ["NOON_LIGHT" in "sky::tables"];
-    pub(crate) const ADAPTATION_POWER: f32 = 0.75 => ["ADAPTATION_POWER" in "sky::tables"];
-    pub(crate) const ADAPTATION_MOST: f32 = 16.0 => ["ADAPTATION_MOST" in "sky::tables"];
+    pub(crate) const NOON_LIGHT: f32 = engine_faces::environment::NOON_LIGHT => ["NOON_LIGHT" in "sky::tables"];
+    pub(crate) const ADAPTATION_POWER: f32 = engine_faces::environment::ADAPTATION_POWER => ["ADAPTATION_POWER" in "sky::tables"];
+    pub(crate) const ADAPTATION_MOST: f32 = engine_faces::environment::ADAPTATION_MOST => ["ADAPTATION_MOST" in "sky::tables"];
 
     pub(crate) const CLOUD_GROUP: u32 = 8 => ["@march_view" in "sky::clouds", "@march_clouds" in "sky::clouds", "@shadow_clouds" in "sky::clouds", "@light_clouds" in "sky::clouds"];
     pub(crate) const SKY_TABLE_GROUP: u32 = 8 => ["@build_sky_view" in "sky::tables"];

@@ -26,7 +26,10 @@ pub(crate) fn cover(targets: Targets) -> (Entry, Entry) {
     match targets {
         Targets::Canvas => (entry::cover::vs_cover, entry::cover::fs_cover),
         Targets::Post => (entry::cover::vs_cover, entry::cover::fs_cover_post),
-        Targets::Temporal => (entry::cover::vs_cover_temporal, entry::cover::fs_cover_temporal),
+        Targets::Temporal => (
+            entry::cover::vs_cover_temporal,
+            entry::cover::fs_cover_temporal,
+        ),
         Targets::Debug => (entry::cover::vs_cover, entry::cover::fs_debug_cover),
     }
 }

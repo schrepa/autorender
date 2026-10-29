@@ -138,12 +138,12 @@ struct Level {
 const EXTENT_STRIDE: u64 = 256;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Reduction {
+pub enum Reduction {
     Farthest,
     Nearest,
 }
 
-pub(crate) struct DepthPyramid {
+pub struct DepthPyramid {
     first: wgpu::ComputePipeline,
     down: wgpu::ComputePipeline,
     first_layout: crate::pipelines::GroupLayout,
@@ -152,7 +152,7 @@ pub(crate) struct DepthPyramid {
 }
 
 impl DepthPyramid {
-    pub(crate) fn new(device: &wgpu::Device, reduction: Reduction) -> Self {
+    pub fn new(device: &wgpu::Device, reduction: Reduction) -> Self {
         let first_layout = crate::pipelines::layout(device, &PYRAMID_FIRST);
         let down_layout = crate::pipelines::layout(device, &PYRAMID_DOWN);
         let pipeline =
@@ -177,11 +177,11 @@ impl DepthPyramid {
         }
     }
 
-    pub(crate) fn release(&mut self) {
+    pub fn release(&mut self) {
         self.levels = None;
     }
 
-    pub(crate) fn prepare(
+    pub fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &crate::gpu_calls::Queue,
@@ -303,7 +303,7 @@ impl DepthPyramid {
         }
     }
 
-    pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder, span: Option<Span<'_>>) {
+    pub fn encode(&self, encoder: &mut wgpu::CommandEncoder, span: Option<Span<'_>>) {
         let Some((_, levels)) = &self.levels else {
             return;
         };
@@ -321,11 +321,11 @@ impl DepthPyramid {
         }
     }
 
-    pub(crate) fn view(&self) -> Option<&Versioned<wgpu::TextureView>> {
+    pub fn view(&self) -> Option<&Versioned<wgpu::TextureView>> {
         self.levels.as_ref().map(|(_, levels)| &levels.full)
     }
 
-    pub(crate) fn capacity_bytes(&self) -> u64 {
+    pub fn capacity_bytes(&self) -> u64 {
         self.levels.as_ref().map_or(0, |(_, levels)| {
             levels
                 .passes

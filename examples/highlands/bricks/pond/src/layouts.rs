@@ -25,7 +25,12 @@ pub const POND: Table = Table {
     label: "pond/pond-layout",
     bindings: &[
         uniform_of("ponds", size_of::<PondUniform>(), Stages::VERTEX_FRAGMENT),
-        texture("heights", Sample::Unfilterable, View::D2Array, Stages::FRAGMENT),
+        texture(
+            "heights",
+            Sample::Unfilterable,
+            View::D2Array,
+            Stages::FRAGMENT,
+        ),
         read("directory", Stages::FRAGMENT),
     ],
 };

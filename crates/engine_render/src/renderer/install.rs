@@ -24,7 +24,10 @@ impl Renderer {
         let layouts = brick_layouts(bricks);
         let device = self.core.device.clone();
         crate::pipelines::link(&device, linker);
-        crate::pipelines::install(&device, &shared, &layouts);
+        let lists: Vec<crate::pipelines::Layouts> = render_bricks(bricks)
+            .flat_map(|(_, render)| render.layouts.iter().copied())
+            .collect();
+        crate::pipelines::install(&device, &shared, lists);
         self.core.camera.install(&device, &layouts);
         self.core
             .camera
@@ -35,8 +38,7 @@ impl Renderer {
         if installed.is_ok() {
             for &(index, at) in &pieces.placed {
                 let _owner = crate::memory::owned(self.parts.decl(index).brick);
-                self.parts
-                    .with_part(index, |part, _| part.place_piece(at));
+                self.parts.with_part(index, |part, _| part.place_piece(at));
             }
             self.core.mesh_entries = self.parts.mesh_entries();
         }
@@ -50,7 +52,7 @@ impl Renderer {
     }
 }
 
-fn installed_parts(bricks: &BrickRegistry) -> Vec<&'static PartEntry> {
+pub fn installed_parts(bricks: &BrickRegistry) -> Vec<&'static PartEntry> {
     let mut entries = core_head(bricks.has(CULLING_BRICK));
     for (_, render) in render_bricks(bricks) {
         entries.extend(render.parts.iter().copied());
@@ -116,13 +118,9 @@ fn check_needs(
         for &need in entry.decl.needs {
             let answered = bricks.filler(need).is_some()
                 || offered.iter().any(|&(face, _)| face == need)
-                || entries.iter().any(|other| {
-                    other
-                        .decl
-                        .faces
-                        .iter()
-                        .any(|offer| offer.name() == need)
-                });
+                || entries
+                    .iter()
+                    .any(|other| other.decl.faces.iter().any(|offer| offer.name() == need));
             if !answered {
                 return Err(bricks.face_unanswered(need, entry.decl.brick));
             }

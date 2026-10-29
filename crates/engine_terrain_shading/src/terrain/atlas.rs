@@ -765,7 +765,10 @@ impl TileAtlas {
                         ),
                         ("data", data.as_entire_binding()),
                         ("control", engine_render::pipelines::view(&target)),
-                        ("rivers", engine_render::pipelines::view(&arrays.rivers_view)),
+                        (
+                            "rivers",
+                            engine_render::pipelines::view(&arrays.rivers_view),
+                        ),
                     ],
                 );
                 pass.set_bind_group(0, &group, &[]);

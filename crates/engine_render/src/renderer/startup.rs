@@ -165,6 +165,7 @@ impl Renderer {
             previous: PreviousFrame::default(),
             debug,
             mesh_entries: None,
+            scene_shading: SceneShading::NONE,
             warm: Vec::new(),
             views: None,
         };

@@ -83,10 +83,7 @@ impl Growable {
     }
 }
 
-pub fn entry<'a>(
-    name: &'a str,
-    buffer: &'a wgpu::Buffer,
-) -> (&'a str, wgpu::BindingResource<'a>) {
+pub fn entry<'a>(name: &'a str, buffer: &'a wgpu::Buffer) -> (&'a str, wgpu::BindingResource<'a>) {
     (name, buffer.as_entire_binding())
 }
 

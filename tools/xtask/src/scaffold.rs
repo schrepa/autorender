@@ -431,7 +431,10 @@ pub static PART: PartEntry = PartEntry {{
          .face_defaults(engine_faces::defaults::MODULES)"
     );
     source
-        .replace(TEMPLATE_IMPORTS, &format!("{GPU_IMPORTS}{TEMPLATE_IMPORTS}"))
+        .replace(
+            TEMPLATE_IMPORTS,
+            &format!("{GPU_IMPORTS}{TEMPLATE_IMPORTS}"),
+        )
         .replace(stats, &registered)
         + &part
 }

@@ -123,7 +123,7 @@ pub struct RenderParticles {
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct ParticleExtractor(Mutex<ParticleExtraction>);
+pub struct ParticleExtractor(Mutex<ParticleExtraction>);
 
 pub fn extract_particles(world: &World, snapshot: &mut RenderSnapshot) {
     world

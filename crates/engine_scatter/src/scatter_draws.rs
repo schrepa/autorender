@@ -13,6 +13,7 @@ use engine_core::glam::{Mat4, Vec3};
 use engine_faces::heightfield::HeightfieldFace;
 use engine_faces::placed::Placements;
 use engine_faces::shadows::ShadowCastersFace;
+use engine_render::debug_targets::{DrawKind, DrawRecord, RECORD_SLOT};
 use engine_render::entries::PassKind;
 use engine_render::gpu_data::{ColorData, Variant, pack_color, pack_surface};
 use engine_render::gpu_layouts::impostors::ImpostorRecord;
@@ -24,7 +25,7 @@ use engine_render::impostors::{
 use engine_render::materials::MaterialStore;
 use engine_render::mesh_arena::{MeshArena, MeshDraw};
 use engine_render::parts::{Prelude, Step, View};
-use engine_render::renderer::{Core, DrawKind, DrawRecord, GpuMesh, RECORD_SLOT};
+use engine_render::renderer::{Core, GpuMesh};
 use engine_terrain::{Tile, TileKey};
 
 type PartLevels = (Vec<(u32, u32, i32)>, Vec<MeshHandle>);
@@ -73,7 +74,10 @@ impl PlacedImpostors {
         let Some(targets) = kind.targets().filter(|_| shown) else {
             return false;
         };
-        if !self.atlas.prepare(&core.device, &core.queue, &self.pipelines, records) {
+        if !self
+            .atlas
+            .prepare(&core.device, &core.queue, &self.pipelines, records)
+        {
             return false;
         }
         self.card = core.ensure_card_pipeline(targets).cloned();
@@ -272,7 +276,11 @@ impl ScatterDraws {
         let height = core.display.size().height as f32;
         let impostors = scatter
             .placed
-            .prepare_cards(core, (cx.frame.kind.gpu_mode, passes.opaque_kind), &self.impostors)
+            .prepare_cards(
+                core,
+                (cx.frame.kind.gpu_mode, passes.opaque_kind),
+                &self.impostors,
+            )
             .then_some(level_of_detail.impostor_pixels);
         let regions = cx
             .parts
@@ -297,7 +305,13 @@ impl ScatterDraws {
         let settings = snapshot.environment.level_of_detail;
         let enabled = cx.frame.kind.gpu_mode && settings.enabled && settings.impostors;
         let core = &*cx.core;
-        placed.atlas.fit(&core.device, placed_shape(settings.sanitized().impostor_pixels));
+        let Some(entries) = core.mesh_entries else {
+            return false;
+        };
+        placed.atlas.fit(
+            &core.device,
+            placed_shape(settings.sanitized().impostor_pixels),
+        );
         placed.dropped = 0;
         let (meshes, materials) = (&core.meshes, &core.materials);
         placed.contents.retain(
@@ -370,6 +384,7 @@ impl ScatterDraws {
                             encoder: &mut *prelude,
                             mips: core.materials.mips(),
                             pipelines: &mut placed.pipelines,
+                            entries,
                         };
                         let supplied = placed.atlas.supply(gpu, key, &bake, content, budget);
                         placed.dropped += u32::from(matches!(supplied, Supplied::Refused));

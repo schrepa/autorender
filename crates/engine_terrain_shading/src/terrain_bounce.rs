@@ -6,14 +6,14 @@ use engine_terrain::bounce::{PROBE_BYTES, TerrainBounce, bin_moments};
 use engine_terrain::{MAX_BOUNCE_LEVELS, RenderTerrain, RenderTerrains, TerrainSettings};
 
 use crate::bindings::BOUNCE;
-use engine_render::buffers::Growable;
-use engine_render::cached::{Bound, GroupCache};
 use crate::gpu_layouts::bounce::{BounceFrame, BounceTerrain};
 use crate::gpu_layouts::constants::BOUNCE_GROUP;
 use crate::shaders::entry::terrain_bounce;
 use crate::terrain_horizons::Horizons;
 use crate::terrain_macro::MacroMaps;
 use crate::terrain_sky::SkyMaps;
+use engine_render::buffers::Growable;
+use engine_render::cached::{Bound, GroupCache};
 
 pub(crate) const BOUNCE_LAYERS: usize = 4 * engine_terrain::bounce::LAYERS;
 
@@ -426,7 +426,10 @@ impl Bounce {
             blocks: self.blocks.bound(),
             probes: self.probes.bound(),
             scratch: self.scratch.bound(),
-            surface: Bound::counted(generation, engine_render::pipelines::view(&maps.ground_view)),
+            surface: Bound::counted(
+                generation,
+                engine_render::pipelines::view(&maps.ground_view),
+            ),
             sky: Bound::counted(
                 terrain.sky.generation(),
                 engine_render::pipelines::view(terrain.sky.view()),
@@ -444,8 +447,12 @@ impl Bounce {
                 scene.cloud_shadows,
             ],
         };
-        let level =
-            |index: usize| Bound::counted(generation, engine_render::pipelines::view(&maps.levels[index]));
+        let level = |index: usize| {
+            Bound::counted(
+                generation,
+                engine_render::pipelines::view(&maps.levels[index]),
+            )
+        };
         let (layout, label) = ((&BOUNCE, &self.layout), "engine/terrain-bounce");
         let finest = self.terrains[0].bound();
         let ground = self.ground_group.bind(

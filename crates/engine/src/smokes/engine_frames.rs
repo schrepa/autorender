@@ -161,12 +161,7 @@ pub(crate) fn lit_meshes_frames(session: &mut dyn SmokeSession) -> SmokeResult {
     let drawn = captured(session, "captures_lit_meshes")?;
     if let (Some(plain), Some(drawn)) = (&plain, &drawn) {
         let changed = differing(plain, drawn, 8)?;
-        smoke_check!(
-            changed > 0,
-            "lit_meshes_draw",
-            json!(changed),
-            json!("> 0")
-        );
+        smoke_check!(changed > 0, "lit_meshes_draw", json!(changed), json!("> 0"));
     }
     Ok(())
 }

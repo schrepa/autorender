@@ -1,5 +1,7 @@
 pub use crate::gpu_layouts::scene::MAX_LEVELS;
-use engine_core::{AlphaMode, Material, MeshVertex, RenderInstance, Surface, UvTransform, glam::Mat4};
+use engine_core::{
+    AlphaMode, Material, MeshVertex, RenderInstance, Surface, UvTransform, glam::Mat4,
+};
 
 use crate::gpu_layouts::constants;
 use crate::targets::FrameRegion;
@@ -42,12 +44,7 @@ impl CameraUniform {
         self.detail = eye.extend(0.0).to_array();
     }
 
-    pub fn probe(
-        view_projection: Mat4,
-        position: glam::Vec3,
-        seconds: f32,
-        size: u32,
-    ) -> Self {
+    pub fn probe(view_projection: Mat4, position: glam::Vec3, seconds: f32, size: u32) -> Self {
         Self {
             options: [1.0, pixel_angle(view_projection, size), 0.0, 0.0],
             region: [size as f32, size as f32, 1.0, 1.0],

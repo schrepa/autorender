@@ -69,7 +69,9 @@ impl WaterBodies {
     }
 
     pub fn water(&self, world: &World, point: Vec3) -> Option<WaterSample> {
-        self.bodies.iter().find_map(|(_, face)| face.water(world, point))
+        self.bodies
+            .iter()
+            .find_map(|(_, face)| face.water(world, point))
     }
 
     pub fn water_in(world: &World, point: Vec3) -> Option<WaterSample> {

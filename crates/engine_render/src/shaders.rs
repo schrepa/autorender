@@ -31,6 +31,7 @@ crate::shader_modules! {
     "post::pixel" in "core" = "post/pixel.wgsl";
     "post::frame" in "core" = "effects.wgsl";
     "post::resolve_plain" in "core" = "post/resolve_plain.wgsl";
+    "post::levels" in "core" = "post/levels.wgsl";
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,5 +129,6 @@ crate::entry_points! {
     }
     post {
         vertex: [vs_fullscreen @ "engine::fullscreen"],
+        fragment: [fs_levels_down @ "post::levels"],
     }
 }

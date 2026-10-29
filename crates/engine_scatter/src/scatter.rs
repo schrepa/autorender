@@ -644,7 +644,10 @@ impl ScatterPass {
                     engine_render::buffers::entry("grounds", &self.grounds),
                     ("control", engine_render::pipelines::view(sources.control)),
                     engine_render::buffers::entry("palette", sources.palette),
-                    ("macro_maps", engine_render::pipelines::view(sources.macro_maps)),
+                    (
+                        "macro_maps",
+                        engine_render::pipelines::view(sources.macro_maps),
+                    ),
                 ],
             );
             self.snap_group.set(key, group);
@@ -879,14 +882,19 @@ impl GpuPart for ScatterPass {
             .iter()
             .flat_map(|terrain| terrain.assets.iter().flatten());
         for asset in placed {
-            assets.meshes.extend(asset.meshes().map(|mesh| (mesh.handle, mesh)));
+            assets
+                .meshes
+                .extend(asset.meshes().map(|mesh| (mesh.handle, mesh)));
             assets.materials.extend(asset.materials());
             assets.textures.extend(asset.textures.iter());
         }
     }
 
     fn prepare(&mut self, cx: &mut Step<'_>, prelude: &mut Prelude) {
-        self.held.restyled = self.held.draws.prepare_impostors(cx, prelude, &mut self.placed);
+        self.held.restyled = self
+            .held
+            .draws
+            .prepare_impostors(cx, prelude, &mut self.placed);
     }
 
     fn prepare_draws(&mut self, cx: &mut Step<'_>, _encoder: &mut wgpu::CommandEncoder) {
@@ -968,7 +976,7 @@ impl GpuPart for ScatterPass {
         Some(("placed impostors", self.placed.atlas.left()))
     }
 
-    fn want_records(&mut self, wants: &mut Vec<RecordKey>) {
+    fn record_wants(&mut self, wants: &mut Vec<RecordKey>) {
         self.placed.atlas.take_wants(wants);
     }
 
@@ -980,7 +988,7 @@ impl GpuPart for ScatterPass {
         self.placed.atlas.answer(record, bytes);
     }
 
-    fn take_made_records(&mut self, made: &mut Vec<(RecordKey, Vec<u8>)>) {
+    fn made_records(&mut self, made: &mut Vec<(RecordKey, Vec<u8>)>) {
         self.placed.atlas.take_made(made);
     }
 }

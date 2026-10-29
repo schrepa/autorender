@@ -34,7 +34,10 @@ impl Brick for WaterBrick {
             .shaders(shaders::MODULES)
             .face_defaults(engine_faces::defaults::MODULES)
             .pipeline_layouts(pipeline_layouts::PIPELINE_LAYOUTS)
-            .mirrors(gpu_layouts::water::LAYOUTS, gpu_layouts::constants::DECLARED)
+            .mirrors(
+                gpu_layouts::water::LAYOUTS,
+                gpu_layouts::constants::DECLARED,
+            )
             .mirrors(&[], gpu_layouts::constants::MIRRORED);
     }
 }

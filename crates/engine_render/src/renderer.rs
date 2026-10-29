@@ -48,6 +48,7 @@ mod frame_stats;
 mod health;
 mod impostor_draws;
 mod install;
+pub use install::installed_parts;
 mod instances;
 mod meshes;
 #[cfg(not(target_arch = "wasm32"))]
@@ -59,15 +60,14 @@ mod probe;
 mod queries;
 mod records;
 mod startup;
-mod view_draws;
 
 pub use attribution::GpuPassTimes;
 pub use camera::CameraBindings;
 pub use core_state::Core;
 pub(crate) use display::DisplayFrame;
 pub use display::{DepthTarget, Display};
-pub use impostor_draws::ImpostorDraws;
 pub use extra_views::CasterDraw;
+pub use impostor_draws::ImpostorDraws;
 pub use instances::FramePoses;
 pub use instances::Instances;
 pub use meshes::{BatchBinds, DrawOrder, MeshPipelines, ShadingSet};
@@ -233,5 +233,4 @@ impl Renderer {
             });
         }
     }
-
 }

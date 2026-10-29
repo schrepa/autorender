@@ -106,7 +106,8 @@ impl MeshPipelines {
 
     pub fn forget(&mut self, targets: Option<Targets>) {
         for set in &mut self.sets {
-            set.variants.retain(|(kind, _), _| kind.targets() != targets);
+            set.variants
+                .retain(|(kind, _), _| kind.targets() != targets);
         }
     }
 }
@@ -501,7 +502,7 @@ fn mesh_pipeline(
         Streams::Basic => 2,
     };
     let buffers = if kind.targets() == Some(Targets::Debug) {
-        crate::debug_view::with_record(&layouts[..buffers])
+        crate::debug_targets::with_record(&layouts[..buffers])
     } else {
         layouts[..buffers].to_vec()
     };

@@ -1021,11 +1021,7 @@ pub struct Family {
 }
 
 impl Family {
-    pub fn new(
-        device: &wgpu::Device,
-        declared: &PipelineLayout,
-        more: &[&GroupLayout],
-    ) -> Self {
+    pub fn new(device: &wgpu::Device, declared: &PipelineLayout, more: &[&GroupLayout]) -> Self {
         let group = match declared.groups[0] {
             GroupRef::Own(table) => layout(device, table),
             GroupRef::Shared { group, without } => shared_layout(device, group, without),

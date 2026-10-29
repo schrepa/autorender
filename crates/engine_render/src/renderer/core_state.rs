@@ -34,8 +34,8 @@ pub struct Core {
     pub shared: crate::bindings::SharedGroups,
     pub previous: PreviousFrame,
     pub debug: crate::debug_targets::DebugFrame,
-    pub mesh_entries: Option<&'static crate::entries::MeshEntries>,
     pub warm: Vec<SceneShading>,
+    pub scene_shading: SceneShading,
     pub views: Option<(wgpu::TextureFormat, bool)>,
 }
 

@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use engine_core::{AutoExposure, RenderSnapshot, RenderStats};
 use engine_faces::display::MeteredExposure;
+use engine_faces::environment::{ADAPTATION_MOST, ADAPTATION_POWER, NOON_LIGHT};
 use engine_render::buffers::{ReadbackRing, storage, uniform};
 use engine_render::cached::{Bound, GroupCache, Versioned};
 use engine_render::graph::{
@@ -28,9 +29,6 @@ const BIN_BYTES: u64 = EXPOSURE_BINS as u64 * 4;
 
 const DUSK: f32 = 0.069_756;
 const NIGHT: f32 = 0.241_922;
-const NOON_LIGHT: f32 = 1.1;
-const ADAPTATION_POWER: f32 = 0.75;
-const ADAPTATION_MOST: f32 = 16.0;
 
 pub(crate) static PART: PartEntry = PartEntry {
     decl: PartDecl {
@@ -276,7 +274,9 @@ impl GpuPart for ExposurePass {
         }
         let post = cx.parts.post().is_some_and(|post| !post.disabled());
         self.shows = enabled && post && self.meter.get().is_some();
-        if self.shows && let Some(meter) = self.meter.get_mut() {
+        if self.shows
+            && let Some(meter) = self.meter.get_mut()
+        {
             meter.start(&cx.core.queue, environment.atmosphere.exposure);
         }
     }

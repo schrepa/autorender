@@ -195,9 +195,9 @@ impl Taa {
     }
 
     fn capacity_bytes(&self) -> u64 {
-        self.targets.size().map_or(0, |size| {
-            u64::from(size.width) * u64::from(size.height) * 8
-        })
+        self.targets
+            .size()
+            .map_or(0, |size| u64::from(size.width) * u64::from(size.height) * 8)
     }
 
     fn begin(
@@ -401,9 +401,10 @@ impl GpuPart for TemporalPass {
             self.resolve = None;
             return;
         }
-        let (Some(frame), Some(inputs)) = (
+        let (Some(frame), Some(([scene, occlusion, reflections], settings)), Some(motion)) = (
             cx.frame.temporal.as_ref(),
             cx.parts.post().and_then(PostPass::resolve_inputs),
+            cx.core.motion(),
         ) else {
             self.resolve = None;
             return;
@@ -420,7 +421,7 @@ impl GpuPart for TemporalPass {
             );
             taa.prepare_resolve(
                 &core.device,
-                inputs,
+                ([scene, occlusion, reflections, motion], settings),
                 frame.parity,
                 (&core.depth.view, core.pieces_buffer()),
                 revealed,

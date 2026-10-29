@@ -37,10 +37,7 @@ impl Targets {
         }
     }
 
-    pub fn color_targets(
-        self,
-        canvas: wgpu::TextureFormat,
-    ) -> Vec<Option<wgpu::ColorTargetState>> {
+    pub fn color_targets(self, canvas: wgpu::TextureFormat) -> Vec<Option<wgpu::ColorTargetState>> {
         if self == Self::Debug {
             return debug_color_targets();
         }

@@ -3,7 +3,9 @@ use engine_faces::heightfield::{CoverSources, HeightfieldFace};
 use engine_render::graph::{
     Access, FrameGraph, GraphTable, PassDecl, PassId, ResourceId, Stage, Targets,
 };
-use engine_render::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Step, View, main_targets};
+use engine_render::parts::{
+    Create, Encode, GpuPart, PartDecl, PartEntry, Step, View, main_targets,
+};
 use engine_render::pipelines::{self, Fragment, Geometry, GroupLayout};
 use engine_render::profiling::Span;
 use engine_terrain::{RenderTerrain, RenderTerrains};
@@ -227,7 +229,8 @@ impl GpuPart for PondPass {
         let terrains = &RenderTerrains::of(cx.frame.snapshot).terrains;
         let uniform = shapes(ponds, terrains, ground);
         let core = &*cx.core;
-        core.queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
+        core.queue
+            .write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         self.bind(&core.device, &sources);
         self.ensure_pipeline(&core.device, shape.targets, core.display.format());
         self.drawn = uniform.count[0];

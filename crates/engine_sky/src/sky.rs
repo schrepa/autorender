@@ -1030,9 +1030,9 @@ impl GpuPart for SkyPass {
                 )
             }
             DrawAt::View { view, .. } => (SkyTargets::Probe, cx.core.view_group(view, CAMERA_VIEW)),
-            DrawAt::Opaque { .. }
-            | DrawAt::ShadowCasters { .. }
-            | DrawAt::Transparent { .. } => return 0,
+            DrawAt::Opaque { .. } | DrawAt::ShadowCasters { .. } | DrawAt::Transparent { .. } => {
+                return 0;
+            }
         };
         let Some(pipeline) = &self.pipelines[targets.index()] else {
             return 0;

@@ -54,7 +54,10 @@ impl CameraBindings {
         layouts: &[(&'static str, &'static PipelineLayout)],
     ) {
         self.views.clear();
-        for &(_, layout) in crate::pipeline_layouts::PIPELINE_LAYOUTS.iter().chain(layouts) {
+        for &(_, layout) in crate::pipeline_layouts::PIPELINE_LAYOUTS
+            .iter()
+            .chain(layouts)
+        {
             for reference in layout.groups {
                 let GroupRef::Shared { group, without } = *reference else {
                     continue;

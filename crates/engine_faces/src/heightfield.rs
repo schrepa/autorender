@@ -179,4 +179,6 @@ pub trait HeightfieldFace {
     fn layers(&self) -> (u32, u64);
 
     fn highest(&self, terrain: u64) -> Option<f32>;
+
+    fn sky_layer(&self, index: usize) -> u32;
 }

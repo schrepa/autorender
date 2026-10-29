@@ -1,13 +1,13 @@
 #![expect(clippy::expect_used, reason = "drawing reads what this frame prepared")]
 
-use std::cell::Cell;
-
 use crate::pipeline_layouts::PARTICLE_PIPELINES;
 use crate::shaders::entry::particles;
 use engine_core::{Drawn, ParticleBlend, RenderEmitter, RenderStats};
 use engine_render::bindings::GroupRef;
 use engine_render::graph::{GraphTable, ResourceId, Targets};
-use engine_render::parts::{Create, DrawAt, GpuPart, Hook, PartDecl, PartEntry, Prelude, Step, View};
+use engine_render::parts::{
+    Create, DrawAt, GpuPart, Hook, PartDecl, PartEntry, Prelude, Step, View,
+};
 use engine_render::post::PostPass;
 use engine_render::transparent::accumulation_targets;
 
@@ -453,7 +453,6 @@ struct Ids {
 struct Particles {
     particles: Option<ParticlePass>,
     frame: Option<ParticleFrame>,
-    accumulated: Cell<bool>,
     ids: Ids,
 }
 
@@ -498,7 +497,6 @@ impl GpuPart for Particles {
     }
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
-        self.accumulated.set(false);
         if cx.frame.kind.debug {
             self.frame = None;
             return;
@@ -513,8 +511,14 @@ impl GpuPart for Particles {
     }
 
     fn draw(&self, at: DrawAt<'_>, cx: &View<'_>, pass: &mut wgpu::RenderPass<'_>) -> u32 {
-        let (DrawAt::Transparent { targets }, Some(frame), Some(particles)) =
-            (at, &self.frame, &self.particles)
+        let (
+            DrawAt::Transparent {
+                targets,
+                accumulated,
+            },
+            Some(frame),
+            Some(particles),
+        ) = (at, &self.frame, &self.particles)
         else {
             return 0;
         };
@@ -522,10 +526,10 @@ impl GpuPart for Particles {
             return 0;
         };
         let camera = cx.core.shared_group(group, without);
-        if self.accumulated.replace(true) {
-            particles.draw_additive(pass, camera, frame, targets != Targets::Canvas);
-        } else {
+        if accumulated {
             particles.draw_alpha(pass, camera, frame);
+        } else {
+            particles.draw_additive(pass, camera, frame, targets != Targets::Canvas);
         }
         0
     }

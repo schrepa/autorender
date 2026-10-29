@@ -508,11 +508,7 @@ impl ImpostorAtlas {
         self.baked.contains_key(&key)
     }
 
-    pub fn record(
-        &self,
-        key: ImpostorKey,
-        material: Option<&Material>,
-    ) -> Option<ImpostorRecord> {
+    pub fn record(&self, key: ImpostorKey, material: Option<&Material>) -> Option<ImpostorRecord> {
         self.baked
             .get(&key)
             .filter(|baked| baked.material.as_ref() == material)
@@ -868,7 +864,7 @@ pub fn draw_pipeline(
         attributes: &CARD_ATTRIBUTES,
     })];
     if targets == Targets::Debug {
-        buffers = crate::debug_view::with_record(&buffers);
+        buffers = crate::debug_targets::with_record(&buffers);
     }
     crate::pipelines::geometry(
         device,

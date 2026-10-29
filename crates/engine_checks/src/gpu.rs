@@ -61,8 +61,7 @@ fn placement(sources: &[ShaderModule]) -> ResolvedLayout {
 }
 
 fn validated(text: &str) -> Result<(naga::Module, ModuleInfo), String> {
-    let module =
-        naga::front::wgsl::parse_str(text).map_err(|error| error.emit_to_string(text))?;
+    let module = naga::front::wgsl::parse_str(text).map_err(|error| error.emit_to_string(text))?;
     let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
     let info = validator
         .validate(&module)

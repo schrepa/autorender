@@ -33,7 +33,7 @@ impl Drop for Motion {
 }
 
 #[derive(Default)]
-pub(crate) struct PreviousFrame {
+pub struct PreviousFrame {
     history: Option<History>,
     frames: u64,
     motion: ScreenTarget<Motion>,
@@ -158,9 +158,9 @@ impl PreviousFrame {
     }
 
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.motion.size().map_or(0, |size| {
-            u64::from(size.width) * u64::from(size.height) * 4
-        })
+        self.motion
+            .size()
+            .map_or(0, |size| u64::from(size.width) * u64::from(size.height) * 4)
     }
 }
 

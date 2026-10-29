@@ -20,7 +20,9 @@ use engine_faces::heightfield::HeightfieldFace;
 use engine_faces::placed::PlacedFace;
 use engine_faces::shadows::{KeptRefresh, SHADOW_POSES, ShadowCastersFace, ground_level};
 use engine_render::batches::BatchPlan;
-use engine_render::bindings::{Contribution, Sample, Sampling, Stages, sampler, texture, uniform_of};
+use engine_render::bindings::{
+    Contribution, Sample, Sampling, Stages, sampler, texture, uniform_of,
+};
 use engine_render::cached::{Bound, GroupCache};
 use engine_render::gpu_data::DRAW_ARGS_BYTES;
 use engine_render::gpu_presentation::Presented;
@@ -874,7 +876,7 @@ impl GpuPart for ShadowPass {
             &core.queue,
             &ShadowInputs {
                 snapshot,
-                presented: gpu_mode.then(|| core.gpu_presentation.shadow_inputs()),
+                presented: gpu_mode.then(|| core.gpu_presentation.presented()),
                 poses: core.frame_poses(parity),
                 slot_capacity: core.instances.capacity,
                 mesh_layout: core.mesh_layout,

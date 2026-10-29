@@ -1,3 +1,7 @@
+pub const NOON_LIGHT: f32 = 1.1;
+pub const ADAPTATION_POWER: f32 = 0.75;
+pub const ADAPTATION_MOST: f32 = 16.0;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EnvironmentPlan {
     pub cubes: u32,

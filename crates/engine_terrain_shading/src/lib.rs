@@ -28,7 +28,10 @@ impl Brick for TerrainShadingBrick {
                 engine_faces::heightfield::LAYOUTS,
                 gpu_layouts::constants::DECLARED,
             )
-            .mirrors(gpu_layouts::terrain::LAYOUTS, gpu_layouts::constants::MIRRORED)
+            .mirrors(
+                gpu_layouts::terrain::LAYOUTS,
+                gpu_layouts::constants::MIRRORED,
+            )
             .mirrors(gpu_layouts::bounce::LAYOUTS, &[]);
     }
 }

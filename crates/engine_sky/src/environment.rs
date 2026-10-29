@@ -368,10 +368,7 @@ fn create_maps(
         "engine/environment-prefilter-group",
         &ENVIRONMENT_PREFILTER,
         &layouts.prefilter,
-        &[
-            ("radiance", pipelines::view(&every_level)),
-            sampler_entry,
-        ],
+        &[("radiance", pipelines::view(&every_level)), sampler_entry],
     );
     let maps_view = maps.create_view(&wgpu::TextureViewDescriptor {
         dimension: Some(wgpu::TextureViewDimension::CubeArray),

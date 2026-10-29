@@ -523,7 +523,10 @@ impl WaterPass {
             &WATER,
             &self.layout,
             &[
-                ("terrain_heights", engine_render::pipelines::view(tiles.heights)),
+                (
+                    "terrain_heights",
+                    engine_render::pipelines::view(tiles.heights),
+                ),
                 ("terrain_view", sized(tiles.views, size_of::<ViewUniform>())),
                 (
                     "terrain",
@@ -531,7 +534,10 @@ impl WaterPass {
                 ),
                 engine_render::buffers::entry("terrain_directory", tiles.directory),
                 engine_render::buffers::entry("terrain_surface_leaves", tiles.leaves),
-                ("water_surface", engine_render::pipelines::view(tiles.surfaces)),
+                (
+                    "water_surface",
+                    engine_render::pipelines::view(tiles.surfaces),
+                ),
                 ("water_info", engine_render::pipelines::view(tiles.info)),
                 ("water", self.uniform.as_entire_binding()),
                 engine_render::buffers::entry("water_live", looks),

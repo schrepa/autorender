@@ -233,13 +233,7 @@ impl Linker {
         self.sources_hash = hasher.finish();
     }
 
-    fn add(
-        &mut self,
-        path: String,
-        brick: &'static str,
-        text: Cow<'static, str>,
-        generated: bool,
-    ) {
+    fn add(&mut self, path: String, brick: &'static str, text: Cow<'static, str>, generated: bool) {
         let overrides = declared_overrides(&text);
         let hex_floats = hex_floats(&text);
         self.sources.push(Source {

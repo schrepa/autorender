@@ -116,7 +116,10 @@ fn signatures_in(folder: &Path) -> Result<BTreeMap<String, Vec<String>>, String>
         .flatten()
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| path.extension().is_some_and(|extension| extension == "wgsl"))
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "wgsl")
+        })
         .collect();
     files.sort();
     for file in files {
@@ -157,7 +160,10 @@ fn declaration(code: &[char], at: usize) -> Option<(String, usize)> {
         .take_while(|&&character| parse::identifier(character))
         .collect();
     let after = at + word.chars().count();
-    if !code.get(after).is_some_and(|character| character.is_whitespace()) {
+    if !code
+        .get(after)
+        .is_some_and(|character| character.is_whitespace())
+    {
         return None;
     }
     match word.as_str() {
@@ -182,7 +188,9 @@ fn declaration(code: &[char], at: usize) -> Option<(String, usize)> {
             let text = parse::normalize(&code[after..stop]);
             let kept = match word.as_str() {
                 "alias" => text.as_str(),
-                _ => text.split_once(" =").map_or(text.as_str(), |(head, _)| head),
+                _ => text
+                    .split_once(" =")
+                    .map_or(text.as_str(), |(head, _)| head),
             };
             Some((format!("{word} {kept}"), stop))
         }

@@ -9,8 +9,7 @@ use engine_render::bindings::EMPTY;
 use engine_render::pipelines::GroupLayout;
 use engine_terrain::shallow_water::step_seconds;
 use engine_terrain::{
-    BLOCK_SIDE, Footprint, NO_BLOCK, SIM_TOUCHES, StoredBlocks, WaterRead, WaterWindow,
-    live_steps,
+    BLOCK_SIDE, Footprint, NO_BLOCK, SIM_TOUCHES, StoredBlocks, WaterRead, WaterWindow, live_steps,
 };
 
 use crate::bindings::WATER_SETUP;

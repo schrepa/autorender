@@ -1,7 +1,7 @@
 mod jobs;
 mod lod;
-mod toon_lighting;
 mod pond;
+mod toon_lighting;
 mod torrent;
 
 use engine::host::Jobs;

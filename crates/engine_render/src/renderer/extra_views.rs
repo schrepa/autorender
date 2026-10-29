@@ -50,12 +50,20 @@ impl Core {
         )
     }
 
-    pub fn draw_view(&self, pass: &mut wgpu::RenderPass<'_>, view: usize, parity: usize) -> u32 {
+    pub fn draw_view(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        view: usize,
+        parity: usize,
+        lights: Option<&wgpu::BindGroup>,
+    ) -> u32 {
         if self.mesh_entries.is_none() {
             return 0;
         }
         pass.set_bind_group(0, self.view_group(view, &["refraction"]), &[]);
         pass.set_bind_group(2, self.instances.pose_group(parity), &[]);
+        let lights = lights.unwrap_or_else(|| self.shared_group("lights", &[]));
+        pass.set_bind_group(3, lights, &[]);
         let kind = PassKind::view();
         let mut binds = BatchBinds::default();
         let mut draws = 0;

@@ -526,8 +526,14 @@ impl ParticleGrid {
                         engine_render::buffers::entry("particle_pool", &pool),
                         engine_render::buffers::entry("particle_counts", &counts),
                         engine_render::buffers::entry("particle_splat", &splat),
-                        ("particle_source", engine_render::pipelines::view(&levels[finer])),
-                        ("particle_target", engine_render::pipelines::view(&levels[level])),
+                        (
+                            "particle_source",
+                            engine_render::pipelines::view(&levels[finer]),
+                        ),
+                        (
+                            "particle_target",
+                            engine_render::pipelines::view(&levels[level]),
+                        ),
                         (
                             "particle_spread_source",
                             engine_render::pipelines::view(&spread_levels[finer]),

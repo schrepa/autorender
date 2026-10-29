@@ -4,9 +4,9 @@ use engine_terrain::lighting::HORIZON_LAYERS;
 use engine_terrain::lighting::TerrainLighting;
 use engine_terrain::{RenderTerrain, RenderTerrains, TerrainSettings};
 
-use engine_render::cached::{Bound, Versioned};
 use crate::gpu_layouts::constants::{HORIZON_RECORD_VECTORS, HORIZON_RECORDS};
 use crate::terrain_bounce::{BOUNCE_LAYERS, BounceLevels, MOST_LEVELS};
+use engine_render::cached::{Bound, Versioned};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const WINDOW_ROW: u32 = engine_terrain::bounce::MAX_PROBES;
@@ -222,7 +222,11 @@ impl Horizons {
         let count = self.record_count() as f32;
         if self.count_written != Some(count) {
             let offset = (HORIZON_RECORDS * size_of::<[f32; 4]>()) as u64;
-            queue.write_buffer(&self.records, offset, bytemuck::bytes_of(&[count, 0.0, 0.0, 0.0]));
+            queue.write_buffer(
+                &self.records,
+                offset,
+                bytemuck::bytes_of(&[count, 0.0, 0.0, 0.0]),
+            );
             self.count_written = Some(count);
         }
     }

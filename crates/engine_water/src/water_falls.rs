@@ -175,8 +175,8 @@ fn rows(path: &[Passing], carried: f32) -> Vec<Vec<Row>> {
                 let sine = falling[index] + (falling[index + 1] - falling[index]) * share;
                 let churning =
                     smooth(0.0, inception, clung) * smooth(AIRED[0], AIRED[1], AIR_SHARE * sine);
-                let released = LINGERING
-                    + (white - LINGERING) * exp(-max(time - before, 0.0) / AIR_RELEASE);
+                let released =
+                    LINGERING + (white - LINGERING) * exp(-max(time - before, 0.0) / AIR_RELEASE);
                 white = max(churning, if white > LINGERING { released } else { white });
             }
             before = time;

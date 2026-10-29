@@ -2,10 +2,8 @@ use std::collections::BTreeSet;
 
 use engine::bricks::{AddBrick, BrickRegistry};
 use engine_render::bindings::{GroupRef, SharedGroups, TABLES, Table};
-use engine_render::composite::{
-    PLAIN_RESOLVE, PixelEffect, PostStage, composite_path, composite_source,
-};
-use engine_render::faces::{FaceOffer, face_module, face_of};
+use engine_render::composite::PixelEffect;
+use engine_render::faces::{face_module, face_of};
 use engine_render::gpu_layouts::{Constant, Layout, constants, layouts};
 use engine_render::linker::{Linker, ShaderModule, face_imports};
 use engine_render::parts::{CORE_BRICK, PartEntry, installed_parts, shared_of};
@@ -145,17 +143,13 @@ impl Installed {
         Ok(())
     }
 
-    fn needs(
-        &self,
-        registry: &BrickRegistry,
-        parts: &[&'static PartEntry],
-    ) -> Result<(), String> {
-        let offered: BTreeSet<&str> = parts
+    fn needs(&self, registry: &BrickRegistry, parts: &[&'static PartEntry]) -> Result<(), String> {
+        let mut offered: BTreeSet<String> = parts
             .iter()
             .flat_map(|part| part.decl.faces)
-            .map(FaceOffer::name)
-            .chain(self.linker.paths().filter_map(face_of))
+            .map(|offer| offer.name().to_string())
             .collect();
+        offered.extend(self.linker.paths().filter_map(face_of).map(str::to_string));
         for part in parts {
             for &name in part.decl.needs {
                 if registry.filler(name).is_none() && !offered.contains(name) {
@@ -171,21 +165,10 @@ impl Installed {
             .iter()
             .flat_map(|part| part.decl.effects.iter().copied())
             .collect();
-        let fused: Vec<PixelEffect> = effects
-            .iter()
-            .copied()
-            .filter(|effect| matches!(effect.stage, PostStage::Light | PostStage::Display))
-            .collect();
-        let resolves = std::iter::once(PLAIN_RESOLVE).chain(
-            effects
-                .iter()
-                .filter(|effect| effect.stage == PostStage::Resolve)
-                .map(|effect| effect.module),
-        );
-        for resolve in resolves {
-            let source =
-                composite_source(resolve, &fused, None).map_err(|error| error.to_string())?;
-            let module = generated(composite_path(resolve), source);
+        let made =
+            engine_render::composite::composites(&effects).map_err(|error| error.to_string())?;
+        for (path, _, source) in made {
+            let module = generated(path, source);
             self.linker.add_generated(
                 module.path.to_owned(),
                 module.brick,

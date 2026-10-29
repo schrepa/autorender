@@ -172,6 +172,7 @@ impl GpuPart for TerrainPass {
                 self.draw_view(cx, pass, (view, center, relative));
                 0
             }
+            DrawAt::Transparent { .. } => 0,
         }
     }
 

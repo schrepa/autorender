@@ -145,9 +145,7 @@ impl Renderer {
                 armed.stage = Stage::Shaded;
             }
             Stage::Shaded => {
-                if scene
-                    && let Some(scene) = self.parts.post().and_then(PostPass::scene_texture)
-                {
+                if scene && let Some(scene) = self.parts.post().and_then(PostPass::scene_texture) {
                     copy_texel(encoder, (scene, all), pixel, (&armed.buffer, SCENE));
                     armed.scene = true;
                 }

@@ -887,9 +887,15 @@ dependencies = [
 name = "engine"
 version = "0.1.0"
 dependencies = [
+ "engine_ambient_occlusion",
+ "engine_auto_exposure",
+ "engine_bloom",
  "engine_collision",
  "engine_core",
+ "engine_debug_view",
  "engine_dev",
+ "engine_dither",
+ "engine_ground_cover",
  "engine_layer_erosion",
  "engine_layer_heightmap",
  "engine_layer_hydrology",
@@ -897,15 +903,29 @@ dependencies = [
  "engine_layer_paths",
  "engine_layer_relief",
  "engine_layer_stamps",
+ "engine_lighting",
+ "engine_lights",
+ "engine_meshes",
  "engine_navigation",
  "engine_panic",
+ "engine_particles",
  "engine_physics",
+ "engine_probes",
  "engine_profile",
+ "engine_reflections",
  "engine_render",
+ "engine_scatter",
  "engine_scene",
  "engine_settings",
+ "engine_shadows",
+ "engine_sky",
+ "engine_sun",
+ "engine_taa",
  "engine_terrain",
+ "engine_terrain_shading",
  "engine_time_of_day",
+ "engine_tonemap",
+ "engine_water",
  "engine_worker",
  "engine_world_streaming",
  "js-sys",
@@ -924,6 +944,7 @@ dependencies = [
  "engine_core",
  "engine_faces",
  "engine_render",
+ "wgpu",
 ]
 
 [[package]]
@@ -960,18 +981,22 @@ dependencies = [
 name = "engine_auto_exposure"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "wgpu",
 ]
 
 [[package]]
 name = "engine_bloom"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "wgpu",
 ]
 
 [[package]]
@@ -1027,9 +1052,11 @@ dependencies = [
 name = "engine_debug_view"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "wgpu",
 ]
 
 [[package]]
@@ -1055,6 +1082,7 @@ dependencies = [
 name = "engine_dither"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
@@ -1075,9 +1103,13 @@ dependencies = [
 name = "engine_ground_cover"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
+ "engine_math",
  "engine_render",
+ "engine_terrain",
+ "wgpu",
 ]
 
 [[package]]
@@ -1195,6 +1227,7 @@ dependencies = [
 name = "engine_lighting"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
@@ -1204,9 +1237,11 @@ dependencies = [
 name = "engine_lights"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "wgpu",
 ]
 
 [[package]]
@@ -1280,9 +1315,11 @@ dependencies = [
 name = "engine_particles"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "wgpu",
 ]
 
 [[package]]
@@ -1322,9 +1359,11 @@ dependencies = [
 name = "engine_probes"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "wgpu",
 ]
 
 [[package]]
@@ -1354,9 +1393,12 @@ dependencies = [
 name = "engine_reflections"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "engine_terrain",
+ "wgpu",
 ]
 
 [[package]]
@@ -1367,9 +1409,7 @@ dependencies = [
  "engine_core",
  "engine_profile",
  "engine_sources",
- "engine_terrain",
  "engine_textures",
- "engine_time_of_day",
  "glam 0.30.9",
  "js-sys",
  "libm",
@@ -1387,9 +1427,12 @@ dependencies = [
 name = "engine_scatter"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "engine_terrain",
+ "wgpu",
 ]
 
 [[package]]
@@ -1427,18 +1470,26 @@ dependencies = [
 name = "engine_shadows"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
+ "engine_profile",
  "engine_render",
+ "engine_terrain",
+ "wgpu",
 ]
 
 [[package]]
 name = "engine_sky"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "engine_time_of_day",
+ "glam 0.30.9",
+ "wgpu",
 ]
 
 [[package]]
@@ -1452,6 +1503,7 @@ dependencies = [
 name = "engine_sun"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
@@ -1461,9 +1513,11 @@ dependencies = [
 name = "engine_taa"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "wgpu",
 ]
 
 [[package]]
@@ -1498,9 +1552,13 @@ dependencies = [
 name = "engine_terrain_shading"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "engine_terrain",
+ "engine_textures",
+ "wgpu",
 ]
 
 [[package]]
@@ -1530,6 +1588,7 @@ dependencies = [
 name = "engine_tonemap"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
@@ -1539,9 +1598,14 @@ dependencies = [
 name = "engine_water"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "engine_sources",
+ "engine_terrain",
+ "serde_json",
+ "wgpu",
 ]
 
 [[package]]
@@ -2063,9 +2127,13 @@ dependencies = [
 name = "highlands_pond"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "engine_terrain",
+ "glam 0.30.9",
+ "wgpu",
 ]
 
 [[package]]

@@ -1,13 +1,8 @@
 import package::engine::color::luminance;
 import package::post::frame::{drawn_texels, drawn_uv, glow, linear, post, scene};
+import package::post::levels::level_tap;
 
 @group(0) @binding(4) var source: texture_2d<f32>;
-
-fn level_tap(level: texture_2d<f32>, at: vec2<f32>, drawn: vec2<f32>, size: vec2<f32>)
-        -> vec3<f32> {
-    return textureSampleLevel(level, linear, clamp(at, vec2<f32>(0.5), drawn - 0.5) / size,
-        0.0).rgb;
-}
 
 fn glow_light(uv: vec2<f32>) -> vec3<f32> {
     let color = textureSampleLevel(scene, linear, uv, 0.0).rgb;
@@ -31,23 +26,6 @@ fn fs_bloom_first(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
         weights += weight;
     }
     return vec4<f32>(sum / weights, 1.0);
-}
-
-fn halved(level: texture_2d<f32>, position: vec2<f32>) -> vec4<f32> {
-    let size = vec2<f32>(textureDimensions(level));
-    let drawn = drawn_texels(size, post);
-    let at = position * 2.0;
-    let sum = level_tap(level, at, drawn, size) * 4.0
-        + level_tap(level, at - 1.0, drawn, size)
-        + level_tap(level, at + 1.0, drawn, size)
-        + level_tap(level, at + vec2<f32>(1.0, -1.0), drawn, size)
-        + level_tap(level, at + vec2<f32>(-1.0, 1.0), drawn, size);
-    return vec4<f32>(sum * 0.125, 1.0);
-}
-
-@fragment
-fn fs_bloom_down(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    return halved(source, position.xy);
 }
 
 @fragment

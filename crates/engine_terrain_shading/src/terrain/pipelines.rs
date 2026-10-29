@@ -129,7 +129,10 @@ impl TerrainPipelines {
                                 size: None,
                             }),
                         ),
-                        ("terrain_albedo", engine_render::pipelines::view(&material_maps[0])),
+                        (
+                            "terrain_albedo",
+                            engine_render::pipelines::view(&material_maps[0]),
+                        ),
                         (
                             "terrain_material_data",
                             engine_render::pipelines::view(&material_maps[1]),
@@ -156,7 +159,10 @@ impl TerrainPipelines {
                             "water_info",
                             engine_render::pipelines::view(sources.water.info_view()),
                         ),
-                        ("terrain_errors", engine_render::pipelines::view(ground_errors)),
+                        (
+                            "terrain_errors",
+                            engine_render::pipelines::view(ground_errors),
+                        ),
                         ("water_errors", engine_render::pipelines::view(water_errors)),
                     ],
                 )

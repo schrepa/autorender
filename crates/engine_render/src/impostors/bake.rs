@@ -41,7 +41,14 @@ impl ImpostorAtlas {
         let targets = self
             .targets
             .get_or_insert_with(|| bake_targets(device, shape));
-        draw_layer((device, entries), encoder, pipelines, targets, source, shape);
+        draw_layer(
+            (device, entries),
+            encoder,
+            pipelines,
+            targets,
+            source,
+            shape,
+        );
         for texture in &targets.layer {
             mips.record(device, encoder, texture);
         }

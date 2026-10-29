@@ -16,7 +16,10 @@ impl PlayerGame {
         without: &str,
     ) -> Result<PlayerGame, JsValue> {
         let bricks = bricks(without, "?without")?;
-        Self::launch(canvas, move || ScenePlayer::new(source, files.files(), bricks)).await
+        Self::launch(canvas, move || {
+            ScenePlayer::new(source, files.files(), bricks)
+        })
+        .await
     }
 
     pub fn scene_progress(&self) -> String {

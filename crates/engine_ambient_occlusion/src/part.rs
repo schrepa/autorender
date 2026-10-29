@@ -95,9 +95,10 @@ impl GpuPart for OcclusionPass {
         if !ambient_contributed(&core.shared) {
             return;
         }
-        self.occlusion.create(device, "engine/ambient-occlusion-", || {
-            Occlusion::new(device)
-        });
+        self.occlusion
+            .create(device, "engine/ambient-occlusion-", || {
+                Occlusion::new(device)
+            });
         let (Some(occlusion), Some((_, uniform))) =
             (self.occlusion.get_mut(), post.resolve_inputs())
         else {
@@ -114,9 +115,12 @@ impl GpuPart for OcclusionPass {
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
-        let (Some(_), Some(shape), Some(pass), Some(occlusion)) =
-            (self.frame, cx.frame.shape, self.ids.pass, self.ids.occlusion)
-        else {
+        let (Some(_), Some(shape), Some(pass), Some(occlusion)) = (
+            self.frame,
+            cx.frame.shape,
+            self.ids.pass,
+            self.ids.occlusion,
+        ) else {
             return;
         };
         if shape.targets == FrameTargets::Canvas {

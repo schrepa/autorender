@@ -317,7 +317,10 @@ mod gpu {
         fn sections(&self) -> [(&'static str, wgpu::BindingResource<'_>); 3] {
             let data: &wgpu::Buffer = &self.data;
             [
-                ("lights", section(data, self.lights_offset(), self.lights_bytes())),
+                (
+                    "lights",
+                    section(data, self.lights_offset(), self.lights_bytes()),
+                ),
                 ("indices", section(data, INDEX_START, self.index_bytes)),
                 ("ranges", section(data, 0, RANGES_BYTES)),
             ]
@@ -642,10 +645,7 @@ mod gpu {
 
     impl LightListFace for LightPass {
         fn probe_group(&self, face: usize) -> Option<wgpu::BindGroup> {
-            self.frame
-                .as_ref()
-                .and(self.bins.get())?
-                .probe_group(face)
+            self.frame.as_ref().and(self.bins.get())?.probe_group(face)
         }
 
         fn encode_probe_face(

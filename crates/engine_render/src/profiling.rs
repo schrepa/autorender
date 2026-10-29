@@ -21,11 +21,7 @@ impl<'a> Span<'a> {
         }
     }
 
-    pub fn compute_part(
-        self,
-        begin: bool,
-        end: bool,
-    ) -> wgpu::ComputePassTimestampWrites<'a> {
+    pub fn compute_part(self, begin: bool, end: bool) -> wgpu::ComputePassTimestampWrites<'a> {
         wgpu::ComputePassTimestampWrites {
             query_set: self.query_set,
             beginning_of_pass_write_index: begin.then_some(self.begin),

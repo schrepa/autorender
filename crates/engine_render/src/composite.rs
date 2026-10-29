@@ -70,9 +70,7 @@ pub fn tonemap_effect(effects: &[PixelEffect]) -> Result<Option<&'static str>, E
     Ok(first.map(|effect| effect.module))
 }
 
-pub fn composites(
-    effects: &[PixelEffect],
-) -> Result<Vec<(String, &'static str, String)>, Error> {
+pub fn composites(effects: &[PixelEffect]) -> Result<Vec<(String, &'static str, String)>, Error> {
     tonemap_effect(effects)?;
     let mut made = Vec::new();
     for resolve in resolves(effects) {
@@ -147,7 +145,10 @@ pub fn transparent_source(effects: &[PixelEffect]) -> String {
     );
     let _ = writeln!(imports, "import package::{COLOR_MODULE}::encode_srgb;");
     let _ = writeln!(body, "    let drawn = weighted(position);");
-    let _ = writeln!(body, "    if drawn.reveal >= 1.0 {{\n        discard;\n    }}");
+    let _ = writeln!(
+        body,
+        "    if drawn.reveal >= 1.0 {{\n        discard;\n    }}"
+    );
     let _ = writeln!(body, "    let encoded = encode_srgb(drawn.color);");
     let _ = writeln!(body, "    var shown = encoded;");
     displays(effects, "shown", "drawn.at", &mut imports, &mut body);

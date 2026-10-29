@@ -1,7 +1,7 @@
 use engine::prelude::*;
 use engine::smoke::{SmokeFailure, SmokeResult, SmokeSession};
-use engine::terrain::data::smokes::{Checked, compiled, control, render, settle};
 use engine::smoke_check;
+use engine::terrain::data::smokes::{Checked, compiled, control, render, settle};
 use highlands_pond::{Pond, PondBrick};
 use serde_json::{Value, json};
 
@@ -82,9 +82,8 @@ fn holds_water(session: &mut dyn SmokeSession) -> Checked<()> {
     let held = water.is_some_and(|water| {
         water.kind == WaterKind::Lake
             && (water.surface - SURFACE).abs() <= DEPTH_WITHIN
-            && expected.is_some_and(|depth| {
-                depth > 0.0 && (water.depth - depth).abs() <= DEPTH_WITHIN
-            })
+            && expected
+                .is_some_and(|depth| depth > 0.0 && (water.depth - depth).abs() <= DEPTH_WITHIN)
     });
     smoke_check!(
         held,

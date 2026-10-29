@@ -232,7 +232,7 @@ pub struct RenderLights {
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct LightExtractor(Mutex<LightExtraction>);
+pub struct LightExtractor(Mutex<LightExtraction>);
 
 pub fn extract_lights(world: &World, snapshot: &mut RenderSnapshot) {
     world

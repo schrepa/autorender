@@ -93,6 +93,10 @@ impl SceneShading {
     }
 
     pub fn with(self, constants: &[(&'static str, f64)]) -> Vec<(&'static str, f64)> {
-        constants.iter().copied().chain(self.0.iter().copied()).collect()
+        constants
+            .iter()
+            .copied()
+            .chain(self.0.iter().copied())
+            .collect()
     }
 }

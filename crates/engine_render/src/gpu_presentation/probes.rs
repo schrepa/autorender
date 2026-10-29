@@ -152,9 +152,11 @@ impl GpuPresentationPass {
         {
             self.probes.current = index;
         } else {
-            self.probes.groups.retain(|((groups, poses, _, still, views), _)| {
-                (*groups, *poses, *still, *views) == (key.0, key.1, key.3, key.4)
-            });
+            self.probes
+                .groups
+                .retain(|((groups, poses, _, still, views), _)| {
+                    (*groups, *poses, *still, *views) == (key.0, key.1, key.3, key.4)
+                });
             let groups = (0..self.probes.uniforms.len())
                 .map(|face| self.probe_face_groups(device, face, poses))
                 .collect();

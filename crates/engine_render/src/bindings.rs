@@ -16,7 +16,7 @@ pub use table::{
 
 use Format::R32Float;
 use Sample::{Depth, Float, Unfilterable};
-use Sampling::{Comparison, Filtering};
+use Sampling::Filtering;
 use View::{D2, D2Array};
 
 const C: Stages = Stages::COMPUTE;

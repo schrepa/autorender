@@ -404,13 +404,8 @@ impl Renderer {
     pub(super) fn prepare_pipelines(&mut self, info: &FrameInfo<'_>) -> Passes {
         let kind = info.kind;
         let gpu_mode = kind.gpu_mode;
-        let (shading, warm) = SceneShading::of_parts(&self.parts.shading(info.snapshot));
-        let warm = if self.core.mesh_pipelines.cooking {
-            warm
-        } else {
-            Vec::new()
-        };
-        self.core.specialize_shading(shading, warm);
+        let shading = self.parts.shading(info.snapshot);
+        self.core.specialize_shading(&shading);
         let targets = self.frame_targets(info);
         let opaque_kind = PassKind::opaque(targets);
         let meshes = self.core.mesh_entries.is_some();
@@ -423,7 +418,9 @@ impl Renderer {
             .map(|views| (views.format, views.mirrored));
         self.core.views = views;
         if meshes && views.is_some() {
-            self.core.ensure_view_variants(PassKind::view());
+            if let Some((format, mirrored)) = views {
+                self.core.ensure_view_variants(format, mirrored);
+            }
         }
         let impostor_pass = if meshes
             && gpu_mode
@@ -482,17 +479,19 @@ impl Renderer {
 }
 
 impl Core {
-    pub(super) fn specialize_shading(&mut self, shading: SceneShading, warm: Vec<SceneShading>) {
-        if shading != self.mesh_pipelines.shading {
-            self.mesh_pipelines.shading = shading;
-            self.structure_keys.variants = None;
-            self.structure_keys.probes = None;
-        }
-        self.warm = warm;
+    pub(super) fn specialize_shading(&mut self, shading: &crate::parts::Shading) {
+        let (set, warm) = SceneShading::of_parts(shading);
+        self.scene_shading = set;
+        self.warm = if self.mesh_pipelines.cooking {
+            warm
+        } else {
+            Vec::new()
+        };
+        self.set_shading(shading);
     }
 
     pub fn shading(&self) -> SceneShading {
-        self.mesh_pipelines.shading
+        self.scene_shading
     }
 
     pub fn warm_shading(&self) -> &[SceneShading] {

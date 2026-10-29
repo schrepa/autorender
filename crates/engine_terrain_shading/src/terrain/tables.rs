@@ -239,9 +239,7 @@ impl TerrainTables {
             let room = PALETTE_ENTRIES - entries.len();
             let kept = &terrain.surface[..terrain.surface.len().min(room)];
             let terms = if kept.len() == terrain.surface.len() {
-                CoverTerms::of(
-                    kept.iter().filter_map(|look| look.cover.as_ref()),
-                )
+                CoverTerms::of(kept.iter().filter_map(|look| look.cover.as_ref()))
             } else {
                 CoverTerms::default()
             };

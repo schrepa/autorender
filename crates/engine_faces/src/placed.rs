@@ -4,6 +4,8 @@ use engine_core::TileKey;
 use engine_render::gpu_layouts::impostors::ImpostorRecord;
 use glam::Vec3;
 
+pub const DEAD: u32 = u32::MAX;
+
 pub struct Placements<'a> {
     pub tiles: Vec<((u64, TileKey), Range<u32>, usize)>,
     pub records: &'a [u8],

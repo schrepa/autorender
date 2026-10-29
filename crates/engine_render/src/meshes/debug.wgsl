@@ -40,10 +40,6 @@ fn debug_targets(record: u32, object: u32, detail: u32, normal: vec3<f32>, sun: 
     return targets;
 }
 
-fn debug_shadowed(source: u32, visible: f32) -> u32 {
-    return source | select(0u, DEBUG_SHADOWED, visible < 0.5);
-}
-
 struct DebugOutput {
     @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,

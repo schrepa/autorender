@@ -10,7 +10,6 @@ engine_render::entry_points! {
         vertex: [vs_fullscreen @ "engine::fullscreen"],
         fragment: [
             fs_bloom_first @ "bloom::chain",
-            fs_bloom_down @ "bloom::chain",
             fs_bloom_up @ "bloom::chain",
         ],
     }

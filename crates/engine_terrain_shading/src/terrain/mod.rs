@@ -556,6 +556,10 @@ impl HeightfieldFace for TerrainPass {
         self.drawn()
     }
 
+    fn sky_layer(&self, index: usize) -> u32 {
+        self.sky.layer(index)
+    }
+
     fn ground_changes(&self) -> &[GroundChange] {
         self.ground_changes()
     }

@@ -3,13 +3,14 @@ use engine_render::bindings::Sample::Depth;
 use engine_render::bindings::View::D2Array;
 use engine_render::bindings::{Stages, Table, dynamic_uniform, read_of, texture};
 use engine_render::gpu_data::{ColorData, PoseData};
-use engine_render::gpu_layouts::constants::GROUND_TEXELS;
 
 const V: Stages = Stages::VERTEX;
 const F: Stages = Stages::FRAGMENT;
 const VF: Stages = Stages::VERTEX_FRAGMENT;
 
 pub const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
+
+pub const GROUND_TEXELS: f32 = 2.0;
 
 pub const ROUTES_BYTES: usize = engine_core::MAX_MOVING_TILES as usize
     * (size_of::<[[f32; 4]; 4]>() + size_of::<[f32; 4]>())

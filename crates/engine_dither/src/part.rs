@@ -2,7 +2,7 @@ use engine_render::composite::{PixelEffect, PostStage};
 use engine_render::parts::{Create, GpuPart, PartDecl, PartEntry, Prelude, Step};
 use engine_render::pieces::PieceDecl;
 
-use crate::piece::DitherPiece;
+use crate::gpu_layouts::DitherPiece;
 
 pub static PART: PartEntry = PartEntry {
     decl: PartDecl {

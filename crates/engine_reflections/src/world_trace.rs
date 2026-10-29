@@ -1,9 +1,9 @@
 use engine_core::PoseRows;
 use engine_faces::heightfield::{HeightfieldFace, TraceSources};
+use engine_faces::placed::DEAD;
 use engine_render::buffers::Growable;
 use engine_render::cached::Bound;
 use engine_render::gpu_calls::Queue;
-use engine_render::gpu_layouts::constants::DEAD;
 use engine_render::gpu_layouts::impostors::ImpostorRecord;
 use engine_terrain::{RenderTerrains, TileKey};
 use std::collections::BTreeMap;
@@ -364,12 +364,7 @@ impl WorldTrace {
         }
     }
 
-    fn write_groups(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &Queue,
-        placed: &Placements<'_>,
-    ) {
+    fn write_groups(&mut self, device: &wgpu::Device, queue: &Queue, placed: &Placements<'_>) {
         let held = placed.impostors.iter().zip(placed.colors);
         let same =
             self.written_groups.len() == placed.impostors.len()
@@ -395,12 +390,7 @@ impl WorldTrace {
         }
     }
 
-    fn write_terrains(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &Queue,
-        frame: &TraceFrame<'_>,
-    ) {
+    fn write_terrains(&mut self, device: &wgpu::Device, queue: &Queue, frame: &TraceFrame<'_>) {
         let mut records = Vec::with_capacity(self.written.len());
         let (first, last) = (
             TileKey::new(0, 0, 0),

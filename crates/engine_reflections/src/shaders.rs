@@ -11,7 +11,6 @@ engine_render::entry_points! {
         fragment: [
             fs_reflections @ "post::reflections",
             fs_levels_first @ "reflections::levels",
-            fs_levels_down @ "reflections::levels",
         ],
     }
 }

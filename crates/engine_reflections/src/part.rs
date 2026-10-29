@@ -140,8 +140,9 @@ impl GpuPart for ReflectionsPass {
         };
         let formats = (target.texture().format(), scene.format());
         let device = &core.device;
-        self.reflections
-            .create(device, "engine/reflections-", || Reflections::new(device, formats));
+        self.reflections.create(device, "engine/reflections-", || {
+            Reflections::new(device, formats)
+        });
         if let Some(reflections) = self.reflections.get_mut() {
             self.active = reflections.begin(
                 device,
@@ -435,7 +436,10 @@ impl Reflections {
             pipeline,
             layout: pipelines::layout(device, &REFLECTIONS),
             levels_first: level("engine/post-levels-first", reflections::fs_levels_first),
-            levels_down: level("engine/post-scene-down", reflections::fs_levels_down),
+            levels_down: level(
+                "engine/post-scene-down",
+                engine_render::shaders::entry::post::fs_levels_down,
+            ),
             levels_layout: pipelines::layout(device, &REFLECTION_LEVELS),
             sampler,
             nearest: DepthPyramid::new(device, Reduction::Nearest),

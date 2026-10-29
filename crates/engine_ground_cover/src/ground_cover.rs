@@ -328,7 +328,10 @@ impl GroundCoverPass {
                     engine_render::buffers::entry("blades", &self.blades),
                     engine_render::buffers::entry("counts", &self.counts),
                     engine_render::buffers::entry("args", &self.args),
-                    ("macro_maps", engine_render::pipelines::view(sources.macro_maps)),
+                    (
+                        "macro_maps",
+                        engine_render::pipelines::view(sources.macro_maps),
+                    ),
                     ("normals", engine_render::pipelines::view(sources.normals)),
                 ],
             );
@@ -390,7 +393,11 @@ impl GroundCoverPass {
     }
 
     fn specialize(&mut self, shading: &[(&'static str, f64)]) {
-        match self.shadings.iter().position(|known| known.as_slice() == shading) {
+        match self
+            .shadings
+            .iter()
+            .position(|known| known.as_slice() == shading)
+        {
             Some(known) => self.shading = known,
             None => {
                 self.shading = self.shadings.len();
@@ -485,9 +492,10 @@ impl GroundCoverPass {
     }
 
     fn draw_blades(&self, pass: &mut wgpu::RenderPass<'_>, targets: Targets) -> u32 {
-        let (Some(pipeline), Some(group)) =
-            (self.pipelines.get(&(targets, self.shading)), self.draw_group.get())
-        else {
+        let (Some(pipeline), Some(group)) = (
+            self.pipelines.get(&(targets, self.shading)),
+            self.draw_group.get(),
+        ) else {
             return 0;
         };
         if self.growths.is_empty() {
@@ -511,7 +519,10 @@ fn turn_share(culling: Mat4) -> f32 {
     if across <= 0.0 {
         return 1.0;
     }
-    engine_core::math::min(engine_math::atan(depth / across) / std::f32::consts::PI, 1.0)
+    engine_core::math::min(
+        engine_math::atan(depth / across) / std::f32::consts::PI,
+        1.0,
+    )
 }
 
 fn lushest() -> f32 {
@@ -635,17 +646,11 @@ pub(crate) fn planes(view_projection: Mat4) -> [[f32; 4]; 6] {
 }
 
 fn compute(device: &wgpu::Device) -> (wgpu::ComputePipeline, wgpu::ComputePipeline) {
-    let pipeline_layout = engine_render::pipelines::layout_of(
-        device,
-        &crate::pipeline_layouts::COVER_GROW_PIPELINES,
-    );
+    let pipeline_layout =
+        engine_render::pipelines::layout_of(device, &crate::pipeline_layouts::COVER_GROW_PIPELINES);
     (
         engine_render::pipelines::compute_entry(device, &pipeline_layout, cover_grow::grow_cover),
-        engine_render::pipelines::compute_entry(
-            device,
-            &pipeline_layout,
-            cover_grow::finish_cover,
-        ),
+        engine_render::pipelines::compute_entry(device, &pipeline_layout, cover_grow::finish_cover),
     )
 }
 
@@ -666,7 +671,7 @@ impl GpuPart for GroundCoverPass {
         let core = &*cx.core;
         let snapshot = cx.frame.snapshot;
         let targets = passes.opaque_kind.targets();
-        self.specialize(&core.mesh_pipelines.shading.constants());
+        self.specialize(core.shading().constants());
         self.warm_cover(core, snapshot, targets);
         if !terrain.drawn() {
             return;

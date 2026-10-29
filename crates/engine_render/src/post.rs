@@ -16,8 +16,7 @@ use crate::graph::{
 };
 use crate::lazy::Lazy;
 use crate::parts::{
-    Begin, BeginOut, CORE_BRICK, Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step,
-    View,
+    Begin, BeginOut, CORE_BRICK, Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View,
 };
 use crate::pipeline_layouts::{POST_PIPELINES, PipelineLayout};
 use crate::pipelines::{self, Fullscreen, fullscreen};
@@ -43,7 +42,11 @@ const MOTION: [(&str, &str, wgpu::TextureFormat); 1] =
 const DEBUG: [(&str, &str, wgpu::TextureFormat); 3] = [
     ("debug_ids", "engine/post-debug-ids", DEBUG_IDS_FORMAT),
     ("debug_count", "engine/post-debug-count", DEBUG_COUNT_FORMAT),
-    ("debug_terrain", "engine/post-debug-terrain", DEBUG_TERRAIN_FORMAT),
+    (
+        "debug_terrain",
+        "engine/post-debug-terrain",
+        DEBUG_TERRAIN_FORMAT,
+    ),
 ];
 
 pub fn debug_color_targets() -> Vec<Option<wgpu::ColorTargetState>> {
@@ -227,7 +230,10 @@ fn ensure<const N: usize>(
     target: &mut ScreenTarget<Made<N>>,
     device: &wgpu::Device,
     size: FrameSize,
-    (made, usage): ([(&'static str, &'static str, wgpu::TextureFormat); N], wgpu::TextureUsages),
+    (made, usage): (
+        [(&'static str, &'static str, wgpu::TextureFormat); N],
+        wgpu::TextureUsages,
+    ),
 ) {
     if !target.resizes(size) {
         return;
@@ -304,9 +310,8 @@ impl GpuPart for PostPass {
         }
         let snapshot = cx.frame.snapshot;
         let region = core.display.region;
-        let needs = cx.frame.temporal.is_some()
-            || targets_read(&snapshot.environment)
-            || region.upscales();
+        let needs =
+            cx.frame.temporal.is_some() || targets_read(&snapshot.environment) || region.upscales();
         self.frame = if needs {
             let format = core.canvas_format();
             self.post
