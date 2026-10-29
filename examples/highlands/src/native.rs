@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use engine::Engine;
+use engine::command_line::CommandOption;
 use engine_native::{Arguments, HostOptions, files};
 
 use crate::land::ROCK_FILES;
@@ -15,8 +16,8 @@ struct Native {
 
 pub fn main(arguments: impl Iterator<Item = String>) -> ExitCode {
     let arguments: Vec<String> = arguments.collect();
-    if arguments.iter().any(|argument| argument == "--help") {
-        println!("{}\n{}", usage(), engine_native::usage());
+    if let Some(help) = engine::command_line::help(&arguments, &command_options()) {
+        println!("{help}");
         return ExitCode::SUCCESS;
     }
     match Native::parse(arguments) {
@@ -35,19 +36,32 @@ fn options() -> Vec<(&'static str, String)> {
     options
 }
 
-fn usage() -> String {
-    let lines: String = options()
+fn default_assets() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/public")
+}
+
+fn command_options() -> Vec<CommandOption> {
+    let defaults = Options::default();
+    let mut options: Vec<CommandOption> = options()
         .into_iter()
-        .map(|(name, values)| format!("  --{name} {values}\n"))
+        .map(|(name, values)| {
+            let option = CommandOption::taking(&format!("--{name}"), values);
+            match defaults.value(name) {
+                Some(default) => option.defaults_to(default),
+                None if name == "assets" => option.defaults_to(default_assets().display()),
+                None => option,
+            }
+        })
         .collect();
-    format!("Usage: highlands-native [OPTIONS]\n\n{lines}")
+    options.extend(engine_native::options());
+    options
 }
 
 impl Native {
     fn parse(arguments: Vec<String>) -> Result<Self, String> {
         let mut native = Self {
             options: Options::default(),
-            assets: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/public"),
+            assets: default_assets(),
             host: HostOptions::default(),
         };
         let mut arguments = Arguments::new(arguments);
@@ -99,8 +113,8 @@ impl Native {
         build: impl FnOnce() -> engine::Result<(Engine, Highlands)>,
     ) -> engine::Result<()> {
         let mut session = self.host.dev_session(build)?.parameters(options());
-        for (name, description) in crate::controls() {
-            session = session.control(name, &description, move |host, args| {
+        for (name, values) in crate::controls() {
+            session = session.control(name, &values, move |host, args| {
                 let value = args
                     .get("name")
                     .and_then(serde_json::Value::as_str)

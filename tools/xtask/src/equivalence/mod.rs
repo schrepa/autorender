@@ -28,7 +28,7 @@ const FOLDER: &str = "target/equivalence";
 
 const REPEAT: usize = 3;
 
-const KEEP: usize = 4;
+pub(crate) const KEEP: usize = 4;
 
 const USAGE: &str = "usage: cargo xtask equivalence [--base REV] [--candidate REV] [--tier smoke|full] [--cells NAME,...] [--aa] [--repeat N] [--keep N] [--gpu discrete|integrated] [--browser | --both [--hosts]]";
 
@@ -168,13 +168,14 @@ pub fn equivalence(root: &Path, arguments: &[String]) -> Result<(), Failure> {
             "candidate"
         },
     };
-    eprintln!(
-        "Equivalence of base {} and {} {}: {} cells.",
-        base.label,
-        second.role,
-        second.side.label,
-        cells.len()
-    );
+    let record = json!({
+        "event": "equivalence_started",
+        "base": base.label,
+        "role": second.role,
+        "second": second.side.label,
+        "cells": cells.len(),
+    });
+    eprintln!("{record}");
     let started = Instant::now();
     let mut legs = Vec::new();
     if options.native {
@@ -221,29 +222,20 @@ pub fn equivalence(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     let report = report(&options, &base, second.side, &legs, &hosts, took);
     fs::write(
         folder.join("report.json"),
-        serde_json::to_string_pretty(&report).expect("reports serialize") + "\n",
+        serde_json::to_string_pretty(&report).expect("report_serializes") + "\n",
     )
     .map_err(|error| error.to_string())?;
     for (leg, results) in &legs {
-        if legs.len() > 1 {
-            println!(
-                "\n{} leg:",
-                if *leg == "native" {
-                    "Native"
-                } else {
-                    "Browser"
-                }
-            );
-        }
-        print_summary(&options, results);
+        print_summary(&options, leg, results);
     }
     print_hosts(&hosts);
-    println!(
-        "{} cells in {:.0} s; report and captures in {}.",
-        cells.len(),
-        took.as_secs_f64(),
-        folder.display()
-    );
+    let record = json!({
+        "event": "equivalence_finished",
+        "cells": cells.len(),
+        "seconds": took.as_secs_f64(),
+        "folder": folder.display().to_string(),
+    });
+    println!("{record}");
     let all: Vec<&Judged> = legs.iter().flat_map(|(_, results)| results).collect();
     if options.aa {
         return aa_outcome(&all);
@@ -302,23 +294,17 @@ fn print_hosts(hosts: &[Value]) {
     if hosts.is_empty() {
         return;
     }
-    println!("\nNative against Chrome, the candidate's images (measurements, not judged):");
     for entry in hosts {
-        match entry["error"].as_str() {
-            Some(error) => println!(
-                "  {:22} {:24} {error}",
-                entry["cell"].as_str().unwrap_or_default(),
-                entry["capture"].as_str().unwrap_or_default()
-            ),
-            None => println!(
-                "  {:22} {:24} {} of {} pixels differ (largest {})",
-                entry["cell"].as_str().unwrap_or_default(),
-                entry["capture"].as_str().unwrap_or_default(),
-                entry["pixels"],
-                entry["total"],
-                entry["largest"]
-            ),
-        }
+        let record = json!({
+            "event": "hosts_measured",
+            "cell": entry["cell"],
+            "capture": entry["capture"],
+            "pixels": entry["pixels"],
+            "total": entry["total"],
+            "largest": entry["largest"],
+            "error": entry["error"],
+        });
+        println!("{record}");
     }
 }
 
@@ -382,10 +368,22 @@ fn judged<'a>(
             let index = base_runs.len() + 1;
             match leg {
                 Leg::Native => {
-                    eprintln!("{}: base run {index}.", cell.name);
+                    let record = json!({
+                        "event": "cell_run",
+                        "cell": cell.name,
+                        "role": "base",
+                        "run": index,
+                    });
+                    eprintln!("{record}");
                     let at = folder.join(format!("base-{index}"));
                     base_runs.push(run_cell(cell, base, &at, &options.gpu));
-                    eprintln!("{}: {} run {index}.", cell.name, second.role);
+                    let record = json!({
+                        "event": "cell_run",
+                        "cell": cell.name,
+                        "role": second.role,
+                        "run": index,
+                    });
+                    eprintln!("{record}");
                     let at = folder.join(format!("{}-{index}", second.role));
                     second_runs.push(run_cell(cell, second.side, &at, &options.gpu));
                 }
@@ -413,8 +411,8 @@ fn judged<'a>(
     });
     if unmatched && !options.aa {
         eprintln!(
-            "{}: an unstable capture matched no base image; running more.",
-            cell.name
+            "{}",
+            json!({"event": "unstable_unmatched", "cell": cell.name})
         );
         run_rounds(&mut base_runs, &mut second_runs);
         (verdicts, changed) = judge(cell, &base_runs, &second_runs, catalog, &folder);
@@ -549,33 +547,46 @@ fn cell_report(judged: &Judged) -> Value {
     })
 }
 
-fn print_summary(options: &Options, results: &[Judged]) {
-    println!("\n{:22} {:12} {:12} result", "cell", "view", "capture");
+fn print_summary(options: &Options, leg: &str, results: &[Judged]) {
     for Judged { cell, verdicts, .. } in results {
         for (key, verdict) in verdicts {
             let (view, capture) = key.split_once(' ').unwrap_or((key, ""));
-            let result = match verdict {
-                Verdict::Equal => "equal".to_owned(),
+            let mut record = json!({
+                "event": "capture_verdict",
+                "leg": leg,
+                "cell": cell.name,
+                "view": view,
+                "capture": capture,
+            });
+            let fields = match verdict {
+                Verdict::Equal => json!({"verdict": "equal"}),
                 Verdict::WithinVariation {
                     pixels,
                     largest,
                     spread,
-                } => format!(
-                    "equal within the base's own variation: {pixels} pixels up to {largest} levels from its nearest image (the base's images differ by up to {} pixels, {} levels)",
-                    spread.0, spread.1
-                ),
-                Verdict::EqualUnstable { distinct } => format!(
-                    "equal: matches one of the base's {distinct} distinct images (unstable)"
-                ),
-                Verdict::Different(what) if options.aa => format!("varies: {what}"),
-                Verdict::Different(what) => format!("DIFFERENT: {what}"),
-                Verdict::Unavailable(why) => format!("unavailable on both sides: {why}"),
-                Verdict::Unchecked(why) => format!("not checked: {why}"),
+                } => json!({
+                    "verdict": "within_variation",
+                    "pixels": pixels,
+                    "largest_levels": largest,
+                    "spread_pixels": spread.0,
+                    "spread_levels": spread.1,
+                }),
+                Verdict::EqualUnstable { distinct } => {
+                    json!({"verdict": "equal_unstable", "distinct": distinct})
+                }
+                Verdict::Different(what) if options.aa => {
+                    json!({"verdict": "varies", "detail": what})
+                }
+                Verdict::Different(what) => json!({"verdict": "different", "detail": what}),
+                Verdict::Unavailable(why) => json!({"verdict": "unavailable", "detail": why}),
+                Verdict::Unchecked(why) => json!({"verdict": "unchecked", "detail": why}),
             };
-            println!("{:22} {:12} {:12} {result}", cell.name, view, capture);
+            for (name, value) in fields.as_object().into_iter().flatten() {
+                record[name] = value.clone();
+            }
+            println!("{record}");
         }
     }
-    let mut shown = false;
     for Judged {
         cell,
         changed,
@@ -584,24 +595,29 @@ fn print_summary(options: &Options, results: &[Judged]) {
     } in results
     {
         for change in changed {
-            if !shown {
-                println!("\nWork counters that changed (rule; base -> candidate):");
-                shown = true;
-            }
-            println!(
-                "  {:22} {:24} {:30} {} -> {} ({}{})",
-                cell.name,
-                change.key,
-                change.name,
-                change.base,
-                change.candidate,
-                change.rule,
-                if change.fails { ", FAILS" } else { "" }
-            );
+            let record = json!({
+                "event": "work_changed",
+                "leg": leg,
+                "cell": cell.name,
+                "capture": change.key,
+                "counter": change.name,
+                "base": change.base,
+                "candidate": change.candidate,
+                "rule": change.rule,
+                "fails": change.fails,
+            });
+            println!("{record}");
         }
         for (view, verdict) in digests {
             if verdict.starts_with("different") {
-                println!("  {:22} digest of {view}: {verdict}", cell.name);
+                let record = json!({
+                    "event": "digest_different",
+                    "leg": leg,
+                    "cell": cell.name,
+                    "view": view,
+                    "detail": verdict,
+                });
+                println!("{record}");
             }
         }
     }
@@ -637,7 +653,7 @@ fn outcome(results: &[&Judged]) -> Result<(), Failure> {
     if unchecked > 0 {
         return Err(format!("{unchecked} capture(s) could not be checked").into());
     }
-    println!("The candidate is equivalent to the base.");
+    println!("{}", json!({"event": "equivalent"}));
     Ok(())
 }
 
@@ -705,8 +721,8 @@ fn aa_outcome(results: &[&Judged]) -> Result<(), Failure> {
     }
     if !steady.is_empty() {
         println!(
-            "Declared unstable but the same each run here: {}.",
-            steady.join(", ")
+            "{}",
+            json!({"event": "unstable_steady", "captures": steady})
         );
     }
     if !varied.is_empty() {
@@ -718,6 +734,6 @@ fn aa_outcome(results: &[&Judged]) -> Result<(), Failure> {
     if unchecked > 0 {
         return Err(format!("{unchecked} capture(s) could not be checked").into());
     }
-    println!("Every capture and digest part the matrix calls stable reproduced exactly.");
+    println!("{}", json!({"event": "stable_reproduced"}));
     Ok(())
 }

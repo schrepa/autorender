@@ -141,7 +141,7 @@ impl Game for ScenePlayer {
         inspectors.resource::<PlayerWalk>(
             include_str!("generated/inspectors.json"),
             "PlayerWalk",
-            |walk| serde_json::to_value(walk).expect("walk counts serialize"),
+            |walk| serde_json::to_value(walk).expect("walk_serializes"),
         );
     }
 }
@@ -165,7 +165,7 @@ struct Player {
 fn attach_player(world: &mut World, entity: Entity) {
     let spawn = world
         .get::<Transform>(entity)
-        .expect("scene entities have transforms")
+        .expect("scene_entity_has_transform")
         .translation;
     world.entity_mut(entity).insert((
         InterpolateTransform,
@@ -181,7 +181,7 @@ fn reset_player(world: &mut World, entity: Entity) {
         return;
     };
     edit_transform(world, entity, |transform| transform.translation = spawn)
-        .expect("the player's transform exists at this exclusive boundary");
+        .expect("player_has_transform");
     if let Some(mut player) = world.get_mut::<Player>(entity) {
         player.vertical_speed = 0.0;
     }

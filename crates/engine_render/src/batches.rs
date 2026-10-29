@@ -325,7 +325,7 @@ impl BatchPlan {
                     let rank = self
                         .texture_source_indices
                         .binary_search_by_key(&handle, |&index| snapshot.textures[index].handle)
-                        .expect("validated above");
+                        .expect("texture_validated");
                     self.used_texture_sources[self.texture_source_indices[rank]] = true;
                 }
             }

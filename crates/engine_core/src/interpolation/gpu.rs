@@ -501,7 +501,7 @@ impl Walk<'_> {
                 debug_assert_eq!(
                     interval.scales_compatible,
                     compatible_scales(&self.record_previous[record], current),
-                    "an interval's cached scale compatibility is current"
+                    "scale_compatibility_current"
                 );
                 let blends = interval.blends(pass.epoch, pass.active_tick);
                 (!blends, blends)
@@ -531,7 +531,7 @@ impl Walk<'_> {
                 previous_valid = pass.this_epoch;
             }
             if blend && previous_valid != pass.this_epoch {
-                let record = record.expect("blending nodes have a history record");
+                let record = record.expect("blend_history_present");
                 self.previous[index] = *previous_pose(
                     &self.record_previous[record],
                     &self.intervals[record],
@@ -559,10 +559,7 @@ impl Walk<'_> {
             if valid {
                 let revision = self.hierarchy.revision_at(index);
                 if self.authority_revisions[index] != revision || revision == u64::MAX {
-                    let matrix = self
-                        .hierarchy
-                        .global(index)
-                        .expect("valid node has a global");
+                    let matrix = self.hierarchy.global(index).expect("valid_node_global");
                     self.authority[index] = pose_rows(matrix);
                     self.authority_revisions[index] = revision;
                     self.authority_stamps[index] = pass.sequence;

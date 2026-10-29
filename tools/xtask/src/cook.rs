@@ -239,15 +239,16 @@ fn read_back(root: &Path, pack: &Pack, problems: &mut Vec<Value>) -> Result<Vec<
             })),
         }
     }
-    println!(
-        "{}: {} records read back natively, {} kinds",
-        pack.name,
-        read.len(),
-        kinds
+    let record = json!({
+        "event": "pack_read_native",
+        "pack": pack.name,
+        "records": read.len(),
+        "kinds": kinds
             .values()
             .collect::<std::collections::BTreeSet<_>>()
-            .len()
-    );
+            .len(),
+    });
+    println!("{record}");
     Ok(read)
 }
 
@@ -259,7 +260,12 @@ fn read_in_wasm(
 ) -> Result<(), String> {
     let file = pack.file();
     let listed = listed.display().to_string();
-    println!("Running node web/scripts/pack-wasm.mjs {file} {listed}");
+    let record = json!({
+        "event": "running",
+        "program": "node",
+        "arguments": ["web/scripts/pack-wasm.mjs", file, listed],
+    });
+    println!("{record}");
     let output = Command::new("node")
         .args(["web/scripts/pack-wasm.mjs", &file, &listed])
         .current_dir(root)
@@ -274,10 +280,13 @@ fn read_in_wasm(
     }
     let report: Value = serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("the Wasm read-back of {file} printed no report: {error}"))?;
-    println!(
-        "{}: {} records read back in Wasm, {} differing",
-        pack.name, report["records"], report["mismatched"]
-    );
+    let record = json!({
+        "event": "pack_read_wasm",
+        "pack": pack.name,
+        "records": report["records"],
+        "mismatched": report["mismatched"],
+    });
+    println!("{record}");
     let named = report["mismatches"].as_array().cloned().unwrap_or_default();
     for mismatch in &named {
         problems.push(json!({
@@ -312,7 +321,12 @@ fn run_on_pack(root: &Path, pack: &Pack, problems: &mut Vec<Value>) -> Result<()
         "--jobcache",
         "verify",
     ]);
-    println!("Running {} {}", pack.program, arguments.join(" "));
+    let record = json!({
+        "event": "running",
+        "program": pack.program,
+        "arguments": arguments,
+    });
+    println!("{record}");
     let output = Command::new(&pack.program)
         .args(&arguments)
         .envs([engine_commit()])
@@ -341,11 +355,15 @@ fn run_on_pack(root: &Path, pack: &Pack, problems: &mut Vec<Value>) -> Result<()
         stats["pipelines_listed"].as_u64().unwrap_or(0),
         stats["pipelines_unlisted"].as_u64().unwrap_or(u64::MAX),
     );
-    println!(
-        "{}: {hits} records read, {mismatches} differing from a fresh run; \
-         {listed} pipelines created up front, {unlisted} after",
-        pack.name
-    );
+    let record = json!({
+        "event": "pack_run",
+        "pack": pack.name,
+        "records_read": hits,
+        "mismatched": mismatches,
+        "pipelines_listed": listed,
+        "pipelines_unlisted": unlisted,
+    });
+    println!("{record}");
     let named = report["mismatched"].as_array().cloned().unwrap_or_default();
     for mismatch in &named {
         problems.push(json!({
@@ -394,7 +412,7 @@ fn write_index(folder: &Path) -> Result<(), String> {
     let index = folder.join("index.json");
     fs::write(
         &index,
-        serde_json::to_string(&packs).expect("names serialize") + "\n",
+        serde_json::to_string(&packs).expect("names_serialize") + "\n",
     )
     .map_err(|error| format!("cannot write {}: {error}", index.display()))
 }

@@ -581,10 +581,12 @@ impl ImpostorAtlas {
         let kept = self.supplies.len();
         self.supplies.retain(|key, _| supplied.contains(key));
         if self.cooking && self.supplies.len() < kept {
-            eprintln!(
-                "Impostors no draw supplies any more stop waiting: {} of {asked}",
-                kept - self.supplies.len()
-            );
+            let record = serde_json::json!({
+                "event": "impostor_supplies_dropped",
+                "dropped": kept - self.supplies.len(),
+                "asked": asked,
+            });
+            eprintln!("{record}");
         }
         let supplies = &self.supplies;
         self.answers

@@ -202,7 +202,7 @@ fn bend(assets: &AssetLibrary, spline: &SplineMesh) -> Result<Bent, String> {
         return Err("its mesh must span more than a millimeter along x".into());
     }
     let (samples, along) = curve(&spline.points);
-    let length = *along.last().expect("curves hold samples");
+    let length = *along.last().expect("curve_has_samples");
     if length <= 1.0e-3 {
         return Err("its curve must be longer than a millimeter".into());
     }

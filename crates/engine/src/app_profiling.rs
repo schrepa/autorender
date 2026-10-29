@@ -50,10 +50,7 @@ impl AppHost {
         }
         self.renderer.profile_poll();
         let cpu = engine_profile::finish();
-        let memory = linear_memory_bytes().map(|bytes| {
-            json!({"wasm_linear_bytes": bytes,
-                "scope": "Wasm linear memory capacity, not live allocation bytes or process memory"})
-        });
+        let memory = linear_memory_bytes().map(|bytes| json!({"wasm_linear_bytes": bytes}));
         let captured = std::mem::take(&mut self.attribution.captured);
         let bricks = engine_core::BrickCosts::table(&captured);
         Ok(json!({

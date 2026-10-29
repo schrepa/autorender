@@ -1,5 +1,4 @@
 use engine::collections::HashMap;
-use std::fmt::Write as _;
 
 use engine_core::bevy_ecs::prelude::*;
 use engine_core::glam::{Quat, Vec3};
@@ -8,6 +7,8 @@ use engine_core::{
     MaterialHandle, Mesh, Mesh3d, MeshHandle, Parent, PresentedTransforms, RenderSnapshot, Tint,
     Transform, reset_interpolation, set_parent, set_parents,
 };
+
+use serde_json::{Value, json};
 
 use crate::Report;
 use crate::random::Random;
@@ -446,35 +447,40 @@ fn readable(bits: &Option<[u32; 16]>) -> String {
     )
 }
 
-fn differences(living: &Frame, fresh: &Frame, map: &HashMap<Entity, Entity>) -> Vec<String> {
+fn differences(living: &Frame, fresh: &Frame, map: &HashMap<Entity, Entity>) -> Vec<Value> {
     let mut found = Vec::new();
     for (what, living, fresh) in [
-        ("world matrix", &living.globals, &fresh.globals),
-        ("presented matrix", &living.presented, &fresh.presented),
+        ("world_matrix", &living.globals, &fresh.globals),
+        ("presented_matrix", &living.presented, &fresh.presented),
     ] {
         if living.len() != fresh.len() {
-            found.push(format!(
-                "{what}s: {} entities against a fresh engine's {}",
-                living.len(),
-                fresh.len()
-            ));
+            found.push(json!({
+                "part": what,
+                "check": "entity_count",
+                "living": living.len(),
+                "fresh": fresh.len(),
+            }));
         }
         for (entity, value) in living {
             let other = map.get(entity).and_then(|entity| fresh.get(entity));
             if other != Some(value) {
                 let other = other.map_or_else(|| "none".to_owned(), readable);
-                found.push(format!(
-                    "{what} of {entity:?}: {}, a fresh engine's {other}",
-                    readable(value)
-                ));
+                found.push(json!({
+                    "part": what,
+                    "entity": format!("{entity:?}"),
+                    "living": readable(value),
+                    "fresh": other,
+                }));
             }
         }
     }
     if living.counts != fresh.counts {
-        found.push(format!(
-            "snapshot counts (instances, dropped, missing): {:?}, a fresh engine's {:?}",
-            living.counts, fresh.counts
-        ));
+        found.push(json!({
+            "part": "snapshot_counts",
+            "fields": ["instances", "dropped", "missing"],
+            "living": living.counts,
+            "fresh": fresh.counts,
+        }));
     }
     if living.instances != fresh.instances {
         let differ = living
@@ -482,7 +488,11 @@ fn differences(living: &Frame, fresh: &Frame, map: &HashMap<Entity, Entity>) -> 
             .iter()
             .zip(&fresh.instances)
             .find(|(a, b)| a != b);
-        found.push(format!("snapshot instances differ, first {differ:?}"));
+        found.push(json!({
+            "part": "snapshot_instances",
+            "living": differ.map(|(living, _)| living),
+            "fresh": differ.map(|(_, fresh)| fresh),
+        }));
     }
     found
 }
@@ -494,11 +504,11 @@ fn apply_both(
     assets: &Assets,
     fresh: &mut Fresh,
     edits: &[Edit],
-    log: &mut String,
-    when: &str,
+    log: &mut Vec<Value>,
+    (phase, tick): (&str, u64),
 ) {
     for edit in edits {
-        let _ = writeln!(log, "{when}: {edit:?}");
+        log.push(json!({"phase": phase, "tick": tick, "edit": format!("{edit:?}")}));
         let spawned = apply(living.app.world_mut(), assets, edit, &|entity| entity);
         if let Some((engine, assets, map)) = fresh.as_mut() {
             let lookup = |entity| map.get(&entity).copied().unwrap_or(entity);
@@ -538,7 +548,7 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
     }
     let mut snapshot = RenderSnapshot::default();
     let mut fresh_snapshot = RenderSnapshot::default();
-    let mut log = String::new();
+    let mut log = Vec::new();
     let mut checks = 0;
     let mut mismatches = 0;
     let mut since = 0;
@@ -555,7 +565,7 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
             &mut fresh,
             &before,
             &mut log,
-            &format!("before tick {tick}"),
+            ("before", tick),
         );
         living.step_fixed(1).map_err(|error| error.to_string())?;
         if let Some((engine, _, _)) = fresh.as_mut() {
@@ -568,7 +578,7 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
             &mut fresh,
             &after,
             &mut log,
-            &format!("after tick {tick}"),
+            ("after", tick),
         );
         let Some((mut engine, _, map)) = fresh else {
             frame(&mut living, &mut snapshot);
@@ -581,12 +591,15 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
         if !found.is_empty() {
             mismatches += 1;
             let shown: Vec<_> = found.iter().take(SHOWN).cloned().collect();
-            report.broke(format!(
-                "caches: seed {seed}, tick {tick}: the living engine disagrees with a fresh \
-                 one in {} place(s): {}; edits since tick {since}:\n{log}",
-                found.len(),
-                shown.join("; ")
-            ));
+            report.broke(json!({
+                "check": "caches_match_fresh",
+                "seed": seed,
+                "tick": tick,
+                "places": found.len(),
+                "differences": shown,
+                "edits_since_tick": since,
+                "edits": log,
+            }));
         }
         log.clear();
         since = tick;

@@ -180,9 +180,7 @@ unsafe extern "system" fn get_instance_proc_addr(
         b"vkGetDeviceProcAddr" => void!(get_device_proc_addr, vk::PFN_vkGetDeviceProcAddr),
         b"vkCreateDevice" => void!(create_device, vk::PFN_vkCreateDevice),
         _ => {
-            let loader = LOADER
-                .get()
-                .expect("the loader loads before instances start");
+            let loader = LOADER.get().expect("loader_before_instances");
             // SAFETY: forwarded as called.
             unsafe { (loader.static_fn().get_instance_proc_addr)(instance, name) }
         }
@@ -215,7 +213,7 @@ unsafe extern "system" fn get_device_proc_addr(
             return hooked;
         }
     }
-    let instance = INSTANCE.get().expect("instances start before devices");
+    let instance = INSTANCE.get().expect("instance_before_devices");
     // SAFETY: forwarded as called.
     unsafe { (instance.fp_v1_0().get_device_proc_addr)(device, name) }
 }
@@ -226,7 +224,7 @@ unsafe extern "system" fn create_device(
     allocator: *const vk::AllocationCallbacks<'_>,
     device: *mut vk::Device,
 ) -> vk::Result {
-    let instance = INSTANCE.get().expect("instances start before devices");
+    let instance = INSTANCE.get().expect("instance_before_devices");
     let create = instance.fp_v1_0().create_device;
     // SAFETY: Vulkan's callers pass a valid create info.
     let info = unsafe { &*info };
@@ -330,9 +328,7 @@ fn plan(
     if feature.performance_counter_query_pools == vk::FALSE {
         return Err("this GPU's driver offers performance queries without query pools".into());
     }
-    let loader = LOADER
-        .get()
-        .expect("the loader loads before instances start");
+    let loader = LOADER.get().expect("loader_before_instances");
     let queries = ash::khr::performance_query::Instance::new(loader, instance);
     // SAFETY: as above.
     let listed = unsafe {
@@ -820,7 +816,7 @@ impl Counting {
                     "instances": instances,
                     "median": named(values),
                     "parts": inner.iter().take(8).map(|(part, values)| json!({
-                        "part": if part.is_empty() { "(between its passes)" } else { part.as_str() },
+                        "part": if part.is_empty() { "between_passes" } else { part.as_str() },
                         "median": named(values),
                     })).collect::<Vec<_>>(),
                 })
@@ -829,7 +825,7 @@ impl Counting {
         json!({
             "status": "counted",
             "gpu": self.gpu,
-            "backend": "Vulkan, which counters need; timings with counters on are perturbed",
+            "backend": "vulkan",
             "available": self.plan.available,
             "counters": counters.iter().map(|counter| json!({
                 "name": counter.name,
@@ -850,9 +846,7 @@ impl Counting {
 type Instances<'a> = BTreeMap<u64, Vec<&'a Vec<f64>>>;
 
 fn counting() -> &'static Counting {
-    COUNTING
-        .get()
-        .expect("functions are hooked for the counting device")
+    COUNTING.get().expect("counting_functions_hooked")
 }
 
 unsafe extern "system" fn begin_command_buffer(

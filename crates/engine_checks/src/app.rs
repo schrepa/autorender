@@ -3,6 +3,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use engine::Engine;
+use engine::command_line::{self, Command, CommandOption};
 
 use crate::stages::{self, Stage};
 use crate::{Exceptions, Repository, Rules};
@@ -127,6 +128,21 @@ fn run<G: 'static, E: Display + 'static>(
         .parent()
         .ok_or_else(|| format!("{folder} has no parent folder"))?;
     let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(json) = command_line::asks_help(&arguments) {
+        let commands = [
+            Command::new(
+                "verify",
+                [CommandOption::taking("--level", "quick|pr|merge").defaults_to("pr")],
+            ),
+            Command::new("schema", []),
+        ];
+        if json {
+            println!("{}", command_line::commands_json(&commands));
+        } else {
+            println!("{}", command_line::commands_text(&commands));
+        }
+        return Ok(());
+    }
     let app = App {
         repository: Repository::read(root)?,
         build: Box::new(move || {

@@ -127,7 +127,7 @@ impl JobPool {
                         ));
                         work(index as u32, &inbox, &report);
                     })
-                    .expect("threads start");
+                    .expect("thread_starts");
                 Slot {
                     orders,
                     #[cfg(feature = "profiling")]
@@ -337,7 +337,13 @@ fn work(index: u32, inbox: &Receiver<Order>, report: &Sender<Reported>) {
             match order {
                 Order::Share(key, bytes) => {
                     if let Err(error) = worker.share(&key, bytes) {
-                        eprintln!("A job worker refused share {key}: {error}");
+                        let record = serde_json::json!({
+                            "event": "share_refused",
+                            "worker": index,
+                            "key": key,
+                            "error": error,
+                        });
+                        eprintln!("{record}");
                     }
                 }
                 Order::Unshare(key) => worker.unshare(&key),

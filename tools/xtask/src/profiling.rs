@@ -57,13 +57,15 @@ pub fn build(root: &Path, attribution: bool) -> Result<(), String> {
         NPM,
         &["run", "build", "--prefix", "web", "--", "--mode", mode],
     )?;
-    let (label, port) = if attribution {
-        ("Attribution", 5176)
-    } else {
-        ("Profiling", 5175)
-    };
-    println!(
-        "{label} build: web/dist-{name}. Serve with npm run preview --prefix web -- --outDir dist-{name} --port {port} --strictPort"
-    );
+    let port = if attribution { 5176 } else { 5175 };
+    let record = serde_json::json!({
+        "event": "built",
+        "build": name,
+        "folder": format!("web/dist-{name}"),
+        "serve": format!(
+            "npm run preview --prefix web -- --outDir dist-{name} --port {port} --strictPort"
+        ),
+    });
+    println!("{record}");
     Ok(())
 }

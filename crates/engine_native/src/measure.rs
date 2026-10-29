@@ -154,7 +154,7 @@ pub fn run<G: Game, E: Into<engine::Error>>(
     }
     mark("serialized-end");
     let mut work: Value =
-        serde_json::from_str(&game.host().stats()).expect("frame statistics are JSON");
+        serde_json::from_str(&game.host().stats()).expect("stats_json");
     work["loading"] = loading.into();
     work["pipelines_compiling"] = compiling.into();
     let capture = match &method.capture {
@@ -186,7 +186,7 @@ pub fn run<G: Game, E: Into<engine::Error>>(
     for _ in 0..method.frames {
         while marks.len() >= method.frames_in_flight as usize {
             game.host()
-                .wait_for_mark(marks.pop_front().expect("frames in flight"))?;
+                .wait_for_mark(marks.pop_front().expect("frame_in_flight"))?;
         }
         game.frame_in_flight(at(frame))?;
         marks.push_back(game.host().gpu_mark());
@@ -243,7 +243,7 @@ fn settle<G: Game>(
             spans_of_frame(game)?
         };
         let stats: Value =
-            serde_json::from_str(&game.host().stats()).expect("frame statistics are JSON");
+            serde_json::from_str(&game.host().stats()).expect("stats_json");
         let holds =
             rule.stats
                 .iter()

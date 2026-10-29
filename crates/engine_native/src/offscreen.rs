@@ -305,7 +305,7 @@ impl<G: Game> Offscreen<G> {
         let (width, height, pixels) = self
             .host
             .read_offscreen()?
-            .expect("offscreen hosts draw offscreen");
+            .expect("offscreen_target");
         Ok(Image {
             width,
             height,

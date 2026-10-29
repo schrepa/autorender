@@ -24,10 +24,12 @@ pub fn prepare_dev(root: &Path) -> Result<(), String> {
 
 pub fn dev(root: &Path, port: u16) -> Result<(), String> {
     prepare_dev(root)?;
-    println!("Serving the games at http://127.0.0.1:{port}; press Ctrl+C to stop.");
-    println!(
-        "For automatic Rust rebuilds and managed browser sessions, run `cargo xtask agent iterate`."
-    );
+    let record = serde_json::json!({
+        "event": "serving",
+        "url": format!("http://127.0.0.1:{port}"),
+        "iterate": "cargo xtask agent iterate",
+    });
+    println!("{record}");
     run(
         root,
         NPM,
@@ -84,7 +86,7 @@ pub(crate) fn build_wasm(
     let identity = serde_json::json!({"profile": profile, "features": features});
     fs::write(
         root.join(out_dir).join("build.json"),
-        serde_json::to_string_pretty(&identity).expect("identities serialize") + "\n",
+        serde_json::to_string_pretty(&identity).expect("identity_serializes") + "\n",
     )
     .map_err(|error| format!("cannot write {out_dir}/build.json: {error}"))
 }
@@ -103,7 +105,10 @@ pub(crate) fn install_web_dependencies(root: &Path) -> Result<(), String> {
         && web.join("node_modules/vite/package.json").is_file()
         && web.join("node_modules/typescript/package.json").is_file()
     {
-        eprintln!("Web dependencies match the locked manifests; reusing installation.");
+        eprintln!(
+            "{}",
+            serde_json::json!({"event": "web_dependencies_reused"})
+        );
         return Ok(());
     }
     crate::process::run_to_stderr(root, NPM, &["ci", "--prefix", "web"]).map_err(|error|

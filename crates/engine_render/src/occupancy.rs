@@ -20,7 +20,7 @@ const SIDE: i32 = CELLS as i32;
 
 const CELL_WORDS: usize = (CELLS * CELLS / 32) as usize;
 
-const _: () = assert!(CELLS == 16, "a word holds two rows of cells");
+const _: () = assert!(CELLS == 16, "word_holds_two_rows");
 
 const REACH_SHARE: f32 = 3.0 / 8.0;
 

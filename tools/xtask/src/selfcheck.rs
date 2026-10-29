@@ -35,7 +35,7 @@ pub fn selfcheck(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     let folder = root.join("target").join("selfcheck");
     fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
     let sha = working_commit(root, &folder)?;
-    println!("Self-checking the tools at {sha}.");
+    println!("{}", json!({"event": "selfcheck_started", "commit": sha}));
     let mut differed = Vec::new();
     for kind in kinds {
         let found = match kind {
@@ -43,7 +43,7 @@ pub fn selfcheck(root: &Path, arguments: &[String]) -> Result<(), Failure> {
             _ => checks_aa(root, &sha, &folder.join("checks"))?,
         };
         if found.is_empty() {
-            println!("selfcheck {kind}: the two sides came out equal.");
+            println!("{}", json!({"event": "selfcheck_equal", "kind": kind}));
         }
         differed.extend(
             found
@@ -200,7 +200,7 @@ fn measure_task(sha: &str, scene: &str) -> (Value, Value) {
 fn write(path: &Path, value: &Value) -> Result<PathBuf, String> {
     fs::write(
         path,
-        serde_json::to_string_pretty(value).expect("JSON serializes") + "\n",
+        serde_json::to_string_pretty(value).expect("json_serializes") + "\n",
     )
     .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
     Ok(path.to_path_buf())
@@ -290,9 +290,15 @@ fn measure_aa(root: &Path, sha: &str, folder: &Path) -> Result<Vec<String>, Stri
         match (median("base"), median("candidate")) {
             (Some(base), Some(candidate)) if base > 0.0 && candidate > 0.0 => {
                 let ratio = candidate / base;
-                println!(
-                    "selfcheck measure: {name} {FRAME_TIME} base {base:.3} ms, candidate {candidate:.3} ms (ratio {ratio:.3})."
-                );
+                let record = json!({
+                    "event": "selfcheck_measured",
+                    "workload": name,
+                    "metric": FRAME_TIME,
+                    "base_ms": base,
+                    "candidate_ms": candidate,
+                    "ratio": ratio,
+                });
+                println!("{record}");
                 if busiest > BUSY_CPU_PCT {
                     unjudged = Some(format!(
                         "{name}: other programs used up to {busiest:.0}% of the processors while it measured (more than {BUSY_CPU_PCT}%), so its frame times say nothing: run it on a quiet machine"

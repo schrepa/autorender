@@ -79,7 +79,7 @@ impl Watcher {
         self.sent += records.len() as u32;
         records
             .into_iter()
-            .map(|record| serde_json::to_value(record).expect("records serialize"))
+            .map(|record| serde_json::to_value(record).expect("record_serializes"))
             .collect()
     }
 }

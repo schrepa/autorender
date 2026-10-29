@@ -13,7 +13,7 @@ const WINDOW_ROW: u32 = engine_terrain::bounce::MAX_PROBES;
 
 const _: () = assert!(
     MOST_LEVELS <= 4 * (HORIZON_RECORD_VECTORS as usize - 4),
-    "a record holds every level's window, four a vector"
+    "record_holds_level_windows"
 );
 
 const NO_RECORD: [[f32; 4]; HORIZON_RECORD_VECTORS as usize] = {

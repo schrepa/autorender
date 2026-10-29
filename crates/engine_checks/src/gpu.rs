@@ -1306,23 +1306,24 @@ pub fn check(repository: &crate::Repository) -> Result<(), String> {
 ",
         ));
     }
-    println!(
-        "Validated {} shader modules with naga; {} WGSL mirrors match their {} upload structs; {} tables hold the bindings of {} entry points, each declared with its stage ({}); {} fragment stages read only locations a vertex stage of their module writes alike; {} bindings of shared groups within their features' ranges; {} pipeline layouts within every device's limits and their budget; {} WGSL functions, none written twice; {} WGSL constants mirror {} Rust ones; {} shader decisions, none reading the camera but through the detail eye's measures or in optics; {} filters and matched handovers deciding by sizes on screen, and no fade; {} files reading the camera's eye on the CPU, each for its reason.",
-        modules.len(),
-        mirrors?,
-        layouts().len(),
-        TABLES.len(),
-        entry_points?,
-        entries?,
-        inter_stage?,
-        ranges?,
-        pipeline_layouts?,
-        functions?,
-        shared?,
-        constants().count(),
-        handovers?,
-        fades?,
-        eye_reads?
-    );
+    let record = serde_json::json!({
+        "event": "shaders_checked",
+        "modules": modules.len(),
+        "mirrors": mirrors?,
+        "upload_structs": layouts().len(),
+        "binding_tables": TABLES.len(),
+        "entry_points": entry_points?,
+        "staged_entries": entries?,
+        "fragment_stages": inter_stage?,
+        "shared_bindings": ranges?,
+        "pipeline_layouts": pipeline_layouts?,
+        "functions": functions?,
+        "wgsl_constants": shared?,
+        "rust_constants": constants().count(),
+        "shader_decisions": handovers?,
+        "handovers": fades?,
+        "eye_reads": eye_reads?,
+    });
+    println!("{record}");
     Ok(())
 }

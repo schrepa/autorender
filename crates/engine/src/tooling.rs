@@ -22,7 +22,7 @@ pub fn declarations(schema: &Value, root: &str) -> String {
 pub fn message_interfaces(schema: &Value, root: &str, imported: &[(&str, &str)]) -> String {
     let mut output = String::new();
     for (name, module) in imported {
-        writeln!(output, "import type {{ {name} }} from \"{module}\";").expect("strings write");
+        writeln!(output, "import type {{ {name} }} from \"{module}\";").expect("string_writes");
     }
     interface(&mut output, root, schema, true);
     for (name, definition) in schema["$defs"].as_object().into_iter().flatten() {
@@ -40,16 +40,16 @@ pub fn constant(name: &str, value: &Value) -> String {
 fn interface(output: &mut String, name: &str, schema: &Value, optional: bool) {
     output.push('\n');
     if schema.get("properties").is_none() {
-        writeln!(output, "export type {name} = {};", type_of(schema)).expect("strings write");
+        writeln!(output, "export type {name} = {};", type_of(schema)).expect("string_writes");
         return;
     }
-    writeln!(output, "export interface {name} {{").expect("strings write");
+    writeln!(output, "export interface {name} {{").expect("string_writes");
     let required = schema["required"].as_array();
     for (field, property) in schema["properties"].as_object().into_iter().flatten() {
         let absent =
             optional && !required.is_some_and(|required| required.iter().any(|name| name == field));
         let mark = if absent { "?" } else { "" };
-        writeln!(output, "  {field}{mark}: {};", type_of(property)).expect("strings write");
+        writeln!(output, "  {field}{mark}: {};", type_of(property)).expect("string_writes");
     }
     output.push_str("}\n");
 }
@@ -67,7 +67,7 @@ fn type_of(schema: &Value) -> String {
         return reference
             .rsplit('/')
             .next()
-            .expect("references name a definition")
+            .expect("reference_names_definition")
             .to_owned();
     }
     if let Some(value) = schema.get("const").filter(|value| value.is_string()) {
@@ -110,7 +110,7 @@ fn type_of(schema: &Value) -> String {
         Value::String(name) => vec![name.as_str()],
         Value::Array(names) => names.iter().filter_map(Value::as_str).collect(),
         other @ (Value::Null | Value::Bool(_) | Value::Number(_) | Value::Object(_)) => {
-            panic!("no TypeScript type for the schema type {other}: {schema}")
+            panic!("schema_typescript_type {other} {schema}")
         }
     };
     types
@@ -129,7 +129,7 @@ fn type_of(schema: &Value) -> String {
                     _ => "Record<string, unknown>".to_owned(),
                 }
             }
-            other => panic!("no TypeScript type for the schema type {other:?}"),
+            other => panic!("schema_typescript_type {other:?}"),
         })
         .collect::<Vec<_>>()
         .join(" | ")

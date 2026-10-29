@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use engine::command_line::CommandOption;
 use engine::host::{HostSettings, SETTINGS, policy};
 use engine::{Engine, Game, GpuPreference};
 use serde_json::json;
@@ -11,122 +12,82 @@ use crate::{
     Record, Window, WindowReport, host_error,
 };
 
-const USAGE_HOST: &str = "\
-Native options:
-  --size WxH           window or offscreen size in physical pixels
-  --gpu discrete|integrated
-                       the GPU asked for where there are two (default discrete)
-  --workers N|off      job worker threads (default every logical processor
-                       but two, every one while cooking); off runs jobs in
-                       the engine
-  --jobcache off|verify|MiB
-                       keep job outputs beside the program (default 1024
-                       MiB); verify runs every job anyway and compares
-  --vsync on|off       whether window frames wait for the display's refresh
-                       (default on); off measures as browsers' frame rates do";
+const MIB: u64 = 1024 * 1024;
 
-const USAGE_TOOLS: &str = "\
-  --frames N           measure N window frames after --settle-ms, then close
-                       and print their rate and CPU times as JSON
-  --settle-ms MS       with --frames: play before measuring (default 20000)
-  --offscreen FRAMES   draw FRAMES frames at 60 Hz offscreen and print their
-                       statistics as JSON, without a window
-  --capture PATH       with --offscreen: the last frame as a PNG file
-  --gpu-capture PATH   with --offscreen: the last frame's GPU work, frame-exact:
-                       a PIX capture (.wpix) where PIX is installed and the
-                       GPU interface is D3D12; else a RenderDoc capture
-                       (PATH_capture.rdc) under `renderdoccmd capture -w`;
-                       else Xcode's, with MTL_CAPTURE_ENABLED=1
-  --profile DIR        with --offscreen: a deep profile of the frames, on any
-                       machine without setup: CPU samples of every thread
-                       (functions, lines, instructions), the engine's spans,
-                       each frame's GPU passes and draws, and the deeper
-                       layers recommended here; files in DIR
-  --counters on|LIST   with --profile, or --dev's profiles: each pass's GPU
-                       hardware counters, where the driver offers Vulkan's
-                       performance queries (Intel's; Mesa's on Linux), which
-                       need no privileges: the first set one run counts, or
-                       the comma-separated counters LIST names; the game then
-                       draws on Vulkan, and counting perturbs its timings
-  --vendor pix|nsight  a deep dive through the GPU vendor's or platform's
-                       tool, set up once: pix (with --offscreen, into
-                       --vendor-dir, or --dev's profiles asking for it, on
-                       D3D12) captures the last frame and replays each draw's
-                       hardware counters, summed per render-graph node; nsight
-                       (in a window, into --vendor-dir, on NVIDIA's GPUs) runs
-                       the program again under Nsight's GPU Trace, --settle-ms
-                       after it starts, for 5 frames, with its shader profiler
-  --vendor-dir DIR     with --vendor: where its files go
-  --vendor-counters LIST
-                       with --vendor pix: the comma-separated counters (PIX's
-                       names) to replay in place of the summary's own
-  --packs DIR          the folder of the cook's packs records are read from
-                       before the store and before any job runs
-  --cook FILE          cook offscreen: every record the game's content needs,
-                       made or read, written into the pack FILE once none is
-                       left
-  --measure FILE       a measured run offscreen, as the method in FILE says
-                       (`cargo xtask measure` writes it): settled by its rule,
-                       then timed one frame at a time and with frames in
-                       flight, with marks to time them by and a JSON report on
-                       standard output; profiling builds add each GPU pass's
-                       and CPU span's time
-  --shader-hash        print the SHA-256 of the renderer's composed shader
-                       modules (each one's name and source) as JSON and exit
-  --settings FILE      the options in FILE, a JSON object whose `options` holds
-                       them by name ({\"options\": {\"size\": \"1400x900\"}}), the
-                       game's too; options after it override its own
-  --dev                serve the development protocol over standard input
-                       and output, drawing offscreen and starting paused
-  --dev-artifacts DIR  with --dev: where captures and profiles go (default
-                       the system's temporary folder)
-  --help               this text
+const DEV_PARAMETERS: [&str; 6] = ["size", "gpu", "workers", "jobcache", "counters", "vendor"];
 
---profile, --counters and --vendor need a build with the profiling feature,
---dev one with the dev feature. WGPU_BACKEND=dx12|vulkan|metal chooses the
-GPU interface; by default the one browsers use on the platform: on Windows
-D3D12 where DXC (dxcompiler.dll, which Chrome and Firefox ship) is beside
-the program or on the path, else Vulkan.";
-
-pub fn usage() -> String {
-    let mut text = format!("{USAGE_HOST}\n");
-    for setting in SETTINGS {
-        let head = format!("  --{} {}", setting.name, setting.values.join("|"));
-        let what = format!("{} (default {})", setting.what, setting.values[0]);
-        text.push_str(&option_lines(&head, &what));
-    }
-    text.push_str(USAGE_TOOLS);
-    text
+pub fn options() -> Vec<CommandOption> {
+    let defaults = HostOptions::default();
+    let gpu = match defaults.gpu {
+        GpuPreference::HighPerformance => "discrete",
+        GpuPreference::LowPower => "integrated",
+    };
+    let jobcache = match defaults.jobs.cache {
+        CacheOptions::Off => "off".to_owned(),
+        CacheOptions::Verify => "verify".to_owned(),
+        CacheOptions::Keep { budget } => (budget / MIB).to_string(),
+    };
+    let mut options = vec![
+        CommandOption::taking("--size", "WxH").in_unit("px"),
+        CommandOption::taking("--gpu", "discrete|integrated").defaults_to(gpu),
+        CommandOption::taking("--workers", format!("0-{}|off", policy::MAX_WORKERS))
+            .defaults_to(defaults.jobs.workers),
+        CommandOption::taking(
+            "--jobcache",
+            format!("off|verify|0-{}", policy::MAX_JOB_CACHE_MIB),
+        )
+        .defaults_to(jobcache)
+        .in_unit("MiB"),
+        CommandOption::taking("--vsync", "on|off").defaults_to(switch(defaults.vsync)),
+    ];
+    options.extend(SETTINGS.iter().map(|setting| {
+        CommandOption::taking(&format!("--{}", setting.name), setting.accepted())
+            .defaults_to(setting.default_value())
+    }));
+    options.extend([
+        CommandOption::taking("--frames", "N"),
+        CommandOption::taking("--settle-ms", "MS")
+            .defaults_to(defaults.settle_ms)
+            .in_unit("ms"),
+        CommandOption::taking("--offscreen", "N"),
+        CommandOption::taking("--capture", "PATH"),
+        CommandOption::taking("--gpu-capture", "PATH"),
+        CommandOption::taking("--profile", "DIR"),
+        CommandOption::taking("--counters", "on|LIST"),
+        CommandOption::taking("--vendor", "pix|nsight"),
+        CommandOption::taking("--vendor-dir", "DIR"),
+        CommandOption::taking("--vendor-counters", "LIST"),
+        CommandOption::taking("--packs", "DIR"),
+        CommandOption::taking("--cook", "FILE"),
+        CommandOption::taking("--measure", "FILE"),
+        CommandOption::flag("--shader-hash"),
+        CommandOption::taking("--settings", "FILE"),
+        CommandOption::flag("--dev"),
+        CommandOption::taking("--dev-artifacts", "DIR")
+            .defaults_to(default_artifacts().display()),
+        CommandOption::flag("--help"),
+        CommandOption::flag("--json"),
+    ]);
+    options
 }
 
-fn option_lines(head: &str, what: &str) -> String {
-    const COLUMN: usize = 23;
-    const WIDTH: usize = 78;
-    let mut text = String::new();
-    let mut line = if head.len() < COLUMN - 1 {
-        format!("{head:COLUMN$}")
-    } else {
-        text.push_str(head);
-        text.push('\n');
-        " ".repeat(COLUMN)
-    };
-    let mut words = 0;
-    for word in what.split_whitespace() {
-        if words > 0 && line.len() + 1 + word.len() > WIDTH {
-            text.push_str(&line);
-            text.push('\n');
-            line = " ".repeat(COLUMN);
-            words = 0;
-        }
-        if words > 0 {
-            line.push(' ');
-        }
-        line.push_str(word);
-        words += 1;
-    }
-    text.push_str(&line);
-    text.push('\n');
-    text
+pub fn parameters() -> Vec<(String, String)> {
+    options()
+        .into_iter()
+        .filter_map(|option| {
+            let name = option.name.strip_prefix("--")?;
+            let known = DEV_PARAMETERS.contains(&name) || HostSettings::takes(name);
+            known.then(|| (name.to_owned(), option.value.clone().unwrap_or_default()))
+        })
+        .collect()
+}
+
+fn switch(on: bool) -> &'static str {
+    if on { "on" } else { "off" }
+}
+
+fn default_artifacts() -> PathBuf {
+    std::env::temp_dir().join("engine-captures")
 }
 
 #[derive(Clone, Debug)]
@@ -312,21 +273,6 @@ impl Default for HostOptions {
         }
     }
 }
-
-pub const PARAMETERS: &[(&str, &str)] = &[
-    ("size", "WIDTHxHEIGHT of the offscreen texture"),
-    ("gpu", "discrete or integrated"),
-    ("workers", "job worker threads, or off"),
-    ("jobcache", "off, verify, or the kept outputs' MiB"),
-    (
-        "counters",
-        "on, or counter names: each profile's per-pass hardware counters (profiling builds; Vulkan)",
-    ),
-    (
-        "vendor",
-        "pix: profiles may ask for the last frame's per-draw counters replayed through PIX (profiling builds; D3D12)",
-    ),
-];
 
 impl HostOptions {
     pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Self, String> {
@@ -576,18 +522,10 @@ impl HostOptions {
         let pix = self.loads_pix().then(Pix::load).flatten();
         let mut game = Offscreen::launch(size, self.gpu, &self.jobs, build)?;
         self.settings.apply(game.host_mut());
-        let artifacts = self
-            .dev_artifacts
-            .clone()
-            .unwrap_or_else(|| std::env::temp_dir().join("engine-captures"));
+        let artifacts = self.dev_artifacts.clone().unwrap_or_else(default_artifacts);
         Ok(crate::dev::DevSession::new(game, artifacts)
             .pix(pix)
-            .parameters(PARAMETERS.iter().copied())
-            .parameters(
-                SETTINGS
-                    .iter()
-                    .map(|setting| (setting.name, setting.described())),
-            ))
+            .parameters(parameters()))
     }
 
     fn loads_pix(&self) -> bool {
@@ -659,11 +597,21 @@ impl HostOptions {
             }
             if said.elapsed() > Duration::from_secs(5) {
                 said = Instant::now();
-                let features = game
+                let features: serde_json::Map<String, serde_json::Value> = game
                     .host()
                     .cooking()
-                    .map(|cooking| cooking.features().to_vec());
-                eprintln!("Cooking: {left} records left, {held} jobs held: {features:?}");
+                    .map(|cooking| cooking.features().to_vec())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(feature, left)| (feature.to_owned(), left.into()))
+                    .collect();
+                let record = json!({
+                    "event": "cooking",
+                    "records_left": left,
+                    "jobs_held": held,
+                    "features_records_left": features,
+                });
+                eprintln!("{record}");
             }
         }
         let written = game.jobs_mut().write_pack(path).map_err(|reason| {
@@ -673,7 +621,7 @@ impl HostOptions {
             )
         })?;
         let stats: serde_json::Value =
-            serde_json::from_str(&game.host().stats()).expect("frame statistics are JSON");
+            serde_json::from_str(&game.host().stats()).expect("stats_json");
         println!(
             "{:#}",
             json!({
@@ -733,7 +681,7 @@ impl HostOptions {
             game.save_png(path)?;
         }
         let stats: serde_json::Value =
-            serde_json::from_str(&game.host().stats()).expect("frame statistics are JSON");
+            serde_json::from_str(&game.host().stats()).expect("stats_json");
         let mismatched: Vec<serde_json::Value> = game
             .jobs_mut()
             .mismatched()
@@ -828,7 +776,7 @@ fn distribution(values: &[f64]) -> serde_json::Value {
 
 fn window_report(report: &WindowReport) -> serde_json::Value {
     let stats: serde_json::Value =
-        serde_json::from_str(&report.stats).expect("frame statistics are JSON");
+        serde_json::from_str(&report.stats).expect("stats_json");
     json!({
         "size": [report.size.0, report.size.1],
         "window": [report.window.0, report.window.1],

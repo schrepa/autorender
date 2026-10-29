@@ -6,12 +6,13 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use engine_core::command_line::{self, CommandOption};
 use serde_json::{Value, json};
 
 #[derive(Default)]
 pub struct Report {
     observations: BTreeMap<String, Value>,
-    broken: Vec<String>,
+    broken: Vec<Value>,
 }
 
 impl Report {
@@ -19,8 +20,8 @@ impl Report {
         self.observations.insert(name.into(), value.into());
     }
 
-    pub fn broke(&mut self, what: String) {
-        self.broken.push(what);
+    pub fn broke(&mut self, broken: Value) {
+        self.broken.push(broken);
     }
 }
 
@@ -33,15 +34,23 @@ struct Options {
     trace: Option<PathBuf>,
 }
 
-fn options() -> Result<Options, String> {
-    let usage = "usage: coresmoke [--seed N] [--trace FILE]";
+fn command_options() -> Vec<CommandOption> {
+    vec![
+        CommandOption::taking("--seed", "N").defaults_to(caches::SEED),
+        CommandOption::taking("--trace", "FILE"),
+        CommandOption::flag("--help"),
+        CommandOption::flag("--json"),
+    ]
+}
+
+fn options(arguments: Vec<String>) -> Result<Options, String> {
     let mut options = Options {
         seed: caches::SEED,
         trace: None,
     };
-    let mut arguments = std::env::args().skip(1);
+    let mut arguments = arguments.into_iter();
     while let Some(argument) = arguments.next() {
-        let mut value = || arguments.next().ok_or(usage);
+        let mut value = || arguments.next().ok_or("--seed and --trace take a value");
         match argument.as_str() {
             "--seed" => {
                 options.seed = value()?
@@ -49,14 +58,19 @@ fn options() -> Result<Options, String> {
                     .map_err(|error| format!("--seed: {error}"))?;
             }
             "--trace" => options.trace = Some(value()?.into()),
-            _ => return Err(usage.into()),
+            _ => return Err(format!("unknown option {argument}")),
         }
     }
     Ok(options)
 }
 
 fn main() -> ExitCode {
-    let options = match options() {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(help) = command_line::help(&arguments, &command_options()) {
+        println!("{help}");
+        return ExitCode::SUCCESS;
+    }
+    let options = match options(arguments) {
         Ok(options) => options,
         Err(error) => {
             eprintln!("{}", json!({"event": "arguments_rejected", "error": error}));

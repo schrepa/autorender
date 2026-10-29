@@ -31,7 +31,7 @@ pub fn lease(root: &Path, sha: &str) -> Result<(), String> {
     if using.insert(sha.to_owned()) {
         let leases = folder(root, "leases");
         fs::create_dir_all(&leases).map_err(|error| error.to_string())?;
-        let listed = serde_json::to_string(&*using).expect("commits serialize");
+        let listed = serde_json::to_string(&*using).expect("commits_serialize");
         fs::write(leases.join(std::process::id().to_string()), listed)
             .map_err(|error| format!("cannot write {}: {error}", leases.display()))?;
     }
@@ -122,10 +122,14 @@ pub fn prune(root: &Path) {
     for path in doomed {
         match fs::remove_dir_all(&path) {
             Ok(()) => removed = true,
-            Err(error) => eprintln!(
-                "Could not remove all of {} yet ({error}); a later task will",
-                path.display()
-            ),
+            Err(error) => {
+                let record = json!({
+                    "event": "checkout_removal_deferred",
+                    "folder": path.display().to_string(),
+                    "error": error.to_string(),
+                });
+                eprintln!("{record}");
+            }
         }
     }
     if removed && let Err(error) = git(root, &["worktree", "prune"]) {
@@ -216,7 +220,12 @@ fn set_aside(path: &Path) -> Option<PathBuf> {
     match fs::rename(path, &doomed) {
         Ok(()) => Some(doomed),
         Err(error) => {
-            eprintln!("Keeping {}, which is in use: {error}", path.display());
+            let record = json!({
+                "event": "checkout_in_use",
+                "folder": path.display().to_string(),
+                "error": error.to_string(),
+            });
+            eprintln!("{record}");
             None
         }
     }
@@ -263,11 +272,12 @@ impl Lock {
                 continue;
             }
             if !told {
-                eprintln!(
-                    "Waiting for {}, which process {} holds.",
-                    path.display(),
-                    held.map_or_else(|| "?".to_owned(), |pid| pid.to_string())
-                );
+                let record = json!({
+                    "event": "lock_waiting",
+                    "lock": path.display().to_string(),
+                    "pid": held,
+                });
+                eprintln!("{record}");
                 told = true;
             }
             std::thread::sleep(LOCK_POLL);

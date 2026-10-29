@@ -735,9 +735,9 @@ fn summary(
                 "threads": samples.threads.iter().map(|thread| json!({
                     "name": thread.name, "samples": thread.samples.len(), "missed": thread.missed,
                 })).collect::<Vec<_>>(),
-                "symbols": "in process, from the program's and libraries' debug information",
+                "symbols": "in_process",
             })),
-            "cpu_samples_unavailable": (!sampled).then_some("this operating system's threads cannot be sampled in process"),
+            "cpu_samples_unavailable": (!sampled).then_some("os_unsupported"),
             "engine_spans": {
                 "events": report["cpu"]["events"].as_array().map_or(0, Vec::len),
                 "complete": report["cpu"]["complete"],
@@ -747,7 +747,7 @@ fn summary(
                 "complete": gpu["complete"],
                 "draws": gpu["draws"],
             },
-            "privileges": "none: no admin, no system setting, no installed tool",
+            "privileges": "none",
         },
         "threads": threads,
         "hot_lines": ranked(lines, main_total, 30),
@@ -756,7 +756,7 @@ fn summary(
         "gpu_draws_ms": draws.iter().take(25).map(|(label, ms, statistics)| json!({"draw": label, "median_ms": ms, "statistics": statistics})).collect::<Vec<_>>(),
         "gpu_counters": report["gpu_counters"],
         "recommended": crate::capabilities::recommended(adapter, sampled && deepest < 8),
-        "open": "Load the .firefox.json file at https://profiler.firefox.com (Load a profile from file; it stays on this machine) or at https://ui.perfetto.dev",
+        "viewers": ["https://profiler.firefox.com", "https://ui.perfetto.dev"],
     })
 }
 

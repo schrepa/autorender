@@ -126,7 +126,7 @@ impl Instances {
 
     pub(super) fn poses(&self, parity: usize) -> &wgpu::Buffer {
         if parity == 1 {
-            Option::as_ref(&self.alternate).expect("temporal frames create it")
+            Option::as_ref(&self.alternate).expect("temporal_frames_create")
         } else {
             &self.buffer
         }
@@ -177,11 +177,11 @@ impl Instances {
     }
 
     pub(super) fn slots(&self) -> &wgpu::Buffer {
-        self.slots.as_ref().expect("retained slot buffer")
+        self.slots.as_ref().expect("slot_buffer_retained")
     }
 
     pub(super) fn pose_group(&self, parity: usize) -> &wgpu::BindGroup {
-        self.pose_groups[parity].get().expect("prepared this frame")
+        self.pose_groups[parity].get().expect("prepared_this_frame")
     }
 
     pub(super) fn prepare_pose_group(&mut self, device: &wgpu::Device, parity: usize) {
@@ -198,7 +198,7 @@ impl Instances {
             [
                 (
                     "poses",
-                    poses.bound(parity).expect("temporal frames create it"),
+                    poses.bound(parity).expect("temporal_frames_create"),
                 ),
                 ("colors", self.colors.bound()),
                 ("grounds", Bound::fixed(self.grounds.as_entire_binding())),
@@ -234,8 +234,7 @@ impl<'a> FramePoses<'a> {
     }
 
     pub(crate) fn current(&self) -> &'a wgpu::Buffer {
-        self.buffer(self.parity)
-            .expect("temporal frames create the alternate pose buffer")
+        self.buffer(self.parity).expect("alternate_poses_created")
     }
 
     pub(crate) fn generation(&self) -> u64 {

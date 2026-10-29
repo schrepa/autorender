@@ -277,8 +277,8 @@ impl Default for TransformIndex {
     }
 }
 
-const _: () = assert!(MAX_TRANSFORM_NODES < u32::MAX as usize, "indices fit a u32");
-const _: () = assert!(MAX_HIERARCHY_DEPTH < u8::MAX as usize, "depths fit a u8");
+const _: () = assert!(MAX_TRANSFORM_NODES < u32::MAX as usize, "indices_fit_u32");
+const _: () = assert!(MAX_HIERARCHY_DEPTH < u8::MAX as usize, "depths_fit_u8");
 const NO_NODE: u32 = u32::MAX;
 
 pub(crate) struct Source {
@@ -594,7 +594,7 @@ fn find_index(indices: &EntityIndices, entity: Entity) -> Option<usize> {
 #[cfg_attr(feature = "attribution", inline(never))]
 fn deferred_global(links: &[Link], globals: &[Mat4], locals: &[NodePose], index: usize) -> Mat4 {
     let parent = links[index].parent().map_or(Mat4::IDENTITY, |parent| {
-        debug_assert!(links[parent].global == Global::Stored, "parents are stored");
+        debug_assert!(links[parent].global == Global::Stored, "parent_stored");
         globals[parent]
     });
     parent * Transform::from_pose(&locals[index]).matrix()
@@ -891,10 +891,7 @@ impl GlobalTransforms {
             self.query.iter(world).len() as f64,
         );
         self.dirty.clear();
-        let mut changed_query = self
-            .changed_query
-            .take()
-            .expect("change scan state is present between scans");
+        let mut changed_query = self.changed_query.take().expect("scan_state_present");
         let scan = self.scan_changed_rows(&mut changed_query, world, work, interpolation);
         self.changed_query = Some(changed_query);
         scan
@@ -961,11 +958,8 @@ impl GlobalTransforms {
         let mut observer = interpolation
             .as_deref_mut()
             .map(InterpolationState::observer);
-        let query = changed_query.get(world).expect("read-only transform query");
-        for (entities, transforms) in query
-            .contiguous_iter()
-            .expect("Transform uses dense table storage")
-        {
+        let query = changed_query.get(world).expect("transform_query_read_only");
+        for (entities, transforms) in query.contiguous_iter().expect("transform_dense_storage") {
             let (transforms, ticks) = ContiguousRef::split(transforms);
             let window = ChangeWindow::new(ticks.last_run(), ticks.this_run());
             let (changed, added) = (ticks.changed(), ticks.added());
@@ -1369,9 +1363,7 @@ impl GlobalTransforms {
         let completed_tick = world.read_change_tick();
         self.scans.scanned(completed_tick);
         consume_through(
-            self.changed_query
-                .as_mut()
-                .expect("change scan state is restored after scanning"),
+            self.changed_query.as_mut().expect("scan_state_restored"),
             completed_tick,
         );
         world.increment_change_tick();
@@ -1389,7 +1381,7 @@ fn local_matrix(local: &Transform) -> Option<Mat4> {
 
 #[inline(always)]
 pub(crate) fn same_finite_matrix_bits(left: Mat4, right: Mat4) -> bool {
-    debug_assert!(left.is_finite() && right.is_finite(), "matrices are finite");
+    debug_assert!(left.is_finite() && right.is_finite(), "matrices_finite");
     let equal = left.x_axis.cmpeq(right.x_axis)
         & left.y_axis.cmpeq(right.y_axis)
         & left.z_axis.cmpeq(right.z_axis)

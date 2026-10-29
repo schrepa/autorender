@@ -89,7 +89,7 @@ impl InspectorDescriptor {
         let schema = schemas
             .get(name)
             .cloned()
-            .unwrap_or_else(|| panic!("no schema named {name} was generated"));
+            .unwrap_or_else(|| panic!("schema_generated {name}"));
         Self::new(name, schema)
     }
 
@@ -186,14 +186,14 @@ impl DevTools {
 impl Default for DevTools {
     fn default() -> Self {
         let schemas: Value = serde_json::from_str(include_str!("../generated/inspectors.json"))
-            .expect("generated schemas are valid JSON");
+            .expect("generated_schema_json");
         Self::with_schemas(&schemas)
     }
 }
 
 fn scene_schema(definition: Option<&str>) -> Result<Value, DevError> {
     let mut schema: Value = serde_json::from_str(include_str!("../generated/scene.schema.json"))
-        .expect("generated scene schema is JSON");
+        .expect("generated_schema_json");
     let definitions = schema
         .as_object_mut()
         .and_then(|schema| schema.remove("$defs"))
@@ -344,7 +344,7 @@ impl DevTools {
                 )),
                 ..reply
             };
-            serde_json::to_string(&refused).expect("replies serialize")
+            serde_json::to_string(&refused).expect("reply_serializes")
         })
     }
 
@@ -974,7 +974,7 @@ pub(crate) fn encode(value: &impl Serialize, limit: usize) -> Result<String, ser
         limit,
     };
     serde_json::to_writer(&mut output, value)?;
-    Ok(String::from_utf8(output.bytes).expect("JSON is UTF-8"))
+    Ok(String::from_utf8(output.bytes).expect("json_utf8"))
 }
 
 pub(crate) fn authored_entity(world: &World, scene: &SceneInstance, id: &str) -> Option<Entity> {
@@ -1025,7 +1025,6 @@ fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, DevError>
         texture_assets,
         resident_cpu_bytes: assets.resident_bytes(),
         readiness: "synchronous",
-        ownership: "library payload excludes retained snapshots and allocator metadata",
         missing,
         missing_total,
     })
@@ -1163,7 +1162,7 @@ fn inspector_at(registry: &BrickRegistry, name: &str) -> Option<String> {
 }
 
 fn frame_stats_schema() -> Value {
-    serde_json::from_str(crate::FRAME_STATS_SCHEMA).expect("generated schema is JSON")
+    serde_json::from_str(crate::FRAME_STATS_SCHEMA).expect("generated_schema_json")
 }
 
 fn stats_schema(key: &str) -> Value {

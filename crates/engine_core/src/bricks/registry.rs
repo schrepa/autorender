@@ -442,7 +442,7 @@ fn parse_section<T: EnvironmentSection>(value: Value, path: &str) -> Result<T, E
 }
 
 fn to_json(value: impl serde::Serialize) -> Value {
-    serde_json::to_value(value).expect("registered values serialize")
+    serde_json::to_value(value).expect("registered_values_serialize")
 }
 
 #[derive(Clone, Copy)]

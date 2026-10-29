@@ -36,7 +36,7 @@ pub fn coverage(
         engine_dev::Context::default(),
         &engine_dev::request(engine_dev::Verb::Describe, json!({})),
     ))
-    .expect("replies are JSON");
+    .expect("reply_json");
     let section_types: Vec<&str> = sections.iter().map(|(_, name)| *name).collect();
     let inspectors: Vec<Value> = described["result"]["types"]
         .as_array()
@@ -88,12 +88,12 @@ pub fn coverage(
         "inspectors": inspectors,
         "ops": ops,
     }))
-    .expect("coverage serializes")
+    .expect("coverage_serializes")
         + "\n")
 }
 
 pub fn check(coverage: &str) -> Result<(), String> {
-    let coverage: Value = serde_json::from_str(coverage).expect("coverage is JSON");
+    let coverage: Value = serde_json::from_str(coverage).expect("coverage_json");
     let mut unchecked = Vec::new();
     for (list, key) in [
         ("inspectors", "inspector"),
@@ -126,7 +126,7 @@ impl Claims {
     pub fn of(source: &str) -> Self {
         let code: Vec<char> = stripped(source, true).chars().collect();
         let bare: Vec<char> = stripped(source, false).chars().collect();
-        assert_eq!(code.len(), bare.len(), "strippings keep positions");
+        assert_eq!(code.len(), bare.len(), "stripping_keeps_positions");
         let mut claims = Self::default();
         let mut open: Option<(usize, char)> = None;
         let mut literals: Vec<(usize, String, Option<&'static str>)> = Vec::new();

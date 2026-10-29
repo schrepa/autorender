@@ -1103,7 +1103,7 @@ impl Renderer {
 
         if let (Some(_), Some(pass)) = (&temporal_frame, self.features.temporal.get_mut()) {
             let poses = self.instances.frame_poses(0);
-            let both = [0, 1].map(|parity| poses.bound(parity).expect("temporal frames create it"));
+            let both = [0, 1].map(|parity| poses.bound(parity).expect("temporal_frames_create"));
             pass.prepare_pose_groups(
                 &self.device,
                 both,

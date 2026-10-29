@@ -108,7 +108,7 @@ impl Sampler {
 
     pub fn finish(self) -> Samples {
         self.stop.store(true, Ordering::Relaxed);
-        self.thread.join().expect("the sampler does not panic")
+        self.thread.join().expect("sampler_unpanicked")
     }
 }
 

@@ -7,7 +7,12 @@ use crate::Repository;
 const RUSTFMT_BATCH: usize = 200;
 
 pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String> {
-    println!("Running {program} {}", arguments.join(" "));
+    let record = serde_json::json!({
+        "event": "running",
+        "program": program,
+        "arguments": arguments,
+    });
+    println!("{record}");
     let status = Command::new(program)
         .args(arguments)
         .current_dir(root)
@@ -81,8 +86,8 @@ pub fn fmt(repository: &Repository) -> Result<(), String> {
     }
     if unformatted.is_empty() {
         println!(
-            "rustfmt finds all {} Rust sources formatted, macro-declared modules included.",
-            files.len()
+            "{}",
+            serde_json::json!({"event": "rustfmt_formatted", "files": files.len()})
         );
         return Ok(());
     }

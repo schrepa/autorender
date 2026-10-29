@@ -335,12 +335,12 @@ impl DebugViewPass {
 
     #[cfg(feature = "dev")]
     pub(crate) fn textures(&self) -> [&wgpu::Texture; 3] {
-        let targets = self.targets.get().expect("sized in prepare");
+        let targets = self.targets.get().expect("sized_in_prepare");
         targets.textures.each_ref()
     }
 
     pub(crate) fn views(&self) -> [&wgpu::TextureView; 3] {
-        let targets = self.targets.get().expect("sized in prepare");
+        let targets = self.targets.get().expect("sized_in_prepare");
         [&targets.ids, &targets.count, &targets.terrain]
     }
 
@@ -376,7 +376,7 @@ impl RenderFeature for DebugViewPass {
         encode: &Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        let targets = self.targets.get().expect("sized in prepare");
+        let targets = self.targets.get().expect("sized_in_prepare");
         let mut pass = encode.render_pass(encoder, node, "engine/debug-view", None);
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &targets.group, &[]);

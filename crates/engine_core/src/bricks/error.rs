@@ -69,7 +69,7 @@ fn failure_at(error: &serde_path_to_error::Error<serde_json::Error>) -> Error {
             Segment::Enum { variant } => write!(path, ".{variant}"),
             Segment::Unknown => write!(path, ".?"),
         }
-        .expect("strings write");
+        .expect("string_writes");
     }
     failure_of(error.inner(), path)
 }

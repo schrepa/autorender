@@ -63,7 +63,7 @@ impl Renderer {
             self.features
                 .post
                 .get()
-                .expect("frames drawing the effects' targets create them")
+                .expect("effect_targets_created")
                 .targets()
         };
         match resource {
@@ -76,13 +76,13 @@ impl Renderer {
                 .features
                 .temporal
                 .get()
-                .expect("temporal frames create it")
+                .expect("temporal_frames_create")
                 .motion(),
             Resource::TerrainIds => {
                 &self
                     .terrain_ids
                     .get()
-                    .expect("deferred terrain's frames create it")
+                    .expect("deferred_terrain_creates")
                     .view
             }
             Resource::DebugIds | Resource::DebugCount | Resource::DebugTerrain => {
@@ -90,7 +90,7 @@ impl Renderer {
                     .features
                     .debug_view
                     .get()
-                    .expect("debug views' frames create it")
+                    .expect("debug_view_creates")
                     .views();
                 if resource == Resource::DebugIds {
                     ids
@@ -127,7 +127,7 @@ impl Renderer {
             | Resource::Bounce
             | Resource::Leaves
             | Resource::Cover => {
-                unreachable!("{resource:?} is no attachment of the renderer's passes")
+                unreachable!("attachment_unknown {resource:?}")
             }
         }
     }
@@ -200,7 +200,7 @@ impl Renderer {
             .features
             .shadow_frame
             .as_ref()
-            .expect("planned with shadows");
+            .expect("planned_with_shadows");
         self.shadows
             .encode_selection(&self.device, encoder, shadow_frame, &self.profiler);
     }
@@ -225,7 +225,7 @@ impl Renderer {
             .features
             .shadow_frame
             .as_ref()
-            .expect("planned with shadows");
+            .expect("planned_with_shadows");
         let meshes = &self.meshes;
         let arena = &self.mesh_arena;
         let (terrain, terrain_frame) = (&self.terrain, state.terrain);

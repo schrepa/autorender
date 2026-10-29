@@ -125,15 +125,15 @@ impl CameraBindings {
     }
 
     pub(super) fn group(&self) -> &wgpu::BindGroup {
-        self.group.get().expect("built with the bindings")
+        self.group.get().expect("built_with_bindings")
     }
 
     pub(super) fn terrain_group(&self) -> &wgpu::BindGroup {
-        self.terrain_group.get().expect("built with the bindings")
+        self.terrain_group.get().expect("built_with_bindings")
     }
 
     pub(super) fn water_group(&self) -> &wgpu::BindGroup {
-        self.water_group.get().expect("built with the bindings")
+        self.water_group.get().expect("built_with_bindings")
     }
 
     pub(super) fn prepare_probe_groups(
@@ -169,13 +169,13 @@ impl CameraBindings {
     pub(super) fn probe_group(&self, face: usize) -> &wgpu::BindGroup {
         self.probe_groups[face]
             .get()
-            .expect("prepared before captures")
+            .expect("prepared_before_captures")
     }
 
     pub(super) fn terrain_probe_group(&self, face: usize) -> &wgpu::BindGroup {
         self.terrain_probe_groups[face]
             .get()
-            .expect("prepared before captures")
+            .expect("prepared_before_captures")
     }
 }
 
@@ -222,11 +222,7 @@ fn water_entries<'a>(
     let mut entries = camera_entries(uniforms, sources)
         .into_iter()
         .chain([("refraction_sampler", refraction_sampler)]);
-    std::array::from_fn(|_| {
-        entries
-            .next()
-            .expect("the camera's entries and the water's sampler fill the group")
-    })
+    std::array::from_fn(|_| entries.next().expect("camera_group_filled"))
 }
 
 fn camera_entries<'a>(

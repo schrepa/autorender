@@ -3,6 +3,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use engine_worker::{JobCache, PACK_HEADER, PackEntry, PackIndex, pack_directory, unpack};
+use serde_json::json;
 
 const INDEX: &str = "index.json";
 pub const DEFAULT_BUDGET: u64 = engine::host::policy::JOB_CACHE_MIB * 1024 * 1024;
@@ -54,7 +55,8 @@ impl JobStore {
         match opened {
             Ok(store) => Some(store),
             Err(error) => {
-                eprintln!("The record store is off: {error}");
+                let record = json!({"event": "record_store_off", "error": error.to_string()});
+                eprintln!("{record}");
                 None
             }
         }
@@ -138,14 +140,15 @@ impl JobStore {
             })();
             if let Err(error) = written {
                 self.index.failed();
-                eprintln!("The record store stopped keeping records: {error}");
+                let record = json!({"event": "record_store_stopped", "error": error.to_string()});
+                eprintln!("{record}");
             }
         }
         self.removals();
     }
 
     pub fn mismatch(&mut self, key: &str) {
-        eprintln!("A kept record differs from a fresh run: {key}");
+        eprintln!("{}", json!({"event": "record_mismatch", "key": key}));
         self.index.mismatch(key);
         self.removals();
     }
@@ -158,7 +161,8 @@ impl JobStore {
         if let Some(index) = self.index.index()
             && let Err(error) = std::fs::write(self.folder.join(INDEX), index)
         {
-            eprintln!("The record store's index was not written: {error}");
+            let record = json!({"event": "record_index_unwritten", "error": error.to_string()});
+            eprintln!("{record}");
         }
     }
 
@@ -183,7 +187,12 @@ pub fn read(sources: &[Source]) -> Option<(usize, Vec<u8>)> {
                 .map_err(|error| error.to_string())
                 .and_then(|stored| unpack(entry, &stored));
                 if let Err(error) = &read {
-                    eprintln!("A record of {} does not read: {error}", path.display());
+                    let record = json!({
+                        "event": "record_unreadable",
+                        "pack": path.display().to_string(),
+                        "error": error,
+                    });
+                    eprintln!("{record}");
                 }
                 read.ok()
             }
@@ -211,7 +220,12 @@ fn open_packs(folder: &Path) -> Vec<Pack> {
         .filter_map(|path| match open_pack(&path) {
             Ok(pack) => Some(pack),
             Err(error) => {
-                eprintln!("The pack {} is left out: {error}", path.display());
+                let record = json!({
+                    "event": "pack_left_out",
+                    "pack": path.display().to_string(),
+                    "error": error,
+                });
+                eprintln!("{record}");
                 None
             }
         })

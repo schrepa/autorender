@@ -52,7 +52,7 @@ impl ExplainRecord {
     pub fn with(mut self, fact: &str, value: impl Serialize) -> Self {
         self.facts.insert(
             fact.to_owned(),
-            serde_json::to_value(value).expect("facts serialize"),
+            serde_json::to_value(value).expect("facts_serialize"),
         );
         self
     }

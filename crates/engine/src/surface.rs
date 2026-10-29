@@ -187,14 +187,10 @@ pub fn typescript(methods: &[SurfaceMethod]) -> String {
          import type { Distribution } from \"./host\";\n\
          import type { Reply, Step } from \"./reply\";\n\
          import type { FrameStats } from \"./stats\";\n\n\
-         /** JSON text the engine wrote of a `T`, which `parseJson` reads. */\n\
          export type Json<T> = string & { readonly json?: T };\n\n\
-         /** The value the engine wrote as `json`. */\n\
          export function parseJson<T>(json: Json<T>): T {\n  \
          return JSON.parse(json) as T;\n\
          }\n\n\
-         /** The methods every game the engine exports has; those of development\n \
-         * and profiling builds are optional. */\n\
          export interface Runtime {\n",
     );
     for method in methods {
@@ -240,7 +236,7 @@ pub fn typescript(methods: &[SurfaceMethod]) -> String {
             method.name,
             arguments.join(", ")
         )
-        .expect("strings write");
+        .expect("string_writes");
     }
     output.push_str("  free(): void;\n}\n");
     output
@@ -251,7 +247,7 @@ fn json_type(json: &str) -> String {
     let payload = json
         .strip_prefix("Json<")
         .and_then(|json| json.strip_suffix('>'))
-        .unwrap_or_else(|| panic!("a method's JSON type is Json<T>, not {json}"));
+        .unwrap_or_else(|| panic!("json_method_type {json}"));
     match payload
         .strip_prefix("Option<")
         .and_then(|payload| payload.strip_suffix('>'))
@@ -274,7 +270,7 @@ fn typescript_type(ty: &str) -> String {
         "Vec<u32>" => "Uint32Array",
         "Array" => "JobOrder[]",
         "SceneFileSet" => "unknown",
-        _ => panic!("the game surface has no TypeScript type for {ty}"),
+        _ => panic!("surface_typescript_type {ty}"),
     }
     .to_owned()
 }

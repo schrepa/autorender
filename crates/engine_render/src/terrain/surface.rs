@@ -18,10 +18,7 @@ const ARGS_BYTES: u64 = SUBDIVISION_ARGS as u64 * 4;
 const DRAW_OFFSET: u64 = SUBDIVISION_DRAW as u64 * 4;
 const SHALLOWEST: u32 = SUBDIVISION_COUNTED + 2;
 const INDEX_FORMAT: wgpu::IndexFormat = wgpu::IndexFormat::Uint16;
-const _: () = assert!(
-    SURFACE_MESHLET_VERTICES <= 1 << 16,
-    "16-bit indices name every point of the meshlet's lattice"
-);
+const _: () = assert!(SURFACE_MESHLET_VERTICES <= 1 << 16, "meshlet_fits_u16");
 
 #[derive(Clone)]
 pub(crate) struct SurfaceDraw {

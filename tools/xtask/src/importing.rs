@@ -50,10 +50,10 @@ fn command(arguments: &[String]) -> Result<Value, ImportError> {
             imported,
         )
     } else {
-        let target = options.into.as_ref().expect("validated target");
+        let target = options.into.as_ref().expect("target_validated");
         let original = authoring::read_scene_source(target).map_err(dev_error)?;
         let current = SceneDocument::from_json(&original)?;
-        let revision = options.revision.expect("validated revision");
+        let revision = options.revision.expect("revision_validated");
         if current.revision != revision {
             return Err(ImportError::new(
                 "revision_conflict",

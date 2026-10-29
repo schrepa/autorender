@@ -714,10 +714,7 @@ impl Observer<'_> {
                 self.active,
             );
         } else if local_changed {
-            debug_assert!(
-                history.identity == identity,
-                "unchanged source keys imply an unchanged record identity"
-            );
+            debug_assert!(history.identity == identity, "record_identity_unchanged");
             observe_motion(
                 history,
                 interval,

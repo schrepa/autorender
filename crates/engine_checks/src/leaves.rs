@@ -31,13 +31,14 @@ pub fn check(repository: &Repository) -> Result<(), String> {
         named(path, &text, &needles, &packages, &mut problems);
     }
     if problems.is_empty() {
-        println!(
-            "{} files under {} reach no package of {} ({}).",
-            files.len(),
-            reaching.join(", "),
-            leaves.iter().cloned().collect::<Vec<_>>().join(", "),
-            packages.join(", ")
-        );
+        let record = serde_json::json!({
+            "event": "leaves_unreached",
+            "files": files.len(),
+            "reaching": reaching,
+            "leaves": leaves,
+            "packages": packages,
+        });
+        println!("{record}");
         return Ok(());
     }
     Err(problems.join("\n"))

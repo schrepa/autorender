@@ -29,7 +29,7 @@ for (const folder of folders) {
   }
 }
 if (unknown.length) {
-  console.error(`Page parameters read but not declared with what they do:\n${unknown.join("\n")}`);
+  console.error(JSON.stringify({ event: "parameters_undeclared", parameters: unknown }));
   process.exit(1);
 }
-console.log(`Every page parameter read is declared (${host.size} host, ${own} of the games).`);
+console.log(JSON.stringify({ event: "parameters_declared", host: host.size, games: own }));

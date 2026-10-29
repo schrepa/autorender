@@ -115,7 +115,7 @@ class FrameHud {
 
 export interface GameOptions<T extends Runtime> {
   create(canvas: HTMLCanvasElement, signal: AbortSignal): Promise<T>;
-  controls?: Record<string, { description: string; run(game: T, args: Record<string, unknown>): unknown }>;
+  controls?: Record<string, { values: string; run(game: T, args: Record<string, unknown>): unknown }>;
   parameters?: Record<string, string>;
   poll?(game: T): void;
   reload?(game: T, signal: AbortSignal): Promise<void>;
@@ -411,7 +411,7 @@ async function start() {
         ?.getConfiguration()?.device.queue.onSubmittedWorkDone(),
       fail, stopped: () => stopped,
       controls: Object.fromEntries(Object.entries(options.controls ?? {}).map(([name, control]) => [name, {
-        description: control.description, run: (args: Record<string, unknown>) => control.run(created, args),
+        values: control.values, run: (args: Record<string, unknown>) => control.run(created, args),
       }])),
       parameters: { ...HOST_PARAMETERS, ...options.parameters },
     });

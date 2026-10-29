@@ -215,8 +215,7 @@ impl<F: RenderFeature> Lazy<F> {
     }
 
     fn ready(&self, _ready: &Ready<F::Frame>) -> &F {
-        self.get()
-            .expect("only Lazy::prepare makes a Ready, once it created its feature")
+        self.get().expect("ready_feature_created")
     }
 }
 
@@ -403,7 +402,7 @@ fn color_operations(ops: Ops) -> wgpu::Operations<wgpu::Color> {
             Load::Clear(Clear::Color([r, g, b, a])) => {
                 wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a })
             }
-            Load::Clear(Clear::Depth(_)) => unreachable!("color attachments clear to colors"),
+            Load::Clear(Clear::Depth(_)) => unreachable!("color_clears_color"),
             Load::Load => wgpu::LoadOp::Load,
         },
         store: store_operation(ops),
@@ -414,7 +413,7 @@ fn depth_operations(ops: Ops) -> wgpu::Operations<f32> {
     wgpu::Operations {
         load: match ops.load {
             Load::Clear(Clear::Depth(depth)) => wgpu::LoadOp::Clear(depth),
-            Load::Clear(Clear::Color(_)) => unreachable!("depth attachments clear to depths"),
+            Load::Clear(Clear::Color(_)) => unreachable!("depth_clears_depth"),
             Load::Load => wgpu::LoadOp::Load,
         },
         store: store_operation(ops),
@@ -472,7 +471,7 @@ macro_rules! render_features {
                         let ready = frames
                             .$field
                             .as_ref()
-                            .expect("features declare their passes only with what they prepared");
+                            .expect("pass_inputs_prepared");
                         #[cfg(feature = "dev")]
                         self.$field.encode_fault(encoder);
                         self.$field.ready(ready).encode(ready.frame(), node, encode, encoder)

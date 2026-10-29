@@ -7,7 +7,7 @@ impl DevTools {
                 .with_default(transform_value(&Transform::default())),
             transform_value,
         )
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.insert(Inspector {
             brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "GlobalTransform"),
@@ -17,17 +17,17 @@ impl DevTools {
             }),
             read: Box::new(global_transform_view),
         })
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.register_component::<InterpolateTransform>(
             InspectorDescriptor::generated(schemas, "InterpolateTransform"),
             |_| json!(InterpolateTransformView { enabled: true }),
         )
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.register_resource::<PresentationState>(
             InspectorDescriptor::generated(schemas, "PresentationState"),
             presentation_value,
         )
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.insert(Inspector {
             brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "Hierarchy"),
@@ -37,7 +37,7 @@ impl DevTools {
             }),
             read: Box::new(hierarchy_view),
         })
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
     }
 }
 

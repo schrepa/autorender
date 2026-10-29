@@ -451,7 +451,7 @@ impl PostPass {
         depth: &Versioned<wgpu::TextureView>,
         sky: [(&'static str, Bound<'_>); 3],
     ) {
-        let targets = self.targets.get().expect("sized in begin");
+        let targets = self.targets.get().expect("sized_in_begin");
         let post = || Bound::fixed(self.uniform.as_entire_binding());
         let target = |view| Bound::of(targets, pipelines::view(view));
         let shared = (&POST, &self.layout);
@@ -491,7 +491,7 @@ impl PostPass {
         display: bool,
     ) -> (Option<HazeHistory>, f32) {
         if frame.haze {
-            let targets = self.targets.get().expect("sized in begin");
+            let targets = self.targets.get().expect("sized_in_begin");
             let post = || Bound::fixed(self.uniform.as_entire_binding());
             let target = |view| Bound::of(targets, pipelines::view(view));
             self.haze_group.bind(
@@ -535,21 +535,21 @@ impl PostPass {
     }
 
     pub(crate) fn targets(&self) -> (&wgpu::TextureView, &wgpu::TextureView, &wgpu::TextureView) {
-        let targets = self.targets.get().expect("sized in begin");
+        let targets = self.targets.get().expect("sized_in_begin");
         (&targets.scene, &targets.glow, &targets.surface)
     }
 
     pub(crate) fn scene_texture(&self) -> &wgpu::Texture {
-        &self.targets.get().expect("sized in begin").textures[0]
+        &self.targets.get().expect("sized_in_begin").textures[0]
     }
 
     pub(crate) fn scene(&self) -> Bound<'_> {
-        let targets = self.targets.get().expect("sized in begin");
+        let targets = self.targets.get().expect("sized_in_begin");
         Bound::of(targets, pipelines::view(&targets.scene))
     }
 
     pub(crate) fn resolve_inputs(&self) -> ([Bound<'_>; 5], Bound<'_>) {
-        let targets = self.targets.get().expect("sized in begin");
+        let targets = self.targets.get().expect("sized_in_begin");
         let target = |view| Bound::of(targets, pipelines::view(view));
         (
             [
@@ -570,7 +570,7 @@ impl PostPass {
         (camera, terrain_camera): (&wgpu::BindGroup, &wgpu::BindGroup),
         profiler: &GpuProfiler,
     ) {
-        let targets = self.targets.get().expect("sized in begin");
+        let targets = self.targets.get().expect("sized_in_begin");
         let drawn = self.region.render.pixels();
         if (frame.occlusion || frame.sky)
             && let Some(group) = self.occlusion_group.get()
@@ -655,7 +655,7 @@ impl PostPass {
         else {
             return;
         };
-        let targets = self.targets.get().expect("sized in begin");
+        let targets = self.targets.get().expect("sized_in_begin");
         let drawn = self.region.render.pixels();
         {
             let mut pass = fullscreen_pass(
@@ -703,7 +703,7 @@ impl PostPass {
         scene_levels: bool,
         profiler: &GpuProfiler,
     ) -> usize {
-        let targets = self.targets.get().expect("sized in begin");
+        let targets = self.targets.get().expect("sized_in_begin");
         let levels = targets.bloom.len();
         let span = profiler.span("bloom");
         let timed = |first: bool, last: bool| {
@@ -791,7 +791,7 @@ impl PostPass {
     }
 
     fn draw_composite(&self, mut pass: wgpu::RenderPass<'_>) {
-        let targets = self.targets.get().expect("sized in begin");
+        let targets = self.targets.get().expect("sized_in_begin");
         pass.set_pipeline(&self.composite);
         pass.set_bind_group(0, &targets.composite, &[]);
         pass.draw(0..3, 0..1);

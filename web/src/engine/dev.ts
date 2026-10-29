@@ -27,7 +27,7 @@ interface Host {
 }
 
 export interface PageControl {
-  description: string;
+  values: string;
   run(args: Record<string, unknown>): unknown;
 }
 
@@ -43,7 +43,7 @@ declare global {
   }
 }
 
-const TIMING = "CPU timings exclude JSON/stats collection; frame intervals include host work and browser pacing; GPU execution time is not measured";
+const TIMING = "raf_paced";
 
 export function connectDevelopment(host: Host): () => void {
   let disposed = false;
@@ -133,7 +133,7 @@ export function connectDevelopment(host: Host): () => void {
     version: protocol.version,
     instance: crypto.randomUUID(),
     build: new URLSearchParams(globalThis.location?.search ?? "").get("engine_build"),
-    controls: Object.fromEntries(Object.entries(host.controls ?? {}).map(([name, control]) => [name, control.description])),
+    controls: Object.fromEntries(Object.entries(host.controls ?? {}).map(([name, control]) => [name, control.values])),
     parameters: host.parameters ?? {},
     waitingOnGpu: () => gpuWaits > 0,
     saved(path: string): string | undefined {

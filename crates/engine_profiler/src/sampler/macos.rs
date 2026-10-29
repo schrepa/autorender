@@ -3,7 +3,7 @@
 use mach2::kern_return::KERN_SUCCESS;
 use mach2::thread_act::{thread_get_state, thread_resume, thread_suspend};
 
-pub(super) const METHOD: Option<&str> = Some("suspend, read registers, follow frame pointers");
+pub(super) const METHOD: Option<&str> = Some("suspend_frame_pointers");
 
 #[derive(Clone, Copy)]
 pub(super) struct Id(mach2::port::mach_port_t);

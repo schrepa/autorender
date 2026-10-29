@@ -34,6 +34,20 @@ impl Default for Options {
 }
 
 impl Options {
+    pub fn value(&self, name: &str) -> Option<String> {
+        let switch = |on: bool| String::from(if on { "on" } else { "off" });
+        match name {
+            "look" => Some(self.look.clone()),
+            "effects" => Some(self.effects.clone()),
+            "view" => self.view.clone(),
+            "lod" => Some(switch(self.lod)),
+            "impostors" => Some(switch(self.impostors)),
+            "rocks" => Some(switch(self.rocks)),
+            "bodies" => Some(self.bodies.to_string()),
+            _ => None,
+        }
+    }
+
     pub fn set(&mut self, name: &str, value: &str) -> engine::Result<()> {
         match name {
             "look" => self.look = value.to_owned(),
@@ -92,6 +106,5 @@ pub fn controls() -> Vec<(&'static str, String)> {
     parameters()
         .into_iter()
         .filter(|(name, _)| CONTROLS.contains(name))
-        .map(|(name, values)| (name, format!("{{name}}: {values}")))
         .collect()
 }

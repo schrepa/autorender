@@ -2,22 +2,57 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
+use engine_core::command_line::{self, CommandOption};
 use engine_terrain::{GivenRiver, RiversLayer};
 use serde_json::{Value, json};
 use tiff::decoder::{Decoder, DecodingResult, Limits};
 use tiff::tags::Tag;
 
 fn main() {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(help) = command_line::help(&arguments, &command_options()) {
+        println!("{help}");
+        return;
+    }
     if let Err(error) = run() {
         eprintln!("{}", json!({"event": "import_failed", "error": error}));
         std::process::exit(1);
     }
 }
 
-const USAGE: &str = "usage: terrain_import --out DIR --id NAME [--center A,B] [--size METERS] \
-     [--spacing METERS] [--extent W,H] [--range LOW,HIGH] [--detail METERS] [--materials DIR] \
-     [--attribution TEXT] [--sea LEVEL] [--rivers GEOJSON] [--river-precision METERS] \
-     [--river-attribution TEXT] INPUT...";
+const DEFAULT_SIZE_M: f64 = 16_384.0;
+
+const DEFAULT_DETAIL_M: f64 = 8.0;
+
+fn command_options() -> Vec<CommandOption> {
+    vec![
+        CommandOption::taking("--out", "DIR").required(),
+        CommandOption::taking("--id", "NAME").required(),
+        CommandOption::taking("--center", "A,B"),
+        CommandOption::taking("--size", "256-262144")
+            .defaults_to(DEFAULT_SIZE_M)
+            .in_unit("m"),
+        CommandOption::taking("--spacing", "N").in_unit("m"),
+        CommandOption::taking("--extent", "W,H").in_unit("m"),
+        CommandOption::taking("--range", "LOW,HIGH").in_unit("m"),
+        CommandOption::taking("--detail", "0-100")
+            .defaults_to(DEFAULT_DETAIL_M)
+            .in_unit("m"),
+        CommandOption::taking("--materials", "DIR"),
+        CommandOption::taking("--attribution", "TEXT"),
+        CommandOption::taking("--sea", "N").in_unit("m"),
+        CommandOption::taking("--rivers", "FILE"),
+        CommandOption::taking(
+            "--river-precision",
+            format!("0-{}", engine_terrain::MAX_PRECISION),
+        )
+        .in_unit("m"),
+        CommandOption::taking("--river-attribution", "TEXT"),
+        CommandOption::taking("INPUT", "PATH...").required(),
+        CommandOption::flag("--help"),
+        CommandOption::flag("--json"),
+    ]
+}
 
 struct Options {
     inputs: Vec<PathBuf>,
@@ -56,11 +91,11 @@ fn options() -> Result<Options, String> {
         out: PathBuf::new(),
         id: String::new(),
         center: None,
-        size: 16_384.0,
+        size: DEFAULT_SIZE_M,
         spacing: None,
         extent: None,
         range: None,
-        detail: 8.0,
+        detail: DEFAULT_DETAIL_M,
         materials: None,
         attribution: None,
         sea: None,
@@ -127,13 +162,13 @@ fn options() -> Result<Options, String> {
                 options.river_attribution = Some(value("--river-attribution")?);
             }
             flag if flag.starts_with("--") => {
-                return Err(format!("unknown option {flag}\n{USAGE}"));
+                return Err(format!("unknown option {flag}"));
             }
             input => options.inputs.push(PathBuf::from(input)),
         }
     }
     if options.inputs.is_empty() || options.id.is_empty() || options.out.as_os_str().is_empty() {
-        return Err(USAGE.into());
+        return Err("--out, --id and INPUT are required".into());
     }
     let id_ok = options.id.len() <= 64
         && options
@@ -165,7 +200,8 @@ struct Raster {
     origin: [f64; 2],
     scale: [f64; 2],
     geographic: bool,
-    description: String,
+    name: String,
+    crs: String,
 }
 
 impl Raster {
@@ -303,7 +339,8 @@ fn read_geotiff(path: &Path) -> Result<Raster, String> {
         origin,
         scale: [scale[0], scale[1]],
         geographic,
-        description: format!("{name} ({width}x{height}, {crs})"),
+        name,
+        crs,
     })
 }
 
@@ -366,10 +403,8 @@ fn read_heightmap(path: &Path, extent: [f64; 2], range: [f64; 2]) -> Result<Rast
             extent[1] / (height - 1) as f64,
         ],
         geographic: false,
-        description: format!(
-            "{name} ({width}x{height}, {} by {} m)",
-            extent[0], extent[1]
-        ),
+        name,
+        crs: "local".to_owned(),
     })
 }
 
@@ -613,7 +648,7 @@ fn run() -> Result<(), String> {
     if rasters.len() > 1
         && !rasters
             .iter()
-            .all(|raster| raster.description.contains("EPSG"))
+            .all(|raster| raster.crs.starts_with("EPSG:"))
     {
         return Err("only georeferenced inputs mosaic; import heightmaps one at a time".into());
     }
@@ -729,22 +764,11 @@ fn run() -> Result<(), String> {
     let height_file = folder.join("height.r16");
     std::fs::write(&height_file, &bytes)
         .map_err(|error| format!("{}: {error}", height_file.display()))?;
-    let source = format!(
-        "{}; {}",
-        rasters
-            .iter()
-            .map(|raster| raster.description.as_str())
-            .collect::<Vec<_>>()
-            .join(", "),
-        if geographic {
-            format!(
-                "transverse Mercator centered at {:.5}, {:.5}",
-                center[0], center[1]
-            )
-        } else {
-            format!("centered at {:.1}, {:.1}", center[0], center[1])
-        }
-    );
+    let source = rasters
+        .iter()
+        .map(|raster| raster.name.as_str())
+        .collect::<Vec<_>>()
+        .join(",");
     if geographic && options.attribution.is_none() {
         eprintln!(
             "{}",
@@ -797,18 +821,9 @@ fn run() -> Result<(), String> {
                     });
                     eprintln!("{record}");
                 }
-                let described = format!(
-                    "{} ({} lines); {}",
-                    path.display(),
-                    lines.len(),
-                    if geographic {
-                        "longitude and latitude, as the heightmap's projection places them"
-                    } else {
-                        "the inputs' own x and y"
-                    }
-                );
+                let named = path.display().to_string();
                 let layer = RiversLayer {
-                    source: Some(described.chars().take(engine_terrain::MAX_CREDIT).collect()),
+                    source: Some(named.chars().take(engine_terrain::MAX_CREDIT).collect()),
                     lines,
                     precision: options
                         .river_precision
@@ -859,7 +874,13 @@ fn run() -> Result<(), String> {
         .map(|layer| layer.lines.iter().map(|river| river.points.len()).sum());
     let report = json!({
         "id": options.id,
-        "inputs": rasters.iter().map(|raster| raster.description.clone()).collect::<Vec<_>>(),
+        "inputs": rasters.iter().map(|raster| json!({
+            "file": raster.name,
+            "width": raster.width,
+            "height": raster.height,
+            "crs": raster.crs,
+        })).collect::<Vec<_>>(),
+        "projection": if geographic { "transverse_mercator" } else { "none" },
         "center": center,
         "size": size,
         "samples": samples,

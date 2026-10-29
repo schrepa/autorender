@@ -19,6 +19,23 @@ pub const MEASURED: &[&str] = &[
     "mem:peak_requested_bytes",
 ];
 
+pub const STATISTICS: &[&str] = &[
+    "any_frame",
+    "capture_start",
+    "end_of_run",
+    "last_frame",
+    "last_frame_late",
+    "last_frame_or_absent",
+    "launch_to_prepared",
+    "mean_pipelined",
+    "mean_serialized",
+    "mean_wall_clock",
+    "p95_serialized",
+    "pass_median",
+    "peak_before_capture",
+    "span_median",
+];
+
 pub const NOT_WORK: &[&str] = &[
     "frame",
     "tick",
@@ -73,7 +90,7 @@ pub fn covers(pattern: &str, name: &str) -> bool {
 
 fn stats_leaves() -> Vec<String> {
     let schema: Value =
-        serde_json::from_str(engine_dev::FRAME_STATS_SCHEMA).expect("generated schema is JSON");
+        serde_json::from_str(engine_dev::FRAME_STATS_SCHEMA).expect("generated_schema_json");
     let definitions = schema["$defs"].clone();
     let mut leaves = Vec::new();
     fn walk(node: &Value, definitions: &Value, path: &str, leaves: &mut Vec<String>) {
@@ -136,10 +153,14 @@ pub fn check(repository: &Repository) -> Result<(), String> {
                 "{at}: work counters, and only they, have a rule: equal, not-above, false or shown"
             ));
         }
-        for field in ["statistic", "unit"] {
-            if entry[field].as_str().is_none_or(str::is_empty) {
-                problems.push(format!("{at}: {field} says what it is"));
-            }
+        if !STATISTICS.contains(&entry["statistic"].as_str().unwrap_or_default()) {
+            problems.push(format!(
+                "{at}: statistic is one of {}",
+                STATISTICS.join(", ")
+            ));
+        }
+        if entry["unit"].as_str().is_none_or(str::is_empty) {
+            problems.push(format!("{at}: unit is named"));
         }
         let runtimes = entry["runtimes"].as_array();
         if runtimes.is_none_or(|runtimes| {
@@ -194,10 +215,8 @@ pub fn check(repository: &Repository) -> Result<(), String> {
     problems.extend(option_file_problems(repository)?);
     problems.extend(shader_path_problems(root)?);
     if problems.is_empty() {
-        println!(
-            "bench/ matches the code: {} catalog entries, the option files and shader paths.",
-            catalog.len()
-        );
+        let record = serde_json::json!({"event": "bench_matches", "catalog": catalog.len()});
+        println!("{record}");
         Ok(())
     } else {
         Err(format!(

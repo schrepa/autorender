@@ -134,7 +134,7 @@ impl Renderer {
                 };
                 pass.set_bind_group(2, poses_group, &[]);
                 if lights.is_some() {
-                    let lights = self.features.lights.get().expect("checked above");
+                    let lights = self.features.lights.get().expect("checked_present");
                     pass.set_bind_group(3, lights.probe_fragment_group(face), &[]);
                 }
                 let mut binds = BatchBinds::default();

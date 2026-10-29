@@ -31,7 +31,7 @@ type SourceStamps = SystemState<(
 fn changed_in_window<T: Component>(components: &Query<'_, '_, Ref<'static, T>>) -> bool {
     components
         .contiguous_iter()
-        .expect("render sources use dense table storage")
+        .expect("render_sources_dense_storage")
         .any(|tables| {
             let (_, ticks) = ContiguousRef::split(tables);
             ChangeWindow::new(ticks.last_run(), ticks.this_run()).any(ticks.changed())
@@ -384,14 +384,14 @@ impl Sources {
                 .material_indices
                 .entry(material_handle)
                 .or_insert_with(|| {
-                    let binding = material.binding().expect("materials with maps bind");
+                    let binding = material.binding().expect("mapped_material_binds");
                     *self.binding_indices.entry(binding).or_insert_with(|| {
                         for texture in material.textures() {
                             self.texture_indices.entry(texture).or_insert_with(|| {
                                 self.textures.push(RenderTexture {
                                     handle: texture,
                                     texture: Arc::clone(
-                                        assets.texture(texture).expect("resolved above"),
+                                        assets.texture(texture).expect("texture_resolved"),
                                     ),
                                 });
                                 self.textures.len() - 1
@@ -488,13 +488,13 @@ impl Sources {
         {
             self.binding_indices.remove(&binding);
         }
-        let binding = material.binding().expect("materials with maps bind");
+        let binding = material.binding().expect("mapped_material_binds");
         self.binding_indices.entry(binding).or_insert(index);
         for texture in material.textures() {
             self.texture_indices.entry(texture).or_insert_with(|| {
                 self.textures.push(RenderTexture {
                     handle: texture,
-                    texture: Arc::clone(assets.texture(texture).expect("checked above")),
+                    texture: Arc::clone(assets.texture(texture).expect("checked_present")),
                 });
                 self.textures.len() - 1
             });
@@ -618,7 +618,7 @@ impl RetainedRender {
     pub(crate) fn new(cube_mesh: MeshHandle, culling: bool, budget: usize) -> Self {
         let identity = NEXT_STREAM
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-            .expect("render stream identities exhausted");
+            .expect("render_stream_identities_left");
         Self {
             identity,
             sequence: 0,
@@ -683,7 +683,7 @@ impl RetainedRender {
         if let Some(Some((cached_entity, index))) = self.query_slots.get(row)
             && *cached_entity == entity
         {
-            debug_assert_eq!(self.owners[*index], Some(entity), "an entity owns its slot");
+            debug_assert_eq!(self.owners[*index], Some(entity), "entity_owns_slot");
             return Some(*index);
         }
         let index = if let Some(&index) = self.snapshot.instance_slots.entities.get(&entity) {
@@ -816,10 +816,7 @@ impl RetainedRender {
         gpu: bool,
     ) {
         let _profile = engine_profile::span("cpu", "extraction_retained_updates_culling");
-        self.sequence = self
-            .sequence
-            .checked_add(1)
-            .expect("render sequence exhausted");
+        self.sequence = self.sequence.checked_add(1).expect("render_sequence_left");
         if self.gpu && !gpu {
             for frame in &mut self.frames {
                 frame.pose_revision = 0;
@@ -1084,7 +1081,7 @@ impl RetainedRender {
         debug_assert_eq!(
             pose.map(|pose| pose.matrix().is_some()),
             globals.get(entity).map(|global| global.matrix().is_some()),
-            "presented validity must match the authoritative boundary"
+            "presented_validity_matches"
         );
         let Some((model, pose_revision)) =
             pose.and_then(|pose| Some((pose.matrix()?, pose.revision())))

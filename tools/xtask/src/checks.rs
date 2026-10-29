@@ -131,7 +131,7 @@ pub fn run(
     let (mut entries, mut incomplete) = (Vec::new(), false);
     for (sha, checks) in by_commit {
         let source = checkout(root, sha, None)?;
-        eprintln!("Starting the development server of {sha}.");
+        eprintln!("{}", json!({"event": "server_starting", "commit": sha}));
         let log = folder.join(format!("server-{}.log", &sha[..12]));
         let server = start_server(&source, sha, &log);
         for check in checks {
@@ -167,13 +167,16 @@ pub fn run(
                             .map_err(|error| error.to_string())?;
                         (-1, Vec::new())
                     }
-                    (Ok(_), None) => unreachable!("a served commit has its scripts"),
+                    (Ok(_), None) => unreachable!("served_commit_has_scripts"),
                 };
-                eprintln!(
-                    "Check {name} on {}: attempt {} exited {exit_code}.",
-                    &sha[..12],
-                    attempts.len() + 1
-                );
+                let record = json!({
+                    "event": "check_attempted",
+                    "check": name,
+                    "commit": &sha[..12],
+                    "attempt": attempts.len() + 1,
+                    "exit_code": exit_code,
+                });
+                eprintln!("{record}");
                 attempts.push(json!({
                     "started_at": started_at,
                     "duration_ms": started.elapsed().as_secs_f64() * 1000.0,
@@ -221,7 +224,7 @@ fn attempt(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|error| format!("cannot run node: {error}"))?;
-    let mut errors = child.stderr.take().expect("piped");
+    let mut errors = child.stderr.take().expect("stdio_piped");
     let stderr = std::thread::spawn(move || {
         let mut text = String::new();
         let _ = errors.read_to_string(&mut text);
@@ -231,7 +234,7 @@ fn attempt(
     let _ = child
         .stdout
         .take()
-        .expect("piped")
+        .expect("stdio_piped")
         .read_to_string(&mut stdout);
     let status = child.wait().map_err(|error| error.to_string())?;
     let stderr = stderr.join().unwrap_or_default();
@@ -336,34 +339,37 @@ pub fn check_task(root: &Path, arguments: &[String]) -> Result<(), String> {
     });
     fs::write(
         &out,
-        serde_json::to_string_pretty(&report).expect("reports serialize") + "\n",
+        serde_json::to_string_pretty(&report).expect("report_serializes") + "\n",
     )
     .map_err(|error| format!("cannot write {}: {error}", out.display()))?;
     for check in report["checks"].as_array().into_iter().flatten() {
-        let codes: Vec<String> = check["attempts"]
+        let codes: Vec<&Value> = check["attempts"]
             .as_array()
             .into_iter()
             .flatten()
-            .map(|attempt| attempt["exit_code"].to_string())
+            .map(|attempt| &attempt["exit_code"])
             .collect();
-        println!(
-            "{} ({}): exited {}",
-            check["name"].as_str().unwrap_or_default(),
-            check["expect"].as_str().unwrap_or_default(),
-            codes.join(", then ")
-        );
+        let record = json!({
+            "event": "check_result",
+            "check": check["name"],
+            "expect": check["expect"],
+            "exit_codes": codes,
+        });
+        println!("{record}");
         for attempt in check["attempts"].as_array().into_iter().flatten() {
             for measured in attempt["measurements"].as_array().into_iter().flatten() {
-                println!(
-                    "  {}: {} {}",
-                    measured["name"].as_str().unwrap_or_default(),
-                    measured["value"],
-                    measured["unit"].as_str().unwrap_or_default()
-                );
+                let record = json!({
+                    "event": "check_measured",
+                    "check": check["name"],
+                    "name": measured["name"],
+                    "value": measured["value"],
+                    "unit": measured["unit"],
+                });
+                println!("{record}");
             }
         }
     }
-    println!("Wrote {}.", out.display());
+    println!("{}", json!({"event": "written", "file": out.display().to_string()}));
     match found.remove("formats") {
         Some(formats) => crate::measure::check_format(&report, &formats, "check"),
         None => Ok(()),

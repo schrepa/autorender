@@ -33,34 +33,44 @@ pub fn run<C: ?Sized + 'static>(context: &C, stages: &[Stage<C>]) -> Result<(), 
             ));
             continue;
         }
-        println!("\n== {} ==", stage.name);
+        println!(
+            "{}",
+            serde_json::json!({"event": "stage_started", "stage": stage.name})
+        );
         let start = Instant::now();
         let outcome = match (stage.run)(context) {
             Ok(()) => Outcome::Passed,
             Err(error) => {
-                eprintln!("{} failed: {error}", stage.name);
+                let record = serde_json::json!({
+                    "event": "stage_failed",
+                    "stage": stage.name,
+                    "error": error,
+                });
+                eprintln!("{record}");
                 Outcome::Failed(error)
             }
         };
         results.push((stage.name, outcome, start.elapsed()));
     }
-    let width = results
-        .iter()
-        .map(|(name, _, _)| name.len())
-        .max()
-        .unwrap_or(0)
-        .max("stage".len());
-    println!("\n{:width$}  result   seconds", "stage");
     for (name, outcome, time) in &results {
         let result = match outcome {
             Outcome::Passed => "ok",
-            Outcome::Failed(_) => "FAILED",
+            Outcome::Failed(_) => "failed",
             Outcome::Skipped(_) => "skipped",
         };
-        println!("{name:width$}  {result:7}  {:7.1}", time.as_secs_f64());
+        let record = serde_json::json!({
+            "event": "stage_result",
+            "stage": name,
+            "result": result,
+            "seconds": time.as_secs_f64(),
+        });
+        println!("{record}");
     }
     let total: Duration = results.iter().map(|(_, _, time)| *time).sum();
-    println!("{:width$}           {:7.1}", "total", total.as_secs_f64());
+    println!(
+        "{}",
+        serde_json::json!({"event": "stages_total", "seconds": total.as_secs_f64()})
+    );
     let problems: Vec<String> = results
         .iter()
         .filter_map(|(name, outcome, _)| match outcome {

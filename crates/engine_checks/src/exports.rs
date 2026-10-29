@@ -47,12 +47,13 @@ pub fn check(repository: &Repository, facade: &Facade) -> Result<(), String> {
         }
     }
     if problems.is_empty() {
-        println!(
-            "The facade exports each of {}'s {} public names once, but the {} internal ones.",
-            facade.inner,
-            core.len(),
-            internal.len()
-        );
+        let record = serde_json::json!({
+            "event": "facade_exports_once",
+            "inner": facade.inner,
+            "public": core.len(),
+            "internal": internal.len(),
+        });
+        println!("{record}");
         Ok(())
     } else {
         Err(problems.join("\n"))

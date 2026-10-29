@@ -73,11 +73,12 @@ pub fn check(repository: &Repository, exceptions: &Exceptions) -> Result<(), Str
         }
     }
     if problems.is_empty() {
-        println!(
-            "No source grew: {} long files and {} wide structs, none over its size.",
-            exceptions.long_files.len(),
-            exceptions.wide_structs.len()
-        );
+        let record = serde_json::json!({
+            "event": "sources_within_size",
+            "long_files": exceptions.long_files.len(),
+            "wide_structs": exceptions.wide_structs.len(),
+        });
+        println!("{record}");
         return Ok(());
     }
     Err(problems.join("\n"))

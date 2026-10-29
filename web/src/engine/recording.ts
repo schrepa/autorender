@@ -32,7 +32,7 @@ export type RecordingReport = {
   phase_subsets_ms: Record<string, Distribution>;
   rendering: { first: Counters | null; last: Counters | null; ranges: Record<string, Range> };
   dropped_seconds: { start: number | null; end: number | null; delta: number | null };
-  diagnostics: Diagnostic[]; frames: Frame[]; timing: string;
+  diagnostics: Diagnostic[]; frames: Frame[];
 };
 
 const DEFAULTS: Options = { warmup: 30, duration_ms: 10_000, timeout_ms: 30_000, max_samples: 1800 };
@@ -213,7 +213,6 @@ export class Recorder {
       dropped_seconds: { start: this.dropStart, end: this.dropEnd,
         delta: this.dropStart === null || this.dropEnd === null ? null : this.dropEnd - this.dropStart },
       diagnostics: this.diagnostics, frames: this.frames,
-      timing: "CPU total is simulation + extraction + render preparation/submission. Additional phase timers are overlapping subsets, not additive. CPU timers exclude recording/stat collection; RAF intervals include host work and browser pacing. GPU execution time is not measured. Adapter/browser hints do not establish physical GPU use. Dropped time is the change in the observed cumulative counter; without warm-up its first frame has no preceding baseline.",
     };
     this.onComplete(report);
   }

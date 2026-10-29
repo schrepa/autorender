@@ -32,7 +32,7 @@ const HEIGHT_MIPS: u32 = 1 + ERROR_MIPS;
 
 const _: () = assert!(
     LAYER_SIZE >= 2 * ERROR_CELLS && LAYER_SIZE >> ERROR_MIPS >= 1,
-    "each mip of the heights below the first holds a mip of their peaks"
+    "height_mips_hold_peak_mips"
 );
 
 struct Listed {
@@ -441,7 +441,7 @@ impl TileAtlas {
         self.changed.push(key);
         self.held_changes.push(key);
         self.touched.push(key);
-        let arrays = self.arrays.as_ref().expect("allocated above");
+        let arrays = self.arrays.as_ref().expect("arrays_allocated");
         let before = replaced.tiles.remove(&key);
         let edited = (before.as_ref()).is_some_and(|held| held.hole_bits() != tile.hole_bits());
         let heights = (before.as_ref()).is_none_or(|held| held.heights() != tile.heights());
@@ -486,7 +486,7 @@ impl TileAtlas {
         (terrain, surfaces): (&RenderTerrain, &BTreeMap<u64, &Arc<SurfaceData>>),
         heights: bool,
     ) -> bool {
-        let arrays = self.arrays.as_ref().expect("allocated above");
+        let arrays = self.arrays.as_ref().expect("arrays_allocated");
         let gpu = tile.control().is_none() && surfaces.contains_key(&key.0);
         let rivers = before.is_none_or(|held| {
             held.river_edges() != tile.river_edges() || held.river_beds() != tile.river_beds()
@@ -561,7 +561,7 @@ impl TileAtlas {
                 )
             }
         };
-        let arrays = self.arrays.as_ref().expect("allocated above");
+        let arrays = self.arrays.as_ref().expect("arrays_allocated");
         write_layer(
             queue,
             &arrays.control,

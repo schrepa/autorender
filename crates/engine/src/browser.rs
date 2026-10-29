@@ -244,7 +244,7 @@ impl<G: Game> PageHost<G> {
 
     pub fn distribution(&self, values: Vec<f64>) -> String {
         serde_json::to_string(&crate::host::Distribution::of(&values))
-            .expect("distributions serialize")
+            .expect("distribution_serializes")
     }
 }
 
@@ -307,7 +307,7 @@ fn read<T: serde::de::DeserializeOwned>(json: &str, what: &str) -> Result<T, Str
 
 #[cfg(feature = "dev")]
 fn written(step: &engine_dev::Step) -> String {
-    serde_json::to_string(step).expect("development steps serialize")
+    serde_json::to_string(step).expect("step_serializes")
 }
 
 #[cfg(feature = "profiling")]

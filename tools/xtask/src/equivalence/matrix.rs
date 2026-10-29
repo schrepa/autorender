@@ -332,10 +332,13 @@ pub(crate) fn check(root: &Path) -> Result<(), String> {
         ));
     }
     let captures: usize = cells.iter().map(|cell| cell.keys().len()).sum();
-    println!(
-        "{MATRIX} holds {} cells ({} smoke) of {captures} captures.",
-        cells.len(),
-        cells.iter().filter(|cell| cell.tier == "smoke").count()
-    );
+    let record = serde_json::json!({
+        "event": "matrix_holds",
+        "file": MATRIX,
+        "cells": cells.len(),
+        "smoke_cells": cells.iter().filter(|cell| cell.tier == "smoke").count(),
+        "captures": captures,
+    });
+    println!("{record}");
     Ok(())
 }

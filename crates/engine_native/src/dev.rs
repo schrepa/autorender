@@ -16,10 +16,10 @@ use crate::{Frames, PixRecord, ProfileRecord, Record};
 use crate::{Offscreen, Pix};
 
 const FRAME: Duration = Duration::from_micros(16_667);
-const TIMING: &str = "CPU timings exclude JSON/stats collection; frame intervals include host work and the GPU's work, waited for after each frame offscreen";
+const TIMING: &str = "offscreen_gpu_waited";
 
 pub struct GameControl<G: Game> {
-    pub description: String,
+    pub values: String,
     #[expect(clippy::type_complexity, reason = "a stored control callback")]
     pub run: Box<dyn FnMut(&mut GameHost<G>, &Map<String, Value>) -> Result<Value, String>>,
 }
@@ -67,13 +67,13 @@ impl<G: Game> DevSession<G> {
     pub fn control(
         mut self,
         name: &str,
-        description: &str,
+        values: &str,
         run: impl FnMut(&mut GameHost<G>, &Map<String, Value>) -> Result<Value, String> + 'static,
     ) -> Self {
         self.controls.insert(
             name.to_owned(),
             GameControl {
-                description: description.to_owned(),
+                values: values.to_owned(),
                 run: Box::new(run),
             },
         );
@@ -88,7 +88,7 @@ impl<G: Game> DevSession<G> {
         self.parameters.extend(
             parameters
                 .into_iter()
-                .map(|(name, what)| (name.into(), what.into())),
+                .map(|(name, values)| (name.into(), values.into())),
         );
         self
     }
@@ -118,7 +118,7 @@ impl<G: Game> DevSession<G> {
             "profiling": cfg!(feature = "profiling"),
             "counters": counting(),
             "pix": self.pix.is_some(),
-            "controls": self.controls.iter().map(|(name, control)| (name.clone(), json!(control.description))).collect::<Map<_, _>>(),
+            "controls": self.controls.iter().map(|(name, control)| (name.clone(), json!(control.values))).collect::<Map<_, _>>(),
             "parameters": self.parameters,
         }));
         let mut next = Instant::now();
@@ -140,7 +140,7 @@ impl<G: Game> DevSession<G> {
                 next = Instant::now() + FRAME;
                 let timestamp = self.now();
                 if let Err(error) = self.game.frame(timestamp) {
-                    eprintln!("The frame failed: {error}");
+                    eprintln!("{}", json!({"event": "frame_failed", "error": error}));
                 }
             }
             self.game.exchange_jobs();
@@ -333,7 +333,7 @@ impl<G: Game> DevSession<G> {
             .dev_request(r#"{"verb":"query","name":"status"}"#, &context)
         {
             Step::Reply(reply) => reply,
-            Step::Effect(effect) => unreachable!("status names no control, yet {effect:?}"),
+            Step::Effect(effect) => unreachable!("status_has_no_effect {effect:?}"),
         }
     }
 
@@ -470,7 +470,7 @@ fn read_lines() -> Receiver<String> {
                 }
             }
         })
-        .expect("threads start");
+        .expect("thread_starts");
     lines
 }
 

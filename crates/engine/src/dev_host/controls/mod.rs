@@ -76,7 +76,7 @@ fn host_control(
         HostControl::Step { ticks } => input::step(host, app, ticks, size),
         HostControl::Render => view::render(app, size),
         HostControl::DebugPanic => {
-            panic!("debug_panic: a development session asked the engine to panic")
+            panic!("debug_panic")
         }
         HostControl::DebugFault { feature } => view::fault(app, &feature, size),
         HostControl::Loop(control) => Ok(json!({ "control": control })),

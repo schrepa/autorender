@@ -55,13 +55,13 @@ impl<'a> Inspectors<'a> {
         #[cfg(feature = "dev")]
         {
             let schemas: serde_json::Value =
-                serde_json::from_str(schemas).expect("inspector schemas are JSON");
+                serde_json::from_str(schemas).expect("inspector_schema_json");
             self.tools
                 .register_resource::<R>(
                     engine_dev::InspectorDescriptor::generated(&schemas, name),
                     view,
                 )
-                .unwrap_or_else(|error| panic!("inspector {name} is invalid: {error:?}"));
+                .unwrap_or_else(|error| panic!("inspector_valid {name} {error:?}"));
         }
         #[cfg(not(feature = "dev"))]
         let _ = (schemas, name, view);

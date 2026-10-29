@@ -227,8 +227,6 @@ fn summarize_events(table: &str, wanted: &[String]) -> Value {
             "event": path.join(" > "),
             "counters": named_values(values),
         })).collect::<Vec<_>>(),
-        "note": "each event's counters come from PIX's replay of it alone, at the clock the GPU \
-                 chose then: costs are in clocks, not times",
     })
 }
 
@@ -338,8 +336,7 @@ pub fn nsight_trace(
     let summary = json!({
         "tool": "nsight",
         "files": written,
-        "open": "Open the .ngfx-gputrace file in Nsight Graphics (ngfx-ui): each pass's unit \
-                 throughputs, and the shader profiler's warp stalls per shader line",
+        "viewer": "ngfx-ui",
     });
     write(&folder.join("nsight.summary.json"), &summary)?;
     Ok(summary)
@@ -375,6 +372,6 @@ fn tail(stdout: &[u8], stderr: &[u8]) -> String {
 }
 
 fn write(path: &Path, value: &Value) -> Result<(), String> {
-    let text = serde_json::to_string_pretty(value).expect("JSON values serialize");
+    let text = serde_json::to_string_pretty(value).expect("json_serializes");
     std::fs::write(path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))
 }

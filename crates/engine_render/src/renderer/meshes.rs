@@ -55,7 +55,7 @@ impl MeshPipelines {
     pub(super) fn sky(&self, targets: SkyTargets) -> &wgpu::RenderPipeline {
         self.sky[targets.index()]
             .as_ref()
-            .expect("prepared with the frame's pipelines")
+            .expect("prepared_with_frame_pipelines")
     }
 
     pub(super) fn forget_sky(&mut self, targets: SkyTargets) {
@@ -292,7 +292,7 @@ impl Renderer {
             self.features
                 .lights
                 .get()
-                .expect("lit frames create the light pass")
+                .expect("light_pass_created")
                 .fragment_layout()
         });
         let groups = (
@@ -321,12 +321,12 @@ impl Renderer {
                 .features
                 .temporal
                 .get()
-                .expect("temporal frames create it");
+                .expect("temporal_frames_create");
             temporal.mesh_layout(kind.lit)
         } else {
             self.mesh_pipelines.layouts[usize::from(kind.lit)]
                 .as_ref()
-                .expect("created with the variant")
+                .expect("created_with_variant")
         };
         let fragment = match kind.pass {
             MeshPass::Opaque(targets) => MeshFragment {

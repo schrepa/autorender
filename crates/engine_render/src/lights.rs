@@ -355,7 +355,7 @@ mod gpu {
         }
 
         pub(crate) fn fragment_group(&self) -> &wgpu::BindGroup {
-            self.fragment_group.get().expect("prepared this frame")
+            self.fragment_group.get().expect("prepared_this_frame")
         }
 
         fn encode_binning(
