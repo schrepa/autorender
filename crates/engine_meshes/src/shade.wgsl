@@ -1,10 +1,12 @@
 import package::engine::noise::variety_noise;
-import package::face::lighting::{BODY_THIN, SurfacePoint, finish, local_light, widened};
+import package::face::lighting::{finish, local_light, widened};
 import package::face::occupancy::foliage;
+import package::face::surface_point::{BODY_THIN, SurfacePoint};
 import package::frame::view::{camera, fade_noise, material_bias, material_detail,
     stable_normalize};
 import package::meshes::declarations::{ALPHA_MASK, DOUBLE_SIDED, EMISSIVE_MAP, FADE_LIST, FOLIAGE,
-    GROUNDING, MATERIAL_MAPS, METALLIC_ROUGHNESS_MAP, NORMAL_MAP, OCCLUSION_MAP, PACKED_OCCLUSION,
+    GROUNDING, MASK_MIP_SCALE, MATERIAL_MAPS, METALLIC_ROUGHNESS_MAP, NORMAL_MAP, OCCLUSION_MAP,
+    PACKED_OCCLUSION,
     PRETESTED, TOP_LAYER, TemporalOutput, VARIANT_DOUBLE_SIDED,
     VARIANT_EMISSIVE_MAP, VARIANT_FOLIAGE, VARIANT_MAPS, VARIANT_METALLIC_ROUGHNESS_MAP,
     VARIANT_NORMAL_MAP, VARIANT_OCCLUSION_MAP, VARIANT_PACKED_OCCLUSION, VARIANT_TOP_LAYER,
@@ -97,8 +99,6 @@ fn untextured() -> MaterialTexels {
     texels.height = 1.0;
     return texels;
 }
-
-const MASK_MIP_SCALE: f32 = 0.25;
 
 fn mask_coverage(dx: vec2<f32>, dy: vec2<f32>) -> f32 {
     let size = vec2<f32>(textureDimensions(base_color_texture));

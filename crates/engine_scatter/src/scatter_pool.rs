@@ -3,18 +3,19 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use engine_core::glam::Vec3;
+use engine_faces::placed::PlacedRecord;
 use engine_render::gpu_data::{ColorData, GroundData, PoseData};
 use engine_terrain::{Tile, TileKey};
 
-use crate::scatter::{DEAD, NEAR_LEVEL_MASK, NEAR_LEVEL_SHIFT, Record, STATE_ADOPT, STATE_FRESH};
+use crate::scatter::{DEAD, NEAR_LEVEL_MASK, NEAR_LEVEL_SHIFT, STATE_ADOPT, STATE_FRESH};
 
-pub(super) type TileObjects = (Vec<PoseData>, Vec<ColorData>, Vec<Record>, Vec<GroundData>);
+pub(super) type TileObjects = (Vec<PoseData>, Vec<ColorData>, Vec<PlacedRecord>, Vec<GroundData>);
 
 #[derive(Default)]
 pub(super) struct ScatterPool {
     pub(super) poses: Vec<PoseData>,
     pub(super) colors: Vec<ColorData>,
-    pub(super) records: Vec<Record>,
+    pub(super) records: Vec<PlacedRecord>,
     pub(super) grounds: Vec<GroundData>,
     pub(super) counts: Vec<u32>,
     pub(super) far: u32,
@@ -191,7 +192,7 @@ impl ScatterPool {
     }
 }
 
-fn bounds(records: &[Record]) -> Option<(Vec3, Vec3)> {
+fn bounds(records: &[PlacedRecord]) -> Option<(Vec3, Vec3)> {
     records
         .iter()
         .filter(|record| record.group != DEAD)
@@ -203,12 +204,12 @@ fn bounds(records: &[Record]) -> Option<(Vec3, Vec3)> {
         .reduce(|(low, high), (min, max)| (low.min(min), high.max(max)))
 }
 
-fn stands_far(record: &Record) -> bool {
+fn stands_far(record: &PlacedRecord) -> bool {
     record.group != DEAD && (record.terrain >> NEAR_LEVEL_SHIFT) & NEAR_LEVEL_MASK != 0
 }
 
-fn dead() -> Record {
-    Record {
+fn dead() -> PlacedRecord {
+    PlacedRecord {
         center: [0.0; 3],
         radius: 0.0,
         group: DEAD,

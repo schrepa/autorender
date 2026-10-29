@@ -19,11 +19,6 @@ impl Brick for LightingModelBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<engine_core::Highlights>()
-            .smoke(
-                "foliage_settings",
-                true,
-                engine_core::brick_smokes::foliage_settings,
-            )
             .render_part(&part::PART)
             .shaders(shaders::MODULES)
             .face_defaults(engine_faces::defaults::MODULES)

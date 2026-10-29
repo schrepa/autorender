@@ -111,6 +111,16 @@ pub struct RenderReflectionProbes {
     pub dropped: usize,
 }
 
+impl RenderSnapshot {
+    pub fn probe_list(&self) -> &[RenderReflectionProbe] {
+        if self.environment.reflection_probes.enabled {
+            &self.reflection_probes.list
+        } else {
+            &[]
+        }
+    }
+}
+
 #[derive(Resource, Default)]
 pub struct ProbeExtractor(Mutex<ProbeExtraction>);
 

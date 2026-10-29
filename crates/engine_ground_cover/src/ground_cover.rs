@@ -3,15 +3,16 @@ use engine_core::collections::HashMap;
 use std::cell::Cell;
 use std::rc::Rc;
 
-use engine_core::glam::{Mat4, Vec3, Vec4};
+use engine_core::glam::{Mat4, Vec3};
 use engine_core::{RenderSnapshot, RenderStats};
-use engine_terrain::{Cover, GroundCover, RenderTerrain};
+use engine_terrain::GroundCover;
 
 use crate::bindings::{COVER_DRAW, COVER_GROW};
-use crate::gpu_layouts::{BLADE_BYTES, COVER_LEAVES, COVER_LUSH_RATIO, PALETTE_ENTRIES};
-use engine_faces::heightfield::HeightfieldFace;
+use crate::gpu_layouts::{BLADE_BYTES, COVER_LEAVES, COVER_LUSH_RATIO};
+use engine_faces::heightfield::{CoverTerms, HeightfieldFace};
 use engine_render::buffers::ReadbackRing;
 use engine_render::cached::Cached;
+use engine_render::gpu_data::{pixels_per_meter, planes};
 use engine_render::graph::{
     FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage, Targets,
 };
@@ -207,9 +208,8 @@ impl GroundCoverPass {
         let mut uniforms = std::mem::take(&mut self.grow_uniforms);
         uniforms.clear();
         let mut most = 0.0;
-        let mut held = 0;
         for (index, render) in terrains.terrains.iter().enumerate() {
-            let terms = CoverTerms::kept(render, &mut held);
+            let terms = terrain.cover_terms(index);
             let (directory, palette, colors) = terrain.cover_terrain(index);
             let density = terms.densest * settings.density * lushest();
             let law = CoverLaw::of(terms, pixels_per_meter);
@@ -509,10 +509,6 @@ impl GroundCoverPass {
     }
 }
 
-pub(crate) fn pixels_per_meter(culling: Mat4, height: f32) -> f32 {
-    culling.row(1).truncate().length() * height * 0.5
-}
-
 fn turn_share(culling: Mat4) -> f32 {
     let across = culling.row(0).truncate().length();
     let depth = culling.row(3).truncate().length();
@@ -529,38 +525,6 @@ fn lushest() -> f32 {
     COVER_LUSH_RATIO.sqrt()
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct CoverTerms {
-    pub(crate) densest: f32,
-    pub(crate) width: f32,
-}
-
-impl CoverTerms {
-    pub(crate) fn of<'a>(covers: impl IntoIterator<Item = &'a Cover>) -> Self {
-        covers.into_iter().fold(Self::default(), |terms, cover| {
-            if cover.density > terms.densest {
-                Self {
-                    densest: cover.density,
-                    width: cover.width,
-                }
-            } else {
-                terms
-            }
-        })
-    }
-
-    fn kept(terrain: &RenderTerrain, held: &mut usize) -> Self {
-        let room = PALETTE_ENTRIES - *held;
-        let kept = &terrain.surface[..terrain.surface.len().min(room)];
-        *held += kept.len();
-        if kept.len() == terrain.surface.len() {
-            Self::of(kept.iter().filter_map(|look| look.cover.as_ref()))
-        } else {
-            Self::default()
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CoverLaw {
     pub(crate) span: f32,
@@ -569,7 +533,7 @@ pub(crate) struct CoverLaw {
 impl CoverLaw {
     pub(crate) fn of(terms: CoverTerms, pixels_per_meter: f32) -> Self {
         Self {
-            span: terms.width * pixels_per_meter,
+            span: terms.span(pixels_per_meter),
         }
     }
 
@@ -623,26 +587,6 @@ fn seen_share(pixels: f32) -> f32 {
     let octaves =
         engine_core::math::ln(engine_core::math::max(pixels, 1.0e-6)) * std::f32::consts::LOG2_E;
     engine_core::math::clamp(1.0 + octaves, 0.0, 1.0)
-}
-
-pub(crate) fn planes(view_projection: Mat4) -> [[f32; 4]; 6] {
-    let rows = [
-        view_projection.row(0),
-        view_projection.row(1),
-        view_projection.row(2),
-        view_projection.row(3),
-    ];
-    [
-        rows[3] + rows[0],
-        rows[3] - rows[0],
-        rows[3] + rows[1],
-        rows[3] - rows[1],
-        rows[2],
-        rows[3] - rows[2],
-    ]
-    .map(|plane: Vec4| {
-        (plane / engine_core::math::max(plane.truncate().length(), 1.0e-12)).to_array()
-    })
 }
 
 fn compute(device: &wgpu::Device) -> (wgpu::ComputePipeline, wgpu::ComputePipeline) {

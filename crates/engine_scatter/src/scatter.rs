@@ -5,10 +5,11 @@ use std::rc::Rc;
 use crate::shaders::entry::{scatter_cull, scatter_snap};
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::{MeshHandle, RecordKey, RenderSnapshot, RenderStats};
-use engine_faces::placed::{PlacedFace, Placements};
-use engine_faces::shadows::KeptRefresh;
+use engine_faces::heightfield::TerrainInfo;
+use engine_faces::placed::{PlacedFace, PlacedRecord, Placements};
+use engine_faces::shadows::{KeptRefresh, SHADOW_FORMAT, SHADOW_POSES};
 
-use crate::bindings::{CASTER_POSES, SCATTER_CULL, SCATTER_SNAP};
+use crate::bindings::{SCATTER_CULL, SCATTER_SNAP};
 use crate::gpu_layouts::Cover;
 use crate::scatter_draws::{PlacedImpostors, ScatterDraws};
 use engine_render::bindings::{RETAINED_POSES, TEMPORAL_POSES};
@@ -42,16 +43,11 @@ pub(crate) const STATE_FRESH: u32 = SHOWN_NONE | SHOWN_NONE << 3 | FADED << 6;
 
 const FADE_MARGIN: f32 = 0.1;
 
-const REGIONS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
-
 use crate::gpu_layouts::ViewData;
 
 pub(crate) const NEAR_LEVEL_MASK: u32 = 0x1f;
 pub(crate) const RANK_MAX: f32 = 1023.0;
 
-pub(crate) use crate::gpu_layouts::Record;
-
-pub(crate) use crate::gpu_layouts::TerrainInfo;
 
 pub(crate) struct SnapSources<'a> {
     pub heights: &'a wgpu::TextureView,
@@ -188,7 +184,7 @@ impl ScatterPass {
             (1, 1),
             1,
             1,
-            REGIONS_FORMAT,
+            SHADOW_FORMAT,
             wgpu::TextureUsages::TEXTURE_BINDING,
         );
         Self {
@@ -197,7 +193,7 @@ impl ScatterPass {
                 engine_render::pipelines::layout(device, &RETAINED_POSES),
                 engine_render::pipelines::layout(device, &TEMPORAL_POSES),
             ],
-            shadow_layout: engine_render::pipelines::layout(device, &CASTER_POSES),
+            shadow_layout: engine_render::pipelines::layout(device, &SHADOW_POSES),
             pipeline: None,
             snap_layout: engine_render::pipelines::layout(device, &SCATTER_SNAP),
             snap_pipeline: None,
@@ -360,13 +356,18 @@ impl ScatterPass {
         &mut self,
         device: &wgpu::Device,
         queue: &engine_render::gpu_calls::Queue,
-        (poses, colors, records, grounds): (&[PoseData], &[ColorData], &[Record], &[GroundData]),
+        (poses, colors, records, grounds): (
+            &[PoseData],
+            &[ColorData],
+            &[PlacedRecord],
+            &[GroundData],
+        ),
         dirty: Option<std::ops::Range<u32>>,
     ) -> Option<std::ops::Range<u32>> {
         let room = [
             (&self.poses, size_of::<PoseData>()),
             (&self.colors, size_of::<ColorData>()),
-            (&self.records, size_of::<Record>()),
+            (&self.records, size_of::<PlacedRecord>()),
             (&self.grounds, size_of::<GroundData>()),
         ]
         .into_iter()
@@ -424,7 +425,7 @@ impl ScatterPass {
             );
             write(
                 &self.records,
-                size_of::<Record>(),
+                size_of::<PlacedRecord>(),
                 bytemuck::cast_slice(&records[range.clone()]),
             );
             write(
@@ -567,7 +568,7 @@ impl ScatterPass {
             engine_render::pipelines::group(
                 device,
                 "engine/scatter-shadow-poses",
-                &CASTER_POSES,
+                &SHADOW_POSES,
                 &self.shadow_layout,
                 &[
                     engine_render::buffers::entry("slot_poses", &self.poses),

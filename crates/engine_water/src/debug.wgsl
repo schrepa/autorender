@@ -1,14 +1,14 @@
 import package::face::heightfield::{WATER_SPAN_LEAST, WATER_SPAN_MOST, WaterAt};
 import package::face::lighting::sun_debug;
 import package::frame::view::eye_world;
-import package::meshes::debug::{DEBUG_KIND_FALLS, DEBUG_KIND_WATER, DebugTargets, debug_targets};
+import package::meshes::debug::{DEBUG_KIND_FALLS, DEBUG_KIND_WATER, DEBUG_SPAN_STEPS, DebugTargets,
+    debug_targets};
 import package::water::falls::{FallOutput, shade_fall};
 import package::water::surface::{WaterOutput, shade_water, water_drawn, water_eddy_froude,
     water_on_surface};
 
 const DEBUG_GRAVITY: f32 = 9.81;
 const DEBUG_DRY: f32 = 1.0e-4;
-const DEBUG_SPAN_STEPS: f32 = 254.0;
 override DEBUG_WATER_VIEWS: bool = false;
 
 fn debug_span_code(span: f32) -> f32 {

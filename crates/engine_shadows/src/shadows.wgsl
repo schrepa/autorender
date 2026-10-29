@@ -1,8 +1,10 @@
 import package::engine::wind::{slot_sway, wind_sway};
+import package::meshes::declarations::SlotColor;
 import package::meshes::impostor_frames::{
     IMPOSTOR_HEMISPHERE, ImpostorRecord, impostor_basis, impostor_frame_direction, impostor_frames,
     impostor_grid, impostor_index,
 };
+import package::presentation::cull::{Batch, Candidate, Rows, VALID};
 
 struct Cull {
     light: array<vec4<f32>, 3>,
@@ -23,34 +25,6 @@ struct Cull {
 
 const REGIONS: u32 = 7u;
 const SHADOW_LEVELS: u32 = 20u;
-
-struct Candidate {
-    slot: u32,
-    node: u32,
-    batch: u32,
-    position: u32,
-}
-
-struct Batch {
-    start: u32,
-    count: u32,
-    index_count: u32,
-    group: u32,
-    bounds_min: vec4<f32>,
-    bounds_max: vec4<f32>,
-    first_index: u32,
-    base_vertex: i32,
-    first_instance: u32,
-    first_plane: u32,
-    lod_ranges: vec4<u32>,
-    lod_errors: vec4<f32>,
-}
-
-struct Rows {
-    r0: vec4<f32>,
-    r1: vec4<f32>,
-    r2: vec4<f32>,
-}
 
 struct DrawArgs {
     index_count: u32,
@@ -77,7 +51,6 @@ struct Counters {
 
 const STILLNESS: u32 = 1u;
 const SKY_REFRESH: u32 = 2u;
-const VALID: u32 = 4u;
 const KEEP_AFTER: u32 = 8u;
 const MOVING_UNTIL: u32 = 64u;
 const KEEP_AFTER_RESTLESS: u32 = 180u;
@@ -415,11 +388,6 @@ fn fs_compose(input: ComposeOutput) -> @builtin(frag_depth) f32 {
     return textureLoad(shadow_regions, texel, input.source.x, 0);
 }
 
-struct SlotColor {
-    color: vec2<u32>,
-    surface: u32,
-    flags: u32,
-}
 @group(1) @binding(1) var<storage, read> slot_colors: array<SlotColor>;
 @group(2) @binding(0) var base_color_texture: texture_2d<f32>;
 @group(2) @binding(1) var base_color_sampler: sampler;

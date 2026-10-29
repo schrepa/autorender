@@ -1,14 +1,15 @@
 import package::engine::color::luminance;
 import package::face::bloom::glow_weight;
 import package::face::horizons::bounce_light;
-import package::face::lighting::{SurfacePoint, distribution, environment_brdf, fresnel,
-    sun_visibility, visibility};
+import package::face::lighting::{distribution, environment_brdf, fresnel, sun_visibility,
+    visibility};
 import package::face::occupancy::{foliage, occupancy_visibility};
 import package::face::probes::environment_light;
 import package::face::reflections::{max_roughness, reflects};
 import package::face::sky::{ambient as sky_ambient, atmospheric, environment_levels,
     environment_sample, environment_size, horizon, mirrored_along, sky_above, sky_average};
 import package::face::sun::{sun_color, sun_direction};
+import package::face::surface_point::SurfacePoint;
 import package::face::tonemap::{exposure, tonemap};
 import package::frame::view::{PI, camera};
 import package::generated::pieces::pieces;

@@ -142,11 +142,49 @@ impl FrameRegion {
         let [x, y] = self.share();
         [self.render.width as f32, self.render.height as f32, x, y]
     }
+
+    pub fn level_region(self, level: u32) -> (u32, u32) {
+        let FrameRegion { display, render } = self;
+        let part = |drawn: u32, whole: u32| {
+            let whole = (whole >> (level + 1)).max(1);
+            ((drawn >> (level + 1)).max(1) + 1).min(whole)
+        };
+        (
+            part(render.width, display.width),
+            part(render.height, display.height),
+        )
+    }
 }
 
 pub fn draw_within(pass: &mut wgpu::RenderPass<'_>, (width, height): (u32, u32)) {
     pass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
     pass.set_scissor_rect(0, 0, width, height);
+}
+
+pub fn fullscreen_pass<'e>(
+    encoder: &'e mut wgpu::CommandEncoder,
+    label: &str,
+    (view, drawn): (&wgpu::TextureView, (u32, u32)),
+    timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
+) -> wgpu::RenderPass<'e> {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    draw_within(&mut pass, drawn);
+    pass
 }
 
 pub struct ScreenTarget<T> {

@@ -4,12 +4,13 @@ use std::ops::Range;
 use bytemuck::Zeroable;
 use engine_core::glam::{DVec3, Mat4, Vec3, Vec4};
 use engine_terrain::gpu::SurfaceData;
-use engine_terrain::{RenderTerrain, RenderTerrains, TileKey};
+use engine_terrain::{Pyramid, RenderTerrain, RenderTerrains, TileKey};
 use std::sync::Arc;
 
 use engine_faces::heightfield::{
-    CoverEntry, CoverSources, GroundChange, HEIGHT_FORMAT, HeightfieldFace, LiveGround,
-    PALETTE_BYTES, PaletteEntry, TERRAIN, TerrainUniform, TraceSources, ViewUniform, WaterDraws,
+    CoverEntry, CoverSources, CoverTerms, GroundChange, HEIGHT_FORMAT, HeightfieldFace,
+    LiveGround, PALETTE_BYTES, PaletteEntry, TERRAIN, TerrainInfo, TerrainUniform, TraceSources,
+    ViewUniform, WaterDraws,
 };
 use engine_faces::shadows::KeptRefresh;
 use engine_render::bindings::{
@@ -453,6 +454,27 @@ impl TerrainPass {
         )
     }
 
+    pub(crate) fn cover_terms(&self, index: usize) -> CoverTerms {
+        self.tables
+            .cover_terms
+            .get(index)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn terrain_info(
+        &self,
+        index: usize,
+        origin: Vec3,
+        pyramid: &Pyramid,
+    ) -> TerrainInfo {
+        let (directory, palette, colors) = self.cover_terrain(index);
+        TerrainInfo {
+            origin: origin.extend(pyramid.spacing(0)).to_array(),
+            levels: [directory, pyramid.levels(), palette, colors],
+        }
+    }
+
     pub(crate) fn draw_surface(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
@@ -570,6 +592,14 @@ impl HeightfieldFace for TerrainPass {
 
     fn cover_terrain(&self, index: usize) -> (u32, u32, u32) {
         self.cover_terrain(index)
+    }
+
+    fn cover_terms(&self, index: usize) -> CoverTerms {
+        self.cover_terms(index)
+    }
+
+    fn terrain_info(&self, index: usize, origin: Vec3, pyramid: &Pyramid) -> TerrainInfo {
+        self.terrain_info(index, origin, pyramid)
     }
 
     fn cover_tallest(&self) -> f32 {

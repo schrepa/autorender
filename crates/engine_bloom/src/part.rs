@@ -10,7 +10,7 @@ use engine_render::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Prelude
 use engine_render::pieces::PieceDecl;
 use engine_render::pipelines::{self, Fullscreen, GroupLayout, fullscreen};
 use engine_render::profiling::GpuProfiler;
-use engine_render::targets::{FrameRegion, FrameSize, ScreenTarget, draw_within};
+use engine_render::targets::{FrameRegion, FrameSize, ScreenTarget, fullscreen_pass};
 
 use crate::gpu_layouts::BloomPiece;
 use crate::layouts::{
@@ -403,18 +403,6 @@ impl Bloom {
         Targets { texture, levels }
     }
 
-    fn level_region(&self, level: u32) -> (u32, u32) {
-        let FrameRegion { display, render } = self.region;
-        let part = |drawn: u32, whole: u32| {
-            let whole = (whole >> (level + 1)).max(1);
-            ((drawn >> (level + 1)).max(1) + 1).min(whole)
-        };
-        (
-            part(render.width, display.width),
-            part(render.height, display.height),
-        )
-    }
-
     fn encode(&self, encoder: &mut wgpu::CommandEncoder, profiler: &GpuProfiler) {
         let (Some(targets), Some(first_group)) = (self.targets.get(), self.first_group.get())
         else {
@@ -426,7 +414,7 @@ impl Bloom {
             span.filter(|_| first || last)
                 .map(|span| span.render_part(first, last))
         };
-        let drawn = |level: usize| self.level_region(level as u32);
+        let drawn = |level: usize| self.region.level_region(level as u32);
         {
             let mut pass = fullscreen_pass(
                 encoder,
@@ -467,30 +455,4 @@ impl Bloom {
             pass.draw(0..3, 0..1);
         }
     }
-}
-
-fn fullscreen_pass<'e>(
-    encoder: &'e mut wgpu::CommandEncoder,
-    label: &str,
-    (view, drawn): (&wgpu::TextureView, (u32, u32)),
-    timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
-) -> wgpu::RenderPass<'e> {
-    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some(label),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Load,
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: None,
-        timestamp_writes,
-        occlusion_query_set: None,
-        multiview_mask: None,
-    });
-    draw_within(&mut pass, drawn);
-    pass
 }

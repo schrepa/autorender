@@ -59,14 +59,6 @@ fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
     ))
 }
 
-pub(crate) fn probe_list(snapshot: &RenderSnapshot) -> &[RenderReflectionProbe] {
-    if snapshot.environment.reflection_probes.enabled {
-        &snapshot.reflection_probes.list
-    } else {
-        &[]
-    }
-}
-
 struct Slot {
     probe: RenderReflectionProbe,
     ready: bool,
@@ -436,7 +428,7 @@ impl GpuPart for ProbePass {
     }
 
     fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
-        self.listed = !probe_list(cx.snapshot).is_empty();
+        self.listed = !cx.snapshot.probe_list().is_empty();
         self.format = cx
             .parts
             .face::<dyn EnvironmentFace>()
@@ -445,7 +437,7 @@ impl GpuPart for ProbePass {
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         let snapshot = cx.frame.snapshot;
-        let probe_list = probe_list(snapshot);
+        let probe_list = snapshot.probe_list();
         let plan = cx
             .parts
             .face::<dyn EnvironmentFace>()

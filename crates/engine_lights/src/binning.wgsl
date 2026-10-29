@@ -1,4 +1,5 @@
 import package::lights::clusters::{SHAPED_LIGHTS, clusters};
+import package::presentation::cull::{Rows, STILL_FRAMES};
 
 struct Input {
     position: vec3<f32>,
@@ -26,12 +27,6 @@ struct Light {
     pad: u32,
 }
 
-struct Rows {
-    r0: vec4<f32>,
-    r1: vec4<f32>,
-    r2: vec4<f32>,
-}
-
 const NO_SLOT: u32 = 0xffffffffu;
 
 @group(0) @binding(1) var<storage, read> inputs: array<Input>;
@@ -42,8 +37,6 @@ const NO_SLOT: u32 = 0xffffffffu;
 @group(0) @binding(6) var<storage, read_write> totals: array<atomic<u32>, 3>;
 @group(0) @binding(7) var<storage, read_write> ranges: array<vec2<u32>>;
 @group(0) @binding(8) var<storage, read> still_frames: array<vec2<u32>>;
-
-const STILL_FRAMES: u32 = 16u;
 
 fn transformed(rows: Rows, point: vec4<f32>) -> vec3<f32> {
     return vec3<f32>(dot(rows.r0, point), dot(rows.r1, point), dot(rows.r2, point));

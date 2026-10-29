@@ -10,13 +10,17 @@ import package::face::sky::{
     ambient as sky_ambient, atmospheric, cloud_passing, sky_above, sky_average,
 };
 import package::face::sun::{sun_color, sun_direction};
+import package::face::surface_point::{BODY_SOLID, BODY_THIN, BODY_WATER};
 import package::face::tonemap::tonemap;
 import package::frame::view::{camera, stable_normalize};
 import package::generated::pieces::pieces;
+import package::meshes::declarations::MASK_MIP_SCALE;
 import package::meshes::impostor_frames::{
     IMPOSTOR_CUTOFF, IMPOSTOR_HEMISPHERE, ImpostorRecord, impostor_basis, impostor_facing,
     impostor_frame_direction, impostor_frames, impostor_grid, impostor_met,
 };
+import package::meshes::surface::MIRRORED_BITS;
+import package::meshes::vertex::octahedral_normal;
 import package::post::frame::{depth_texture, drawn_uv, glow, linear, post};
 
 @group(1) @binding(10) var nearest_depth: texture_2d<f32>;
@@ -88,16 +92,11 @@ const TILE_QUADS: u32 = 256u;
 const PEAK_MIPS: u32 = 8u;
 const PEAK_CELLS: u32 = 128u;
 const IMPOSTOR_KINDS: u32 = 4u;
-const MASK_MIP_SCALE: f32 = 0.25;
 
 const REFLECTION_STEPS: u32 = 96u;
 const WORLD_STEPS: u32 = 2u * PEAK_CELLS;
 const WORLD_PAST: f32 = 1.0e-3;
 const REFLECTION_THIN: f32 = 0.05;
-const MIRRORED_BITS: u32 = 14u;
-const BODY_SOLID: u32 = 0u;
-const BODY_THIN: u32 = 1u;
-const BODY_WATER: u32 = 3u;
 const REFLECTION_CONE: f32 = 1.19;
 const REFLECTION_LOBE_EDGE: f32 = 0.244;
 const REFLECTION_TAPS: u32 = 8u;
@@ -122,14 +121,6 @@ fn screen_point(world: vec3<f32>) -> vec4<f32> {
         ndc.z, clip.w);
 }
 
-fn unfolded_normal(encoded: vec2<f32>) -> vec3<f32> {
-    let z = 1.0 - abs(encoded.x) - abs(encoded.y);
-    let fold = max(-z, 0.0);
-    let shift = vec2<f32>(select(-fold, fold, encoded.x >= 0.0),
-        select(-fold, fold, encoded.y >= 0.0));
-    return normalize(vec3<f32>(encoded - shift, z));
-}
-
 fn world_point(pixel: vec2<f32>, depth: f32) -> vec3<f32> {
     let uv = pixel * post.size.zw;
     let world = post.inverse_view_projection
@@ -147,7 +138,7 @@ fn mirroring_at(pixel: vec2<i32>) -> Mirroring {
     let words = textureLoad(surface_texture, pixel, 0);
     let most = (1u << MIRRORED_BITS) - 1u;
     var mirroring: Mirroring;
-    mirroring.normal = unfolded_normal(vec2<f32>(words.xy) / 65535.0 * 2.0 - 1.0);
+    mirroring.normal = normalize(octahedral_normal(vec2<f32>(words.xy) / 65535.0 * 2.0 - 1.0));
     mirroring.roughness = unpack4x8unorm(words.z).xy;
     mirroring.mirrored = f32(words.w & most) / f32(most);
     return mirroring;

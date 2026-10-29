@@ -6,7 +6,7 @@ use engine_core::glam::Vec3;
 use engine_core::math::max;
 use engine_core::{RenderSnapshot, RenderStats, WaterStats};
 use engine_faces::heightfield::{
-    HeightfieldFace, SubdivisionUniform, TerrainUniform, ViewUniform, WaterDraws,
+    HeightfieldFace, SubdivisionUniform, SurfaceDraw, TerrainUniform, ViewUniform, WaterDraws,
 };
 use engine_render::bindings::{Contribution, Sampling, Stages, sampler};
 use engine_render::cached::Bound;
@@ -83,27 +83,6 @@ struct Placeholders {
     live: wgpu::Buffer,
     storage: wgpu::Buffer,
     particles: wgpu::Buffer,
-}
-
-struct SurfaceDraw {
-    indices: wgpu::Buffer,
-    args: wgpu::Buffer,
-    offset: u64,
-}
-
-impl SurfaceDraw {
-    fn of(draw: &engine_faces::heightfield::SurfaceDraw<'_>) -> Self {
-        Self {
-            indices: draw.indices.clone(),
-            args: draw.args.clone(),
-            offset: draw.offset,
-        }
-    }
-
-    fn record(&self, pass: &mut wgpu::RenderPass<'_>) {
-        pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint16);
-        pass.draw_indexed_indirect(&self.args, self.offset);
-    }
 }
 
 struct TileDraws {
@@ -402,7 +381,7 @@ impl WaterPass {
             terrains: tiles
                 .terrains
                 .iter()
-                .map(|(id, uniform, tree, leaves)| (*id, *uniform, *tree, SurfaceDraw::of(leaves)))
+                .map(|(id, uniform, tree, leaves)| (*id, *uniform, *tree, leaves.clone()))
                 .collect(),
         });
     }

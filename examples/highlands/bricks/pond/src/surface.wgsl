@@ -1,6 +1,7 @@
 import package::face::dither::{encoded, stored};
 import package::face::heightfield::{GroundTerrain, NOT_RESIDENT, level_tile, true_height};
-import package::face::lighting::{BODY_WATER, SurfacePoint, finish};
+import package::face::lighting::finish;
+import package::face::surface_point::{BODY_WATER, SurfacePoint};
 import package::frame::view::{camera, stable_normalize};
 import package::meshes::declarations::{SceneTargets, TemporalTargets};
 import package::meshes::surface::{Shaded, scene_targets, temporal_targets};

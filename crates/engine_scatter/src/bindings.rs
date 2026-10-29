@@ -1,11 +1,10 @@
 use engine_render::bindings::{
-    Sample, Stages, Table, View, read, read_of, texture, uniform, uniform_of, write,
+    Sample, Stages, Table, View, read, texture, uniform, uniform_of, write,
 };
-use engine_render::gpu_data::{ColorData, PoseData};
 
 use crate::gpu_layouts::{FrameUniform, SnapUniform, SplatUniform};
 
-use Sample::{Depth, Float, Uint, Unfilterable};
+use Sample::{Float, Uint, Unfilterable};
 use View::{D2, D2Array};
 
 const C: Stages = Stages::COMPUTE;
@@ -13,8 +12,6 @@ const F: Stages = Stages::FRAGMENT;
 const V: Stages = Stages::VERTEX;
 const VC: Stages = Stages::VERTEX_COMPUTE;
 const VFC: Stages = Stages::VERTEX_FRAGMENT_COMPUTE;
-const POSE: usize = size_of::<PoseData>();
-const COLOR: usize = size_of::<ColorData>();
 
 pub(crate) const SCATTER_CULL: Table = Table {
     label: "engine/scatter-cull-layout",
@@ -58,14 +55,5 @@ pub(crate) const OCCUPANCY: Table = Table {
         write("listed_draw", C),
         texture("finer_coverage", Unfilterable, D2, F),
         texture("finer_heights", Unfilterable, D2, F),
-    ],
-};
-
-pub(crate) const CASTER_POSES: Table = Table {
-    label: "engine/scatter-caster-pose-layout",
-    bindings: &[
-        read_of("slot_poses", POSE, V),
-        read_of("slot_colors", COLOR, V),
-        texture("shadow_regions", Depth, D2Array, F),
     ],
 };

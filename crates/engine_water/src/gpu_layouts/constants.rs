@@ -49,7 +49,6 @@ engine_render::gpu_consts! {
 
     pub(crate) const DEBUG_GRAVITY: f32 = engine_terrain::hydraulics::GRAVITY => ["DEBUG_GRAVITY" in "water::debug"];
     pub(crate) const DEBUG_DRY: f32 = engine_terrain::shallow_water::DRY => ["DEBUG_DRY" in "water::debug"];
-    pub(crate) const DEBUG_SPAN_STEPS: f32 = 254.0 => ["DEBUG_SPAN_STEPS" in "water::debug"];
 
     pub(crate) const SURFACE_BEND: f32 = 7.0 => ["WATER_SURFACE_BEND"];
     pub(crate) const SURFACE_BEND_MOST: f32 = 1.0 => ["WATER_SURFACE_BEND_MOST"];

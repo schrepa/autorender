@@ -1,4 +1,5 @@
-import package::face::lighting::{SurfacePoint, sun_debug};
+import package::face::lighting::sun_debug;
+import package::face::surface_point::SurfacePoint;
 import package::meshes::debug::{DEBUG_FADING, DebugOutput, DebugTargets, debug_targets};
 import package::meshes::declarations::MOVED_SLOT;
 import package::meshes::impostor_frames::{IMPOSTOR_FADING, impostor_index};

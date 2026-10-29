@@ -35,6 +35,12 @@ engine_render::gpu_structs! {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub struct TerrainInfo as ["TerrainInfo" in "scatter::snap", "TerrainInfo" in "post::reflections"] {
+        pub origin: [f32; 4],
+        pub levels: [u32; 4],
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub struct CoverEntry as ["CoverSpec"] {
         pub shape: [f32; 4],
         pub color: [f32; 4],
@@ -99,6 +105,18 @@ pub const TERRAIN: Table = Table {
     ],
 };
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CoverTerms {
+    pub densest: f32,
+    pub width: f32,
+}
+
+impl CoverTerms {
+    pub fn span(self, pixels_per_meter: f32) -> f32 {
+        self.width * pixels_per_meter
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct GroundChange {
     pub min: Vec3,
@@ -133,10 +151,18 @@ pub struct LiveGround<'a> {
     pub terrain: u64,
 }
 
-pub struct SurfaceDraw<'a> {
-    pub indices: &'a wgpu::Buffer,
-    pub args: &'a wgpu::Buffer,
+#[derive(Clone)]
+pub struct SurfaceDraw {
+    pub indices: wgpu::Buffer,
+    pub args: wgpu::Buffer,
     pub offset: u64,
+}
+
+impl SurfaceDraw {
+    pub fn record(&self, pass: &mut wgpu::RenderPass<'_>) {
+        pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint16);
+        pass.draw_indexed_indirect(&self.args, self.offset);
+    }
 }
 
 pub struct WaterDraws<'a> {
@@ -149,7 +175,7 @@ pub struct WaterDraws<'a> {
     pub surfaces: &'a wgpu::TextureView,
     pub info: &'a wgpu::TextureView,
     pub generation: [u64; 6],
-    pub terrains: Vec<(u64, u32, u32, SurfaceDraw<'a>)>,
+    pub terrains: Vec<(u64, u32, u32, SurfaceDraw)>,
     pub targets: [f32; 2],
     pub blocks: [u32; 2],
     pub subdivided: [u32; 2],
@@ -163,6 +189,10 @@ pub trait HeightfieldFace {
     fn cover_sources(&self) -> Option<CoverSources<'_>>;
 
     fn cover_terrain(&self, index: usize) -> (u32, u32, u32);
+
+    fn cover_terms(&self, index: usize) -> CoverTerms;
+
+    fn terrain_info(&self, index: usize, origin: Vec3, pyramid: &Pyramid) -> TerrainInfo;
 
     fn cover_tallest(&self) -> f32;
 

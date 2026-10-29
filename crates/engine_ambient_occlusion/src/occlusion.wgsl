@@ -1,3 +1,4 @@
+import package::engine::math::TAU;
 import package::engine::screen_points::{depth_normal, world_at};
 import package::post::frame::post;
 
@@ -15,7 +16,6 @@ struct Sky {
 @group(0) @binding(17) var sky_sampler: sampler_comparison;
 @group(0) @binding(18) var<uniform> sky: Sky;
 
-const TAU: f32 = 6.2831853;
 const SAMPLES: u32 = 8u;
 const SPIRAL: array<vec2<f32>, 8> = array<vec2<f32>, 8>(
     vec2<f32>(-0.9238795, 0.38268343), vec2<f32>(-0.38268343, 0.9238795),

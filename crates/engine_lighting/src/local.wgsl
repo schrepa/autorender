@@ -1,6 +1,7 @@
-import package::face::lighting::{SurfacePoint, distribution, fresnel, visibility};
+import package::face::lighting::{distribution, fresnel, visibility};
 import package::face::lights::{LIGHT_EXTERIOR, LIGHT_INTERIOR, Light};
 import package::face::probes::in_interior;
+import package::face::surface_point::SurfacePoint;
 import package::generated::pieces::pieces;
 import package::lighting::surface::{cap_share, disk_energy, dominant_direction};
 

@@ -30,7 +30,6 @@ pub const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
 pub const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Uint;
 pub const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 pub const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-const SCENE_LEVELS: u32 = 6;
 
 const COMPOSITED: [&str; 5] = ["scene", "glow", "occlusion", "reflections", "surface"];
 const fn per_frame(name: &'static str) -> ResourceDecl {
@@ -386,7 +385,7 @@ impl Post {
     fn capacity_bytes(&self) -> u64 {
         self.targets.size().map_or(0, |size| {
             let pixels = u64::from(size.width) * u64::from(size.height);
-            pixels * 20 + pixels * 4 / 3
+            pixels * 20
         })
     }
 
@@ -461,14 +460,13 @@ impl Post {
                 crate::targets::RENDER_TARGET,
             )
         };
-        let scene_levels = SCENE_LEVELS.min(crate::gpu_data::mip_levels(width, height) - 1);
         let textures = [
             crate::targets::texture_2d(
                 device,
                 "engine/post-scene",
                 size,
                 1,
-                1 + scene_levels,
+                1,
                 SCENE_FORMAT,
                 crate::targets::RENDER_TARGET | wgpu::TextureUsages::COPY_SRC,
             ),

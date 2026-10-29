@@ -68,6 +68,12 @@ pub const DITHER: ShaderModule = ShaderModule {
     source: include_str!("defaults/dither.wgsl"),
 };
 
+pub const SURFACE_POINT: ShaderModule = ShaderModule {
+    path: "face::surface_point",
+    brick: BRICK,
+    source: include_str!("defaults/surface_point.wgsl"),
+};
+
 pub static MODULES: &[ShaderModule] = &[
     SHADOWS,
     SKY,
@@ -80,4 +86,5 @@ pub static MODULES: &[ShaderModule] = &[
     BLOOM,
     REFLECTIONS,
     DITHER,
+    SURFACE_POINT,
 ];
