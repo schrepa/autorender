@@ -48,16 +48,16 @@ impl Options {
                     .ok()
                     .filter(|bodies| *bodies <= MAX_BODIES)
                     .ok_or_else(|| {
-                        Error::new(ErrorCode::OutOfRange, "$.bodies", format!("0-{MAX_BODIES}"))
+                        Error::new(ErrorCode::OutOfRange, "$.bodies")
+                            .range(0.0, f64::from(MAX_BODIES))
+                            .got(value)
                     })?;
             }
             _ => {
-                let known: Vec<&str> = parameters().into_iter().map(|(known, _)| known).collect();
-                return Err(Error::new(
-                    ErrorCode::InvalidArguments,
-                    format!("$.{name}"),
-                    known.join("|"),
-                ));
+                let known = parameters().into_iter().map(|(known, _)| known);
+                return Err(Error::new(ErrorCode::InvalidArguments, format!("$.{name}"))
+                    .got(name)
+                    .variants(known));
             }
         }
         Ok(())
@@ -68,11 +68,9 @@ fn switch(name: &str, value: &str) -> engine::Result<bool> {
     match value {
         "on" => Ok(true),
         "off" => Ok(false),
-        _ => Err(Error::new(
-            ErrorCode::InvalidValue,
-            format!("$.{name}"),
-            SWITCH,
-        )),
+        _ => Err(Error::new(ErrorCode::InvalidValue, format!("$.{name}"))
+            .got(value)
+            .variants(SWITCH.split('|'))),
     }
 }
 

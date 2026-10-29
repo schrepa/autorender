@@ -1,3 +1,4 @@
+use engine::ErrorCode;
 use engine::prelude::*;
 
 use crate::random::noise;
@@ -11,9 +12,9 @@ pub(crate) fn cave(points: &[Vec3], radius: [f32; 2], seed: u32) -> engine::Resu
     let (centers, tangents) = centerline(points);
     let rings = centers.len();
     if rings < 2 {
-        return Err(engine::Error::game_rule(
-            "a cave needs a centerline at least a ring long",
-        ));
+        return Err(engine::Error::new(ErrorCode::GameRule, "$.points")
+            .at_least(2)
+            .got(rings));
     }
     let origin = points[0];
     let offset = Vec3::new(
@@ -90,7 +91,7 @@ pub(crate) fn cave(points: &[Vec3], radius: [f32; 2], seed: u32) -> engine::Resu
             }
         })
         .collect();
-    Mesh::new(vertices, indices).map_err(|error| engine::Error::from(error).context("cave"))
+    Mesh::new(vertices, indices).map_err(|error| error.within("$.cave"))
 }
 
 fn centerline(points: &[Vec3]) -> (Vec<Vec3>, Vec<Vec3>) {

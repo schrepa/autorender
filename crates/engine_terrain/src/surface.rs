@@ -1,3 +1,4 @@
+use engine_core::{Error, ErrorCode, Expected};
 use engine_math::{clamp, max, min, sin_cos};
 use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
 use serde::{Deserialize, Serialize};
@@ -190,19 +191,22 @@ pub struct Biomes {
     pub macro_colors: MacroCauses,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BiomeError {
-    pub path: String,
-    pub rule: String,
+pub(crate) fn terrain_error(path: impl Into<String>) -> Error {
+    Error::new(ErrorCode::InvalidTerrain, path)
 }
 
-impl std::fmt::Display for BiomeError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{}: {}", self.path, self.rule)
+pub(crate) fn setting_error(invalid: InvalidSetting, at: &str) -> Error {
+    Error {
+        code: ErrorCode::InvalidTerrain,
+        ..Error::from(invalid).within(at)
     }
 }
 
-impl std::error::Error for BiomeError {}
+pub(crate) fn unknown(path: impl Into<String>, got: &str, names: &[String]) -> Error {
+    Error::new(ErrorCode::UnknownReference, path)
+        .got(got)
+        .variants(names)
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Reads {
@@ -398,25 +402,27 @@ fn fold(
 }
 
 impl Compiled {
-    pub(crate) fn from(mask: &Mask, path: &str, depth: usize) -> Result<Self, BiomeError> {
-        let fail = |rule: &str| BiomeError {
-            path: path.to_owned(),
-            rule: rule.to_owned(),
-        };
+    pub(crate) fn from(mask: &Mask, path: &str, depth: usize) -> Result<Self, Error> {
         if depth > MAX_MASK_DEPTH {
-            return Err(fail("masks nest at most 8 deep"));
+            return Err(terrain_error(path)
+                .at_most(MAX_MASK_DEPTH as u64)
+                .got(depth));
         }
         let finite = |values: &[f32]| values.iter().all(|value| value.is_finite());
-        let ramped = |ends: &[f32; 2], what: &str, input: fn([f32; 2]) -> Self| {
+        let ramped = |ends: &[f32; 2], key: &str, input: fn([f32; 2]) -> Self| {
             if finite(ends) {
                 Ok(input(*ends))
             } else {
-                Err(fail(&format!("{what} must be finite")))
+                Err(terrain_error(format!("{path}.{key}"))
+                    .expected(Expected::Finite)
+                    .got(ends))
             }
         };
-        let list = |masks: &[Mask], name: &str| -> Result<Vec<Compiled>, BiomeError> {
+        let list = |masks: &[Mask], name: &str| -> Result<Vec<Compiled>, Error> {
             if masks.is_empty() || masks.len() > MAX_MASK_LIST {
-                return Err(fail("combines 1 to 16 masks"));
+                return Err(terrain_error(format!("{path}.{name}"))
+                    .range(1.0, MAX_MASK_LIST as f64)
+                    .got(masks.len()));
             }
             masks
                 .iter()
@@ -429,26 +435,25 @@ impl Compiled {
         Ok(match mask {
             Mask::Constant(value) => {
                 if !value.is_finite() {
-                    return Err(fail("must be finite"));
+                    return Err(terrain_error(format!("{path}.constant"))
+                        .expected(Expected::Finite)
+                        .got(value));
                 }
                 Self::Constant(*value)
             }
-            Mask::Height(ends) => ramped(ends, "heights", Self::Height)?,
+            Mask::Height(ends) => ramped(ends, "height", Self::Height)?,
             Mask::Slope(ends) => {
                 if let Err(invalid) =
                     ends.check("slope", Rule::Range(0.0, MAX_SLOPE_DEGREES as f64))
                 {
-                    return Err(fail(&invalid.rule));
+                    return Err(setting_error(invalid, path));
                 }
                 Self::Gradient(ends.map(tangent))
             }
-            Mask::Curvature(ends) => ramped(ends, "curvatures", Self::Curvature)?,
+            Mask::Curvature(ends) => ramped(ends, "curvature", Self::Curvature)?,
             Mask::Facing(facing) => {
                 if let Err(invalid) = facing.validate() {
-                    return Err(BiomeError {
-                        path: format!("{path}.facing.{}", invalid.field),
-                        rule: invalid.rule.into_owned(),
-                    });
+                    return Err(setting_error(invalid, &format!("{path}.facing")));
                 }
                 let (sin, cos) = sin_cos(facing.heading.to_radians());
                 Self::Facing {
@@ -456,22 +461,19 @@ impl Compiled {
                     ends: facing.ramp,
                 }
             }
-            Mask::Worn(ends) => ramped(ends, "depths worn", Self::Worn)?,
-            Mask::Deposit(ends) => ramped(ends, "depths laid down", Self::Deposit)?,
-            Mask::Flow(ends) => ramped(ends, "flows", Self::Flow)?,
+            Mask::Worn(ends) => ramped(ends, "worn", Self::Worn)?,
+            Mask::Deposit(ends) => ramped(ends, "deposit", Self::Deposit)?,
+            Mask::Flow(ends) => ramped(ends, "flow", Self::Flow)?,
             Mask::Wetness(ends) => ramped(ends, "wetness", Self::Wetness)?,
-            Mask::Lake(ends) => ramped(ends, "lake depths", Self::Lake)?,
-            Mask::River(ends) => ramped(ends, "river distances", Self::River)?,
-            Mask::Grain(ends) => ramped(ends, "grain sizes", Self::Grain)?,
-            Mask::Power(ends) => ramped(ends, "stream powers", Self::Power)?,
-            Mask::Flood(ends) => ramped(ends, "heights above floods", Self::Flood)?,
-            Mask::Path(ends) => ramped(ends, "path distances", Self::Path)?,
+            Mask::Lake(ends) => ramped(ends, "lake", Self::Lake)?,
+            Mask::River(ends) => ramped(ends, "river", Self::River)?,
+            Mask::Grain(ends) => ramped(ends, "grain", Self::Grain)?,
+            Mask::Power(ends) => ramped(ends, "power", Self::Power)?,
+            Mask::Flood(ends) => ramped(ends, "flood", Self::Flood)?,
+            Mask::Path(ends) => ramped(ends, "path", Self::Path)?,
             Mask::Noise(noise) => {
                 if let Err(invalid) = noise.validate() {
-                    return Err(BiomeError {
-                        path: format!("{path}.noise.{}", invalid.field),
-                        rule: invalid.rule.into_owned(),
-                    });
+                    return Err(setting_error(invalid, &format!("{path}.noise")));
                 }
                 Self::Noise {
                     frequency: 1.0 / noise.wavelength,
@@ -490,7 +492,9 @@ impl Compiled {
             )?)),
             Mask::Remap(remap) => {
                 if !(remap.from.is_finite() && remap.to.is_finite()) {
-                    return Err(fail("remap ends must be finite"));
+                    return Err(terrain_error(format!("{path}.remap"))
+                        .expected(Expected::Finite)
+                        .got([remap.from, remap.to]));
                 }
                 Self::Remap(
                     Box::new(Self::from(
@@ -845,33 +849,39 @@ impl Biomes {
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    pub fn compile(&self) -> Result<BiomeRules, BiomeError> {
-        let fail = |path: String, rule: &str| BiomeError {
-            path,
-            rule: rule.to_owned(),
-        };
+    pub fn compile(&self) -> Result<BiomeRules, Error> {
         if self.materials.is_empty() || self.materials.len() > MAX_SURFACE_MATERIALS {
-            return Err(fail("materials".into(), "needs 1 to 255 materials"));
+            return Err(terrain_error("$.materials")
+                .range(1.0, MAX_SURFACE_MATERIALS as f64)
+                .got(self.materials.len()));
         }
         for (index, id) in self.materials.iter().enumerate() {
             if self.materials[..index].contains(id) {
-                return Err(fail(format!("materials[{index}]"), "IDs must be unique"));
+                return Err(terrain_error(format!("$.materials[{index}]"))
+                    .expected(Expected::Unique)
+                    .got(id));
             }
         }
         if self.biomes.is_empty() || self.biomes.len() > MAX_BIOMES {
-            return Err(fail("biomes".into(), "needs 1 to 255 biomes"));
+            return Err(terrain_error("$.biomes")
+                .range(1.0, MAX_BIOMES as f64)
+                .got(self.biomes.len()));
         }
         let mut biomes = Vec::with_capacity(self.biomes.len());
         for (index, biome) in self.biomes.iter().enumerate() {
-            let at = format!("biomes[{index}]");
+            let at = format!("$.biomes[{index}]");
             if self.biomes[..index]
                 .iter()
                 .any(|other| other.id == biome.id)
             {
-                return Err(fail(format!("{at}.id"), "IDs must be unique"));
+                return Err(terrain_error(format!("{at}.id"))
+                    .expected(Expected::Unique)
+                    .got(&biome.id));
             }
             if biome.layers.is_empty() || biome.layers.len() > MAX_BIOME_LAYERS {
-                return Err(fail(format!("{at}.layers"), "needs 1 to 64 layers"));
+                return Err(terrain_error(format!("{at}.layers"))
+                    .range(1.0, MAX_BIOME_LAYERS as f64)
+                    .got(biome.layers.len()));
             }
             let fitness = Compiled::from(&biome.fitness, &format!("{at}.fitness"), 0)?;
             let mut layers = Vec::with_capacity(biome.layers.len());
@@ -881,9 +891,15 @@ impl Biomes {
                     .materials
                     .iter()
                     .position(|id| *id == layer.material)
-                    .ok_or_else(|| fail(format!("{path}.material"), "must name a material"))?;
+                    .ok_or_else(|| {
+                        unknown(
+                            format!("{path}.material"),
+                            &layer.material,
+                            &self.materials,
+                        )
+                    })?;
                 if let Err(invalid) = layer.validate() {
-                    return Err(fail(format!("{path}.{}", invalid.field), &invalid.rule));
+                    return Err(setting_error(invalid, &path));
                 }
                 layers.push(CompiledLayer {
                     material: material as u8,
@@ -909,13 +925,15 @@ impl Biomes {
         let steep = match &self.steep {
             Some(layer) => {
                 if let Err(invalid) = layer.validate() {
-                    return Err(fail(format!("steep.{}", invalid.field), &invalid.rule));
+                    return Err(setting_error(invalid, "$.steep"));
                 }
                 let material = self
                     .materials
                     .iter()
                     .position(|id| *id == layer.material)
-                    .ok_or_else(|| fail("steep.material".into(), "must name a material"))?;
+                    .ok_or_else(|| {
+                        unknown("$.steep.material", &layer.material, &self.materials)
+                    })?;
                 let steep = Steep {
                     material: material as u8,
                     gradient: layer.slope.map(tangent),
@@ -934,10 +952,7 @@ impl Biomes {
             None => None,
         };
         if let Err(invalid) = self.macro_colors.validate() {
-            return Err(fail(
-                format!("macro_colors.{}", invalid.field),
-                &invalid.rule,
-            ));
+            return Err(setting_error(invalid, "$.macro_colors"));
         }
         let cost = 1 + biomes
             .iter()
@@ -947,10 +962,9 @@ impl Biomes {
                     + biome.wetness.as_ref().map_or(0, Compiled::cost)
             })
             .sum::<u64>();
-        let placements = crate::placement::compile(&self.placements, &self.materials, &self.assets)
-            .map_err(|(path, rule)| BiomeError { path, rule })?;
-        let placed = crate::placement::compile_authored(&self.placed, &self.assets)
-            .map_err(|(path, rule)| BiomeError { path, rule })?;
+        let placements =
+            crate::placement::compile(&self.placements, &self.materials, &self.assets)?;
+        let placed = crate::placement::compile_authored(&self.placed, &self.assets)?;
         let reads = biomes.iter().fold(Reads::default(), |reads, biome| {
             let reads = (biome.wetness.as_ref()).map_or(reads, |rule| reads.and(rule.reads()));
             biome

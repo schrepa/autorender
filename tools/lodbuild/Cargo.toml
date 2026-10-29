@@ -9,6 +9,7 @@ description = "Offline mesh levels of detail with measured errors (the cook and 
 [dependencies]
 engine_assets.workspace = true
 engine_math.workspace = true
+engine_settings.workspace = true
 glam.workspace = true
 
 [lints]

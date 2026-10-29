@@ -19,8 +19,8 @@ use parry3d::{
 
 use crate::geometry::{AffineShape, Bounds, Support};
 use crate::{
-    CollisionError, CollisionLayers, CollisionRay, QueryFilter, RayHit, SensorFilter,
-    ShapeCastOptions, ShapeHit,
+    CollisionLayers, CollisionRay, Fault, QueryFilter, RayHit, SensorFilter, ShapeCastOptions,
+    ShapeHit,
 };
 
 struct Field {
@@ -209,7 +209,7 @@ impl TerrainFields {
         shape: &AffineShape,
         filter: QueryFilter,
         output: &mut Vec<Entity>,
-    ) -> Result<(), CollisionError> {
+    ) -> Result<(), Fault> {
         for field in &self.fields {
             if !accepts(filter, field.entity)
                 || output.contains(&field.entity)
@@ -239,7 +239,7 @@ impl TerrainFields {
         displacement: Vec3,
         filter: QueryFilter,
         options: ShapeCastOptions,
-    ) -> Result<Option<ShapeHit>, CollisionError> {
+    ) -> Result<Option<ShapeHit>, Fault> {
         let swept = shape
             .bounds
             .swept(displacement)
@@ -307,7 +307,7 @@ fn triangle_overlaps(
     shape: &AffineShape,
     triangle: &Triangle,
     center: Vec3,
-) -> Result<bool, CollisionError> {
+) -> Result<bool, Fault> {
     let calls = Cell::new(0);
     let triangle = relative(triangle, center, shape);
     let hit = details::intersection_test_support_map_support_map(
@@ -316,7 +316,7 @@ fn triangle_overlaps(
         &triangle,
     );
     if calls.get() >= 200 {
-        Err(CollisionError::NumericalFailure)
+        Err(Fault::NumericalFailure)
     } else {
         Ok(hit)
     }
@@ -329,7 +329,7 @@ fn cast_triangle(
     center: Vec3,
     displacement: Vec3,
     options: ShapeCastOptions,
-) -> Result<Option<(f32, Vec3, Vec3, bool)>, CollisionError> {
+) -> Result<Option<(f32, Vec3, Vec3, bool)>, Fault> {
     let calls = Cell::new(0);
     let triangle = relative(triangle, center, shape);
     let support = Support::new(shape, &calls);
@@ -350,7 +350,7 @@ fn cast_triangle(
         &mut simplex,
     );
     if calls.get() >= 200 {
-        return Err(CollisionError::NumericalFailure);
+        return Err(Fault::NumericalFailure);
     }
     let contact = match proximity {
         GJKResult::Intersection => {
@@ -386,7 +386,7 @@ fn cast_triangle(
         },
     );
     if calls.get() >= 200 {
-        return Err(CollisionError::NumericalFailure);
+        return Err(Fault::NumericalFailure);
     }
     let Some(hit) = hit else {
         return Ok(None);
@@ -395,7 +395,7 @@ fn cast_triangle(
         || !hit.time_of_impact.is_finite()
         || !(0.0..=1.0).contains(&hit.time_of_impact)
     {
-        return Err(CollisionError::NumericalFailure);
+        return Err(Fault::NumericalFailure);
     }
     Ok(Some((
         hit.time_of_impact,

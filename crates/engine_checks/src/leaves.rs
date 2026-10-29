@@ -1,6 +1,8 @@
 use std::collections::BTreeSet;
 use std::fs;
 
+use engine_core::{Error, ErrorCode};
+
 use crate::Repository;
 
 pub fn check(repository: &Repository) -> Result<(), String> {
@@ -40,7 +42,7 @@ pub fn check(repository: &Repository) -> Result<(), String> {
         );
         return Ok(());
     }
-    Err(problems.join("\n"))
+    crate::report(&problems)
 }
 
 fn top(path: &str) -> Option<&str> {
@@ -78,7 +80,7 @@ fn named(
     text: &str,
     needles: &[String],
     packages: &[String],
-    problems: &mut Vec<String>,
+    problems: &mut Vec<Error>,
 ) {
     let manifest = path.ends_with("Cargo.toml");
     let mut dependencies = false;
@@ -87,7 +89,8 @@ fn named(
         for needle in needles {
             for (start, _) in line.match_indices(needle.as_str()) {
                 if reaches_root(&line[..start]) {
-                    problems.push(format!("{at}: example_named {}", line.trim()));
+                    problems
+                        .push(Error::new(ErrorCode::ExampleNamed, at.as_str()).got(line.trim()));
                 }
             }
         }
@@ -103,7 +106,7 @@ fn named(
                 .map(|(_, name)| name.trim_matches('"'))
                 .filter(|name| packages.iter().any(|package| package == name))
             {
-                problems.push(format!("{at}: example_dependency {name}"));
+                problems.push(Error::new(ErrorCode::ExampleDependency, at.as_str()).got(name));
             }
             continue;
         }
@@ -123,7 +126,7 @@ fn named(
             .map(|(name, _)| name);
         for name in [Some(key), renamed].into_iter().flatten() {
             if packages.iter().any(|package| package == name) {
-                problems.push(format!("{at}: example_dependency {name}"));
+                problems.push(Error::new(ErrorCode::ExampleDependency, at.as_str()).got(name));
             }
         }
     }

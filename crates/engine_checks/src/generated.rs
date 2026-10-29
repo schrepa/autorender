@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 
+use engine_core::{Error, ErrorCode};
+
 pub fn write(root: &Path, files: &[(String, String)]) -> Result<(), String> {
     for (path, contents) in files {
         if let Some(directory) = Path::new(path).parent() {
@@ -21,12 +23,16 @@ pub fn check(root: &Path, files: &[(String, String)], schema: &str) -> Result<()
             Ok(saved) if saved.replace("\r\n", "\n") == *contents => {
                 println!("Generated file matches {path}.");
             }
-            Ok(_) => stale.push(format!("{path} is out of date")),
-            Err(error) => stale.push(format!("cannot read {path}: {error}")),
+            Ok(_) => {
+                stale.push(Error::new(ErrorCode::GeneratedStale, path.as_str()).nearest(schema));
+            }
+            Err(error) => stale.push(
+                Error::new(ErrorCode::SourceIo, path.as_str()).got(format!("{:?}", error.kind())),
+            ),
         }
     }
     if stale.is_empty() {
         return Ok(());
     }
-    Err(format!("{}; run `{schema}`", stale.join("; ")))
+    crate::report(&stale)
 }

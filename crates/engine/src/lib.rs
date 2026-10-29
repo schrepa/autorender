@@ -119,16 +119,16 @@ pub mod bricks {
 pub mod terrain {
     pub use engine_terrain as data;
     pub use engine_terrain::{
-        AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes,
-        Blend, Control, DECK_DEPTH, DECK_MARGIN, DECK_RISE, Erosion, ErosionLayer, ErosionStage,
-        Facing, FarPlacement, GivenRiver, HeightImage, HeightmapLayer, HummocksLayer, Hydrology,
-        HydrologyLayer, HydrologySample, HydrologyStage, Layer, LayerError, Layers,
-        MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS, MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, Mask,
-        MotionDetail, NoiseLayer, NoiseMask, PathLayer, PathProfile, PathStage, Placed,
-        PlacedCollider, PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod,
-        PlacementPart, Pyramid, PyramidError, Remap, RiversLayer, Route, RouteOptions, Stamp,
-        StampOp, StepsLayer, SurfaceMaterial, SurfaceProjection, Surroundings, SurroundingsStatus,
-        TerrainBakes, TerrainEdit, TerrainPrefetch, TerrainRiver, TerrainSurface, Tile, TileKey,
+        AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeLayer, BiomeRules, Biomes, Blend, Control,
+        DECK_DEPTH, DECK_MARGIN, DECK_RISE, Erosion, ErosionLayer, ErosionStage, Facing,
+        FarPlacement, GivenRiver, HeightImage, HeightmapLayer, HummocksLayer, Hydrology,
+        HydrologyLayer, HydrologySample, HydrologyStage, Layer, Layers, MAX_COLLIDER_EXTENT,
+        MAX_PLACEMENT_LODS, MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, Mask, MotionDetail,
+        NoiseLayer, NoiseMask, PathLayer, PathProfile, PathStage, Placed, PlacedCollider,
+        PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod, PlacementPart,
+        Pyramid, Remap, RiversLayer, Route, RouteOptions, Stamp, StampOp, StepsLayer,
+        SurfaceMaterial, SurfaceProjection, Surroundings, SurroundingsStatus, TerrainBakes,
+        TerrainEdit, TerrainPrefetch, TerrainRiver, TerrainSurface, Tile, TileKey,
     };
 }
 

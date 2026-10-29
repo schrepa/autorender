@@ -6,9 +6,9 @@ use std::{
 };
 
 use engine_assetc::{
-    IMPORTER_VERSION, ImportError, ImportedFile, MAX_INPUT_BYTES, import_glb, import_glb_prefab,
-    source_sha256,
+    IMPORTER_VERSION, ImportedFile, MAX_INPUT_BYTES, import_glb, import_glb_prefab, source_sha256,
 };
+use engine_core::{Error, ErrorCode, Expected};
 use engine_dev::authoring;
 use engine_scene::SceneDocument;
 use serde_json::{Value, json};
@@ -30,7 +30,7 @@ pub fn asset(arguments: &[String]) -> Result<(), String> {
     }
 }
 
-fn command(arguments: &[String]) -> Result<Value, ImportError> {
+fn command(arguments: &[String]) -> Result<Value, Error> {
     let options = Options::parse(arguments)?;
     let bytes = read_source(&options.file)?;
     let result = if options.as_prefab {
@@ -51,23 +51,18 @@ fn command(arguments: &[String]) -> Result<Value, ImportError> {
         )
     } else {
         let target = options.into.as_ref().expect("validated target");
-        let original = authoring::read_scene_source(target).map_err(dev_error)?;
+        let original = authoring::read_scene_source(target)?;
         let current = SceneDocument::from_json(&original)?;
         let revision = options.revision.expect("validated revision");
         if current.revision != revision {
-            return Err(ImportError::new(
-                "revision_conflict",
-                "$.revision",
-                format!(
-                    "expected revision {revision}, saved source is {}",
-                    current.revision
-                ),
-            ));
+            return Err(Error::new(ErrorCode::RevisionConflict, "$.revision")
+                .got(revision)
+                .nearest(current.revision));
         }
         let candidate = merge(current, imported, &options.id, options.replace)?;
         let source = candidate.to_json()?;
         write_files(target, &result.files)?;
-        let report = authoring::save_scene(target, &source, revision).map_err(dev_error)?;
+        let report = authoring::save_scene(target, &source, revision)?;
         (
             json!({"path":report.path,"revision":report.revision,"persisted":report.persisted,"source_bytes":report.source_bytes,"mode":if options.replace {"replace_namespace"} else {"append"}}),
             candidate,
@@ -90,17 +85,22 @@ struct Options {
     as_prefab: bool,
 }
 
+const VALUED: [&str; 5] = ["--file", "--id", "--output", "--into", "--expected-revision"];
+
+fn argument(flag: &str) -> Error {
+    Error::new(
+        ErrorCode::InvalidArguments,
+        format!("$.{}", flag.trim_start_matches("--")),
+    )
+}
+
 impl Options {
-    fn parse(arguments: &[String]) -> Result<Self, ImportError> {
-        let invalid = || {
-            ImportError::new(
-                "invalid_arguments",
-                "$",
-                "usage: cargo xtask asset import --file MODEL.glb --id NAMESPACE [--as-prefab] (--output NEW.scene.json | --into EXISTING.scene.json --expected-revision N [--replace])",
-            )
-        };
-        if arguments.first().is_none_or(|command| command != "import") {
-            return Err(invalid());
+    fn parse(arguments: &[String]) -> Result<Self, Error> {
+        if let Some(command) = arguments.first().filter(|command| *command != "import") {
+            return Err(argument("command").got(command).variants(["import"]));
+        }
+        if arguments.is_empty() {
+            return Err(argument("command").expected(Expected::Present));
         }
         let mut values = BTreeMap::new();
         let mut arguments = arguments[1..].iter();
@@ -114,46 +114,62 @@ impl Options {
                     &mut as_prefab
                 };
                 if *present {
-                    return Err(invalid());
+                    return Err(argument(flag).expected(Expected::Unique));
                 }
                 *present = true;
                 continue;
             }
-            if !matches!(
-                flag.as_str(),
-                "--file" | "--id" | "--output" | "--into" | "--expected-revision"
-            ) {
-                return Err(invalid());
+            if !VALUED.contains(&flag.as_str()) {
+                return Err(argument("arguments").got(flag).variants(
+                    VALUED.into_iter().chain(["--replace", "--as-prefab"]),
+                ));
             }
             let value = arguments
                 .next()
                 .filter(|value| !value.starts_with("--"))
-                .ok_or_else(invalid)?;
+                .ok_or_else(|| argument(flag).expected(Expected::Present))?;
             if values.insert(flag.as_str(), value.as_str()).is_some() {
-                return Err(invalid());
+                return Err(argument(flag).expected(Expected::Unique));
             }
         }
-        let file = PathBuf::from(values.get("--file").ok_or_else(invalid)?);
-        let id = values.get("--id").ok_or_else(invalid)?.to_string();
+        let required = |flag: &str| {
+            values
+                .get(flag)
+                .copied()
+                .ok_or_else(|| argument(flag).expected(Expected::Present))
+        };
+        let file = PathBuf::from(required("--file")?);
+        let id = required("--id")?.to_owned();
         let output = values.get("--output").map(PathBuf::from);
         let into = values.get("--into").map(PathBuf::from);
         let revision = values
             .get("--expected-revision")
             .map(|revision| {
                 revision.parse::<u64>().map_err(|_| {
-                    ImportError::new(
-                        "invalid_revision",
-                        "--expected-revision",
-                        "expected an unsigned 64-bit decimal integer",
-                    )
+                    Error::new(ErrorCode::InvalidRevision, "$.expected-revision")
+                        .expected(Expected::Integer)
+                        .got(revision)
                 })
             })
             .transpose()?;
-        if output.is_some() == into.is_some()
-            || (into.is_some() != revision.is_some())
-            || (replace && into.is_none())
-        {
-            return Err(invalid());
+        if output.is_some() == into.is_some() {
+            let wanted = if output.is_some() {
+                Expected::Absent
+            } else {
+                Expected::Present
+            };
+            return Err(argument("--into").expected(wanted));
+        }
+        if into.is_some() != revision.is_some() {
+            let wanted = if into.is_some() {
+                Expected::Present
+            } else {
+                Expected::Absent
+            };
+            return Err(argument("--expected-revision").expected(wanted));
+        }
+        if replace && into.is_none() {
+            return Err(argument("--replace").expected(Expected::Absent));
         }
         Ok(Self {
             file,
@@ -172,7 +188,7 @@ fn merge(
     mut imported: SceneDocument,
     id: &str,
     replace: bool,
-) -> Result<SceneDocument, ImportError> {
+) -> Result<SceneDocument, Error> {
     let as_prefab = !imported.prefabs.is_empty();
     let existing_prefab = current.prefabs.iter().any(|prefab| prefab.id == id);
     let existing_flat = current
@@ -195,11 +211,7 @@ fn merge(
         || (!as_prefab && existing_prefab)
         || (existing_assets && !existing_flat && !existing_prefab)
     {
-        return Err(ImportError::new(
-            "namespace_mode_conflict",
-            "--id",
-            "namespace belongs to another or ambiguous import mode; use a new namespace or explicitly migrate its authoring data before import",
-        ));
+        return Err(Error::new(ErrorCode::DuplicateId, "$.id").got(id));
     }
     if replace {
         let retained = if as_prefab {
@@ -268,13 +280,10 @@ fn merge(
     current.materials.extend(imported.materials);
     current.textures.extend(imported.textures);
     current.prefabs.extend(imported.prefabs);
-    current.revision = current.revision.checked_add(1).ok_or_else(|| {
-        ImportError::new(
-            "revision_exhausted",
-            "$.revision",
-            "scene revision cannot advance past u64::MAX",
-        )
-    })?;
+    current.revision = current
+        .revision
+        .checked_add(1)
+        .ok_or_else(|| Error::new(ErrorCode::RevisionExhausted, "$.revision"))?;
     current.validate()?;
     Ok(current)
 }
@@ -282,7 +291,7 @@ fn merge(
 fn preserve_colliders(
     previous: &[&engine_scene::SceneObject],
     replacements: Vec<&mut engine_scene::SceneObject>,
-) -> Result<(), ImportError> {
+) -> Result<(), Error> {
     let mut replacements: BTreeMap<_, _> = replacements
         .into_iter()
         .map(|entity| (entity.id.clone(), entity))
@@ -292,14 +301,9 @@ fn preserve_colliders(
             continue;
         };
         let Some(replacement) = replacements.get_mut(&old.id) else {
-            return Err(ImportError::new(
-                "collider_reimport_conflict",
-                "--replace",
-                format!(
-                    "reimport removes '{}' with an authored collider; explicitly remove or relocate that collider in source first",
-                    old.id
-                ),
-            ));
+            return Err(Error::new(ErrorCode::InvalidCollider, "$.replace")
+                .expected(Expected::Present)
+                .got(&old.id));
         };
         replacement.collider = Some(collider);
     }
@@ -353,71 +357,72 @@ fn generated(value: &str, namespace: &str, kind: Kind) -> bool {
     }
 }
 
-fn read_source(path: &Path) -> Result<Vec<u8>, ImportError> {
-    let file = File::open(path).map_err(|error| io_error(path, error))?;
-    if file
+fn read_source(path: &Path) -> Result<Vec<u8>, Error> {
+    let too_large = |bytes: u64| {
+        Error::new(ErrorCode::SourceTooLarge, path.display().to_string())
+            .at_most(MAX_INPUT_BYTES as u64)
+            .got(bytes)
+    };
+    let file = File::open(path).map_err(|error| io_error(path, &error))?;
+    let length = file
         .metadata()
-        .map_err(|error| io_error(path, error))?
-        .len()
-        > MAX_INPUT_BYTES as u64
-    {
-        return Err(ImportError::new(
-            "input_too_large",
-            path.display().to_string(),
-            "GLB source exceeds the format's 4 GiB length field",
-        ));
+        .map_err(|error| io_error(path, &error))?
+        .len();
+    if length > MAX_INPUT_BYTES as u64 {
+        return Err(too_large(length));
     }
     let mut bytes = Vec::new();
     file.take((MAX_INPUT_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
-        .map_err(|error| io_error(path, error))?;
+        .map_err(|error| io_error(path, &error))?;
     if bytes.len() > MAX_INPUT_BYTES {
-        return Err(ImportError::new(
-            "input_too_large",
-            path.display().to_string(),
-            "GLB source exceeds the format's 4 GiB length field",
-        ));
+        return Err(too_large(bytes.len() as u64));
     }
     Ok(bytes)
 }
 
-fn write_files(scene: &Path, files: &[ImportedFile]) -> Result<(), ImportError> {
+fn write_files(scene: &Path, files: &[ImportedFile]) -> Result<(), Error> {
     let folder = scene.parent().unwrap_or(Path::new("."));
     for file in files {
         let path = folder.join(&file.uri);
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| io_error(parent, error))?;
+            std::fs::create_dir_all(parent).map_err(|error| io_error(parent, &error))?;
         }
-        std::fs::write(&path, &file.bytes).map_err(|error| io_error(&path, error))?;
+        std::fs::write(&path, &file.bytes).map_err(|error| io_error(&path, &error))?;
     }
     Ok(())
 }
 
-fn write_new(path: &Path, source: &str) -> Result<(), ImportError> {
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::AlreadyExists { ImportError::new("output_exists", path.display().to_string(), "output exists; use a new path or revision-checked --into with explicit --replace") } else { io_error(path, error) }
-    })?;
+fn write_new(path: &Path, source: &str) -> Result<(), Error> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| {
+            let failed = io_error(path, &error);
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                failed.expected(Expected::Absent)
+            } else {
+                failed
+            }
+        })?;
     let result = file
         .write_all(source.as_bytes())
         .and_then(|()| file.sync_all());
     drop(file);
     if let Err(error) = result {
-        let cleanup = std::fs::remove_file(path);
-        return Err(ImportError::new(
-            "source_io",
-            path.display().to_string(),
-            match cleanup {
-                Ok(()) => error.to_string(),
-                Err(cleanup) => format!("{error}; cannot remove incomplete output: {cleanup}"),
-            },
-        ));
+        return Err(match std::fs::remove_file(path) {
+            Ok(()) => io_error(path, &error),
+            Err(cleanup) => io_error(path, &error).got([kind(&error), kind(&cleanup)]),
+        });
     }
     Ok(())
 }
 
-fn io_error(path: &Path, error: std::io::Error) -> ImportError {
-    ImportError::new("source_io", path.display().to_string(), error.to_string())
+fn kind(error: &std::io::Error) -> String {
+    format!("{:?}", error.kind())
 }
-fn dev_error(error: engine_dev::DevError) -> ImportError {
-    ImportError::new(error.code.as_str(), error.path, error.message)
+
+fn io_error(path: &Path, error: &std::io::Error) -> Error {
+    Error::new(ErrorCode::SourceIo, path.display().to_string()).got(kind(error))
 }

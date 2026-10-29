@@ -1,7 +1,7 @@
-use std::fmt;
 use std::ops::{BitOr, BitOrAssign};
 
 use engine_math::{max, min};
+use engine_settings::{Error, ErrorCode};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SimplifyOptions {
@@ -99,86 +99,34 @@ pub struct Simplified {
     pub error: f32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum SimplifyError {
-    TriangleCount {
-        indices: usize,
-    },
-    IndexOutOfBounds {
-        index: usize,
-        value: u32,
-        vertices: usize,
-    },
-    TooLarge {
-        vertices: usize,
-        indices: usize,
-    },
-    AttributeLayout {
-        values: usize,
-        stride: usize,
-        weights: usize,
-        vertices: usize,
-    },
-    InvalidWeight {
-        attribute: usize,
-    },
-    VertexFlagCount {
-        expected: usize,
-        actual: usize,
-    },
-    InvalidTargetError,
+fn mesh_error(path: impl Into<String>) -> Error {
+    Error::new(ErrorCode::InvalidMesh, path)
 }
 
-impl fmt::Display for SimplifyError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::TriangleCount { indices } => {
-                write!(f, "simplify index count {indices} must be a multiple of 3")
-            }
-            Self::IndexOutOfBounds {
-                index,
-                value,
-                vertices,
-            } => write!(
-                f,
-                "simplify index {index} is {value}, outside {vertices} vertices"
-            ),
-            Self::TooLarge { vertices, indices } => write!(
-                f,
-                "simplify input of {vertices} vertices and {indices} indices exceeds 32-bit indices"
-            ),
-            Self::AttributeLayout {
-                values,
-                stride,
-                weights,
-                vertices,
-            } => write!(
-                f,
-                "simplify attributes need {stride} values for each of {vertices} vertices and at most {stride} weights; received {values} values and {weights} weights"
-            ),
-            Self::InvalidWeight { attribute } => write!(
-                f,
-                "simplify attribute {attribute} weight must be finite and not negative"
-            ),
-            Self::VertexFlagCount { expected, actual } => write!(
-                f,
-                "simplify vertex flags need one value per vertex: {expected}; received {actual}"
-            ),
-            Self::InvalidTargetError => {
-                write!(f, "simplify target error must not be negative or NaN")
-            }
-        }
+fn exactly(path: &str, wanted: usize, got: usize) -> Error {
+    mesh_error(path)
+        .range(wanted as f64, wanted as f64)
+        .got(got)
+}
+
+fn too_large(vertices: usize, indices: usize) -> Error {
+    if vertices >= NONE as usize {
+        mesh_error("$.positions")
+            .at_most(u64::from(NONE - 1))
+            .got(vertices)
+    } else {
+        mesh_error("$.indices")
+            .at_most(u64::from(NONE))
+            .got(indices)
     }
 }
-
-impl std::error::Error for SimplifyError {}
 
 pub fn simplify(
     input: &SimplifyInput<'_>,
     target_index_count: usize,
     target_error: f32,
     options: SimplifyOptions,
-) -> Result<Simplified, SimplifyError> {
+) -> Result<Simplified, Error> {
     validate(input, target_error)?;
     Ok(simplify_edge(
         input,
@@ -198,27 +146,20 @@ pub fn protect_attribute_seams(
     stride: usize,
     mask: u32,
     flags: &mut [VertexFlags],
-) -> Result<(), SimplifyError> {
+) -> Result<(), Error> {
     let vertices = positions.len();
     if vertices.checked_mul(stride) != Some(values.len()) {
-        return Err(SimplifyError::AttributeLayout {
-            values: values.len(),
-            stride,
-            weights: 0,
-            vertices,
-        });
+        return Err(exactly(
+            "$.values",
+            vertices.saturating_mul(stride),
+            values.len(),
+        ));
     }
     if flags.len() != vertices {
-        return Err(SimplifyError::VertexFlagCount {
-            expected: vertices,
-            actual: flags.len(),
-        });
+        return Err(exactly("$.flags", vertices, flags.len()));
     }
     if vertices >= NONE as usize {
-        return Err(SimplifyError::TooLarge {
-            vertices,
-            indices: 0,
-        });
+        return Err(too_large(vertices, 0));
     }
     let (remap, _) = build_position_remap(positions, false);
     for (vertex, &first) in remap.iter().enumerate() {
@@ -235,55 +176,54 @@ pub fn protect_attribute_seams(
     Ok(())
 }
 
-fn validate(input: &SimplifyInput<'_>, target_error: f32) -> Result<(), SimplifyError> {
+fn validate(input: &SimplifyInput<'_>, target_error: f32) -> Result<(), Error> {
     let vertices = input.positions.len();
     let indices = input.indices.len();
     if !indices.is_multiple_of(3) {
-        return Err(SimplifyError::TriangleCount { indices });
+        return Err(mesh_error("$.indices").got(indices));
     }
     if vertices >= NONE as usize || indices > NONE as usize {
-        return Err(SimplifyError::TooLarge { vertices, indices });
+        return Err(too_large(vertices, indices));
     }
     if let Some(index) = input
         .indices
         .iter()
         .position(|&value| value as usize >= vertices)
     {
-        return Err(SimplifyError::IndexOutOfBounds {
-            index,
-            value: input.indices[index],
-            vertices,
-        });
+        return Err(mesh_error(format!("$.indices[{index}]"))
+            .at_most(vertices.saturating_sub(1) as u64)
+            .got(input.indices[index]));
     }
     if let Some(attributes) = &input.attributes {
-        if attributes.weights.len() > attributes.stride
-            || vertices.checked_mul(attributes.stride) != Some(attributes.values.len())
-        {
-            return Err(SimplifyError::AttributeLayout {
-                values: attributes.values.len(),
-                stride: attributes.stride,
-                weights: attributes.weights.len(),
-                vertices,
-            });
+        if attributes.weights.len() > attributes.stride {
+            return Err(mesh_error("$.attributes.weights")
+                .at_most(attributes.stride as u64)
+                .got(attributes.weights.len()));
+        }
+        if vertices.checked_mul(attributes.stride) != Some(attributes.values.len()) {
+            return Err(exactly(
+                "$.attributes.values",
+                vertices.saturating_mul(attributes.stride),
+                attributes.values.len(),
+            ));
         }
         if let Some(attribute) = attributes
             .weights
             .iter()
             .position(|weight| !weight.is_finite() || *weight < 0.0)
         {
-            return Err(SimplifyError::InvalidWeight { attribute });
+            return Err(mesh_error(format!("$.attributes.weights[{attribute}]"))
+                .at_least(0)
+                .got(attributes.weights[attribute]));
         }
     }
     if let Some(flags) = input.vertex_flags
         && flags.len() != vertices
     {
-        return Err(SimplifyError::VertexFlagCount {
-            expected: vertices,
-            actual: flags.len(),
-        });
+        return Err(exactly("$.vertex_flags", vertices, flags.len()));
     }
     if target_error.is_nan() || target_error < 0.0 {
-        return Err(SimplifyError::InvalidTargetError);
+        return Err(mesh_error("$.target_error").at_least(0).got(target_error));
     }
     Ok(())
 }

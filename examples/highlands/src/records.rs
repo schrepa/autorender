@@ -30,11 +30,11 @@ pub(crate) fn mesh_then(
         move || {
             make()
                 .map(|mesh| mesh_bytes(&mesh))
-                .map_err(|error| error.message)
+                .map_err(|error| error.to_string())
         },
         move |world, bytes| {
-            let mesh = decode_mesh_buffer(bytes).map_err(|error| error.message)?;
-            then(world, handle, &mesh).map_err(|error| error.message)?;
+            let mesh = decode_mesh_buffer(bytes).map_err(|error| error.to_string())?;
+            then(world, handle, &mesh).map_err(|error| error.to_string())?;
             world
                 .resource_mut::<AssetLibrary>()
                 .fill_mesh(handle, mesh)
@@ -71,5 +71,5 @@ pub(crate) fn textures(
             .collect(),
         make: MakeSources::Here(Arc::new(make)),
     };
-    records.textures(assets, set).map_err(engine::Error::from)
+    records.textures(assets, set)
 }

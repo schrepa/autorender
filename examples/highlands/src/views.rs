@@ -1,5 +1,5 @@
 use engine::prelude::*;
-use engine::{Error, ErrorCode};
+use engine::{Error, ErrorCode, Expected};
 
 use crate::field::hamlet_radius;
 use crate::land::Plateau;
@@ -12,11 +12,14 @@ const EYE_HEIGHT: f32 = 1.7;
 
 const SPEED: f32 = 160.0;
 
-pub(crate) fn names() -> String {
-    let names: Vec<&str> = VIEWS
+fn view_names() -> impl Iterator<Item = &'static str> {
+    VIEWS
         .into_iter()
         .chain(WATER_VIEWS.iter().map(|(name, ..)| *name))
-        .collect();
+}
+
+pub(crate) fn names() -> String {
+    let names: Vec<&str> = view_names().collect();
     format!("{}|{STAND}x,z,yaw,pitch", names.join("|"))
 }
 
@@ -47,7 +50,11 @@ fn aim(world: &mut World, view: &str) -> engine::Result<()> {
         .map(StandingEye::camera)
         .or_else(|| camera(world, view))
         .or(bodies)
-        .ok_or_else(|| Error::new(ErrorCode::InvalidValue, "$.view", names()))?;
+        .ok_or_else(|| {
+            Error::new(ErrorCode::InvalidValue, "$.view")
+                .got(view)
+                .variants(view_names())
+        })?;
     if let Some(standing) = standing {
         world.insert_resource(standing);
     } else {
@@ -107,23 +114,26 @@ struct StandingEye {
 
 impl StandingEye {
     fn new(world: &World, place: &str) -> engine::Result<Self> {
-        let malformed = || {
-            Error::new(
-                ErrorCode::InvalidValue,
-                "$.view",
-                format!("{STAND}x,z,yaw,pitch"),
-            )
+        let malformed = |expected| {
+            Error::new(ErrorCode::InvalidValue, "$.view")
+                .expected(expected)
+                .got(place)
         };
         let numbers: Vec<f32> = place
             .split(',')
             .map(|number| number.trim().parse::<f32>())
             .collect::<Result<_, _>>()
-            .map_err(|_| malformed())?;
+            .map_err(|_| malformed(Expected::Number))?;
         let [x, z, yaw, pitch] = numbers[..] else {
-            return Err(malformed());
+            return Err(malformed(Expected::Array));
         };
-        if numbers.iter().any(|number| !number.is_finite()) || pitch.abs() >= 90.0 {
-            return Err(malformed());
+        if numbers.iter().any(|number| !number.is_finite()) {
+            return Err(malformed(Expected::Finite));
+        }
+        if pitch.abs() >= 90.0 {
+            return Err(Error::new(ErrorCode::OutOfRange, "$.view")
+                .range(-90.0, 90.0)
+                .got(pitch));
         }
         let (yaw_sin, yaw_cos) = math::sin_cos(yaw.to_radians());
         let (pitch_sin, pitch_cos) = math::sin_cos(pitch.to_radians());

@@ -8,7 +8,9 @@ use gltf::{
     mesh::Semantic,
 };
 
-use crate::{ImportError, ImportedFile, unsupported};
+use engine_core::{Error, ErrorCode, Expected};
+
+use crate::{ImportedFile, gltf_error, unsupported};
 
 pub(crate) fn import(
     document: &gltf::Document,
@@ -16,7 +18,7 @@ pub(crate) fn import(
     id: &str,
     output: &mut SceneDocument,
     files: &mut Vec<ImportedFile>,
-) -> Result<(), ImportError> {
+) -> Result<(), Error> {
     let source = document.scenes().next().expect("single_scene");
     let mut stack: Vec<_> = source.nodes().map(|node| (node, Mat4::IDENTITY)).collect();
     stack.reverse();
@@ -34,11 +36,7 @@ pub(crate) fn import(
             || matrix.z_axis.w != 0.0
             || matrix.w_axis.w != 1.0
         {
-            return Err(ImportError::new(
-                "invalid_transform",
-                &path,
-                "node world transforms must be finite, affine and nonsingular",
-            ));
+            return Err(Error::new(ErrorCode::InvalidWorldTransform, &path));
         }
         let normal_matrix = linear.inverse().transpose();
         if let Some(mesh) = node.mesh() {
@@ -55,11 +53,7 @@ pub(crate) fn import(
         stack[start..].reverse();
     }
     if output.entities.is_empty() {
-        return Err(ImportError::new(
-            "empty_model",
-            "$.nodes",
-            "the scene contains no mesh primitives",
-        ));
+        return Err(Error::new(ErrorCode::InvalidMesh, "$.meshes").expected(Expected::Present));
     }
     Ok(())
 }
@@ -72,19 +66,17 @@ fn import_primitive(
     primitive: &gltf::Primitive<'_>,
     matrix: Mat4,
     normal_matrix: Mat3,
-) -> Result<(SceneObject, SceneMesh, ImportedFile), ImportError> {
+) -> Result<(SceneObject, SceneMesh, ImportedFile), Error> {
     let mesh = node.mesh().expect("node_has_mesh");
     let primitive_path = format!(
         "$.meshes[{}].primitives[{}]",
         mesh.index(),
         primitive.index()
     );
-    let material_index = primitive.material().index().ok_or_else(|| {
-        unsupported(
-            format!("{primitive_path}.material"),
-            "an explicit material is required",
-        )
-    })?;
+    let material_index = primitive
+        .material()
+        .index()
+        .ok_or_else(|| unsupported(format!("{primitive_path}.material")).expected(Expected::Present))?;
     let material = &output.materials[material_index];
     let textured = material.texture.is_some()
         || material.metallic_roughness_texture.is_some()
@@ -111,8 +103,8 @@ fn import_primitive(
     let name = format!("node{}.p{}", node.index(), primitive.index());
     let plain: Vec<engine_core::MeshVertex> =
         vertices.iter().map(|&vertex| vertex.into()).collect();
-    let lods = engine_lodbuild::levels(&plain, &indices)
-        .map_err(|message| ImportError::new("invalid_mesh", &primitive_path, message))?;
+    let lods =
+        engine_lodbuild::levels(&plain, &indices).map_err(|error| error.within(&primitive_path))?;
     let file = ImportedFile::named(
         id,
         &name,
@@ -146,6 +138,11 @@ fn import_primitive(
     Ok((object, mesh, file))
 }
 
+fn mismatched(path: &str, vertices: usize) -> Error {
+    Error::new(ErrorCode::InvalidMesh, format!("{path}.attributes"))
+        .range(vertices as f64, vertices as f64)
+}
+
 fn node_name(node: &gltf::Node<'_>, fallback: &str) -> String {
     node.name()
         .filter(|name| name.len() <= 128 && !name.chars().any(char::is_control))
@@ -164,13 +161,12 @@ fn primitive_data(
     normal_matrix: Mat3,
     textured: bool,
     path: &str,
-) -> Result<(Vec<SceneVertex>, Vec<u32>), ImportError> {
-    if primitive.mode() != gltf::mesh::Mode::Triangles || primitive.morph_targets().next().is_some()
-    {
-        return Err(unsupported(
-            path,
-            "only indexed triangle primitives without morph targets are supported",
-        ));
+) -> Result<(Vec<SceneVertex>, Vec<u32>), Error> {
+    if primitive.mode() != gltf::mesh::Mode::Triangles {
+        return Err(unsupported(format!("{path}.mode")).got(primitive.mode().as_gl_enum()));
+    }
+    if primitive.morph_targets().next().is_some() {
+        return Err(unsupported(format!("{path}.targets")).expected(Expected::Absent));
     }
     for (semantic, accessor) in primitive.attributes() {
         let dimensions = match semantic {
@@ -186,16 +182,13 @@ fn primitive_data(
             || accessor.dimensions() != dimensions
             || accessor.normalized()
         {
-            return Err(unsupported(
-                format!("{path}.attributes"),
-                "vertex attributes must be unnormalized FLOAT VEC3 (position/normal) or FLOAT VEC2 (UV)",
-            ));
+            return Err(unsupported(format!("{path}.attributes")).got(semantic.to_string()));
         }
     }
     let positions = primitive.get(&Semantic::Positions).ok_or_else(|| {
-        unsupported(
+        Error::new(
+            ErrorCode::MissingField,
             format!("{path}.attributes.POSITION"),
-            "POSITION is required",
         )
     })?;
     let normals = primitive.get(&Semantic::Normals);
@@ -207,16 +200,12 @@ fn primitive_data(
             .as_ref()
             .is_some_and(|uv| uv.count() != positions.count())
     {
-        return Err(ImportError::new(
-            "attribute_count",
-            path,
-            "vertex attribute counts must match",
-        ));
+        return Err(mismatched(path, positions.count()));
     }
     if textured && texcoords.is_none() {
-        return Err(unsupported(
+        return Err(Error::new(
+            ErrorCode::MissingField,
             format!("{path}.attributes.TEXCOORD_0"),
-            "textured primitives require TEXCOORD_0",
         ));
     }
     if let Some(accessor) = primitive.indices() {
@@ -229,18 +218,13 @@ fn primitive_data(
             || accessor.count() % 3 != 0
             || accessor.view().is_some_and(|view| view.stride().is_some())
         {
-            return Err(ImportError::new(
-                "invalid_indices",
-                format!("{path}.indices"),
-                "indices must be tightly packed unsigned scalars in complete triangles",
-            ));
+            return Err(Error::new(ErrorCode::InvalidMesh, format!("{path}.indices")));
         }
     } else if positions.count() % 3 != 0 {
-        return Err(ImportError::new(
-            "invalid_indices",
-            format!("{path}.attributes.POSITION"),
-            "unindexed primitives draw complete triangles",
-        ));
+        return Err(
+            Error::new(ErrorCode::InvalidMesh, format!("{path}.attributes.POSITION"))
+                .got(positions.count()),
+        );
     }
     let reader = primitive.reader(|buffer| {
         if buffer.index() == 0 {
@@ -251,14 +235,14 @@ fn primitive_data(
     });
     let position_data: Vec<Vec3> = reader
         .read_positions()
-        .ok_or_else(|| ImportError::new("invalid_accessor", path, "cannot read positions"))?
+        .ok_or_else(|| gltf_error(format!("{path}.attributes.POSITION")))?
         .map(Vec3::from)
         .collect();
     let normal_data: Option<Vec<Vec3>> = match normals {
         Some(_) => Some(
             reader
                 .read_normals()
-                .ok_or_else(|| ImportError::new("invalid_accessor", path, "cannot read normals"))?
+                .ok_or_else(|| gltf_error(format!("{path}.attributes.NORMAL")))?
                 .map(Vec3::from)
                 .collect(),
         ),
@@ -278,29 +262,23 @@ fn primitive_data(
             .as_ref()
             .is_some_and(|colors| colors.len() != position_data.len())
     {
-        return Err(ImportError::new(
-            "attribute_count",
-            path,
-            "vertex attribute counts must match",
-        ));
+        return Err(mismatched(path, position_data.len()));
     }
     let mut indices: Vec<u32> = match primitive.indices() {
         Some(_) => reader
             .read_indices()
-            .ok_or_else(|| ImportError::new("invalid_accessor", path, "cannot read indices"))?
+            .ok_or_else(|| gltf_error(format!("{path}.indices")))?
             .into_u32()
             .collect(),
         None => (0..position_data.len() as u32).collect(),
     };
-    if indices
+    if let Some(&index) = indices
         .iter()
-        .any(|index| *index as usize >= position_data.len())
+        .find(|index| **index as usize >= position_data.len())
     {
-        return Err(ImportError::new(
-            "index_bounds",
-            format!("{path}.indices"),
-            "triangle index is outside the vertex array",
-        ));
+        return Err(Error::new(ErrorCode::InvalidMesh, format!("{path}.indices"))
+            .at_most(position_data.len().saturating_sub(1) as u64)
+            .got(index));
     }
     let (sources, local_normals): (Vec<u32>, Vec<Vec3>) = match &normal_data {
         Some(normals) => ((0..position_data.len() as u32).collect(), normals.clone()),
@@ -333,11 +311,9 @@ fn primitive_data(
             || normal.length_squared() < 0.000_000_000_001
             || uv.iter().any(|value| !value.is_finite())
         {
-            return Err(ImportError::new(
-                "invalid_vertex",
-                path,
-                "vertices must have finite bounded positions, nonzero finite normals and finite UVs",
-            ));
+            return Err(Error::new(ErrorCode::InvalidMesh, format!("{path}.attributes"))
+                .expected(Expected::Finite)
+                .got(source));
         }
         let color = color_data.as_ref().map(|colors| colors[source as usize]);
         let uv1 = uv1_data.as_ref().map(|uv1| uv1[source as usize]);
@@ -347,11 +323,9 @@ fn primitive_data(
                 .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
         }) || uv1.is_some_and(|uv1| uv1.iter().any(|value| !value.is_finite()))
         {
-            return Err(ImportError::new(
-                "invalid_vertex",
-                path,
-                "vertex colors must be finite in [0, 1] and second UVs finite",
-            ));
+            return Err(Error::new(ErrorCode::InvalidMesh, format!("{path}.attributes"))
+                .range(0.0, 1.0)
+                .got(source));
         }
         vertices.push(SceneVertex {
             position: position.to_array(),

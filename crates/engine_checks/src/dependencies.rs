@@ -2,11 +2,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use engine_core::{Error, ErrorCode};
 use serde_json::json;
 
 use crate::bricks::Recorded;
 use crate::faces::{Face, parse};
-use crate::{DependencyKind, Exceptions, Package, Repository};
+use crate::{DependencyKind, Exceptions, Repository};
 
 pub fn check(repository: &Repository, exceptions: &Exceptions) -> Result<(), String> {
     let recorded = crate::bricks::recorded(repository)?;
@@ -17,16 +18,14 @@ pub fn check(repository: &Repository, exceptions: &Exceptions) -> Result<(), Str
     let mut problems = Vec::new();
     let used = core_uses(repository, &bricks, exceptions, &mut problems)?;
     for &(from, to) in exceptions.core_uses_brick {
-        let known = repository.package(from).is_some_and(Package::own);
-        if known && !used.contains(&(from.to_owned(), to.to_owned())) {
+        let Some(package) = repository.package(from).filter(|package| package.own()) else {
+            continue;
+        };
+        if !used.contains(&(from.to_owned(), to.to_owned())) {
+            let file = repository.relative(&package.manifest).unwrap_or_default();
             problems.push(
-                json!({
-                    "rule": "exception_unused",
-                    "list": "core_uses_brick",
-                    "from": from,
-                    "to": to,
-                })
-                .to_string(),
+                Error::new(ErrorCode::ExceptionUnused, file)
+                    .got(json!({"core_uses_brick": [from, to]})),
             );
         }
     }
@@ -44,14 +43,14 @@ pub fn check(repository: &Repository, exceptions: &Exceptions) -> Result<(), Str
         );
         return Ok(());
     }
-    Err(problems.join("\n"))
+    crate::report(&problems)
 }
 
 fn core_uses(
     repository: &Repository,
     bricks: &BTreeSet<String>,
     exceptions: &Exceptions,
-    problems: &mut Vec<String>,
+    problems: &mut Vec<Error>,
 ) -> Result<BTreeSet<(String, String)>, String> {
     let mut used = BTreeSet::new();
     for package in repository.own().filter(|package| package.core()) {
@@ -75,16 +74,13 @@ fn core_uses(
                 if !reported.insert(brick.clone()) {
                     continue;
                 }
+                let line = line_of(&manifest, &dependency.package);
                 problems.push(
-                    json!({
-                        "rule": "core_uses_brick",
-                        "file": file,
-                        "line": line_of(&manifest, &dependency.package),
+                    Error::new(ErrorCode::CoreUsesBrick, crate::at(&file, line)).got(json!({
                         "from": package.name,
                         "to": brick,
                         "through": through,
-                    })
-                    .to_string(),
+                    })),
                 );
             }
         }
@@ -141,7 +137,7 @@ fn line_of(manifest: &str, name: &str) -> usize {
 fn internal_paths(
     repository: &Repository,
     bricks: &BTreeSet<String>,
-    problems: &mut Vec<String>,
+    problems: &mut Vec<Error>,
 ) -> Result<(), String> {
     let mut faces: BTreeMap<String, Face> = BTreeMap::new();
     for package in repository.own() {
@@ -171,15 +167,13 @@ fn internal_paths(
                         continue;
                     }
                     problems.push(
-                        json!({
-                            "rule": "brick_internal_path",
-                            "file": shown,
-                            "line": line,
-                            "from": own,
-                            "to": other,
-                            "path": format!("{other}::{}", segments.join("::")),
-                        })
-                        .to_string(),
+                        Error::new(ErrorCode::BrickInternalPath, crate::at(&shown, line)).got(
+                            json!({
+                                "from": own,
+                                "to": other,
+                                "path": format!("{other}::{}", segments.join("::")),
+                            }),
+                        ),
                     );
                 }
             }
@@ -279,17 +273,17 @@ fn paths(code: &[char], krate: &str) -> Vec<(usize, Vec<String>)> {
     found
 }
 
-fn brick_cycles(recorded: &[Recorded], problems: &mut Vec<String>) {
+fn brick_cycles(recorded: &[Recorded], problems: &mut Vec<Error>) {
     let graph: BTreeMap<String, Vec<String>> = recorded
         .iter()
         .map(|brick| (brick.name.clone(), brick.reads.clone()))
         .collect();
     for cycle in cycles(&graph) {
-        problems.push(json!({"rule": "brick_cycle", "bricks": cycle}).to_string());
+        problems.push(Error::new(ErrorCode::BrickCycle, crate::bricks::FILE).got(cycle));
     }
 }
 
-fn crate_cycles(repository: &Repository, problems: &mut Vec<String>) {
+fn crate_cycles(repository: &Repository, problems: &mut Vec<Error>) {
     let own: BTreeSet<&str> = repository
         .own()
         .map(|package| package.name.as_str())
@@ -309,7 +303,7 @@ fn crate_cycles(repository: &Repository, problems: &mut Vec<String>) {
         })
         .collect();
     for cycle in cycles(&graph) {
-        problems.push(json!({"rule": "crate_cycle", "crates": cycle}).to_string());
+        problems.push(Error::new(ErrorCode::CrateCycle, "Cargo.toml").got(cycle));
     }
 }
 

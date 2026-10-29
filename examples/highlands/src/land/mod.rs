@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use engine::prelude::*;
 use engine::terrain::*;
+use engine::{ErrorCode, Expected};
 
 use crate::records;
 use looks::{LOOKS, Look};
@@ -684,7 +685,9 @@ fn surface(
         .material(wall_rock)
         .copied()
         .map(|material| material.with_double_sided(true))
-        .ok_or_else(|| engine::Error::game_rule("the cave's rock is resident"))?;
+        .ok_or_else(|| {
+            engine::Error::new(ErrorCode::GameRule, "$.cave.wall").expected(Expected::Present)
+        })?;
     let wall = assets.insert_material(wall)?;
     world.insert_resource(CaveRock {
         boulders,
@@ -703,7 +706,6 @@ fn surface(
         bridge: Some(rock),
         ..surface
     })
-    .map_err(engine::Error::from)
 }
 
 #[derive(Resource)]
@@ -853,9 +855,7 @@ fn open_cave(world: &mut World) {
 fn report_failure(event: &str, error: &engine::Error) {
     let record = serde_json::json!({
         "event": event,
-        "code": error.code,
-        "path": error.path,
-        "message": error.message,
+        "error": error,
     });
     eprintln!("{record}");
 }
@@ -943,7 +943,7 @@ fn maps(
             let set = format!("highlands/{name}");
             let textures =
                 crate::records::textures((records, &mut *assets), set, &maps, move || {
-                    ground::sources(name)
+                    ground::sources(name).map_err(|error| error.to_string())
                 })?;
             loaded.insert(name, textures.clone());
             textures
@@ -961,9 +961,7 @@ fn maps(
         .and_then(|material| material.with_normal_texture(TextureRef::new(textures[1]), 1.0))
         .and_then(|material| material.with_metallic_roughness_texture(TextureRef::new(textures[2])))
         .and_then(|material| material.with_occlusion_texture(TextureRef::new(textures[2]), 1.0))?;
-    assets
-        .insert_material(material)
-        .map_err(engine::Error::from)
+    assets.insert_material(material)
 }
 
 fn scanned(
@@ -980,7 +978,7 @@ fn scanned(
             return Ok(None);
         };
         let texture = Texture::from_rgba(file.width, file.height, file.pixels.clone())
-            .map_err(|error| engine::Error::from(error).context(&file_name))?;
+            .map_err(|error| error.within(&format!("$.rocks.{name}.{map}")))?;
         textures.push(assets.insert_texture(texture)?);
     }
     Material::new([1.0; 4])
@@ -997,7 +995,6 @@ fn scanned(
         .and_then(|material| material.with_world_mapping(tiling))
         .and_then(|material| material.with_top_layer(top))
         .map(Some)
-        .map_err(engine::Error::from)
 }
 
 fn in_terrain_rock(
@@ -1027,7 +1024,6 @@ fn in_terrain_rock(
     material
         .with_world_mapping(tiling)
         .and_then(|material| material.with_top_layer(top))
-        .map_err(engine::Error::from)
 }
 
 #[expect(

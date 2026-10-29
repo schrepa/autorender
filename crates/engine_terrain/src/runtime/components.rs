@@ -1,4 +1,6 @@
 use super::*;
+use crate::surface::{setting_error, terrain_error};
+use engine_core::{Error, Expected};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainSurface {
@@ -53,18 +55,19 @@ pub struct PlacementPart {
 pub const MAX_PLACEMENT_PARTS: usize = 2;
 
 impl PlacementPart {
-    pub fn check(parts: &[usize], levels: usize) -> Result<(), (Option<usize>, &'static str)> {
+    pub fn check(parts: &[usize], levels: usize) -> Result<(), Error> {
         if parts.len() > MAX_PLACEMENT_PARTS {
-            return Err((None, "lists at most 2 parts"));
+            return Err(terrain_error("$.parts")
+                .at_most(MAX_PLACEMENT_PARTS as u64)
+                .got(parts.len()));
         }
         match parts
             .iter()
             .position(|&meshes| meshes == 0 || meshes > levels)
         {
-            Some(index) => Err((
-                Some(index),
-                "needs a mesh, and one for each of the asset's levels at most",
-            )),
+            Some(index) => Err(terrain_error(format!("$.parts[{index}].meshes"))
+                .range(1.0, levels as f64)
+                .got(parts[index])),
             None => Ok(()),
         }
     }
@@ -132,17 +135,18 @@ pub struct PlacementLod {
 pub const MAX_PLACEMENT_LODS: usize = 4;
 
 impl PlacementLod {
-    pub fn check(errors: &[f32]) -> Result<(), (Option<usize>, &'static str)> {
+    pub fn check(errors: &[f32]) -> Result<(), Error> {
         if errors.len() > MAX_PLACEMENT_LODS {
-            return Err((None, "lists at most 4 meshes"));
+            return Err(terrain_error("$.lods")
+                .at_most(MAX_PLACEMENT_LODS as u64)
+                .got(errors.len()));
         }
         let mut last = 0.0;
         for (level, &error) in errors.iter().enumerate() {
             if !(error.is_finite() && error > last) {
-                return Err((
-                    Some(level),
-                    "must be finite, positive and grow with each mesh",
-                ));
+                return Err(terrain_error(format!("$.lods[{level}].error"))
+                    .expected(Expected::Sorted)
+                    .got(error));
             }
             last = error;
         }
@@ -187,13 +191,13 @@ impl SurfaceMaterial {
 }
 
 impl TerrainSurface {
-    pub fn new(surface: &Biomes, materials: Vec<SurfaceMaterial>) -> Result<Self, BiomeError> {
+    pub fn new(surface: &Biomes, materials: Vec<SurfaceMaterial>) -> Result<Self, Error> {
         let rules = surface.compile()?;
-        if materials.len() != surface.materials.len() {
-            return Err(BiomeError {
-                path: "materials".into(),
-                rule: "needs one look per material".into(),
-            });
+        let named = surface.materials.len();
+        if materials.len() != named {
+            return Err(terrain_error("$.materials")
+                .range(named as f64, named as f64)
+                .got(materials.len()));
         }
         Ok(Self {
             rules: Arc::new(rules),
@@ -203,42 +207,29 @@ impl TerrainSurface {
         })
     }
 
-    pub fn with_assets(mut self, assets: Vec<PlacementAsset>) -> Result<Self, BiomeError> {
-        let fail = |path: String, rule: &str| {
-            Err(BiomeError {
-                path,
-                rule: rule.into(),
-            })
-        };
-        if assets.len() != self.rules.authored().assets.len() {
-            return fail("assets".into(), "needs one mesh and material per asset");
+    pub fn with_assets(mut self, assets: Vec<PlacementAsset>) -> Result<Self, Error> {
+        let named = self.rules.authored().assets.len();
+        if assets.len() != named {
+            return Err(terrain_error("$.assets")
+                .range(named as f64, named as f64)
+                .got(assets.len()));
         }
         for (index, asset) in assets.iter().enumerate() {
+            let at = format!("$.assets[{index}]");
             if let Err(invalid) = asset.sway.check("sway", PlacementAsset::SWAY) {
-                return fail(format!("assets[{index}].sway"), &invalid.rule);
+                return Err(setting_error(invalid, &at));
             }
             if let Some(Err(invalid)) = asset
                 .collider
                 .map(|collider| collider.check("collider", Rule::Any))
             {
-                return fail(format!("assets[{index}].collider"), &invalid.rule);
+                return Err(setting_error(invalid, &at));
             }
             let errors: Vec<f32> = asset.lods.iter().map(|lod| lod.error).collect();
-            if let Err((level, rule)) = PlacementLod::check(&errors) {
-                let path = match level {
-                    Some(level) => format!("assets[{index}].lods[{level}].error"),
-                    None => format!("assets[{index}].lods"),
-                };
-                return fail(path, rule);
-            }
+            PlacementLod::check(&errors).map_err(|error| error.within(&at))?;
             let parts: Vec<usize> = asset.parts.iter().map(|part| part.meshes.len()).collect();
-            if let Err((part, rule)) = PlacementPart::check(&parts, 1 + asset.lods.len()) {
-                let path = match part {
-                    Some(part) => format!("assets[{index}].parts[{part}].meshes"),
-                    None => format!("assets[{index}].parts"),
-                };
-                return fail(path, rule);
-            }
+            PlacementPart::check(&parts, 1 + asset.lods.len())
+                .map_err(|error| error.within(&at))?;
         }
         self.assets = assets;
         Ok(self)

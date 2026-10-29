@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use engine_core::{Error, ErrorCode};
 use engine_math::{clamp, max, min};
 use engine_settings::{InvalidSetting, Rule, Setting, settings};
 use glam::{Vec2, Vec4};
@@ -14,6 +15,7 @@ use crate::noise::{
 };
 use crate::path::PathSample;
 use crate::relief::{HummocksLayer, StepsLayer};
+use crate::surface::setting_error;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -432,35 +434,13 @@ pub type ErosionStage = Stage<ErosionBake>;
 
 pub type HydrologyStage = Stage<HydrologyBake>;
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct LayerError {
-    pub layer: usize,
-    pub field: std::borrow::Cow<'static, str>,
-    pub rule: std::borrow::Cow<'static, str>,
+fn layer_error(index: usize, kind: &str, invalid: InvalidSetting) -> Error {
+    setting_error(invalid, &format!("$.layers[{index}].{kind}"))
 }
 
-impl LayerError {
-    fn new(layer: usize, kind: &'static str, invalid: InvalidSetting) -> Self {
-        let invalid = invalid.within(kind);
-        Self {
-            layer,
-            field: invalid.field,
-            rule: invalid.rule,
-        }
-    }
+fn missing_hydrology(index: usize, kind: &str) -> Error {
+    Error::new(ErrorCode::MissingLayer, format!("$.layers[{index}].{kind}")).variants(["hydrology"])
 }
-
-impl std::fmt::Display for LayerError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "layer {} {} {}",
-            self.layer, self.field, self.rule
-        )
-    }
-}
-
-impl std::error::Error for LayerError {}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Octave {
@@ -950,10 +930,10 @@ pub(crate) struct Fade {
     pub(crate) blend: f32,
 }
 
-fn check_stamp(index: usize, stamp: &Stamp) -> Result<(), LayerError> {
+fn check_stamp(index: usize, stamp: &Stamp) -> Result<(), Error> {
     stamp
         .validate()
-        .map_err(|invalid| LayerError::new(index, "stamp", invalid))
+        .map_err(|invalid| layer_error(index, "stamp", invalid))
 }
 
 const HEIGHTMAP_MIN: Rule = Rule::Range(
@@ -987,7 +967,7 @@ impl HeightmapLayer {
 impl Layers {
     pub const MAX_COORDINATE: f32 = 1.0e7;
 
-    pub fn new(layers: Vec<Layer>) -> Result<Self, LayerError> {
+    pub fn new(layers: Vec<Layer>) -> Result<Self, Error> {
         let last_hydrology = layers
             .iter()
             .rposition(|layer| matches!(layer, Layer::Hydrology(_)));
@@ -1003,29 +983,15 @@ impl Layers {
                 Layer::Steps(steps) => ("steps", steps.validate()),
                 Layer::Hummocks(hummocks) => ("hummocks", hummocks.validate()),
             };
-            checked.map_err(|invalid| LayerError::new(index, kind, invalid))?;
+            checked.map_err(|invalid| layer_error(index, kind, invalid))?;
             if matches!(layer, Layer::Steps(_) | Layer::Hummocks(_)) && last_hydrology.is_none() {
-                return Err(LayerError::new(
-                    index,
-                    kind,
-                    InvalidSetting::new(
-                        "wetness",
-                        "needs a hydrology layer in the stack, whose maps place it",
-                    ),
-                ));
+                return Err(missing_hydrology(index, kind));
             }
         }
         if let Some(index) = layers.iter().enumerate().position(|(index, layer)| {
             matches!(layer, Layer::Rivers(_)) && last_hydrology.is_none_or(|last| last < index)
         }) {
-            return Err(LayerError::new(
-                index,
-                "rivers",
-                InvalidSetting::new(
-                    "lines",
-                    "need a hydrology layer after them, which runs them",
-                ),
-            ));
+            return Err(missing_hydrology(index, "rivers"));
         }
         let tables = layers
             .iter()
@@ -1112,7 +1078,7 @@ impl Layers {
         ]
     }
 
-    pub fn with_stamps(&self, stamps: &[Stamp]) -> Result<Self, LayerError> {
+    pub fn with_stamps(&self, stamps: &[Stamp]) -> Result<Self, Error> {
         let mut layers = self.layers.clone();
         let mut tables = self.tables.clone();
         for (offset, stamp) in stamps.iter().enumerate() {
@@ -1496,9 +1462,9 @@ fn reaches(center: [f32; 2], radius: f32, min: Vec2, max: Vec2) -> bool {
     nearest.distance_squared(Vec2::from(center)) <= radius * radius
 }
 
-use crate::codec::{Codec, CodecError, Reader, Writer, record, tagged};
+use crate::codec::{Codec, Reader, Writer, record, tagged};
 
-tagged!(Blend, "invalid blend" {
+tagged!(Blend {
     0 => Add,
     1 => Max,
     2 => Min,
@@ -1519,7 +1485,7 @@ record!(NoiseLayer {
     blend,
 });
 
-tagged!(StampOp, "invalid stamp" {
+tagged!(StampOp {
     0 => Raise(meters),
     1 => Lower(meters),
     2 => Flatten(height),
@@ -1560,7 +1526,7 @@ record!(ErosionStage { layer, baked });
 record!(HydrologyStage { layer, baked });
 record!(Fade { low, high, blend });
 
-tagged!(Layer, "invalid layer" {
+tagged!(Layer {
     0 => Noise(layer),
     1 => Heightmap(layer),
     2 => Stamp(layer),
@@ -1577,11 +1543,11 @@ impl Codec for Layers {
         out.put(&self.layers).put(&self.offset).put(&self.fade);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         let layers = input.get()?;
         let offset = input.get()?;
         let fade = input.get()?;
-        let mut stack = Self::new(layers).map_err(|_| CodecError("invalid layers"))?;
+        let mut stack = Self::new(layers)?;
         stack.offset = offset;
         stack.fade = fade;
         Ok(stack)

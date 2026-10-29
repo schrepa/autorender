@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode};
+use engine_core::{Error, ErrorCode, missing_brick};
+use engine_settings::rule::Bound;
 use glam::{Mat3, Mat4, Vec3};
 
 pub use engine_terrain::{MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT};
@@ -16,7 +17,11 @@ pub enum ColliderShape {
 }
 
 impl ColliderShape {
-    pub fn validate(self) -> Result<(), CollisionError> {
+    pub fn validate(self) -> Result<(), Error> {
+        self.check().map_err(Fault::error)
+    }
+
+    pub(crate) fn check(self) -> Result<(), Fault> {
         let dimensions = match self {
             Self::Cuboid { half_extents } => half_extents,
             Self::Sphere { radius } => Vec3::splat(radius),
@@ -27,7 +32,7 @@ impl ColliderShape {
         {
             Ok(())
         } else {
-            Err(CollisionError::InvalidShape)
+            Err(Fault::InvalidShape)
         }
     }
 
@@ -71,7 +76,7 @@ pub struct Collider {
     sensor: bool,
 }
 impl Collider {
-    pub fn new(shape: ColliderShape) -> Result<Self, CollisionError> {
+    pub fn new(shape: ColliderShape) -> Result<Self, Error> {
         shape.validate()?;
         Ok(Self {
             shape,
@@ -79,10 +84,10 @@ impl Collider {
             sensor: false,
         })
     }
-    pub fn cuboid(half_extents: Vec3) -> Result<Self, CollisionError> {
+    pub fn cuboid(half_extents: Vec3) -> Result<Self, Error> {
         Self::new(ColliderShape::Cuboid { half_extents })
     }
-    pub fn sphere(radius: f32) -> Result<Self, CollisionError> {
+    pub fn sphere(radius: f32) -> Result<Self, Error> {
         Self::new(ColliderShape::Sphere { radius })
     }
     #[must_use]
@@ -106,13 +111,14 @@ impl Collider {
     }
 }
 
-pub fn validate_collider_transform(
-    shape: ColliderShape,
-    matrix: Mat4,
-) -> Result<(), CollisionError> {
-    shape.validate()?;
+pub fn validate_collider_transform(shape: ColliderShape, matrix: Mat4) -> Result<(), Error> {
+    check_collider_transform(shape, matrix).map_err(Fault::error)
+}
+
+pub(crate) fn check_collider_transform(shape: ColliderShape, matrix: Mat4) -> Result<(), Fault> {
+    shape.check()?;
     if !engine_core::valid_global_matrix(matrix) || !valid_position(matrix.w_axis.truncate()) {
-        return Err(CollisionError::InvalidTransform);
+        return Err(Fault::InvalidTransform);
     }
     let basis = Mat3::from_mat4(matrix) * Mat3::from_diagonal(shape.dimensions());
     let lengths = Vec3::new(
@@ -124,13 +130,13 @@ pub fn validate_collider_transform(
         || lengths.min_element() < MIN_COLLIDER_EXTENT
         || lengths.max_element() > MAX_COLLIDER_EXTENT
     {
-        return Err(CollisionError::InvalidTransform);
+        return Err(Fault::InvalidTransform);
     }
     let normalized = basis / lengths.max_element();
     let inverse = normalized.inverse();
     let row_sums = inverse.x_axis.abs() + inverse.y_axis.abs() + inverse.z_axis.abs();
     if !inverse.is_finite() || row_sums.max_element() > 1000.0 {
-        return Err(CollisionError::InvalidTransform);
+        return Err(Fault::InvalidTransform);
     }
     Ok(())
 }
@@ -178,7 +184,7 @@ fn within(budget: Option<u32>, limit: usize) -> usize {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CollisionError {
+pub(crate) enum Fault {
     MissingPlugin,
     InvalidShape,
     InvalidTransform,
@@ -191,29 +197,16 @@ pub enum CollisionError {
     ResultBudget,
     NumericalFailure,
 }
-impl std::fmt::Display for CollisionError {
-    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        out.write_str(match self {
-            Self::MissingPlugin => "the collision brick is not added",
-            Self::InvalidShape => "collider dimensions must be finite and within [1e-4,1e4]",
-            Self::InvalidTransform => "collider requires valid affine world transform, center within +/-1e6, effective basis lengths [1e-4,1e4], and normalized inverse infinity norm <=1000",
-            Self::InvalidRay => "ray requires finite bounded origin/end, nonzero finite direction and distance in [0,2e6]",
-            Self::InvalidCast => "shape cast requires finite bounded start/end and target distance in [0,1]",
-            Self::InvalidConfig => "collision budgets exceed their documented hard limits",
-            Self::IncompleteWorld => "collision snapshot contains invalid or capacity-overflow colliders",
-            Self::CandidateBudget => "collision candidate budget exhausted; result is incomplete",
-            Self::PairBudget => "sensor pair budget exhausted; previous complete pairs retained",
-            Self::ResultBudget => "query result limit exceeded; output cleared",
-            Self::NumericalFailure => "collision narrow-phase failed to produce a reliable finite result",
-        })
-    }
-}
-impl std::error::Error for CollisionError {}
-impl CollisionError {
-    pub fn code(self) -> ErrorCode {
-        match self {
-            Self::MissingPlugin => ErrorCode::MissingPlugin,
-            Self::InvalidShape => ErrorCode::CollisionInvalidShape,
+
+impl Fault {
+    pub(crate) fn error(self) -> Error {
+        const PATH: &str = "$.collision";
+        let code = match self {
+            Self::MissingPlugin => return missing_brick("collision", PATH),
+            Self::InvalidShape => {
+                return Error::new(ErrorCode::CollisionInvalidShape, PATH)
+                    .range(MIN_COLLIDER_EXTENT.bound(), MAX_COLLIDER_EXTENT.bound());
+            }
             Self::InvalidTransform => ErrorCode::CollisionInvalidTransform,
             Self::InvalidRay => ErrorCode::CollisionInvalidRay,
             Self::InvalidCast => ErrorCode::CollisionInvalidCast,
@@ -223,11 +216,8 @@ impl CollisionError {
             Self::PairBudget => ErrorCode::CollisionPairBudget,
             Self::ResultBudget => ErrorCode::CollisionResultBudget,
             Self::NumericalFailure => ErrorCode::CollisionNumericalFailure,
-        }
-    }
-
-    pub fn query_error(self) -> Error {
-        Error::new(self.code(), "$.collision", self.to_string())
+        };
+        Error::new(code, PATH)
     }
 }
 
@@ -236,11 +226,20 @@ pub fn validate_shape_cast(
     matrix: Mat4,
     displacement: Vec3,
     options: ShapeCastOptions,
-) -> Result<(), CollisionError> {
-    validate_collider_transform(shape, matrix)?;
-    options.validate()?;
+) -> Result<(), Error> {
+    check_shape_cast(shape, matrix, displacement, options).map_err(Fault::error)
+}
+
+pub(crate) fn check_shape_cast(
+    shape: ColliderShape,
+    matrix: Mat4,
+    displacement: Vec3,
+    options: ShapeCastOptions,
+) -> Result<(), Fault> {
+    check_collider_transform(shape, matrix)?;
+    options.check()?;
     if !displacement.is_finite() || !valid_position(matrix.w_axis.truncate() + displacement) {
-        return Err(CollisionError::InvalidCast);
+        return Err(Fault::InvalidCast);
     }
     Ok(())
 }
@@ -285,24 +284,24 @@ pub struct CollisionRay {
     pub max_distance: f32,
 }
 impl CollisionRay {
-    pub fn validate(self) -> Result<(), CollisionError> {
-        self.normalized().map(|_| ())
+    pub fn validate(self) -> Result<(), Error> {
+        self.normalized().map(|_| ()).map_err(Fault::error)
     }
-    pub(crate) fn normalized(mut self) -> Result<Self, CollisionError> {
+    pub(crate) fn normalized(mut self) -> Result<Self, Fault> {
         if !valid_position(self.origin)
             || !self.direction.is_finite()
             || !self.max_distance.is_finite()
             || !(0.0..=2.0 * MAX_COLLISION_COORDINATE).contains(&self.max_distance)
         {
-            return Err(CollisionError::InvalidRay);
+            return Err(Fault::InvalidRay);
         }
         let max = self.direction.abs().max_element();
         if max == 0.0 {
-            return Err(CollisionError::InvalidRay);
+            return Err(Fault::InvalidRay);
         }
         self.direction = (self.direction / max).normalize();
         if !valid_position(self.origin + self.direction * self.max_distance) {
-            return Err(CollisionError::InvalidRay);
+            return Err(Fault::InvalidRay);
         }
         Ok(self)
     }
@@ -338,11 +337,15 @@ impl Default for ShapeCastOptions {
     }
 }
 impl ShapeCastOptions {
-    pub fn validate(self) -> Result<(), CollisionError> {
+    pub fn validate(self) -> Result<(), Error> {
+        self.check().map_err(Fault::error)
+    }
+
+    pub(crate) fn check(self) -> Result<(), Fault> {
         if self.target_distance.is_finite() && (0.0..=1.0).contains(&self.target_distance) {
             Ok(())
         } else {
-            Err(CollisionError::InvalidCast)
+            Err(Fault::InvalidCast)
         }
     }
 }

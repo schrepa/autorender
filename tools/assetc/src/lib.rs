@@ -2,10 +2,8 @@ mod geometry;
 mod materials;
 mod validation;
 
-use std::{error::Error, fmt};
-
-use engine_scene::{SceneCamera, SceneDocument, SceneError, ScenePrefab};
-use serde::Serialize;
+use engine_core::{Error, ErrorCode, Expected};
+use engine_scene::{SceneCamera, SceneDocument, ScenePrefab};
 use sha2::{Digest, Sha256};
 
 pub const MAX_INPUT_BYTES: usize = u32::MAX as usize;
@@ -34,66 +32,31 @@ pub struct Imported {
     pub ignored_extensions: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct ImportError {
-    pub code: &'static str,
-    pub path: String,
-    pub message: String,
-}
-
-impl ImportError {
-    pub fn new(code: &'static str, path: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            code,
-            path: path.into(),
-            message: message.into(),
-        }
-    }
-}
-
-impl fmt::Display for ImportError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "{} at {}: {}",
-            self.code, self.path, self.message
-        )
-    }
-}
-
-impl Error for ImportError {}
-
-impl From<SceneError> for ImportError {
-    fn from(error: SceneError) -> Self {
-        Self::new(error.code.as_str(), error.path, error.message)
-    }
-}
-
 pub fn source_sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
+pub const MAX_ID_BYTES: usize = 40;
+
+pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, Error> {
     if id.is_empty()
-        || id.len() > 40
+        || id.len() > MAX_ID_BYTES
         || !id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
     {
-        return Err(ImportError::new(
-            "invalid_id",
-            "--id",
-            "import namespace must be 1 to 40 ASCII letters, digits, underscores, hyphens or periods",
-        ));
+        return Err(Error::new(ErrorCode::InvalidId, "$.id")
+            .expected(Expected::Id)
+            .at_most(MAX_ID_BYTES as u64)
+            .got(id));
     }
     let json = validation::container(bytes)?;
     let ignored_extensions = validation::structure(&json)?;
-    let gltf = gltf::Gltf::from_slice(bytes)
-        .map_err(|error| ImportError::new("invalid_gltf", "$", error.to_string()))?;
+    let gltf = gltf::Gltf::from_slice(bytes).map_err(|_| gltf_error("$"))?;
     let binary = gltf
         .blob
         .as_deref()
-        .ok_or_else(|| ImportError::new("missing_binary", "$", "a GLB BIN chunk is required"))?;
+        .ok_or_else(|| gltf_error("$.buffers[0]").expected(Expected::Present))?;
     validation::buffers(&gltf.document, binary)?;
     let mut scene = SceneDocument {
         id: id.to_owned(),
@@ -118,7 +81,7 @@ pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
     })
 }
 
-pub fn import_glb_prefab(bytes: &[u8], id: &str) -> Result<Imported, ImportError> {
+pub fn import_glb_prefab(bytes: &[u8], id: &str) -> Result<Imported, Error> {
     let mut imported = import_glb(bytes, id)?;
     let scene = &mut imported.document;
     let prefix = format!("{id}.");
@@ -143,6 +106,10 @@ pub fn import_glb_prefab(bytes: &[u8], id: &str) -> Result<Imported, ImportError
     Ok(imported)
 }
 
-pub(crate) fn unsupported(path: impl Into<String>, message: impl Into<String>) -> ImportError {
-    ImportError::new("unsupported_feature", path, message)
+pub(crate) fn unsupported(path: impl Into<String>) -> Error {
+    Error::new(ErrorCode::UnsupportedFeature, path)
+}
+
+pub(crate) fn gltf_error(path: impl Into<String>) -> Error {
+    Error::new(ErrorCode::InvalidGltf, path)
 }

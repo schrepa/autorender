@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::{Entity, World};
 use bevy_ecs::world::Mut;
-use engine_core::{Error, Jobs, Operation, Transform};
-use engine_settings::{ErrorCode, Rule, Setting};
+use engine_core::{Error, Jobs, Operation, Transform, missing_brick};
+use engine_settings::{ErrorCode, InvalidSetting, Rule, Setting};
 use engine_terrain::{Terrain, TerrainKey, Terrains, terrain_key};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
@@ -148,21 +148,13 @@ impl Operation for NavGoControl {
                 .iter()
                 .all(|value| value.is_finite() && value.abs() <= 1.0e6)
         {
-            return Err(Error::new(
-                ErrorCode::OutOfRange,
-                "$.destination",
-                "must be finite and within 1000000 meters",
-            ));
+            return Err(Error::new(ErrorCode::OutOfRange, "$.destination")
+                .range(-1.0e6, 1.0e6)
+                .got(destination));
         }
         let entity = engine_core::authored_entity(world, &id)
             .filter(|&entity| world.get::<NavAgent>(entity).is_some())
-            .ok_or_else(|| {
-                Error::new(
-                    ErrorCode::UnknownEntity,
-                    "$.entity",
-                    format!("no navigation agent {id} in the scene"),
-                )
-            })?;
+            .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&id))?;
         let mut agent = world.get_mut::<NavAgent>(entity).expect("agent_found");
         agent.destination = destination;
         Ok(json!(NavGoResult {
@@ -223,16 +215,16 @@ impl Operation for NavPathQuery {
 fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
     match value.check("value", COORDINATE) {
         Ok(()) => Ok(value as f32),
-        Err(invalid) => Err(Error::new(ErrorCode::OutOfRange, path, invalid.rule)),
+        Err(invalid) => Err(out_of_range(invalid, path)),
     }
 }
 
-fn missing(brick: &str) -> Error {
-    Error::new(
-        ErrorCode::MissingPlugin,
-        "$.op",
-        format!("the {brick} brick is not added: add it to the engine"),
-    )
+fn out_of_range(invalid: InvalidSetting, path: &str) -> Error {
+    Error {
+        code: ErrorCode::OutOfRange,
+        path: path.to_owned(),
+        ..Error::from(invalid)
+    }
 }
 
 fn walk(
@@ -245,24 +237,21 @@ fn walk(
     );
     let to = Vec2::new(coordinate(to[0], "$.to[0]")?, coordinate(to[1], "$.to[1]")?);
     let options = options.unwrap_or_default();
-    options.validate().map_err(|invalid| {
-        Error::new(
-            ErrorCode::OutOfRange,
-            format!("$.options.{}", invalid.field),
-            invalid.rule,
-        )
+    options.validate().map_err(|invalid| Error {
+        code: ErrorCode::OutOfRange,
+        ..Error::from(invalid).within("$.options")
     })?;
     let entity = world
         .query::<(Entity, &Terrain)>()
         .iter(world)
         .map(|(entity, _)| entity)
         .next()
-        .ok_or_else(|| Error::new(ErrorCode::UnknownTerrain, "$", "no terrain"))?;
+        .ok_or_else(|| Error::new(ErrorCode::UnknownTerrain, "$"))?;
     if !world.contains_resource::<Terrains>() {
-        return Err(missing("terrain"));
+        return Err(missing_brick("terrain", "$.op"));
     }
     if !world.contains_resource::<NavAgents>() || !world.contains_resource::<Jobs>() {
-        return Err(missing("navigation"));
+        return Err(missing_brick("navigation", "$.op"));
     }
     let found = world.resource_scope(|world, mut navigation: Mut<NavAgents>| {
         world.resource_scope(|world, mut jobs: Mut<Jobs>| {

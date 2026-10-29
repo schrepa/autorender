@@ -111,19 +111,20 @@ fn collision_budgets() -> engine::collision::CollisionConfig {
     }
 }
 
+fn look_names() -> impl Iterator<Item = &'static str> {
+    std::iter::once(SCENE_LOOK).chain(LOOKS.iter().map(|(name, ..)| *name))
+}
+
 pub(crate) fn looks() -> String {
-    let names: Vec<&str> = std::iter::once(SCENE_LOOK)
-        .chain(LOOKS.iter().map(|(name, ..)| *name))
-        .collect();
-    names.join("|")
+    look_names().collect::<Vec<_>>().join("|")
+}
+
+fn exclusions() -> impl Iterator<Item = String> {
+    EFFECTS.iter().map(|effect| format!("no-{effect}"))
 }
 
 pub(crate) fn effects() -> String {
-    let exclusions: Vec<String> = EFFECTS
-        .iter()
-        .map(|effect| format!("no-{effect}"))
-        .collect();
-    format!("all|none|{}", exclusions.join(","))
+    format!("all|none|{}", exclusions().collect::<Vec<_>>().join(","))
 }
 
 pub(crate) fn set_look(engine: &mut Engine, name: &str) -> engine::Result<()> {
@@ -153,7 +154,10 @@ pub(crate) fn set_effects(engine: &mut Engine, name: &str, look_name: &str) -> e
                 match excluded {
                     Some(index) => on[index] = false,
                     None => {
-                        return Err(Error::new(ErrorCode::InvalidValue, "$.effects", effects()));
+                        let tokens = ["all", "none"].map(String::from).into_iter();
+                        return Err(Error::new(ErrorCode::InvalidValue, "$.effects")
+                            .got(token)
+                            .variants(tokens.chain(exclusions())));
                     }
                 }
             }
@@ -230,13 +234,17 @@ fn apply_sky(world: &mut World, name: &str) {
     }
 }
 
-fn look(name: &str) -> engine::Result<(Atmosphere, f32)> {
-    let name = resolve(name);
+fn look(asked: &str) -> engine::Result<(Atmosphere, f32)> {
+    let name = resolve(asked);
     LOOKS
         .iter()
         .find(|(look, ..)| *look == name)
         .map(|&(_, atmosphere, lamps)| (atmosphere(), lamps))
-        .ok_or_else(|| Error::new(ErrorCode::InvalidValue, "$.look", looks()))
+        .ok_or_else(|| {
+            Error::new(ErrorCode::InvalidValue, "$.look")
+                .got(asked)
+                .variants(look_names())
+        })
 }
 
 fn resolve(name: &str) -> &str {

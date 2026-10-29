@@ -86,28 +86,17 @@ impl Operation for TerrainRouteQuery {
             water_cost: water_cost.map_or(defaults.water_cost, |value| value as f32),
             turn_cost: turn_cost.map_or(defaults.turn_cost, |value| value as f32),
         };
-        options.validate().map_err(|invalid| {
-            Error::new(
-                ErrorCode::OutOfRange,
-                format!("$.{}", invalid.field),
-                invalid.rule,
-            )
+        options.validate().map_err(|invalid| Error {
+            code: ErrorCode::OutOfRange,
+            ..Error::from(invalid)
         })?;
         let world = &*world;
         let terrains = terrains(world)?;
         let Some(sample) = terrains.sample(from.x, from.y) else {
-            return Err(Error::new(
-                ErrorCode::InvalidRequest,
-                "$.from",
-                "no resident terrain lies under from",
-            ));
+            return Err(Error::new(ErrorCode::InvalidRequest, "$.from").got(from.to_array()));
         };
         let Some(terrain) = terrains.terrain(sample.terrain) else {
-            return Err(Error::new(
-                ErrorCode::InvalidRequest,
-                "$.from",
-                "no terrain lies under from",
-            ));
+            return Err(Error::new(ErrorCode::InvalidRequest, "$.from").got(from.to_array()));
         };
         let origin = Vec2::new(terrain.origin.x, terrain.origin.z);
         let route = terrains.route(sample.terrain, from, to, &options);
@@ -153,11 +142,9 @@ fn route_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
 
 fn heights(world: &World, points: &[[f64; 2]]) -> Result<Value, Error> {
     if points.is_empty() || points.len() > MAX_POINTS {
-        return Err(Error::new(
-            ErrorCode::OutOfRange,
-            "$.points",
-            format!("name 1 to {MAX_POINTS} points"),
-        ));
+        return Err(Error::new(ErrorCode::OutOfRange, "$.points")
+            .range(1.0, MAX_POINTS as f64)
+            .got(points.len()));
     }
     let terrains = terrains(world)?;
     let samples = points

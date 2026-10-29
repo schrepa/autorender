@@ -134,15 +134,7 @@ fn scene_id(root: &Path, scene: &str) -> Result<String, String> {
         .map_err(|error| format!("cannot read the scene {scene}: {error}"))?;
     engine_scene::SceneDocument::from_json(&text)
         .map(|document| document.id)
-        .map_err(|error| {
-            json!({
-                "code": error.code.to_string(),
-                "file": scene,
-                "path": error.path,
-                "message": error.message,
-            })
-            .to_string()
-        })
+        .map_err(|error| json!({ "file": scene, "error": error }).to_string())
 }
 
 fn cooked_by(pack: &Pack) -> String {

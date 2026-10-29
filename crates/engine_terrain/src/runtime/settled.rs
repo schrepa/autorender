@@ -1,5 +1,5 @@
 use super::*;
-use crate::codec::CodecError;
+use crate::codec::Error;
 use crate::jobs::{SteadiedJob, WaterJob, settled_key, share_settled, share_summary, summary_key};
 use crate::{SettleRegion, SettleStart, SettledKey, SteadyCell, SteadyWater, TileWater, WaterPart};
 use engine_core::{MISSING_RECORD, RecordParity};
@@ -896,7 +896,7 @@ fn take_arrived(
             }
             Err(error) => {
                 state.settled.failed.insert(key, frame);
-                state.failures.record(frame, error);
+                state.failures.record(frame, error.to_string());
             }
         }
     }
@@ -908,9 +908,9 @@ fn arrive(
     (key, record, bytes): (TileKey, RecordKey, Vec<u8>),
     (kept, whole): (&[TileKey], &[TileKey]),
     released: &mut Vec<String>,
-) -> Result<bool, String> {
+) -> Result<bool, Error> {
     let settled = &mut state.settled;
-    let unread = |error: CodecError| format!("{SETTLED_KIND}: its output does not decode: {error}");
+    let unread = |error: Error| error.within(&format!("$.{SETTLED_KIND}"));
     let (head, length) = SteadyWater::head(&bytes).map_err(unread)?;
     if head.key != key || head.cell != settled.cell {
         return Ok(false);
@@ -1020,7 +1020,7 @@ fn take_parts(
             }
             Err(error) => {
                 settled.fail(&making.region.kept, frame);
-                state.failures.record(frame, error);
+                state.failures.record(frame, error.to_string());
             }
         }
     }

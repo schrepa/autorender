@@ -69,7 +69,7 @@ pub(crate) fn atlas_record(world: &mut World) -> engine::Result<TextureHandle> {
     Ok(handles[0])
 }
 
-pub(crate) fn material(atlas: TextureHandle) -> Result<Material, AssetError> {
+pub(crate) fn material(atlas: TextureHandle) -> engine::Result<Material> {
     Material::new([1.0; 4])?
         .with_surface(Surface {
             roughness: 0.9,
@@ -165,9 +165,7 @@ fn conifer(seed: u32, detail: usize) -> engine::Result<Mesh> {
     builder
         .mesh()
         .and_then(|mesh| trim_cards(&mesh, atlas, CUTOFF))
-        .map_err(|error| {
-            engine::Error::from(error).context(format!("conifer {seed} at detail {detail}"))
-        })
+        .map_err(|error| error.within(&format!("$.conifers[{seed}].details[{detail}]")))
 }
 
 fn shadow_proxy(seed: u32) -> engine::Result<Mesh> {
@@ -193,9 +191,9 @@ fn shadow_proxy(seed: u32) -> engine::Result<Mesh> {
         };
         builder.tier(&whorls[0], top);
     }
-    builder.mesh().map_err(|error| {
-        engine::Error::from(error).context(format!("conifer {seed}'s shadow proxy"))
-    })
+    builder
+        .mesh()
+        .map_err(|error| error.within(&format!("$.conifers[{seed}].shadow")))
 }
 
 struct Shape {
@@ -337,7 +335,7 @@ impl Builder {
         self.vertices.len() as u32 - 1
     }
 
-    fn mesh(self) -> Result<Mesh, AssetError> {
+    fn mesh(self) -> engine::Result<Mesh> {
         let Self {
             vertices,
             colors,

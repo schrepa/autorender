@@ -20,10 +20,10 @@ pub fn check(mut engine: Engine) -> Result<(), String> {
             ..ScheduleBuildSettings::default()
         });
         if let Err(error) = schedule.initialize(world) {
-            problems.push(format!(
-                "{label:?}: {}",
-                error.to_string(schedule.graph(), world)
-            ));
+            problems.push(
+                engine_core::Error::new(engine_core::ErrorCode::ScheduleAmbiguity, format!("{label:?}"))
+                    .got(error.to_string(schedule.graph(), world)),
+            );
         }
         world.resource_mut::<Schedules>().insert(schedule);
     }
@@ -31,5 +31,5 @@ pub fn check(mut engine: Engine) -> Result<(), String> {
         println!("The engine's schedules order every pair of conflicting systems.");
         return Ok(());
     }
-    Err(problems.join("\n"))
+    crate::report(&problems)
 }

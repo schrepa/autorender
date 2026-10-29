@@ -408,7 +408,7 @@ fn place_key(point: Vec2) -> u32 {
     point.x.to_bits().wrapping_mul(0x8da6_b343) ^ point.y.to_bits().wrapping_mul(0xd816_3841)
 }
 
-crate::codec::tagged!(Reach, "invalid reach" {
+crate::codec::tagged!(Reach {
     0 => Pool,
     1 => Plane,
     2 => Steps,

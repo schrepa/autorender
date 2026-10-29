@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
+use engine_core::ErrorCode;
 use engine_math::collections::HashMap;
-use engine_terrain::codec::{self, CodecError, Reader};
+use engine_terrain::codec::{self, Error, Reader};
 use engine_terrain::jobs::{TerrainWorker, stamped};
 use engine_terrain::{Layers, Pyramid, Stamp, TileKey, record};
 
@@ -32,7 +33,7 @@ impl PortalsJob {
     }
 }
 
-pub fn portals_output(bytes: &[u8]) -> Result<TilePortals, CodecError> {
+pub fn portals_output(bytes: &[u8]) -> Result<TilePortals, Error> {
     codec::decode(bytes)
 }
 
@@ -83,10 +84,17 @@ impl NavigationWorker {
         input: &[u8],
         terrain: &TerrainWorker,
     ) -> Result<(), String> {
+        let portals = Self::begin(kind, input, terrain).map_err(|error| error.to_string())?;
+        self.running.insert(id, portals);
+        Ok(())
+    }
+
+    fn begin(kind: &str, input: &[u8], terrain: &TerrainWorker) -> Result<Portals, Error> {
         if !Self::runs(kind) {
-            return Err(format!("unknown job kind {kind}"));
+            return Err(Error::new(ErrorCode::UnknownVariant, "$.kind")
+                .got(kind)
+                .variants([PortalsJob::KIND]));
         }
-        let invalid = |error: CodecError| error.to_string();
         let mut reader = Reader::new(input);
         let PortalsJob {
             stack,
@@ -94,34 +102,33 @@ impl NavigationWorker {
             key,
             stamps,
             gait,
-        } = reader.get().map_err(invalid)?;
-        reader.finish().map_err(invalid)?;
+        } = reader.get()?;
+        reader.finish()?;
         gait.validate(&pyramid)?;
         if !pyramid.contains(key) || u32::from(key.level) != gait.level {
-            return Err("portals of a tile outside its gait's level".into());
+            return Err(Error::new(ErrorCode::OutOfRange, "$.key")
+                .got([u16::from(key.level), key.x, key.z]));
         }
-        let stack = terrain
+        let layers = terrain
             .stack(&stack)
-            .ok_or_else(|| format!("unknown stack {stack}"))?;
-        let layers = stamped(stack, &stamps)?;
-        self.running.insert(
-            id,
-            Portals {
-                layers,
-                pyramid,
-                key,
-                gait,
-            },
-        );
-        Ok(())
+            .ok_or_else(|| Error::new(ErrorCode::UnknownReference, "$.stack").got(&stack))?;
+        Ok(Portals {
+            layers: stamped(layers, &stamps)?,
+            pyramid,
+            key,
+            gait,
+        })
     }
 
     pub fn step(&mut self, id: u64, _budget: u64) -> Result<Option<Vec<u8>>, String> {
         let Some(job) = self.running.remove(&id) else {
-            return Err("no such job".into());
+            return Err(Error::new(ErrorCode::UnknownReference, "$.id")
+                .got(id)
+                .to_string());
         };
         tile_portals(&job.layers, &job.pyramid, job.key, &job.gait)
             .map(|portals| Some(codec::encode(&portals)))
+            .map_err(|error| error.to_string())
     }
 
     pub fn cancel(&mut self, id: u64) {

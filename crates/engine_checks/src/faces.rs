@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use engine_core::{Error, ErrorCode};
 use serde_json::json;
 
 use crate::Repository;
@@ -453,10 +454,8 @@ pub fn check(repository: &Repository) -> Result<(), String> {
             .of_crate(replaced)
             .or_else(|| repository.package(replaced))
         else {
-            problems.push(
-                json!({"rule": "replaces_unknown", "crate": package.name, "replaces": replaced})
-                    .to_string(),
-            );
+            let file = repository.relative(&package.manifest).unwrap_or_default();
+            problems.push(Error::new(ErrorCode::ReplacesUnknown, file).got(replaced));
             continue;
         };
         let offered = face(&package.folder)?;
@@ -468,14 +467,11 @@ pub fn check(repository: &Repository) -> Result<(), String> {
             .collect();
         compared += 1;
         if !missing.is_empty() {
+            let file = repository.relative(&package.manifest).unwrap_or_default();
             problems.push(
-                json!({
-                    "rule": "face_missing",
-                    "crate": package.name,
-                    "replaces": original.name,
-                    "missing": missing,
-                })
-                .to_string(),
+                Error::new(ErrorCode::FaceMissing, file)
+                    .got(missing)
+                    .nearest(&original.name),
             );
         }
     }
@@ -486,5 +482,5 @@ pub fn check(repository: &Repository) -> Result<(), String> {
         );
         return Ok(());
     }
-    Err(problems.join("\n"))
+    crate::report(&problems)
 }

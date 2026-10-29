@@ -17,12 +17,13 @@ impl HighlandsRocks {
     }
 
     pub fn add(&mut self, name: &str, bytes: &[u8]) -> Result<(), JsValue> {
-        let invalid =
-            |message: String| Error::new(ErrorCode::InvalidTexture, format!("$.{name}"), message);
-        if engine::host::image_format(bytes).map(|format| format.name) != Some("ktx2-rgba8") {
-            return Err(invalid("ktx2-rgba8".to_owned()).into());
+        let invalid = || Error::new(ErrorCode::InvalidTexture, format!("$.{name}"));
+        let format = engine::host::image_format(bytes).map(|format| format.name);
+        if format != Some("ktx2-rgba8") {
+            return Err(invalid().got(format).variants(["ktx2-rgba8"]).into());
         }
-        let image = engine::host::decode_image(name, bytes).map_err(invalid)?;
+        let image =
+            engine::host::decode_image(name, bytes).map_err(|reason| invalid().got(reason))?;
         self.maps.insert(name.to_owned(), image);
         Ok(())
     }

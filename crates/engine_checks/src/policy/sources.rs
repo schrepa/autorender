@@ -1,5 +1,7 @@
+use engine_core::{Error, ErrorCode};
+
 use super::{Problems, rust};
-use crate::{Errors, Rules};
+use crate::{Errors, Rules, at};
 
 pub fn lockfile(path: &str) -> bool {
     let name = path.rsplit('/').next().unwrap_or(path);
@@ -30,14 +32,7 @@ pub fn check_text(path: &str, text: &str, problems: &mut Problems) {
                     && !after
                         .is_some_and(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
             }) {
-                problems.at(
-                    path,
-                    index + 1,
-                    &format!(
-                        "a {marker} marker: do the work, or say what the code does now (work \
-                         left for later belongs in an issue)"
-                    ),
-                );
+                problems.push(Error::new(ErrorCode::Marker, at(path, index + 1)).got(marker));
             }
         }
     }
@@ -60,13 +55,7 @@ pub fn check(
                 let listed = &listed[..listed.find(')').unwrap_or(listed.len())];
                 for lint in listed.split(',').filter(|item| !item.contains('=')) {
                     if lints.iter().any(|key| covers(key, lint)) || GROUPS.contains(&lint) {
-                        problems.file(
-                            path,
-                            &format!(
-                                "allows the workspace lint {lint} crate-wide; allow it where \
-                                 it is needed, with a reason"
-                            ),
-                        );
+                        problems.push(Error::new(ErrorCode::LintAllowed, path).got(lint));
                     }
                 }
             }
@@ -80,13 +69,7 @@ pub fn check(
                 })
                 .collect();
             for lint in ENGINE_DENIES.iter().filter(|lint| !denied.contains(lint)) {
-                problems.file(
-                    path,
-                    &format!(
-                        "an engine crate denies {lint} at its root: #![deny({})]",
-                        ENGINE_DENIES.join(", ")
-                    ),
-                );
+                problems.push(Error::new(ErrorCode::LintMissing, path).got(lint));
             }
         }
     }
@@ -94,7 +77,11 @@ pub fn check(
         if path.starts_with(forbidden.within) && path != forbidden.except {
             let code: String = split.code.concat().split_whitespace().collect();
             if code.contains(forbidden.code) {
-                problems.file(path, forbidden.rule);
+                problems.push(
+                    Error::new(ErrorCode::ForbiddenCode, path)
+                        .got(forbidden.code)
+                        .nearest(forbidden.instead),
+                );
             }
         }
     }
@@ -104,20 +91,10 @@ pub fn check(
         .iter()
         .position(|code| rust::has_word(code, "unsafe") || rust::has_word(code, "unsafe_code"));
     if !listed && let Some(line) = first {
-        problems.at(
-            path,
-            line + 1,
-            "unsafe code outside the exceptions' unsafe_files: keep it in a listed file, or \
-             list this one",
-        );
+        problems.push(Error::new(ErrorCode::UnsafeUnlisted, at(path, line + 1)));
     }
     if listed && !split.code.iter().any(|code| rust::has_word(code, "unsafe")) {
-        problems.at(
-            path,
-            1,
-            "listed in the exceptions' unsafe_files but has no unsafe code: remove it from \
-             the list",
-        );
+        problems.push(Error::new(ErrorCode::ExceptionUnused, at(path, 1)).got("unsafe_files"));
     }
     for (index, code) in split.code.iter().enumerate() {
         for end in rust::words(code, "unsafe") {
@@ -129,26 +106,13 @@ pub fn check(
             if !split.safety_comment_above(index)
                 && !split.safety_comment_above(split.statement_start(index))
             {
-                problems.at(
-                    path,
-                    index + 1,
-                    &format!(
-                        "unsafe {kind} without a `// SAFETY:` comment above it saying why it is \
-                         sound"
-                    ),
-                );
+                problems.push(Error::new(ErrorCode::SafetyMissing, at(path, index + 1)).got(kind));
             }
         }
     }
 }
 
-pub struct ErrorType {
-    path: String,
-    line: usize,
-    name: String,
-}
-
-pub fn error_types(path: &str, source: &str, errors: &Errors, found: &mut Vec<ErrorType>) {
+pub fn error_types(path: &str, source: &str, errors: &Errors, problems: &mut Problems) {
     if !path.starts_with(errors.within) || path == errors.file {
         return;
     }
@@ -165,49 +129,13 @@ pub fn error_types(path: &str, source: &str, errors: &Errors, found: &mut Vec<Er
             .take_while(|character| character.is_alphanumeric() || *character == '_')
             .collect();
         if name.ends_with("Error") {
-            found.push(ErrorType {
-                path: path.to_owned(),
-                line: index + 1,
-                name,
-            });
-        }
-    }
-}
-
-pub fn conversions(
-    root: &std::path::Path,
-    found: &[ErrorType],
-    errors: &Errors,
-    problems: &mut Problems,
-) -> Result<(), String> {
-    let file = errors.file;
-    let source = std::fs::read_to_string(root.join(file))
-        .map_err(|error| format!("cannot read {file}: {error}"))?;
-    let impls: Vec<String> = rust::split(&source)
-        .code
-        .iter()
-        .map(|code| code.split_whitespace().collect::<Vec<_>>().join(" "))
-        .filter(|code| code.starts_with("impl From<") && code.ends_with("> for Error {"))
-        .collect();
-    for error in found {
-        let converted = impls.iter().any(|code| {
-            let from = &code["impl From<".len()..code.len() - "> for Error {".len()];
-            from == error.name || from.ends_with(&format!("::{}", error.name))
-        });
-        if !converted {
-            problems.at(
-                &error.path,
-                error.line,
-                &format!(
-                    "{} is a public engine error without a conversion into engine::Error: \
-                     add `impl From<{}> for Error` to {file}, an exhaustive match \
-                     choosing each variant's code",
-                    error.name, error.name
-                ),
+            problems.push(
+                Error::new(ErrorCode::ErrorType, at(path, index + 1))
+                    .got(name)
+                    .nearest(errors.file),
             );
         }
     }
-    Ok(())
 }
 
 fn covers(key: &str, lint: &str) -> bool {

@@ -36,7 +36,7 @@ fn boulder(seed: u32) -> engine::Result<Mesh> {
     let (vertices, indices, colors) = shaped(&shape);
     Mesh::new(vertices, indices)
         .and_then(|mesh| mesh.with_colors(colors))
-        .map_err(|error| engine::Error::from(error).context(format!("boulder {seed}")))
+        .map_err(|error| error.within(&format!("$.boulders[{seed}]")))
 }
 
 fn shaped(shape: &impl Fn(Vec3) -> Vec3) -> (Vec<MeshVertex>, Vec<u32>, Vec<[f32; 4]>) {

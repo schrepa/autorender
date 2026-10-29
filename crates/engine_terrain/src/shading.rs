@@ -1,7 +1,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::codec::{self, CodecError, Reader, Writer};
+use crate::codec::{self, Error, Reader, Writer};
 use crate::surface::smooth_gradient;
 use crate::tile::{SurfaceInputs, control_row};
 use crate::{
@@ -105,12 +105,12 @@ impl codec::Codec for TileShading {
         codec::put_wide_planes(out, &halves, SIDE);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         let key = input.get()?;
         let bytes = codec::get_planes(input, SIDE)?;
         let halves = codec::get_wide_planes(input, SIDE)?;
         if bytes.len() != 4 * AREA || halves.len() != 2 * AREA {
-            return Err(CodecError("invalid tile shading"));
+            return Err(codec::invalid("$.shading"));
         }
         let control = (0..AREA)
             .map(|at| {
@@ -396,7 +396,7 @@ impl ShadingMaking {
         }
     }
 
-    pub(crate) fn advance(&mut self, budget: &mut u64) -> Result<Option<TileShading>, String> {
+    pub(crate) fn advance(&mut self, budget: &mut u64) -> Result<Option<TileShading>, Error> {
         let (pyramid, key) = (self.pyramid, self.key);
         let shading = match &mut self.reads {
             Reads::Ground(ground) => {
@@ -430,7 +430,7 @@ impl ShadingMaking {
 }
 
 impl Ground {
-    fn advance(&mut self, pyramid: &Pyramid, budget: &mut u64) -> Result<bool, String> {
+    fn advance(&mut self, pyramid: &Pyramid, budget: &mut u64) -> Result<bool, Error> {
         loop {
             if *budget == 0 {
                 return Ok(false);
@@ -453,15 +453,14 @@ impl Ground {
             };
             let Some(made) = generator.advance(budget) else {
                 if generator.failed() {
-                    return Err("the ground's heights are invalid".into());
+                    return Err(crate::jobs::invalid_heights());
                 }
                 return Ok(false);
             };
             let layers = layers.clone();
             self.generating = None;
             self.next += 1;
-            let tile: Tile =
-                codec::decode(&codec::encode(&made)).map_err(|error| error.to_string())?;
+            let tile: Tile = codec::decode(&codec::encode(&made))?;
             self.reading = Reading::of(tile, layers, pyramid, &self.window);
         }
     }

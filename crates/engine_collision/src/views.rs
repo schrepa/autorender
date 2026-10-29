@@ -1,10 +1,9 @@
 use bevy_ecs::prelude::{Entity, World};
-use engine_core::GlobalTransforms;
+use engine_core::{Error, GlobalTransforms};
 use serde::Serialize;
 
 use crate::{
-    Collider, ColliderShape, ColliderStatus, CollisionError, CollisionWorld,
-    validate_collider_transform,
+    Collider, ColliderShape, ColliderStatus, CollisionWorld, Fault, check_collider_transform,
 };
 
 #[derive(Serialize)]
@@ -23,7 +22,7 @@ pub struct ColliderView {
     pub filter: u32,
     pub sensor: bool,
     pub world_valid: bool,
-    pub world_error: Option<String>,
+    pub world_error: Option<Error>,
     pub cache_status: String,
 }
 
@@ -87,8 +86,8 @@ pub fn collider_view(world: &World, entity: Entity) -> Option<ColliderView> {
         .get_resource::<GlobalTransforms>()
         .and_then(|globals| globals.get(entity))
         .and_then(|global| global.matrix())
-        .ok_or(CollisionError::InvalidTransform)
-        .and_then(|matrix| validate_collider_transform(collider.shape(), matrix));
+        .ok_or(Fault::InvalidTransform)
+        .and_then(|matrix| check_collider_transform(collider.shape(), matrix));
     let cache_status = world
         .get_resource::<CollisionWorld>()
         .map_or("unavailable", |cache| match cache.collider_status(entity) {
@@ -108,7 +107,7 @@ pub fn collider_view(world: &World, entity: Entity) -> Option<ColliderView> {
         filter: collider.layers().filter,
         sensor: collider.is_sensor(),
         world_valid: valid.is_ok(),
-        world_error: valid.err().map(|error| error.to_string()),
+        world_error: valid.err().map(Fault::error),
         cache_status: cache_status.to_owned(),
     })
 }

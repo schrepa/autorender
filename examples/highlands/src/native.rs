@@ -21,8 +21,8 @@ pub fn main(arguments: impl Iterator<Item = String>) -> ExitCode {
     }
     match Native::parse(arguments) {
         Ok(native) => engine_native::exit(native.run()),
-        Err(message) => {
-            let record = serde_json::json!({"event": "arguments_rejected", "error": message});
+        Err(error) => {
+            let record = serde_json::json!({"event": "arguments_rejected", "error": error});
             eprintln!("{record}");
             ExitCode::from(2)
         }
@@ -44,7 +44,7 @@ fn usage() -> String {
 }
 
 impl Native {
-    fn parse(arguments: Vec<String>) -> Result<Self, String> {
+    fn parse(arguments: Vec<String>) -> engine::Result<Self> {
         let mut native = Self {
             options: Options::default(),
             assets: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/public"),
@@ -60,10 +60,7 @@ impl Native {
                 native.assets = arguments.value(&argument)?.into();
             } else if parameters().iter().any(|(known, _)| *known == name) {
                 let value = arguments.value(&argument)?;
-                native
-                    .options
-                    .set(name, &value)
-                    .map_err(|error| error.to_string())?;
+                native.options.set(name, &value)?;
             } else {
                 return Err(argument.unknown());
             }

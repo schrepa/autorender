@@ -2,18 +2,16 @@ mod manifests;
 pub mod rust;
 mod sources;
 
+use engine_core::{Error, ErrorCode};
+
 use crate::{Repository, Rules};
 
 #[derive(Default)]
-pub struct Problems(Vec<String>);
+pub struct Problems(Vec<Error>);
 
 impl Problems {
-    fn at(&mut self, path: &str, line: usize, message: &str) {
-        self.0.push(format!("{path}:{line}: {message}"));
-    }
-
-    fn file(&mut self, path: &str, message: &str) {
-        self.0.push(format!("{path}: {message}"));
+    fn push(&mut self, error: Error) {
+        self.0.push(error);
     }
 }
 
@@ -43,7 +41,6 @@ pub fn check(repository: &Repository, rules: &Rules) -> Result<(), String> {
         })
         .filter_map(|package| package.file("src/lib.rs"))
         .collect();
-    let mut errors = Vec::new();
     for path in &files {
         if sources::lockfile(path) {
             continue;
@@ -56,30 +53,19 @@ pub fn check(repository: &Repository, rules: &Rules) -> Result<(), String> {
         sources::check_text(path, &text, &mut problems);
         if path.ends_with(".rs") {
             sources::check(path, &text, &lints, &libraries, rules, &mut problems);
-            if let Some(conversions) = &rules.errors {
-                sources::error_types(path, &text, conversions, &mut errors);
+            if let Some(errors) = &rules.errors {
+                sources::error_types(path, &text, errors, &mut problems);
             }
         }
     }
-    if let Some(conversions) = &rules.errors {
-        sources::conversions(root, &errors, conversions, &mut problems)?;
-    }
     for path in rules.exceptions.unsafe_files {
         if !files.iter().any(|file| file == path) {
-            problems.file(
-                path,
-                "listed in the exceptions' unsafe_files but does not exist: remove it from the \
-                 list",
-            );
+            problems.push(Error::new(ErrorCode::ExceptionUnused, *path).got("unsafe_files"));
         }
     }
     if problems.0.is_empty() {
         println!("Policy holds.");
         return Ok(());
     }
-    Err(format!(
-        "{} policy problem(s):\n{}",
-        problems.0.len(),
-        problems.0.join("\n")
-    ))
+    crate::report(&problems.0)
 }

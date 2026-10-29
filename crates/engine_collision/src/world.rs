@@ -3,7 +3,8 @@ use engine_core::collections::HashMap;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::{SystemParam, SystemState};
 use engine_core::{
-    FixedTime, FrameTime, GlobalTransforms, Transform, TransformIndex, propagate_transforms,
+    Error, FixedTime, FrameTime, GlobalTransforms, Transform, TransformIndex,
+    propagate_transforms,
 };
 use glam::{Mat4, Vec3};
 
@@ -98,7 +99,7 @@ pub struct CollisionWorld {
     bvh: Bvh,
     next_pairs: Vec<SensorPair>,
     report: CollisionReport,
-    last_error: Option<CollisionError>,
+    last_error: Option<Fault>,
     pub(crate) terrain: TerrainFields,
     pub(crate) placed: PlacedShapes,
 }
@@ -140,18 +141,18 @@ impl CollisionWorld {
     pub fn config(&self) -> CollisionConfig {
         self.config
     }
-    pub fn last_error(&self) -> Option<CollisionError> {
-        self.last_error
+    pub fn last_error(&self) -> Option<Error> {
+        self.last_error.map(Fault::error)
     }
     pub fn collider_status(&self, entity: Entity) -> Option<ColliderStatus> {
         self.statuses.get(&entity).copied()
     }
 
-    fn ready(&self) -> Result<(), CollisionError> {
+    fn ready(&self) -> Result<(), Fault> {
         if self.report.complete {
             Ok(())
         } else {
-            Err(self.last_error.unwrap_or(CollisionError::IncompleteWorld))
+            Err(self.last_error.unwrap_or(Fault::IncompleteWorld))
         }
     }
 
@@ -275,20 +276,20 @@ impl CollisionWorld {
             && self.report.invalid_colliders == 0
             && self.report.overflow_colliders == 0;
         self.last_error = if !configuration_valid {
-            Some(CollisionError::InvalidConfig)
+            Some(Fault::InvalidConfig)
         } else if !self.report.complete {
-            Some(CollisionError::IncompleteWorld)
+            Some(Fault::IncompleteWorld)
         } else {
             None
         };
         self.report
     }
 
-    pub fn raycast(
-        &self,
-        ray: CollisionRay,
-        filter: QueryFilter,
-    ) -> Result<Option<RayHit>, CollisionError> {
+    pub fn raycast(&self, ray: CollisionRay, filter: QueryFilter) -> Result<Option<RayHit>, Error> {
+        self.nearest_ray(ray, filter).map_err(Fault::error)
+    }
+
+    fn nearest_ray(&self, ray: CollisionRay, filter: QueryFilter) -> Result<Option<RayHit>, Fault> {
         let _profile = engine_profile::span("collision.query", "raycast");
         let mut precise = engine_profile::Aggregate::new("collision.narrow", "ray_tests");
         let mut broad = engine_profile::Aggregate::new("collision.broad", "bvh_traversal");
@@ -336,7 +337,7 @@ impl CollisionWorld {
         filter: QueryFilter,
         output: &mut Vec<RayHit>,
         limit: usize,
-    ) -> Result<(), CollisionError> {
+    ) -> Result<(), Error> {
         let _profile = engine_profile::span("collision.query", "raycast_all");
         let mut precise = engine_profile::Aggregate::new("collision.narrow", "ray_tests");
         let mut broad = engine_profile::Aggregate::new("collision.broad", "bvh_traversal");
@@ -357,7 +358,7 @@ impl CollisionWorld {
                     precise.measure(|| entry.affine.ray(ray))
                 {
                     if output.len() == limit {
-                        return Err(CollisionError::ResultBudget);
+                        return Err(Fault::ResultBudget);
                     }
                     output.push(RayHit {
                         entity: entry.entity,
@@ -372,7 +373,7 @@ impl CollisionWorld {
             self.placed.ray_all(ray, filter, output);
             self.terrain.ray_all(ray, filter, output);
             if output.len() > limit {
-                return Err(CollisionError::ResultBudget);
+                return Err(Fault::ResultBudget);
             }
             output.sort_unstable_by(|a, b| {
                 a.distance
@@ -384,7 +385,7 @@ impl CollisionWorld {
         if result.is_err() {
             output.clear();
         }
-        result
+        result.map_err(Fault::error)
     }
 
     pub fn overlap(
@@ -394,7 +395,7 @@ impl CollisionWorld {
         filter: QueryFilter,
         output: &mut Vec<Entity>,
         limit: usize,
-    ) -> Result<(), CollisionError> {
+    ) -> Result<(), Error> {
         let _profile = engine_profile::span("collision.query", "overlap");
         let mut precise = engine_profile::Aggregate::new("collision.narrow", "overlap_tests");
         let mut broad = engine_profile::Aggregate::new("collision.broad", "bvh_traversal");
@@ -413,7 +414,7 @@ impl CollisionWorld {
                 let entry = entry?;
                 if precise.measure(|| intersects(&shape, &entry.affine))? {
                     if output.len() == limit {
-                        return Err(CollisionError::ResultBudget);
+                        return Err(Fault::ResultBudget);
                     }
                     output.push(entry.entity);
                 }
@@ -421,7 +422,7 @@ impl CollisionWorld {
             self.placed.overlap(&shape, filter, output)?;
             self.terrain.overlap(&shape, filter, output)?;
             if output.len() > limit {
-                return Err(CollisionError::ResultBudget);
+                return Err(Fault::ResultBudget);
             }
             output.sort_unstable();
             Ok(())
@@ -429,7 +430,7 @@ impl CollisionWorld {
         if result.is_err() {
             output.clear();
         }
-        result
+        result.map_err(Fault::error)
     }
 
     pub fn cast_shape(
@@ -439,11 +440,23 @@ impl CollisionWorld {
         displacement: Vec3,
         filter: QueryFilter,
         options: ShapeCastOptions,
-    ) -> Result<Option<ShapeHit>, CollisionError> {
+    ) -> Result<Option<ShapeHit>, Error> {
+        self.nearest_cast(shape, matrix, displacement, filter, options)
+            .map_err(Fault::error)
+    }
+
+    fn nearest_cast(
+        &self,
+        shape: ColliderShape,
+        matrix: Mat4,
+        displacement: Vec3,
+        filter: QueryFilter,
+        options: ShapeCastOptions,
+    ) -> Result<Option<ShapeHit>, Fault> {
         let _profile = engine_profile::span("collision.query", "shape_cast");
         let mut precise = engine_profile::Aggregate::new("collision.narrow", "shape_cast_tests");
         let mut broad = engine_profile::Aggregate::new("collision.broad", "bvh_traversal");
-        validate_shape_cast(shape, matrix, displacement, options)?;
+        check_shape_cast(shape, matrix, displacement, options)?;
         self.ready()?;
         let shape = AffineShape::new(shape, matrix)?;
         let swept = shape
@@ -485,9 +498,9 @@ impl CollisionWorld {
         Ok(nearest)
     }
 
-    fn validate_limit(&self, limit: usize) -> Result<(), CollisionError> {
+    fn validate_limit(&self, limit: usize) -> Result<(), Fault> {
         if limit > self.config.query_hits() {
-            Err(CollisionError::ResultBudget)
+            Err(Fault::ResultBudget)
         } else {
             Ok(())
         }
@@ -528,7 +541,7 @@ impl CollisionWorld {
                     }
                     if precise.measure(|| intersects(&a.affine, &b.affine))? {
                         if self.next_pairs.len() == self.config.sensor_pairs() {
-                            return Err(CollisionError::PairBudget);
+                            return Err(Fault::PairBudget);
                         }
                         self.next_pairs.push(SensorPair::new(a.entity, b.entity));
                     }
@@ -588,7 +601,7 @@ fn candidates<'a>(
     test: impl Fn(Bounds) -> bool + 'a,
     filter: QueryFilter,
     broad: &'a mut engine_profile::Aggregate,
-) -> impl Iterator<Item = Result<Entry, CollisionError>> + 'a {
+) -> impl Iterator<Item = Result<Entry, Fault>> + 'a {
     let mut count = 0;
     bvh.query_profiled(test, broad).filter_map(move |index| {
         if let Err(error) = candidate(&mut count, limit) {
@@ -601,9 +614,9 @@ fn candidates<'a>(
     })
 }
 
-fn candidate(count: &mut usize, limit: usize) -> Result<(), CollisionError> {
+fn candidate(count: &mut usize, limit: usize) -> Result<(), Fault> {
     if *count == limit {
-        return Err(CollisionError::CandidateBudget);
+        return Err(Fault::CandidateBudget);
     }
     *count += 1;
     Ok(())
@@ -618,7 +631,7 @@ pub struct SensorEvents {
     committed_tick: Option<u64>,
     complete: bool,
     candidate_pairs: usize,
-    error: Option<CollisionError>,
+    error: Option<Fault>,
 }
 impl SensorEvents {
     pub fn events(&self) -> &[SensorEvent] {
@@ -642,14 +655,14 @@ impl SensorEvents {
     pub fn candidate_pairs(&self) -> usize {
         self.candidate_pairs
     }
-    pub fn error(&self) -> Option<CollisionError> {
-        self.error
+    pub fn error(&self) -> Option<Error> {
+        self.error.map(Fault::error)
     }
 }
 
-pub fn refresh_collision_world(world: &mut World) -> Result<CollisionReport, CollisionError> {
+pub fn refresh_collision_world(world: &mut World) -> Result<CollisionReport, Error> {
     if !world.contains_resource::<CollisionWorld>() {
-        return Err(CollisionError::MissingPlugin);
+        return Err(Fault::MissingPlugin.error());
     }
     propagate_transforms(world);
     world.init_resource::<DirectSyncState>();

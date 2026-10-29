@@ -3,7 +3,7 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 use engine_math::{clamp, max, min, sin_cos};
 
 use crate::SampleShape;
-use crate::codec::{self, Codec, CodecError, Reader, Writer};
+use crate::codec::{self, Codec, Error, Reader, Writer};
 
 pub const DIRECTIONS: usize = 16;
 
@@ -37,7 +37,7 @@ impl Codec for TerrainLighting {
         out.put(&self.lowest);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         let sky_size: u32 = input.get()?;
         let horizon_size: u32 = input.get()?;
         let sky = codec::get_planes(input, sky_size as usize)?;
@@ -46,7 +46,7 @@ impl Codec for TerrainLighting {
         if sky.len() != SKY_PLANES * area(sky_size)
             || horizons.len() != HORIZON_PLANES * area(horizon_size)
         {
-            return Err(CodecError("lighting maps of another size"));
+            return Err(codec::invalid("$.lighting"));
         }
         Ok(Self {
             sky_size,
