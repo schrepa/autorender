@@ -7,7 +7,10 @@ use engine_settings::{Setting, settings};
 
 impl Brick for DebugView {
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.settings::<DebugView>().passes(&["debug_view"]);
+        bricks
+            .settings::<DebugView>()
+            .passes(&["debug_view"])
+            .smoke("debug_view", true, crate::debug_view_smoke::run);
     }
 }
 

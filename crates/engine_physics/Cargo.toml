@@ -19,6 +19,7 @@ engine_settings.workspace = true
 bevy_ecs.workspace = true
 glam.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 rapier3d.workspace = true
 parry3d.workspace = true
 schemars = { workspace = true, optional = true }

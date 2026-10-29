@@ -164,6 +164,7 @@ pub mod stats {
 }
 
 pub mod host;
+pub mod smokes;
 
 #[cfg(feature = "dev")]
 pub use engine_dev as dev;

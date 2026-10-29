@@ -12,8 +12,8 @@ use engine_collision::{CollisionError, CollisionWorld, refresh_collision_world};
 use engine_core::{
     ActionId, ActionInput, AssetLibrary, Atmosphere, BrickRegistry, Camera, Engine, FixedTime,
     FrameTime, GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle,
-    Mesh3d, MeshHandle, Parent, ParticleEmitter, PresentationMode, PresentationState,
-    ReflectionProbe, TextureHandle, Tint, Transform,
+    Mesh3d, MeshHandle, OperationScene, Parent, ParticleEmitter, PresentationMode,
+    PresentationState, ReflectionProbe, TextureHandle, Tint, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
@@ -771,13 +771,16 @@ impl DevTools {
                 value,
             });
         }
-        let scene = scene.ok_or_else(|| {
-            DevError::new(
-                ErrorCode::NoScene,
-                "$.entity",
-                "authored entity inspection requires an active scene instance",
-            )
-        })?;
+        let scene = scene
+            .map(SceneInstance::operation_scene)
+            .or_else(|| world.get_resource::<OperationScene>().cloned())
+            .ok_or_else(|| {
+                DevError::new(
+                    ErrorCode::NoScene,
+                    "$.entity",
+                    "authored entity inspection requires an active scene instance",
+                )
+            })?;
         if scene.entity_count() > MAX_SCAN_ENTITIES {
             return Err(DevError::new(
                 ErrorCode::ScanLimit,
@@ -794,7 +797,7 @@ impl DevTools {
                     "a selected entity has no pagination offset",
                 ));
             }
-            let entity = authored_entity(world, scene, id).ok_or_else(|| {
+            let entity = scene.entity(world, id).ok_or_else(|| {
                 DevError::new(
                     ErrorCode::UnknownEntity,
                     "$.entity",
@@ -809,19 +812,13 @@ impl DevTools {
                 ));
             }
             return Ok(InspectResult::Entity {
-                entity: self.entity_row(
-                    world,
-                    (context, &bricks),
-                    scene,
-                    (id, entity),
-                    inspector,
-                )?,
+                entity: self.entity_row(world, (context, &bricks), (id, entity), inspector)?,
             });
         }
         let parent = parent
             .map(|id| {
                 validate_name(id, "$.parent")?;
-                let entity = authored_entity(world, scene, id).ok_or_else(|| {
+                let entity = scene.entity(world, id).ok_or_else(|| {
                     DevError::new(
                         ErrorCode::UnknownEntity,
                         "$.parent",
@@ -840,7 +837,7 @@ impl DevTools {
             .transpose()?;
         let mut rows = Vec::with_capacity(limit);
         let mut total = 0;
-        for (id, entity) in scene.entities() {
+        for (id, &entity) in scene.entities.iter() {
             if world.get_entity(entity).is_err()
                 || parent.is_some_and(|parent| {
                     world.get::<Parent>(entity).map(Parent::parent) != Some(parent)
@@ -853,8 +850,7 @@ impl DevTools {
                 rows.push(self.entity_row(
                     world,
                     (context, &bricks),
-                    scene,
-                    (id, entity),
+                    (id.as_str(), entity),
                     inspector,
                 )?);
             }
@@ -874,16 +870,11 @@ impl DevTools {
         &self,
         world: &World,
         (context, bricks): (Context<'_>, &BrickInspectors),
-        scene: &SceneInstance,
         (id, entity): (&str, Entity),
         inspector: Option<&Inspector>,
     ) -> Result<EntityRow, DevError> {
         let metadata = world.get::<SceneEntity>(entity);
         let components = if let Some(inspector) = inspector {
-            let context = Context {
-                scene: Some(scene),
-                ..context
-            };
             let value = read_value(inspector, world, Some(entity), &context)?;
             EntityComponents::Values(
                 [(inspector.descriptor.name.clone(), value)]
