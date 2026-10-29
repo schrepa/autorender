@@ -439,8 +439,7 @@ pub(crate) fn bake(
         lakes.push(encode(standing, LAKE_RANGE));
     }
     let image = |samples: Vec<u16>| {
-        HeightImage::new(across as u32, rows as u32, samples)
-            .expect("grid_two_samples_each_way")
+        HeightImage::new(across as u32, rows as u32, samples).expect("grid_two_samples_each_way")
     };
     let Drainage {
         order,

@@ -334,11 +334,14 @@ fn sampler<'a>(
 }
 
 fn uniform_buffer(device: &wgpu::Device, uniform: &MaterialUniform) -> wgpu::Buffer {
-    crate::memory::buffer_init(device, &wgpu::util::BufferInitDescriptor {
-        label: Some("engine/material-uniform"),
-        contents: bytemuck::bytes_of(uniform),
-        usage: wgpu::BufferUsages::UNIFORM,
-    })
+    crate::memory::buffer_init(
+        device,
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("engine/material-uniform"),
+            contents: bytemuck::bytes_of(uniform),
+            usage: wgpu::BufferUsages::UNIFORM,
+        },
+    )
 }
 
 const MAP_BINDINGS: [(&str, &str); 5] = [

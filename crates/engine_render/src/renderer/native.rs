@@ -59,12 +59,15 @@ impl Renderer {
         };
         let (width, height) = (texture.width(), texture.height());
         let row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-        let buffer = crate::memory::buffer(&self.device, &wgpu::BufferDescriptor {
-            label: Some("engine/offscreen-readback"),
-            size: u64::from(row) * u64::from(height),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        let buffer = crate::memory::buffer(
+            &self.device,
+            &wgpu::BufferDescriptor {
+                label: Some("engine/offscreen-readback"),
+                size: u64::from(row) * u64::from(height),
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            },
+        );
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {

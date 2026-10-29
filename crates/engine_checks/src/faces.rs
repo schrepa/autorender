@@ -205,13 +205,7 @@ impl Builder<'_> {
     }
 }
 
-fn expose(
-    modules: &[Module],
-    index: usize,
-    prefix: &str,
-    builder: &mut Builder<'_>,
-    depth: usize,
-) {
+fn expose(modules: &[Module], index: usize, prefix: &str, builder: &mut Builder<'_>, depth: usize) {
     if depth > DEPTH {
         return;
     }
@@ -239,7 +233,10 @@ fn expose(
             }
             Target::Item(owner, item) => builder.item(&modules[owner].parsed.items[item], &path),
             Target::Outside if import.glob => {
-                builder.external(&joined(prefix, "*"), &format!("{}::*", import.path.join("::")));
+                builder.external(
+                    &joined(prefix, "*"),
+                    &format!("{}::*", import.path.join("::")),
+                );
             }
             Target::Outside => builder.external(&path, &import.path.join("::")),
         }
@@ -368,7 +365,10 @@ fn shaders(folder: &Path, files: &mut Vec<PathBuf>) {
             if path.file_name().is_some_and(|name| name != "target") {
                 shaders(&path, files);
             }
-        } else if path.extension().is_some_and(|extension| extension == "wgsl") {
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "wgsl")
+        {
             files.push(path);
         }
     }
@@ -421,7 +421,11 @@ pub fn files(
     let crates: BTreeSet<String> =
         crate::bricks::brick_crates(repository, registered.iter().copied())
             .into_iter()
-            .filter(|name| repository.of_crate(name).is_some_and(|package| package.own()))
+            .filter(|name| {
+                repository
+                    .of_crate(name)
+                    .is_some_and(|package| package.own())
+            })
             .collect();
     let listed: Vec<serde_json::Value> = faces(repository, &crates)?
         .into_iter()
@@ -476,7 +480,10 @@ pub fn check(repository: &Repository) -> Result<(), String> {
         }
     }
     if problems.is_empty() {
-        println!("{}", json!({"event": "faces_offered", "replacements": compared}));
+        println!(
+            "{}",
+            json!({"event": "faces_offered", "replacements": compared})
+        );
         return Ok(());
     }
     Err(problems.join("\n"))

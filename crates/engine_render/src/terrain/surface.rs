@@ -132,11 +132,14 @@ impl SurfaceTrees {
                 ARGS_BYTES,
                 wgpu::BufferUsages::INDIRECT,
             ),
-            indices: crate::memory::buffer_init(device, &wgpu::util::BufferInitDescriptor {
-                label: Some("engine/terrain-surface-indices"),
-                contents: bytemuck::cast_slice(&meshlet_indices()),
-                usage: wgpu::BufferUsages::INDEX,
-            }),
+            indices: crate::memory::buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("engine/terrain-surface-indices"),
+                    contents: bytemuck::cast_slice(&meshlet_indices()),
+                    usage: wgpu::BufferUsages::INDEX,
+                },
+            ),
             uniforms: Versioned::new(crate::buffers::uniform(
                 device,
                 "engine/terrain-subdivision",

@@ -864,6 +864,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_checks"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "engine",
+ "engine_core",
+ "engine_dev",
+ "engine_render",
+ "engine_sources",
+ "naga",
+ "serde_json",
+ "toml_edit",
+]
+
+[[package]]
 name = "engine_collision"
 version = "0.1.0"
 dependencies = [
@@ -2522,14 +2537,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "policy"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "toml_edit",
-]
-
-[[package]]
 name = "polling"
 version = "3.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4119,6 +4126,7 @@ dependencies = [
  "engine",
  "engine_assetc",
  "engine_assets",
+ "engine_checks",
  "engine_core",
  "engine_dev",
  "engine_lodbuild",
@@ -4135,7 +4143,6 @@ dependencies = [
  "gltf",
  "naga",
  "png",
- "policy",
  "serde_json",
  "sha2",
  "texture2ddecoder",

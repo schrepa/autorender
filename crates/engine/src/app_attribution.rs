@@ -14,7 +14,8 @@ impl AppHost {
         };
         registry.check_passes(engine_render::RENDER_PASSES)?;
         #[cfg(any(feature = "dev", feature = "profiling"))]
-        self.renderer.set_pass_owners(|pass| registry.pass_owner(pass));
+        self.renderer
+            .set_pass_owners(|pass| registry.pass_owner(pass));
         Ok(())
     }
 }

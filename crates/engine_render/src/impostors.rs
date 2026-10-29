@@ -439,12 +439,15 @@ pub(crate) struct ImpostorAtlas {
 }
 
 fn record_buffer(device: &wgpu::Device, records: usize) -> wgpu::Buffer {
-    crate::memory::buffer(device, &wgpu::BufferDescriptor {
-        label: Some("engine/impostor-records"),
-        size: (records.max(1) * size_of::<ImpostorRecord>()) as u64,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    })
+    crate::memory::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some("engine/impostor-records"),
+            size: (records.max(1) * size_of::<ImpostorRecord>()) as u64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        },
+    )
 }
 
 impl ImpostorAtlas {
@@ -720,22 +723,25 @@ impl ImpostorAtlas {
         let capacity = grown_layers(layers, self.layer_bytes(), most_layers(device));
         let (size, levels) = (self.shape.size(), self.shape.levels());
         let formats = self.format.textures();
-        let texture = crate::memory::texture(device, &wgpu::TextureDescriptor {
-            label: Some("engine/impostor-array"),
-            size: wgpu::Extent3d {
-                width: size,
-                height: size,
-                depth_or_array_layers: KINDS * capacity,
+        let texture = crate::memory::texture(
+            device,
+            &wgpu::TextureDescriptor {
+                label: Some("engine/impostor-array"),
+                size: wgpu::Extent3d {
+                    width: size,
+                    height: size,
+                    depth_or_array_layers: KINDS * capacity,
+                },
+                mip_level_count: levels,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: formats[0].remove_srgb_suffix(),
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[formats[0]],
             },
-            mip_level_count: levels,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: formats[0].remove_srgb_suffix(),
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[formats[0]],
-        });
+        );
         if let Some(old) = &self.arrays {
             let encoder = prelude(device, encoder);
             for kind in 0..KINDS {

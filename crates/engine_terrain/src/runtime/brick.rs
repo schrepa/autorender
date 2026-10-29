@@ -99,7 +99,10 @@ fn explain_residency(world: &World, request: &ExplainRequest) -> Option<ExplainR
             .with("entity", &entity.id)
             .with("position_m", [position.x, position.y, position.z])
             .with("ground_level", sample.as_ref().map(|sample| sample.level))
-            .with("ground_height_m", sample.as_ref().map(|sample| sample.height)),
+            .with(
+                "ground_height_m",
+                sample.as_ref().map(|sample| sample.height),
+            ),
     )
 }
 

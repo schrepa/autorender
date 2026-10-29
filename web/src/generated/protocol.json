@@ -30,7 +30,6 @@
     "render",
     "pause",
     "resume",
-    "capture",
     "game",
     "reload",
     "debug_panic",
@@ -201,11 +200,9 @@
   "profile_max_events": 65536,
   "queries": [
     "status",
-    "inspect",
     "assets",
     "digest",
     "distribution",
-    "describe",
     "terrain_height",
     "terrain_route",
     "nav_path",
@@ -214,6 +211,17 @@
     "shape_cast",
     "collision_events",
     "terrain_sweep"
+  ],
+  "verbs": [
+    "describe",
+    "inspect",
+    "query",
+    "control",
+    "capture",
+    "profile",
+    "explain",
+    "watch",
+    "check"
   ],
   "version": 1
 }

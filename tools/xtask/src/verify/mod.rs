@@ -9,7 +9,8 @@ use crate::Failure;
 use crate::measure::git;
 use map::Check;
 
-const USAGE: &str = "usage: cargo xtask verify [--level quick|pr|merge] [--base REV] [--plan] [--json]";
+const USAGE: &str =
+    "usage: cargo xtask verify [--level quick|pr|merge] [--base REV] [--plan] [--json]";
 
 const QUICK_STAGES: &[&str] = &[
     "policy",

@@ -184,7 +184,6 @@ impl BrickRegistry {
             .collect()
     }
 
-
     pub fn extractions(
         &self,
     ) -> impl Iterator<Item = (&'static str, fn(&World, &mut RenderSnapshot))> + '_ {

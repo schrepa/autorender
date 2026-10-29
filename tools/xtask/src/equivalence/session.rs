@@ -244,10 +244,7 @@ fn drive(session: &mut Session, cell: &Cell, log: &Path, run: &mut Run) -> Resul
         session.ok(&named("control", "environment", args), log)?;
     }
     if cell.ticks > 0 {
-        session.ok(
-            &named("control", "step", json!({"ticks": cell.ticks})),
-            log,
-        )?;
+        session.ok(&named("control", "step", json!({"ticks": cell.ticks})), log)?;
     }
     for view in &cell.views {
         match (&view.camera, view.name.as_str()) {

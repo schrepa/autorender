@@ -68,7 +68,11 @@ pub struct ExplainEntry {
 }
 
 impl ExplainEntry {
-    pub(super) fn of(brick: &'static str, explain: Explainer, at: &'static Location<'static>) -> Self {
+    pub(super) fn of(
+        brick: &'static str,
+        explain: Explainer,
+        at: &'static Location<'static>,
+    ) -> Self {
         Self { brick, at, explain }
     }
 

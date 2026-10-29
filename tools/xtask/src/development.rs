@@ -44,7 +44,9 @@ pub fn verbs() -> Result<Value, String> {
 
 fn agent_help(root: &Path, arguments: &[String]) -> Result<(), String> {
     if let Some(argument) = arguments.first() {
-        return Err(format!("agent help takes no arguments; received {argument:?}"));
+        return Err(format!(
+            "agent help takes no arguments; received {argument:?}"
+        ));
     }
     let output = Command::new("node")
         .args(["web/scripts/agent.mjs", "help"])
@@ -65,9 +67,8 @@ fn check_request(arguments: &[String]) -> Result<CheckRequest, DevError> {
     let source = match arguments {
         [] => "{}".to_owned(),
         [option, value] if option == "--json" => value.clone(),
-        [option, value] if option == "--file" => std::fs::read_to_string(value).map_err(|error| {
-            DevError::new(ErrorCode::SourceIo, "--file", error.to_string())
-        })?,
+        [option, value] if option == "--file" => std::fs::read_to_string(value)
+            .map_err(|error| DevError::new(ErrorCode::SourceIo, "--file", error.to_string()))?,
         _ => {
             return Err(DevError::new(
                 ErrorCode::InvalidArguments,
@@ -107,7 +108,11 @@ fn check(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     let ran = stdout
         .lines()
         .rev()
-        .find_map(|line| serde_json::from_str::<Value>(line).ok().filter(|value| value.get("verify").is_some()))
+        .find_map(|line| {
+            serde_json::from_str::<Value>(line)
+                .ok()
+                .filter(|value| value.get("verify").is_some())
+        })
         .map(|value| value["verify"].clone());
     let exit = output.status.code();
     let steps: Vec<Value> = ran
@@ -153,7 +158,9 @@ fn check(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     println!("{reply}");
     match (ran.is_some(), passed) {
         (true, true) => Ok(()),
-        (true, false) => Err(Failure::found("agent check found faults; see its JSON result")),
+        (true, false) => Err(Failure::found(
+            "agent check found faults; see its JSON result",
+        )),
         (false, _) => Err("agent check could not run verify; see its JSON result".into()),
     }
 }
@@ -161,14 +168,18 @@ fn check(root: &Path, arguments: &[String]) -> Result<(), Failure> {
 fn locations(text: &str) -> Vec<String> {
     const EXTENSIONS: [&str; 6] = [".rs:", ".mjs:", ".ts:", ".wgsl:", ".json:", ".toml:"];
     let mut found: Vec<String> = Vec::new();
-    let separators = |character: char| character.is_whitespace() || "()[]{}'\"`,;<>".contains(character);
+    let separators =
+        |character: char| character.is_whitespace() || "()[]{}'\"`,;<>".contains(character);
     for token in text.split(separators) {
         for extension in EXTENSIONS {
             let Some(at) = token.find(extension) else {
                 continue;
             };
             let after = at + extension.len();
-            let line: String = token[after..].chars().take_while(char::is_ascii_digit).collect();
+            let line: String = token[after..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
             if line.is_empty() {
                 continue;
             }

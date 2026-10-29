@@ -159,7 +159,12 @@ pub(crate) const LINT: &[Stage<Path>] = &[
     Stage {
         name: "clippy brick template",
         needs: &[],
-        run: |root| clippy(root, &["-p", "engine_core", "--examples", "--target", WASM_TARGET]),
+        run: |root| {
+            clippy(
+                root,
+                &["-p", "engine_core", "--examples", "--target", WASM_TARGET],
+            )
+        },
     },
     Stage {
         name: "wasm",

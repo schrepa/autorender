@@ -270,9 +270,8 @@ fn option_file_problems(repository: &Repository) -> Result<Vec<String>, String> 
                                 "{at}: {project}/Cargo.toml: [package.metadata.engine] declares \
                                  no native"
                             )),
-                            None => problems.push(format!(
-                                "{at}: project {project} is no game crate's folder"
-                            )),
+                            None => problems
+                                .push(format!("{at}: project {project} is no game crate's folder")),
                         }
                     }
                     None => problems.push(format!("{at}: project names a game crate's folder")),

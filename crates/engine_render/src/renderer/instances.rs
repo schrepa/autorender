@@ -101,14 +101,17 @@ impl Instances {
                 .max(INITIAL_CAPACITY)
                 .next_power_of_two()
                 .min(self.limit);
-            self.slots = Some(crate::memory::buffer(device, &wgpu::BufferDescriptor {
-                label: Some("engine/retained-slots"),
-                size: (self.slot_capacity * size_of::<u32>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX
-                    | wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }));
+            self.slots = Some(crate::memory::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("engine/retained-slots"),
+                    size: (self.slot_capacity * size_of::<u32>()) as u64,
+                    usage: wgpu::BufferUsages::VERTEX
+                        | wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ));
             self.slot_revision = None;
         }
         if self.slot_revision == key {

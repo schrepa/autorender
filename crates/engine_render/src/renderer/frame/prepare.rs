@@ -216,11 +216,14 @@ impl Renderer {
                     )
                     .ok_or_else(|| {
                         let buffer = |label, contents: &[u8], usage| {
-                            buffer_init(&self.device, &wgpu::util::BufferInitDescriptor {
-                                label: Some(label),
-                                contents,
-                                usage,
-                            })
+                            buffer_init(
+                                &self.device,
+                                &wgpu::util::BufferInitDescriptor {
+                                    label: Some(label),
+                                    contents,
+                                    usage,
+                                },
+                            )
                         };
                         let vertex = wgpu::BufferUsages::VERTEX;
                         OwnMesh {

@@ -141,11 +141,14 @@ impl DepthPyramid {
         };
         let views: Vec<wgpu::TextureView> = (0..count).map(level_view).collect();
         let reduced = extents(region.render, count);
-        let extents_buffer = crate::memory::buffer_init(device, &wgpu::util::BufferInitDescriptor {
-            label: Some("engine/depth-pyramid-extents"),
-            contents: &extent_bytes(&reduced),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let extents_buffer = crate::memory::buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("engine/depth-pyramid-extents"),
+                contents: &extent_bytes(&reduced),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            },
+        );
         let extent_binding = |level: u32| {
             wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                 buffer: &extents_buffer,

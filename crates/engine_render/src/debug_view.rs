@@ -240,11 +240,14 @@ impl DebugViewPass {
                 }
             }
         }
-        let records = crate::memory::buffer_init(device, &wgpu::util::BufferInitDescriptor {
-            label: Some("engine/debug-view-records"),
-            contents: bytemuck::cast_slice(&words),
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        let records = crate::memory::buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("engine/debug-view-records"),
+                contents: bytemuck::cast_slice(&words),
+                usage: wgpu::BufferUsages::VERTEX,
+            },
+        );
         Self {
             layout,
             pipeline,

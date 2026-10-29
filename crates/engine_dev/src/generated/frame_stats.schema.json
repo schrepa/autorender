@@ -11,6 +11,85 @@
       ],
       "type": "object"
     },
+    "BrickCost": {
+      "properties": {
+        "allocations": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "brick": {
+          "type": "string"
+        },
+        "cpu_ms": {
+          "format": "double",
+          "type": "number"
+        },
+        "created_after_warmup": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duplicate_upload_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gpu_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "gpu_ms": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "heap_live_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "heap_peak_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "brick",
+        "cpu_ms",
+        "heap_live_bytes",
+        "heap_peak_bytes",
+        "allocations",
+        "gpu_bytes",
+        "created_after_warmup",
+        "duplicate_upload_bytes"
+      ],
+      "type": "object"
+    },
+    "BrickCosts": {
+      "properties": {
+        "frame": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rows": {
+          "items": {
+            "$ref": "#/$defs/BrickCost"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "frame",
+        "rows"
+      ],
+      "type": "object"
+    },
     "CellStats": {
       "properties": {
         "cells": {
@@ -997,6 +1076,16 @@
     },
     "bloom": {
       "$ref": "#/$defs/Applied"
+    },
+    "bricks_cost": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BrickCosts"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "clouds": {
       "$ref": "#/$defs/CloudStats"

@@ -896,23 +896,26 @@ impl TileAtlas {
         }
         let layers = needed.next_power_of_two().max(16).min(max_layers.max(1));
         let array = |label: &'static str, format, usage, mips| {
-            crate::memory::texture(device, &wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: LAYER_SIZE,
-                    height: LAYER_SIZE,
-                    depth_or_array_layers: layers,
+            crate::memory::texture(
+                device,
+                &wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width: LAYER_SIZE,
+                        height: LAYER_SIZE,
+                        depth_or_array_layers: layers,
+                    },
+                    mip_level_count: mips,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_DST
+                        | wgpu::TextureUsages::COPY_SRC
+                        | usage,
+                    view_formats: &[],
                 },
-                mip_level_count: mips,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_DST
-                    | wgpu::TextureUsages::COPY_SRC
-                    | usage,
-                view_formats: &[],
-            })
+            )
         };
         let texture = array(
             "engine/terrain-heights",
@@ -939,22 +942,25 @@ impl TileAtlas {
             1,
         );
         let pyramid = |label: &'static str| {
-            crate::memory::texture(device, &wgpu::TextureDescriptor {
-                label: Some(label),
-                size: wgpu::Extent3d {
-                    width: ERROR_CELLS,
-                    height: ERROR_CELLS,
-                    depth_or_array_layers: layers,
+            crate::memory::texture(
+                device,
+                &wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width: ERROR_CELLS,
+                        height: ERROR_CELLS,
+                        depth_or_array_layers: layers,
+                    },
+                    mip_level_count: ERROR_MIPS,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: ERROR_FORMAT,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_DST
+                        | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
                 },
-                mip_level_count: ERROR_MIPS,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: ERROR_FORMAT,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_DST
-                    | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            })
+            )
         };
         let ground_errors = pyramid("engine/terrain-ground-errors");
         let water_errors = pyramid("engine/terrain-water-errors");

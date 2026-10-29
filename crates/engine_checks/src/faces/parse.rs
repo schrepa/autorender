@@ -359,7 +359,12 @@ fn invocation(code: &[char], at: usize, end: usize, parsed: &mut Parsed) -> usiz
         let open = space(code, bang + 1, end);
         if matches!(code.get(open), Some('(' | '[' | '{')) && open < end {
             let close = closing(code, open).min(end);
-            items(code, open + 1, close.saturating_sub(1).max(open + 1), parsed);
+            items(
+                code,
+                open + 1,
+                close.saturating_sub(1).max(open + 1),
+                parsed,
+            );
             let after = space(code, close, end);
             return if code.get(after) == Some(&';') {
                 after + 1
@@ -460,7 +465,11 @@ fn module_item(
     let mut item = declared.item(Kind::Module, name, String::new(), Vec::new());
     let next = if code.get(next) == Some(&'{') {
         let close = closing(code, next).min(end);
-        item.body = Some(code[next + 1..close.saturating_sub(1).max(next + 1)].iter().collect());
+        item.body = Some(
+            code[next + 1..close.saturating_sub(1).max(next + 1)]
+                .iter()
+                .collect(),
+        );
         close
     } else {
         statement_end(code, next, end)
@@ -509,7 +518,9 @@ fn struct_item(
         }
         _ => (Vec::new(), (stop + 1).min(end)),
     };
-    parsed.items.push(declared.item(kind, name, header, members));
+    parsed
+        .items
+        .push(declared.item(kind, name, header, members));
     after
 }
 
@@ -675,7 +686,9 @@ fn value_item(
     let stop = until(code, next, end, &['=', ';']);
     let header = normalize(&code[next..stop]);
     if name != "_" {
-        parsed.items.push(declared.item(kind, name, header, Vec::new()));
+        parsed
+            .items
+            .push(declared.item(kind, name, header, Vec::new()));
     }
     statement_end(code, stop, end)
 }

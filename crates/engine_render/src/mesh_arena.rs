@@ -173,12 +173,15 @@ mod gpu {
         size: u64,
         usage: wgpu::BufferUsages,
     ) -> wgpu::Buffer {
-        crate::memory::buffer(device, &wgpu::BufferDescriptor {
-            label: Some(label),
-            size: size.max(4).next_multiple_of(4),
-            usage,
-            mapped_at_creation: false,
-        })
+        crate::memory::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some(label),
+                size: size.max(4).next_multiple_of(4),
+                usage,
+                mapped_at_creation: false,
+            },
+        )
     }
 
     fn regrown(

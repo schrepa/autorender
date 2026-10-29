@@ -112,12 +112,12 @@ impl DevHost {
             Verb::Capture | Verb::Profile | Verb::Explain | Verb::Watch => {
                 looped(&envelope, paused)
             }
-            Verb::Check => Err(DevError::new(
-                ErrorCode::UnsupportedCommand,
-                "$.verb",
-                Verb::Check.name(),
-            )
-            .expected("cargo xtask agent check")),
+            Verb::Check => {
+                Err(
+                    DevError::new(ErrorCode::UnsupportedCommand, "$.verb", Verb::Check.name())
+                        .expected("cargo xtask agent check"),
+                )
+            }
         };
         match answered {
             Ok(result) => self.result(app, scene, result),
@@ -218,12 +218,10 @@ fn looped(envelope: &Envelope, paused: bool) -> Result<Value, DevError> {
             let request: ProfileRequest = envelope.body()?;
             request.validate()?;
             if request.deep.is_some() {
-                return Err(DevError::new(
-                    ErrorCode::ProfilingUnavailable,
-                    "$.deep",
-                    "deep",
-                )
-                .expected("a native session or the agent bridge, which take deep profiles"));
+                return Err(
+                    DevError::new(ErrorCode::ProfilingUnavailable, "$.deep", "deep")
+                        .expected("a native session or the agent bridge, which take deep profiles"),
+                );
             }
             true
         }

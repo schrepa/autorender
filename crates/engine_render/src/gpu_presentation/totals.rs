@@ -27,12 +27,15 @@ pub(super) struct Totals {
 impl Totals {
     pub(super) fn new(device: &wgpu::Device) -> Self {
         Self {
-            buffer: crate::memory::buffer(device, &wgpu::BufferDescriptor {
-                label: Some("engine/presentation-totals"),
-                size: TOTALS_BYTES,
-                usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            }),
+            buffer: crate::memory::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("engine/presentation-totals"),
+                    size: TOTALS_BYTES,
+                    usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            ),
             readbacks: ReadbackRing::new("engine/presentation-visible-readback"),
             last: Rc::new(Cell::new(None)),
             frames: 0,

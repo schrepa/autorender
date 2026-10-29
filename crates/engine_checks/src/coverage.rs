@@ -60,8 +60,12 @@ pub fn coverage(
             })
         })
         .collect();
-    let named = [engine_dev::Verb::Query, engine_dev::Verb::Control, engine_dev::Verb::Check]
-        .map(engine_dev::Verb::name);
+    let named = [
+        engine_dev::Verb::Query,
+        engine_dev::Verb::Control,
+        engine_dev::Verb::Check,
+    ]
+    .map(engine_dev::Verb::name);
     let verbs = protocol["verbs"]
         .as_array()
         .cloned()

@@ -358,9 +358,11 @@ fn ask(state: &mut TerrainState, slots: &mut JobBudget<'_>, wants: &[Want], fram
                     continue;
                 };
                 let held = Arc::clone(held);
-                state.shading.share(slots.jobs, shading_key(&read.hash), || {
-                    share_shading(&crate::codec::encode(held.as_ref()))
-                });
+                state
+                    .shading
+                    .share(slots.jobs, shading_key(&read.hash), || {
+                        share_shading(&crate::codec::encode(held.as_ref()))
+                    });
             }
             let kind = ShadingJob::KIND.name();
             Phase::Making(slots.jobs.submit_record(kind, input, want.priority, record))

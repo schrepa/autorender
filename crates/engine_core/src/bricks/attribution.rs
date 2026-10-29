@@ -161,7 +161,8 @@ mod measured {
             input: <Self::In as SystemInput>::Inner<'_>,
             run_system: impl FnOnce(
                 SystemIn<'_, SystemWithAccess>,
-            ) -> Result<<SystemWithAccess as System>::Out, RunSystemError>,
+            )
+                -> Result<<SystemWithAccess as System>::Out, RunSystemError>,
         ) -> Result<Self::Out, RunSystemError> {
             let _span = engine_profile::span("brick", self.brick);
             let _scope = engine_profile::enter(self.index);

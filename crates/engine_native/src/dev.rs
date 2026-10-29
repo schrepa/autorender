@@ -297,7 +297,9 @@ impl<G: Game> DevSession<G> {
 
     fn keep_file(&mut self, name: &str, contents: &Value) -> Result<Artifact, String> {
         self.captures += 1;
-        let path = self.artifacts.join(format!("{name}-{}.json", self.captures));
+        let path = self
+            .artifacts
+            .join(format!("{name}-{}.json", self.captures));
         std::fs::create_dir_all(&self.artifacts).map_err(|error| error.to_string())?;
         let bytes = serde_json::to_vec(contents).map_err(|error| error.to_string())?;
         std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;

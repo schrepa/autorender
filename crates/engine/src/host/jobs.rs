@@ -6,8 +6,14 @@ use crate::app_host::JobMessage;
 #[derive(Debug)]
 pub enum JobOrder {
     Share(JobShare),
-    Run { worker: u32, request: JobRequest },
-    Cancel { worker: u32, id: JobId },
+    Run {
+        worker: u32,
+        request: JobRequest,
+    },
+    Cancel {
+        worker: u32,
+        id: JobId,
+    },
     Lookup {
         id: JobId,
         key: String,

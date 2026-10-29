@@ -409,12 +409,12 @@ impl DevTools {
             | Verb::Profile
             | Verb::Explain
             | Verb::Watch
-            | Verb::Check) => Err(DevError::new(
-                ErrorCode::UnsupportedCommand,
-                "$.verb",
-                verb.name(),
-            )
-            .allowed([Verb::Describe, Verb::Inspect, Verb::Query].map(Verb::name))),
+            | Verb::Check) => {
+                Err(
+                    DevError::new(ErrorCode::UnsupportedCommand, "$.verb", verb.name())
+                        .allowed([Verb::Describe, Verb::Inspect, Verb::Query].map(Verb::name)),
+                )
+            }
         }
     }
 
@@ -525,7 +525,11 @@ impl DevTools {
         }
     }
 
-    fn describe(&self, world: &World, request: &DescribeRequest) -> Result<DescribeResult, DevError> {
+    fn describe(
+        &self,
+        world: &World,
+        request: &DescribeRequest,
+    ) -> Result<DescribeResult, DevError> {
         let bricks = self.brick_inspectors(world);
         let registry = world.get_resource::<BrickRegistry>();
         let full = request.detail == Detail::Full;
@@ -604,7 +608,9 @@ impl DevTools {
                 brick: described_brick(brick, true),
             });
         }
-        if let Some(stats) = registry.and_then(|registry| registry.stats().find(|stats| stats.key == name)) {
+        if let Some(stats) =
+            registry.and_then(|registry| registry.stats().find(|stats| stats.key == name))
+        {
             return Ok(DescribeResult::Stats {
                 name: name.to_owned(),
                 kind: TypeKind::Stats,
@@ -673,7 +679,11 @@ impl DevTools {
             .chain(
                 registry
                     .into_iter()
-                    .flat_map(|registry| registry.names().chain(registry.stats().map(|stats| stats.key)))
+                    .flat_map(|registry| {
+                        registry
+                            .names()
+                            .chain(registry.stats().map(|stats| stats.key))
+                    })
                     .map(str::to_owned),
             )
             .collect();
@@ -1080,7 +1090,8 @@ fn control_state(world: &World) -> serde_json::Map<String, Value> {
 }
 
 fn described_brick(brick: &engine_core::BrickRecord, full: bool) -> DescribedBrick {
-    let at = |at: &'static std::panic::Location<'static>| full.then(|| engine_core::source_line(at));
+    let at =
+        |at: &'static std::panic::Location<'static>| full.then(|| engine_core::source_line(at));
     DescribedBrick {
         name: brick.name,
         crate_name: brick.crate_name,
@@ -1204,7 +1215,10 @@ fn references(value: &Value, names: &mut Vec<String>) {
     match value {
         Value::Object(object) => {
             for (key, value) in object {
-                match value.as_str().and_then(|path| path.strip_prefix("#/$defs/")) {
+                match value
+                    .as_str()
+                    .and_then(|path| path.strip_prefix("#/$defs/"))
+                {
                     Some(name) if key == "$ref" => names.push(name.to_owned()),
                     Some(_) | None => references(value, names),
                 }

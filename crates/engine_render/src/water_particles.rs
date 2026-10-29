@@ -481,12 +481,15 @@ impl ParticleGrid {
             (u64::from(PARTICLE_ITEMS) + pooled + sites + 2 * scanned) * 4,
             wgpu::BufferUsages::COPY_SRC,
         );
-        let args = crate::memory::buffer(device, &wgpu::BufferDescriptor {
-            label: Some("engine/water-particles-args"),
-            size: DRAW_ARGS + DRAW_BYTES,
-            usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let args = crate::memory::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("engine/water-particles-args"),
+                size: DRAW_ARGS + DRAW_BYTES,
+                usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
         let splat = storage(
             "engine/water-particles-splat",
             area * SPLAT_BYTES,

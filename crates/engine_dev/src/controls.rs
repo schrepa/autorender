@@ -122,7 +122,12 @@ impl CaptureRequest {
 
 impl ProfileRequest {
     pub fn validate(&self) -> Result<(), DevError> {
-        bounded(self.frames, bounds::FRAMES, ErrorCode::OutOfRange, "$.frames")?;
+        bounded(
+            self.frames,
+            bounds::FRAMES,
+            ErrorCode::OutOfRange,
+            "$.frames",
+        )?;
         bounded(
             self.interval_ms,
             bounds::FRAME_INTERVAL,
@@ -144,7 +149,12 @@ impl ExplainQuestion {
 
 impl WatchRequest {
     pub fn validate(&self) -> Result<(), DevError> {
-        bounded(self.frames, bounds::FRAMES, ErrorCode::OutOfRange, "$.frames")?;
+        bounded(
+            self.frames,
+            bounds::FRAMES,
+            ErrorCode::OutOfRange,
+            "$.frames",
+        )?;
         bounded(
             self.interval_ms,
             bounds::FRAME_INTERVAL,
@@ -164,18 +174,20 @@ impl WatchRequest {
             ("$.entities", self.entities.len()),
         ] {
             if count > MAX_WATCHED {
-                return Err(
-                    DevError::new(ErrorCode::OutOfRange, field, format!("{count} watched"))
-                        .expected(format!("at most {MAX_WATCHED}")),
-                );
+                return Err(DevError::new(
+                    ErrorCode::OutOfRange,
+                    field,
+                    format!("{count} watched"),
+                )
+                .expected(format!("at most {MAX_WATCHED}")));
             }
         }
         for (index, stat) in self.stats.iter().enumerate() {
             let valid = !stat.is_empty()
                 && stat.len() <= 128
-                && stat
-                    .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_.".contains(&byte));
+                && stat.bytes().all(|byte| {
+                    byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_.".contains(&byte)
+                });
             if !valid {
                 return Err(DevError::new(
                     ErrorCode::InvalidName,

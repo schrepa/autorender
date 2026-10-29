@@ -175,18 +175,24 @@ mod capture {
                     ty: wgpu::QueryType::Timestamp,
                     count: QUERIES,
                 }),
-                resolve: crate::memory::buffer(device, &wgpu::BufferDescriptor {
-                    label: Some("engine/profile-resolve"),
-                    size: SLOT_BYTES,
-                    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                }),
-                readback: crate::memory::buffer(device, &wgpu::BufferDescriptor {
-                    label: Some("engine/profile-readback"),
-                    size: SLOT_BYTES,
-                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                    mapped_at_creation: false,
-                }),
+                resolve: crate::memory::buffer(
+                    device,
+                    &wgpu::BufferDescriptor {
+                        label: Some("engine/profile-resolve"),
+                        size: SLOT_BYTES,
+                        usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                        mapped_at_creation: false,
+                    },
+                ),
+                readback: crate::memory::buffer(
+                    device,
+                    &wgpu::BufferDescriptor {
+                        label: Some("engine/profile-readback"),
+                        size: SLOT_BYTES,
+                        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    },
+                ),
                 mapped: Rc::new(Cell::new(MapState::Pending)),
                 origin: None,
                 spans: RefCell::new(Vec::with_capacity(SPANS)),

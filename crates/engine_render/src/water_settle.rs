@@ -483,12 +483,15 @@ impl WaterSettle {
         copies: &[(bool, u64, u64)],
     ) {
         let bytes: u64 = copies.iter().map(|&(_, _, bytes)| bytes).sum();
-        let buffer = crate::memory::buffer(device, &wgpu::BufferDescriptor {
-            label: Some("engine/water-settle-readback"),
-            size: bytes,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let buffer = crate::memory::buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("engine/water-settle-readback"),
+                size: bytes,
+                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
         let mut into = 0;
         for &(ground, offset, bytes) in copies {
             self.copies.push(CopyBack {

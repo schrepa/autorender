@@ -154,7 +154,9 @@ fn check_packs(root: &Path, packs: &[Pack]) -> Result<(), Failure> {
     let mut problems = Vec::new();
     for pack in packs {
         let read = read_back(root, pack, &mut problems)?;
-        let listed = root.join(READ_BACK).join(format!("{}.records.json", pack.name));
+        let listed = root
+            .join(READ_BACK)
+            .join(format!("{}.records.json", pack.name));
         if let Some(folder) = listed.parent() {
             fs::create_dir_all(folder)
                 .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
@@ -241,7 +243,10 @@ fn read_back(root: &Path, pack: &Pack, problems: &mut Vec<Value>) -> Result<Vec<
         "{}: {} records read back natively, {} kinds",
         pack.name,
         read.len(),
-        kinds.values().collect::<std::collections::BTreeSet<_>>().len()
+        kinds
+            .values()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
     );
     Ok(read)
 }

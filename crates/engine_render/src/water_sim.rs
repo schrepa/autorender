@@ -521,7 +521,11 @@ impl SimWindow {
 
     fn follow(
         &mut self,
-        gpu: (&wgpu::Device, &crate::gpu_calls::Queue, (&GroupLayout, &GroupLayout)),
+        gpu: (
+            &wgpu::Device,
+            &crate::gpu_calls::Queue,
+            (&GroupLayout, &GroupLayout),
+        ),
         source: &Arc<WaterWindow>,
         fitted: Arc<WaterWindow>,
     ) {

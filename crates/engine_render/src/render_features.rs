@@ -229,12 +229,15 @@ fn poll(validation: &mut Validation) -> Poll<Option<wgpu::Error>> {
 #[cfg(feature = "dev")]
 fn invalid_buffer<F: RenderFeature>(device: &wgpu::Device) -> wgpu::Buffer {
     let label = format!("{}fault", F::LABELS.first().copied().unwrap_or("engine/"));
-    crate::memory::buffer(device, &wgpu::BufferDescriptor {
-        label: Some(&label),
-        size: 4,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::MAP_WRITE,
-        mapped_at_creation: false,
-    })
+    crate::memory::buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some(&label),
+            size: 4,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::MAP_WRITE,
+            mapped_at_creation: false,
+        },
+    )
 }
 
 pub(crate) struct Eager<F> {

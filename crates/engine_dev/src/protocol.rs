@@ -130,19 +130,23 @@ impl Envelope {
         check_version(fields.remove("version"))?;
         let verb = match fields.remove("verb") {
             None => {
-                return Err(
-                    DevError::new(ErrorCode::MissingField, "$.verb", "missing field `verb`")
-                        .allowed(Verb::names()),
-                );
+                return Err(DevError::new(
+                    ErrorCode::MissingField,
+                    "$.verb",
+                    "missing field `verb`",
+                )
+                .allowed(Verb::names()));
             }
             Some(Value::String(name)) => Verb::named(&name)
                 .ok_or_else(|| DevError::unknown("$.verb", &name, Verb::names()))?,
             Some(_) => {
-                return Err(
-                    DevError::new(ErrorCode::InvalidType, "$.verb", "the verb is a string")
-                        .expected("string")
-                        .allowed(Verb::names()),
-                );
+                return Err(DevError::new(
+                    ErrorCode::InvalidType,
+                    "$.verb",
+                    "the verb is a string",
+                )
+                .expected("string")
+                .allowed(Verb::names()));
             }
         };
         Ok(Self { verb, fields })
@@ -187,18 +191,18 @@ impl Envelope {
     }
 
     pub fn body<T: DeserializeOwned>(&self) -> Result<T, DevError> {
-        Ok(engine_scene::parse_value(Value::Object(self.fields.clone()))?)
+        Ok(engine_scene::parse_value(Value::Object(
+            self.fields.clone(),
+        ))?)
     }
 }
 
 pub fn request(verb: Verb, fields: Value) -> String {
     let mut request = match fields {
         Value::Object(fields) => fields,
-        Value::Null
-        | Value::Bool(_)
-        | Value::Number(_)
-        | Value::String(_)
-        | Value::Array(_) => Map::new(),
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {
+            Map::new()
+        }
     };
     request.insert("verb".to_owned(), Value::from(verb.name()));
     request.insert("version".to_owned(), Value::from(PROTOCOL_VERSION));

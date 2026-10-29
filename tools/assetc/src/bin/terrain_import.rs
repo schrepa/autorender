@@ -746,7 +746,10 @@ fn run() -> Result<(), String> {
         }
     );
     if geographic && options.attribution.is_none() {
-        eprintln!("{}", json!({"event": "attribution_missing", "option": "--attribution"}));
+        eprintln!(
+            "{}",
+            json!({"event": "attribution_missing", "option": "--attribution"})
+        );
     }
     let rivers = match &options.rivers {
         Some(path) => {

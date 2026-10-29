@@ -10,8 +10,10 @@ use crate::{DependencyKind, Exceptions, Package, Repository};
 
 pub fn check(repository: &Repository, exceptions: &Exceptions) -> Result<(), String> {
     let recorded = crate::bricks::recorded(repository)?;
-    let bricks =
-        crate::bricks::brick_crates(repository, recorded.iter().map(|brick| brick.krate.as_str()));
+    let bricks = crate::bricks::brick_crates(
+        repository,
+        recorded.iter().map(|brick| brick.krate.as_str()),
+    );
     let mut problems = Vec::new();
     let used = core_uses(repository, &bricks, exceptions, &mut problems)?;
     for &(from, to) in exceptions.core_uses_brick {
@@ -235,7 +237,11 @@ fn paths(code: &[char], krate: &str) -> Vec<(usize, Vec<String>)> {
             at += 1;
             continue;
         }
-        let line = code[..at].iter().filter(|&&character| character == '\n').count() + 1;
+        let line = code[..at]
+            .iter()
+            .filter(|&&character| character == '\n')
+            .count()
+            + 1;
         let mut end = at + needle.len();
         let mut segments = Vec::new();
         let mut expanded = false;

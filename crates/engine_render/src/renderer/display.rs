@@ -272,12 +272,15 @@ impl FrameTimer {
                 ty: wgpu::QueryType::Timestamp,
                 count: 2,
             }),
-            resolved: crate::memory::buffer(device, &wgpu::BufferDescriptor {
-                label: Some("engine/frame-timer-resolve"),
-                size: FRAME_STAMP_BYTES,
-                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            }),
+            resolved: crate::memory::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("engine/frame-timer-resolve"),
+                    size: FRAME_STAMP_BYTES,
+                    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                },
+            ),
             readbacks: ReadbackRing::new("engine/frame-timer-readback"),
             read: Rc::default(),
         })

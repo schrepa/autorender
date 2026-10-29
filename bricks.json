@@ -48,7 +48,26 @@
           "name": "terrain_route"
         }
       ],
+      "passes": [
+        "subdivision",
+        "scatter",
+        "occupancy",
+        "bounce",
+        "ground_cover",
+        "terrain_ids",
+        "terrain_resolve",
+        "water"
+      ],
       "reads": [],
+      "records": [
+        "terrain_tile",
+        "terrain_bake",
+        "terrain_lighting",
+        "terrain_bounce",
+        "terrain_shading",
+        "terrain_steadied",
+        "settled_water"
+      ],
       "resources": [
         "engine_terrain::runtime::settings::TerrainSettings",
         "engine_terrain::runtime::ground_cover::GroundCover",
@@ -90,7 +109,7 @@
       "stats": [],
       "system_set": "terrain",
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "b43c1775a62ea611a5a67559e6e34eb2548e74b500da5c5eda5c2a44c17d9e1f"
+      "version": "72a2500738b79fcf59ef51a06413a6af7c6354a152b26aa27eea1eb3da11fb7a"
     },
     {
       "components": [],
@@ -112,7 +131,9 @@
           "name": "world_changes"
         }
       ],
+      "passes": [],
       "reads": [],
+      "records": [],
       "resources": [
         "engine_world_streaming::WorldStreaming",
         "engine_world_streaming::WorldCells",
@@ -132,7 +153,7 @@
       ],
       "system_set": "world_streaming",
       "type": "engine_world_streaming::WorldStreamingBrick",
-      "version": "128912056a148d65ce0a3cc7c7f8660a2a72ab701c6bedc91c595e341c10f506"
+      "version": "c6de2d6d93710985df8aa9fde53e37a42bb184018d179232963866ff8e993653"
     },
     {
       "components": [],
@@ -159,8 +180,12 @@
           "name": "nav_path"
         }
       ],
+      "passes": [],
       "reads": [
         "terrain"
+      ],
+      "records": [
+        "terrain_portals"
       ],
       "resources": [
         "engine_navigation::agents::Navigation",
@@ -180,7 +205,7 @@
       ],
       "system_set": "navigation",
       "type": "engine_navigation::agents::NavigationBrick",
-      "version": "94523849ad60801b50dde3c5633a1e1a8585db84c221cf8e0bbbf61cf96bae9d"
+      "version": "cd727377cca291b924e1b9c80e26fe6c83721c4fef3e86536439c194ae7050e6"
     },
     {
       "components": [],
@@ -193,9 +218,11 @@
       "lists": [],
       "name": "time_of_day",
       "operations": [],
+      "passes": [],
       "reads": [
         "sky"
       ],
+      "records": [],
       "resources": [
         "engine_time_of_day::TimeOfDay"
       ],
@@ -210,7 +237,7 @@
       "stats": [],
       "system_set": "time_of_day",
       "type": "engine_time_of_day::TimeOfDayBrick",
-      "version": "6ab0f1310c51cba99d2ed6a1c63149e11915c988e1147697daf76b4d1ec0a001"
+      "version": "e8e4eedf4f29ab8d704c990c6f8501123059c5de69945983079113573c92d180"
     },
     {
       "components": [],
@@ -248,9 +275,11 @@
           "name": "terrain_sweep"
         }
       ],
+      "passes": [],
       "reads": [
         "terrain"
       ],
+      "records": [],
       "resources": [
         "engine_collision::types::CollisionConfig",
         "engine_collision::world::CollisionWorld",
@@ -261,7 +290,7 @@
       "stats": [],
       "system_set": "collision",
       "type": "engine_collision::Collision",
-      "version": "aa247b8ab6fb26ad7950a5df6645face90c63ad659d427367d5d08148fcbffc6"
+      "version": "3d584f9053f161f182a0be05a8e2f06c038d6a504499cee496f883a3c309625e"
     },
     {
       "components": [],
@@ -279,10 +308,12 @@
       "lists": [],
       "name": "physics",
       "operations": [],
+      "passes": [],
       "reads": [
         "collision",
         "terrain"
       ],
+      "records": [],
       "resources": [
         "engine_physics::settings::Physics",
         "engine_physics::settings::PhysicsStats",
@@ -301,7 +332,7 @@
       ],
       "system_set": "physics",
       "type": "engine_physics::PhysicsBrick",
-      "version": "ff97b32b9589e99182b581a1c75c5df568be5e85882536af2cf282831644bb32"
+      "version": "3c988cc0af84cca922a764a6e5d5055fe0871a5655839fb659992fb179218e59"
     },
     {
       "components": [],
@@ -319,7 +350,11 @@
       "lists": [],
       "name": "lights",
       "operations": [],
+      "passes": [
+        "lights"
+      ],
       "reads": [],
+      "records": [],
       "resources": [
         "engine_core::lights::LocalLightSettings",
         "engine_core::lights::LightExtractor"
@@ -335,7 +370,7 @@
       "stats": [],
       "system_set": "lights",
       "type": "engine_core::lights::Lights",
-      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+      "version": "3e902408168f6e5a05834125a1583a040733414b73ce9c95692a96819a3d9495"
     },
     {
       "components": [],
@@ -353,7 +388,9 @@
       "lists": [],
       "name": "particles",
       "operations": [],
+      "passes": [],
       "reads": [],
+      "records": [],
       "resources": [
         "engine_core::particles::ParticleSettings",
         "engine_core::particles::ParticleExtractor"
@@ -369,7 +406,7 @@
       "stats": [],
       "system_set": "particles",
       "type": "engine_core::particles::Particles",
-      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+      "version": "3e902408168f6e5a05834125a1583a040733414b73ce9c95692a96819a3d9495"
     },
     {
       "components": [],
@@ -387,7 +424,11 @@
       "lists": [],
       "name": "reflection_probes",
       "operations": [],
+      "passes": [
+        "probe_captures"
+      ],
       "reads": [],
+      "records": [],
       "resources": [
         "engine_core::probes::ReflectionProbeSettings",
         "engine_core::probes::ProbeExtractor"
@@ -403,7 +444,7 @@
       "stats": [],
       "system_set": "reflection_probes",
       "type": "engine_core::probes::ReflectionProbes",
-      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+      "version": "3e902408168f6e5a05834125a1583a040733414b73ce9c95692a96819a3d9495"
     },
     {
       "components": [],
@@ -421,7 +462,13 @@
       "lists": [],
       "name": "sky",
       "operations": [],
+      "passes": [
+        "cloud_dome",
+        "cloud_march",
+        "cloud_composite"
+      ],
       "reads": [],
+      "records": [],
       "resources": [
         "engine_core::clouds::Clouds",
         "engine_core::sky::Sky",
@@ -455,7 +502,7 @@
       "stats": [],
       "system_set": "sky",
       "type": "engine_core::sky::Sky",
-      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+      "version": "3e902408168f6e5a05834125a1583a040733414b73ce9c95692a96819a3d9495"
     },
     {
       "components": [],
@@ -473,7 +520,13 @@
       "lists": [],
       "name": "shadows",
       "operations": [],
+      "passes": [
+        "shadow_select",
+        "shadow_maps",
+        "shadow_marks"
+      ],
       "reads": [],
+      "records": [],
       "resources": [
         "engine_core::effects::Shadows",
         "engine_core::sky_occlusion::SkyOcclusion"
@@ -494,7 +547,7 @@
       "stats": [],
       "system_set": "shadows",
       "type": "engine_core::effects::Shadows",
-      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+      "version": "3e902408168f6e5a05834125a1583a040733414b73ce9c95692a96819a3d9495"
     },
     {
       "components": [],
@@ -512,7 +565,14 @@
       "lists": [],
       "name": "post_effects",
       "operations": [],
+      "passes": [
+        "exposure",
+        "effects",
+        "composite",
+        "temporal_resolve"
+      ],
       "reads": [],
+      "records": [],
       "resources": [
         "engine_core::effects::AmbientOcclusion",
         "engine_core::effects::Bloom",
@@ -557,7 +617,7 @@
       "stats": [],
       "system_set": "post_effects",
       "type": "engine_core::effects::PostEffects",
-      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+      "version": "3e902408168f6e5a05834125a1583a040733414b73ce9c95692a96819a3d9495"
     },
     {
       "components": [],
@@ -575,7 +635,9 @@
       "lists": [],
       "name": "level_of_detail",
       "operations": [],
+      "passes": [],
       "reads": [],
+      "records": [],
       "resources": [
         "engine_core::level_of_detail::LevelOfDetail"
       ],
@@ -590,7 +652,7 @@
       "stats": [],
       "system_set": "level_of_detail",
       "type": "engine_core::level_of_detail::LevelOfDetail",
-      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+      "version": "3e902408168f6e5a05834125a1583a040733414b73ce9c95692a96819a3d9495"
     },
     {
       "components": [],
@@ -608,7 +670,12 @@
       "lists": [],
       "name": "culling",
       "operations": [],
+      "passes": [
+        "occlusion_test",
+        "opaque_phase_two"
+      ],
       "reads": [],
+      "records": [],
       "resources": [
         "engine_core::gpu_culling::OcclusionCulling",
         "engine_core::gpu_culling::SubpixelCulling"
@@ -629,7 +696,7 @@
       "stats": [],
       "system_set": "culling",
       "type": "engine_core::gpu_culling::Culling",
-      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+      "version": "3e902408168f6e5a05834125a1583a040733414b73ce9c95692a96819a3d9495"
     },
     {
       "components": [],
@@ -647,7 +714,9 @@
       "lists": [],
       "name": "resolution",
       "operations": [],
+      "passes": [],
       "reads": [],
+      "records": [],
       "resources": [
         "engine_core::resolution::Resolution",
         "engine_core::resolution::DynamicResolution"
@@ -668,7 +737,7 @@
       "stats": [],
       "system_set": "resolution",
       "type": "engine_core::resolution::Resolution",
-      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+      "version": "3e902408168f6e5a05834125a1583a040733414b73ce9c95692a96819a3d9495"
     },
     {
       "components": [],
@@ -686,7 +755,11 @@
       "lists": [],
       "name": "debug_view",
       "operations": [],
+      "passes": [
+        "debug_view"
+      ],
       "reads": [],
+      "records": [],
       "resources": [
         "engine_core::debug_view::DebugView"
       ],
@@ -701,7 +774,7 @@
       "stats": [],
       "system_set": "debug_view",
       "type": "engine_core::debug_view::DebugView",
-      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+      "version": "3e902408168f6e5a05834125a1583a040733414b73ce9c95692a96819a3d9495"
     },
     {
       "components": [],
@@ -719,7 +792,9 @@
       "lists": [],
       "name": "lighting_model",
       "operations": [],
+      "passes": [],
       "reads": [],
+      "records": [],
       "resources": [
         "engine_core::highlights::Highlights",
         "engine_core::foliage::Foliage"
@@ -740,7 +815,7 @@
       "stats": [],
       "system_set": "lighting_model",
       "type": "engine_core::foliage::LightingModel",
-      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+      "version": "3e902408168f6e5a05834125a1583a040733414b73ce9c95692a96819a3d9495"
     }
   ]
 }

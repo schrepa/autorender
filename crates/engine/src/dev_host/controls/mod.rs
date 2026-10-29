@@ -22,8 +22,9 @@ pub(super) fn run(
             let result = call.apply(&mut app.engine, scene)?;
             then_render(app, size, &call.changed(), result)
         }
-        Control::Host(control) => host_control(host, app, (args, control), size)
-            .map_err(DevError::in_args),
+        Control::Host(control) => {
+            host_control(host, app, (args, control), size).map_err(DevError::in_args)
+        }
     }
 }
 

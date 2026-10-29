@@ -303,7 +303,11 @@ impl Scanner<'_> {
             && self.characters[self.at] != quote
             && self.characters[self.at] != '\n'
         {
-            self.at += if self.characters[self.at] == '\\' { 2 } else { 1 };
+            self.at += if self.characters[self.at] == '\\' {
+                2
+            } else {
+                1
+            };
         }
         self.at = (self.at + 1).min(self.characters.len());
         self.last = Some(quote);
@@ -346,8 +350,20 @@ impl Scanner<'_> {
                 .collect();
             return matches!(
                 before.as_str(),
-                "return" | "typeof" | "case" | "of" | "in" | "void" | "yield" | "await"
-                    | "delete" | "throw" | "new" | "else" | "do" | "instanceof"
+                "return"
+                    | "typeof"
+                    | "case"
+                    | "of"
+                    | "in"
+                    | "void"
+                    | "yield"
+                    | "await"
+                    | "delete"
+                    | "throw"
+                    | "new"
+                    | "else"
+                    | "do"
+                    | "instanceof"
             );
         }
         !matches!(last, ')' | ']' | '}' | '"' | '\'' | '`')

@@ -208,14 +208,14 @@ pub fn bricks_json(repository: &Repository, engine: &mut Engine) -> Result<Strin
         .map(|registry| registry.names().collect())
         .unwrap_or_default();
     let accessed = accessed(world, &names);
-    registry
-        .check_passes(engine::RENDER_PASSES)
-        .map_err(|error| error.to_string())?;
     let Some(registry) = world.get_resource::<BrickRegistry>() else {
         return Ok(serde_json::to_string_pretty(&json!({ "bricks": [] }))
             .map_err(|error| format!("cannot write {FILE}: {error}"))?
             + "\n");
     };
+    registry
+        .check_passes(engine::RENDER_PASSES)
+        .map_err(|error| error.to_string())?;
     let bricks = registry
         .bricks()
         .iter()

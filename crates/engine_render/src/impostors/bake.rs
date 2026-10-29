@@ -268,15 +268,18 @@ fn bake_group(
         ([0.0; 3], false, false),
         shape,
     );
-    let uniform = crate::memory::buffer_init(device, &wgpu::util::BufferInitDescriptor {
-        label: Some("engine/impostor-bake"),
-        contents: bytemuck::bytes_of(&ImpostorBakeUniform {
-            sphere: baking.sphere,
-            flags: [baking.flags, 0, 0, 0],
-            tile,
-        }),
-        usage: wgpu::BufferUsages::UNIFORM,
-    });
+    let uniform = crate::memory::buffer_init(
+        device,
+        &wgpu::util::BufferInitDescriptor {
+            label: Some("engine/impostor-bake"),
+            contents: bytemuck::bytes_of(&ImpostorBakeUniform {
+                sphere: baking.sphere,
+                flags: [baking.flags, 0, 0, 0],
+                tile,
+            }),
+            usage: wgpu::BufferUsages::UNIFORM,
+        },
+    );
     crate::pipelines::group(
         device,
         "engine/impostor-bake-group",
@@ -296,20 +299,23 @@ fn bake_texture(
     format: wgpu::TextureFormat,
     usage: wgpu::TextureUsages,
 ) -> wgpu::Texture {
-    crate::memory::texture(device, &wgpu::TextureDescriptor {
-        label: Some("engine/impostor-bake-target"),
-        size: wgpu::Extent3d {
-            width: size,
-            height: size,
-            depth_or_array_layers: 1,
+    crate::memory::texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some("engine/impostor-bake-target"),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: samples,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
         },
-        mip_level_count: 1,
-        sample_count: samples,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage,
-        view_formats: &[],
-    })
+    )
 }
 
 fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
@@ -348,23 +354,26 @@ fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
         )
     });
     let layer = FORMATS.map(|format| {
-        crate::memory::texture(device, &wgpu::TextureDescriptor {
-            label: Some("engine/impostor-bake-layer"),
-            size: wgpu::Extent3d {
-                width: size,
-                height: size,
-                depth_or_array_layers: 1,
+        crate::memory::texture(
+            device,
+            &wgpu::TextureDescriptor {
+                label: Some("engine/impostor-bake-layer"),
+                size: wgpu::Extent3d {
+                    width: size,
+                    height: size,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: shape.levels(),
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
             },
-            mip_level_count: shape.levels(),
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        })
+        )
     });
     let view = |texture: &wgpu::Texture| texture.create_view(&Default::default());
     BakeTargets {

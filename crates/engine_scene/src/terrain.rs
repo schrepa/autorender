@@ -397,8 +397,7 @@ pub struct SceneHeightmap {
 #[cfg(feature = "schema")]
 fn state_heightmap_rules(schema: &mut schemars::Schema) {
     for field in ["min", "size", "low", "high", "falloff"] {
-        let rule =
-            engine_terrain::HeightmapLayer::rule_of(field).expect("heightmap_rule_declared");
+        let rule = engine_terrain::HeightmapLayer::rule_of(field).expect("heightmap_rule_declared");
         engine_settings::state(schema, field, rule);
     }
 }

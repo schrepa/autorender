@@ -119,10 +119,7 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
                 .replace(TEMPLATE_GAME, &game)
                 .replace("Template", &pascal),
         ),
-        (
-            crate_dir.join("xtask/Cargo.toml"),
-            xtask_manifest(&name),
-        ),
+        (crate_dir.join("xtask/Cargo.toml"), xtask_manifest(&name)),
         (
             crate_dir.join("xtask/src/main.rs"),
             xtask.replace(TEMPLATE_GAME, &game),
@@ -339,8 +336,16 @@ workspace = true
     join_workspace(root, &folder)?;
     join_dependencies(root, &package, &folder)?;
     run(root, "cargo", &["check", "-p", &package])?;
-    run(root, "cargo", &["check", "-p", &package, "--features", "schema"])?;
-    run(root, "cargo", &["check", "-p", &package, "--target", WASM_TARGET])?;
+    run(
+        root,
+        "cargo",
+        &["check", "-p", &package, "--features", "schema"],
+    )?;
+    run(
+        root,
+        "cargo",
+        &["check", "-p", &package, "--target", WASM_TARGET],
+    )?;
     println!(
         "{}",
         json!({

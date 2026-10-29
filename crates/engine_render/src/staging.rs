@@ -175,12 +175,15 @@ impl StagingRing {
             Some(index) => index,
             None if self.buffers.len() < MAX_BUFFERS => {
                 self.buffers.push(Staging {
-                    buffer: crate::memory::buffer(device, &wgpu::BufferDescriptor {
-                        label: Some("engine/pose-staging"),
-                        size: needed,
-                        usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
-                        mapped_at_creation: true,
-                    }),
+                    buffer: crate::memory::buffer(
+                        device,
+                        &wgpu::BufferDescriptor {
+                            label: Some("engine/pose-staging"),
+                            size: needed,
+                            usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                            mapped_at_creation: true,
+                        },
+                    ),
                     size: needed,
                     state: Rc::new(Cell::new(State::Mapped)),
                 });

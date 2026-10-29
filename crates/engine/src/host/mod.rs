@@ -35,12 +35,9 @@ pub fn typescript() -> String {
     use crate::tooling::{constant, declarations};
     let schema =
         |schema: schemars::Schema| serde_json::to_value(schema).expect("schemas serialize");
-    let mut output = declarations(
-        &schema(schemars::schema_for!(Distribution)),
-        "Distribution",
-    )
-    .trim_start()
-    .to_owned();
+    let mut output = declarations(&schema(schemars::schema_for!(Distribution)), "Distribution")
+        .trim_start()
+        .to_owned();
     output.push_str(&declarations(
         &schema(schemars::schema_for!(PanicReport)),
         "PanicReport",

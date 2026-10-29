@@ -111,7 +111,11 @@ fn counted(brick: u16, bytes: usize) {
             left == 0
         })
         .unwrap_or(false);
-    if !due || SAMPLING_HERE.try_with(|here| here.replace(true)).unwrap_or(true) {
+    if !due
+        || SAMPLING_HERE
+            .try_with(|here| here.replace(true))
+            .unwrap_or(true)
+    {
         return;
     }
     let sampler = SAMPLER.try_lock().ok().and_then(|sampler| *sampler);

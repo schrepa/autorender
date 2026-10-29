@@ -401,7 +401,10 @@ fn split_tagged(variant: &Value) -> Option<(String, Value)> {
 
 fn named_variant(verb: Verb, name: &str, args: Value) -> Value {
     let mut required = vec![json!("verb"), json!("version"), json!("name")];
-    if args["required"].as_array().is_some_and(|fields| !fields.is_empty()) {
+    if args["required"]
+        .as_array()
+        .is_some_and(|fields| !fields.is_empty())
+    {
         required.push(json!("args"));
     }
     json!({
@@ -849,4 +852,3 @@ fn resolve<'a>(definitions: &'a Value, schema: &'a Value) -> Option<&'a Value> {
         })
         .or(Some(schema))
 }
-

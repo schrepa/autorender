@@ -46,20 +46,23 @@ fn table(
     (width, height): (u32, u32),
     usage: wgpu::TextureUsages,
 ) -> Table {
-    let texture = crate::memory::texture(device, &wgpu::TextureDescriptor {
-        label: Some(label),
-        size: wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
+    let texture = crate::memory::texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage,
+            view_formats: &[],
         },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: FORMAT,
-        usage,
-        view_formats: &[],
-    });
+    );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     Table { texture, view }
 }

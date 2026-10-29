@@ -229,7 +229,10 @@ Commands:"
                 .map(|(usage, summary)| serde_json::json!({"usage": usage, "summary": summary}))
                 .collect();
             let agent = serde_json::json!({ "verbs": development::verbs()? });
-            println!("{}", serde_json::json!({ "commands": commands, "agent": agent }));
+            println!(
+                "{}",
+                serde_json::json!({ "commands": commands, "agent": agent })
+            );
             Ok(())
         }
         _ => Err("usage: cargo xtask help [--json]".into()),

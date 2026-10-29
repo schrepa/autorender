@@ -776,12 +776,15 @@ pub(crate) struct Fillers {
 impl Fillers {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let buffer = |label, size, usage| {
-            crate::memory::buffer(device, &wgpu::BufferDescriptor {
-                label: Some(label),
-                size,
-                usage,
-                mapped_at_creation: false,
-            })
+            crate::memory::buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some(label),
+                    size,
+                    usage,
+                    mapped_at_creation: false,
+                },
+            )
         };
         let texture = |label, format| {
             crate::targets::texture_2d(

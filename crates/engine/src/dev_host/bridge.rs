@@ -4,8 +4,8 @@ use engine_dev::results::{
     CaptureResult, FramesResult, GameResult, KeptArtifact, WatchResult, result,
 };
 use engine_dev::{
-    Effect, EntityFacts, ExplainQuestion, HostContext, Outcome, ProfileRequest, Step,
-    WatchRequest, Watcher,
+    Effect, EntityFacts, ExplainQuestion, HostContext, Outcome, ProfileRequest, Step, WatchRequest,
+    Watcher,
 };
 use engine_scene::SceneFiles;
 use serde::de::DeserializeOwned;
@@ -490,11 +490,9 @@ impl<G: Game> GameHost<G> {
                 self.dev_done(reply, context)
             }
             Some(Pending::ExplainScene) => {
-                let explained = self.dev_tools().explain_scene(
-                    self.engine().app.world(),
-                    source,
-                    files,
-                );
+                let explained =
+                    self.dev_tools()
+                        .explain_scene(self.engine().app.world(), source, files);
                 let mut reply = self.dev_invoke(&query("status"), context);
                 if reply["ok"] == true {
                     reply["result"] = result::explain(explained);
@@ -663,7 +661,11 @@ impl<G: Game> GameHost<G> {
             return self.dev_refused(
                 ErrorCode::RenderFailed,
                 "$",
-                &format!("frame {} of {} failed: {message}", run.ran + 1, run.request.frames),
+                &format!(
+                    "frame {} of {} failed: {message}",
+                    run.ran + 1,
+                    run.request.frames
+                ),
             );
         }
         let Some(costs) = self
@@ -703,12 +705,9 @@ impl<G: Game> GameHost<G> {
         match question {
             ExplainQuestion::Frame { top, detail } => {
                 let stats = self.stats_value();
-                let explained = self.dev_tools().explain_frame(
-                    self.engine().app.world(),
-                    &stats,
-                    top,
-                    detail,
-                );
+                let explained =
+                    self.dev_tools()
+                        .explain_frame(self.engine().app.world(), &stats, top, detail);
                 match explained {
                     Ok(explained) => {
                         let mut reply = self.dev_invoke(&query("status"), context);
@@ -819,12 +818,21 @@ impl<G: Game> GameHost<G> {
         self.dev_effect(Pending::Watch(run), Effect::Stream { records })
     }
 
-    fn dev_watch(&mut self, mut run: Box<WatchRun>, outcome: &Outcome, context: &HostContext) -> Step {
+    fn dev_watch(
+        &mut self,
+        mut run: Box<WatchRun>,
+        outcome: &Outcome,
+        context: &HostContext,
+    ) -> Step {
         if let Some(message) = &outcome.failed {
             return self.dev_refused(
                 ErrorCode::RenderFailed,
                 "$",
-                &format!("frame {} of {} failed: {message}", run.ran + 1, run.watcher.frames()),
+                &format!(
+                    "frame {} of {} failed: {message}",
+                    run.ran + 1,
+                    run.watcher.frames()
+                ),
             );
         }
         if !run.streaming {

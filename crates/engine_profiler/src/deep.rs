@@ -584,11 +584,13 @@ fn spans_by_brick(report: &Value) -> Value {
             let rows: Vec<Value> = spans
                 .into_iter()
                 .take(SPANS_PER_BRICK)
-                .map(|(name, (total, calls))| json!({
-                    "name": name,
-                    "ms_per_frame": total / count,
-                    "calls": calls,
-                }))
+                .map(|(name, (total, calls))| {
+                    json!({
+                        "name": name,
+                        "ms_per_frame": total / count,
+                        "calls": calls,
+                    })
+                })
                 .collect();
             (brick, Value::Array(rows))
         })

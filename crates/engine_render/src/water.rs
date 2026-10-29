@@ -139,11 +139,14 @@ impl WaterPass {
             return;
         }
         let buffer = |label, contents: &[u8], usage| {
-            crate::memory::buffer_init(device, &wgpu::util::BufferInitDescriptor {
-                label: Some(label),
-                contents,
-                usage,
-            })
+            crate::memory::buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some(label),
+                    contents,
+                    usage,
+                },
+            )
         };
         self.falls = Some(FallDraws {
             vertices: buffer(
@@ -793,20 +796,23 @@ fn absorption(color: [f32; 3], clarity: f32) -> [f32; 4] {
 
 fn placeholders(device: &wgpu::Device) -> Placeholders {
     let array = |label, format| {
-        crate::memory::texture(device, &wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
+        crate::memory::texture(
+            device,
+            &wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        })
+        )
     };
     let scene = array(
         "engine/water-placeholder-scene",

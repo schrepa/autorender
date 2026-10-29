@@ -288,7 +288,10 @@ fn edit_terrain(
     editing: TerrainEditing,
 ) -> Result<TerrainEdited, Error> {
     let entity = terrain_entity(world, name)?;
-    let terrain = world.get::<Terrain>(entity).cloned().expect("terrain_found");
+    let terrain = world
+        .get::<Terrain>(entity)
+        .cloned()
+        .expect("terrain_found");
     let origin = terrain.origin;
     let mut edits = terrain.edits.to_vec();
     let reach = |stamp: &Stamp| {
@@ -312,7 +315,10 @@ fn edit_terrain(
             let z = coordinate(center[1], "$.center[1]")?;
             let (radius, falloff) = (radius as f32, falloff as f32);
             if edits.iter().any(|edit| *edit.id == *id) {
-                let standing = edits.iter().find(|edit| *edit.id == *id).expect("edit_found");
+                let standing = edits
+                    .iter()
+                    .find(|edit| *edit.id == *id)
+                    .expect("edit_found");
                 return Ok(TerrainEdited::Edit {
                     temporary: true,
                     applied: false,
@@ -426,7 +432,10 @@ fn edit_terrain(
 fn draw_river(world: &mut World, drawing: &TerrainRiverControl) -> Result<TerrainEdited, Error> {
     let entity = terrain_entity(world, drawing.terrain.as_deref())?;
     terrains(world)?;
-    let terrain = world.get::<Terrain>(entity).cloned().expect("terrain_found");
+    let terrain = world
+        .get::<Terrain>(entity)
+        .cloned()
+        .expect("terrain_found");
     if !terrain.layers.has_hydrology() {
         return Err(Error::new(
             ErrorCode::InvalidRequest,
