@@ -1,3 +1,9 @@
+import package::terrain::ground::{
+    GroundTerrain, LevelTile, NOT_RESIDENT, directory, heights, level_tile, tile_height,
+    true_height
+};
+import package::terrain::variety::macro_tint;
+
 struct Snap {
     counts: vec4<u32>,
     eye: vec4<f32>,
@@ -46,8 +52,6 @@ const HIDDEN: u32 = 0x80000000u;
 @group(0) @binding(1) var<storage, read_write> records: array<Record>;
 @group(0) @binding(2) var<storage, read_write> poses: array<Pose>;
 @group(0) @binding(3) var<storage, read> terrains: array<TerrainInfo>;
-@group(0) @binding(4) var<storage, read> directory: array<u32>;
-@group(0) @binding(5) var heights: texture_2d_array<f32>;
 @group(0) @binding(6) var<storage, read_write> grounds: array<vec4<u32>>;
 @group(0) @binding(7) var control: texture_2d_array<u32>;
 const PALETTE_ENTRIES: u32 = 113u;

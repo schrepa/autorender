@@ -104,23 +104,21 @@ tables! {
 
     const IMPOSTOR_DRAW: Table = Table {
         label: "engine/impostor-layout",
-        serves: [SHADER @ 1, SHADOW_SHADER @ 2],
         bindings: &[
-            read_of(11, "impostor_records", size_of::<ImpostorRecord>(), VF),
-            texture(12, "impostor_albedo", Float, D2Array, F),
-            texture(13, "impostor_emissive", Float, D2Array, F),
-            texture(14, "impostor_geometry", Float, D2Array, F),
-            texture(15, "impostor_surface", Float, D2Array, F),
-            sampler(16, "impostor_sampler", Filtering, F),
+            read_of("impostor_records", size_of::<ImpostorRecord>(), VF),
+            texture("impostor_albedo", Float, D2Array, F),
+            texture("impostor_emissive", Float, D2Array, F),
+            texture("impostor_geometry", Float, D2Array, F),
+            texture("impostor_surface", Float, D2Array, F),
+            sampler("impostor_sampler", Filtering, F),
         ],
     };
 
     const IMPOSTOR_BAKE: Table = Table {
         label: "engine/impostor-bake-layout",
-        serves: [SHADER @ 2],
         bindings: &[
-            uniform_of(15, "impostor_bake", size_of::<ImpostorBakeUniform>(), VF),
-            texture(16, "impostor_shade", Depth, D2, F),
+            uniform_of("impostor_bake", size_of::<ImpostorBakeUniform>(), VF),
+            texture("impostor_shade", Depth, D2, F),
         ],
     };
 

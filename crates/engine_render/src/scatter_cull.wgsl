@@ -1,3 +1,5 @@
+import package::terrain::variety::seen_share;
+
 struct Frame {
     eye: vec4<f32>,
     counts: vec4<u32>,

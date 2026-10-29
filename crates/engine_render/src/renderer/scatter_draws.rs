@@ -1,26 +1,34 @@
 use engine_core::collections::HashMap;
+use engine_core::{MaterialHandle, MeshHandle, RenderSnapshot, TextureHandle};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::frame::FrameState;
 use super::scatter_pool::{ScatterPool, TileObjects};
-use super::*;
+use super::{Core, GpuMesh};
 use crate::debug_view::{DebugViewPass, DrawKind, DrawRecord, bind_record};
-use crate::gpu_data::{ColorData, pack_color, pack_surface};
+use crate::gpu_data::{ColorData, Variant, pack_color, pack_surface};
+use crate::graph::Targets;
 use crate::impostors::{
-    BakeGpu, BakePart, BakeSource, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord, Supplied,
+    BakeGpu, BakePart, BakeSource, Contents, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord, Supplied,
 };
-use crate::occupancy::{Cover, OccupancyFrame};
+use crate::materials::MaterialStore;
+use crate::mesh_arena::{MeshArena, MeshDraw};
+use crate::occupancy::Cover;
+use crate::parts::{Prelude, Step, View};
 use crate::scatter::{
     GroupLayout, LAYER_SHIFT, LEVELS, NEAR_LEVEL_SHIFT, NO_LAYER, RANK_MAX, RANK_SHIFT, Record,
-    STATE_FRESH, ScatterFrame, SnapSources, TERRAIN_INDEX, TerrainInfo,
+    STATE_FRESH, ScatterPass, SnapSources, TERRAIN_INDEX, TerrainInfo,
 };
+use crate::shadows::ShadowPass;
+use crate::temporal::TemporalPass;
+use crate::terrain::TerrainPass;
 use engine_core::glam::{Mat4, Vec3};
 use engine_terrain::{Tile, TileKey};
 
 type PartLevels = (Vec<(u32, u32, i32)>, Vec<MeshHandle>);
 
 #[derive(Default)]
-pub(super) struct ScatterDraws {
+pub(crate) struct ScatterDraws {
     key: Option<ScatterKey>,
     groups: Vec<ScatterDraw>,
     layouts: Vec<GroupLayout>,
@@ -34,19 +42,19 @@ pub(super) struct ScatterDraws {
 }
 
 impl ScatterDraws {
-    pub(super) fn impostors(&self) -> &[ImpostorRecord] {
+    pub(crate) fn impostors(&self) -> &[ImpostorRecord] {
         &self.impostors
     }
 
-    pub(super) fn far_objects(&self) -> u32 {
+    pub(crate) fn far_objects(&self) -> u32 {
         self.pool.far
     }
 
-    pub(super) fn covers(&self) -> &[Cover] {
+    pub(crate) fn covers(&self) -> &[Cover] {
         &self.covers
     }
 
-    pub(super) fn placements(&self) -> crate::world_trace::Placements<'_> {
+    pub(crate) fn placements(&self) -> crate::world_trace::Placements<'_> {
         crate::world_trace::Placements {
             tiles: self.pool.tiles(),
             records: &self.pool.records,
@@ -55,6 +63,10 @@ impl ScatterDraws {
             colors: &self.colors,
             revision: self.pool.revision(),
         }
+    }
+
+    pub(crate) fn placed_impostors(core: &Core) -> u32 {
+        core.impostors.placed.live()
     }
 }
 
@@ -94,22 +106,28 @@ type Levels = (
     u32,
 );
 
-impl Renderer {
-    pub(super) fn prepare_scatter(
+impl ScatterDraws {
+    pub(crate) fn prepare(
         &mut self,
-        snapshot: &RenderSnapshot,
-        kind: PassKind,
-        impostors: bool,
-    ) -> Option<Ready<ScatterFrame>> {
+        scatter: &mut ScatterPass,
+        cx: &mut Step<'_>,
+        moved: &mut Vec<(Vec3, Vec3)>,
+    ) -> bool {
+        let Some(passes) = cx.frame.passes else {
+            return false;
+        };
+        let snapshot = cx.frame.snapshot;
         let terrains = &engine_terrain::RenderTerrains::of(snapshot).terrains;
-        let key = self.scatter_key(terrains);
-        if self.scatter_draws.key.as_ref() != Some(&key) || self.scatter_draws.pool.fragmented() {
-            self.build_scatter_groups(terrains);
-            self.scatter_draws.key = Some(key);
+        if terrains.iter().any(|terrain| !terrain.assets.is_empty()) {
+            scatter.warm(&cx.core.device);
+        }
+        let key = scatter_key(cx.core, terrains);
+        if self.key.as_ref() != Some(&key) || self.pool.fragmented() {
+            self.build_groups(cx.core, terrains);
+            self.key = Some(key);
         }
         for terrain in terrains {
-            let draws = &mut self.scatter_draws;
-            if !draws.pool.tiles_changed(terrain.id, terrain.tiles_revision) {
+            if !self.pool.tiles_changed(terrain.id, terrain.tiles_revision) {
                 continue;
             }
             let current: HashMap<TileKey, &Arc<Tile>> = terrain
@@ -118,145 +136,125 @@ impl Renderer {
                 .filter(|tile| !tile.placed().is_empty())
                 .map(|tile| (tile.key(), tile))
                 .collect();
-            draws.pool.retain(terrain.id, |key, held| {
+            self.pool.retain(terrain.id, |key, held| {
                 current.get(&key).is_some_and(|tile| {
                     Arc::ptr_eq(tile, held) || std::ptr::eq(tile.placed(), held.placed())
                 })
             });
             for tile in terrain.tiles.iter() {
-                if tile.placed().is_empty() || draws.pool.contains(terrain.id, tile.key()) {
+                if tile.placed().is_empty() || self.pool.contains(terrain.id, tile.key()) {
                     continue;
                 }
-                let objects = tile_objects(draws, terrain, tile);
-                draws
-                    .pool
+                let objects = tile_objects(self, terrain, tile);
+                self.pool
                     .insert((terrain.id, tile.key()), Arc::clone(tile), objects);
             }
         }
-        let infos: Vec<TerrainInfo> = terrains
-            .iter()
-            .enumerate()
-            .map(|(index, terrain)| crate::world_trace::terrain_info(&self.terrain, index, terrain))
-            .collect();
-        let draws = &mut self.scatter_draws;
-        let (dirty, counts_changed) = draws.pool.take_changes();
-        for (min, max) in draws.pool.take_moved() {
-            self.shadows.dirty_kept(min, max);
-            self.features.occupancy.get_mut().dirty_box(min, max);
-        }
-        let written = self.features.scatter.get_mut().write_slots(
-            &self.device,
-            &self.queue,
+        let terrain_part = cx.parts.get::<TerrainPass>();
+        let infos: Vec<TerrainInfo> = terrain_part.map_or_else(Vec::new, |part| {
+            terrains
+                .iter()
+                .enumerate()
+                .map(|(index, terrain)| crate::world_trace::terrain_info(part, index, terrain))
+                .collect()
+        });
+        let (dirty, counts_changed) = self.pool.take_changes();
+        moved.extend(self.pool.take_moved());
+        let core = &mut *cx.core;
+        let written = scatter.write_slots(
+            &core.device,
+            &core.queue,
             (
-                &draws.pool.poses,
-                &draws.pool.colors,
-                &draws.pool.records,
-                &draws.pool.grounds,
+                &self.pool.poses,
+                &self.pool.colors,
+                &self.pool.records,
+                &self.pool.grounds,
             ),
             dirty,
         );
         if let Some(slots) = written {
-            draws.pool.uploaded(slots);
+            self.pool.uploaded(slots);
         }
-        if counts_changed || std::mem::take(&mut draws.changed) {
-            let counts: Vec<u32> = draws
+        if counts_changed || std::mem::take(&mut self.changed) {
+            let counts: Vec<u32> = self
                 .groups
                 .iter()
-                .map(|group| draws.pool.counts[group.objects as usize])
+                .map(|group| self.pool.counts[group.objects as usize])
                 .collect();
-            for (group, &count) in draws.groups.iter_mut().zip(&counts) {
+            for (group, &count) in self.groups.iter_mut().zip(&counts) {
                 group.count = count;
             }
-            self.features.scatter.get_mut().set_groups(
-                &self.device,
-                &self.queue,
-                &draws.layouts,
-                &counts,
-            );
+            scatter.set_groups(&core.device, &core.queue, &self.layouts, &counts);
         }
-        let sources = self.terrain.cover_sources().map(|sources| SnapSources {
-            heights: sources.heights,
-            control: sources.control,
-            directory: sources.directory,
-            palette: sources.palette,
-            macro_maps: sources.macro_maps,
-            generation: sources.generation,
-            revision: sources.revision,
-            terrains: &infos,
-        });
-        self.features.scatter.get_mut().prepare_snap(
-            &self.device,
-            &self.queue,
-            sources,
-            snapshot.detail_eye,
-        );
+        let sources = terrain_part
+            .and_then(TerrainPass::cover_sources)
+            .map(|sources| SnapSources {
+                heights: sources.heights,
+                control: sources.control,
+                directory: sources.directory,
+                palette: sources.palette,
+                macro_maps: sources.macro_maps,
+                generation: sources.generation,
+                revision: sources.revision,
+                terrains: &infos,
+            });
+        scatter.prepare_snap(&core.device, &core.queue, sources, snapshot.detail_eye);
         let variants: Vec<Variant> = self
-            .scatter_draws
             .groups
             .iter()
             .flat_map(|draw| {
-                let variant = self.scatter_binding(draw).1;
+                let variant = scatter_binding(core, draw).1;
                 [variant, variant.with_fading(true)]
             })
             .collect();
         for variant in variants {
-            self.ensure_opaque_variant(kind, variant);
+            core.ensure_opaque_variant(passes.opaque_kind, variant);
         }
         let level_of_detail = snapshot.environment.level_of_detail;
         let pixel_error = level_of_detail
             .enabled
             .then_some(level_of_detail.pixel_error);
-        let fade = self.switch_fades.share;
-        let height = self.display.size().height as f32;
-        let impostors = impostors.then_some(level_of_detail.impostor_pixels);
-        let (device, queue, shadows) = (&self.device, &self.queue, &self.shadows);
-        self.features.scatter.prepare(|scatter| {
-            scatter
-                .prepare(
-                    device,
-                    queue,
-                    (snapshot.view_projection, snapshot.detail_eye),
-                    (pixel_error, height, impostors, fade),
-                    shadows.region_views(),
-                )
-                .then_some(ScatterFrame)
-        })
+        let fade = core.switch_fades.share;
+        let height = core.display.size().height as f32;
+        let impostors = passes
+            .impostor_pass
+            .is_some()
+            .then_some(level_of_detail.impostor_pixels);
+        let regions = cx
+            .parts
+            .get::<ShadowPass>()
+            .map_or(&[][..], ShadowPass::region_views);
+        scatter.prepare(
+            &core.device,
+            &core.queue,
+            (snapshot.view_projection, snapshot.detail_eye),
+            (pixel_error, height, impostors, fade),
+            regions,
+        )
     }
 
-    pub(super) fn prepare_occupancy(&mut self) -> Option<Ready<OccupancyFrame>> {
-        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Occupancy);
-        let device = &self.device;
-        let slots = self.features.scatter.get().slot_buffers();
-        self.features
-            .occupancy
-            .prepare(|occupancy| occupancy.prepare_draws(device, slots))
-    }
-
-    pub(super) fn prepare_scatter_impostors(
-        &mut self,
-        snapshot: &RenderSnapshot,
-        gpu_mode: bool,
-        encoder: &mut Option<wgpu::CommandEncoder>,
-    ) {
+    pub(crate) fn prepare_impostors(&mut self, cx: &mut Step<'_>, prelude: &mut Prelude) -> bool {
+        let snapshot = cx.frame.snapshot;
         let settings = snapshot.environment.level_of_detail;
-        let enabled = gpu_mode && settings.enabled && settings.impostors;
-        let (meshes, materials) = (&self.meshes, &self.materials);
-        self.impostors.placed.retain(
+        let enabled = cx.frame.kind.gpu_mode && settings.enabled && settings.impostors;
+        let core = &mut *cx.core;
+        let (meshes, materials) = (&core.meshes, &core.materials);
+        core.impostors.placed.retain(
             |(mesh, material)| {
                 meshes.contains_key(mesh)
                     && material.is_none_or(|handle| materials.group(handle).is_some())
             },
-            |handle| Self::placed_material(snapshot, handle),
+            |handle| placed_material(snapshot, handle),
         );
         let budget = settings
             .max_impostors
-            .map(|budget| budget.saturating_sub(self.impostors.atlas.live()));
-        self.impostors.placed.enforce_budget(budget);
-        let groups = &self.scatter_draws.groups;
+            .map(|budget| budget.saturating_sub(core.impostors.atlas.live()));
+        core.impostors.placed.enforce_budget(budget);
+        let groups = &self.groups;
         let mut records = Vec::with_capacity(groups.len());
         for (index, group) in groups.iter().enumerate() {
             let mut record = ImpostorRecord::default();
-            let mesh = self.meshes.get(&group.meshes[0]);
+            let mesh = core.meshes.get(&group.meshes[0]);
             let asset = engine_terrain::RenderTerrains::of(snapshot)
                 .terrains
                 .iter()
@@ -269,7 +267,7 @@ impl Renderer {
                 });
             if let (true, Some(mesh), Some(asset)) = (eligible, mesh, asset) {
                 let key = (group.meshes[0], Some(group.material));
-                record = match self.impostors.placed.record(key, Some(&group.source)) {
+                record = match core.impostors.placed.record(key, Some(&group.source)) {
                     Some(resident) => resident,
                     None => {
                         let textures = |handle: TextureHandle| {
@@ -279,7 +277,7 @@ impl Renderer {
                                 .find(|texture| texture.handle == handle)
                                 .map(|texture| &*texture.texture)
                         };
-                        let contents = &mut self.impostors.contents;
+                        let contents = &mut core.impostors.contents;
                         let content = (
                             contents.mesh(group.meshes[0], &asset.mesh.mesh),
                             contents.material(Some(&group.source), textures),
@@ -287,13 +285,13 @@ impl Renderer {
                         let bounds = asset.mesh.mesh.bounds();
                         let (parts, content, (low, high)) = bake_parts(
                             (groups, index, asset),
-                            (&self.meshes, &self.mesh_arena, &self.materials),
+                            (&core.meshes, &core.mesh_arena, &core.materials),
                             contents,
                             (content, (bounds.min(), bounds.max())),
                         );
-                        let (bind_group, variant) = self.materials.binding(Some(group.material));
+                        let (bind_group, variant) = core.materials.binding(Some(group.material));
                         let bake = BakeSource {
-                            draw: mesh.draw(&self.mesh_arena),
+                            draw: mesh.draw(&core.mesh_arena),
                             extended: mesh.extended,
                             group: bind_group,
                             variant: variant.with_extended(mesh.extended),
@@ -302,85 +300,37 @@ impl Renderer {
                             parts,
                         };
                         let gpu = BakeGpu {
-                            device: &self.device,
-                            queue: &self.queue,
-                            encoder: &mut *encoder,
-                            mips: self.materials.mips(),
-                            shader: &self.mesh_shader,
-                            pipelines: &mut self.impostors.pipelines,
+                            device: &core.device,
+                            queue: &core.queue,
+                            encoder: &mut *prelude,
+                            mips: core.materials.mips(),
+                            pipelines: &mut core.impostors.pipelines,
                         };
-                        let supplied = self
+                        let supplied = core
                             .impostors
                             .placed
                             .supply(gpu, key, &bake, content, budget);
-                        self.impostors.dropped += u32::from(matches!(supplied, Supplied::Refused));
+                        core.impostors.dropped += u32::from(matches!(supplied, Supplied::Refused));
                         supplied.record()
                     }
                 };
             }
             records.push(record);
         }
-        self.impostors.placed.release_targets();
-        if records != self.scatter_draws.impostors {
-            self.shadows.dirty_kept_all();
-        }
-        let draws = &mut self.scatter_draws;
-        for (index, (layout, record)) in draws.layouts.iter_mut().zip(&records).enumerate() {
+        core.impostors.placed.release_targets();
+        let restyled = records != self.impostors;
+        for (index, (layout, record)) in self.layouts.iter_mut().zip(&records).enumerate() {
             let impostor = (record.error(), index as u32);
             if layout.impostor != impostor {
                 layout.impostor = impostor;
-                draws.changed = true;
+                self.changed = true;
             }
         }
-        draws.impostors = records;
+        self.impostors = records;
+        restyled
     }
 
-    fn scatter_key(&self, terrains: &[engine_terrain::RenderTerrain]) -> ScatterKey {
-        let terrains = terrains
-            .iter()
-            .map(|terrain| {
-                let assets = terrain
-                    .assets
-                    .iter()
-                    .map(|asset| {
-                        asset.as_ref().map(|asset| {
-                            let lods: Vec<MeshHandle> =
-                                asset.lods.iter().map(|(lod, _)| lod.handle).collect();
-                            let resident = asset
-                                .meshes()
-                                .map(|mesh| self.meshes.contains_key(&mesh.handle))
-                                .collect();
-                            let parts = asset
-                                .parts
-                                .iter()
-                                .map(|part| {
-                                    (
-                                        part.material.handle,
-                                        part.material.version,
-                                        part.meshes.iter().map(|mesh| mesh.handle).collect(),
-                                    )
-                                })
-                                .collect();
-                            (
-                                asset.mesh.handle,
-                                asset.material.handle,
-                                asset.material.version,
-                                lods,
-                                resident,
-                                asset.sway.to_bits(),
-                                parts,
-                                asset.shadow.as_ref().map(|proxy| proxy.handle),
-                            )
-                        })
-                    })
-                    .collect();
-                (terrain.id, assets)
-            })
-            .collect();
-        (terrains, self.mesh_layout)
-    }
-
-    fn build_scatter_groups(&mut self, terrains: &[engine_terrain::RenderTerrain]) {
+    fn build_groups(&mut self, core: &Core, terrains: &[engine_terrain::RenderTerrain]) {
         let mut groups = Vec::new();
         let mut layouts = Vec::new();
         let mut covers = Vec::new();
@@ -391,7 +341,7 @@ impl Renderer {
                 let Some(asset) = asset else {
                     continue;
                 };
-                let Some((levels, casters, meshes, errors, camera)) = self.scatter_levels(asset)
+                let Some((levels, casters, meshes, errors, camera)) = scatter_levels(core, asset)
                 else {
                     continue;
                 };
@@ -400,14 +350,14 @@ impl Renderer {
                     .iter()
                     .enumerate()
                     .filter_map(|(part, rendered)| {
-                        Some((part, self.part_levels(rendered, levels.len())?))
+                        Some((part, part_levels(core, rendered, levels.len())?))
                     })
                     .collect();
                 let bounds = asset.mesh.mesh.bounds();
                 let proxy = asset
                     .shadow
                     .as_ref()
-                    .and_then(|mesh| Some((mesh, self.proxy_caster(mesh)?)));
+                    .and_then(|mesh| Some((mesh, proxy_caster(core, mesh)?)));
                 let (low, high) = parts
                     .iter()
                     .map(|&(part, _)| asset.parts[part].meshes[0].mesh.bounds())
@@ -487,159 +437,98 @@ impl Renderer {
                 }
             }
         }
-        let draws = &mut self.scatter_draws;
-        draws.impostors = vec![ImpostorRecord::default(); groups.len()];
-        draws.pool.clear(groups.len());
-        draws.groups = groups;
-        draws.layouts = layouts;
-        draws.covers = covers;
-        draws.colors = colors;
-        draws.indices = indices;
-        draws.terrains = terrains
+        self.impostors = vec![ImpostorRecord::default(); groups.len()];
+        self.pool.clear(groups.len());
+        self.groups = groups;
+        self.layouts = layouts;
+        self.covers = covers;
+        self.colors = colors;
+        self.indices = indices;
+        self.terrains = terrains
             .iter()
             .enumerate()
             .map(|(index, terrain)| (terrain.id, index as u32))
             .collect();
     }
 
-    fn scatter_levels(&self, asset: &engine_terrain::RenderPlacementAsset) -> Option<Levels> {
-        let mesh = self.meshes.get(&asset.mesh.handle)?;
-        let draw = mesh.draw(&self.mesh_arena);
-        let level = |mesh: &GpuMesh, draw: &MeshDraw<'_>, level: usize, own: (u32, u32)| {
-            let (first, count) = mesh.caster_range(level, own);
-            (
-                (own.1, draw.first_index + own.0, draw.base_vertex),
-                (count, draw.first_index + first, draw.base_vertex),
-            )
-        };
-        let (finest, finest_casters) = level(mesh, &draw, 0, (0, draw.index_count));
-        let mut levels = vec![finest];
-        let mut casters = vec![finest_casters];
-        let mut meshes = vec![asset.mesh.handle];
-        let mut errors = [0.0; LEVELS as usize - 1];
-        if asset.lods.is_empty() {
-            for &(first_index, index_count, error) in mesh.lods.iter().take(LEVELS as usize - 1) {
-                if index_count == 0 {
-                    break;
-                }
-                errors[levels.len() - 1] = error;
-                let (drawn, cast) = level(mesh, &draw, levels.len(), (first_index, index_count));
-                levels.push(drawn);
-                casters.push(cast);
-                meshes.push(asset.mesh.handle);
-            }
-            let camera = levels.len() as u32;
-            return Some((levels, casters, meshes, errors, camera));
-        }
-        for (lod, error) in asset.lods.iter().take(LEVELS as usize - 1) {
-            let Some(coarser) = self.meshes.get(&lod.handle) else {
-                break;
-            };
-            if coarser.extended != mesh.extended {
-                break;
-            }
-            let coarse = coarser.draw(&self.mesh_arena);
-            errors[levels.len() - 1] = *error;
-            let (drawn, cast) = level(coarser, &coarse, 0, (0, coarse.index_count));
-            levels.push(drawn);
-            casters.push(cast);
-            meshes.push(lod.handle);
-        }
-        let camera = levels.len() as u32;
-        Some((levels, casters, meshes, errors, camera))
-    }
-
-    fn part_levels(
+    pub(crate) fn draw(
         &self,
-        part: &engine_terrain::RenderPlacementPart,
-        levels: usize,
-    ) -> Option<PartLevels> {
-        let first = self.meshes.get(&part.meshes.first()?.handle)?;
-        let mut ranges = Vec::new();
-        let mut meshes = Vec::new();
-        for rendered in part.meshes.iter().take(levels) {
-            let Some(mesh) = self.meshes.get(&rendered.handle) else {
-                break;
-            };
-            if mesh.extended != first.extended {
-                break;
-            }
-            let draw = mesh.draw(&self.mesh_arena);
-            ranges.push((draw.index_count, draw.first_index, draw.base_vertex));
-            meshes.push(rendered.handle);
-        }
-        Some((ranges, meshes))
-    }
-
-    fn proxy_caster(&self, proxy: &engine_core::RenderMesh) -> Option<(u32, u32, i32)> {
-        let mesh = self.meshes.get(&proxy.handle)?;
-        let draw = mesh.draw(&self.mesh_arena);
-        let (first, count) = mesh.caster_range(0, (0, draw.index_count));
-        Some((count, draw.first_index + first, draw.base_vertex))
-    }
-
-    fn scatter_binding(&self, draw: &ScatterDraw) -> (&wgpu::BindGroup, Variant) {
-        let mesh = self.meshes.get(&draw.meshes[0]);
-        let (group, variant) = self.materials.binding(Some(draw.material));
-        let variant = variant
-            .with_extended(mesh.is_some_and(|mesh| mesh.extended))
-            .with_grounding(draw.source.grounding().is_some());
-        (group, variant)
-    }
-
-    pub(super) fn draw_scatter(
-        &self,
-        state: &FrameState<'_>,
+        scatter: &ScatterPass,
+        cx: &View<'_>,
         pass: &mut wgpu::RenderPass<'_>,
         prepass: bool,
     ) -> u32 {
-        if !state.scatter {
-            return 0;
-        }
-        let Some(groups) = self.features.scatter.get().pose_groups() else {
+        let (Some(groups), Some(passes)) = (scatter.pose_groups(), cx.frame.passes) else {
             return 0;
         };
-        let kind = state.passes.opaque_kind;
-        let temporal =
-            state.packing.temporal_frame.is_some() && self.features.temporal.get().is_some();
-        pass.set_bind_group(0, self.camera.group(), &[]);
-        if kind.lit
-            && !prepass
-            && let Some(lights) = self.features.lights.get()
-        {
-            pass.set_bind_group(3, lights.fragment_group(), &[]);
+        let kind = passes.opaque_kind;
+        let temporal = cx.frame.temporal.is_some()
+            && cx
+                .parts
+                .get::<TemporalPass>()
+                .is_some_and(TemporalPass::active);
+        pass.set_bind_group(0, cx.core.shared_group("frame", &["refraction"]), &[]);
+        if kind.lit && !prepass {
+            pass.set_bind_group(3, cx.core.shared_group("lights", &[]), &[]);
         }
         pass.set_bind_group(2, &groups[usize::from(temporal)], &[]);
-        let debug = self
-            .debug_records(state)
-            .map(|records| (records, state.shape.shadows));
+        let debug = cx
+            .frame
+            .shape
+            .is_some_and(|shape| shape.targets == Targets::Debug)
+            .then(|| cx.parts.get::<DebugViewPass>())
+            .flatten()
+            .and_then(DebugViewPass::records)
+            .map(|records| (records, casts_shadows(cx)));
         let mut draws = 0;
-        let fading = self.features.scatter.get().fading_view();
+        let fading = scatter.fading_view();
         for (view, fades) in [(0, false), (fading, true)] {
-            for (index, draw) in self.scatter_draws.groups.iter().enumerate() {
+            for (index, draw) in self.groups.iter().enumerate() {
                 if draw.count == 0 {
                     continue;
                 }
-                let (group, variant) = self.scatter_binding(draw);
-                let Some(pipeline) =
-                    self.opaque_pipeline(kind, variant.with_fading(fades), prepass)
+                let (group, variant) = scatter_binding(cx.core, draw);
+                let Some(pipeline) = cx
+                    .core
+                    .opaque_pipeline(kind, variant.with_fading(fades), prepass)
                 else {
                     continue;
                 };
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(1, group, &[]);
-                draws += self.draw_scatter_levels(pass, (index, draw), view, debug);
+                for (level, handle) in draw.meshes.iter().enumerate() {
+                    let Some(mesh) = cx.core.meshes.get(handle) else {
+                        continue;
+                    };
+                    let Some((ids, args, offset)) = scatter.draw_source(view, index, level) else {
+                        continue;
+                    };
+                    let source = mesh.draw(&cx.core.mesh_arena);
+                    pass.set_vertex_buffer(0, source.vertices.slice(..));
+                    if let Some(stream) = source.extras.filter(|_| mesh.extended) {
+                        pass.set_vertex_buffer(2, stream.slice(..));
+                    }
+                    pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.set_vertex_buffer(1, ids);
+                    if let Some((records, casts)) = debug {
+                        let casts = casts && draw.casts.is_some();
+                        let record = DrawRecord::of(DrawKind::Placed, level, casts);
+                        bind_record(pass, Some(records), record);
+                    }
+                    pass.draw_indexed_indirect(args, offset);
+                    draws += 1;
+                }
             }
         }
         if prepass {
             return draws;
         }
-        if let Some((targets, lit)) = state.passes.impostor_pass
+        if let Some((targets, lit)) = passes.impostor_pass
             && let (Some(pipeline), Some(group)) = (
-                self.impostors.pipelines.pipeline(targets, lit),
-                self.impostors.placed.group(),
+                cx.core.impostors.pipelines.pipeline(targets, lit),
+                cx.core.impostors.placed.group(),
             )
-            && let Some((cards, args, offset)) = self.features.scatter.get().card_source(0)
+            && let Some((cards, args, offset)) = scatter.card_source(0)
         {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, group, &[]);
@@ -654,41 +543,29 @@ impl Renderer {
         draws
     }
 
-    pub(super) fn placed_material(
-        snapshot: &RenderSnapshot,
-        handle: MaterialHandle,
-    ) -> Option<engine_core::Material> {
-        engine_terrain::RenderTerrains::of(snapshot)
-            .terrains
-            .iter()
-            .flat_map(|terrain| terrain.assets.iter().flatten())
-            .flat_map(engine_terrain::RenderPlacementAsset::materials)
-            .find(|material| material.handle == handle)
-            .map(|material| material.material)
-    }
-
-    pub(super) fn draw_scatter_shadow(
+    pub(crate) fn draw_shadow(
         &self,
+        scatter: &ScatterPass,
+        cx: &View<'_>,
         pass: &mut wgpu::RenderPass<'_>,
-        map: usize,
-        casters: &[wgpu::RenderPipeline; 2],
-        cards: Option<&wgpu::RenderPipeline>,
+        (map, casters, cards): (
+            usize,
+            &[wgpu::RenderPipeline; 2],
+            Option<&wgpu::RenderPipeline>,
+        ),
     ) -> u32 {
-        let (Some(view), Some(poses)) = (
-            self.features.scatter.get().map_view(map),
-            self.features.scatter.get().shadow_group(),
-        ) else {
+        let (Some(view), Some(poses)) = (scatter.map_view(map), scatter.shadow_group()) else {
             return 0;
         };
         pass.set_bind_group(1, poses, &[]);
         let mut bound = None;
         let mut draws = 0;
-        for (index, draw) in self.scatter_draws.groups.iter().enumerate() {
+        for (index, draw) in self.groups.iter().enumerate() {
             let Some(masked) = draw.casts.filter(|_| draw.count > 0) else {
                 continue;
             };
             if masked {
-                let Some(material) = self.materials.group(draw.material) else {
+                let Some(material) = cx.core.materials.group(draw.material) else {
                     continue;
                 };
                 pass.set_bind_group(2, material, &[]);
@@ -697,10 +574,10 @@ impl Renderer {
                 pass.set_pipeline(&casters[usize::from(masked)]);
                 bound = Some(masked);
             }
-            draws += self.draw_scatter_casters(pass, (index, draw), view);
+            draws += draw_casters(scatter, cx.core, pass, (index, draw), view);
         }
-        if let (Some(pipeline), Some(group)) = (cards, self.impostors.placed.group())
-            && let Some((cards, args, offset)) = self.features.scatter.get().card_source(view)
+        if let (Some(pipeline), Some(group)) = (cards, cx.core.impostors.placed.group())
+            && let Some((cards, args, offset)) = scatter.card_source(view)
         {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(2, group, &[]);
@@ -710,67 +587,180 @@ impl Renderer {
         }
         draws
     }
+}
 
-    fn draw_scatter_levels(
-        &self,
-        pass: &mut wgpu::RenderPass<'_>,
-        (index, draw): (usize, &ScatterDraw),
-        view: usize,
-        debug: Option<(&DebugViewPass, bool)>,
-    ) -> u32 {
-        let mut draws = 0;
-        for (level, handle) in draw.meshes.iter().enumerate() {
-            let Some(mesh) = self.meshes.get(handle) else {
-                continue;
-            };
-            let Some((ids, args, offset)) =
-                self.features.scatter.get().draw_source(view, index, level)
-            else {
-                continue;
-            };
-            let source = mesh.draw(&self.mesh_arena);
-            pass.set_vertex_buffer(0, source.vertices.slice(..));
-            if let Some(stream) = source.extras.filter(|_| mesh.extended) {
-                pass.set_vertex_buffer(2, stream.slice(..));
-            }
-            pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.set_vertex_buffer(1, ids);
-            if let Some((records, casts)) = debug {
-                let casts = casts && draw.casts.is_some();
-                let record = DrawRecord::of(DrawKind::Placed, level, casts);
-                bind_record(pass, Some(records), record);
-            }
-            pass.draw_indexed_indirect(args, offset);
-            draws += 1;
-        }
-        draws
-    }
+fn casts_shadows(cx: &View<'_>) -> bool {
+    cx.parts
+        .get::<ShadowPass>()
+        .is_some_and(|shadows| shadows.frame().is_some())
+}
 
-    fn draw_scatter_casters(
-        &self,
-        pass: &mut wgpu::RenderPass<'_>,
-        (index, draw): (usize, &ScatterDraw),
-        view: usize,
-    ) -> u32 {
-        let mut draws = 0;
-        for (level, handle) in draw.casters.iter().enumerate() {
-            let Some(mesh) = self.meshes.get(handle) else {
-                continue;
-            };
-            let Some((ids, args, offset)) =
-                self.features.scatter.get().draw_source(view, index, level)
-            else {
-                continue;
-            };
-            let source = mesh.draw(&self.mesh_arena);
-            pass.set_vertex_buffer(0, source.vertices.slice(..));
-            pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
-            pass.set_vertex_buffer(1, ids);
-            pass.draw_indexed_indirect(args, offset);
-            draws += 1;
+fn placed_material(
+    snapshot: &RenderSnapshot,
+    handle: MaterialHandle,
+) -> Option<engine_core::Material> {
+    engine_terrain::RenderTerrains::of(snapshot)
+        .terrains
+        .iter()
+        .flat_map(|terrain| terrain.assets.iter().flatten())
+        .flat_map(engine_terrain::RenderPlacementAsset::materials)
+        .find(|material| material.handle == handle)
+        .map(|material| material.material)
+}
+
+fn scatter_key(core: &Core, terrains: &[engine_terrain::RenderTerrain]) -> ScatterKey {
+    let terrains = terrains
+        .iter()
+        .map(|terrain| {
+            let assets = terrain
+                .assets
+                .iter()
+                .map(|asset| {
+                    asset.as_ref().map(|asset| {
+                        let lods: Vec<MeshHandle> =
+                            asset.lods.iter().map(|(lod, _)| lod.handle).collect();
+                        let resident = asset
+                            .meshes()
+                            .map(|mesh| core.meshes.contains_key(&mesh.handle))
+                            .collect();
+                        let parts = asset
+                            .parts
+                            .iter()
+                            .map(|part| {
+                                (
+                                    part.material.handle,
+                                    part.material.version,
+                                    part.meshes.iter().map(|mesh| mesh.handle).collect(),
+                                )
+                            })
+                            .collect();
+                        (
+                            asset.mesh.handle,
+                            asset.material.handle,
+                            asset.material.version,
+                            lods,
+                            resident,
+                            asset.sway.to_bits(),
+                            parts,
+                            asset.shadow.as_ref().map(|proxy| proxy.handle),
+                        )
+                    })
+                })
+                .collect();
+            (terrain.id, assets)
+        })
+        .collect();
+    (terrains, core.mesh_layout)
+}
+
+fn scatter_levels(core: &Core, asset: &engine_terrain::RenderPlacementAsset) -> Option<Levels> {
+    let mesh = core.meshes.get(&asset.mesh.handle)?;
+    let draw = mesh.draw(&core.mesh_arena);
+    let level = |mesh: &GpuMesh, draw: &MeshDraw<'_>, level: usize, own: (u32, u32)| {
+        let (first, count) = mesh.caster_range(level, own);
+        (
+            (own.1, draw.first_index + own.0, draw.base_vertex),
+            (count, draw.first_index + first, draw.base_vertex),
+        )
+    };
+    let (finest, finest_casters) = level(mesh, &draw, 0, (0, draw.index_count));
+    let mut levels = vec![finest];
+    let mut casters = vec![finest_casters];
+    let mut meshes = vec![asset.mesh.handle];
+    let mut errors = [0.0; LEVELS as usize - 1];
+    if asset.lods.is_empty() {
+        for &(first_index, index_count, error) in mesh.lods.iter().take(LEVELS as usize - 1) {
+            if index_count == 0 {
+                break;
+            }
+            errors[levels.len() - 1] = error;
+            let (drawn, cast) = level(mesh, &draw, levels.len(), (first_index, index_count));
+            levels.push(drawn);
+            casters.push(cast);
+            meshes.push(asset.mesh.handle);
         }
-        draws
+        let camera = levels.len() as u32;
+        return Some((levels, casters, meshes, errors, camera));
     }
+    for (lod, error) in asset.lods.iter().take(LEVELS as usize - 1) {
+        let Some(coarser) = core.meshes.get(&lod.handle) else {
+            break;
+        };
+        if coarser.extended != mesh.extended {
+            break;
+        }
+        let coarse = coarser.draw(&core.mesh_arena);
+        errors[levels.len() - 1] = *error;
+        let (drawn, cast) = level(coarser, &coarse, 0, (0, coarse.index_count));
+        levels.push(drawn);
+        casters.push(cast);
+        meshes.push(lod.handle);
+    }
+    let camera = levels.len() as u32;
+    Some((levels, casters, meshes, errors, camera))
+}
+
+fn part_levels(
+    core: &Core,
+    part: &engine_terrain::RenderPlacementPart,
+    levels: usize,
+) -> Option<PartLevels> {
+    let first = core.meshes.get(&part.meshes.first()?.handle)?;
+    let mut ranges = Vec::new();
+    let mut meshes = Vec::new();
+    for rendered in part.meshes.iter().take(levels) {
+        let Some(mesh) = core.meshes.get(&rendered.handle) else {
+            break;
+        };
+        if mesh.extended != first.extended {
+            break;
+        }
+        let draw = mesh.draw(&core.mesh_arena);
+        ranges.push((draw.index_count, draw.first_index, draw.base_vertex));
+        meshes.push(rendered.handle);
+    }
+    Some((ranges, meshes))
+}
+
+fn proxy_caster(core: &Core, proxy: &engine_core::RenderMesh) -> Option<(u32, u32, i32)> {
+    let mesh = core.meshes.get(&proxy.handle)?;
+    let draw = mesh.draw(&core.mesh_arena);
+    let (first, count) = mesh.caster_range(0, (0, draw.index_count));
+    Some((count, draw.first_index + first, draw.base_vertex))
+}
+
+fn scatter_binding<'c>(core: &'c Core, draw: &ScatterDraw) -> (&'c wgpu::BindGroup, Variant) {
+    let mesh = core.meshes.get(&draw.meshes[0]);
+    let (group, variant) = core.materials.binding(Some(draw.material));
+    let variant = variant
+        .with_extended(mesh.is_some_and(|mesh| mesh.extended))
+        .with_grounding(draw.source.grounding().is_some());
+    (group, variant)
+}
+
+fn draw_casters(
+    scatter: &ScatterPass,
+    core: &Core,
+    pass: &mut wgpu::RenderPass<'_>,
+    (index, draw): (usize, &ScatterDraw),
+    view: usize,
+) -> u32 {
+    let mut draws = 0;
+    for (level, handle) in draw.casters.iter().enumerate() {
+        let Some(mesh) = core.meshes.get(handle) else {
+            continue;
+        };
+        let Some((ids, args, offset)) = scatter.draw_source(view, index, level) else {
+            continue;
+        };
+        let source = mesh.draw(&core.mesh_arena);
+        pass.set_vertex_buffer(0, source.vertices.slice(..));
+        pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
+        pass.set_vertex_buffer(1, ids);
+        pass.draw_indexed_indirect(args, offset);
+        draws += 1;
+    }
+    draws
 }
 
 fn bake_parts<'a>(

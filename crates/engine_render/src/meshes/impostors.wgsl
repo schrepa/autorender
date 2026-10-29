@@ -1,3 +1,27 @@
+import package::engine::math::maximum_abs;
+import package::engine::wind::slot_sway;
+import package::frame::encode::encoded;
+import package::frame::view::{camera, lighting, material_detail, stable_normalize};
+import package::lighting::surface::{BODY_SOLID, BODY_THIN, Shaded, SurfacePoint, finish};
+import package::lights::shade::local_light;
+import package::meshes::declarations::{
+    ALPHA_MASK, MATERIAL_MAPS, MOVED_SLOT, NORMAL_MAP, TOP_LAYER, VARIANT_MAPS,
+    VARIANT_NORMAL_MAP, VARIANT_TOP_LAYER, colors, material_flag, material_maps, poses,
+    previous_poses
+};
+import package::meshes::impostor_frames::{
+    IMPOSTOR_CUTOFF, IMPOSTOR_FADING, IMPOSTOR_FADING_OUT, IMPOSTOR_HEMISPHERE, IMPOSTOR_MASKED,
+    ImpostorRecord, impostor_basis, impostor_facing, impostor_fade, impostor_frame_direction,
+    impostor_frames, impostor_grid, impostor_index, impostor_met, impostor_over
+};
+import package::meshes::surface::{
+    MASK_MIP_SCALE, MaterialTexels, alpha_cutoff, fragment_pixel, geometric_normal, leafiness,
+    mapped_normal, material_texels, plant_tint, rippled, scene_targets, temporal_targets,
+    top_layer_amount, widened
+};
+import package::meshes::vertex::{octahedral_normal, origin_key, pose_matrix, slot_wind};
+import package::shadows::sample::fade_noise;
+
 const IMPOSTOR_FOLIAGE: u32 = 0x1000000u;
 
 @group(1) @binding(11) var<storage, read> impostor_records: array<ImpostorRecord>;

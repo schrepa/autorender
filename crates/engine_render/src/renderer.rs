@@ -61,7 +61,6 @@ mod records;
 pub(crate) mod scatter_draws;
 pub(crate) mod scatter_pool;
 mod startup;
-pub(crate) mod terrain_draws;
 
 pub use attribution::GpuPassTimes;
 pub(crate) use camera::CameraBindings;
