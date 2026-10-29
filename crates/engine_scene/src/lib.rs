@@ -20,6 +20,8 @@ mod spline;
 mod terrain;
 mod texture;
 mod validation;
+mod views;
+mod writer;
 
 pub use collider::{SceneCollider, SceneColliderShape};
 pub use components::COMPONENT_SHOWS;
@@ -43,9 +45,11 @@ pub use material::{
     SceneTextureMap, SceneTopLayer, SceneWrap,
 };
 pub use probe::SceneReflectionProbe;
+pub use rules::{SceneAlong, SceneAlongStreamed};
 pub use spline::SceneSpline;
 pub use terrain::{
     SceneHeightmap, SceneSurroundings, SceneTerrain, SceneTerrainAsset, SceneTerrainLayer,
     SceneTerrainLod, SceneTerrainMaterial, SceneTerrainPart, SceneTerrainSurface,
 };
 pub use texture::SceneTexture;
+pub use views::{SCENE_LOOK, SceneLook, SceneView, SceneViews, show_look, show_view};

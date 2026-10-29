@@ -231,6 +231,13 @@ impl<G: Game> PageHost<G> {
                     .map_err(|error| error.within(&format!("?{}", setting.name)))?;
             }
         }
+        let world = self.host.engine_mut().app.world_mut();
+        if let Some(look) = parameters.get("look") {
+            crate::host::show_look(world, &look, "?look")?;
+        }
+        if let Some(view) = parameters.get("view") {
+            crate::host::show_view(world, &view, "?view")?;
+        }
         settings.apply(&mut self.host);
         Ok(())
     }

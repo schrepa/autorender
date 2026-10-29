@@ -8,6 +8,7 @@ pub mod policy;
 mod resolution;
 mod scene_load;
 mod settings;
+mod views;
 
 pub use crate::app_host::{TerrainClock, now_ms};
 pub use adapter::{AdapterStatus, vendor};
@@ -29,6 +30,7 @@ pub use scene_load::{
     FileRead, IMAGE_FORMATS, Image, ImageFormat, SceneLoad, decode_image, image_format,
 };
 pub use settings::{HostSettings, SETTINGS, Setting};
+pub use views::{SceneLookControl, SceneViewControl, SceneViewsBrick, show_look, show_view};
 
 #[cfg(all(feature = "schema", not(target_arch = "wasm32")))]
 pub fn typescript() -> String {

@@ -272,6 +272,7 @@ impl SceneDocument {
         if let Some(environment) = &prepared.environment {
             environment.apply_all(world, "$.environment")?;
         }
+        world.insert_resource(crate::SceneViews::of(self));
         let streamed = (!prepared.streamed.items.is_empty()).then(|| {
             let scene = Arc::new(StreamedScene {
                 lookups,

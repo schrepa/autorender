@@ -54,6 +54,18 @@ impl SceneDocument {
         if !self.streamed.is_empty() && !added(world, "world_streaming") {
             return Err(missing_brick("world_streaming", "$.streamed"));
         }
+        if let Some(index) = self.along.iter().position(|along| along.streamed.is_some())
+            && !added(world, "world_streaming")
+        {
+            return Err(missing_brick(
+                "world_streaming",
+                format!("$.along[{index}].streamed"),
+            ));
+        }
+        for (index, look) in self.looks.iter().enumerate() {
+            look.environment
+                .check(world, &format!("$.looks[{index}].environment"))?;
+        }
         if let Some(environment) = &self.environment {
             environment.check(world, "$.environment")?;
         }
