@@ -4,7 +4,7 @@ mod submission;
 
 pub(crate) use submission::{Handover, Recorded};
 
-pub(crate) struct Queue {
+pub struct Queue {
     submission: submission::Submission,
     queue: wgpu::Queue,
     immediate: Cell<u32>,

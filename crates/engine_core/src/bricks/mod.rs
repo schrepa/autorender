@@ -38,6 +38,8 @@ use crate::RenderSnapshot;
 use crate::smoke::{SmokeEntry, SmokeResult, SmokeSession};
 
 pub trait Brick: Send + Sync + 'static {
+    const SLOT: Option<&'static str> = None;
+
     fn register(bricks: &mut Bricks<'_>);
 }
 
@@ -270,11 +272,6 @@ impl Bricks<'_> {
         self
     }
 
-    pub fn slot<S: Slot>(&mut self) -> &mut Self {
-        self.record.slot = Some(S::NAME);
-        self
-    }
-
     pub fn list<L: List>(&mut self) -> &mut Self {
         if !self.record.lists.contains(&L::NAME) {
             self.record.lists.push(L::NAME);
@@ -300,6 +297,10 @@ impl Bricks<'_> {
     pub fn world_mut(&mut self) -> &mut World {
         self.app.world_mut()
     }
+
+    pub fn extension<T: std::any::Any + Send + Sync + Default>(&mut self) -> Option<&mut T> {
+        self.record.extension_mut::<T>()
+    }
 }
 
 impl AddBrick for App {
@@ -324,11 +325,17 @@ impl AddBrick for App {
     }
 
     fn add_bricks(&mut self, bricks: BrickList) -> &mut Self {
-        for (_, add) in bricks.entries {
-            add(self);
+        if let Err(error) = bricks.check() {
+            panic!("{error}");
         }
         if !self.world().contains_resource::<BrickRegistry>() {
             self.init_resource::<BrickRegistry>();
+        }
+        self.world_mut()
+            .resource_mut::<BrickRegistry>()
+            .know_fillers(bricks.fillers.iter().copied());
+        for listed in bricks.entries {
+            (listed.add)(self);
         }
         self.world_mut()
             .resource_mut::<BrickRegistry>()
@@ -339,16 +346,86 @@ impl AddBrick for App {
 
 type AddFn = fn(&mut App);
 
+#[derive(Clone, Copy)]
+struct Listed {
+    name: &'static str,
+    slot: Option<&'static str>,
+    add: AddFn,
+}
+
+impl Listed {
+    fn of<B: Brick>() -> Self {
+        Self {
+            name: brick_name::<B>(),
+            slot: B::SLOT,
+            add: add_one::<B>,
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct BrickList {
-    entries: Vec<(&'static str, AddFn)>,
+    entries: Vec<Listed>,
     left_out: Vec<&'static str>,
+    fillers: Vec<(&'static str, &'static str)>,
+    errors: Vec<Error>,
 }
 
 impl BrickList {
     #[must_use]
     pub fn with<B: Brick>(mut self) -> Self {
-        self.entries.push((brick_name::<B>(), add_one::<B>));
+        let listed = Listed::of::<B>();
+        self.know(listed);
+        self.entries.push(listed);
+        self
+    }
+
+    #[must_use]
+    pub fn with_before<B: Brick>(mut self, before: &str) -> Self {
+        let listed = Listed::of::<B>();
+        self.know(listed);
+        match self.entries.iter().position(|known| known.name == before) {
+            Some(index) => self.entries.insert(index, listed),
+            None => {
+                let error = Error::new(
+                    ErrorCode::InvalidArguments,
+                    format!("$.bricks.{}.before", listed.name),
+                )
+                .got(before)
+                .variants(self.names());
+                self.errors.push(error);
+            }
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn fill<B: Brick>(mut self) -> Self {
+        let listed = Listed::of::<B>();
+        let Some(slot) = listed.slot else {
+            let error = Error::new(
+                ErrorCode::InvalidArguments,
+                format!("$.bricks.{}.slot", listed.name),
+            )
+            .expected(Expected::Present);
+            self.errors.push(error);
+            return self;
+        };
+        self.know(listed);
+        match self
+            .entries
+            .iter()
+            .position(|known| known.slot == Some(slot))
+        {
+            Some(index) => {
+                let replaced = std::mem::replace(&mut self.entries[index], listed);
+                if replaced.name != listed.name && !self.left_out.contains(&replaced.name) {
+                    self.left_out.push(replaced.name);
+                }
+            }
+            None => self.entries.push(listed),
+        }
+        self.left_out.retain(|&name| name != listed.name);
         self
     }
 
@@ -356,22 +433,68 @@ impl BrickList {
     pub fn without<'n>(mut self, names: impl IntoIterator<Item = &'n str>) -> Self {
         let names: Vec<&str> = names.into_iter().collect();
         let left_out = &mut self.left_out;
-        self.entries.retain(|&(name, _)| {
-            let kept = !names.contains(&name);
-            if !kept && !left_out.contains(&name) {
-                left_out.push(name);
+        self.entries.retain(|listed| {
+            let kept = !names.contains(&listed.name);
+            if !kept && !left_out.contains(&listed.name) {
+                left_out.push(listed.name);
             }
             kept
         });
         self
     }
 
+    fn know(&mut self, listed: Listed) {
+        if let Some(slot) = listed.slot
+            && !self.fillers.contains(&(slot, listed.name))
+        {
+            self.fillers.push((slot, listed.name));
+        }
+    }
+
     pub fn names(&self) -> impl ExactSizeIterator<Item = &'static str> + '_ {
-        self.entries.iter().map(|&(name, _)| name)
+        self.entries.iter().map(|listed| listed.name)
     }
 
     pub fn contains(&self, name: &str) -> bool {
-        self.entries.iter().any(|&(listed, _)| listed == name)
+        self.entries.iter().any(|listed| listed.name == name)
+    }
+
+    pub fn filler(&self, slot: &str) -> Option<&'static str> {
+        self.entries
+            .iter()
+            .find(|listed| listed.slot == Some(slot))
+            .map(|listed| listed.name)
+    }
+
+    pub fn fillers<'a>(&'a self, slot: &'a str) -> impl Iterator<Item = &'static str> + 'a {
+        self.fillers
+            .iter()
+            .filter(move |&&(known, _)| known == slot)
+            .map(|&(_, name)| name)
+    }
+
+    pub fn check(&self) -> Result<(), Error> {
+        if let Some(error) = self.errors.first() {
+            return Err(error.clone());
+        }
+        for (index, listed) in self.entries.iter().enumerate() {
+            let Some(slot) = listed.slot else {
+                continue;
+            };
+            if let Some(first) = self.entries[..index]
+                .iter()
+                .find(|earlier| earlier.slot == Some(slot))
+            {
+                return Err(
+                    Error::new(ErrorCode::SlotFilledTwice, format!("$.slots.{slot}"))
+                        .expected(Expected::Unique)
+                        .got(listed.name)
+                        .nearest(first.name)
+                        .variants(self.fillers(slot)),
+                );
+            }
+        }
+        Ok(())
     }
 
     pub fn check_names<'n>(

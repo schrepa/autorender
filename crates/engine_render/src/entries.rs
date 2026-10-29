@@ -202,3 +202,11 @@ pub(crate) fn cover(targets: Targets, lit: bool) -> (Entry, Entry) {
 }
 
 pub(crate) const TERRAIN_SHADOW_VERTEX: Entry = terrain_shadow::vs_terrain_shadow;
+
+pub struct MeshEntries {
+    pub fragment: fn(PassKind, bool) -> Entry,
+    pub prepass: fn(PassKind, bool) -> Entry,
+    pub card_vertex: fn(Targets) -> Entry,
+    pub card_fragment: fn(Targets) -> Entry,
+    pub card_bake: fn(bool, bool) -> (Entry, Entry),
+}

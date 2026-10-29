@@ -1,9 +1,9 @@
 use engine_core::{Error, ErrorCode, Expected};
 
-pub(crate) const MAX_COLORS: usize = 4;
-pub(crate) const MAX_PASSES: usize = 64;
+pub const MAX_COLORS: usize = 4;
+pub const MAX_PASSES: usize = 64;
 const SET_WORDS: usize = 2;
-pub(crate) const MAX_RESOURCES: usize = 64 * SET_WORDS;
+pub const MAX_RESOURCES: usize = 64 * SET_WORDS;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Stage {

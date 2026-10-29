@@ -105,6 +105,9 @@ pub(crate) static PART: PartEntry = PartEntry {
         ],
         labels: &["engine/post-", "engine/post.", "engine/haze."],
         lazy: true,
+        faces: &[],
+        needs: &[],
+        piece: None,
     },
     create,
 };

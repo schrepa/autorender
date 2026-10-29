@@ -61,6 +61,7 @@ struct Source {
 #[derive(Default)]
 pub struct Linker {
     sources: Vec<Source>,
+    defaults: Vec<ShaderModule>,
     features: Vec<(&'static str, bool)>,
     features_hash: u64,
     composed: BTreeMap<ComposeKey, Arc<Composed>>,
@@ -77,6 +78,105 @@ impl Linker {
             );
         }
         linker
+    }
+
+    pub fn add_modules(&mut self, modules: &[ShaderModule]) -> Result<(), Error> {
+        for module in modules {
+            if let Some(known) = self.sources.iter().find(|known| known.path == module.path) {
+                if known.brick == module.brick && known.text == module.source {
+                    continue;
+                }
+                let error = match crate::faces::face_of(module.path) {
+                    Some(face) => Error::new(ErrorCode::SlotFilledTwice, format!("$.faces.{face}")),
+                    None => Error::new(
+                        ErrorCode::DuplicateBrick,
+                        format!("$.shaders.{}", module.path),
+                    ),
+                };
+                return Err(error
+                    .expected(Expected::Unique)
+                    .got(module.brick)
+                    .nearest(known.brick));
+            }
+            self.add(
+                module.path.to_owned(),
+                module.brick,
+                Cow::Borrowed(module.source),
+            );
+        }
+        Ok(())
+    }
+
+    pub fn add_defaults(&mut self, modules: &[ShaderModule]) -> Result<(), Error> {
+        for module in modules {
+            let Some(face) = crate::faces::face_of(module.path) else {
+                return Err(Error::new(
+                    ErrorCode::InvalidName,
+                    format!("$.shaders.{}", module.path),
+                )
+                .expected(Expected::Matching)
+                .got(module.path)
+                .nearest(crate::faces::face_module(module.path)));
+            };
+            if let Some(known) = self.defaults.iter().find(|known| known.path == module.path) {
+                if known.source == module.source {
+                    continue;
+                }
+                return Err(Error::new(
+                    ErrorCode::DuplicateBrick,
+                    format!("$.faces.{face}.default"),
+                )
+                .expected(Expected::Unique)
+                .got(module.brick)
+                .nearest(known.brick));
+            }
+            self.defaults.push(*module);
+        }
+        Ok(())
+    }
+
+    pub fn faces_offered(&self) -> Vec<(&str, &'static str)> {
+        self.sources
+            .iter()
+            .filter_map(|source| Some((crate::faces::face_of(&source.path)?, source.brick)))
+            .collect()
+    }
+
+    pub fn face_needs(&self) -> Vec<FaceNeed> {
+        let mut needs = Vec::new();
+        for source in &self.sources {
+            for face in face_imports(&source.text) {
+                needs.push(FaceNeed {
+                    brick: source.brick,
+                    module: source.path.clone(),
+                    face,
+                });
+            }
+        }
+        needs
+    }
+
+    pub fn resolve_faces(&mut self) -> Result<Vec<String>, FaceNeed> {
+        let mut defaulted = Vec::new();
+        loop {
+            let mut added = false;
+            for need in self.face_needs() {
+                let path = crate::faces::face_module(&need.face);
+                if self.sources.iter().any(|source| source.path == path) {
+                    continue;
+                }
+                let Some(default) = self.defaults.iter().find(|module| module.path == path) else {
+                    return Err(need);
+                };
+                let (brick, source) = (default.brick, default.source);
+                self.add(path, brick, Cow::Borrowed(source));
+                defaulted.push(need.face);
+                added = true;
+            }
+            if !added {
+                return Ok(defaulted);
+            }
+        }
     }
 
     pub fn add_generated(&mut self, path: String, brick: &'static str, source: String) -> bool {
@@ -300,6 +400,31 @@ impl Linker {
         self.composed.insert(key, Arc::clone(&composed));
         Ok(composed)
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FaceNeed {
+    pub brick: &'static str,
+    pub module: String,
+    pub face: String,
+}
+
+pub fn face_imports(text: &str) -> Vec<String> {
+    let prefix = format!("import package::{}::", crate::faces::FACE_ROOT);
+    let mut found: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let Some(path) = line.trim_start().strip_prefix(prefix.as_str()) else {
+            continue;
+        };
+        let face: String = path
+            .chars()
+            .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+            .collect();
+        if !face.is_empty() && !found.contains(&face) {
+            found.push(face);
+        }
+    }
+    found
 }
 
 pub fn unmangle(name: &str) -> Option<(String, String)> {

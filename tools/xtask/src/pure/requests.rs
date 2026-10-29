@@ -22,6 +22,7 @@ const PAGE: &str = "the page answers it (web/src/engine/dev.ts and the benchmark
 const NATIVE_PROFILE: &str = "native profile captures answer it (crates/engine_native)";
 const CHECKS: &str = "the checks report it (crates/engine_checks)";
 const LINKER: &str = "the shader linker answers it when a GPU device links shaders, and the checks report it (crates/engine_render/src/linker.rs)";
+const BRICK_LISTS: &str = "brick lists and the brick registry answer it when two bricks fill one slot (crates/engine_core/src/bricks)";
 const IMPORT: &str = "the glTF importer answers it (tools/assetc)";
 const RECORDS: &str = "records that do not decode answer it (crates/engine_terrain/src/codec.rs)";
 const LAYERS: &str = "terrain layer stacks answer it (crates/engine_terrain/src/layers.rs)";
@@ -142,6 +143,8 @@ const UNREACHED: &[(&str, &str)] = &[
     ("session_request_limit", BRIDGE),
     ("session_unavailable", BRIDGE),
     ("shader_link", LINKER),
+    ("slot_filled_twice", BRICK_LISTS),
+    ("slot_unfilled", LINKER),
     ("source_budget", WATCH),
     (
         "source_changed",

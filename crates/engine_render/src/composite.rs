@@ -3,29 +3,29 @@ use std::fmt::Write as _;
 use engine_core::{Error, ErrorCode, Expected};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum PostStage {
+pub enum PostStage {
     Scene,
     Light,
     Display,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct PixelEffect {
+pub struct PixelEffect {
     pub stage: PostStage,
     pub module: &'static str,
 }
 
-pub(crate) const COLOR_MODULE: &str = "engine::color";
-pub(crate) const COMPOSITE_ENTRY: &str = "fs_composite";
-pub(crate) const PLAIN_RESOLVE: &str = "post::resolve_plain";
-pub(crate) const TAA_RESOLVE: &str = "post::taa";
-pub(crate) const RESOLVES: [&str; 2] = [PLAIN_RESOLVE, TAA_RESOLVE];
+pub const COLOR_MODULE: &str = "engine::color";
+pub const COMPOSITE_ENTRY: &str = "fs_composite";
+pub const PLAIN_RESOLVE: &str = "post::resolve_plain";
+pub const TAA_RESOLVE: &str = "post::taa";
+pub const RESOLVES: [&str; 2] = [PLAIN_RESOLVE, TAA_RESOLVE];
 
-pub(crate) fn composite_path(resolve: &str) -> String {
+pub fn composite_path(resolve: &str) -> String {
     format!("generated::composite::{}", resolve.replace("::", "_"))
 }
 
-pub(crate) fn composite_entry(resolve: &str) -> crate::shaders::Entry {
+pub fn composite_entry(resolve: &str) -> crate::shaders::Entry {
     crate::shaders::Entry {
         module: Box::leak(composite_path(resolve).into_boxed_str()),
         name: COMPOSITE_ENTRY,
@@ -33,13 +33,13 @@ pub(crate) fn composite_entry(resolve: &str) -> crate::shaders::Entry {
     }
 }
 
-pub(crate) fn pixel_effects(parts: &crate::parts::Parts) -> Vec<PixelEffect> {
+pub fn pixel_effects(parts: &crate::parts::Parts) -> Vec<PixelEffect> {
     (0..parts.len())
         .flat_map(|index| parts.decl(index).effects.iter().copied())
         .collect()
 }
 
-pub(crate) fn composite_source(
+pub fn composite_source(
     resolve: &str,
     effects: &[PixelEffect],
     tonemap: Option<&str>,

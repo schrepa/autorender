@@ -230,6 +230,8 @@ error_codes! {
     UnknownModule => "unknown_module",
     UnknownBinding => "unknown_binding",
     BindingLimit => "binding_limit",
+    SlotFilledTwice => "slot_filled_twice",
+    SlotUnfilled => "slot_unfilled",
 
     Comment => "comment",
     Marker => "marker",

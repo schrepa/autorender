@@ -123,6 +123,9 @@ pub(crate) static PART: PartEntry = PartEntry {
         effects: &[],
         labels: &[],
         lazy: false,
+        faces: &[],
+        needs: &[],
+        piece: None,
     },
     create,
 };

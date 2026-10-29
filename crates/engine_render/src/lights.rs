@@ -53,6 +53,9 @@ pub(crate) static PART: PartEntry = PartEntry {
         effects: &[],
         labels: LABELS,
         lazy: true,
+        faces: &[],
+        needs: &[],
+        piece: None,
     },
     create: gpu::create,
 };

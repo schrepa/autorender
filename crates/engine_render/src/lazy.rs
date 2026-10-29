@@ -2,7 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 
-pub(crate) struct Lazy<F> {
+pub struct Lazy<F> {
     state: State<F>,
     #[cfg(feature = "dev")]
     fault: std::cell::Cell<Fault>,
@@ -39,21 +39,21 @@ impl<F> Default for Lazy<F> {
 }
 
 impl<F> Lazy<F> {
-    pub(crate) fn get(&self) -> Option<&F> {
+    pub fn get(&self) -> Option<&F> {
         match &self.state {
             State::Created { part, .. } => Some(part),
             State::Absent | State::Disabled => None,
         }
     }
 
-    pub(crate) fn get_mut(&mut self) -> Option<&mut F> {
+    pub fn get_mut(&mut self) -> Option<&mut F> {
         match &mut self.state {
             State::Created { part, .. } => Some(part),
             State::Absent | State::Disabled => None,
         }
     }
 
-    pub(crate) fn create(
+    pub fn create(
         &mut self,
         device: &wgpu::Device,
         label: &'static str,
@@ -88,17 +88,17 @@ impl<F> Lazy<F> {
         };
     }
 
-    pub(crate) fn release(&mut self) {
+    pub fn release(&mut self) {
         if matches!(self.state, State::Created { .. }) {
             self.state = State::Absent;
         }
     }
 
-    pub(crate) fn disabled(&self) -> bool {
+    pub fn disabled(&self) -> bool {
         matches!(self.state, State::Disabled)
     }
 
-    pub(crate) fn poll(&mut self) -> bool {
+    pub fn poll(&mut self) -> bool {
         let State::Created {
             validation: Some(validation),
             ..
@@ -118,7 +118,7 @@ impl<F> Lazy<F> {
         }
     }
 
-    pub(crate) fn disable(&mut self) -> bool {
+    pub fn disable(&mut self) -> bool {
         #[cfg(feature = "dev")]
         drop(self.fault.take());
         !matches!(
@@ -128,14 +128,14 @@ impl<F> Lazy<F> {
     }
 
     #[cfg(feature = "dev")]
-    pub(crate) fn inject(&mut self) -> bool {
+    pub fn inject(&mut self) -> bool {
         self.release();
         self.fault.set(Fault::Injected);
         true
     }
 
     #[cfg(feature = "dev")]
-    pub(crate) fn encode_fault(&self, encoder: &mut wgpu::CommandEncoder) {
+    pub fn encode_fault(&self, encoder: &mut wgpu::CommandEncoder) {
         match self.fault.take() {
             Fault::Made(buffer) => encoder.clear_buffer(&buffer, 0, None),
             fault @ (Fault::None | Fault::Injected) => self.fault.set(fault),

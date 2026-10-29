@@ -227,6 +227,9 @@ pub(crate) static PART: PartEntry = PartEntry {
         effects: &[],
         labels: &["engine/debug-view"],
         lazy: true,
+        faces: &[],
+        needs: &[],
+        piece: None,
     },
     create,
 };

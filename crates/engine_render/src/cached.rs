@@ -54,7 +54,7 @@ impl Versioned<wgpu::TextureView> {
 }
 
 #[derive(Clone)]
-pub(crate) struct Bound<'a> {
+pub struct Bound<'a> {
     generation: u64,
     resource: wgpu::BindingResource<'a>,
 }

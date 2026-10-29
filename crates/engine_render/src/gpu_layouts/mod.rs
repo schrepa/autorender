@@ -59,7 +59,7 @@ macro_rules! gpu_structs {
         $(
             $(#[$meta])*
             #[repr(C)]
-            pub(crate) struct $name {
+            $vis struct $name {
                 $($(#[$field_meta])* pub $field: $ty,)*
             }
 

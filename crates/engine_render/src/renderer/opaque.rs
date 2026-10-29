@@ -36,6 +36,9 @@ pub(crate) static OPAQUE_PART: PartEntry = PartEntry {
         effects: &[],
         labels: &[],
         lazy: false,
+        faces: &[],
+        needs: &[],
+        piece: None,
     },
     create: create_opaque,
 };

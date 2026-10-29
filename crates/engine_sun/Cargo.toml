@@ -1,0 +1,17 @@
+[package]
+name = "engine_sun"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+
+[dependencies]
+engine_core.workspace = true
+engine_faces.workspace = true
+engine_render.workspace = true
+
+[lints]
+workspace = true

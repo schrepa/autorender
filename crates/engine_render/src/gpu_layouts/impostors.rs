@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 
 gpu_structs! {
     #[derive(Clone, Copy, Debug, Default, PartialEq, Pod, Zeroable)]
-    pub(crate) struct ImpostorRecord as ["ImpostorRecord"] {
+    pub struct ImpostorRecord as ["ImpostorRecord"] {
         pub sphere: [f32; 4],
         pub extent: [f32; 3],
         pub layer: u32,

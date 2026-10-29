@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 use std::panic::Location;
 use std::sync::Arc;
@@ -48,15 +48,31 @@ pub struct BrickRecord {
     pub smokes: Vec<SmokeEntry>,
     pub resources: Vec<Owned>,
     pub components: Vec<Owned>,
+    pub extensions: Vec<Box<dyn Any + Send + Sync>>,
 }
 
 impl BrickRecord {
+    pub fn extension<T: Any>(&self) -> Option<&T> {
+        self.extensions
+            .iter()
+            .find_map(|extension| extension.downcast_ref::<T>())
+    }
+
+    pub(super) fn extension_mut<T: Any + Send + Sync + Default>(&mut self) -> Option<&mut T> {
+        if !self.extensions.iter().any(|extension| extension.is::<T>()) {
+            self.extensions.push(Box::new(T::default()));
+        }
+        self.extensions
+            .iter_mut()
+            .find_map(|extension| extension.downcast_mut::<T>())
+    }
+
     pub(super) fn new<B: Brick>(name: &'static str) -> Self {
         Self {
             name,
             type_path: std::any::type_name::<B>(),
             crate_name: crate_of::<B>(),
-            slot: None,
+            slot: B::SLOT,
             lists: Vec::new(),
             records: Vec::new(),
             settings: Vec::new(),
@@ -69,6 +85,7 @@ impl BrickRecord {
             smokes: Vec::new(),
             resources: Vec::new(),
             components: Vec::new(),
+            extensions: Vec::new(),
         }
     }
 
@@ -102,6 +119,7 @@ impl BrickRecord {
 pub struct BrickRegistry {
     bricks: Vec<BrickRecord>,
     left_out: Vec<&'static str>,
+    fillers: Vec<(&'static str, &'static str)>,
 }
 
 impl BrickRegistry {
@@ -220,6 +238,53 @@ impl BrickRegistry {
         &self.left_out
     }
 
+    pub fn filler(&self, slot: &str) -> Option<&BrickRecord> {
+        self.bricks.iter().find(|brick| brick.slot == Some(slot))
+    }
+
+    pub fn fillers(&self, slot: &str) -> Vec<&'static str> {
+        let mut fillers: Vec<&'static str> = self
+            .bricks
+            .iter()
+            .filter(|brick| brick.slot == Some(slot))
+            .map(|brick| brick.name)
+            .collect();
+        for &(known, name) in &self.fillers {
+            if known == slot && !fillers.contains(&name) {
+                fillers.push(name);
+            }
+        }
+        fillers
+    }
+
+    pub fn know_fillers(
+        &mut self,
+        fillers: impl IntoIterator<Item = (&'static str, &'static str)>,
+    ) {
+        for filler in fillers {
+            if !self.fillers.contains(&filler) {
+                self.fillers.push(filler);
+            }
+        }
+    }
+
+    pub fn knows_slot(&self, slot: &str) -> bool {
+        self.bricks.iter().any(|brick| brick.slot == Some(slot))
+            || self.fillers.iter().any(|&(known, _)| known == slot)
+    }
+
+    pub fn face_unanswered(&self, face: &str, needed_by: &str) -> Error {
+        if self.knows_slot(face) {
+            return Error::new(ErrorCode::SlotUnfilled, format!("$.slots.{face}"))
+                .expected(Expected::Present)
+                .got(needed_by)
+                .variants(self.fillers(face));
+        }
+        Error::new(ErrorCode::FaceMissing, format!("$.faces.{face}"))
+            .expected(Expected::Present)
+            .got(needed_by)
+    }
+
     pub fn leave_out(&mut self, names: impl IntoIterator<Item = &'static str>) {
         for name in names {
             if !self.left_out.contains(&name) && !self.has(name) {
@@ -281,6 +346,17 @@ impl BrickRegistry {
     pub(super) fn add(&mut self, record: BrickRecord) -> Result<(), Error> {
         self.admits(record.name)?;
         let name = record.name;
+        if let Some(slot) = record.slot
+            && let Some(first) = self.filler(slot)
+        {
+            return Err(
+                Error::new(ErrorCode::SlotFilledTwice, format!("$.slots.{slot}"))
+                    .expected(Expected::Unique)
+                    .got(name)
+                    .nearest(first.name)
+                    .variants(self.fillers(slot)),
+            );
+        }
         let taken = |kind: &str, key: &str, owner: &str| {
             Error::new(
                 ErrorCode::DuplicateBrick,

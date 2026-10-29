@@ -918,6 +918,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_ambient_occlusion"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
 name = "engine_assetc"
 version = "0.1.0"
 dependencies = [
@@ -945,6 +954,24 @@ dependencies = [
  "glam 0.30.9",
  "libm",
  "schemars",
+]
+
+[[package]]
+name = "engine_auto_exposure"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
+name = "engine_bloom"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
 ]
 
 [[package]]
@@ -997,6 +1024,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_debug_view"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
 name = "engine_dev"
 version = "0.1.0"
 dependencies = [
@@ -1013,6 +1049,35 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "engine_dither"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
+name = "engine_faces"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "engine_core",
+ "engine_render",
+ "glam 0.30.9",
+ "wgpu",
+]
+
+[[package]]
+name = "engine_ground_cover"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
 ]
 
 [[package]]
@@ -1127,6 +1192,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_lighting"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
+name = "engine_lights"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
 name = "engine_lodbuild"
 version = "0.1.0"
 dependencies = [
@@ -1142,6 +1225,15 @@ version = "0.1.0"
 dependencies = [
  "foldhash",
  "libm",
+]
+
+[[package]]
+name = "engine_meshes"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
 ]
 
 [[package]]
@@ -1185,6 +1277,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_particles"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
 name = "engine_physics"
 version = "0.1.0"
 dependencies = [
@@ -1218,6 +1319,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_probes"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
 name = "engine_profile"
 version = "0.1.0"
 dependencies = [
@@ -1238,6 +1348,15 @@ dependencies = [
  "serde_json",
  "wgpu",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "engine_reflections"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
 ]
 
 [[package]]
@@ -1262,6 +1381,15 @@ dependencies = [
  "wesl",
  "wgpu",
  "wgpu-types 30.0.1",
+]
+
+[[package]]
+name = "engine_scatter"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
 ]
 
 [[package]]
@@ -1296,10 +1424,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_shadows"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
+name = "engine_sky"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
 name = "engine_sources"
 version = "0.1.0"
 dependencies = [
  "sha2",
+]
+
+[[package]]
+name = "engine_sun"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
+name = "engine_taa"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
 ]
 
 [[package]]
@@ -1331,6 +1495,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_terrain_shading"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
 name = "engine_textures"
 version = "0.1.0"
 dependencies = [
@@ -1351,6 +1524,24 @@ dependencies = [
  "glam 0.30.9",
  "schemars",
  "serde",
+]
+
+[[package]]
+name = "engine_tonemap"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
+name = "engine_water"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
 ]
 
 [[package]]
@@ -1860,10 +2051,30 @@ dependencies = [
  "engine",
  "engine_native",
  "engine_sources",
+ "highlands_pond",
+ "highlands_toon_lighting",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "highlands_pond"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
+]
+
+[[package]]
+name = "highlands_toon_lighting"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_faces",
+ "engine_render",
 ]
 
 [[package]]

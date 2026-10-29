@@ -285,6 +285,21 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
     let mut dependencies = String::new();
     let mut metadata = String::new();
     match &claim {
+        Some(claim) if claim.kind == "slot" => {
+            source = source.replace(
+                &format!("impl Brick for {pascal}Brick {{\n"),
+                &format!(
+                    "impl Brick for {pascal}Brick {{\n    const SLOT: Option<&'static str> = Some(<{} as engine_core::Slot>::NAME);\n\n",
+                    claim.path
+                ),
+            );
+            if claim.package != "engine_core" {
+                dependencies = format!("{}.workspace = true\n", claim.package);
+            }
+            if let Some(replaced) = &claim.replaces {
+                metadata = format!("\n[package.metadata.engine]\nreplaces = \"{replaced}\"\n");
+            }
+        }
         Some(claim) => {
             source = source.replace(
                 &stats,

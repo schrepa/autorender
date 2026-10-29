@@ -11,6 +11,8 @@ use engine_core::{
 pub struct TerrainBrick;
 
 impl Brick for TerrainBrick {
+    const SLOT: Option<&'static str> = Some(<GroundSlot as engine_core::Slot>::NAME);
+
     fn register(bricks: &mut Bricks) {
         bricks
             .settings::<TerrainSettings>()
@@ -28,7 +30,6 @@ impl Brick for TerrainBrick {
                 SETTLED_KIND,
             ])
             .resource::<Terrains>()
-            .slot::<GroundSlot>()
             .insert_resource(Ground::new("terrain", TerrainGround))
             .resource::<TerrainLayerKinds>()
             .terrain_layers(crate::expr::KINDS)

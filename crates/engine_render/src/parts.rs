@@ -1,21 +1,27 @@
-use std::any::Any;
+use std::any::{Any, TypeId};
+use std::sync::Arc;
 
-use engine_core::{Error, ErrorCode, Expected, RenderFrame, RenderSnapshot, RenderStats};
+use engine_core::{
+    Error, ErrorCode, Expected, MeshHandle, RecordKey, RenderFrame, RenderMaterial, RenderMesh,
+    RenderSnapshot, RenderStats, RenderTexture,
+};
 
 use crate::bindings::SharedGroups;
 use crate::cached::Bound;
-use crate::entries::PassKind;
+use crate::entries::{MeshEntries, PassKind};
+use crate::faces::{FaceCast, FaceOffer};
 use crate::gpu_calls::Recorded;
 use crate::gpu_data::LightingUniform;
 use crate::graph::{
     Clear, FrameGraph, FrameShape, GraphTable, Load, MAX_COLORS, Node, Ops, PassDecl, ResourceDecl,
     ResourceId, Targets,
 };
+use crate::pieces::{PieceAt, PieceDecl};
 use crate::renderer::Core;
 use crate::temporal::TemporalFrame;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct FrameKind {
+pub struct FrameKind {
     pub gpu_mode: bool,
     pub temporal: bool,
     pub display: bool,
@@ -24,12 +30,12 @@ pub(crate) struct FrameKind {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Passes {
+pub struct Passes {
     pub opaque_kind: PassKind,
     pub impostor_pass: Option<(Targets, bool)>,
 }
 
-pub(crate) struct FrameInfo<'s> {
+pub struct FrameInfo<'s> {
     pub snapshot: &'s RenderSnapshot,
     pub frame: RenderFrame<'s>,
     pub kind: FrameKind,
@@ -40,15 +46,54 @@ pub(crate) struct FrameInfo<'s> {
     pub kept: u64,
 }
 
+pub struct PartAssets<'s> {
+    pub meshes: Vec<(MeshHandle, &'s RenderMesh)>,
+    pub materials: Vec<&'s RenderMaterial>,
+    pub textures: Vec<&'s RenderTexture>,
+}
+
+#[derive(Default)]
+pub struct Shading {
+    pub values: Vec<(&'static str, f64)>,
+    pub warm: Vec<(&'static str, f64)>,
+}
+
+impl Shading {
+    pub fn set(&mut self, name: &'static str, value: f64) {
+        self.values.push((name, value));
+    }
+
+    pub fn warm(&mut self, name: &'static str, value: f64) {
+        self.warm.push((name, value));
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Jitter {
+    pub offset: [f32; 2],
+    pub sequence: u64,
+}
+
+pub struct Views<'a> {
+    pub cameras: &'a [wgpu::Buffer],
+    pub format: wgpu::TextureFormat,
+    pub mirrored: bool,
+    pub still: bool,
+}
+
+pub type RecordStart = (u64, Vec<RecordKey>, Arc<dyn Any + Send + Sync>);
+
+pub type MadeRecord = (RecordKey, Result<Vec<u8>, String>);
+
 impl FrameInfo<'_> {
-    pub(crate) fn runs(&self, table: &GraphTable, pass: &str) -> bool {
+    pub fn runs(&self, table: &GraphTable, pass: &str) -> bool {
         table
             .pass_named(pass)
             .is_some_and(|pass| self.kept & (1 << pass.index()) != 0)
     }
 }
 
-pub(crate) fn scene_target(table: &GraphTable, shape: &FrameShape) -> Option<ResourceId> {
+pub fn scene_target(table: &GraphTable, shape: &FrameShape) -> Option<ResourceId> {
     table.resource(match shape.targets {
         Targets::Canvas => "canvas",
         Targets::Post | Targets::Temporal => "scene",
@@ -56,7 +101,7 @@ pub(crate) fn scene_target(table: &GraphTable, shape: &FrameShape) -> Option<Res
     })
 }
 
-pub(crate) fn main_targets(table: &GraphTable, shape: &FrameShape) -> Vec<(ResourceId, Clear)> {
+pub fn main_targets(table: &GraphTable, shape: &FrameShape) -> Vec<(ResourceId, Clear)> {
     let transparent = Clear::Color(crate::graph::TRANSPARENT);
     let scene = Clear::Color(crate::graph::SCENE_CLEAR);
     let named: Vec<(&str, Clear)> = match shape.targets {
@@ -84,7 +129,7 @@ pub(crate) fn main_targets(table: &GraphTable, shape: &FrameShape) -> Vec<(Resou
         .collect()
 }
 
-pub(crate) struct Begin<'f> {
+pub struct Begin<'f> {
     pub core: &'f mut Core,
     pub parts: &'f Parts,
     pub snapshot: &'f RenderSnapshot,
@@ -93,16 +138,16 @@ pub(crate) struct Begin<'f> {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct BeginOut {
+pub struct BeginOut {
     pub forget_temporal: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct UniformsOut {
+pub struct UniformsOut {
     pub forget_lighting: bool,
 }
 
-pub(crate) struct Step<'f> {
+pub struct Step<'f> {
     pub core: &'f mut Core,
     pub parts: &'f Parts,
     pub table: &'f GraphTable,
@@ -112,20 +157,20 @@ pub(crate) struct Step<'f> {
 impl Step<'_> {}
 
 #[derive(Clone, Copy)]
-pub(crate) struct View<'f> {
+pub struct View<'f> {
     pub core: &'f Core,
     pub parts: &'f Parts,
     pub table: &'f GraphTable,
     pub frame: &'f FrameInfo<'f>,
 }
 
-pub(crate) struct NodeViews {
+pub struct NodeViews {
     pub colors: [Option<wgpu::TextureView>; MAX_COLORS],
     pub depth: Option<wgpu::TextureView>,
     pub region: Option<(u32, u32)>,
 }
 
-pub(crate) struct Encode<'f> {
+pub struct Encode<'f> {
     pub core: &'f mut Core,
     pub parts: &'f Parts,
     pub table: &'f GraphTable,
@@ -135,7 +180,7 @@ pub(crate) struct Encode<'f> {
 }
 
 impl Encode<'_> {
-    pub(crate) fn view(&self) -> View<'_> {
+    pub fn view(&self) -> View<'_> {
         View {
             core: &*self.core,
             parts: self.parts,
@@ -144,7 +189,7 @@ impl Encode<'_> {
         }
     }
 
-    pub(crate) fn render_pass<'e>(
+    pub fn render_pass<'e>(
         &self,
         encoder: &'e mut wgpu::CommandEncoder,
         label: &'static str,
@@ -153,12 +198,12 @@ impl Encode<'_> {
         render_pass(encoder, self.node, self.views, label, timestamp_writes)
     }
 
-    pub(crate) fn draw_hook(&self, at: DrawAt<'_>, pass: &mut wgpu::RenderPass<'_>) -> u32 {
+    pub fn draw_hook(&self, at: DrawAt<'_>, pass: &mut wgpu::RenderPass<'_>) -> u32 {
         self.parts.draw_hook(at, &self.view(), pass)
     }
 }
 
-pub(crate) fn render_pass<'e>(
+pub fn render_pass<'e>(
     encoder: &'e mut wgpu::CommandEncoder,
     node: &Node,
     views: &NodeViews,
@@ -227,7 +272,7 @@ fn store_operation(ops: Ops) -> wgpu::StoreOp {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum OpaqueSlot {
+pub enum OpaqueSlot {
     Prepass,
     Meshes,
     Ground,
@@ -237,14 +282,14 @@ pub(crate) enum OpaqueSlot {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Hook {
+pub enum Hook {
     Opaque(OpaqueSlot),
     ShadowCasters,
     ProbeFace,
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum DrawAt<'a> {
+pub enum DrawAt<'a> {
     Opaque {
         slot: OpaqueSlot,
         phase: usize,
@@ -262,7 +307,7 @@ pub(crate) enum DrawAt<'a> {
 }
 
 impl DrawAt<'_> {
-    pub(crate) fn hook(&self) -> Hook {
+    pub fn hook(&self) -> Hook {
         match self {
             Self::Opaque { slot, .. } => Hook::Opaque(*slot),
             Self::ShadowCasters { .. } => Hook::ShadowCasters,
@@ -272,7 +317,7 @@ impl DrawAt<'_> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum PreludeStage {
+pub enum PreludeStage {
     Tables,
     Uploads,
     Inputs,
@@ -280,7 +325,7 @@ pub(crate) enum PreludeStage {
 }
 
 #[derive(Default)]
-pub(crate) struct Prelude {
+pub struct Prelude {
     encoders: Vec<(PreludeStage, &'static str, wgpu::CommandEncoder)>,
     buffers: Vec<(PreludeStage, &'static str, wgpu::CommandBuffer)>,
     order: Vec<(PreludeStage, &'static str, bool)>,
@@ -289,7 +334,7 @@ pub(crate) struct Prelude {
 }
 
 impl Prelude {
-    pub(crate) fn encoder(
+    pub fn encoder(
         &mut self,
         device: &wgpu::Device,
         stage: PreludeStage,
@@ -311,7 +356,7 @@ impl Prelude {
         &mut self.encoders[index].2
     }
 
-    pub(crate) fn push_encoder(
+    pub fn push_encoder(
         &mut self,
         stage: PreludeStage,
         span: &'static str,
@@ -322,7 +367,7 @@ impl Prelude {
         self.order.push((stage, span, true));
     }
 
-    pub(crate) fn push_buffer(
+    pub fn push_buffer(
         &mut self,
         stage: PreludeStage,
         span: &'static str,
@@ -333,16 +378,16 @@ impl Prelude {
         self.order.push((stage, span, false));
     }
 
-    pub(crate) fn reserve(&mut self, span: &'static str) {
+    pub fn reserve(&mut self, span: &'static str) {
         self.note(span);
     }
 
-    pub(crate) fn attribute(&mut self, owner: &'static str) {
+    pub fn attribute(&mut self, owner: &'static str) {
         self.owner = owner;
     }
 
     #[cfg(feature = "profiling")]
-    pub(crate) fn owners(&self) -> &[(&'static str, &'static str)] {
+    pub fn owners(&self) -> &[(&'static str, &'static str)] {
         &self.spans
     }
 
@@ -352,7 +397,7 @@ impl Prelude {
         }
     }
 
-    pub(crate) fn take(self) -> Vec<(&'static str, Recorded)> {
+    pub fn take(self) -> Vec<(&'static str, Recorded)> {
         let mut encoders = self.encoders.into_iter();
         let mut buffers = self.buffers.into_iter();
         let spans = self.spans;
@@ -380,7 +425,7 @@ impl Prelude {
     }
 }
 
-pub(crate) struct PartDecl {
+pub struct PartDecl {
     pub name: &'static str,
     pub brick: &'static str,
     pub passes: &'static [PassDecl],
@@ -390,18 +435,21 @@ pub(crate) struct PartDecl {
     pub effects: &'static [crate::composite::PixelEffect],
     pub labels: &'static [&'static str],
     pub lazy: bool,
+    pub faces: &'static [FaceOffer],
+    pub needs: &'static [&'static str],
+    pub piece: Option<PieceDecl>,
 }
 
-pub(crate) struct Create<'f> {
+pub struct Create<'f> {
     pub core: &'f Core,
 }
 
-pub(crate) struct PartEntry {
+pub struct PartEntry {
     pub decl: PartDecl,
     pub create: fn(&Create<'_>) -> Box<dyn GpuPart>,
 }
 
-pub(crate) trait GpuPart: Any {
+pub trait GpuPart: Any {
     fn install(&mut self, _table: &GraphTable) {}
 
     fn begin(&mut self, _cx: &mut Begin<'_>, _out: &mut BeginOut) {}
@@ -478,6 +526,56 @@ pub(crate) trait GpuPart: Any {
 
     #[cfg(feature = "dev")]
     fn encode_fault(&self, _encoder: &mut wgpu::CommandEncoder) {}
+
+    fn set_cooking(&mut self, _cooking: bool) {}
+
+    fn shading(&self, _snapshot: &RenderSnapshot, _shading: &mut Shading) {}
+
+    fn place_piece(&mut self, _at: PieceAt) {}
+
+    fn piece(&self) -> Option<&[u8]> {
+        None
+    }
+
+    fn produces(&self, _resource: ResourceId) -> bool {
+        false
+    }
+
+    fn wants(&self, _resource: ResourceId) -> bool {
+        false
+    }
+
+    fn jitter(&mut self, _cx: &mut Step<'_>) -> Option<Jitter> {
+        None
+    }
+
+    fn asset_generation(&self) -> u64 {
+        0
+    }
+
+    fn assets<'s>(&self, _snapshot: &'s RenderSnapshot, _assets: &mut PartAssets<'s>) {}
+
+    fn batch_group(&self, _batch: usize) -> Option<u32> {
+        None
+    }
+
+    fn views(&self) -> Option<Views<'_>> {
+        None
+    }
+
+    fn mesh_entries(&self) -> Option<&'static MeshEntries> {
+        None
+    }
+
+    fn start_records(&mut self, _starts: &mut Vec<RecordStart>) {}
+
+    fn take_records(&mut self) -> Vec<MadeRecord> {
+        Vec::new()
+    }
+
+    fn records_left(&self) -> Option<(&'static str, u64)> {
+        None
+    }
 }
 
 struct Slot {
@@ -485,14 +583,21 @@ struct Slot {
     part: Option<Box<dyn GpuPart>>,
 }
 
+struct Offered {
+    face: TypeId,
+    slot: usize,
+    cast: Box<dyn Any + Send + Sync>,
+}
+
 #[derive(Default)]
-pub(crate) struct Parts {
+pub struct Parts {
     slots: Vec<Slot>,
     names: &'static [&'static str],
+    offered: Vec<Offered>,
 }
 
 impl Parts {
-    pub(crate) fn install(
+    pub fn install(
         &mut self,
         entries: &[&'static PartEntry],
         core: &Core,
@@ -532,6 +637,26 @@ impl Parts {
             };
             self.slots.push(slot);
         }
+        self.offered.clear();
+        for (index, slot) in self.slots.iter().enumerate() {
+            for offer in slot.entry.decl.faces {
+                let face = (offer.face)();
+                if let Some(first) = self.offered.iter().find(|known| known.face == face) {
+                    return Err(Error::new(
+                        ErrorCode::SlotFilledTwice,
+                        format!("$.faces.{}", offer.name()),
+                    )
+                    .expected(Expected::Unique)
+                    .got(slot.entry.decl.brick)
+                    .nearest(self.slots[first.slot].entry.decl.brick));
+                }
+                self.offered.push(Offered {
+                    face,
+                    slot: index,
+                    cast: (offer.cast)(),
+                });
+            }
+        }
         let mut table = GraphTable::default();
         for (index, slot) in self.slots.iter().enumerate() {
             let decl = &slot.entry.decl;
@@ -547,43 +672,86 @@ impl Parts {
         Ok(table)
     }
 
-    pub(crate) fn get<T: GpuPart>(&self) -> Option<&T> {
+    pub fn get<T: GpuPart>(&self) -> Option<&T> {
         self.slots.iter().find_map(|slot| {
             let part: &dyn Any = slot.part.as_deref()?;
             part.downcast_ref::<T>()
         })
     }
 
-    pub(crate) fn get_mut<T: GpuPart>(&mut self) -> Option<&mut T> {
+    pub fn get_mut<T: GpuPart>(&mut self) -> Option<&mut T> {
         self.slots.iter_mut().find_map(|slot| {
             let part: &mut dyn Any = slot.part.as_deref_mut()?;
             part.downcast_mut::<T>()
         })
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn face<F: ?Sized + 'static>(&self) -> Option<&F> {
+        let face = TypeId::of::<F>();
+        let offered = self.offered.iter().find(|offered| offered.face == face)?;
+        let cast = offered.cast.downcast_ref::<FaceCast<F>>()?;
+        let part: &dyn Any = self.slots.get(offered.slot)?.part.as_deref()?;
+        (cast.get)(part)
+    }
+
+    pub fn face_mut<F: ?Sized + 'static>(&mut self) -> Option<&mut F> {
+        let face = TypeId::of::<F>();
+        let offered = self.offered.iter().find(|offered| offered.face == face)?;
+        let get_mut = offered.cast.downcast_ref::<FaceCast<F>>()?.get_mut;
+        let slot = offered.slot;
+        let part: &mut dyn Any = self.slots.get_mut(slot)?.part.as_deref_mut()?;
+        get_mut(part)
+    }
+
+    pub fn offers(&self, brick: &str) -> Vec<&'static str> {
+        self.slots
+            .iter()
+            .filter(|slot| slot.entry.decl.brick == brick)
+            .flat_map(|slot| slot.entry.decl.faces.iter().map(FaceOffer::name))
+            .collect()
+    }
+
+    pub fn produces(&self, resource: impl Into<Option<ResourceId>>) -> bool {
+        let Some(resource) = resource.into() else {
+            return false;
+        };
+        self.slots
+            .iter()
+            .filter_map(|slot| slot.part.as_deref())
+            .any(|part| part.produces(resource))
+    }
+
+    pub fn set_cooking(&mut self, cooking: bool) {
+        for slot in &mut self.slots {
+            if let Some(part) = slot.part.as_mut() {
+                part.set_cooking(cooking);
+            }
+        }
+    }
+
+    pub fn len(&self) -> usize {
         self.slots.len()
     }
 
-    pub(crate) fn decl(&self, index: usize) -> &'static PartDecl {
+    pub fn decl(&self, index: usize) -> &'static PartDecl {
         &self.slots[index].entry.decl
     }
 
-    pub(crate) fn names(&self) -> &'static [&'static str] {
+    pub fn names(&self) -> &'static [&'static str] {
         self.names
     }
 
-    pub(crate) fn part(&self, index: usize) -> Option<&dyn GpuPart> {
+    pub fn part(&self, index: usize) -> Option<&dyn GpuPart> {
         self.slots.get(index)?.part.as_deref()
     }
 
-    pub(crate) fn iter(&self) -> impl Iterator<Item = (&'static PartDecl, &dyn GpuPart)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&'static PartDecl, &dyn GpuPart)> {
         self.slots
             .iter()
             .filter_map(|slot| Some((&slot.entry.decl, slot.part.as_deref()?)))
     }
 
-    pub(crate) fn with_part<R>(
+    pub fn with_part<R>(
         &mut self,
         index: usize,
         act: impl FnOnce(&mut dyn GpuPart, &Parts) -> R,
@@ -594,12 +762,7 @@ impl Parts {
         Some(result)
     }
 
-    pub(crate) fn draw_hook(
-        &self,
-        at: DrawAt<'_>,
-        cx: &View<'_>,
-        pass: &mut wgpu::RenderPass<'_>,
-    ) -> u32 {
+    pub fn draw_hook(&self, at: DrawAt<'_>, cx: &View<'_>, pass: &mut wgpu::RenderPass<'_>) -> u32 {
         let hook = at.hook();
         self.slots
             .iter()
@@ -609,7 +772,7 @@ impl Parts {
             .sum()
     }
 
-    pub(crate) fn named_by(&self, message: &str) -> u64 {
+    pub fn named_by(&self, message: &str) -> u64 {
         let mut named = 0;
         for (index, slot) in self.slots.iter().enumerate() {
             if slot
@@ -628,7 +791,7 @@ impl Parts {
         named
     }
 
-    pub(crate) fn disable(&mut self, named: u64) -> u64 {
+    pub fn disable(&mut self, named: u64) -> u64 {
         let mut disabled = 0;
         for (index, slot) in self.slots.iter_mut().enumerate() {
             let Some(part) = slot.part.as_mut() else {
@@ -642,7 +805,7 @@ impl Parts {
         disabled
     }
 
-    pub(crate) fn disabled(&self) -> u64 {
+    pub fn disabled(&self) -> u64 {
         self.slots
             .iter()
             .enumerate()
@@ -651,7 +814,7 @@ impl Parts {
     }
 
     #[cfg(feature = "dev")]
-    pub(crate) fn lazy_names(&self) -> impl Iterator<Item = &'static str> + '_ {
+    pub fn lazy_names(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.slots
             .iter()
             .filter(|slot| slot.entry.decl.lazy)
@@ -659,7 +822,7 @@ impl Parts {
     }
 
     #[cfg(feature = "dev")]
-    pub(crate) fn inject(&mut self, name: &str) -> bool {
+    pub fn inject(&mut self, name: &str) -> bool {
         self.slots
             .iter_mut()
             .find(|slot| slot.entry.decl.name == name)
@@ -667,7 +830,7 @@ impl Parts {
             .is_some_and(|part| part.inject())
     }
 
-    pub(crate) fn after_submit(&mut self) {
+    pub fn after_submit(&mut self) {
         for slot in &mut self.slots {
             if let Some(part) = slot.part.as_mut() {
                 let _owner = crate::memory::owned(slot.entry.decl.brick);
@@ -677,9 +840,9 @@ impl Parts {
     }
 }
 
-pub(crate) const CORE_BRICK: &str = "core";
+pub const CORE_BRICK: &str = "core";
 
-pub(crate) fn standard() -> [&'static PartEntry; 17] {
+pub fn standard() -> [&'static PartEntry; 17] {
     [
         &crate::gpu_presentation::PART,
         &crate::renderer::OPAQUE_PART,
@@ -701,14 +864,14 @@ pub(crate) fn standard() -> [&'static PartEntry; 17] {
     ]
 }
 
-pub(crate) fn installed(bricks: &engine_core::BrickRegistry) -> Vec<&'static PartEntry> {
+pub fn installed(bricks: &engine_core::BrickRegistry) -> Vec<&'static PartEntry> {
     standard()
         .into_iter()
         .filter(|entry| entry.decl.brick == CORE_BRICK || bricks.has(entry.decl.brick))
         .collect()
 }
 
-pub(crate) fn shared_of(entries: &[&'static PartEntry]) -> Result<SharedGroups, Error> {
+pub fn shared_of(entries: &[&'static PartEntry]) -> Result<SharedGroups, Error> {
     let mut shared = SharedGroups::default();
     for entry in entries {
         for contribution in entry.decl.contributes {

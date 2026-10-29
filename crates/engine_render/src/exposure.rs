@@ -47,6 +47,9 @@ pub(crate) static PART: PartEntry = PartEntry {
         effects: &[],
         labels: &["engine/exposure"],
         lazy: true,
+        faces: &[],
+        needs: &[],
+        piece: None,
     },
     create,
 };
