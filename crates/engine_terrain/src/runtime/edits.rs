@@ -431,6 +431,13 @@ fn draw_river(world: &mut World, drawing: &TerrainRiverControl) -> Result<Terrai
     if !terrain.layers.has_hydrology() {
         return Err(Error::new(ErrorCode::MissingLayer, "$.terrain").variants(["hydrology"]));
     }
+    if world
+        .get_resource::<crate::layer::TerrainLayerKinds>()
+        .and_then(|kinds| kinds.get("rivers"))
+        .is_none()
+    {
+        return Err(Error::new(ErrorCode::MissingLayer, "$.terrain").variants(["rivers"]));
+    }
     valid_id(&drawing.id)?;
     let origin = Vec2::new(terrain.origin.x, terrain.origin.z);
     let reach = |rivers: &[&GivenRiver]| -> Option<Reach> {

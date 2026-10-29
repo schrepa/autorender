@@ -1,21 +1,17 @@
 use std::sync::Arc;
 
 use engine_core::{Error, ErrorCode};
-use engine_math::{clamp, max, min};
+use engine_math::{max, min};
 use engine_settings::{InvalidSetting, Rule, Setting, settings};
-use glam::{Vec2, Vec4};
+use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
-use crate::bake::{ErosionBake, HydrologyBake, PathBake, Stage};
-use crate::given::{GivenRiver, RiversLayer};
+use crate::given::GivenRiver;
 use crate::hydrology::Hydrology;
-use crate::noise::{
-    gradient_noise, gradient_noise4, gradient_value, gradient_value4, gullies, gullies4, max4,
-    min4, smooth, smooth4, sqrt4,
-};
-use crate::path::PathSample;
-use crate::relief::{HummocksLayer, StepsLayer};
-use crate::surface::setting_error;
+use crate::layer::{ChangeMap, NoFiles, Place, TerrainLayer, layer_kind, read_entry, write_entry};
+use crate::noise::smooth;
+use crate::path::{Bridge, PathSample};
+use crate::rivers::Rivers;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -40,25 +36,6 @@ impl Blend {
             Self::Replace => value,
         };
         below + (target - below) * weight
-    }
-}
-
-settings! {
-    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-    #[serde(default, deny_unknown_fields)]
-    pub struct NoiseLayer {
-        pub seed: u32 = 0 => any,
-        pub height: f32 = 900.0 => range(0.0, MAX_HEIGHT),
-        pub offset: f32 = 0.0 => range(-MAX_HEIGHT, MAX_HEIGHT),
-        pub wavelength: f32 = 3000.0 => range(16.0, 1.0e6),
-        pub ridges: f32 = 0.3 => range(0.0, 1.0),
-        pub warp: f32 = 0.35 => range(0.0, 1.0),
-        pub erosion: f32 = 0.7 => range(0.0, 1.0),
-        pub smoothing: f32 = 1.0 => range(0.0, 1.0),
-        pub valleys: f32 = 0.7 => range(0.0, 1.0),
-        pub roughness: f32 = 0.5 => range(0.0, 1.0),
-        pub blend: Blend = Blend::Add => any,
     }
 }
 
@@ -362,563 +339,8 @@ pub fn catmull_rom(t: f32) -> [f32; 4] {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct HeightmapLayer {
-    pub image: Arc<HeightImage>,
-    pub min: Vec2,
-    pub size: Vec2,
-    pub low: f32,
-    pub high: f32,
-    pub falloff: f32,
-    pub blend: Blend,
-    pub uri: Option<String>,
-    pub source: Option<String>,
-    pub attribution: Option<String>,
-}
-
-impl HeightmapLayer {
-    pub(crate) fn texel(&self) -> f32 {
-        let image = &self.image;
-        max(
-            self.size.x / (image.width - 1) as f32,
-            self.size.y / (image.height - 1) as f32,
-        )
-    }
-
-    fn level_for(&self, spacing: f32) -> usize {
-        let texel = self.texel();
-        let mut level = 0;
-        while level < self.image.levels() && texel * (2_u32 << level) as f32 <= spacing * 1.0001 {
-            level += 1;
-        }
-        level
-    }
-
-    #[inline]
-    fn at(&self, x: f32, z: f32, level: usize) -> (f32, f32) {
-        let local = Vec2::new(x, z) - self.min;
-        let inside = min(
-            min(local.x, self.size.x - local.x),
-            min(local.y, self.size.y - local.y),
-        );
-        if inside < 0.0 {
-            return (0.0, 0.0);
-        }
-        let weight = if self.falloff > 0.0 {
-            smooth(inside / self.falloff)
-        } else {
-            1.0
-        };
-        let u = local.x / self.size.x * (self.image.width - 1) as f32;
-        let v = local.y / self.size.y * (self.image.height - 1) as f32;
-        let value = self.image.sample(u, v, level) * (1.0 / 65_535.0);
-        (self.low + (self.high - self.low) * value, weight)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Layer {
-    Noise(NoiseLayer),
-    Heightmap(HeightmapLayer),
-    Stamp(Stamp),
-    Rivers(Arc<RiversLayer>),
-    Hydrology(HydrologyStage),
-    Erosion(ErosionStage),
-    Path(PathStage),
-    Steps(StepsLayer),
-    Hummocks(HummocksLayer),
-}
-
-pub type PathStage = Stage<PathBake>;
-
-pub type ErosionStage = Stage<ErosionBake>;
-
-pub type HydrologyStage = Stage<HydrologyBake>;
-
-fn layer_error(index: usize, kind: &str, invalid: InvalidSetting) -> Error {
-    setting_error(invalid, &format!("$.layers[{index}].{kind}"))
-}
-
-fn missing_hydrology(index: usize, kind: &str) -> Error {
-    Error::new(ErrorCode::MissingLayer, format!("$.layers[{index}].{kind}")).variants(["hydrology"])
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Octave {
-    m: [f32; 4],
-    t: [f32; 2],
-    amplitude: f32,
-    wavelength: f32,
-    seed: u32,
-}
-
-impl Octave {
-    #[inline(always)]
-    fn lattice(&self, x: f32, z: f32) -> (f32, f32) {
-        (
-            self.m[0] * x + self.m[1] * z + self.t[0],
-            self.m[2] * x + self.m[3] * z + self.t[1],
-        )
-    }
-
-    #[inline(always)]
-    fn lattice4(&self, x: Vec4, z: Vec4) -> (Vec4, Vec4) {
-        (
-            self.m[0] * x + self.m[1] * z + self.t[0],
-            self.m[2] * x + self.m[3] * z + self.t[1],
-        )
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct GullyOctave {
-    cell: f32,
-    depth: f32,
-    seed: u32,
-}
-
-const OCTAVES: usize = 28;
-const GULLY_OCTAVES: usize = 5;
-
-pub(crate) const STATE_HEAD: usize = 6;
-pub(crate) const STATE_OCTAVE: usize = 1;
-
-pub(crate) const fn state_len(octaves: usize) -> usize {
-    STATE_HEAD + STATE_OCTAVE * octaves
-}
-
-#[derive(Clone, Copy, Debug)]
-struct Sums {
-    rolling: f32,
-    ridged: f32,
-    weight: f32,
-    lattice_slope: [f32; 2],
-}
-
-impl Sums {
-    const START: Self = Self {
-        rolling: 0.0,
-        ridged: 0.0,
-        weight: 1.0,
-        lattice_slope: [0.0; 2],
-    };
-
-    #[inline(always)]
-    fn add(&mut self, octave: &Octave, smoothing: f32, [n, nx, nz]: [f32; 3]) -> (f32, f32) {
-        self.lattice_slope[0] += nx;
-        self.lattice_slope[1] += nz;
-        let damping = 1.0
-            / (1.0
-                + smoothing
-                    * (self.lattice_slope[0] * self.lattice_slope[0]
-                        + self.lattice_slope[1] * self.lattice_slope[1]));
-        let a = octave.amplitude * damping;
-        self.rolling += a * n;
-        (a, self.add_ridged(octave, n))
-    }
-
-    #[inline(always)]
-    fn add_ridged(&mut self, octave: &Octave, n: f32) -> f32 {
-        let crest = 1.0 - n.abs();
-        let weighted = crest * self.weight;
-        let signal = crest * weighted;
-        self.ridged += octave.amplitude * signal;
-        self.weight = clamp(signal * 2.0, 0.0, 1.0);
-        weighted
-    }
-}
-
-struct Sums4 {
-    rolling: Vec4,
-    ridged: Vec4,
-    weight: Vec4,
-    lattice_slope: [Vec4; 2],
-}
-
-impl Sums4 {
-    const START: Self = Self {
-        rolling: Vec4::ZERO,
-        ridged: Vec4::ZERO,
-        weight: Vec4::ONE,
-        lattice_slope: [Vec4::ZERO; 2],
-    };
-
-    #[inline(always)]
-    fn add(&mut self, octave: &Octave, smoothing: f32, [n, nx, nz]: [Vec4; 3]) -> (Vec4, Vec4) {
-        self.lattice_slope[0] += nx;
-        self.lattice_slope[1] += nz;
-        let damping = 1.0
-            / (1.0
-                + smoothing
-                    * (self.lattice_slope[0] * self.lattice_slope[0]
-                        + self.lattice_slope[1] * self.lattice_slope[1]));
-        let a = octave.amplitude * damping;
-        self.rolling += a * n;
-        (a, self.add_ridged(octave, n))
-    }
-
-    #[inline(always)]
-    fn add_ridged(&mut self, octave: &Octave, n: Vec4) -> Vec4 {
-        let crest = 1.0 - n.abs();
-        let weighted = crest * self.weight;
-        let signal = crest * weighted;
-        self.ridged += octave.amplitude * signal;
-        self.weight = min4(max4(signal * 2.0, Vec4::ZERO), Vec4::ONE);
-        weighted
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NoiseTables {
-    params: NoiseLayer,
-    octaves: [Octave; OCTAVES],
-    gullies: [GullyOctave; GULLY_OCTAVES],
-}
-
-pub(crate) const COARSE_SAMPLES: f32 = 32.0;
-pub(crate) const FINEST_SAMPLES: f32 = 4.0;
-pub(crate) const GULLY_SAMPLES: f32 = 16.0;
-const CREASE: f32 = 1.0;
-
-impl NoiseTables {
-    fn new(params: NoiseLayer) -> Self {
-        let (cos, sin) = (0.8_f64, 0.6_f64);
-        let gain = 0.35 + 0.3 * f64::from(params.roughness);
-        let mut amplitude = 1.0 - gain;
-        let mut m = [
-            1.0 / f64::from(params.wavelength),
-            0.0,
-            0.0,
-            1.0 / f64::from(params.wavelength),
-        ];
-        let octaves = std::array::from_fn(|o| {
-            let octave = Octave {
-                m: m.map(|value| value as f32),
-                t: [
-                    (o as f64 * 17.137 + 0.31) as f32,
-                    (o as f64 * 31.713 + 0.73) as f32,
-                ],
-                amplitude: amplitude as f32,
-                wavelength: (f64::from(params.wavelength) / f64::from(1u32 << o.min(31))) as f32,
-                seed: params
-                    .seed
-                    .wrapping_add((o as u32).wrapping_mul(0x9e37_79b9)),
-            };
-            amplitude *= gain;
-            m = [
-                2.0 * (cos * m[0] - sin * m[2]),
-                2.0 * (cos * m[1] - sin * m[3]),
-                2.0 * (sin * m[0] + cos * m[2]),
-                2.0 * (sin * m[1] + cos * m[3]),
-            ];
-            octave
-        });
-        let gullies = std::array::from_fn(|k| {
-            let cell = params.wavelength / (8u32 << k) as f32;
-            GullyOctave {
-                cell,
-                depth: 0.05 * cell,
-                seed: params.seed ^ 0x6a09_e667_u32.wrapping_add(k as u32),
-            }
-        });
-        Self {
-            params,
-            octaves,
-            gullies,
-        }
-    }
-
-    pub(crate) fn bands(&self, spacing: f32) -> (usize, std::ops::Range<usize>, usize) {
-        let coarse = self
-            .octaves
-            .iter()
-            .take_while(|octave| octave.wavelength >= COARSE_SAMPLES * spacing)
-            .count();
-        let fine = coarse
-            + self.octaves[coarse..]
-                .iter()
-                .take_while(|octave| octave.wavelength >= FINEST_SAMPLES * spacing)
-                .count();
-        let gullies = self
-            .gullies
-            .iter()
-            .take_while(|octave| octave.cell >= GULLY_SAMPLES * spacing)
-            .count();
-        (coarse, coarse..fine, gullies)
-    }
-
-    #[inline]
-    fn warp4(&self, x: Vec4, z: Vec4) -> [Vec4; 2] {
-        let warp = self.params.warp;
-        if warp == 0.0 {
-            return [Vec4::ZERO; 2];
-        }
-        let w = self.params.wavelength;
-        let (u, v) = (x / w, z / w);
-        let seed = self.params.seed ^ 0xbb67_ae85;
-        let a = gradient_value4(u * 0.75 + 11.3, v * 0.75 + 7.1, seed)
-            + 0.5 * gradient_value4(u * 1.5 - 3.7, v * 1.5 + 19.9, seed ^ 1);
-        let b = gradient_value4(u * 0.75 - 23.9, v * 0.75 + 41.7, seed ^ 2)
-            + 0.5 * gradient_value4(u * 1.5 + 29.3, v * 1.5 - 13.1, seed ^ 3);
-        let reach = warp * w * 0.35;
-        [reach * a, reach * b]
-    }
-
-    #[inline]
-    fn warp(&self, x: f32, z: f32) -> [f32; 2] {
-        let warp = self.params.warp;
-        if warp == 0.0 {
-            return [0.0; 2];
-        }
-        let w = self.params.wavelength;
-        let (u, v) = (x / w, z / w);
-        let seed = self.params.seed ^ 0xbb67_ae85;
-        let a = gradient_value(u * 0.75 + 11.3, v * 0.75 + 7.1, seed)
-            + 0.5 * gradient_value(u * 1.5 - 3.7, v * 1.5 + 19.9, seed ^ 1);
-        let b = gradient_value(u * 0.75 - 23.9, v * 0.75 + 41.7, seed ^ 2)
-            + 0.5 * gradient_value(u * 1.5 + 29.3, v * 1.5 - 13.1, seed ^ 3);
-        let reach = warp * w * 0.35;
-        [reach * a, reach * b]
-    }
-
-    pub(crate) fn coarse(
-        &self,
-        x: f32,
-        z: f32,
-        octaves: usize,
-        gully_octaves: usize,
-        state: &mut [f32],
-    ) {
-        let params = &self.params;
-        let warp = self.warp(x, z);
-        let (px, pz) = (x + warp[0], z + warp[1]);
-        let mut sums = Sums::START;
-        let mut terms = [[0.0_f32; 6]; GULLY_OCTAVES + 1];
-        let mut blended = [0.0_f32; GULLY_OCTAVES];
-        let values = state[STATE_HEAD..].iter_mut();
-        for ((index, octave), value) in self.octaves[..octaves].iter().enumerate().zip(values) {
-            let (qx, qz) = octave.lattice(px, pz);
-            let noise = gradient_noise(qx, qz, octave.seed);
-            let [n, nx, nz] = noise;
-            *value = n;
-            let gx = octave.m[0] * nx + octave.m[2] * nz;
-            let gz = octave.m[1] * nx + octave.m[3] * nz;
-            let (a, weighted) = sums.add(octave, params.smoothing, noise);
-            if let Some(term) = terms.get_mut(index) {
-                let ridge = -2.0 * weighted * octave.amplitude;
-                *term = [a * gx, a * gz, ridge * gx, ridge * gz, n, gx * gx + gz * gz];
-            }
-            if let Some(slot) = index.checked_sub(1).and_then(|k| blended.get_mut(k)) {
-                *slot = blend(sums.rolling, sums.ridged, params.ridges);
-            }
-        }
-        let mut gully_heights = 0.0;
-        for (k, (octave, mixed)) in self.gullies[..gully_octaves]
-            .iter()
-            .zip(blended)
-            .enumerate()
-        {
-            let width = CREASE * octave.cell;
-            let (mut rolling, mut ridged) = ([0.0_f32; 2], [0.0_f32; 2]);
-            for [rx, rz, gx, gz, n, slope] in &terms[..k + 2] {
-                rolling[0] += rx;
-                rolling[1] += rz;
-                let turn = n / max((n * n + width * width * slope).sqrt(), 1.0e-12);
-                ridged[0] += turn * gx;
-                ridged[1] += turn * gz;
-            }
-            let mx = blend_gradient(rolling[0], ridged[0], params.ridges);
-            let mz = blend_gradient(rolling[1], ridged[1], params.ridges);
-            let h = clamp(mixed, 0.0, 1.0);
-            let shape_slope = params.height * (1.0 + params.valleys * (2.0 * h - 1.0));
-            let (gx, gz) = (shape_slope * mx, shape_slope * mz);
-            let slope = (gx * gx + gz * gz).sqrt();
-            let inverse = 1.0 / max(slope, 1.0e-6);
-            let across = [-gz * inverse, gx * inverse];
-            let [c, _] = gullies(px / octave.cell, pz / octave.cell, across, octave.seed);
-            let depth = octave.depth * params.erosion * smooth((slope - 0.05) * (1.0 / 0.45));
-            gully_heights += depth * c;
-        }
-        state[..STATE_HEAD].copy_from_slice(&[
-            warp[0],
-            warp[1],
-            gully_heights,
-            sums.rolling,
-            sums.lattice_slope[0],
-            sums.lattice_slope[1],
-        ]);
-    }
-
-    pub(crate) fn coarse4(
-        &self,
-        x: Vec4,
-        z: f32,
-        octaves: usize,
-        gully_octaves: usize,
-        out: &mut [f32],
-    ) {
-        let params = &self.params;
-        let warp = self.warp4(x, Vec4::splat(z));
-        let (px, pz) = (x + warp[0], z + warp[1]);
-        let mut sums = Sums4::START;
-        let mut terms = [[Vec4::ZERO; 6]; GULLY_OCTAVES + 1];
-        let mut blended = [Vec4::ZERO; GULLY_OCTAVES];
-        let mut values = [Vec4::ZERO; OCTAVES];
-        for ((index, octave), value) in self.octaves[..octaves].iter().enumerate().zip(&mut values)
-        {
-            let (qx, qz) = octave.lattice4(px, pz);
-            let noise = gradient_noise4(qx, qz, octave.seed);
-            let [n, nx, nz] = noise;
-            *value = n;
-            let gx = octave.m[0] * nx + octave.m[2] * nz;
-            let gz = octave.m[1] * nx + octave.m[3] * nz;
-            let (a, weighted) = sums.add(octave, params.smoothing, noise);
-            if let Some(term) = terms.get_mut(index) {
-                let ridge = -2.0 * weighted * octave.amplitude;
-                *term = [a * gx, a * gz, ridge * gx, ridge * gz, n, gx * gx + gz * gz];
-            }
-            if let Some(slot) = index.checked_sub(1).and_then(|k| blended.get_mut(k)) {
-                *slot = blend4(sums.rolling, sums.ridged, params.ridges);
-            }
-        }
-        let mut gully_heights = Vec4::ZERO;
-        for (k, (octave, mixed)) in self.gullies[..gully_octaves]
-            .iter()
-            .zip(blended)
-            .enumerate()
-        {
-            let width = CREASE * octave.cell;
-            let (mut rolling, mut ridged) = ([Vec4::ZERO; 2], [Vec4::ZERO; 2]);
-            for &[rx, rz, gx, gz, n, slope] in &terms[..k + 2] {
-                rolling[0] += rx;
-                rolling[1] += rz;
-                let turn = n / max4(sqrt4(n * n + width * width * slope), Vec4::splat(1.0e-12));
-                ridged[0] += turn * gx;
-                ridged[1] += turn * gz;
-            }
-            let mx = blend_gradient4(rolling[0], ridged[0], params.ridges);
-            let mz = blend_gradient4(rolling[1], ridged[1], params.ridges);
-            let h = min4(max4(mixed, Vec4::ZERO), Vec4::ONE);
-            let shape_slope = params.height * (1.0 + params.valleys * (2.0 * h - 1.0));
-            let (gx, gz) = (shape_slope * mx, shape_slope * mz);
-            let slope = sqrt4(gx * gx + gz * gz);
-            let inverse = 1.0 / max4(slope, Vec4::splat(1.0e-6));
-            let across = [-gz * inverse, gx * inverse];
-            let c = gullies4(px / octave.cell, pz / octave.cell, across, octave.seed);
-            let depth = octave.depth * params.erosion * smooth4((slope - 0.05) * (1.0 / 0.45));
-            gully_heights += depth * c;
-        }
-        let head = [
-            warp[0],
-            warp[1],
-            gully_heights,
-            sums.rolling,
-            sums.lattice_slope[0],
-            sums.lattice_slope[1],
-        ];
-        for (lane, state) in out.chunks_exact_mut(state_len(octaves)).take(4).enumerate() {
-            let (first, rest) = state.split_at_mut(STATE_HEAD);
-            for (value, lanes) in first.iter_mut().zip(&head) {
-                *value = lanes[lane];
-            }
-            for (value, lanes) in rest.iter_mut().zip(&values) {
-                *value = lanes[lane];
-            }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn finish(
-        &self,
-        x: f32,
-        z: f32,
-        state: &[f32],
-        octaves: usize,
-        fine: std::ops::Range<usize>,
-    ) -> f32 {
-        let params = &self.params;
-        let (px, pz) = (x + state[0], z + state[1]);
-        let mut sums = Sums {
-            rolling: state[3],
-            lattice_slope: [state[4], state[5]],
-            ..Sums::START
-        };
-        for (octave, &n) in self.octaves[..octaves].iter().zip(&state[STATE_HEAD..]) {
-            sums.add_ridged(octave, n);
-        }
-        for octave in &self.octaves[fine] {
-            let (qx, qz) = octave.lattice(px, pz);
-            sums.add(
-                octave,
-                params.smoothing,
-                gradient_noise(qx, qz, octave.seed),
-            );
-        }
-        let h = clamp(blend(sums.rolling, sums.ridged, params.ridges), 0.0, 1.0);
-        let shaped = h + params.valleys * (h * h - h);
-        params.offset + params.height * shaped + state[2]
-    }
-
-    #[inline]
-    pub(crate) fn finish4(
-        &self,
-        x: Vec4,
-        z: f32,
-        state: &[Vec4],
-        octaves: usize,
-        fine: std::ops::Range<usize>,
-    ) -> Vec4 {
-        let params = &self.params;
-        let (px, pz) = (x + state[0], z + state[1]);
-        let mut sums = Sums4 {
-            rolling: state[3],
-            ridged: Vec4::ZERO,
-            weight: Vec4::ONE,
-            lattice_slope: [state[4], state[5]],
-        };
-        for (octave, &n) in self.octaves[..octaves].iter().zip(&state[STATE_HEAD..]) {
-            sums.add_ridged(octave, n);
-        }
-        for octave in &self.octaves[fine] {
-            let (qx, qz) = octave.lattice4(px, pz);
-            sums.add(
-                octave,
-                params.smoothing,
-                gradient_noise4(qx, qz, octave.seed),
-            );
-        }
-        let h = min4(
-            max4(blend4(sums.rolling, sums.ridged, params.ridges), Vec4::ZERO),
-            Vec4::ONE,
-        );
-        let shaped = h + params.valleys * (h * h - h);
-        params.offset + params.height * shaped + state[2]
-    }
-}
-
-#[inline(always)]
-fn blend(rolling: f32, ridged: f32, ridges: f32) -> f32 {
-    0.5 + 0.8 * rolling + ridges * (ridged - 0.5 - 0.8 * rolling)
-}
-
-#[inline(always)]
-fn blend_gradient(rolling: f32, ridged: f32, ridges: f32) -> f32 {
-    0.8 * rolling + ridges * (ridged - 0.8 * rolling)
-}
-
-#[inline(always)]
-fn blend4(rolling: Vec4, ridged: Vec4, ridges: f32) -> Vec4 {
-    0.5 + 0.8 * rolling + ridges * (ridged - 0.5 - 0.8 * rolling)
-}
-
-#[inline(always)]
-fn blend_gradient4(rolling: Vec4, ridged: Vec4, ridges: f32) -> Vec4 {
-    0.8 * rolling + ridges * (ridged - 0.8 * rolling)
-}
-
-#[derive(Clone, Debug, PartialEq)]
 pub struct Layers {
-    layers: Vec<Layer>,
-    tables: Vec<Option<NoiseTables>>,
+    layers: Vec<Arc<dyn TerrainLayer>>,
     pub(crate) offset: Vec2,
     pub(crate) fade: Option<Fade>,
 }
@@ -930,113 +352,35 @@ pub(crate) struct Fade {
     pub(crate) blend: f32,
 }
 
-fn check_stamp(index: usize, stamp: &Stamp) -> Result<(), Error> {
-    stamp
-        .validate()
-        .map_err(|invalid| layer_error(index, "stamp", invalid))
-}
-
-const HEIGHTMAP_MIN: Rule = Rule::Range(
-    -Layers::MAX_COORDINATE as f64,
-    Layers::MAX_COORDINATE as f64,
-);
-const HEIGHTMAP_SIZE: Rule = Rule::Range(1.0e-3, Layers::MAX_COORDINATE as f64);
-const HEIGHTMAP_HEIGHT: Rule = Rule::Range(-MAX_HEIGHT as f64, MAX_HEIGHT as f64);
-const HEIGHTMAP_FALLOFF: Rule = Rule::Range(0.0, Layers::MAX_COORDINATE as f64);
-
-impl HeightmapLayer {
-    pub fn rule_of(field: &str) -> Option<Rule> {
-        match field {
-            "min" => Some(HEIGHTMAP_MIN),
-            "size" => Some(HEIGHTMAP_SIZE),
-            "low" | "high" => Some(HEIGHTMAP_HEIGHT),
-            "falloff" => Some(HEIGHTMAP_FALLOFF),
-            _ => None,
-        }
-    }
-
-    fn validate(&self) -> Result<(), InvalidSetting> {
-        self.min.to_array().check("min", HEIGHTMAP_MIN)?;
-        self.size.to_array().check("size", HEIGHTMAP_SIZE)?;
-        self.low.check("low", HEIGHTMAP_HEIGHT)?;
-        self.high.check("high", HEIGHTMAP_HEIGHT)?;
-        self.falloff.check("falloff", HEIGHTMAP_FALLOFF)
-    }
-}
-
 impl Layers {
     pub const MAX_COORDINATE: f32 = 1.0e7;
 
-    pub fn new(layers: Vec<Layer>) -> Result<Self, Error> {
-        let last_hydrology = layers
-            .iter()
-            .rposition(|layer| matches!(layer, Layer::Hydrology(_)));
+    pub fn new(layers: Vec<Arc<dyn TerrainLayer>>) -> Result<Self, Error> {
         for (index, layer) in layers.iter().enumerate() {
-            let (kind, checked) = match layer {
-                Layer::Noise(noise) => ("noise", noise.validate()),
-                Layer::Heightmap(map) => ("heightmap", map.validate()),
-                Layer::Stamp(stamp) => ("stamp", stamp.validate()),
-                Layer::Rivers(rivers) => ("rivers", rivers.validate()),
-                Layer::Erosion(stage) => ("erosion", stage.layer.validate()),
-                Layer::Path(stage) => ("path", stage.layer.validate()),
-                Layer::Hydrology(stage) => ("hydrology", stage.layer.validate()),
-                Layer::Steps(steps) => ("steps", steps.validate()),
-                Layer::Hummocks(hummocks) => ("hummocks", hummocks.validate()),
-            };
-            checked.map_err(|invalid| layer_error(index, kind, invalid))?;
-            if matches!(layer, Layer::Steps(_) | Layer::Hummocks(_)) && last_hydrology.is_none() {
-                return Err(missing_hydrology(index, kind));
-            }
+            layer
+                .check(Place {
+                    layers: &layers,
+                    index,
+                })
+                .map_err(|error| error.within(&format!("$.layers[{index}]")))?;
         }
-        if let Some(index) = layers.iter().enumerate().position(|(index, layer)| {
-            matches!(layer, Layer::Rivers(_)) && last_hydrology.is_none_or(|last| last < index)
-        }) {
-            return Err(missing_hydrology(index, "rivers"));
-        }
-        let tables = layers
-            .iter()
-            .map(|layer| match layer {
-                Layer::Noise(noise) => Some(NoiseTables::new(*noise)),
-                Layer::Heightmap(_)
-                | Layer::Stamp(_)
-                | Layer::Rivers(_)
-                | Layer::Hydrology(_)
-                | Layer::Erosion(_)
-                | Layer::Path(_)
-                | Layer::Steps(_)
-                | Layer::Hummocks(_) => None,
-            })
-            .collect();
         Ok(Self {
             layers,
-            tables,
             offset: Vec2::ZERO,
             fade: None,
         })
     }
 
-    pub fn layers(&self) -> &[Layer] {
+    pub fn layers(&self) -> &[Arc<dyn TerrainLayer>] {
         &self.layers
     }
 
     pub fn may_hole(&self) -> bool {
-        self.layers.iter().any(|layer| match layer {
-            Layer::Stamp(stamp) => matches!(stamp.op, StampOp::Hole),
-            Layer::Path(stage) => stage.layer.tunnel_cut > 0.0,
-            Layer::Noise(_)
-            | Layer::Heightmap(_)
-            | Layer::Rivers(_)
-            | Layer::Hydrology(_)
-            | Layer::Erosion(_)
-            | Layer::Steps(_)
-            | Layer::Hummocks(_) => false,
-        })
+        self.layers.iter().any(|layer| layer.may_hole())
     }
 
     pub fn has_hydrology(&self) -> bool {
-        self.layers
-            .iter()
-            .any(|layer| matches!(layer, Layer::Hydrology(_)))
+        self.layers.iter().any(|layer| layer.makes_water())
     }
 
     #[must_use]
@@ -1080,15 +424,25 @@ impl Layers {
 
     pub fn with_stamps(&self, stamps: &[Stamp]) -> Result<Self, Error> {
         let mut layers = self.layers.clone();
-        let mut tables = self.tables.clone();
-        for (offset, stamp) in stamps.iter().enumerate() {
-            check_stamp(self.layers.len() + offset, stamp)?;
-            layers.push(Layer::Stamp(*stamp));
-            tables.push(None);
+        if !stamps.is_empty() {
+            let kind = layer_kind(STAMP).ok_or_else(|| {
+                Error::new(ErrorCode::MissingLayer, "$.stamps").variants([STAMP])
+            })?;
+            for (offset, stamp) in stamps.iter().enumerate() {
+                let at = format!("$.layers[{}]", self.layers.len() + offset);
+                stamp.validate().map_err(|invalid| {
+                    Error::from(invalid)
+                        .coded(ErrorCode::InvalidTerrain)
+                        .within(&at)
+                })?;
+                let bytes = crate::codec::encode(stamp);
+                let made =
+                    (kind.read)(&mut Reader::new(&bytes)).map_err(|error| error.within(&at))?;
+                layers.push(made);
+            }
         }
         Ok(Self {
             layers,
-            tables,
             offset: self.offset,
             fade: self.fade,
         })
@@ -1096,46 +450,35 @@ impl Layers {
 
     #[must_use]
     pub fn with_drawn(&self, drawn: &[GivenRiver], baked: Option<&Self>) -> Self {
-        let Some(first) = self
-            .layers
-            .iter()
-            .position(|layer| matches!(layer, Layer::Hydrology(_)))
-        else {
+        let Some(first) = self.layers.iter().position(|layer| layer.makes_water()) else {
             return self.clone();
         };
-        let mut layers: Vec<Layer> = self.layers.iter().map(unbaked).collect();
-        let mut tables = self.tables.clone();
+        let mut layers: Vec<Arc<dyn TerrainLayer>> = self.layers.iter().map(unbaked).collect();
         if let Some(baked) = baked {
             for (layer, done) in layers[..first].iter_mut().zip(&baked.layers) {
-                if unbaked(done) == *layer {
+                if unbaked(done).same(layer.as_ref()) {
                     *layer = done.clone();
                 }
             }
         }
-        if !drawn.is_empty() {
-            layers.insert(
-                first,
-                Layer::Rivers(Arc::new(RiversLayer {
-                    lines: drawn.to_vec(),
-                    ..RiversLayer::default()
-                })),
-            );
-            tables.insert(first, None);
+        if !drawn.is_empty()
+            && let Some(rivers) = drawn_rivers(drawn)
+        {
+            layers.insert(first, rivers);
         }
         Self {
             layers,
-            tables,
             offset: self.offset,
             fade: self.fade,
         }
     }
 
     pub fn changes_from(&self, before: &Self) -> Option<Vec<(Vec2, Vec2)>> {
-        let shown = |stack: &Self| -> Vec<Layer> {
+        let shown = |stack: &Self| -> Vec<Arc<dyn TerrainLayer>> {
             stack
                 .layers
                 .iter()
-                .filter(|layer| !matches!(layer, Layer::Rivers(_)))
+                .filter(|layer| layer.given_rivers().is_none())
                 .cloned()
                 .collect()
         };
@@ -1145,278 +488,71 @@ impl Layers {
         }
         let mut regions = Vec::new();
         for (now, then) in now.iter().zip(&then) {
-            if now == then {
+            if now.same(then.as_ref()) {
                 continue;
             }
-            match (now, then) {
-                (Layer::Hydrology(now), Layer::Hydrology(then)) if now.layer == then.layer => {
-                    let (Some(now), Some(then)) = (&now.baked, &then.baked) else {
-                        return None;
-                    };
-                    if now.flow != then.flow
-                        || now.wetness != then.wetness
-                        || now.lakes != then.lakes
-                        || now.water != then.water
-                    {
-                        return None;
-                    }
-                    regions.extend(now.rivers.changes_from(&then.rivers));
-                }
-                (Layer::Path(now), Layer::Path(then)) if now.layer == then.layer => {
-                    let (Some(now), Some(then)) = (&now.baked, &then.baked) else {
-                        return None;
-                    };
-                    let ((low, high), (from, to)) = (now.bounds(), then.bounds());
-                    regions.push((low.min(from), high.max(to)));
-                }
-                _ => return None,
-            }
+            regions.extend(now.changed_regions(then.as_ref())?);
         }
         Some(regions)
-    }
-
-    pub(crate) fn layer_mut(&mut self, index: usize) -> Option<&mut Layer> {
-        self.layers.get_mut(index)
     }
 
     #[must_use]
     pub fn below(&self, index: usize) -> Self {
         Self {
             layers: self.layers[..index].to_vec(),
-            tables: self.tables[..index].to_vec(),
             offset: self.offset,
             fade: self.fade,
         }
     }
 
+    pub fn unbaked(&self) -> Option<usize> {
+        self.layers.iter().position(|layer| layer.needs_bake())
+    }
+
+    #[must_use]
+    pub fn with_baked(&self, index: usize, baked: Arc<dyn TerrainLayer>) -> Self {
+        let mut layers = self.clone();
+        layers.layers[index] = baked;
+        layers
+    }
+
     pub fn hydrology(&self) -> Option<&Hydrology> {
-        self.hydrology_layer().map(|(_, hydrology)| hydrology)
+        self.layers.iter().find_map(|layer| layer.water())
     }
 
     pub(crate) fn hydrology_layer(&self) -> Option<(usize, &Hydrology)> {
         self.layers
             .iter()
             .enumerate()
-            .find_map(|(index, layer)| match layer {
-                Layer::Hydrology(HydrologyStage {
-                    baked: Some(baked), ..
-                }) => Some((index, baked.as_ref())),
-                Layer::Noise(_)
-                | Layer::Heightmap(_)
-                | Layer::Stamp(_)
-                | Layer::Rivers(_)
-                | Layer::Hydrology(_)
-                | Layer::Erosion(_)
-                | Layer::Path(_)
-                | Layer::Steps(_)
-                | Layer::Hummocks(_) => None,
-            })
+            .find_map(|(index, layer)| layer.water().map(|water| (index, water)))
     }
 
-    pub(crate) fn rivers_of(&self, index: usize) -> Option<&crate::Rivers> {
-        match self.layers.get(index) {
-            Some(Layer::Hydrology(HydrologyStage {
-                baked: Some(baked), ..
-            })) if !baked.rivers.is_empty() => Some(&baked.rivers),
-            _ => None,
-        }
+    pub(crate) fn rivers_of(&self, index: usize) -> Option<&Rivers> {
+        self.layers
+            .get(index)?
+            .water()
+            .map(|water| &water.rivers)
+            .filter(|rivers| !rivers.is_empty())
     }
 
-    pub fn path_profiles(&self) -> impl Iterator<Item = &crate::path::PathProfile> {
-        self.layers.iter().filter_map(|layer| match layer {
-            Layer::Path(PathStage {
-                baked: Some(profile),
-                ..
-            }) => Some(profile.as_ref()),
-            Layer::Noise(_)
-            | Layer::Heightmap(_)
-            | Layer::Stamp(_)
-            | Layer::Rivers(_)
-            | Layer::Hydrology(_)
-            | Layer::Erosion(_)
-            | Layer::Path(_)
-            | Layer::Steps(_)
-            | Layer::Hummocks(_) => None,
-        })
+    pub fn bridges(&self) -> Vec<Bridge> {
+        self.layers.iter().flat_map(|layer| layer.bridges()).collect()
     }
 
     pub fn path_at(&self, x: f32, z: f32) -> PathSample {
-        let point = Vec2::new(x, z);
-        self.layers
-            .iter()
-            .fold(PathSample::FAR, |nearest, layer| match layer {
-                Layer::Path(PathStage {
-                    baked: Some(profile),
-                    ..
-                }) => {
-                    let sample = profile.sample(point);
-                    if sample.edge() < nearest.edge() {
-                        sample
-                    } else {
-                        nearest
-                    }
-                }
-                Layer::Noise(_)
-                | Layer::Heightmap(_)
-                | Layer::Stamp(_)
-                | Layer::Rivers(_)
-                | Layer::Hydrology(_)
-                | Layer::Erosion(_)
-                | Layer::Path(_)
-                | Layer::Steps(_)
-                | Layer::Hummocks(_) => nearest,
-            })
+        nearest_path(&self.layers, Vec2::new(x, z))
     }
 
-    pub fn changes(&self) -> impl Iterator<Item = crate::layer::ChangeMap<'_>> + '_ {
-        self.layers.iter().filter_map(|layer| {
-            if let Layer::Erosion(ErosionStage {
-                baked: Some(erosion),
-                ..
-            }) = layer
-            {
-                Some(crate::layer::ChangeMap {
-                    spacing: erosion.spacing,
-                    image: &erosion.change,
-                    range: erosion.range,
-                })
-            } else {
-                None
-            }
-        })
-    }
-
-    pub(crate) fn noise(&self, index: usize) -> Option<&NoiseTables> {
-        self.tables.get(index).and_then(Option::as_ref)
+    pub fn changes(&self) -> impl Iterator<Item = ChangeMap<'_>> + '_ {
+        self.layers.iter().filter_map(|layer| layer.change())
     }
 
     pub fn holes_reach(&self, min: Vec2, max: Vec2) -> bool {
-        self.layers.iter().any(|layer| match layer {
-            Layer::Stamp(
-                stamp @ Stamp {
-                    op: StampOp::Hole, ..
-                },
-            ) => reaches(stamp.center, stamp.radius, min, max),
-            Layer::Path(PathStage {
-                baked: Some(profile),
-                ..
-            }) => profile.portal_bounds().is_some_and(|(low, high)| {
-                low.x <= max.x && low.y <= max.y && high.x >= min.x && high.y >= min.y
-            }),
-            Layer::Noise(_)
-            | Layer::Heightmap(_)
-            | Layer::Stamp(_)
-            | Layer::Rivers(_)
-            | Layer::Hydrology(_)
-            | Layer::Erosion(_)
-            | Layer::Path(_)
-            | Layer::Steps(_)
-            | Layer::Hummocks(_) => false,
-        })
+        self.layers.iter().any(|layer| layer.holes_reach(min, max))
     }
 
     pub fn hole_at(&self, x: f32, z: f32) -> bool {
-        self.layers.iter().any(|layer| match layer {
-            Layer::Stamp(
-                stamp @ Stamp {
-                    op: StampOp::Hole, ..
-                },
-            ) => {
-                let dx = x - stamp.center[0];
-                let dz = z - stamp.center[1];
-                dx * dx + dz * dz < stamp.radius * stamp.radius
-            }
-            Layer::Path(PathStage {
-                baked: Some(profile),
-                ..
-            }) => profile.portal_hole(Vec2::new(x, z)),
-            Layer::Noise(_)
-            | Layer::Heightmap(_)
-            | Layer::Stamp(_)
-            | Layer::Rivers(_)
-            | Layer::Hydrology(_)
-            | Layer::Erosion(_)
-            | Layer::Path(_)
-            | Layer::Steps(_)
-            | Layer::Hummocks(_) => false,
-        })
-    }
-
-    pub(crate) fn apply_local(
-        &self,
-        index: usize,
-        row: &mut [f32],
-        xs: &[f32],
-        z: f32,
-        (min, max): (Vec2, Vec2),
-        spacing: f32,
-    ) {
-        match &self.layers[index] {
-            Layer::Noise(_) | Layer::Rivers(_) => {}
-            Layer::Path(stage) => {
-                let Some(profile) = &stage.baked else {
-                    return;
-                };
-                let (low, high) = profile.bounds();
-                if low.x > max.x || low.y > max.y || high.x < min.x || high.y < min.y {
-                    return;
-                }
-                for (height, &x) in row.iter_mut().zip(xs) {
-                    if let Some((distance, road, false)) = profile.nearest(Vec2::new(x, z)) {
-                        *height += (road - *height) * profile.weight(distance) * self.shown(x, z);
-                    }
-                }
-            }
-            Layer::Erosion(stage) => {
-                let Some(baked) = &stage.baked else {
-                    return;
-                };
-                let below = row.to_vec();
-                baked.wear_row(xs, z, spacing, &below, |index, worn| {
-                    row[index] += worn * self.shown(xs[index], z);
-                });
-            }
-            Layer::Hydrology(stage) => {
-                let Some(baked) = &stage.baked else {
-                    return;
-                };
-                if baked.rivers.is_empty() {
-                    return;
-                }
-                for (height, &x) in row.iter_mut().zip(xs) {
-                    let cut = baked.rivers.cut(x, z, *height, spacing);
-                    *height = self.faded(*height, cut, x, z);
-                }
-            }
-            Layer::Stamp(stamp) => {
-                if !reaches(stamp.center, stamp.reach(), min, max) {
-                    return;
-                }
-                for (height, &x) in row.iter_mut().zip(xs) {
-                    let weight = stamp.weight(x, z) * self.shown(x, z);
-                    *height = match stamp.op {
-                        StampOp::Raise(amount) => *height + amount * weight,
-                        StampOp::Lower(amount) => *height - amount * weight,
-                        StampOp::Flatten(level) => *height + (level - *height) * weight,
-                        StampOp::Hole => *height,
-                    };
-                }
-            }
-            Layer::Heightmap(map) => {
-                let map_max = map.min + map.size;
-                if map.min.x > max.x || map.min.y > max.y || map_max.x < min.x || map_max.y < min.y
-                {
-                    return;
-                }
-                let level = map.level_for(spacing);
-                for (height, &x) in row.iter_mut().zip(xs) {
-                    let (value, weight) = map.at(x, z, level);
-                    *height = map.blend.apply(*height, value, weight * self.shown(x, z));
-                }
-            }
-            Layer::Steps(steps) => steps.apply_row(self, (row, xs, z), spacing),
-            Layer::Hummocks(hummocks) => hummocks.apply_row(self, (row, xs, z), spacing),
-        }
+        self.layers.iter().any(|layer| layer.hole(x, z))
     }
 
     pub(crate) fn cut_rivers(
@@ -1433,7 +569,7 @@ impl Layers {
         }
     }
 
-    fn faded(&self, height: f32, changed: f32, x: f32, z: f32) -> f32 {
+    pub(crate) fn faded(&self, height: f32, changed: f32, x: f32, z: f32) -> f32 {
         let shown = self.shown(x, z);
         if shown >= 1.0 {
             changed
@@ -1441,38 +577,31 @@ impl Layers {
             height + (changed - height) * shown
         }
     }
-
-    pub(crate) fn apply_noise(&self, index: usize, row: &mut [f32], values: &[f32]) {
-        if let Layer::Noise(noise) = &self.layers[index] {
-            let blend = noise.blend;
-            for (height, &value) in row.iter_mut().zip(values) {
-                *height = blend.apply(*height, value, 1.0);
-            }
-        }
-    }
 }
 
-fn unbaked(layer: &Layer) -> Layer {
-    match layer {
-        Layer::Hydrology(stage) => Layer::Hydrology(HydrologyStage {
-            layer: stage.layer,
-            baked: None,
-        }),
-        Layer::Erosion(stage) => Layer::Erosion(ErosionStage {
-            layer: stage.layer,
-            baked: None,
-        }),
-        Layer::Path(stage) => Layer::Path(PathStage {
-            layer: stage.layer.clone(),
-            baked: None,
-        }),
-        Layer::Noise(_)
-        | Layer::Heightmap(_)
-        | Layer::Stamp(_)
-        | Layer::Rivers(_)
-        | Layer::Steps(_)
-        | Layer::Hummocks(_) => layer.clone(),
-    }
+const STAMP: &str = "stamp";
+
+const RIVERS: &str = "rivers";
+
+fn unbaked(layer: &Arc<dyn TerrainLayer>) -> Arc<dyn TerrainLayer> {
+    layer.unbaked().unwrap_or_else(|| layer.clone())
+}
+
+fn drawn_rivers(drawn: &[GivenRiver]) -> Option<Arc<dyn TerrainLayer>> {
+    let kind = layer_kind(RIVERS)?;
+    let lines = serde_json::to_value(drawn).ok()?;
+    let mut settings = serde_json::Map::new();
+    settings.insert("lines".to_owned(), lines);
+    (kind.from_json)(&serde_json::Value::Object(settings), &NoFiles).ok()
+}
+
+pub(crate) fn nearest_path(layers: &[Arc<dyn TerrainLayer>], point: Vec2) -> PathSample {
+    layers
+        .iter()
+        .fold(PathSample::FAR, |nearest, layer| match layer.path(point) {
+            Some(sample) if sample.edge() < nearest.edge() => sample,
+            Some(_) | None => nearest,
+        })
 }
 
 pub fn reaches(center: [f32; 2], radius: f32, min: Vec2, max: Vec2) -> bool {
@@ -1487,20 +616,6 @@ tagged!(Blend {
     1 => Max,
     2 => Min,
     3 => Replace,
-});
-
-record!(NoiseLayer {
-    seed,
-    height,
-    offset,
-    wavelength,
-    ridges,
-    warp,
-    erosion,
-    smoothing,
-    valleys,
-    roughness,
-    blend,
 });
 
 tagged!(StampOp {
@@ -1527,42 +642,23 @@ record!(ImageLevel {
     height,
     samples,
 });
-record!(HeightmapLayer {
-    image,
-    min,
-    size,
-    low,
-    high,
-    falloff,
-    blend,
-    uri,
-    source,
-    attribution,
-});
-record!(PathStage { layer, baked });
-record!(ErosionStage { layer, baked });
-record!(HydrologyStage { layer, baked });
 record!(Fade { low, high, blend });
-
-tagged!(Layer {
-    0 => Noise(layer),
-    1 => Heightmap(layer),
-    2 => Stamp(layer),
-    3 => Hydrology(stage),
-    4 => Erosion(stage),
-    5 => Path(stage),
-    6 => Rivers(layer),
-    7 => Steps(layer),
-    8 => Hummocks(layer),
-});
 
 impl Codec for Layers {
     fn write(&self, out: &mut Writer) {
-        out.put(&self.layers).put(&self.offset).put(&self.fade);
+        out.put(&(self.layers.len() as u64));
+        for layer in &self.layers {
+            write_entry(out, layer.as_ref());
+        }
+        out.put(&self.offset).put(&self.fade);
     }
 
     fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
-        let layers = input.get()?;
+        let count: u64 = input.get()?;
+        let mut layers = Vec::new();
+        for _ in 0..count {
+            layers.push(read_entry(input)?);
+        }
         let offset = input.get()?;
         let fade = input.get()?;
         let mut stack = Self::new(layers)?;

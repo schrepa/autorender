@@ -1,5 +1,6 @@
 use super::*;
-use engine_terrain::{FALLS_SHOWN, FallView, RiverFlowView};
+use engine_terrain::layer::maps;
+use engine_terrain::{FALLS_SHOWN, FallView, RiverFlowView, TerrainLayer};
 
 impl DevTools {
     pub(super) fn register_terrain(&mut self, schemas: &Value) {
@@ -31,40 +32,53 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
             level_errors = errors.to_vec();
             level_ranges = ranges.to_vec();
         }
-        let holds =
-            |wanted: fn(&engine_terrain::Layer) -> bool| terrain.layers.layers().iter().any(wanted);
+        let holds = |wanted: fn(&dyn TerrainLayer) -> bool| {
+            terrain
+                .layers
+                .layers()
+                .iter()
+                .any(|layer| wanted(layer.as_ref()))
+        };
         let bakes = terrains.bakes(entity);
-        if holds(|layer| matches!(layer, engine_terrain::Layer::Hydrology(_))) {
+        if holds(|layer| layer.makes_water()) {
             hydrology = Some(hydrology_view(terrains, entity));
         }
         if let Some(layers) = terrains.layers(entity) {
             for (index, layer) in layers.layers().iter().enumerate() {
-                if let engine_terrain::Layer::Path(stage) = layer {
-                    let stats = stage.baked.as_ref().map(|profile| profile.stats);
+                if publishes(layer.as_ref(), maps::PATH) {
+                    let stats = layer.stats();
+                    let stats = stats.as_ref();
                     paths.push(crate::views::PathView {
                         layer: index,
                         baked: stats.is_some(),
-                        length: stats.map(|stats| stats.length),
-                        samples: stats.map(|stats| stats.samples),
-                        steepest: stats.map(|stats| stats.steepest),
-                        deepest_cut: stats.map(|stats| stats.deepest_cut),
-                        highest_fill: stats.map(|stats| stats.highest_fill),
-                        bridges: stats.map(|stats| stats.bridges),
-                        bridged: stats.map(|stats| stats.bridged),
-                        tunnels: stats.map(|stats| stats.tunnels),
-                        tunneled: stats.map(|stats| stats.tunneled),
+                        length: field(stats, "length"),
+                        samples: field(stats, "samples"),
+                        steepest: field(stats, "steepest"),
+                        deepest_cut: field(stats, "deepest_cut"),
+                        highest_fill: field(stats, "highest_fill"),
+                        bridges: field(stats, "bridges"),
+                        bridged: field(stats, "bridged"),
+                        tunnels: field(stats, "tunnels"),
+                        tunneled: field(stats, "tunneled"),
                     });
                 }
             }
         }
-        if holds(|layer| matches!(layer, engine_terrain::Layer::Erosion(_))) {
-            let stats = bakes.erosion;
+        if holds(|layer| publishes(layer, maps::WORN)) {
+            let stats = terrains.layers(entity).and_then(|layers| {
+                layers
+                    .layers()
+                    .iter()
+                    .find(|layer| publishes(layer.as_ref(), maps::WORN))?
+                    .stats()
+            });
+            let stats = stats.as_ref();
             erosion = Some(crate::views::ErosionView {
                 baking: bakes.baking,
-                samples: stats.map(|stats| stats.samples),
-                rounds: stats.map(|stats| stats.rounds),
-                deepest: stats.map(|stats| stats.deepest),
-                highest: stats.map(|stats| stats.highest),
+                samples: field(stats, "samples"),
+                rounds: field(stats, "rounds"),
+                deepest: field(stats, "deepest"),
+                highest: field(stats, "highest"),
             });
         }
     }
@@ -123,6 +137,14 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
                 drawn: status.drawn,
             }),
     }))
+}
+
+fn publishes(layer: &dyn TerrainLayer, name: &str) -> bool {
+    layer.outputs().iter().any(|output| output == name)
+}
+
+fn field<T: serde::de::DeserializeOwned>(stats: Option<&Value>, name: &str) -> Option<T> {
+    serde_json::from_value(stats?.get(name)?.clone()).ok()
 }
 
 fn hydrology_view(

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use engine_math::{clamp, max, sin_cos};
 
-use crate::erosion::Erosion;
+use crate::layer::ChangeMap;
 use crate::layers::Layers;
 use crate::noise::{gradient_value, smooth};
 use crate::{Generator, MacroCauses, PathSample, Pyramid, TILE_QUADS};
@@ -258,7 +258,7 @@ pub fn macro_colors(
     let extent = pyramid.extent();
     let step = [extent.x / size as f32, extent.y / size as f32];
     let footprint = max(step[0], step[1]);
-    let erosions: Vec<&Erosion> = crate::surface::erosions(layers).collect();
+    let erosions: Vec<ChangeMap<'_>> = layers.changes().collect();
     let count = size as usize;
     let mut texels = Vec::with_capacity(count * count * 4);
     let mut changes = vec![0.0_f32; count];

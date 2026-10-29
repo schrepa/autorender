@@ -9,10 +9,12 @@ use std::f64::consts::FRAC_PI_3;
 use bevy_ecs::prelude::Entity;
 use engine_core::smoke::{SmokeFailure, SmokeSession};
 use engine_core::{Bricks, smoke_check, smoke_eq};
+use glam::Vec2;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::{Layer, PathStats, SurroundingsStatus, Terrain, TerrainBakes, Terrains};
+use crate::layer::maps;
+use crate::{SurroundingsStatus, Terrain, TerrainBakes, Terrains};
 
 pub use fixture::{FIXTURE, Fixture, fixture, name};
 
@@ -301,7 +303,7 @@ pub(crate) struct Seen {
     pub errors: Vec<f32>,
     pub ranges: Vec<f32>,
     pub bakes: TerrainBakes,
-    pub paths: Vec<(usize, Option<PathStats>)>,
+    pub paths: Vec<(usize, Option<Value>)>,
     pub surroundings: Option<SurroundingsStatus>,
 }
 
@@ -326,13 +328,8 @@ pub(crate) fn seen(session: &mut dyn SmokeSession, entity: Entity) -> Seen {
                 .layers()
                 .iter()
                 .enumerate()
-                .filter_map(|(index, layer)| {
-                    if let Layer::Path(stage) = layer {
-                        Some((index, stage.baked.as_ref().map(|profile| profile.stats)))
-                    } else {
-                        None
-                    }
-                })
+                .filter(|(_, layer)| layer.outputs().iter().any(|name| name == maps::PATH))
+                .map(|(index, layer)| (index, layer.stats()))
                 .collect()
         })
         .unwrap_or_default();
@@ -345,4 +342,44 @@ pub(crate) fn seen(session: &mut dyn SmokeSession, entity: Entity) -> Seen {
         paths,
         surroundings: terrains.surroundings(entity),
     }
+}
+
+pub(crate) fn layer_sweep(
+    session: &mut dyn SmokeSession,
+    center: Vec2,
+    half_extent: f32,
+    samples: u32,
+) -> Value {
+    let world = session.app().world();
+    let Some(terrains) = world.get_resource::<Terrains>() else {
+        return Value::Null;
+    };
+    let (mut compared, mut worst, mut at) = (0_usize, 0.0_f32, None);
+    for row in 0..samples {
+        for column in 0..samples {
+            let unit = Vec2::new(column as f32, row as f32) / (samples - 1) as f32 * 2.0 - 1.0;
+            let point = center + unit * half_extent;
+            let Some(sample) = terrains.sample(point.x, point.y) else {
+                continue;
+            };
+            if sample.hole || sample.level != 0 {
+                continue;
+            }
+            let (Some(terrain), Some(stack)) = (
+                world.get::<Terrain>(sample.terrain),
+                terrains.layers(sample.terrain),
+            ) else {
+                continue;
+            };
+            let local = point - Vec2::new(terrain.origin.x, terrain.origin.z);
+            let height = terrain.origin.y + stack.height_at(&terrain.pyramid, local);
+            let difference = (height - sample.height).abs();
+            compared += 1;
+            if difference > worst || at.is_none() {
+                worst = worst.max(difference);
+                at = Some(point.to_array());
+            }
+        }
+    }
+    json!({"compared": compared, "worst": {"max_difference": worst, "at": at}})
 }

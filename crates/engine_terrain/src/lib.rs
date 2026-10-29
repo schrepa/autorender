@@ -9,8 +9,8 @@ pub mod bake;
 pub mod bed;
 pub mod bounce;
 pub mod codec;
-mod erosion;
 pub mod expr;
+pub mod expr_layer;
 pub mod flow;
 pub mod given;
 pub mod gpu;
@@ -25,7 +25,6 @@ pub mod noise;
 pub mod path;
 mod placement;
 mod pyramid;
-mod relief;
 pub mod rivers;
 mod runtime;
 mod select;
@@ -39,38 +38,32 @@ mod tile;
 mod tile_errors;
 mod tile_water;
 
-pub use bake::{Bake, BakeKind, Baked, ErosionBake, HydrologyBake, PathBake, Stage, TerrainBake};
+pub use bake::TerrainBake;
 pub use bed::{Bed, NARROWEST, Reach};
 pub use engine_core::{Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
-pub use erosion::{Erosion, ErosionLayer, ErosionStats};
 pub use expr::Expr;
 pub use flow::{Block, Pool, RiverFlow, WEIR};
 pub use given::{
     GivenRiver, MAX_CREDIT, MAX_DEPTH, MAX_DISCHARGE, MAX_GIVEN_RIVERS, MAX_PRECISION,
-    MAX_RIVER_POINTS, MAX_WIDTH, RiversLayer,
+    MAX_RIVER_POINTS, MAX_WIDTH,
 };
 pub use hydrology::{
-    FLOW_RANGE, Fall, Hydrology, HydrologyLayer, HydrologySample, HydrologyStats, LAKE_RANGE,
-    RIVER_FAR, WETNESS_RANGE,
+    FLOW_RANGE, Fall, Hydrology, HydrologySample, HydrologyStats, LAKE_RANGE, RIVER_FAR,
+    WETNESS_RANGE,
 };
 pub use layer::{
-    AddTerrainLayers, Below, ChangeMap, LayerBake, LayerFiles, LayerKind, LayerTile, Row,
-    SamplePoint, TerrainLayer, TerrainLayerKinds, TileFrame,
+    AddTerrainLayers, Below, ChangeMap, FineRegion, LayerBake, LayerFiles, LayerKind, LayerTile,
+    NoFiles, Place, Row, SamplePoint, TerrainLayer, TerrainLayerKinds, TerrainLayersList,
+    TileFrame,
 };
-pub use layers::{
-    Blend, ErosionStage, HeightImage, HeightmapLayer, HydrologyStage, Layer, Layers, NoiseLayer,
-    PathStage, Stamp, StampOp,
-};
-pub use path::{
-    Bridge, HeightGrid, MASK_MARGIN, MAX_PATH_POINTS, PATH_FAR, PORTAL_HEIGHT, PROFILE_STEP,
-    PathLayer, PathProfile, PathSample, PathStats, Route, RouteOptions, route,
-};
+pub use layers::{Blend, HeightImage, Layers, Stamp, StampOp};
+pub use path::{Bridge, HeightGrid, PATH_FAR, PathSample, Route, RouteOptions, route};
 pub use placement::{
     AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Footprint, Obstacle, Placed, PlacementChoice,
     PlacementLayer, Placing, Solid,
 };
-pub use relief::{HummocksLayer, StepsLayer};
 pub use rivers::{RIVER_STEP, Rivers};
+pub use runtime::LayerStats;
 pub use runtime::{
     Cover, DECK_DEPTH, DECK_MARGIN, DECK_RISE, FALLS_SHOWN, FallView, GUST_QUICK_ACROSS,
     GUST_QUICK_RATE, GUST_QUICK_SHARE, GUST_QUICK_TRAVEL, GUST_SLOW_RATE, GUST_SLOW_SHARE,
@@ -103,7 +96,7 @@ pub use steady_water::{
 };
 pub use surface::{
     Biome, BiomeLayer, BiomeRules, Biomes, Control, Facing, MAX_BIOMES, MAX_SURFACE_MATERIALS,
-    MacroCauses, Mask, NoiseMask, Remap, SampleInputs, SampleShape, Steep, SteepLayer,
+    MacroCauses, NoiseMask, SampleInputs, SampleShape, Steep, SteepLayer,
 };
 pub use tile::{Generator, RIVER_EDGE_FAR, RIVER_EDGE_STEP, RIVER_EDGE_ZERO, Tile, TileSample};
 pub use tile_errors::{DRY_CELL, ERROR_CELLS, ERROR_MIPS, ERROR_TEXELS, ErrorPyramid};

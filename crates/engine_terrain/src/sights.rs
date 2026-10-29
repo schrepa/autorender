@@ -3,7 +3,6 @@ use engine_math::{max, min};
 use glam::Vec2;
 
 use crate::hydraulics::{FLOODS, GRAVITY, distances};
-use crate::layers::Layer;
 use crate::rivers::River;
 use crate::{Bed, Hydrology, Layers, Pool, RiverFlow, Rivers};
 
@@ -116,12 +115,13 @@ impl Layers {
         let Some((_, hydrology)) = self.hydrology_layer() else {
             return Vec::new();
         };
-        let name = |[layer, line]: [u32; 2]| match self.layers().get(layer as usize) {
-            Some(Layer::Rivers(rivers)) => rivers
-                .lines
-                .get(line as usize)
-                .and_then(|river| river.name.clone()),
-            _ => None,
+        let name = |[layer, line]: [u32; 2]| {
+            self.layers()
+                .get(layer as usize)?
+                .given_rivers()?
+                .get(line as usize)?
+                .name
+                .clone()
         };
         let mut listings: Vec<RiverListing> = Vec::new();
         let mut held: Vec<(usize, usize)> = Vec::new();

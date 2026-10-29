@@ -1,13 +1,13 @@
 use bevy_ecs::prelude::Entity;
 use engine_core::smoke::{SmokeResult, SmokeSession};
 use engine_core::{smoke_check, smoke_eq};
+use glam::Vec2;
 use serde_json::{Value, json};
 
 use super::{
-    Checked, SETTLE_FRAMES, above, at_most, below, control, height_at, heights, inspect, near,
-    number, open, query, raycast, refuse, render, seen, with,
+    Checked, SETTLE_FRAMES, above, at_most, below, control, height_at, heights, inspect,
+    layer_sweep, near, number, open, query, raycast, refuse, render, seen, with,
 };
-use crate::PathStats;
 
 const ROAD: [[f64; 2]; 4] = [
     [100.0, 300.0],
@@ -82,15 +82,20 @@ fn erosion(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
         &bakes.baking,
         &false
     );
-    let worn = bakes.erosion;
+    let worn = bakes
+        .layers
+        .iter()
+        .find(|stats| stats.layer == "erosion")
+        .map(|stats| stats.stats.clone());
+    let read = |name: &str| worn.as_ref().map_or(f64::NAN, |worn| number(&worn[name]));
     smoke_check!(
-        worn.is_some_and(|worn| worn.samples == SIDE * SIDE),
+        read("samples") == (SIDE * SIDE) as f64,
         "erosion_reads_its_level",
         &worn,
         &json!({ "samples": SIDE * SIDE })
     );
     smoke_check!(
-        worn.is_some_and(|worn| worn.rounds == 6 && worn.deepest > 0.0),
+        read("rounds") == 6.0 && read("deepest") > 0.0,
         "erosion_wears_ground_away",
         &worn,
         &json!({"rounds": 6, "deepest": above(0)})
@@ -100,29 +105,31 @@ fn erosion(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
 
 fn path(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
     let paths = seen(session, ground).paths;
-    let road = paths.first().copied();
+    let road = paths.first().cloned();
     smoke_check!(
-        road.is_some_and(|(layer, stats)| layer == 4 && stats.is_some()),
+        road.as_ref().is_some_and(|(layer, stats)| *layer == 4 && stats.is_some()),
         "the_path_bakes",
         &paths,
         &json!({"layer": 4, "baked": true})
     );
-    let stats = road.and_then(|(_, stats)| stats).unwrap_or_default();
+    let stats = road.and_then(|(_, stats)| stats).unwrap_or(Value::Null);
     let length = ROAD
         .windows(2)
         .map(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]))
         .sum::<f64>();
     let samples = (length / 4.0).ceil() as usize + 1;
     smoke_check!(
-        (f64::from(stats.length) - length).abs() < 1e-2 && stats.samples == samples,
+        (number(&stats["length"]) - length).abs() < 1e-2
+            && stats["samples"].as_u64() == Some(samples as u64),
         "the_profile_reads_its_line",
         &stats,
         &json!({"length": length, "samples": samples})
     );
+    let steepest = number(&stats["steepest"]);
     smoke_check!(
-        stats.steepest > 0.0 && stats.steepest < 0.6,
+        steepest > 0.0 && steepest < 0.6,
         "the_road_climbs_gently",
-        &stats.steepest,
+        &steepest,
         &json!({"above": 0, "below": 0.6})
     );
     let mut across = Vec::new();
@@ -177,19 +184,23 @@ fn path(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
 }
 
 fn bridge(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
-    let baked: Vec<PathStats> = seen(session, ground)
+    let baked: Vec<Value> = seen(session, ground)
         .paths
-        .iter()
-        .filter_map(|&(_, stats)| stats)
+        .into_iter()
+        .filter_map(|(_, stats)| stats)
         .collect();
-    let road = baked.first().copied().unwrap_or_default();
+    let road = baked.first().cloned().unwrap_or(Value::Null);
     smoke_check!(
-        road.bridges >= 1 && road.bridged > 15.0,
+        road["bridges"].as_u64().is_some_and(|bridges| bridges >= 1)
+            && number(&road["bridged"]) > 15.0,
         "the_road_bridges_the_trench",
         &road,
         &json!({"bridges": {"at_least": 1}, "bridged": above(15)})
     );
-    let bridges: usize = baked.iter().map(|stats| stats.bridges).sum();
+    let bridges: u64 = baked
+        .iter()
+        .filter_map(|stats| stats["bridges"].as_u64())
+        .sum();
     let terrains = inspect(session, "Terrains")?;
     smoke_eq!(
         &terrains["bridges"],
@@ -218,10 +229,13 @@ fn bridge(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
 
 fn tunnel(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
     let paths = seen(session, ground).paths;
-    let bore = paths.get(1).copied();
+    let bore = paths.get(1).cloned();
     smoke_check!(
-        bore.is_some_and(|(layer, stats)| {
-            layer == 6 && stats.is_some_and(|stats| stats.tunnels == 1 && stats.tunneled > 40.0)
+        bore.as_ref().is_some_and(|(layer, stats)| {
+            *layer == 6
+                && stats.as_ref().is_some_and(|stats| {
+                    stats["tunnels"] == 1 && number(&stats["tunneled"]) > 40.0
+                })
         }),
         "the_road_tunnels_the_mound",
         &bore,
@@ -387,7 +401,8 @@ fn collision(session: &mut dyn SmokeSession) -> Checked<()> {
         "terrain_sweep",
         json!({"center": [0.0, 0.0], "half_extent": 120.0, "samples": 24}),
     )?;
-    let (collided, layered) = (&sweep["collision"], &sweep["layers"]);
+    let collided = &sweep["collision"];
+    let layered = &layer_sweep(session, Vec2::ZERO, 120.0, 24);
     smoke_check!(
         number(&collided["compared"]) > 100.0
             && number(&collided["worst"]["max_difference"]) < 5e-3,
