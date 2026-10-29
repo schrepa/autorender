@@ -67,7 +67,7 @@ fn wire(
     if let Some(mut terrains) = world.get_resource_mut::<engine_terrain::Terrains>() {
         terrains.set_device_tiles(Some(renderer.terrain_tile_capacity()));
         terrains.set_clock(clock.reading());
-        terrains.set_water_settling(engine_render::sources::WATER, true);
+        terrains.set_water_settling(engine_water::sources::WATER, true);
     }
     if let Some(mut records) = world.get_resource_mut::<engine_core::Records>() {
         records.set_sampling(Some(renderer.texture_sampling()));
@@ -885,15 +885,21 @@ impl AppHost {
 
     fn exchange_settled_water(&mut self) {
         let world = self.engine.app.world_mut();
-        let cooking = world.get_resource::<engine_core::Cooking>().is_some();
-        self.renderer.set_water_cooking(cooking);
         if let Some(mut terrains) = world.get_resource_mut::<engine_terrain::Terrains>() {
             let starts = terrains.take_water_settles();
             if !starts.is_empty() {
-                self.renderer.settle_water(starts);
+                self.renderer.start_records(
+                    starts
+                        .into_iter()
+                        .map(|(id, records, start)| {
+                            let start: std::sync::Arc<dyn std::any::Any + Send + Sync> = start;
+                            (id, records, start)
+                        })
+                        .collect(),
+                );
             }
         }
-        let settled = self.renderer.take_settled_water();
+        let settled = self.renderer.take_records();
         if settled.is_empty() {
             return;
         }

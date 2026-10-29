@@ -165,6 +165,7 @@ impl<'a> RenderFrame<'a> {
             surface_under_eye,
             elapsed_seconds,
             presented_seconds,
+            wind,
             environment,
             lights,
             particles,
@@ -188,6 +189,7 @@ impl<'a> RenderFrame<'a> {
         snapshot.surface_under_eye = *surface_under_eye;
         snapshot.elapsed_seconds = *elapsed_seconds;
         snapshot.presented_seconds = *presented_seconds;
+        snapshot.wind = *wind;
         snapshot.environment = *environment;
         snapshot.lights.list.clear();
         snapshot.lights.dropped = lights.dropped;

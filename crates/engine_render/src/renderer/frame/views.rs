@@ -1,16 +1,19 @@
 use super::*;
-use crate::debug_view::DebugViewPass;
 use crate::graph::{MAX_COLORS, Node, ResourceId};
 
+const DEBUG_TARGETS: [&str; 3] = ["debug_ids", "debug_count", "debug_terrain"];
+
 impl Renderer {
-    pub(super) fn shows_debug_view(&self, snapshot: &RenderSnapshot) -> bool {
+    pub(super) fn shows_debug_view(&self) -> bool {
         #[cfg(feature = "dev")]
         let forced = self.core.display.probe.forces();
         #[cfg(not(feature = "dev"))]
         let forced = None;
-        self.parts
-            .get::<DebugViewPass>()
-            .is_some_and(|debug| debug.shows(snapshot, forced))
+        forced.unwrap_or_else(|| {
+            DEBUG_TARGETS
+                .into_iter()
+                .any(|name| self.parts.wants(self.table.resource(name)))
+        })
     }
 
     pub(super) fn node_views(
@@ -52,9 +55,15 @@ impl Renderer {
             "canvas" => Some(canvas.clone()),
             "depth" => Some((*self.core.depth.view).clone()),
             _ => self
-                .parts
-                .part(self.table.owner(resource))
-                .and_then(|part| part.attachment(name)),
+                .core
+                .previous
+                .attachment(name)
+                .or_else(|| self.core.debug.attachment(name))
+                .or_else(|| {
+                    self.parts
+                        .part(self.table.owner(resource))
+                        .and_then(|part| part.attachment(name))
+                }),
         };
         view.ok_or_else(|| {
             failed(&format!("$.passes.{}", self.table.entry(node.pass()).name))

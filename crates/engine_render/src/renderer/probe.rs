@@ -1,5 +1,4 @@
 use super::*;
-use crate::debug_view::DebugViewPass;
 use crate::gpu_layouts::constants::{
     DEBUG_CASTS, DEBUG_FADING, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS,
     DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN,
@@ -14,7 +13,6 @@ use engine_core::{
     DetailShares, DrawnKind, MaterialShare, PixelProbe, SunLookup, TerrainProbe, WaterProbe,
     WaterReach,
 };
-use engine_terrain::Reach;
 use std::{cell::RefCell, rc::Rc};
 
 const IDS: u64 = 0;
@@ -133,10 +131,7 @@ impl Renderer {
         match armed.stage {
             Stage::Debug => {
                 if info.kind.debug
-                    && let Some([ids, count, terrain]) = self
-                        .parts
-                        .get::<DebugViewPass>()
-                        .and_then(DebugViewPass::textures)
+                    && let Some([ids, count, terrain]) = self.core.debug.textures()
                 {
                     copy_texel(encoder, (ids, all), pixel, (&armed.buffer, IDS));
                     copy_texel(encoder, (count, all), pixel, (&armed.buffer, COUNT));
@@ -151,10 +146,7 @@ impl Renderer {
             }
             Stage::Shaded => {
                 if scene
-                    && let Some(scene) = self
-                        .parts
-                        .get::<PostPass>()
-                        .and_then(PostPass::scene_texture)
+                    && let Some(scene) = self.parts.post().and_then(PostPass::scene_texture)
                 {
                     copy_texel(encoder, (scene, all), pixel, (&armed.buffer, SCENE));
                     armed.scene = true;
@@ -347,15 +339,16 @@ fn terrain_probe((record, object, detail): (u32, u32, u32), bytes: &[u8]) -> Ter
 
 fn water_reach(code: u32) -> Option<WaterReach> {
     [
-        Reach::Pool,
-        Reach::Plane,
-        Reach::Steps,
-        Reach::Cascade,
-        Reach::Falls,
+        WaterReach::Pool,
+        WaterReach::Plane,
+        WaterReach::Steps,
+        WaterReach::Cascade,
+        WaterReach::Falls,
     ]
     .into_iter()
-    .find(|&reach| u32::from(reach as u8) + 1 == code)
-    .map(WaterReach::from)
+    .zip(1..)
+    .find(|&(_, reach)| reach == code)
+    .map(|(reach, _)| reach)
 }
 
 fn water_span(code: u8) -> f32 {

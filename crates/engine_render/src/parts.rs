@@ -1,24 +1,29 @@
 use std::any::{Any, TypeId};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use engine_core::{
     Error, ErrorCode, Expected, MeshHandle, RecordKey, RenderFrame, RenderMaterial, RenderMesh,
     RenderSnapshot, RenderStats, RenderTexture,
 };
+use glam::Mat4;
 
 use crate::bindings::SharedGroups;
 use crate::cached::Bound;
+use crate::depth_pyramid::CullingPart;
 use crate::entries::{MeshEntries, PassKind};
 use crate::faces::{FaceCast, FaceOffer};
 use crate::gpu_calls::Recorded;
-use crate::gpu_data::LightingUniform;
+use crate::gpu_data::CameraUniform;
+use crate::gpu_presentation::PresentationPart;
 use crate::graph::{
     Clear, FrameGraph, FrameShape, GraphTable, Load, MAX_COLORS, Node, Ops, PassDecl, ResourceDecl,
     ResourceId, Targets,
 };
 use crate::pieces::{PieceAt, PieceDecl};
-use crate::renderer::Core;
-use crate::temporal::TemporalFrame;
+use crate::post::PostPass;
+use crate::renderer::{Core, History};
+use crate::transparent::Transparency;
 
 #[derive(Clone, Copy, Debug)]
 pub struct FrameKind {
@@ -32,7 +37,17 @@ pub struct FrameKind {
 #[derive(Clone, Copy, Debug)]
 pub struct Passes {
     pub opaque_kind: PassKind,
-    pub impostor_pass: Option<(Targets, bool)>,
+    pub impostor_pass: Option<Targets>,
+}
+
+#[derive(Clone, Copy)]
+pub struct TemporalFrame {
+    pub parity: usize,
+    pub camera: CameraUniform,
+    pub rasterized: Mat4,
+    pub history_valid: bool,
+    pub motion_valid: bool,
+    pub(crate) history: History,
 }
 
 pub struct FrameInfo<'s> {
@@ -40,12 +55,13 @@ pub struct FrameInfo<'s> {
     pub frame: RenderFrame<'s>,
     pub kind: FrameKind,
     pub temporal: Option<TemporalFrame>,
-    pub lighting: Option<LightingUniform>,
     pub passes: Option<Passes>,
     pub shape: Option<FrameShape>,
     pub kept: u64,
+    pub written: u128,
 }
 
+#[derive(Default)]
 pub struct PartAssets<'s> {
     pub meshes: Vec<(MeshHandle, &'s RenderMesh)>,
     pub materials: Vec<&'s RenderMaterial>,
@@ -90,6 +106,12 @@ impl FrameInfo<'_> {
         table
             .pass_named(pass)
             .is_some_and(|pass| self.kept & (1 << pass.index()) != 0)
+    }
+
+    pub fn writes(&self, resource: impl Into<Option<ResourceId>>) -> bool {
+        resource
+            .into()
+            .is_some_and(|resource| self.written & (1 << resource.index()) != 0)
     }
 }
 
@@ -140,11 +162,6 @@ pub struct Begin<'f> {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BeginOut {
     pub forget_temporal: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct UniformsOut {
-    pub forget_lighting: bool,
 }
 
 pub struct Step<'f> {
@@ -285,7 +302,8 @@ pub enum OpaqueSlot {
 pub enum Hook {
     Opaque(OpaqueSlot),
     ShadowCasters,
-    ProbeFace,
+    View,
+    Transparent,
 }
 
 #[derive(Clone, Copy)]
@@ -299,10 +317,12 @@ pub enum DrawAt<'a> {
         casters: &'a [wgpu::RenderPipeline; 2],
         cards: Option<&'a wgpu::RenderPipeline>,
     },
-    ProbeFace {
-        face: usize,
+    View {
+        view: usize,
         center: glam::Vec3,
-        lit: bool,
+    },
+    Transparent {
+        targets: Targets,
     },
 }
 
@@ -311,7 +331,8 @@ impl DrawAt<'_> {
         match self {
             Self::Opaque { slot, .. } => Hook::Opaque(*slot),
             Self::ShadowCasters { .. } => Hook::ShadowCasters,
-            Self::ProbeFace { .. } => Hook::ProbeFace,
+            Self::View { .. } => Hook::View,
+            Self::Transparent { .. } => Hook::Transparent,
         }
     }
 }
@@ -456,18 +477,6 @@ pub trait GpuPart: Any {
 
     fn forget_targets(&mut self, _targets: Targets) {}
 
-    fn temporal_frame(&mut self, _cx: &mut Step<'_>) -> Option<TemporalFrame> {
-        None
-    }
-
-    fn uniforms(
-        &mut self,
-        _cx: &mut Step<'_>,
-        _lighting: &mut LightingUniform,
-        _out: &mut UniformsOut,
-    ) {
-    }
-
     fn prepare(&mut self, _cx: &mut Step<'_>, _prelude: &mut Prelude) {}
 
     fn prepare_draws(&mut self, _cx: &mut Step<'_>, _encoder: &mut wgpu::CommandEncoder) {}
@@ -576,6 +585,16 @@ pub trait GpuPart: Any {
     fn records_left(&self) -> Option<(&'static str, u64)> {
         None
     }
+
+    fn record_wants(&mut self, _wants: &mut Vec<RecordKey>) {}
+
+    fn asks_record(&self, _record: RecordKey) -> bool {
+        false
+    }
+
+    fn answer_record(&mut self, _record: RecordKey, _bytes: Option<Vec<u8>>) {}
+
+    fn made_records(&mut self, _made: &mut Vec<(RecordKey, Vec<u8>)>) {}
 }
 
 struct Slot {
@@ -672,18 +691,76 @@ impl Parts {
         Ok(table)
     }
 
-    pub fn get<T: GpuPart>(&self) -> Option<&T> {
+    fn core_part<T: GpuPart>(&self) -> Option<&T> {
         self.slots.iter().find_map(|slot| {
             let part: &dyn Any = slot.part.as_deref()?;
             part.downcast_ref::<T>()
         })
     }
 
-    pub fn get_mut<T: GpuPart>(&mut self) -> Option<&mut T> {
-        self.slots.iter_mut().find_map(|slot| {
-            let part: &mut dyn Any = slot.part.as_deref_mut()?;
-            part.downcast_mut::<T>()
-        })
+    pub fn post(&self) -> Option<&PostPass> {
+        self.core_part()
+    }
+
+    pub fn transparency(&self) -> Option<&Transparency> {
+        self.core_part()
+    }
+
+    pub(crate) fn presentation(&self) -> Option<&PresentationPart> {
+        self.core_part()
+    }
+
+    pub(crate) fn culling(&self) -> Option<&CullingPart> {
+        self.core_part()
+    }
+
+    fn live(&self) -> impl Iterator<Item = &dyn GpuPart> {
+        self.slots.iter().filter_map(|slot| slot.part.as_deref())
+    }
+
+    pub fn wants(&self, resource: impl Into<Option<ResourceId>>) -> bool {
+        let Some(resource) = resource.into() else {
+            return false;
+        };
+        self.live().any(|part| part.wants(resource))
+    }
+
+    pub fn views(&self) -> Option<Views<'_>> {
+        self.live().find_map(|part| part.views())
+    }
+
+    pub fn shading(&self, snapshot: &RenderSnapshot) -> Shading {
+        let mut shading = Shading::default();
+        for part in self.live() {
+            part.shading(snapshot, &mut shading);
+        }
+        shading
+    }
+
+    pub fn assets<'s>(&self, snapshot: &'s RenderSnapshot) -> PartAssets<'s> {
+        let mut assets = PartAssets::default();
+        for part in self.live() {
+            part.assets(snapshot, &mut assets);
+        }
+        assets
+    }
+
+    pub fn asset_generation(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        for (index, slot) in self.slots.iter().enumerate() {
+            if let Some(part) = slot.part.as_deref() {
+                (index, part.asset_generation()).hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    pub fn batch_group(&self, batch: usize) -> Option<u32> {
+        self.live().find_map(|part| part.batch_group(batch))
+    }
+
+    pub fn mesh_entries(&self) -> Option<&'static MeshEntries> {
+        self.live().find_map(|part| part.mesh_entries())
     }
 
     pub fn face<F: ?Sized + 'static>(&self) -> Option<&F> {
@@ -842,33 +919,19 @@ impl Parts {
 
 pub const CORE_BRICK: &str = "core";
 
-pub fn standard() -> [&'static PartEntry; 17] {
+pub const CULLING_BRICK: &str = "culling";
+
+pub fn core_head(culling: bool) -> Vec<&'static PartEntry> {
     [
         &crate::gpu_presentation::PART,
         &crate::renderer::OPAQUE_PART,
         &crate::depth_pyramid::PART,
-        &crate::terrain::PART,
-        &crate::scatter::PART,
-        &crate::occupancy::PART,
-        &crate::shadows::PART,
-        &crate::lights::PART,
-        &crate::sky::PART,
-        &crate::probes::PART,
-        &crate::ground_cover::PART,
-        &crate::water::PART,
         &crate::post::PART,
         &crate::transparent::PART,
-        &crate::temporal::PART,
-        &crate::exposure::PART,
-        &crate::debug_view::PART,
     ]
-}
-
-pub fn installed(bricks: &engine_core::BrickRegistry) -> Vec<&'static PartEntry> {
-    standard()
-        .into_iter()
-        .filter(|entry| entry.decl.brick == CORE_BRICK || bricks.has(entry.decl.brick))
-        .collect()
+    .into_iter()
+    .filter(|entry| culling || entry.decl.brick != CULLING_BRICK)
+    .collect()
 }
 
 pub fn shared_of(entries: &[&'static PartEntry]) -> Result<SharedGroups, Error> {
@@ -879,26 +942,4 @@ pub fn shared_of(entries: &[&'static PartEntry]) -> Result<SharedGroups, Error> 
         }
     }
     Ok(shared)
-}
-
-pub fn standard_passes() -> Vec<&'static str> {
-    standard()
-        .iter()
-        .flat_map(|entry| entry.decl.passes)
-        .map(|pass| pass.name)
-        .collect()
-}
-
-pub fn standard_shared() -> SharedGroups {
-    shared_of(&standard()).unwrap_or_default()
-}
-
-pub fn standard_features() -> Vec<(&'static str, bool)> {
-    let mut features: Vec<(&'static str, bool)> = Vec::new();
-    for entry in standard() {
-        if !features.iter().any(|&(brick, _)| brick == entry.decl.brick) {
-            features.push((entry.decl.brick, true));
-        }
-    }
-    features
 }

@@ -13,9 +13,7 @@ profiling = ["engine_profile/enabled", "engine_core/profiling"]
 [dependencies]
 engine_core.workspace = true
 engine_profile.workspace = true
-engine_terrain.workspace = true
 engine_textures.workspace = true
-engine_time_of_day.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
 libm.workspace = true
@@ -42,3 +40,6 @@ engine_sources.workspace = true
 
 [lints]
 workspace = true
+
+[package.metadata.engine]
+core = true

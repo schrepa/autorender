@@ -1,5 +1,4 @@
 use super::*;
-use crate::temporal::TemporalPass;
 use std::task::{Context, Poll, Waker};
 
 #[derive(Default)]
@@ -61,14 +60,7 @@ impl Renderer {
                 return Err(fatal.clone());
             }
         }
-        if self.parts.disable(named) != 0
-            && self
-                .parts
-                .get::<TemporalPass>()
-                .is_some_and(|temporal| temporal.disabled())
-        {
-            self.forget_temporal();
-        }
+        self.parts.disable(named);
         Ok(())
     }
 

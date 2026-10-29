@@ -249,9 +249,10 @@ impl From<Reach> for WaterReach {
     reason = "longer than the line ceiling; it may only shrink"
 )]
 pub(crate) fn extract_terrains(world: &World, snapshot: &mut RenderSnapshot) {
-    snapshot
-        .extracted
-        .insert(TerrainEnvironment::current(world));
+    let environment = TerrainEnvironment::current(world);
+    let wind = environment.wind;
+    snapshot.wind = [wind.velocity[0], wind.velocity[1], wind.gusts, 0.0];
+    snapshot.extracted.insert(environment);
     if snapshot.extracted.get::<RenderTerrains>().is_none() {
         snapshot.extracted.insert(RenderTerrains::default());
     }

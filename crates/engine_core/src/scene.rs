@@ -330,6 +330,7 @@ pub struct RenderSnapshot {
     pub surface_under_eye: Option<f32>,
     pub elapsed_seconds: f32,
     pub presented_seconds: f64,
+    pub wind: [f32; 4],
     pub environment: crate::Environment,
     pub lights: crate::RenderLights,
     pub particles: crate::RenderParticles,
