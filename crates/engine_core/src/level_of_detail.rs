@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::{Resource, World};
 use serde::{Deserialize, Serialize};
 
-use crate::bricks::{Brick, Bricks, Drawn, ExplainRecord, ExplainRequest};
+use crate::bricks::{Brick, Bricks, DrawState, ExplainRecord, ExplainRequest};
 use crate::sections::environment_section;
 use engine_settings::settings;
 
@@ -17,7 +17,7 @@ fn explain_level(world: &World, request: &ExplainRequest) -> Option<ExplainRecor
     let ExplainRequest::Entity(entity) = request else {
         return None;
     };
-    let Drawn::Level(level) = entity.drawn else {
+    let DrawState::Level(level) = entity.drawn else {
         return None;
     };
     let settings = world

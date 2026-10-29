@@ -283,32 +283,32 @@ fn typed_results(
     controls: &[String],
     problems: &mut Vec<String>,
 ) {
-    let ops: Vec<&str> = Verb::names()
+    let mut ops: Vec<&str> = Verb::names()
         .filter(|verb| {
             ![Verb::Query.name(), Verb::Control.name()].contains(verb)
                 && !crate::results::HOST_VERBS.contains(verb)
         })
-        .chain(
-            queries
-                .iter()
-                .chain(controls)
-                .map(String::as_str)
-                .filter(|op| registry.operation(op).is_none()),
-        )
         .collect();
+    ops.extend(
+        queries
+            .iter()
+            .chain(controls)
+            .map(String::as_str)
+            .filter(|op| registry.operation(op).is_none()),
+    );
     let (typed, untyped) = (
         crate::results::TYPED_RESULTS,
         crate::results::UNTYPED_RESULTS,
     );
     for op in &ops {
-        if typed.contains(op) == untyped.contains(op) {
+        if typed.iter().any(|name| name == op) == untyped.iter().any(|name| name == op) {
             problems.push(format!(
                 "{op}'s result is typed (results!) or listed in UNTYPED_RESULTS, not both or neither"
             ));
         }
     }
     for op in typed.iter().chain(untyped) {
-        if !ops.contains(op) {
+        if !ops.iter().any(|name| name == op) {
             problems.push(format!("{op} in results.rs is no verb or core operation"));
         }
     }

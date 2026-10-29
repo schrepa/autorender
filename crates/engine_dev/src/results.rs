@@ -7,6 +7,8 @@ use crate::{InspectorDescriptor, InspectorKind};
 
 pub const UNTYPED_RESULTS: &[&str] = &["benchmark", "debug_device_loss", "debug_panic", "reload"];
 
+pub const HOST_VERBS: &[&str] = &["check"];
+
 macro_rules! results {
     ($($op:ident: $result:ty),* $(,)?) => {
         pub mod result {

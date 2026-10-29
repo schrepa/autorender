@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::{Resource, World};
 use serde::{Deserialize, Serialize};
 
-use crate::bricks::{Brick, Bricks, Drawn, ExplainRecord, ExplainRequest};
+use crate::bricks::{Brick, Bricks, DrawState, ExplainRecord, ExplainRequest};
 use crate::sections::environment_section;
 use engine_settings::settings;
 
@@ -21,7 +21,7 @@ fn explain_culled(world: &World, request: &ExplainRequest) -> Option<ExplainReco
     let ExplainRequest::Entity(entity) = request else {
         return None;
     };
-    if entity.drawn != Drawn::Culled {
+    if entity.drawn != DrawState::Culled {
         return None;
     }
     Some(

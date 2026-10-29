@@ -12,7 +12,7 @@ pub use attribution::{
 };
 pub use error::{Error, parse_json, parse_value, parse_value_at};
 pub use explain::{
-    Drawn, ExplainEntry, ExplainRecord, ExplainRequest, ExplainedEntity, Explainer, source_line,
+    DrawState, ExplainEntry, ExplainRecord, ExplainRequest, ExplainedEntity, Explainer, source_line,
 };
 pub use extracted::Extracted;
 pub use registry::{

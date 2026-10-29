@@ -1,5 +1,5 @@
 use engine_core::bevy_ecs::prelude::Entity;
-use engine_core::{Drawn, ErrorCode};
+use engine_core::{DrawState, ErrorCode};
 use engine_dev::results::{
     CaptureResult, FramesResult, GameResult, KeptArtifact, WatchResult, result,
 };
@@ -738,7 +738,7 @@ impl<G: Game> GameHost<G> {
                     .is_some_and(|detail| detail.enabled && detail.fade_seconds > 0.0);
                 let Some(slot) = self.engine().render_slot(entity).filter(|_| readable) else {
                     let slot = self.engine().render_slot(entity);
-                    return self.dev_explained((id, entity), slot, Drawn::Unread, context);
+                    return self.dev_explained((id, entity), slot, DrawState::Unread, context);
                 };
                 self.read_back(slot);
                 for _ in 0..2 {
@@ -761,11 +761,11 @@ impl<G: Game> GameHost<G> {
     ) -> Step {
         match self.read_back(slot) {
             Some((level, 0)) => {
-                let drawn = level.map_or(Drawn::Culled, Drawn::Level);
+                let drawn = level.map_or(DrawState::Culled, DrawState::Level);
                 self.dev_explained((id, entity), Some(slot), drawn, context)
             }
             Some(_) | None if waits >= READ_BACK_WAITS => {
-                self.dev_explained((id, entity), Some(slot), Drawn::Unread, context)
+                self.dev_explained((id, entity), Some(slot), DrawState::Unread, context)
             }
             Some(_) | None => self.dev_effect(
                 Pending::Explain {
@@ -783,7 +783,7 @@ impl<G: Game> GameHost<G> {
         &mut self,
         (id, entity): (String, Entity),
         slot: Option<u32>,
-        drawn: Drawn,
+        drawn: DrawState,
         context: &HostContext,
     ) -> Step {
         let stats = self.stats_value();

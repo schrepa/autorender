@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Drawn {
+pub enum DrawState {
     Unread,
     Culled,
     Level(u32),
@@ -16,7 +16,7 @@ pub struct ExplainedEntity {
     pub id: String,
     pub entity: Entity,
     pub slot: Option<u32>,
-    pub drawn: Drawn,
+    pub drawn: DrawState,
 }
 
 #[derive(Clone, Debug)]

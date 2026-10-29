@@ -1,6 +1,6 @@
 use engine_core::bevy_ecs::prelude::{Entity, World};
 use engine_core::{
-    AssetLibrary, BrickCost, BrickCosts, BrickRegistry, Drawn, ExplainRecord, ExplainRequest,
+    AssetLibrary, BrickCost, BrickCosts, BrickRegistry, DrawState, ExplainRecord, ExplainRequest,
     ExplainedEntity, Mesh3d,
 };
 use engine_scene::{SceneDocument, SceneFiles, SceneInstance};
@@ -14,7 +14,7 @@ use crate::{DevError, DevTools};
 #[derive(Clone, Copy, Debug)]
 pub struct EntityFacts {
     pub slot: Option<u32>,
-    pub drawn: Drawn,
+    pub drawn: DrawState,
     pub frustum_culling: bool,
 }
 
@@ -116,9 +116,9 @@ fn core_entity(world: &World, id: &str, entity: Entity, facts: EntityFacts) -> E
     });
     let decided = match (facts.slot, facts.drawn) {
         (None, _) => "not_extracted",
-        (Some(_), Drawn::Culled) => "culled",
-        (Some(_), Drawn::Level(_)) => "drawn",
-        (Some(_), Drawn::Unread) => "unread",
+        (Some(_), DrawState::Culled) => "culled",
+        (Some(_), DrawState::Level(_)) => "drawn",
+        (Some(_), DrawState::Unread) => "unread",
     };
     ExplainRecord::new(decided)
         .of("core")
