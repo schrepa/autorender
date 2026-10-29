@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-dev = []
+dev = ["engine_profile/bricks"]
 profiling = ["engine_profile/enabled"]
 attribution = []
 schema = ["dep:schemars", "engine_assets/schema", "engine_settings/schema"]

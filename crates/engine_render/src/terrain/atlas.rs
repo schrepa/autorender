@@ -686,7 +686,7 @@ impl TileAtlas {
     fn sync_surfaces(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         surfaces: &BTreeMap<u64, &Arc<SurfaceData>>,
     ) {
         self.surfaces.retain(|id, _| surfaces.contains_key(id));
@@ -896,7 +896,7 @@ impl TileAtlas {
         }
         let layers = needed.next_power_of_two().max(16).min(max_layers.max(1));
         let array = |label: &'static str, format, usage, mips| {
-            device.create_texture(&wgpu::TextureDescriptor {
+            crate::memory::texture(device, &wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
                     width: LAYER_SIZE,
@@ -939,7 +939,7 @@ impl TileAtlas {
             1,
         );
         let pyramid = |label: &'static str| {
-            device.create_texture(&wgpu::TextureDescriptor {
+            crate::memory::texture(device, &wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
                     width: ERROR_CELLS,

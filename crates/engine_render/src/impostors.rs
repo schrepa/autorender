@@ -337,7 +337,7 @@ pub(crate) struct BakePart<'a> {
 
 pub(crate) struct BakeGpu<'a> {
     pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
+    pub queue: &'a crate::gpu_calls::Queue,
     pub encoder: &'a mut Option<wgpu::CommandEncoder>,
     pub mips: &'a MipGenerator,
     pub shader: &'a wgpu::ShaderModule,
@@ -439,7 +439,7 @@ pub(crate) struct ImpostorAtlas {
 }
 
 fn record_buffer(device: &wgpu::Device, records: usize) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
+    crate::memory::buffer(device, &wgpu::BufferDescriptor {
         label: Some("engine/impostor-records"),
         size: (records.max(1) * size_of::<ImpostorRecord>()) as u64,
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
@@ -720,7 +720,7 @@ impl ImpostorAtlas {
         let capacity = grown_layers(layers, self.layer_bytes(), most_layers(device));
         let (size, levels) = (self.shape.size(), self.shape.levels());
         let formats = self.format.textures();
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = crate::memory::texture(device, &wgpu::TextureDescriptor {
             label: Some("engine/impostor-array"),
             size: wgpu::Extent3d {
                 width: size,
@@ -804,7 +804,7 @@ impl ImpostorAtlas {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         pipelines: &ImpostorPipelines,
         records: &[ImpostorRecord],
     ) -> bool {

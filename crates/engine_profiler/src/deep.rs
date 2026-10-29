@@ -1,6 +1,7 @@
 use engine::collections::HashMap;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use engine::host::median;
@@ -15,6 +16,50 @@ use serde_json::{Value, json};
 use crate::sampler::{SampledThread, Sampler, Samples};
 
 const INTERVAL: Duration = Duration::from_millis(1);
+const HEAP_SAMPLES: usize = 65_536;
+const HEAP_FRAMES: usize = 48;
+const HEAP_STACKS: usize = 12;
+const SPANS_PER_BRICK: usize = 15;
+const ALLOCATOR_FRAMES: &[&str] = &[
+    "backtrace::",
+    "engine_profiler::deep::",
+    "engine_profile::",
+    "__rust_",
+    "__rdl_",
+    "__rg_",
+    "alloc::alloc::",
+    "alloc::raw_vec::",
+    "std::alloc::",
+    "core::alloc::",
+];
+
+struct HeapSample {
+    brick: u16,
+    bytes: usize,
+    stack: Vec<u64>,
+}
+
+static HEAP: Mutex<Vec<HeapSample>> = Mutex::new(Vec::new());
+
+fn sample_heap(brick: u16, bytes: usize) {
+    let mut frames = [0_u64; HEAP_FRAMES];
+    let mut depth = 0;
+    backtrace::trace(|frame| {
+        frames[depth] = frame.ip() as u64;
+        depth += 1;
+        depth < HEAP_FRAMES
+    });
+    let Ok(mut samples) = HEAP.try_lock() else {
+        return;
+    };
+    if samples.len() < HEAP_SAMPLES {
+        samples.push(HeapSample {
+            brick,
+            bytes,
+            stack: frames[..depth].to_vec(),
+        });
+    }
+}
 
 pub struct DeepCapture {
     sampler: Option<Sampler>,
@@ -34,6 +79,8 @@ impl DeepCapture {
         max_events: usize,
     ) -> Result<Self, String> {
         host.profiling_start(max_events).map_err(String::from)?;
+        HEAP.lock().unwrap_or_else(PoisonError::into_inner).clear();
+        engine::profiling::sample_allocations(Some(sample_heap));
         crate::counters::begin();
         let sampler = (!threads.is_empty())
             .then(|| Sampler::start(threads, INTERVAL, engine::host::now_ms))
@@ -49,6 +96,8 @@ impl DeepCapture {
         context: Value,
     ) -> Result<ProfileFiles, String> {
         let samples = self.sampler.map(Sampler::finish);
+        engine::profiling::sample_allocations(None);
+        let heap = std::mem::take(&mut *HEAP.lock().unwrap_or_else(PoisonError::into_inner));
         let mut report = host.profiling_stop().map_err(String::from)?;
         host.wait_for_gpu().map_err(|error| error.to_string())?;
         host.profiling_poll();
@@ -57,7 +106,8 @@ impl DeepCapture {
         if let Some(counters) = crate::counters::end() {
             report["gpu_counters"] = counters;
         }
-        let symbols = Symbols::of(samples.as_ref());
+        let symbols = Symbols::of(samples.as_ref(), &heap);
+        report["heap_samples_by_brick"] = heap_by_brick(&heap, &symbols);
         let profile = firefox_profile(&report, samples.as_ref(), &symbols, host.adapter());
         let summary = summary(&report, samples.as_ref(), &symbols, host.adapter());
         std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
@@ -78,6 +128,9 @@ impl DeepCapture {
         write(&files.report, &report)?;
         write(&files.firefox, &profile)?;
         let mut summary = summary;
+        summary["bricks"] = report["bricks"].clone();
+        summary["heap_samples_by_brick"] = report["heap_samples_by_brick"].clone();
+        summary["spans_by_brick"] = spans_by_brick(&report);
         summary["files"] = json!({
             "report": files.report.display().to_string(),
             "firefox": files.firefox.display().to_string(),
@@ -121,18 +174,21 @@ struct SymbolFrame {
 struct Symbols(HashMap<u64, Resolved>);
 
 impl Symbols {
-    fn of(samples: Option<&Samples>) -> Self {
+    fn of(samples: Option<&Samples>, heap: &[HeapSample]) -> Self {
         let mut resolved = HashMap::default();
-        for thread in samples.into_iter().flat_map(|samples| &samples.threads) {
-            for sample in &thread.samples {
-                for (index, &address) in sample.stack.iter().enumerate() {
-                    let lookup = if index == 0 {
-                        address
-                    } else {
-                        address.saturating_sub(1)
-                    };
-                    resolved.entry(lookup).or_insert_with(|| resolve(lookup));
-                }
+        let stacks = samples
+            .into_iter()
+            .flat_map(|samples| &samples.threads)
+            .flat_map(|thread| thread.samples.iter().map(|sample| &sample.stack))
+            .chain(heap.iter().map(|sample| &sample.stack));
+        for stack in stacks {
+            for (index, &address) in stack.iter().enumerate() {
+                let lookup = if index == 0 {
+                    address
+                } else {
+                    address.saturating_sub(1)
+                };
+                resolved.entry(lookup).or_insert_with(|| resolve(lookup));
             }
         }
         Self(resolved)
@@ -428,6 +484,119 @@ fn firefox_profile(
         }
     }
     profile
+}
+
+fn heap_by_brick(samples: &[HeapSample], symbols: &Symbols) -> Value {
+    type Stacks = HashMap<Vec<String>, (u64, u64)>;
+    let mut bricks: BTreeMap<&'static str, (u64, u64, Stacks)> = BTreeMap::new();
+    for sample in samples {
+        let mut names = functions(&sample.stack, symbols);
+        while names.last().is_some_and(|name| {
+            ALLOCATOR_FRAMES
+                .iter()
+                .any(|frame| name.starts_with(frame) || name.contains(&format!("<{frame}")))
+        }) {
+            names.pop();
+        }
+        let callers = names.split_off(names.len().saturating_sub(HEAP_STACKS));
+        let brick = engine::profiling::brick_name(sample.brick);
+        let (count, bytes, stacks) = bricks.entry(brick).or_default();
+        *count += 1;
+        *bytes += sample.bytes as u64;
+        let (stack_count, stack_bytes) = stacks.entry(callers).or_default();
+        *stack_count += 1;
+        *stack_bytes += sample.bytes as u64;
+    }
+    let mut rows: Vec<(&str, u64, u64, Stacks)> = bricks
+        .into_iter()
+        .map(|(brick, (count, bytes, stacks))| (brick, count, bytes, stacks))
+        .collect();
+    rows.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+    json!({
+        "every": engine::profiling::SAMPLE_EVERY,
+        "bricks": rows
+            .into_iter()
+            .map(|(brick, count, bytes, stacks)| {
+                let mut stacks: Vec<(Vec<String>, (u64, u64))> = stacks.into_iter().collect();
+                stacks.sort_by(|a, b| b.1.0.cmp(&a.1.0).then_with(|| a.0.cmp(&b.0)));
+                json!({
+                    "brick": brick,
+                    "samples": count,
+                    "sampled_bytes": bytes,
+                    "stacks": stacks
+                        .into_iter()
+                        .take(10)
+                        .map(|(frames, (samples, bytes))| json!({
+                            "samples": samples,
+                            "sampled_bytes": bytes,
+                            "frames": frames,
+                        }))
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect::<Vec<_>>(),
+    })
+}
+
+fn spans_by_brick(report: &Value) -> Value {
+    let mut open: Vec<Option<String>> = Vec::new();
+    let mut frames: Vec<u64> = Vec::new();
+    let mut totals: BTreeMap<String, BTreeMap<String, (f64, u64)>> = BTreeMap::new();
+    for event in report["cpu"]["events"].as_array().into_iter().flatten() {
+        if event["kind"] != "span" {
+            continue;
+        }
+        let (Some(name), Some(depth), Some(duration)) = (
+            event["name"].as_str(),
+            event["depth"].as_u64(),
+            event["duration_ms"].as_f64(),
+        ) else {
+            continue;
+        };
+        if let Some(frame) = event["frame"].as_u64()
+            && !frames.contains(&frame)
+        {
+            frames.push(frame);
+        }
+        open.truncate(depth as usize);
+        let enclosing = open.iter().rev().find_map(Clone::clone);
+        if event["category"] == "brick" {
+            open.push(Some(name.to_owned()));
+            continue;
+        }
+        if let Some(brick) = &enclosing {
+            let (total, count) = totals
+                .entry(brick.clone())
+                .or_default()
+                .entry(name.to_owned())
+                .or_default();
+            *total += duration;
+            *count += 1;
+        }
+        open.push(enclosing);
+    }
+    let count = frames.len().max(1) as f64;
+    let bricks: serde_json::Map<String, Value> = totals
+        .into_iter()
+        .map(|(brick, spans)| {
+            let mut spans: Vec<(String, (f64, u64))> = spans.into_iter().collect();
+            spans.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
+            let rows: Vec<Value> = spans
+                .into_iter()
+                .take(SPANS_PER_BRICK)
+                .map(|(name, (total, calls))| json!({
+                    "name": name,
+                    "ms_per_frame": total / count,
+                    "calls": calls,
+                }))
+                .collect();
+            (brick, Value::Array(rows))
+        })
+        .collect();
+    json!({
+        "frames": frames.len(),
+        "bricks": bricks,
+    })
 }
 
 fn ranked(counts: HashMap<String, u64>, total: u64, limit: usize) -> Vec<Value> {

@@ -29,6 +29,7 @@ pub struct FrameStats {
     pub disabled_features: Names,
     #[serde(flatten)]
     pub render: RenderStats,
+    pub bricks_cost: Option<crate::BrickCosts>,
     #[serde(flatten)]
     #[cfg_attr(feature = "schema", schemars(skip))]
     pub bricks: BTreeMap<&'static str, serde_json::Value>,

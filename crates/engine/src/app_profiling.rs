@@ -39,6 +39,7 @@ impl AppHost {
     pub fn profiling_start(&mut self, max_events: usize) -> Result<(), &'static str> {
         engine_profile::set_clock(now_ms);
         let id = engine_profile::start(max_events)?;
+        self.attribution.captured.clear();
         self.renderer.profile_begin(id);
         Ok(())
     }
@@ -53,7 +54,14 @@ impl AppHost {
             json!({"wasm_linear_bytes": bytes,
                 "scope": "Wasm linear memory capacity, not live allocation bytes or process memory"})
         });
-        Ok(json!({"cpu": cpu, "gpu": self.renderer.profile_report(), "memory": memory}))
+        let captured = std::mem::take(&mut self.attribution.captured);
+        let bricks = engine_core::BrickCosts::table(&captured);
+        Ok(json!({
+            "bricks": bricks,
+            "cpu": cpu,
+            "gpu": self.renderer.profile_report(),
+            "memory": memory,
+        }))
     }
 
     pub fn profiling_poll(&mut self) {

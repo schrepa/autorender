@@ -27,7 +27,7 @@ pub(super) struct Totals {
 impl Totals {
     pub(super) fn new(device: &wgpu::Device) -> Self {
         Self {
-            buffer: device.create_buffer(&wgpu::BufferDescriptor {
+            buffer: crate::memory::buffer(device, &wgpu::BufferDescriptor {
                 label: Some("engine/presentation-totals"),
                 size: TOTALS_BYTES,
                 usage: wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,

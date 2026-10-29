@@ -173,7 +173,7 @@ mod gpu {
         size: u64,
         usage: wgpu::BufferUsages,
     ) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
+        crate::memory::buffer(device, &wgpu::BufferDescriptor {
             label: Some(label),
             size: size.max(4).next_multiple_of(4),
             usage,

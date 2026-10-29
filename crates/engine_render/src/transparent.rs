@@ -252,7 +252,7 @@ impl Transparency {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         snapshot: &RenderSnapshot,
         emitters: (u64, u64),
         (region, depth): (FrameRegion, &Versioned<wgpu::TextureView>),

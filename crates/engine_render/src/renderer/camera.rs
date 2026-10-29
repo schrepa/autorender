@@ -85,7 +85,11 @@ impl CameraBindings {
         self.lighting = None;
     }
 
-    pub(super) fn write_lighting(&mut self, queue: &wgpu::Queue, lighting: LightingUniform) -> u64 {
+    pub(super) fn write_lighting(
+        &mut self,
+        queue: &crate::gpu_calls::Queue,
+        lighting: LightingUniform,
+    ) -> u64 {
         if self.lighting == Some(lighting) {
             return 0;
         }

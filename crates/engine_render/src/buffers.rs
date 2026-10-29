@@ -9,7 +9,7 @@ pub(crate) fn storage(
     bytes: u64,
     extra: wgpu::BufferUsages,
 ) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
+    crate::memory::buffer(device, &wgpu::BufferDescriptor {
         label: Some(label),
         size: bytes.max(16).next_multiple_of(16),
         usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | extra,
@@ -18,7 +18,7 @@ pub(crate) fn storage(
 }
 
 pub(crate) fn uniform(device: &wgpu::Device, label: &str, bytes: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
+    crate::memory::buffer(device, &wgpu::BufferDescriptor {
         label: Some(label),
         size: bytes,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -149,7 +149,7 @@ impl<T: Copy + 'static> ReadbackRing<T> {
             Some(index) => index,
             None if slots.len() < READBACKS => {
                 slots.push(Slot {
-                    buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                    buffer: crate::memory::buffer(device, &wgpu::BufferDescriptor {
                         label: Some(self.label),
                         size: bytes,
                         usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
@@ -194,6 +194,8 @@ impl<T: Copy + 'static> ReadbackRing<T> {
     }
 
     pub(crate) fn clear(&mut self) {
-        self.slots.get_mut().clear();
+        for slot in self.slots.get_mut().drain(..) {
+            crate::memory::release_buffer(&slot.buffer);
+        }
     }
 }

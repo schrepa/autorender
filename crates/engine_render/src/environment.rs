@@ -56,6 +56,7 @@ impl Environment {
         clouds: crate::clouds::DomeBinding<'_>,
         air: crate::sky::AirBindings<'_>,
     ) -> Self {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::CloudDome);
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("engine/environment.wgsl"),
             source: wgpu::ShaderSource::Wgsl(ENVIRONMENT_SHADER.into()),

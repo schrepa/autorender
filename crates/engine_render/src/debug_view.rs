@@ -4,7 +4,6 @@
 )]
 
 use engine_core::{DebugView, DebugViewMode, RenderSnapshot};
-use wgpu::util::DeviceExt;
 
 use crate::bindings::DEBUG_VIEW;
 use crate::gpu_layouts::constants::{
@@ -241,7 +240,7 @@ impl DebugViewPass {
                 }
             }
         }
-        let records = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let records = crate::memory::buffer_init(device, &wgpu::util::BufferInitDescriptor {
             label: Some("engine/debug-view-records"),
             contents: bytemuck::cast_slice(&words),
             usage: wgpu::BufferUsages::VERTEX,
@@ -262,7 +261,7 @@ impl DebugViewPass {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         size: FrameSize,
         settings: DebugView,
         sun: [f32; 3],

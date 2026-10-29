@@ -293,7 +293,7 @@ impl WaterSim {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         live: Option<Live<'_>>,
         seconds: f64,
     ) {
@@ -476,7 +476,11 @@ impl WaterSim {
 
 impl SimWindow {
     fn new(
-        (device, queue, layouts): (&wgpu::Device, &wgpu::Queue, (&GroupLayout, &GroupLayout)),
+        (device, queue, layouts): (
+            &wgpu::Device,
+            &crate::gpu_calls::Queue,
+            (&GroupLayout, &GroupLayout),
+        ),
         source: &Arc<WaterWindow>,
         fitted: Arc<WaterWindow>,
     ) -> Self {
@@ -517,7 +521,7 @@ impl SimWindow {
 
     fn follow(
         &mut self,
-        gpu: (&wgpu::Device, &wgpu::Queue, (&GroupLayout, &GroupLayout)),
+        gpu: (&wgpu::Device, &crate::gpu_calls::Queue, (&GroupLayout, &GroupLayout)),
         source: &Arc<WaterWindow>,
         fitted: Arc<WaterWindow>,
     ) {
@@ -535,7 +539,7 @@ impl SimWindow {
         &mut self,
         (device, queue, (layout, setup)): (
             &wgpu::Device,
-            &wgpu::Queue,
+            &crate::gpu_calls::Queue,
             (&GroupLayout, &GroupLayout),
         ),
     ) {
@@ -577,7 +581,7 @@ impl SimWindow {
 
     fn set_up(
         &mut self,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         sets_up: bool,
         resident: &dyn Fn(&WaterRead) -> bool,
     ) {
@@ -699,7 +703,7 @@ impl SimWindow {
         });
     }
 
-    fn write_table(&self, queue: &wgpu::Queue) {
+    fn write_table(&self, queue: &crate::gpu_calls::Queue) {
         let side = self.fitted.blocks();
         let corner = self
             .fitted
@@ -880,7 +884,7 @@ fn largest_bytes(blocks: u32, (sources, solids): (usize, usize)) -> u64 {
 }
 
 fn write_sources(
-    queue: &wgpu::Queue,
+    queue: &crate::gpu_calls::Queue,
     buffers: &SlotBuffers,
     window: &WaterWindow,
     stored: &StoredBlocks,
@@ -906,7 +910,7 @@ fn write_sources(
     sources.len() as u32
 }
 
-fn write_solids(queue: &wgpu::Queue, list: &wgpu::Buffer, solids: &[Footprint]) -> u32 {
+fn write_solids(queue: &crate::gpu_calls::Queue, list: &wgpu::Buffer, solids: &[Footprint]) -> u32 {
     let mut entries: Vec<[f32; 4]> = Vec::with_capacity(SETUP_SOLID_ENTRIES * solids.len());
     for solid in solids {
         let axes = Mat3::from_cols_array(&solid.axes);

@@ -135,7 +135,7 @@ impl WaterParticles {
 
     pub(crate) fn prepare(
         &mut self,
-        (device, queue): (&wgpu::Device, &wgpu::Queue),
+        (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
         terrain: Option<u32>,
         seen: ParticleView,
         (settings, ridden, wind, seconds): (&Water, f32, [f32; 2], f64),
@@ -481,7 +481,7 @@ impl ParticleGrid {
             (u64::from(PARTICLE_ITEMS) + pooled + sites + 2 * scanned) * 4,
             wgpu::BufferUsages::COPY_SRC,
         );
-        let args = device.create_buffer(&wgpu::BufferDescriptor {
+        let args = crate::memory::buffer(device, &wgpu::BufferDescriptor {
             label: Some("engine/water-particles-args"),
             size: DRAW_ARGS + DRAW_BYTES,
             usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,

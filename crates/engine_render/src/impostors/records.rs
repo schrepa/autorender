@@ -164,7 +164,7 @@ impl ImpostorAtlas {
         let record = self.record_key(content);
         let baked = &self.targets.as_ref().expect("drawn above").layer;
         let (regions, bytes) = level_regions(shape);
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = crate::memory::buffer(device, &wgpu::BufferDescriptor {
             label: Some("engine/impostor-readback"),
             size: bytes,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,

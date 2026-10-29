@@ -276,14 +276,18 @@ impl ShadowMaps {
         }
     }
 
-    pub(super) fn write_uniform(&mut self, queue: &wgpu::Queue, uniform: ShadowUniform) {
+    pub(super) fn write_uniform(
+        &mut self,
+        queue: &crate::gpu_calls::Queue,
+        uniform: ShadowUniform,
+    ) {
         if self.written != Some(uniform) {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
             self.written = Some(uniform);
         }
     }
 
-    pub(super) fn write_horizon_records(&mut self, queue: &wgpu::Queue, count: f32) {
+    pub(super) fn write_horizon_records(&mut self, queue: &crate::gpu_calls::Queue, count: f32) {
         if let Some(written) = &mut self.written
             && written.level_state[3] != count
         {
@@ -293,7 +297,12 @@ impl ShadowMaps {
         }
     }
 
-    pub(super) fn write_table(&self, queue: &wgpu::Queue, table: &[u32], changed: &[usize]) {
+    pub(super) fn write_table(
+        &self,
+        queue: &crate::gpu_calls::Queue,
+        table: &[u32],
+        changed: &[usize],
+    ) {
         let Some(maps) = self.textures() else {
             return;
         };

@@ -84,7 +84,7 @@ impl ExposurePass {
 
     pub(crate) fn prepare(
         &mut self,
-        (device, queue): (&wgpu::Device, &wgpu::Queue),
+        (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
         snapshot: &RenderSnapshot,
         (scene, depth, drawn): (Bound<'_>, &Versioned<wgpu::TextureView>, (u32, u32)),
         lighting: &wgpu::Buffer,

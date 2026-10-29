@@ -168,7 +168,7 @@ macro_rules! passes {
             $($name,)*
         }
 
-        const PASS_NAMES: &[&str] = &[$(stringify!($name),)*];
+        pub(crate) const PASS_NAMES: &[&str] = &[$(stringify!($name),)*];
 
         const PASS_STAGES: &[&str] = &[$(concat!("stage_", stringify!($name)),)*];
 

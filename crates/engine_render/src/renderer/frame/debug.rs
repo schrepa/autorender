@@ -29,6 +29,7 @@ impl Renderer {
         snapshot: &RenderSnapshot,
         kind: FrameKind,
     ) -> Option<Ready<DebugViewFrame>> {
+        let _owner = crate::memory::owned(Pass::Feature(FeaturePass::DebugView));
         let (device, queue) = (&self.device, &self.queue);
         let (size, format) = (self.display.size(), self.display.format());
         let sun = snapshot

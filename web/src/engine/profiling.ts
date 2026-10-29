@@ -3,7 +3,7 @@ import type { Runtime } from "./host";
 type JsonObject = Record<string, unknown>;
 type CpuEvent = { category: string; name: string; kind: string; start_ms: number; duration_ms: number; value: number | null; depth: number; frame: string | number | null; complete: boolean };
 type CpuCapture = { version: number; id: string | number; start_ms: number; end_ms: number; max_events: number; dropped_events: number; incomplete_spans: number; complete: boolean; events: CpuEvent[]; allocations_start: JsonObject; allocations_end: JsonObject; allocations_delta: JsonObject };
-type RustCapture = { cpu: CpuCapture; gpu: JsonObject; memory: { wasm_linear_bytes?: number } };
+type RustCapture = { bricks: JsonObject; cpu: CpuCapture; gpu: JsonObject; memory: { wasm_linear_bytes?: number } };
 type ProfilingRuntime = Runtime & Required<Pick<Runtime, "profiling_start" | "profiling_stop" | "profiling_status" | "profiling_poll" | "profiling_report">>;
 type Frame = { index: number; raf_timestamp_ms: number; start_ms: number; rust_end_ms: number | null; end_ms: number | null; previous_raf_ms: number | null };
 type BrowserEntry = { entryType: string; name: string; startTime: number; duration: number; [key: string]: unknown };
@@ -208,7 +208,7 @@ export class DetailedProfiler {
     if (raw?.gpu.supported === true && raw.gpu.complete !== true) { complete = false; if (reason === "duration_complete") reason = "gpu_capture_incomplete"; }
     if (this.droppedEntries || this.droppedFrames) { complete = false; if (reason === "duration_complete") reason = "host_buffer_limit"; }
     const { samples: _gpuSamples, ...gpuSummary } = raw?.gpu ?? {};
-    const summary = { cpu_events: raw?.cpu.events.length ?? 0, dropped_cpu_events: raw?.cpu.dropped_events ?? 0, host_frames: this.frames.length, browser_entries: this.entries.length,
+    const summary = { bricks: raw?.bricks ?? null, cpu_events: raw?.cpu.events.length ?? 0, dropped_cpu_events: raw?.cpu.dropped_events ?? 0, host_frames: this.frames.length, browser_entries: this.entries.length,
       gpu: gpuSummary, allocations: raw?.cpu.allocations_delta ?? null, memory_start: this.memories[0] ?? null, memory_end: this.memories.at(-1) ?? null };
     const result: DetailedProfileReport = {
       version: 1, kind: "detailed_profile", complete, reason, started_at: this.startedAt, metadata: this.metadata, capabilities: this.capabilities,

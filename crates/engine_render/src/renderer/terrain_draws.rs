@@ -17,6 +17,7 @@ impl Renderer {
         opaque_kind: PassKind,
         (probes, fades): (bool, bool),
     ) -> bool {
+        let _owner = crate::memory::owned(crate::render_graph::Pass::Subdivision);
         let terrains = engine_terrain::RenderTerrains::of(snapshot);
         if terrains.terrains.is_empty() && self.terrain.resident() == 0 {
             self.terrain.rest();
@@ -239,6 +240,7 @@ impl Renderer {
         snapshot: &RenderSnapshot,
         opaque_kind: PassKind,
     ) -> Option<Ready<WaterFrame>> {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Water);
         let targets = opaque_kind.targets()?;
         let terrains = engine_terrain::RenderTerrains::of(snapshot);
         let coming = terrains.terrains.iter().any(|terrain| terrain.hydrology);

@@ -111,7 +111,7 @@ pub(crate) struct Bounce {
 }
 
 impl Bounce {
-    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
         let frame = crate::buffers::uniform(
             device,
             "engine/terrain-bounce-frame",
@@ -253,7 +253,7 @@ impl Bounce {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         terrains: &RenderTerrains,
         (horizons, sky, colors, palette): (&Horizons, &SkyMaps, &MacroMaps, &[u32]),
         cooking: bool,
@@ -380,7 +380,7 @@ impl Bounce {
             .grow(device, u64::from(scratch) * SCRATCH_PROBE_BYTES);
     }
 
-    fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+    fn upload(&mut self, device: &wgpu::Device, queue: &crate::gpu_calls::Queue) {
         let mut words: Vec<u32> = Vec::new();
         let mut probes: Vec<u8> = Vec::new();
         self.bases.clear();
@@ -715,7 +715,12 @@ fn mean_of(four: [&[u8]; 4]) -> [u8; PROBE_BYTES] {
     mean
 }
 
-fn write_ground(queue: &wgpu::Queue, ground: &wgpu::Texture, index: usize, bounce: &TerrainBounce) {
+fn write_ground(
+    queue: &crate::gpu_calls::Queue,
+    ground: &wgpu::Texture,
+    index: usize,
+    bounce: &TerrainBounce,
+) {
     let side = bounce.texels();
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {

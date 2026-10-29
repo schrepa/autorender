@@ -12,6 +12,7 @@ impl Renderer {
         view: &wgpu::TextureView,
         report: &mut EncodeReport,
     ) {
+        let _owner = crate::memory::owned(node.pass());
         match node.pass() {
             Pass::Presentation => self.encode_presentation(encoder),
             Pass::Subdivision => self.terrain.encode_subdivision(

@@ -94,7 +94,7 @@ pub(crate) struct WaterBlocks {
 impl WaterBlocks {
     pub(super) fn new(device: &wgpu::Device) -> Self {
         let stand_in = |label: &'static str, format| {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
+            let texture = crate::memory::texture(device, &wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
                     width: 1,
@@ -363,7 +363,7 @@ impl WaterBlocks {
         }
         let layers = needed.next_power_of_two().min(max_layers.max(1));
         let array = |label: &'static str, format| {
-            device.create_texture(&wgpu::TextureDescriptor {
+            crate::memory::texture(device, &wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
                     width: LAYER_TEXELS,

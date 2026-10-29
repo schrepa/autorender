@@ -89,7 +89,7 @@ impl DepthPyramid {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         depth: &Versioned<wgpu::TextureView>,
         region: FrameRegion,
     ) -> u32 {
@@ -141,14 +141,11 @@ impl DepthPyramid {
         };
         let views: Vec<wgpu::TextureView> = (0..count).map(level_view).collect();
         let reduced = extents(region.render, count);
-        let extents_buffer = wgpu::util::DeviceExt::create_buffer_init(
-            device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("engine/depth-pyramid-extents"),
-                contents: &extent_bytes(&reduced),
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            },
-        );
+        let extents_buffer = crate::memory::buffer_init(device, &wgpu::util::BufferInitDescriptor {
+            label: Some("engine/depth-pyramid-extents"),
+            contents: &extent_bytes(&reduced),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
         let extent_binding = |level: u32| {
             wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                 buffer: &extents_buffer,
@@ -242,7 +239,7 @@ impl DepthPyramid {
 }
 
 impl Levels {
-    fn reduce(&mut self, queue: &wgpu::Queue, drawn: FrameSize) {
+    fn reduce(&mut self, queue: &crate::gpu_calls::Queue, drawn: FrameSize) {
         let reduced = extents(drawn, self.passes.len() as u32);
         queue.write_buffer(&self.extents, 0, &extent_bytes(&reduced));
         for (level, extent) in self.passes.iter_mut().zip(&reduced) {

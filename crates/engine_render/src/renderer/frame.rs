@@ -155,6 +155,7 @@ impl Renderer {
         drawn: bool,
         inputs: &mut Option<wgpu::CommandEncoder>,
     ) -> Option<Ready<ExposureFrame>> {
+        let _owner = crate::memory::owned(Pass::Feature(FeaturePass::Exposure));
         let needs = drawn && snapshot.environment.auto_exposure.enabled;
         let (device, queue) = (&self.device, &self.queue);
         let (post, depth) = (self.features.post.get(), &self.depth.view);

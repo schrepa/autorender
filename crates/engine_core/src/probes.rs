@@ -20,7 +20,8 @@ impl Brick for ReflectionProbes {
         bricks
             .settings::<ReflectionProbeSettings>()
             .resource::<ProbeExtractor>()
-            .extract(extract_probes);
+            .extract(extract_probes)
+            .passes(&["probe_captures"]);
     }
 }
 

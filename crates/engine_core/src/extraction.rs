@@ -14,8 +14,8 @@ pub(crate) fn extract(retained: &mut RetainedRender, world: &World) {
             .unwrap_or_default(),
     );
     if let Some(registry) = world.get_resource::<crate::BrickRegistry>() {
-        for extract in registry.extractions() {
-            retained.extract_brick(world, extract);
+        for (brick, extract) in registry.extractions() {
+            crate::bricks::under(brick, || retained.extract_brick(world, extract));
         }
     }
 }

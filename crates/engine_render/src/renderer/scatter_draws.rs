@@ -224,6 +224,7 @@ impl Renderer {
     }
 
     pub(super) fn prepare_occupancy(&mut self) -> Option<Ready<OccupancyFrame>> {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Occupancy);
         let device = &self.device;
         let slots = self.features.scatter.get().slot_buffers();
         self.features

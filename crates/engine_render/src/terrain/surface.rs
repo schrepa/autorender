@@ -132,7 +132,7 @@ impl SurfaceTrees {
                 ARGS_BYTES,
                 wgpu::BufferUsages::INDIRECT,
             ),
-            indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            indices: crate::memory::buffer_init(device, &wgpu::util::BufferInitDescriptor {
                 label: Some("engine/terrain-surface-indices"),
                 contents: bytemuck::cast_slice(&meshlet_indices()),
                 usage: wgpu::BufferUsages::INDEX,
@@ -228,7 +228,7 @@ impl SurfaceTrees {
     pub(super) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         terrains: &RenderTerrains,
         views: &TerrainViews<'_>,
         holds_water: impl Fn(u64) -> bool,
@@ -299,7 +299,7 @@ impl SurfaceTrees {
 
     fn lay_out(
         &mut self,
-        (device, queue): (&wgpu::Device, &wgpu::Queue),
+        (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
         (terrain, index, measure): (&RenderTerrain, usize, Measure),
         (depth, (first, room)): (u32, (u32, u32)),
         planes: [[f32; 4]; 6],
@@ -339,7 +339,7 @@ impl SurfaceTrees {
     fn tree(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         (terrain, measure): (&RenderTerrain, Measure),
         (wanted, capacity): (u32, u32),
     ) -> (f32, u32) {
@@ -551,7 +551,7 @@ fn tree_bytes(depth: u32) -> u64 {
     (u64::from(counts_words(depth)) + (1_u64 << (depth - 5))) * 4
 }
 
-fn seed(queue: &wgpu::Queue, buffer: &wgpu::Buffer, depth: u32) {
+fn seed(queue: &crate::gpu_calls::Queue, buffer: &wgpu::Buffer, depth: u32) {
     let word = |at: u64, value: u32| queue.write_buffer(buffer, at * 4, &value.to_le_bytes());
     word(1, 2);
     for level in 1..=depth - SUBDIVISION_COUNTED {

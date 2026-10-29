@@ -19,7 +19,11 @@ impl<T> Versioned<T> {
         }
     }
 
-    pub(crate) fn replace(&mut self, value: T) {
+    pub(crate) fn replace(&mut self, value: T)
+    where
+        T: 'static,
+    {
+        crate::memory::release_any(&self.value);
         self.value = value;
         self.generation = next_generation();
     }

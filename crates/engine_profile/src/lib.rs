@@ -7,10 +7,19 @@ pub const MAX_EVENTS: usize = 65_536;
 
 #[cfg(feature = "enabled")]
 mod allocator;
+#[cfg(feature = "bricks")]
+mod bricks;
 #[cfg(feature = "enabled")]
 mod collector;
 #[cfg(feature = "enabled")]
-pub use allocator::{AllocationSnapshot, TrackingAllocator, allocation_snapshot};
+pub use allocator::{
+    AllocationSnapshot, SAMPLE_EVERY, TrackingAllocator, allocation_snapshot, sample_allocations,
+};
+#[cfg(feature = "bricks")]
+pub use bricks::{
+    BrickHeap, BrickScope, CORE, CORE_NAME, MAX_BRICKS, brick_heap, brick_index, brick_name,
+    current_brick, enter, install_clock, take_spent,
+};
 #[cfg(feature = "enabled")]
 pub use collector::*;
 

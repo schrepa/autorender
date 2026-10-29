@@ -213,7 +213,7 @@ mod gpu {
         pub(crate) fn prepare(
             &mut self,
             device: &wgpu::Device,
-            queue: &wgpu::Queue,
+            queue: &crate::gpu_calls::Queue,
             snapshot: &RenderSnapshot,
             emitters: (u64, u64),
             size: crate::targets::FrameSize,
@@ -265,7 +265,12 @@ mod gpu {
             })
         }
 
-        fn pack(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, snapshot: &RenderSnapshot) {
+        fn pack(
+            &mut self,
+            device: &wgpu::Device,
+            queue: &crate::gpu_calls::Queue,
+            snapshot: &RenderSnapshot,
+        ) {
             let room = self.owners.room() / 4;
             self.counts = pack_emitters(&snapshot.particles.list, &mut self.records, room);
             let total = self.counts.2;

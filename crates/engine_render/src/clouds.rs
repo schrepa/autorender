@@ -122,9 +122,13 @@ fn levels_below(side: u32, texels: &[u8]) -> Vec<Vec<u8>> {
 }
 
 impl NoiseVolumes {
-    fn new(device: &wgpu::Device, queue: &wgpu::Queue, noise: &StaticTable<CloudNoise>) -> Self {
+    fn new(
+        device: &wgpu::Device,
+        queue: &crate::gpu_calls::Queue,
+        noise: &StaticTable<CloudNoise>,
+    ) -> Self {
         let volume = |label, side: u32, levels: &[&[u8]]| {
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
+            let texture = crate::memory::texture(device, &wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
                     width: side,
@@ -246,8 +250,8 @@ impl CloudPass {
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let clear = device.create_texture(&wgpu::TextureDescriptor {
+    pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
+        let clear = crate::memory::texture(device, &wgpu::TextureDescriptor {
             label: Some("engine/cloud-clear"),
             size: wgpu::Extent3d {
                 width: 1,
@@ -518,7 +522,7 @@ impl CloudPass {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         (settings, noise, (eye, surface), seconds): CloudInputs<'_>,
         (lighting, air): (&LightingUniform, crate::sky::AirBindings<'_>),
         whole: bool,
@@ -652,7 +656,7 @@ impl CloudPass {
     pub(crate) fn prepare_view(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         (settings, eye, seconds): (&Clouds, glam::Vec3, f64),
         view_projection: glam::Mat4,
         region: crate::targets::FrameRegion,
@@ -858,7 +862,7 @@ impl CloudPass {
         self.ready = true;
     }
 
-    fn write_domes(&self, queue: &wgpu::Queue, eye: glam::Vec3, settings: &Clouds) {
+    fn write_domes(&self, queue: &crate::gpu_calls::Queue, eye: glam::Vec3, settings: &Clouds) {
         let shows = if self.active && self.ready { 1.0 } else { 0.0 };
         let [old, new, _] = self.roles;
         let (older, newer) = (self.origins[old], self.origins[new]);
@@ -1000,7 +1004,7 @@ fn march_uniform(
 }
 
 fn view_texture(device: &wgpu::Device, size: [u32; 2]) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let texture = crate::memory::texture(device, &wgpu::TextureDescriptor {
         label: Some("engine/cloud-view"),
         size: wgpu::Extent3d {
             width: size[0],
@@ -1081,7 +1085,7 @@ fn composite_pipeline(
 }
 
 fn dome_texture(device: &wgpu::Device, size: [u32; 2]) -> (wgpu::Texture, wgpu::TextureView) {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let texture = crate::memory::texture(device, &wgpu::TextureDescriptor {
         label: Some("engine/cloud-dome"),
         size: wgpu::Extent3d {
             width: size[0],
@@ -1123,7 +1127,7 @@ pub(crate) fn shadow_lighting(clouds: &Clouds, eye: glam::Vec3) -> ([f32; 4], [f
     }
 }
 
-fn shadow_uniform(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::Buffer {
+fn shadow_uniform(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> wgpu::Buffer {
     let buffer = crate::buffers::storage(
         device,
         "engine/cloud-shadows",

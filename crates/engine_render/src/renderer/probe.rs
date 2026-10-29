@@ -66,7 +66,7 @@ impl Renderer {
     pub fn arm_probe(&mut self, pixel: (u32, u32)) {
         let armed_size = self.display.size().pixels();
         let depth_row = (armed_size.0 * 4).next_multiple_of(ROW_ALIGNMENT);
-        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let buffer = crate::memory::buffer(&self.device, &wgpu::BufferDescriptor {
             label: Some("engine/debug-view-probe"),
             size: DEPTH + u64::from(depth_row) * u64::from(armed_size.1),
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,

@@ -81,6 +81,7 @@ pub(crate) struct WaterPass {
 
 impl WaterPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Water);
         Self {
             layout: crate::pipelines::layout(device, &WATER),
             behind_layout: crate::pipelines::layout(device, &WATER_BEHIND),
@@ -138,14 +139,11 @@ impl WaterPass {
             return;
         }
         let buffer = |label, contents: &[u8], usage| {
-            wgpu::util::DeviceExt::create_buffer_init(
-                device,
-                &wgpu::util::BufferInitDescriptor {
-                    label: Some(label),
-                    contents,
-                    usage,
-                },
-            )
+            crate::memory::buffer_init(device, &wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents,
+                usage,
+            })
         };
         self.falls = Some(FallDraws {
             vertices: buffer(
@@ -192,7 +190,7 @@ impl WaterPass {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &crate::gpu_calls::Queue,
         (tiles, terrains): (Option<TerrainWaterDraws<'_>>, &[RenderTerrain]),
         settings: Water,
         (seen, wind, seconds): (ParticleView, Wind, f64),
@@ -795,7 +793,7 @@ fn absorption(color: [f32; 3], clarity: f32) -> [f32; 4] {
 
 fn placeholders(device: &wgpu::Device) -> Placeholders {
     let array = |label, format| {
-        device.create_texture(&wgpu::TextureDescriptor {
+        crate::memory::texture(device, &wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
                 width: 1,
