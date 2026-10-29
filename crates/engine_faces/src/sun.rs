@@ -7,7 +7,7 @@ pub struct Sun {
 impl Sun {
     pub const NONE: Self = Self {
         direction: [0.0, 1.0, 0.0, 0.0],
-        color: [0.0, 0.0, 0.0, 1.0],
+        color: [0.0, 0.0, 0.0, 0.0],
     };
 }
 
