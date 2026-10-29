@@ -3,7 +3,7 @@ use engine_terrain::SIM_TOUCHES;
 
 use super::constants::SIM_SLOTS;
 
-gpu_structs! {
+engine_render::gpu_structs! {
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct WaterUniform as ["WaterUniform"] {
         pub color: [f32; 4],

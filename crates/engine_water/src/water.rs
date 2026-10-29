@@ -4,21 +4,27 @@ use std::sync::Arc;
 
 use engine_core::glam::Vec3;
 use engine_core::math::max;
-use engine_core::{RecordKey, RenderSnapshot, RenderStats, WaterStats};
+use engine_core::{RenderSnapshot, RenderStats, WaterStats};
+use engine_faces::heightfield::{
+    HeightfieldFace, SubdivisionUniform, TerrainUniform, ViewUniform, WaterDraws,
+};
+use engine_render::bindings::{Contribution, Sampling, Stages, sampler};
+use engine_render::cached::Bound;
+use engine_render::entries::PassKind;
+use engine_render::graph::{
+    Access, FrameGraph, GraphTable, PassDecl, PassId, ResourceId, Stage, Targets,
+};
+use engine_render::parts::{
+    Begin, BeginOut, Create, Encode, GpuPart, MadeRecord, PartDecl, PartEntry, RecordStart,
+    Shading, Step, View,
+};
+use engine_render::post::PostPass;
+use engine_render::profiling::Span;
+use engine_render::renderer::Core;
+use engine_render::targets::{FrameSize, ScreenTarget};
 use engine_terrain::{Fall, RenderTerrain, SettleStart, Water, Wind};
 
-use crate::bindings::{Contribution, Sampling, Stages, WATER, WATER_BEHIND, sampler};
-use crate::cached::Bound;
-use crate::entries::PassKind;
-use crate::gpu_layouts::terrain::{SubdivisionUniform, TerrainUniform, ViewUniform};
-use crate::graph::{Access, FrameGraph, GraphTable, PassDecl, PassId, ResourceId, Stage, Targets};
-use crate::parts::{Begin, BeginOut, Create, Encode, GpuPart, PartDecl, PartEntry, Step, View};
-use crate::post::PostPass;
-use crate::profiling::Span;
-use crate::renderer::Core;
-use crate::scene_shading::SceneShading;
-use crate::targets::{FrameSize, ScreenTarget};
-use crate::terrain::{SurfaceDraw, TerrainPass, TerrainWaterDraws};
+use crate::bindings::{WATER, WATER_BEHIND};
 use crate::water_falls::{fall_layout, sheets};
 use crate::water_particles::{ParticleStats, ParticleView, WaterParticles, particle_terrain};
 use crate::water_settle::WaterSettle;
@@ -28,10 +34,10 @@ use crate::gpu_layouts::water::{FallVertex, WaterUniform};
 
 pub(crate) const WATER_UNIFORM_BYTES: usize = size_of::<WaterUniform>();
 
-pub(crate) static PART: PartEntry = PartEntry {
+pub static PART: PartEntry = PartEntry {
     decl: PartDecl {
         name: "water",
-        brick: "terrain",
+        brick: "water",
         passes: &[PassDecl {
             name: "water",
             stage: Stage::Surfaces,
@@ -58,7 +64,7 @@ pub(crate) static PART: PartEntry = PartEntry {
 };
 
 fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
-    let _owner = crate::memory::owned(PART.decl.brick);
+    let _owner = engine_render::memory::owned(PART.decl.brick);
     Box::new(WaterPass::new(&cx.core.device))
 }
 
@@ -77,6 +83,27 @@ struct Placeholders {
     live: wgpu::Buffer,
     storage: wgpu::Buffer,
     particles: wgpu::Buffer,
+}
+
+struct SurfaceDraw {
+    indices: wgpu::Buffer,
+    args: wgpu::Buffer,
+    offset: u64,
+}
+
+impl SurfaceDraw {
+    fn of(draw: &engine_faces::heightfield::SurfaceDraw<'_>) -> Self {
+        Self {
+            indices: draw.indices.clone(),
+            args: draw.args.clone(),
+            offset: draw.offset,
+        }
+    }
+
+    fn record(&self, pass: &mut wgpu::RenderPass<'_>) {
+        pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint16);
+        pass.draw_indexed_indirect(&self.args, self.offset);
+    }
 }
 
 struct TileDraws {
@@ -102,14 +129,14 @@ struct BehindCopies {
 
 const FOAM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 
-pub(crate) struct WaterFrame {
+struct WaterFrame {
     blocks: [u32; 2],
     subdivided: [u32; 2],
 }
 
 pub(crate) struct WaterPass {
-    layout: crate::pipelines::GroupLayout,
-    behind_layout: crate::pipelines::GroupLayout,
+    layout: engine_render::pipelines::GroupLayout,
+    behind_layout: engine_render::pipelines::GroupLayout,
     behind: ScreenTarget<BehindCopies>,
     placeholders: Placeholders,
     refraction_sampler: wgpu::Sampler,
@@ -125,17 +152,17 @@ pub(crate) struct WaterPass {
     fall_pipelines: HashMap<Targets, wgpu::RenderPipeline>,
     fall_vertices: Vec<FallVertex>,
     fall_indices: Vec<u32>,
-    shading: SceneShading,
+    shading: Vec<(&'static str, f64)>,
     water_views: bool,
     frame: Option<WaterFrame>,
     ids: Ids,
 }
 
 impl WaterPass {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
+    fn new(device: &wgpu::Device) -> Self {
         Self {
-            layout: crate::pipelines::layout(device, &WATER),
-            behind_layout: crate::pipelines::layout(device, &WATER_BEHIND),
+            layout: engine_render::pipelines::layout(device, &WATER),
+            behind_layout: engine_render::pipelines::layout(device, &WATER_BEHIND),
             behind: ScreenTarget::default(),
             placeholders: placeholders(device),
             refraction_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
@@ -147,7 +174,11 @@ impl WaterPass {
             settle: WaterSettle::new(device),
             sim: WaterSim::new(device),
             particles: WaterParticles::new(device),
-            uniform: crate::buffers::uniform(device, "engine/water", WATER_UNIFORM_BYTES as u64),
+            uniform: engine_render::buffers::uniform(
+                device,
+                "engine/water",
+                WATER_UNIFORM_BYTES as u64,
+            ),
             group: None,
             tiles: None,
             pipelines: HashMap::default(),
@@ -156,30 +187,14 @@ impl WaterPass {
             fall_pipelines: HashMap::default(),
             fall_vertices: Vec::new(),
             fall_indices: Vec::new(),
-            shading: SceneShading::ALL,
+            shading: Vec::new(),
             water_views: false,
             frame: None,
             ids: Ids::default(),
         }
     }
 
-    pub(crate) fn settle(&mut self, starts: Vec<(u64, Vec<RecordKey>, Arc<SettleStart>)>) {
-        self.settle.settle(starts);
-    }
-
-    pub(crate) fn take_made(&mut self) -> Vec<(RecordKey, Result<Vec<u8>, String>)> {
-        self.settle.take_made()
-    }
-
-    pub(crate) fn set_cooking(&mut self, cooking: bool) {
-        self.settle.set_cooking(cooking);
-    }
-
-    pub(crate) fn looks_left(&self) -> u64 {
-        self.settle.looks_left()
-    }
-
-    fn specialize(&mut self, shading: SceneShading, water_views: bool) {
+    fn specialize(&mut self, shading: Vec<(&'static str, f64)>, water_views: bool) {
         if self.shading != shading {
             self.shading = shading;
             self.pipelines.clear();
@@ -214,7 +229,7 @@ impl WaterPass {
             return;
         }
         let buffer = |label, contents: &[u8], usage| {
-            crate::memory::buffer_init(
+            engine_render::memory::buffer_init(
                 device,
                 &wgpu::util::BufferInitDescriptor {
                     label: Some(label),
@@ -268,8 +283,12 @@ impl WaterPass {
     fn prepare_frame(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
-        (tiles, terrains): (Option<TerrainWaterDraws<'_>>, &[RenderTerrain]),
+        queue: &engine_render::gpu_calls::Queue,
+        (tiles, terrains, heightfield): (
+            Option<WaterDraws<'_>>,
+            &[RenderTerrain],
+            &dyn HeightfieldFace,
+        ),
         settings: Water,
         (seen, wind, seconds): (ParticleView, Wind, f64),
         (depth, refracts): (&wgpu::Texture, bool),
@@ -282,15 +301,19 @@ impl WaterPass {
         let tiles = tiles?;
         let live = terrains.iter().find_map(|terrain| {
             let window = terrain.water_window.as_ref()?;
-            let ground = tiles.ground.and_then(|(_, group)| {
-                let drawn = tiles.terrains.iter().find(|drawn| drawn.0 == terrain.id)?;
-                Some(LiveGround {
-                    group,
-                    uniform: drawn.1,
-                    terrain: terrain.id,
-                    held: tiles.held,
-                })
-            });
+            let ground = tiles
+                .terrains
+                .iter()
+                .find(|drawn| drawn.0 == terrain.id)
+                .and_then(|drawn| {
+                    let ground = heightfield.ground(terrain.id)?;
+                    Some(LiveGround {
+                        group: ground.group,
+                        uniform: drawn.1,
+                        terrain: terrain.id,
+                        held: heightfield,
+                    })
+                });
             Some(Live {
                 window,
                 touches: &terrain.water_touches[..],
@@ -363,7 +386,7 @@ impl WaterPass {
     fn prepare_tiles(
         &mut self,
         device: &wgpu::Device,
-        tiles: &TerrainWaterDraws<'_>,
+        tiles: &WaterDraws<'_>,
         sim_generation: u64,
     ) {
         let generations = (tiles.generation, sim_generation);
@@ -376,7 +399,11 @@ impl WaterPass {
             self.group = Some((generations, group));
         }
         self.tiles = Some(TileDraws {
-            terrains: tiles.terrains.clone(),
+            terrains: tiles
+                .terrains
+                .iter()
+                .map(|(id, uniform, tree, leaves)| (*id, *uniform, *tree, SurfaceDraw::of(leaves)))
+                .collect(),
         });
     }
 
@@ -388,7 +415,7 @@ impl WaterPass {
         refracts: bool,
     ) -> BehindCopies {
         let copy = |label, format| {
-            crate::targets::texture_2d(
+            engine_render::targets::texture_2d(
                 device,
                 label,
                 size.pixels(),
@@ -399,8 +426,8 @@ impl WaterPass {
             )
         };
         let depth = copy("engine/water-depth", format);
-        let scene = refracts.then(|| copy("engine/water-scene", crate::post::SCENE_FORMAT));
-        let foam = crate::targets::texture_2d(
+        let scene = refracts.then(|| copy("engine/water-scene", engine_render::post::SCENE_FORMAT));
+        let foam = engine_render::targets::texture_2d(
             device,
             "engine/water-foam",
             size.pixels(),
@@ -419,32 +446,32 @@ impl WaterPass {
             .foam_buffers()
             .unwrap_or((&self.placeholders.particles, &self.placeholders.storage));
         let group = |label, drawn: &wgpu::TextureView| {
-            crate::pipelines::group(
+            engine_render::pipelines::group(
                 device,
                 label,
                 &WATER_BEHIND,
                 &self.behind_layout,
                 &[
-                    ("water_depth", crate::pipelines::view(&depth_view)),
+                    ("water_depth", engine_render::pipelines::view(&depth_view)),
                     (
                         "water_scene",
-                        crate::pipelines::view(
+                        engine_render::pipelines::view(
                             scene_view.as_ref().unwrap_or(&self.placeholders.scene),
                         ),
                     ),
                     (
                         "water_particles",
-                        crate::pipelines::view(
+                        engine_render::pipelines::view(
                             self.particles.view().unwrap_or(&self.placeholders.splatted),
                         ),
                     ),
                     (
                         "water_particles_sampler",
-                        crate::pipelines::sampler(self.particles.sampler()),
+                        engine_render::pipelines::sampler(self.particles.sampler()),
                     ),
                     ("particle_frame", frame.as_entire_binding()),
-                    crate::buffers::entry("foam_pool", pool),
-                    ("water_foam_drawn", crate::pipelines::view(drawn)),
+                    engine_render::buffers::entry("foam_pool", pool),
+                    ("water_foam_drawn", engine_render::pipelines::view(drawn)),
                 ],
             )
         };
@@ -484,30 +511,30 @@ impl WaterPass {
         }
     }
 
-    fn tile_group(&self, device: &wgpu::Device, tiles: &TerrainWaterDraws<'_>) -> wgpu::BindGroup {
+    fn tile_group(&self, device: &wgpu::Device, tiles: &WaterDraws<'_>) -> wgpu::BindGroup {
         let looks = self
             .sim
             .drawn()
             .0
             .map_or(&self.placeholders.live, |drawn| drawn.looks);
-        crate::pipelines::group(
+        engine_render::pipelines::group(
             device,
             "engine/water-group",
             &WATER,
             &self.layout,
             &[
-                ("terrain_heights", crate::pipelines::view(tiles.heights)),
+                ("terrain_heights", engine_render::pipelines::view(tiles.heights)),
                 ("terrain_view", sized(tiles.views, size_of::<ViewUniform>())),
                 (
                     "terrain",
                     sized(tiles.uniforms, size_of::<TerrainUniform>()),
                 ),
-                crate::buffers::entry("terrain_directory", tiles.directory),
-                crate::buffers::entry("terrain_surface_leaves", tiles.leaves),
-                ("water_surface", crate::pipelines::view(tiles.surfaces)),
-                ("water_info", crate::pipelines::view(tiles.info)),
+                engine_render::buffers::entry("terrain_directory", tiles.directory),
+                engine_render::buffers::entry("terrain_surface_leaves", tiles.leaves),
+                ("water_surface", engine_render::pipelines::view(tiles.surfaces)),
+                ("water_info", engine_render::pipelines::view(tiles.info)),
                 ("water", self.uniform.as_entire_binding()),
-                crate::buffers::entry("water_live", looks),
+                engine_render::buffers::entry("water_live", looks),
                 (
                     "water_tree",
                     sized(tiles.trees, size_of::<SubdivisionUniform>()),
@@ -538,7 +565,8 @@ impl WaterPass {
     }
 
     fn foam_pipeline(device: &wgpu::Device) -> wgpu::RenderPipeline {
-        let layout = crate::pipelines::layout_of(device, &crate::pipeline_layouts::WATER_PIPELINES);
+        let layout =
+            engine_render::pipelines::layout_of(device, &crate::pipeline_layouts::WATER_PIPELINES);
         let added = wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::One,
             dst_factor: wgpu::BlendFactor::One,
@@ -552,9 +580,9 @@ impl WaterPass {
             }),
             write_mask: wgpu::ColorWrites::ALL,
         })];
-        crate::pipelines::geometry(
+        engine_render::pipelines::geometry(
             device,
-            &crate::pipelines::Geometry {
+            &engine_render::pipelines::Geometry {
                 label: "engine/water-foam",
                 layout: &layout,
                 vertex_constants: &[],
@@ -566,7 +594,7 @@ impl WaterPass {
                     ..Default::default()
                 },
                 depth: None,
-                fragment: Some(crate::pipelines::Fragment {
+                fragment: Some(engine_render::pipelines::Fragment {
                     entry: crate::shaders::entry::meshes::fs_foam,
                     constants: &[],
                     targets: &targets,
@@ -582,7 +610,8 @@ impl WaterPass {
         (canvas, depth): (wgpu::TextureFormat, wgpu::TextureFormat),
         surface: Surface,
     ) -> wgpu::RenderPipeline {
-        let layout = crate::pipelines::layout_of(device, &crate::pipeline_layouts::WATER_PIPELINES);
+        let layout =
+            engine_render::pipelines::layout_of(device, &crate::pipeline_layouts::WATER_PIPELINES);
         let (vertex, fragment) = match surface {
             Surface::Tiles => crate::entries::water(targets),
             Surface::Falls => crate::entries::falls(targets),
@@ -607,14 +636,15 @@ impl WaterPass {
         }
         let sheets = [Some(fall_layout())];
         let constants = match (targets, surface) {
-            (Targets::Debug, Surface::Tiles) => self
-                .shading
-                .with(&crate::debug_view::water_constants(self.water_views)),
-            _ => self.shading.constants().to_vec(),
+            (Targets::Debug, Surface::Tiles) => crate::debug::water_constants(self.water_views)
+                .into_iter()
+                .chain(self.shading.iter().copied())
+                .collect(),
+            _ => self.shading.clone(),
         };
-        crate::pipelines::geometry(
+        engine_render::pipelines::geometry(
             device,
-            &crate::pipelines::Geometry {
+            &engine_render::pipelines::Geometry {
                 label: match surface {
                     Surface::Tiles => "engine/water",
                     Surface::Falls => "engine/water-falls",
@@ -638,7 +668,7 @@ impl WaterPass {
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                fragment: Some(crate::pipelines::Fragment {
+                fragment: Some(engine_render::pipelines::Fragment {
                     entry: fragment,
                     constants: &constants,
                     targets: &color_targets,
@@ -651,19 +681,22 @@ impl WaterPass {
         &mut self,
         core: &Core,
         snapshot: &RenderSnapshot,
-        terrain_pass: &TerrainPass,
+        terrain: &dyn HeightfieldFace,
         opaque_kind: PassKind,
     ) -> Option<WaterFrame> {
         let targets = opaque_kind.targets()?;
         let terrains = engine_terrain::RenderTerrains::of(snapshot);
         let coming = terrains.terrains.iter().any(|terrain| terrain.hydrology);
         let device = &core.device;
-        let formats = (core.display.format(), crate::renderer::DEPTH_FORMAT);
-        let tiles = terrain_pass.water_draws(terrains);
+        let formats = (core.display.format(), engine_render::renderer::DEPTH_FORMAT);
+        let tiles = terrain.water_draws(snapshot);
         let display = core.display.region.display;
         let seen = ParticleView {
             detail: snapshot.detail_eye,
-            pixel_angle: crate::gpu_data::pixel_angle(snapshot.view_projection, display.height),
+            pixel_angle: engine_render::gpu_data::pixel_angle(
+                snapshot.view_projection,
+                display.height,
+            ),
             display,
         };
         if coming {
@@ -673,7 +706,7 @@ impl WaterPass {
         let prepared = self.prepare_frame(
             device,
             &core.queue,
-            (tiles, &terrains.terrains),
+            (tiles, &terrains.terrains, terrain),
             environment.water,
             (seen, environment.wind, snapshot.presented_seconds),
             (
@@ -746,13 +779,17 @@ impl GpuPart for WaterPass {
     }
 
     fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
-        let water_views = crate::debug_view::shows_water(cx.snapshot.environment.debug_view.view);
-        self.specialize(SceneShading::of(cx.snapshot), water_views);
+        let water_views = crate::debug::shows_water(cx.snapshot.environment.debug_view.view);
+        let mut shading = Shading::default();
+        for (_, part) in cx.parts.iter() {
+            part.shading(cx.snapshot, &mut shading);
+        }
+        self.specialize(shading.values, water_views);
     }
 
     fn prepare_draws(&mut self, cx: &mut Step<'_>, encoder: &mut wgpu::CommandEncoder) {
         self.frame = None;
-        let Some(terrain) = cx.parts.get::<TerrainPass>() else {
+        let Some(terrain) = cx.parts.face::<dyn HeightfieldFace>() else {
             return;
         };
         let core = &*cx.core;
@@ -775,7 +812,7 @@ impl GpuPart for WaterPass {
             .read_written(self.ids.shadow_maps)
             .read_written(self.ids.leaves)
             .read(self.ids.probes);
-        for (target, _) in crate::parts::main_targets(cx.table, &shape) {
+        for (target, _) in engine_render::parts::main_targets(cx.table, &shape) {
             water = water.color(target, Access::Load);
         }
         if let Some(depth) = self.ids.depth {
@@ -800,7 +837,7 @@ impl GpuPart for WaterPass {
                 .encode(&core.device, encoder, (camera, group), &core.profiler);
         }
         let scene = matches!(shape.targets, Targets::Post | Targets::Temporal)
-            .then(|| cx.parts.get::<PostPass>())
+            .then(|| cx.parts.post())
             .flatten()
             .and_then(PostPass::scene_texture);
         self.copy_behind(encoder, &core.depth.texture, scene);
@@ -817,7 +854,7 @@ impl GpuPart for WaterPass {
         if group == "frame" {
             out.push((
                 "refraction_sampler",
-                Bound::fixed(crate::pipelines::sampler(&self.refraction_sampler)),
+                Bound::fixed(engine_render::pipelines::sampler(&self.refraction_sampler)),
             ));
         }
     }
@@ -825,6 +862,29 @@ impl GpuPart for WaterPass {
     fn after_submit(&mut self) {
         self.settle.after_submit();
         self.particles.after_submit();
+    }
+
+    fn set_cooking(&mut self, cooking: bool) {
+        self.settle.set_cooking(cooking);
+    }
+
+    fn start_records(&mut self, starts: &mut Vec<RecordStart>) {
+        let mut settles = Vec::new();
+        for (terrain, records, start) in std::mem::take(starts) {
+            match start.downcast::<SettleStart>() {
+                Ok(start) => settles.push((terrain, records, start)),
+                Err(start) => starts.push((terrain, records, start)),
+            }
+        }
+        self.settle.settle(settles);
+    }
+
+    fn take_records(&mut self) -> Vec<MadeRecord> {
+        self.settle.take_made()
+    }
+
+    fn records_left(&self) -> Option<(&'static str, u64)> {
+        Some(("water looks", self.settle.looks_left()))
     }
 
     fn capacity_bytes(&self) -> u64 {
@@ -917,7 +977,7 @@ fn absorption(color: [f32; 3], clarity: f32) -> [f32; 4] {
 
 fn placeholders(device: &wgpu::Device) -> Placeholders {
     let array = |label, format| {
-        crate::memory::texture(
+        engine_render::memory::texture(
             device,
             &wgpu::TextureDescriptor {
                 label: Some(label),
@@ -946,19 +1006,19 @@ fn placeholders(device: &wgpu::Device) -> Placeholders {
             ..Default::default()
         }),
         splatted: scene.create_view(&wgpu::TextureViewDescriptor::default()),
-        live: crate::buffers::storage(
+        live: engine_render::buffers::storage(
             device,
             "engine/water-placeholder-live",
             16,
             wgpu::BufferUsages::empty(),
         ),
-        storage: crate::buffers::storage(
+        storage: engine_render::buffers::storage(
             device,
             "engine/water-placeholder-storage",
             256,
             wgpu::BufferUsages::empty(),
         ),
-        particles: crate::buffers::uniform(
+        particles: engine_render::buffers::uniform(
             device,
             "engine/water-placeholder-particles",
             size_of::<crate::gpu_layouts::water::ParticleFrame>() as u64,

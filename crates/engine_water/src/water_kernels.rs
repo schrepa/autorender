@@ -12,7 +12,7 @@ use crate::shaders::entry::water_sim;
 const DISPATCH_ROW: u32 = 65_535;
 
 pub(crate) struct Kernels {
-    pub(crate) layout: crate::pipelines::GroupLayout,
+    pub(crate) layout: engine_render::pipelines::GroupLayout,
     pipelines: Option<Pipelines>,
 }
 
@@ -36,16 +36,19 @@ pub(crate) struct Pipelines {
 impl Kernels {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         Self {
-            layout: crate::pipelines::layout(device, &WATER_SIM),
+            layout: engine_render::pipelines::layout(device, &WATER_SIM),
             pipelines: None,
         }
     }
 
     pub(crate) fn pipelines(&mut self, device: &wgpu::Device) -> &Pipelines {
         self.pipelines.get_or_insert_with(|| {
-            let pipeline_layout =
-                crate::pipelines::layout_of(device, &crate::pipeline_layouts::WATER_SIM_PIPELINES);
-            let entry = |entry| crate::pipelines::compute_entry(device, &pipeline_layout, entry);
+            let pipeline_layout = engine_render::pipelines::layout_of(
+                device,
+                &crate::pipeline_layouts::WATER_SIM_PIPELINES,
+            );
+            let entry =
+                |entry| engine_render::pipelines::compute_entry(device, &pipeline_layout, entry);
             Pipelines {
                 exchange: entry(water_sim::sim_exchange),
                 waves: entry(water_sim::sim_waves),
@@ -195,14 +198,14 @@ pub(crate) struct SlotBuffers {
 impl SlotBuffers {
     pub(crate) fn new(
         device: &wgpu::Device,
-        layout: &crate::pipelines::GroupLayout,
+        layout: &engine_render::pipelines::GroupLayout,
         (capacity, slots): (Capacity, u32),
         live: bool,
     ) -> Self {
         let entries = entries(capacity, live);
         let all = u64::from(slots);
         let storage = |label: &str, bytes: u64, extra: wgpu::BufferUsages| {
-            crate::buffers::storage(device, label, bytes, extra)
+            engine_render::buffers::storage(device, label, bytes, extra)
         };
         let none = wgpu::BufferUsages::empty();
         let ground = storage(
@@ -221,8 +224,9 @@ impl SlotBuffers {
             all * entries.averages * 16,
             wgpu::BufferUsages::COPY_SRC,
         );
-        let uniform =
-            |label: &str, bytes: usize| crate::buffers::uniform(device, label, bytes as u64);
+        let uniform = |label: &str, bytes: usize| {
+            engine_render::buffers::uniform(device, label, bytes as u64)
+        };
         let squares = uniform("engine/water-sim-slots", size_of::<SimSlots>());
         let frames = [
             uniform("engine/water-sim-first", size_of::<SimFrame>()),
@@ -251,28 +255,28 @@ impl SlotBuffers {
         buffers
     }
 
-    fn bind(&mut self, device: &wgpu::Device, layout: &crate::pipelines::GroupLayout) {
+    fn bind(&mut self, device: &wgpu::Device, layout: &engine_render::pipelines::GroupLayout) {
         self.groups = self
             .frames
             .iter()
             .map(|frame| {
-                crate::pipelines::group(
+                engine_render::pipelines::group(
                     device,
                     "engine/water-sim",
                     &WATER_SIM,
                     layout,
                     &[
-                        crate::buffers::entry("frame", frame),
-                        crate::buffers::entry("sim_ground", &self.ground),
-                        crate::buffers::entry("sim_cells", &self.cells),
-                        crate::buffers::entry("sim_depths", &self.depths),
-                        crate::buffers::entry("sim_fluxes", &self.fluxes),
-                        crate::buffers::entry("sim_inputs", &self.inputs),
-                        crate::buffers::entry("sim_blocks", &self.blocks),
-                        crate::buffers::entry("sim_steps", &self.steps),
-                        crate::buffers::entry("sim_slots", &self.squares),
-                        crate::buffers::entry("sim_averages", &self.averages),
-                        crate::buffers::entry("sim_touches", &self.touches),
+                        engine_render::buffers::entry("frame", frame),
+                        engine_render::buffers::entry("sim_ground", &self.ground),
+                        engine_render::buffers::entry("sim_cells", &self.cells),
+                        engine_render::buffers::entry("sim_depths", &self.depths),
+                        engine_render::buffers::entry("sim_fluxes", &self.fluxes),
+                        engine_render::buffers::entry("sim_inputs", &self.inputs),
+                        engine_render::buffers::entry("sim_blocks", &self.blocks),
+                        engine_render::buffers::entry("sim_steps", &self.steps),
+                        engine_render::buffers::entry("sim_slots", &self.squares),
+                        engine_render::buffers::entry("sim_averages", &self.averages),
+                        engine_render::buffers::entry("sim_touches", &self.touches),
                     ],
                 )
             })
@@ -282,7 +286,7 @@ impl SlotBuffers {
     pub(crate) fn hold_sources(
         &mut self,
         device: &wgpu::Device,
-        layout: &crate::pipelines::GroupLayout,
+        layout: &engine_render::pipelines::GroupLayout,
         sources: usize,
     ) -> bool {
         if sources as u32 <= self.capacity.sources {
@@ -294,7 +298,7 @@ impl SlotBuffers {
         true
     }
 
-    pub(crate) fn write_frames(&self, queue: &crate::gpu_calls::Queue) {
+    pub(crate) fn write_frames(&self, queue: &engine_render::gpu_calls::Queue) {
         let capacity = self.capacity;
         for (stage, buffer) in self.frames.iter().enumerate() {
             let frame = SimFrame {
@@ -310,7 +314,11 @@ impl SlotBuffers {
         }
     }
 
-    pub(crate) fn write_squares(&self, queue: &crate::gpu_calls::Queue, squares: &[SimSlot]) {
+    pub(crate) fn write_squares(
+        &self,
+        queue: &engine_render::gpu_calls::Queue,
+        squares: &[SimSlot],
+    ) {
         let mut all = SimSlots {
             slot: [SimSlot::zeroed(); SIM_SLOTS],
         };
@@ -322,7 +330,7 @@ impl SlotBuffers {
 
     pub(crate) fn write_touches(
         &mut self,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         touches: Option<&SimTouches>,
     ) {
         self.touched = touches.map(|touches| [touches.blocks[2], touches.blocks[3]]);
@@ -336,7 +344,7 @@ impl SlotBuffers {
 
     pub(crate) fn write_table(
         &self,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         slot: u32,
         stored: &StoredBlocks,
     ) {
@@ -407,7 +415,7 @@ fn inputs(device: &wgpu::Device, (capacity, slots): (Capacity, u32), live: bool)
     } else {
         0
     };
-    crate::buffers::storage(
+    engine_render::buffers::storage(
         device,
         "engine/water-sim-inputs",
         (all * u64::from(capacity.sources) + rings) * 16,

@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use engine_core::glam::{Vec2, Vec3};
-use engine_core::math::{clamp, max, min};
+use engine_core::math::{clamp, exp, max, min, pow};
 use engine_terrain::Fall;
 
 use crate::gpu_layouts::water::FallVertex;
@@ -129,7 +129,7 @@ fn smooth(low: f32, high: f32, value: f32) -> f32 {
 
 fn rows(path: &[Passing], carried: f32) -> Vec<Vec<Row>> {
     let falling = skimmed(path);
-    let breakup = BREAKUP * libm::powf(max(carried, 1.0e-3), 0.32);
+    let breakup = BREAKUP * pow(max(carried, 1.0e-3), 0.32);
     let inception = min(INCEPTION[0] + INCEPTION[1] * carried.sqrt(), INCEPTION[2]);
     let mut jets: Vec<Vec<Row>> = Vec::new();
     let (mut height, mut took_off, mut airborne_white) = (0.0, 0.0, 0.0);
@@ -156,7 +156,7 @@ fn rows(path: &[Passing], carried: f32) -> Vec<Vec<Row>> {
                 let (center, tangent, speed) = on_segment(&a, &b, share);
                 let fallen = max(height - center.y, 0.0);
                 let flying = time - took_off;
-                white = max(airborne_white, 1.0 - libm::expf(-flying / AIRING));
+                white = max(airborne_white, 1.0 - exp(-flying / AIRING));
                 if let Some(jet) = jets.last_mut() {
                     jet.push(Row {
                         center,
@@ -176,7 +176,7 @@ fn rows(path: &[Passing], carried: f32) -> Vec<Vec<Row>> {
                 let churning =
                     smooth(0.0, inception, clung) * smooth(AIRED[0], AIRED[1], AIR_SHARE * sine);
                 let released = LINGERING
-                    + (white - LINGERING) * libm::expf(-max(time - before, 0.0) / AIR_RELEASE);
+                    + (white - LINGERING) * exp(-max(time - before, 0.0) / AIR_RELEASE);
                 white = max(churning, if white > LINGERING { released } else { white });
             }
             before = time;
@@ -236,7 +236,7 @@ fn fall_jets(fall: &Fall, origin: Vec3, vertices: &mut Vec<FallVertex>, indices:
 }
 
 pub(crate) fn fall_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 5] = crate::pipelines::vertex_attributes!(FallVertex {
+    const ATTRIBUTES: [wgpu::VertexAttribute; 5] = engine_render::vertex_attributes!(FallVertex {
         0 => position as Float32x3,
         1 => normal as Float32x3,
         2 => sheet as Float32x4,

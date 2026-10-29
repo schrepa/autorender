@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use bytemuck::Zeroable;
 use engine_core::RecordKey;
+use engine_faces::heightfield::HeightfieldFace;
 use engine_terrain::shallow_water::{CELL_MEANS, DRY, step_seconds};
 use engine_terrain::{BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, SettleStart, SteadyWater, codec};
 
@@ -13,11 +14,10 @@ use crate::gpu_layouts::constants::{
     SIM_SLOTS, SIM_SPARSE, SIM_STEPPING, SIM_SUMMING,
 };
 use crate::gpu_layouts::water::{SimSetup, SimSlot};
-use crate::terrain::TerrainPass;
 use crate::water_kernels::{
     Capacity, Kernels, SlotBuffers, encode_look, encode_steps, slot_bytes, slot_largest_bytes,
 };
-use crate::water_sim::{Setup, SetupBuffers};
+use crate::water_sim::{LiveGround, Setup, SetupBuffers};
 
 const LOOK_EVERY: u32 = 256;
 const SETTLE_STEPS: [u32; 2] = [1024, 16_384];
@@ -210,8 +210,8 @@ impl WaterSettle {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
-        terrain: &TerrainPass,
+        queue: &engine_render::gpu_calls::Queue,
+        terrain: &dyn HeightfieldFace,
     ) {
         self.clears.clear();
         self.copies.clear();
@@ -264,15 +264,24 @@ impl WaterSettle {
 
     fn raise(
         &mut self,
-        (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
-        terrain: &TerrainPass,
+        (device, queue): (&wgpu::Device, &engine_render::gpu_calls::Queue),
+        terrain: &dyn HeightfieldFace,
     ) {
         let Some(buffers) = self.buffers.as_ref() else {
             return;
         };
         let found = self.squares.iter().enumerate().find_map(|(slot, square)| {
             let square = square.as_ref().filter(|square| !square.raised)?;
-            Some((slot, terrain.ground(square.terrain)?))
+            let ground = terrain.ground(square.terrain)?;
+            Some((
+                slot,
+                LiveGround {
+                    group: ground.group,
+                    uniform: ground.uniform,
+                    terrain: ground.terrain,
+                    held: terrain,
+                },
+            ))
         });
         self.setup.hold(found.as_ref().map(|(_, ground)| ground));
         let Some((slot, _)) = found else {
@@ -375,7 +384,7 @@ impl WaterSettle {
         }
     }
 
-    fn write_squares(&mut self, queue: &crate::gpu_calls::Queue) -> Vec<usize> {
+    fn write_squares(&mut self, queue: &engine_render::gpu_calls::Queue) -> Vec<usize> {
         let steps = self.steps;
         self.blocks = 0;
         self.sourced = 0;
@@ -481,7 +490,7 @@ impl WaterSettle {
         copies: &[(bool, u64, u64)],
     ) {
         let bytes: u64 = copies.iter().map(|&(_, _, bytes)| bytes).sum();
-        let buffer = crate::memory::buffer(
+        let buffer = engine_render::memory::buffer(
             device,
             &wgpu::BufferDescriptor {
                 label: Some("engine/water-settle-readback"),
@@ -710,7 +719,7 @@ impl WaterSettle {
             let mapped = Rc::clone(&readback.mapped);
             readback.buffer.slice(..).map_async(
                 wgpu::MapMode::Read,
-                crate::platform::map_callback(move |result| {
+                engine_render::platform::map_callback(move |result| {
                     let read = if result.is_ok() {
                         let bytes = buffer
                             .slice(..)
@@ -730,7 +739,7 @@ impl WaterSettle {
 }
 
 fn load(
-    queue: &crate::gpu_calls::Queue,
+    queue: &engine_render::gpu_calls::Queue,
     buffers: &SlotBuffers,
     slot: u32,
     square: &mut Square,
