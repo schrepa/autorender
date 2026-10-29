@@ -1,57 +1,134 @@
 use super::*;
 use crate::bindings::EMPTY;
-use crate::entries::Slots;
-use crate::pipeline_layouts::{
-    LIT_MESH_PIPELINES, LIT_TEMPORAL_MESH_PIPELINES, MESH_PIPELINES, TEMPORAL_MESH_PIPELINES,
-};
-use crate::pipelines::vertex_attributes;
+use crate::entries::{MeshEntries, Slots};
+use crate::parts::Shading;
+use crate::pipeline_layouts::{LIT_MESH_PIPELINES, LIT_TEMPORAL_MESH_PIPELINES};
 
-pub(crate) struct MeshPipelines {
-    pub(crate) variants: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
-    pub(crate) empty_group: wgpu::BindGroup,
-    pub(crate) shading: SceneShading,
-    pub(crate) cooking: bool,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct ShadingSet(usize);
+
+struct ShadingPipelines {
+    constants: Vec<(&'static str, f64)>,
+    variants: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
 }
 
-impl MeshPipelines {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let empty_layout = crate::pipelines::layout(device, &EMPTY);
-        let empty_group =
-            crate::pipelines::group(device, "engine/empty-group", &EMPTY, &empty_layout, &[]);
+impl ShadingPipelines {
+    fn new(constants: Vec<(&'static str, f64)>) -> Self {
         Self {
+            constants,
             variants: HashMap::default(),
-            empty_group,
-            shading: SceneShading::ALL,
-            cooking: false,
         }
     }
 }
 
-pub(crate) fn relit(kind: PassKind) -> PassKind {
-    PassKind {
-        lit: !kind.lit,
-        ..kind
+pub struct MeshPipelines {
+    sets: Vec<ShadingPipelines>,
+    current: ShadingSet,
+    warm: Vec<ShadingSet>,
+    view: Option<(wgpu::TextureFormat, bool)>,
+    pub empty_group: wgpu::BindGroup,
+    pub cooking: bool,
+}
+
+impl MeshPipelines {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let empty_layout = crate::pipelines::layout(device, &EMPTY);
+        let empty_group =
+            crate::pipelines::group(device, "engine/empty-group", &EMPTY, &empty_layout, &[]);
+        Self {
+            sets: vec![ShadingPipelines::new(Vec::new())],
+            current: ShadingSet::default(),
+            warm: Vec::new(),
+            view: None,
+            empty_group,
+            cooking: false,
+        }
+    }
+
+    pub fn specialize(&mut self, shading: &Shading) -> bool {
+        let current = self.set_of(shading.values.clone());
+        let mut warm = Vec::new();
+        for &(name, value) in &shading.warm {
+            let mut values = shading.values.clone();
+            values.retain(|&(known, _)| known != name);
+            values.push((name, value));
+            let set = self.set_of(values);
+            if set != current && !warm.contains(&set) {
+                warm.push(set);
+            }
+        }
+        self.warm = warm;
+        let changed = current != self.current;
+        self.current = current;
+        changed
+    }
+
+    fn set_of(&mut self, mut values: Vec<(&'static str, f64)>) -> ShadingSet {
+        values.sort_by_key(|value| value.0);
+        values.dedup_by_key(|value| value.0);
+        let same = |known: &[(&'static str, f64)]| {
+            known.len() == values.len()
+                && known
+                    .iter()
+                    .zip(&values)
+                    .all(|(a, b)| a.0 == b.0 && a.1.to_bits() == b.1.to_bits())
+        };
+        if let Some(found) = self.sets.iter().position(|set| same(&set.constants)) {
+            return ShadingSet(found);
+        }
+        self.sets.push(ShadingPipelines::new(values));
+        ShadingSet(self.sets.len() - 1)
+    }
+
+    pub fn shading(&self) -> ShadingSet {
+        self.current
+    }
+
+    pub fn constants(&self) -> &[(&'static str, f64)] {
+        &self.sets[self.current.0].constants
+    }
+
+    fn warming(&self) -> Vec<ShadingSet> {
+        if self.cooking {
+            self.warm.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn pipeline(&self, key: &(PassKind, Variant)) -> Option<&wgpu::RenderPipeline> {
+        self.sets[self.current.0].variants.get(key)
+    }
+
+    fn has(&self, set: ShadingSet, key: &(PassKind, Variant)) -> bool {
+        self.sets[set.0].variants.contains_key(key)
+    }
+
+    pub fn forget(&mut self, targets: Option<Targets>) {
+        for set in &mut self.sets {
+            set.variants.retain(|(kind, _), _| kind.targets() != targets);
+        }
     }
 }
 
 #[derive(Default)]
-pub(crate) struct DrawOrder {
-    pub(crate) order: Vec<u32>,
-    pub(crate) masked: Vec<u32>,
-    pub(crate) keys: Vec<(u8, Variant, Option<MaterialHandle>, u8, u32)>,
+pub struct DrawOrder {
+    pub order: Vec<u32>,
+    pub masked: Vec<u32>,
+    pub keys: Vec<(u8, Variant, Option<MaterialHandle>, u8, u32)>,
 }
 
-const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = vertex_attributes!(Vertex {
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = crate::vertex_attributes!(Vertex {
     0 => position as Float32x3,
     1 => normal as Snorm16x2,
     7 => uv as Float32x2,
 });
 const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
-const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] = vertex_attributes!(ExtraVertex {
+const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] = crate::vertex_attributes!(ExtraVertex {
     9 => color as Unorm16x4,
     10 => uv1 as Float32x2,
 });
-pub(crate) fn extra_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
+pub fn extra_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
     Some(wgpu::VertexBufferLayout {
         array_stride: size_of::<ExtraVertex>() as u64,
         step_mode: wgpu::VertexStepMode::Vertex,
@@ -59,7 +136,7 @@ pub(crate) fn extra_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
     })
 }
 
-pub(crate) fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
+pub fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
     Some(wgpu::VertexBufferLayout {
         array_stride: size_of::<Vertex>() as u64,
         step_mode: wgpu::VertexStepMode::Vertex,
@@ -67,7 +144,7 @@ pub(crate) fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
     })
 }
 
-pub(crate) fn slot_layouts() -> [Option<wgpu::VertexBufferLayout<'static>>; 2] {
+pub fn slot_layouts() -> [Option<wgpu::VertexBufferLayout<'static>>; 2] {
     [
         vertex_layout(),
         Some(wgpu::VertexBufferLayout {
@@ -79,13 +156,20 @@ pub(crate) fn slot_layouts() -> [Option<wgpu::VertexBufferLayout<'static>>; 2] {
 }
 
 #[derive(Default)]
-pub(crate) struct BatchBinds {
-    pub(crate) bindings: Bindings,
+pub struct BatchBinds {
+    pub bindings: Bindings,
     variant: Option<Variant>,
 }
 
 impl Core {
-    pub(crate) fn batch_binding(
+    pub(crate) fn set_shading(&mut self, shading: &Shading) {
+        if self.mesh_pipelines.specialize(shading) {
+            self.structure_keys.variants = None;
+            self.structure_keys.probes = None;
+        }
+    }
+
+    pub fn batch_binding(
         &self,
         batch: &DrawBatch,
         mesh: Option<&GpuMesh>,
@@ -95,13 +179,13 @@ impl Core {
         (group, variant)
     }
 
-    pub(crate) fn bind_batch(
+    pub fn bind_batch(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         binds: &mut BatchBinds,
         (kind, uber): (PassKind, bool),
         batch: &DrawBatch,
-    ) -> (&GpuMesh, MeshDraw<'_>) {
+    ) -> Option<(&GpuMesh, MeshDraw<'_>)> {
         let mesh = &self.meshes[&batch.mesh];
         let (group, variant) = self.batch_binding(batch, Some(mesh));
         let variant = if uber {
@@ -111,13 +195,11 @@ impl Core {
         } else {
             variant
         };
-        (
-            mesh,
-            self.bind_mesh(pass, binds, (kind, variant), (group, mesh)),
-        )
+        let draw = self.bind_mesh(pass, binds, (kind, variant), (group, mesh))?;
+        Some((mesh, draw))
     }
 
-    pub(crate) fn bind_prepass(
+    pub fn bind_prepass(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         binds: &mut BatchBinds,
@@ -127,7 +209,8 @@ impl Core {
         let mesh = &self.meshes[&batch.mesh];
         let (group, variant) = self.batch_binding(batch, Some(mesh));
         let key = prepass_key(kind, variant)?;
-        Some((mesh, self.bind_mesh(pass, binds, key, (group, mesh))))
+        let draw = self.bind_mesh(pass, binds, key, (group, mesh))?;
+        Some((mesh, draw))
     }
 
     fn bind_mesh<'m>(
@@ -136,9 +219,9 @@ impl Core {
         binds: &mut BatchBinds,
         key: (PassKind, Variant),
         (group, mesh): (&wgpu::BindGroup, &'m GpuMesh),
-    ) -> MeshDraw<'m> {
+    ) -> Option<MeshDraw<'m>> {
         if binds.variant != Some(key.1) {
-            pass.set_pipeline(&self.mesh_pipelines.variants[&key]);
+            pass.set_pipeline(self.mesh_pipelines.pipeline(&key)?);
             binds.variant = Some(key.1);
         }
         let bindings = &mut binds.bindings;
@@ -149,10 +232,10 @@ impl Core {
             bindings.vertex(pass, 2, extras);
         }
         bindings.index(pass, draw.indices);
-        draw
+        Some(draw)
     }
 
-    pub(crate) fn opaque_pipeline(
+    pub fn opaque_pipeline(
         &self,
         kind: PassKind,
         variant: Variant,
@@ -163,97 +246,105 @@ impl Core {
         } else {
             (kind, variant.opaque())
         };
-        self.mesh_pipelines.variants.get(&key)
+        self.mesh_pipelines.pipeline(&key)
     }
 
-    pub(crate) fn ensure_opaque_variant(&mut self, kind: PassKind, variant: Variant) {
+    pub fn ensure_opaque_variant(&mut self, kind: PassKind, variant: Variant) {
+        let set = self.mesh_pipelines.shading();
         for key in opaque_keys(kind, variant).into_iter().flatten() {
-            self.ensure_variant(key);
+            self.ensure_variant(key, set);
         }
     }
 
-    fn ensure_variant(&mut self, (kind, variant): (PassKind, Variant)) {
-        if self.mesh_pipelines.variants.contains_key(&(kind, variant)) {
+    fn ensure_variant(&mut self, (kind, variant): (PassKind, Variant), set: ShadingSet) {
+        if self.mesh_pipelines.has(set, &(kind, variant)) {
             return;
         }
-        let pipeline = self.create_variant(kind, variant);
-        self.mesh_pipelines
+        let Some(pipeline) = self.create_variant(kind, variant, set) else {
+            return;
+        };
+        self.mesh_pipelines.sets[set.0]
             .variants
             .insert((kind, variant), pipeline);
     }
 
-    pub(crate) fn ensure_variants(&mut self, opaque: PassKind, relights: bool) {
-        if relights && opaque.targets() != Some(Targets::Debug) {
-            self.create_variants(relit(opaque));
+    pub(crate) fn ensure_variants(&mut self, opaque: PassKind) {
+        if opaque.targets() != Some(Targets::Debug) {
+            for set in self.mesh_pipelines.warming() {
+                self.create_variants(opaque, set);
+            }
         }
-        self.create_variants(opaque);
-    }
-
-    fn create_variants(&mut self, opaque: PassKind) {
         let key = (self.structure_key(), opaque);
         if self.structure_keys.variants != Some(key) {
-            let mut missing = Vec::new();
-            for batch in &self.plan.batches {
-                let (_, variant) = self.batch_binding(batch, self.meshes.get(&batch.mesh));
-                for pipeline in opaque_keys(opaque, variant).into_iter().flatten() {
-                    if !self.mesh_pipelines.variants.contains_key(&pipeline)
-                        && !missing.contains(&pipeline)
-                    {
-                        missing.push(pipeline);
-                    }
-                }
-            }
-            for pipeline in missing {
-                self.ensure_variant(pipeline);
-            }
+            self.create_variants(opaque, self.mesh_pipelines.shading());
             self.structure_keys.variants = Some(key);
         }
     }
 
-    pub(crate) fn ensure_probe_variants(&mut self, kind: PassKind, relights: bool) {
-        if relights {
-            self.create_probe_variants(relit(kind));
+    fn create_variants(&mut self, opaque: PassKind, set: ShadingSet) {
+        let mut missing = Vec::new();
+        for batch in &self.plan.batches {
+            let (_, variant) = self.batch_binding(batch, self.meshes.get(&batch.mesh));
+            for pipeline in opaque_keys(opaque, variant).into_iter().flatten() {
+                if !self.mesh_pipelines.has(set, &pipeline) && !missing.contains(&pipeline) {
+                    missing.push(pipeline);
+                }
+            }
         }
-        self.create_probe_variants(kind);
+        for pipeline in missing {
+            self.ensure_variant(pipeline, set);
+        }
     }
 
-    fn create_probe_variants(&mut self, kind: PassKind) {
+    pub(crate) fn ensure_view_variants(&mut self, format: wgpu::TextureFormat, mirrored: bool) {
+        if self.mesh_pipelines.view != Some((format, mirrored)) {
+            self.mesh_pipelines.forget(None);
+            self.mesh_pipelines.view = Some((format, mirrored));
+            self.structure_keys.probes = None;
+        }
+        let kind = PassKind::view();
+        for set in self.mesh_pipelines.warming() {
+            self.create_view_variants(kind, set);
+        }
         let key = (self.structure_key(), kind);
         if self.structure_keys.probes == Some(key) {
             return;
         }
         self.structure_keys.probes = Some(key);
+        self.create_view_variants(kind, self.mesh_pipelines.shading());
+    }
+
+    fn create_view_variants(&mut self, kind: PassKind, set: ShadingSet) {
         let mut missing = Vec::new();
         for batch in &self.plan.batches {
             let Some(mesh) = self.meshes.get(&batch.mesh) else {
                 continue;
             };
             let variant = self.batch_binding(batch, Some(mesh)).1.uber();
-            if !self.mesh_pipelines.variants.contains_key(&(kind, variant))
-                && !missing.contains(&variant)
-            {
+            if !self.mesh_pipelines.has(set, &(kind, variant)) && !missing.contains(&variant) {
                 missing.push(variant);
             }
         }
         for variant in missing {
-            let pipeline = self.create_variant(kind, variant);
-            self.mesh_pipelines
-                .variants
-                .insert((kind, variant), pipeline);
+            self.ensure_variant((kind, variant), set);
         }
     }
 
     fn mesh_layout(&self, kind: PassKind) -> wgpu::PipelineLayout {
-        let declared = match (kind.slots(), kind.lit) {
-            (Slots::Temporal, true) => &LIT_TEMPORAL_MESH_PIPELINES,
-            (Slots::Temporal, false) => &TEMPORAL_MESH_PIPELINES,
-            (Slots::Retained, true) => &LIT_MESH_PIPELINES,
-            (Slots::Retained, false) => &MESH_PIPELINES,
+        let declared = match kind.slots() {
+            Slots::Temporal => &LIT_TEMPORAL_MESH_PIPELINES,
+            Slots::Retained => &LIT_MESH_PIPELINES,
         };
         crate::pipelines::layout_of(&self.device, declared)
     }
 
-    pub(crate) fn create_variant(&self, kind: PassKind, variant: Variant) -> wgpu::RenderPipeline {
+    fn create_variant(
+        &self,
+        kind: PassKind,
+        variant: Variant,
+        set: ShadingSet,
+    ) -> Option<wgpu::RenderPipeline> {
+        let entries = self.mesh_entries?;
         let canvas = self.display.format();
         let layout = self.mesh_layout(kind);
         let fragment = match kind.pass {
@@ -271,20 +362,23 @@ impl Core {
                 depth_write: !variant.pretested(),
                 mirrored: false,
             },
-            MeshPass::Probe => MeshFragment {
-                targets: vec![Some(ENVIRONMENT_FORMAT.into())],
-                depth_compare: wgpu::CompareFunction::Greater,
-                depth_write: true,
-                mirrored: true,
-            },
+            MeshPass::View => {
+                let (format, mirrored) = self.mesh_pipelines.view?;
+                MeshFragment {
+                    targets: vec![Some(format.into())],
+                    depth_compare: wgpu::CompareFunction::Greater,
+                    depth_write: true,
+                    mirrored,
+                }
+            }
         };
-        mesh_pipeline(
+        Some(mesh_pipeline(
             &self.device,
             &layout,
-            kind,
+            (kind, entries),
             &fragment,
-            (variant, self.mesh_pipelines.shading),
-        )
+            (variant, &self.mesh_pipelines.sets[set.0].constants),
+        ))
     }
 
     pub(crate) fn order_draws(&mut self, snapshot: &engine_core::RenderSnapshot) {
@@ -376,19 +470,18 @@ fn opaque_keys(kind: PassKind, variant: Variant) -> [Option<(PassKind, Variant)>
 }
 
 fn prepass_key(kind: PassKind, variant: Variant) -> Option<(PassKind, Variant)> {
-    variant
-        .alpha_mask()
-        .then_some((PassKind { lit: false, ..kind }, variant.prepass()))
+    variant.alpha_mask().then_some((kind, variant.prepass()))
 }
 
 fn mesh_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
-    kind: PassKind,
+    (kind, entries): (PassKind, &MeshEntries),
     fragment: &MeshFragment,
-    (variant, shading): (Variant, SceneShading),
+    (variant, shading): (Variant, &[(&'static str, f64)]),
 ) -> wgpu::RenderPipeline {
-    let constants = shading.with(&variant.constants());
+    let mut constants = variant.constants().to_vec();
+    constants.extend_from_slice(shading);
     let extended = variant.extended();
     let streams = if extended {
         Streams::Extended
@@ -397,9 +490,9 @@ fn mesh_pipeline(
     };
     let vertex_entry = kind.vertex_entry(streams);
     let fragment_entry = if variant.depth_only() {
-        kind.prepass_entry(extended)
+        (entries.prepass)(kind, extended)
     } else {
-        kind.fragment_entry(extended)
+        (entries.fragment)(kind, extended)
     };
     let [mesh, slot_ids] = slot_layouts();
     let layouts = [mesh, slot_ids, extra_layout()];

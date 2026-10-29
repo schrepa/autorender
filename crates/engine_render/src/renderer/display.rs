@@ -5,18 +5,18 @@ use super::*;
 use crate::buffers::ReadbackRing;
 use crate::targets::FrameRegion;
 
-pub(crate) struct Display {
+pub struct Display {
     instance: wgpu::Instance,
     surface: Option<wgpu::Surface<'static>>,
     offscreen: Option<wgpu::Texture>,
     target: RenderTarget,
     configuration: wgpu::SurfaceConfiguration,
     pub(crate) max_dimension: u32,
-    pub(crate) max_layers: u32,
+    pub max_layers: u32,
     pub(crate) suspended: bool,
     reconfigure_next_frame: bool,
     asked: Option<(u32, u32)>,
-    pub(crate) region: FrameRegion,
+    pub region: FrameRegion,
     timer: Option<Rc<FrameTimer>>,
     #[cfg(feature = "dev")]
     pub(crate) probe: super::probe::Probe,
@@ -99,14 +99,14 @@ impl Display {
         }
     }
 
-    pub(crate) fn size(&self) -> FrameSize {
+    pub fn size(&self) -> FrameSize {
         FrameSize {
             width: self.configuration.width,
             height: self.configuration.height,
         }
     }
 
-    pub(crate) fn format(&self) -> wgpu::TextureFormat {
+    pub fn format(&self) -> wgpu::TextureFormat {
         self.configuration.format
     }
 
@@ -321,9 +321,9 @@ impl FrameTimer {
     }
 }
 
-pub(crate) struct DepthTarget {
-    pub(crate) texture: wgpu::Texture,
-    pub(crate) view: Versioned<wgpu::TextureView>,
+pub struct DepthTarget {
+    pub texture: wgpu::Texture,
+    pub view: Versioned<wgpu::TextureView>,
 }
 
 impl DepthTarget {

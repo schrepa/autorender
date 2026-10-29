@@ -7,9 +7,9 @@ use super::*;
 use crate::bindings::RETAINED_POSES;
 use crate::cached::GroupCache;
 
-pub(crate) struct Instances {
+pub struct Instances {
     pub(crate) limit: usize,
-    pub(crate) capacity: usize,
+    pub capacity: usize,
     pub(crate) buffer: Versioned<wgpu::Buffer>,
     colors: Versioned<wgpu::Buffer>,
     pub(crate) color_staging: Vec<ColorData>,
@@ -85,7 +85,7 @@ impl Instances {
         self.prepare_pose_group(device, 0);
     }
 
-    pub(crate) fn generation(&self) -> u64 {
+    pub fn generation(&self) -> u64 {
         self.frame_poses(0).generation()
     }
 
@@ -132,7 +132,7 @@ impl Instances {
         }
     }
 
-    pub(crate) fn frame_poses(&self, parity: usize) -> FramePoses<'_> {
+    pub fn frame_poses(&self, parity: usize) -> FramePoses<'_> {
         FramePoses {
             first: &self.buffer,
             alternate: &self.alternate,
@@ -172,7 +172,7 @@ impl Instances {
         &self.colors
     }
 
-    pub(crate) fn grounds(&self) -> &wgpu::Buffer {
+    pub fn grounds(&self) -> &wgpu::Buffer {
         &self.grounds
     }
 
@@ -180,11 +180,11 @@ impl Instances {
         self.slots.as_ref().expect("slot_buffer_retained")
     }
 
-    pub(crate) fn pose_group(&self, parity: usize) -> &wgpu::BindGroup {
+    pub fn pose_group(&self, parity: usize) -> &wgpu::BindGroup {
         self.pose_groups[parity].get().expect("prepared_this_frame")
     }
 
-    pub(crate) fn prepare_pose_group(&mut self, device: &wgpu::Device, parity: usize) {
+    pub fn prepare_pose_group(&mut self, device: &wgpu::Device, parity: usize) {
         let poses = FramePoses {
             first: &self.buffer,
             alternate: &self.alternate,
@@ -208,7 +208,7 @@ impl Instances {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct FramePoses<'a> {
+pub struct FramePoses<'a> {
     first: &'a Versioned<wgpu::Buffer>,
     alternate: &'a Versioned<Option<wgpu::Buffer>>,
     pub colors: &'a Versioned<wgpu::Buffer>,
@@ -216,7 +216,7 @@ pub(crate) struct FramePoses<'a> {
 }
 
 impl<'a> FramePoses<'a> {
-    pub(crate) fn buffer(&self, parity: usize) -> Option<&'a wgpu::Buffer> {
+    pub fn buffer(&self, parity: usize) -> Option<&'a wgpu::Buffer> {
         if parity == 1 {
             Option::as_ref(self.alternate)
         } else {
@@ -224,7 +224,7 @@ impl<'a> FramePoses<'a> {
         }
     }
 
-    pub(crate) fn bound(&self, parity: usize) -> Option<Bound<'a>> {
+    pub fn bound(&self, parity: usize) -> Option<Bound<'a>> {
         if parity == 1 {
             Option::as_ref(self.alternate)
                 .map(|buffer| Bound::of(self.alternate, buffer.as_entire_binding()))
@@ -233,11 +233,11 @@ impl<'a> FramePoses<'a> {
         }
     }
 
-    pub(crate) fn current(&self) -> &'a wgpu::Buffer {
+    pub fn current(&self) -> &'a wgpu::Buffer {
         self.buffer(self.parity).expect("alternate_poses_created")
     }
 
-    pub(crate) fn generation(&self) -> u64 {
+    pub fn generation(&self) -> u64 {
         [
             self.first.generation(),
             self.alternate.generation(),

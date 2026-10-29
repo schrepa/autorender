@@ -9,7 +9,7 @@ use wesl::Mangler as _;
 use crate::bindings::ResolvedLayout;
 use crate::shaders::Entry;
 
-pub(crate) const UNPLACED_GROUP: u32 = 1_000_000;
+pub const UNPLACED_GROUP: u32 = 1_000_000;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ShaderModule {
@@ -25,7 +25,7 @@ pub struct ComposeKey {
     pub module: String,
     pub entry: String,
     pub layout: String,
-    pub features: u64,
+    pub sources: u64,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -56,14 +56,14 @@ struct Source {
     text: Cow<'static, str>,
     overrides: Vec<String>,
     hex_floats: Vec<String>,
+    generated: bool,
 }
 
 #[derive(Default)]
 pub struct Linker {
     sources: Vec<Source>,
     defaults: Vec<ShaderModule>,
-    features: Vec<(&'static str, bool)>,
-    features_hash: u64,
+    sources_hash: u64,
     composed: BTreeMap<ComposeKey, Arc<Composed>>,
 }
 
@@ -75,8 +75,10 @@ impl Linker {
                 module.path.to_owned(),
                 module.brick,
                 Cow::Borrowed(module.source),
+                false,
             );
         }
+        linker.rehash();
         linker
     }
 
@@ -102,8 +104,10 @@ impl Linker {
                 module.path.to_owned(),
                 module.brick,
                 Cow::Borrowed(module.source),
+                false,
             );
         }
+        self.rehash();
         Ok(())
     }
 
@@ -169,11 +173,12 @@ impl Linker {
                     return Err(need);
                 };
                 let (brick, source) = (default.brick, default.source);
-                self.add(path, brick, Cow::Borrowed(source));
+                self.add(path, brick, Cow::Borrowed(source), false);
                 defaulted.push(need.face);
                 added = true;
             }
             if !added {
+                self.rehash();
                 return Ok(defaulted);
             }
         }
@@ -187,13 +192,54 @@ impl Linker {
         {
             return false;
         }
+        let imported = self.imports(&path);
         self.sources.retain(|known| known.path != path);
-        self.composed.retain(|key, _| key.module != path);
-        self.add(path, brick, Cow::Owned(source));
+        if imported {
+            self.composed.clear();
+        } else {
+            self.composed.retain(|key, _| key.module != path);
+        }
+        self.add(path, brick, Cow::Owned(source), true);
+        self.rehash();
         true
     }
 
-    fn add(&mut self, path: String, brick: &'static str, text: Cow<'static, str>) {
+    pub fn imports(&self, path: &str) -> bool {
+        let named = format!("package::{path}");
+        self.sources.iter().any(|source| {
+            source.path != path
+                && source.text.match_indices(named.as_str()).any(|(at, _)| {
+                    !source.text[at + named.len()..].starts_with(|character: char| {
+                        character.is_ascii_alphanumeric() || character == '_'
+                    })
+                })
+        })
+    }
+
+    pub fn sources_hash(&self) -> u64 {
+        self.sources_hash
+    }
+
+    fn rehash(&mut self) {
+        let mut hasher = DefaultHasher::new();
+        for source in &self.sources {
+            if source.generated && !self.imports(&source.path) {
+                continue;
+            }
+            source.path.hash(&mut hasher);
+            source.brick.hash(&mut hasher);
+            source.text.hash(&mut hasher);
+        }
+        self.sources_hash = hasher.finish();
+    }
+
+    fn add(
+        &mut self,
+        path: String,
+        brick: &'static str,
+        text: Cow<'static, str>,
+        generated: bool,
+    ) {
         let overrides = declared_overrides(&text);
         let hex_floats = hex_floats(&text);
         self.sources.push(Source {
@@ -202,18 +248,8 @@ impl Linker {
             text,
             overrides,
             hex_floats,
+            generated,
         });
-    }
-
-    pub fn set_features(&mut self, features: Vec<(&'static str, bool)>) {
-        let mut hasher = DefaultHasher::new();
-        features.hash(&mut hasher);
-        let hash = hasher.finish();
-        if hash != self.features_hash || self.features != features {
-            self.composed.clear();
-        }
-        self.features = features;
-        self.features_hash = hash;
     }
 
     pub fn module_brick(&self, path: &str) -> Option<&'static str> {
@@ -232,13 +268,13 @@ impl Linker {
             module: entry.module.to_owned(),
             entry: entry.name.to_owned(),
             layout: layout.label.to_owned(),
-            features: self.features_hash,
+            sources: self.sources_hash,
         }
     }
 
     pub fn preload(&mut self, composed: Vec<Composed>) {
         for composed in composed {
-            if composed.key.features == self.features_hash {
+            if composed.key.sources == self.sources_hash {
                 self.composed
                     .insert(composed.key.clone(), Arc::new(composed));
             }
@@ -267,7 +303,7 @@ impl Linker {
             module: module.to_owned(),
             entry: entry.to_owned(),
             layout: layout.label.to_owned(),
-            features: self.features_hash,
+            sources: self.sources_hash,
         };
         let path = format!("$.shaders.{module}.{entry}");
         self.link(key, Some(entry), path, layout)
@@ -282,7 +318,7 @@ impl Linker {
             module: module.to_owned(),
             entry: String::new(),
             layout: layout.label.to_owned(),
-            features: self.features_hash,
+            sources: self.sources_hash,
         };
         let path = format!("$.shaders.{module}");
         self.link(key, None, path, layout)
@@ -330,9 +366,6 @@ impl Linker {
         }
         let mut features = wesl::Features::new();
         features.default = wesl::Feature::Error;
-        for &(name, enabled) in &self.features {
-            features.set(name, enabled);
-        }
         let options = wesl::CompileOptions {
             imports: true,
             condcomp: true,

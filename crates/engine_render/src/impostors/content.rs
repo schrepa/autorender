@@ -5,13 +5,13 @@ use engine_core::{
 };
 
 #[derive(Default)]
-pub(crate) struct Contents {
+pub struct Contents {
     meshes: HashMap<MeshHandle, u128>,
     textures: HashMap<TextureHandle, u128>,
 }
 
 impl Contents {
-    pub(crate) fn mesh(&mut self, handle: MeshHandle, mesh: &Mesh) -> u128 {
+    pub fn mesh(&mut self, handle: MeshHandle, mesh: &Mesh) -> u128 {
         *self.meshes.entry(handle).or_insert_with(|| {
             let mut bytes = Vec::with_capacity(mesh.byte_len() + 16);
             words(
@@ -36,7 +36,7 @@ impl Contents {
         })
     }
 
-    pub(crate) fn material<'a>(
+    pub fn material<'a>(
         &mut self,
         material: Option<&Material>,
         texture: impl Fn(TextureHandle) -> Option<&'a Texture>,
@@ -122,7 +122,7 @@ impl Contents {
         content
     }
 
-    pub(crate) fn retain(
+    pub fn retain(
         &mut self,
         mut mesh: impl FnMut(MeshHandle) -> bool,
         mut texture: impl FnMut(TextureHandle) -> bool,

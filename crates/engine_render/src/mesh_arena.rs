@@ -1,11 +1,11 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Streams {
+pub enum Streams {
     Plain = 0,
     Extended = 1,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Placement {
+pub struct Placement {
     pub first_index: u32,
     pub index_count: u32,
     pub streams: Streams,
@@ -68,14 +68,14 @@ fn grown_capacity(space: &Space, length: u32, bytes: u64, limit: u64) -> Option<
     (capacity >= needed).then_some(capacity as u32)
 }
 
-pub(crate) use gpu::*;
+pub use gpu::*;
 
 mod gpu {
     use super::*;
     use crate::gpu_calls::Queue;
 
     #[derive(Clone, Copy)]
-    pub(crate) struct MeshDraw<'a> {
+    pub struct MeshDraw<'a> {
         pub vertices: &'a wgpu::Buffer,
         pub extras: Option<&'a wgpu::Buffer>,
         pub indices: &'a wgpu::Buffer,
@@ -85,25 +85,25 @@ mod gpu {
     }
 
     impl MeshDraw<'_> {
-        pub(crate) fn index_range(&self) -> std::ops::Range<u32> {
+        pub fn index_range(&self) -> std::ops::Range<u32> {
             self.first_index..self.first_index + self.index_count
         }
     }
 
-    pub(crate) enum Ids<'a> {
+    pub enum Ids<'a> {
         Whole(&'a wgpu::Buffer),
         Region(wgpu::BufferSlice<'a>),
     }
 
     #[derive(Default)]
-    pub(crate) struct Bindings {
+    pub struct Bindings {
         vertex: [Option<*const wgpu::Buffer>; 4],
         index: Option<*const wgpu::Buffer>,
         groups: [Option<*const wgpu::BindGroup>; 4],
     }
 
     impl Bindings {
-        pub(crate) fn vertex(
+        pub fn vertex(
             &mut self,
             pass: &mut wgpu::RenderPass<'_>,
             slot: u32,
@@ -116,14 +116,14 @@ mod gpu {
             }
         }
 
-        pub(crate) fn index(&mut self, pass: &mut wgpu::RenderPass<'_>, buffer: &wgpu::Buffer) {
+        pub fn index(&mut self, pass: &mut wgpu::RenderPass<'_>, buffer: &wgpu::Buffer) {
             if self.index != Some(buffer as *const _) {
                 pass.set_index_buffer(buffer.slice(..), wgpu::IndexFormat::Uint32);
                 self.index = Some(buffer as *const _);
             }
         }
 
-        pub(crate) fn ids(&mut self, pass: &mut wgpu::RenderPass<'_>, slot: u32, ids: Ids<'_>) {
+        pub fn ids(&mut self, pass: &mut wgpu::RenderPass<'_>, slot: u32, ids: Ids<'_>) {
             match ids {
                 Ids::Whole(buffer) => self.vertex(pass, slot, buffer),
                 Ids::Region(region) => {
@@ -133,7 +133,7 @@ mod gpu {
             }
         }
 
-        pub(crate) fn group(
+        pub fn group(
             &mut self,
             pass: &mut wgpu::RenderPass<'_>,
             index: u32,
@@ -153,7 +153,7 @@ mod gpu {
         space: Space,
     }
 
-    pub(crate) struct MeshArena {
+    pub struct MeshArena {
         classes: [Class; 2],
         indices: wgpu::Buffer,
         index_space: Space,
@@ -201,7 +201,7 @@ mod gpu {
     }
 
     impl MeshArena {
-        pub(crate) fn new(device: &wgpu::Device, [vertex, extra]: [u64; 2]) -> Self {
+        pub fn new(device: &wgpu::Device, [vertex, extra]: [u64; 2]) -> Self {
             let class = |strides: Vec<u64>| Class {
                 buffers: strides
                     .iter()
@@ -217,7 +217,7 @@ mod gpu {
             }
         }
 
-        pub(crate) fn capacity_bytes(&self) -> u64 {
+        pub fn capacity_bytes(&self) -> u64 {
             self.indices.size()
                 + self
                     .classes
@@ -227,7 +227,7 @@ mod gpu {
                     .sum::<u64>()
         }
 
-        pub(crate) fn insert(
+        pub fn insert(
             &mut self,
             device: &wgpu::Device,
             queue: &Queue,
@@ -302,7 +302,7 @@ mod gpu {
             })
         }
 
-        pub(crate) fn remove(&mut self, placement: Placement) {
+        pub fn remove(&mut self, placement: Placement) {
             self.index_space
                 .release(placement.first_index, placement.index_count);
             self.classes[placement.streams as usize]
@@ -310,7 +310,7 @@ mod gpu {
                 .release(placement.base_vertex, placement.vertex_count);
         }
 
-        pub(crate) fn draw(&self, placement: Placement) -> MeshDraw<'_> {
+        pub fn draw(&self, placement: Placement) -> MeshDraw<'_> {
             let buffers = &self.classes[placement.streams as usize].buffers;
             MeshDraw {
                 vertices: &buffers[0],

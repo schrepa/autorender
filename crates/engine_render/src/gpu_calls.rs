@@ -2,7 +2,7 @@ use std::cell::Cell;
 
 mod submission;
 
-pub(crate) use submission::{Handover, Recorded};
+pub use submission::{Handover, Recorded};
 
 pub struct Queue {
     submission: submission::Submission,
@@ -19,7 +19,7 @@ impl std::ops::Deref for Queue {
 }
 
 impl Queue {
-    pub(crate) fn new(queue: wgpu::Queue) -> Self {
+    pub fn new(queue: wgpu::Queue) -> Self {
         Self {
             submission: submission::Submission::new(&queue),
             queue,
@@ -27,16 +27,16 @@ impl Queue {
         }
     }
 
-    pub(crate) fn hand(&self, handover: Handover) {
+    pub fn hand(&self, handover: Handover) {
         self.submission.hand(&self.queue, handover);
     }
 
-    pub(crate) fn settle(&self) {
+    pub fn settle(&self) {
         self.submission.settle();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn submit(
+    pub fn submit(
         &self,
         buffers: impl IntoIterator<Item = wgpu::CommandBuffer>,
     ) -> wgpu::SubmissionIndex {
@@ -44,22 +44,22 @@ impl Queue {
         submit(&self.queue, buffers)
     }
 
-    pub(crate) fn submit_now(&self, buffers: impl IntoIterator<Item = wgpu::CommandBuffer>) {
+    pub fn submit_now(&self, buffers: impl IntoIterator<Item = wgpu::CommandBuffer>) {
         self.settle();
         self.immediate.set(self.immediate.get() + 1);
         submit(&self.queue, buffers);
     }
 
-    pub(crate) fn take_immediate(&self) -> u32 {
+    pub fn take_immediate(&self) -> u32 {
         self.immediate.take()
     }
 
-    pub(crate) fn write_buffer(&self, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
+    pub fn write_buffer(&self, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
         crate::memory::uploaded_buffer(buffer, offset, data);
         write_buffer(&self.queue, buffer, offset, data);
     }
 
-    pub(crate) fn write_texture(
+    pub fn write_texture(
         &self,
         texture: wgpu::TexelCopyTextureInfo<'_>,
         data: &[u8],
@@ -102,6 +102,6 @@ fn submit(
 }
 
 #[expect(clippy::disallowed_methods, reason = "the renderer's one error scope")]
-pub(crate) fn validation_scope(device: &wgpu::Device) -> wgpu::ErrorScopeGuard {
+pub fn validation_scope(device: &wgpu::Device) -> wgpu::ErrorScopeGuard {
     device.push_error_scope(wgpu::ErrorFilter::Validation)
 }

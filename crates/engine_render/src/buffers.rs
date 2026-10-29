@@ -3,7 +3,7 @@ use std::{
     rc::Rc,
 };
 
-pub(crate) fn storage(
+pub fn storage(
     device: &wgpu::Device,
     label: &str,
     bytes: u64,
@@ -20,7 +20,7 @@ pub(crate) fn storage(
     )
 }
 
-pub(crate) fn uniform(device: &wgpu::Device, label: &str, bytes: u64) -> wgpu::Buffer {
+pub fn uniform(device: &wgpu::Device, label: &str, bytes: u64) -> wgpu::Buffer {
     crate::memory::buffer(
         device,
         &wgpu::BufferDescriptor {
@@ -32,7 +32,7 @@ pub(crate) fn uniform(device: &wgpu::Device, label: &str, bytes: u64) -> wgpu::B
     )
 }
 
-pub(crate) struct Growable {
+pub struct Growable {
     buffer: crate::cached::Versioned<wgpu::Buffer>,
     label: &'static str,
     extra: wgpu::BufferUsages,
@@ -48,7 +48,7 @@ impl std::ops::Deref for Growable {
 }
 
 impl Growable {
-    pub(crate) fn new(
+    pub fn new(
         device: &wgpu::Device,
         label: &'static str,
         bytes: u64,
@@ -68,7 +68,7 @@ impl Growable {
         }
     }
 
-    pub(crate) fn grow(&mut self, device: &wgpu::Device, bytes: u64) -> bool {
+    pub fn grow(&mut self, device: &wgpu::Device, bytes: u64) -> bool {
         let size = bytes.next_power_of_two().min(self.room);
         if bytes <= self.buffer.size() || size <= self.buffer.size() {
             return false;
@@ -78,19 +78,19 @@ impl Growable {
         true
     }
 
-    pub(crate) fn room(&self) -> u64 {
+    pub fn room(&self) -> u64 {
         self.room
     }
 }
 
-pub(crate) fn entry<'a>(
+pub fn entry<'a>(
     name: &'a str,
     buffer: &'a wgpu::Buffer,
 ) -> (&'a str, wgpu::BindingResource<'a>) {
     (name, buffer.as_entire_binding())
 }
 
-pub(crate) const READBACKS: usize = 3;
+pub const READBACKS: usize = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -105,30 +105,30 @@ struct Slot<T> {
     tag: T,
 }
 
-pub(crate) struct Words<'a>(&'a [u8]);
+pub struct Words<'a>(&'a [u8]);
 
 impl Words<'_> {
-    pub(crate) fn get(&self, index: usize) -> u32 {
+    pub fn get(&self, index: usize) -> u32 {
         self.0.get(index * 4..index * 4 + 4).map_or(0, |bytes| {
             u32::from_le_bytes(bytes.try_into().unwrap_or([0; 4]))
         })
     }
 }
 
-pub(crate) struct ReadbackRing<T> {
+pub struct ReadbackRing<T> {
     label: &'static str,
     slots: RefCell<Vec<Slot<T>>>,
 }
 
 impl<T: Copy + 'static> ReadbackRing<T> {
-    pub(crate) fn new(label: &'static str) -> Self {
+    pub fn new(label: &'static str) -> Self {
         Self {
             label,
             slots: RefCell::new(Vec::new()),
         }
     }
 
-    pub(crate) fn record(
+    pub fn record(
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
@@ -139,7 +139,7 @@ impl<T: Copy + 'static> ReadbackRing<T> {
         self.record_at(device, encoder, (source, 0), bytes, tag)
     }
 
-    pub(crate) fn record_at(
+    pub fn record_at(
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
@@ -178,7 +178,7 @@ impl<T: Copy + 'static> ReadbackRing<T> {
         true
     }
 
-    pub(crate) fn after_submit(&self, read: impl Fn(&Words<'_>, T) + Clone + 'static) {
+    pub fn after_submit(&self, read: impl Fn(&Words<'_>, T) + Clone + 'static) {
         for slot in self.slots.borrow().iter() {
             if slot.state.get() != State::Recorded {
                 continue;
@@ -202,7 +202,7 @@ impl<T: Copy + 'static> ReadbackRing<T> {
         }
     }
 
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         for slot in self.slots.get_mut().drain(..) {
             crate::memory::release_buffer(&slot.buffer);
         }

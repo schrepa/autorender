@@ -10,7 +10,7 @@ pub struct GpuMemory {
     clippy::disallowed_methods,
     reason = "the renderer's one buffer creation, which records its owner"
 )]
-pub(crate) fn buffer(
+pub fn buffer(
     device: &wgpu::Device,
     descriptor: &wgpu::BufferDescriptor<'_>,
 ) -> wgpu::Buffer {
@@ -24,7 +24,7 @@ pub(crate) fn buffer(
     clippy::disallowed_methods,
     reason = "the renderer's one initialized buffer creation, which records its owner"
 )]
-pub(crate) fn buffer_init(
+pub fn buffer_init(
     device: &wgpu::Device,
     descriptor: &wgpu::util::BufferInitDescriptor<'_>,
 ) -> wgpu::Buffer {
@@ -38,7 +38,7 @@ pub(crate) fn buffer_init(
     clippy::disallowed_methods,
     reason = "the renderer's one texture creation, which records its owner"
 )]
-pub(crate) fn texture(
+pub fn texture(
     device: &wgpu::Device,
     descriptor: &wgpu::TextureDescriptor<'_>,
 ) -> wgpu::Texture {
@@ -52,7 +52,7 @@ pub(crate) fn texture(
     not(any(feature = "dev", feature = "profiling")),
     expect(unused_variables, reason = "only measured builds keep a ledger")
 )]
-pub(crate) fn release_buffer(buffer: &wgpu::Buffer) {
+pub fn release_buffer(buffer: &wgpu::Buffer) {
     #[cfg(any(feature = "dev", feature = "profiling"))]
     ledger::released(ledger::id_of(buffer));
 }
@@ -61,28 +61,28 @@ pub(crate) fn release_buffer(buffer: &wgpu::Buffer) {
     not(any(feature = "dev", feature = "profiling")),
     expect(unused_variables, reason = "only measured builds keep a ledger")
 )]
-pub(crate) fn release_ids(ids: &[u64]) {
+pub fn release_ids(ids: &[u64]) {
     #[cfg(any(feature = "dev", feature = "profiling"))]
     ids.iter().copied().for_each(ledger::released);
 }
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
-pub(crate) fn created_count() -> u64 {
+pub fn created_count() -> u64 {
     ledger::count()
 }
 
 #[cfg(not(any(feature = "dev", feature = "profiling")))]
-pub(crate) fn created_count() -> u64 {
+pub fn created_count() -> u64 {
     0
 }
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
-pub(crate) fn created_since(count: u64) -> Vec<u64> {
+pub fn created_since(count: u64) -> Vec<u64> {
     ledger::since(count)
 }
 
 #[cfg(not(any(feature = "dev", feature = "profiling")))]
-pub(crate) fn created_since(_count: u64) -> Vec<u64> {
+pub fn created_since(_count: u64) -> Vec<u64> {
     Vec::new()
 }
 
@@ -90,7 +90,7 @@ pub(crate) fn created_since(_count: u64) -> Vec<u64> {
     not(any(feature = "dev", feature = "profiling")),
     expect(unused_variables, reason = "only measured builds keep a ledger")
 )]
-pub(crate) fn release_any(value: &dyn std::any::Any) {
+pub fn release_any(value: &dyn std::any::Any) {
     #[cfg(any(feature = "dev", feature = "profiling"))]
     ledger::released_any(value);
 }
@@ -99,7 +99,7 @@ pub(crate) fn release_any(value: &dyn std::any::Any) {
     not(any(feature = "dev", feature = "profiling")),
     expect(unused_variables, reason = "only measured builds keep a ledger")
 )]
-pub(crate) fn uploaded_buffer(buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
+pub fn uploaded_buffer(buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
     #[cfg(any(feature = "dev", feature = "profiling"))]
     ledger::uploaded(ledger::id_of(&(ledger::id_of(buffer), offset)), data);
 }
@@ -108,7 +108,7 @@ pub(crate) fn uploaded_buffer(buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
     not(any(feature = "dev", feature = "profiling")),
     expect(unused_variables, reason = "only measured builds keep a ledger")
 )]
-pub(crate) fn uploaded_texture(texture: &wgpu::TexelCopyTextureInfo<'_>, data: &[u8]) {
+pub fn uploaded_texture(texture: &wgpu::TexelCopyTextureInfo<'_>, data: &[u8]) {
     #[cfg(any(feature = "dev", feature = "profiling"))]
     ledger::uploaded(
         ledger::id_of(&(
@@ -143,17 +143,17 @@ fn texture_bytes(descriptor: &wgpu::TextureDescriptor<'_>) -> u64 {
 }
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
-pub(crate) use ledger::{end_warmup, take};
+pub use ledger::{end_warmup, take};
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
-pub(crate) struct Owned {
+pub struct Owned {
     previous: Option<&'static str>,
     _brick: engine_profile::BrickScope,
     _span: engine_profile::Span,
 }
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
-pub(crate) fn owned(brick: &'static str) -> Owned {
+pub fn owned(brick: &'static str) -> Owned {
     let (previous, index) = ledger::own(brick);
     Owned {
         previous,
@@ -170,11 +170,11 @@ impl Drop for Owned {
 }
 
 #[cfg(not(any(feature = "dev", feature = "profiling")))]
-pub(crate) struct Owned;
+pub struct Owned;
 
 #[cfg(not(any(feature = "dev", feature = "profiling")))]
 #[inline(always)]
-pub(crate) fn owned(_brick: &'static str) -> Owned {
+pub fn owned(_brick: &'static str) -> Owned {
     Owned
 }
 
@@ -308,11 +308,11 @@ mod ledger {
         });
     }
 
-    pub(crate) fn end_warmup() {
+    pub fn end_warmup() {
         LEDGER.with_borrow_mut(|ledger| ledger.warm = true);
     }
 
-    pub(crate) fn take() -> Vec<GpuMemory> {
+    pub fn take() -> Vec<GpuMemory> {
         LEDGER.with_borrow_mut(|ledger| {
             let duplicates = std::mem::take(&mut ledger.duplicates);
             let mut owners: BTreeMap<Owner, GpuMemory> = BTreeMap::new();

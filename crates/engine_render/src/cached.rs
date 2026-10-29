@@ -6,20 +6,20 @@ fn next_generation() -> u64 {
 }
 
 #[derive(Debug)]
-pub(crate) struct Versioned<T> {
+pub struct Versioned<T> {
     value: T,
     generation: u64,
 }
 
 impl<T> Versioned<T> {
-    pub(crate) fn new(value: T) -> Self {
+    pub fn new(value: T) -> Self {
         Self {
             value,
             generation: next_generation(),
         }
     }
 
-    pub(crate) fn replace(&mut self, value: T)
+    pub fn replace(&mut self, value: T)
     where
         T: 'static,
     {
@@ -28,7 +28,7 @@ impl<T> Versioned<T> {
         self.generation = next_generation();
     }
 
-    pub(crate) fn generation(&self) -> u64 {
+    pub fn generation(&self) -> u64 {
         self.generation
     }
 }
@@ -42,13 +42,13 @@ impl<T> std::ops::Deref for Versioned<T> {
 }
 
 impl Versioned<wgpu::Buffer> {
-    pub(crate) fn bound(&self) -> Bound<'_> {
+    pub fn bound(&self) -> Bound<'_> {
         Bound::of(self, self.value.as_entire_binding())
     }
 }
 
 impl Versioned<wgpu::TextureView> {
-    pub(crate) fn bound(&self) -> Bound<'_> {
+    pub fn bound(&self) -> Bound<'_> {
         Bound::of(self, wgpu::BindingResource::TextureView(&self.value))
     }
 }
@@ -60,21 +60,21 @@ pub struct Bound<'a> {
 }
 
 impl<'a> Bound<'a> {
-    pub(crate) fn of<T>(versioned: &Versioned<T>, resource: wgpu::BindingResource<'a>) -> Self {
+    pub fn of<T>(versioned: &Versioned<T>, resource: wgpu::BindingResource<'a>) -> Self {
         Self {
             generation: versioned.generation,
             resource,
         }
     }
 
-    pub(crate) fn fixed(resource: wgpu::BindingResource<'a>) -> Self {
+    pub fn fixed(resource: wgpu::BindingResource<'a>) -> Self {
         Self {
             generation: 0,
             resource,
         }
     }
 
-    pub(crate) fn counted(generation: u64, resource: wgpu::BindingResource<'a>) -> Self {
+    pub fn counted(generation: u64, resource: wgpu::BindingResource<'a>) -> Self {
         Self {
             generation,
             resource,
@@ -82,7 +82,7 @@ impl<'a> Bound<'a> {
     }
 }
 
-pub(crate) struct GroupCache<const N: usize> {
+pub struct GroupCache<const N: usize> {
     cached: Cached<[u64; N], wgpu::BindGroup>,
 }
 
@@ -95,7 +95,7 @@ impl<const N: usize> Default for GroupCache<N> {
 }
 
 impl<const N: usize> GroupCache<N> {
-    pub(crate) fn bind(
+    pub fn bind(
         &mut self,
         device: &wgpu::Device,
         label: &str,
@@ -109,7 +109,7 @@ impl<const N: usize> GroupCache<N> {
         })
     }
 
-    pub(crate) fn bind_filled(
+    pub fn bind_filled(
         &mut self,
         device: &wgpu::Device,
         label: &str,
@@ -124,22 +124,22 @@ impl<const N: usize> GroupCache<N> {
         })
     }
 
-    pub(crate) fn get(&self) -> Option<&wgpu::BindGroup> {
+    pub fn get(&self) -> Option<&wgpu::BindGroup> {
         self.cached.get()
     }
 
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.cached.clear();
     }
 }
 
 #[derive(Default)]
-pub(crate) struct GrowableGroupCache {
+pub struct GrowableGroupCache {
     cached: Cached<Vec<u64>, wgpu::BindGroup>,
 }
 
 impl GrowableGroupCache {
-    pub(crate) fn bind_with(
+    pub fn bind_with(
         &mut self,
         entries: &[(u32, Bound<'_>)],
         build: impl FnOnce(&[wgpu::BindGroupEntry<'_>]) -> wgpu::BindGroup,
@@ -157,17 +157,17 @@ impl GrowableGroupCache {
         })
     }
 
-    pub(crate) fn get(&self) -> Option<&wgpu::BindGroup> {
+    pub fn get(&self) -> Option<&wgpu::BindGroup> {
         self.cached.get()
     }
 
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.cached.clear();
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct Cached<K, V> {
+pub struct Cached<K, V> {
     entry: Option<(K, V)>,
 }
 
@@ -178,15 +178,15 @@ impl<K, V> Default for Cached<K, V> {
 }
 
 impl<K: PartialEq, V> Cached<K, V> {
-    pub(crate) fn stale(&self, key: &K) -> bool {
+    pub fn stale(&self, key: &K) -> bool {
         self.entry.as_ref().is_none_or(|(built, _)| built != key)
     }
 
-    pub(crate) fn set(&mut self, key: K, value: V) {
+    pub fn set(&mut self, key: K, value: V) {
         self.entry = Some((key, value));
     }
 
-    pub(crate) fn get_or_insert_with(&mut self, key: K, build: impl FnOnce() -> V) -> &V {
+    pub fn get_or_insert_with(&mut self, key: K, build: impl FnOnce() -> V) -> &V {
         let entry = match self.entry.take() {
             Some(entry) if entry.0 == key => entry,
             stale => {
@@ -200,15 +200,15 @@ impl<K: PartialEq, V> Cached<K, V> {
 }
 
 impl<K, V> Cached<K, V> {
-    pub(crate) fn get(&self) -> Option<&V> {
+    pub fn get(&self) -> Option<&V> {
         self.entry.as_ref().map(|(_, value)| value)
     }
 
-    pub(crate) fn key(&self) -> Option<&K> {
+    pub fn key(&self) -> Option<&K> {
         self.entry.as_ref().map(|(key, _)| key)
     }
 
-    pub(crate) fn clear(&mut self) {
+    pub fn clear(&mut self) {
         self.entry = None;
     }
 }

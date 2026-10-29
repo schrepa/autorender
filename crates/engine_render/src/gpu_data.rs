@@ -1,26 +1,23 @@
-pub(crate) use crate::gpu_layouts::scene::MAX_LEVELS;
-use engine_core::{
-    AlphaMode, Atmosphere, Bloom, Material, MeshVertex, Reflections, RenderInstance, Surface,
-    UvTransform, glam::Mat4,
-};
+pub use crate::gpu_layouts::scene::MAX_LEVELS;
+use engine_core::{AlphaMode, Material, MeshVertex, RenderInstance, Surface, UvTransform, glam::Mat4};
 
 use crate::gpu_layouts::constants;
 use crate::targets::FrameRegion;
 
-pub(crate) use crate::gpu_layouts::constants::COMPOSED_BYTES;
-pub(crate) use crate::gpu_layouts::constants::DRAW_ARGS_BYTES;
-pub(crate) use crate::gpu_layouts::constants::FLAG_PHASE1;
-pub(crate) use crate::gpu_layouts::constants::FLAG_PHASE2;
-pub(crate) use crate::gpu_layouts::constants::FLAG_PROBE;
-pub(crate) use crate::gpu_layouts::constants::FLAG_VISIBLE;
-pub(crate) use crate::gpu_layouts::constants::LOD_LEVELS;
-pub(crate) use crate::gpu_layouts::constants::LOD_STATE;
-pub(crate) use crate::gpu_layouts::constants::MOVED_SLOT;
-pub(crate) use crate::gpu_layouts::constants::STILL_FRAMES;
-pub(crate) use crate::gpu_layouts::scene::CameraUniform;
+pub use crate::gpu_layouts::constants::COMPOSED_BYTES;
+pub use crate::gpu_layouts::constants::DRAW_ARGS_BYTES;
+pub use crate::gpu_layouts::constants::FLAG_PHASE1;
+pub use crate::gpu_layouts::constants::FLAG_PHASE2;
+pub use crate::gpu_layouts::constants::FLAG_PROBE;
+pub use crate::gpu_layouts::constants::FLAG_VISIBLE;
+pub use crate::gpu_layouts::constants::LOD_LEVELS;
+pub use crate::gpu_layouts::constants::LOD_STATE;
+pub use crate::gpu_layouts::constants::MOVED_SLOT;
+pub use crate::gpu_layouts::constants::STILL_FRAMES;
+pub use crate::gpu_layouts::scene::CameraUniform;
 
 impl CameraUniform {
-    pub(crate) fn exact(view_projection: Mat4, position: glam::Vec3, seconds: f32) -> Self {
+    pub fn exact(view_projection: Mat4, position: glam::Vec3, seconds: f32) -> Self {
         let columns = view_projection.to_cols_array_2d();
         Self {
             view_projection: columns,
@@ -35,17 +32,17 @@ impl CameraUniform {
         }
     }
 
-    pub(crate) fn set_region(&mut self, view_projection: Mat4, region: FrameRegion) {
+    pub fn set_region(&mut self, view_projection: Mat4, region: FrameRegion) {
         self.options[1] = pixel_angle(view_projection, region.display.height);
         self.options[3] = region.mip_bias();
         self.region = region.uniform();
     }
 
-    pub(crate) fn set_detail(&mut self, eye: glam::Vec3) {
+    pub fn set_detail(&mut self, eye: glam::Vec3) {
         self.detail = eye.extend(0.0).to_array();
     }
 
-    pub(crate) fn probe(
+    pub fn probe(
         view_projection: Mat4,
         position: glam::Vec3,
         seconds: f32,
@@ -58,7 +55,7 @@ impl CameraUniform {
         }
     }
 
-    pub(crate) fn temporal(
+    pub fn temporal(
         view_projection: Mat4,
         position: glam::Vec3,
         seconds: f32,
@@ -83,147 +80,12 @@ impl CameraUniform {
     }
 }
 
-pub(crate) fn pixel_angle(view_projection: Mat4, height: u32) -> f32 {
+pub fn pixel_angle(view_projection: Mat4, height: u32) -> f32 {
     let row = view_projection.row(1).truncate().length() * height.max(1) as f32;
     2.0 / engine_core::math::max(row, 1.0e-12)
 }
 
-pub(crate) use crate::gpu_layouts::scene::LightingUniform;
-
-pub(crate) fn contrast_weight(contrast: f32) -> f32 {
-    engine_core::math::clamp(2.0 * (contrast - 1.0), -2.0, 1.0)
-}
-
-fn unit_luminance(tint: glam::Vec3) -> [f32; 4] {
-    let luminance = tint.dot(glam::Vec3::new(0.2126, 0.7152, 0.0722));
-    if luminance > 1.0e-6 {
-        (tint / luminance).extend(0.0).to_array()
-    } else {
-        [1.0, 1.0, 1.0, 0.0]
-    }
-}
-
-impl LightingUniform {
-    pub(crate) fn new(
-        atmosphere: &Atmosphere,
-        bloom: &Bloom,
-        reflections: &Reflections,
-        (sky, highlights): (&engine_core::Sky, &engine_core::Highlights),
-        (foliage, temporal): (&engine_core::Foliage, bool),
-    ) -> Self {
-        let atmosphere = atmosphere.sanitized();
-        let reflections = reflections.sanitized();
-        let sky = sky.sanitized();
-        let foliage = foliage.sanitized();
-        let highlights = highlights.sanitized();
-        let (fog, aerial, physical) = if sky.enabled {
-            let altitude = sky.altitude * 0.001;
-            let rayleigh = (sky.rayleigh[0] + sky.rayleigh[1] + sky.rayleigh[2]) / 3.0
-                * (-altitude / sky.rayleigh_height).exp();
-            let mie = (sky.mie + sky.mie_absorption) * (-altitude / sky.mie_height).exp();
-            let extinction = rayleigh + mie;
-            let height = if extinction > 0.0 {
-                (rayleigh * sky.rayleigh_height + mie * sky.mie_height) / extinction
-            } else {
-                sky.rayleigh_height
-            };
-            (
-                [0.0; 4],
-                [0.0, extinction * 0.001 * sky.aerial, 0.001 / height, 0.0],
-                1.0,
-            )
-        } else {
-            (
-                [
-                    atmosphere.fog_start,
-                    atmosphere.fog_density,
-                    atmosphere.fog_falloff,
-                    atmosphere.fog_max,
-                ],
-                [
-                    atmosphere.aerial_start,
-                    atmosphere.aerial_density,
-                    atmosphere.aerial_falloff,
-                    atmosphere.aerial_glow,
-                ],
-                0.0,
-            )
-        };
-        Self {
-            sun: atmosphere
-                .sun_direction
-                .normalize()
-                .extend(atmosphere.rim)
-                .to_array(),
-            sun_color: atmosphere.sun_color.extend(atmosphere.specular).to_array(),
-            zenith: atmosphere.zenith.extend(atmosphere.ambient).to_array(),
-            horizon: atmosphere.horizon.extend(atmosphere.exposure).to_array(),
-            ground: atmosphere.ground.extend(atmosphere.saturation).to_array(),
-            fog,
-            effects: [
-                atmosphere.emission,
-                bloom.sanitized().threshold,
-                reflections.max_roughness,
-                if reflections.enabled() { 1.0 } else { 0.0 },
-            ],
-            grade: [
-                contrast_weight(atmosphere.contrast),
-                atmosphere.vibrance,
-                physical,
-                0.0,
-            ],
-            shadow_tint: unit_luminance(atmosphere.shadow_tint),
-            highlight_tint: unit_luminance(atmosphere.highlight_tint),
-            aerial,
-            aerial_color: atmosphere.aerial_color.extend(0.0).to_array(),
-            occupancy: [0.0; 4],
-            occupancy_maps: [0.0; 4],
-            occupancy_centers: [[0.0; 4]; crate::gpu_layouts::scene::MAX_OCCUPANCY_LEVELS / 2],
-            cloud_shadow: [0.0; 4],
-            cloud_layer: [0.0; 4],
-            night: [0.0; 4],
-            star_turn: [0.0, 0.0, 0.0, 1.0],
-            moon: [0.0; 4],
-            night_shape: [0.0; 4],
-            foliage: [
-                foliage.transmission,
-                foliage.variation,
-                if foliage.hashed_cutoff && temporal {
-                    1.0
-                } else {
-                    0.0
-                },
-                foliage.ground_blend,
-            ],
-            highlights: sized_highlights(&highlights, &sky),
-            haze_march: [0.0; 4],
-        }
-    }
-}
-
-fn sized_highlights(highlights: &engine_core::Highlights, sky: &engine_core::Sky) -> [f32; 4] {
-    let cap = if highlights.capped {
-        highlights.cap
-    } else {
-        0.0
-    };
-    if !highlights.enabled {
-        return if cap > 0.0 {
-            [1.0, 0.0, cap, 0.0]
-        } else {
-            [0.0; 4]
-        };
-    }
-    let radius = if sky.enabled {
-        sky.sun_size
-    } else {
-        highlights.sun_size
-    };
-    let (sine, cosine) = engine_core::math::sin_cos(radius.to_radians());
-    [cosine, sine, cap, highlights.light_radius]
-}
-
-pub(crate) fn pack_surface(surface: Surface) -> u32 {
+pub fn pack_surface(surface: Surface) -> u32 {
     let unit = |value: f32, fallback: f32, max: f32| {
         let value = if value.is_nan() { fallback } else { value };
         (engine_core::math::clamp(value / max, 0.0, 1.0) * 255.0).round() as u32
@@ -235,7 +97,7 @@ pub(crate) fn pack_surface(surface: Surface) -> u32 {
         | unit(surface.ripples, matte.ripples, 1.0) << 24
 }
 
-pub(crate) fn pack_color(color: [f32; 4]) -> [u32; 2] {
+pub fn pack_color(color: [f32; 4]) -> [u32; 2] {
     let unit = |value: f32, fallback: f32| {
         let value = if value.is_nan() { fallback } else { value };
         (engine_core::math::clamp(value, 0.0, 1.0) * 65535.0).round() as u32
@@ -246,7 +108,7 @@ pub(crate) fn pack_color(color: [f32; 4]) -> [u32; 2] {
     ]
 }
 
-pub(crate) fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
+pub fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
     Mat4::from_cols(
         glam::Vec4::X,
         glam::Vec4::Y,
@@ -255,13 +117,13 @@ pub(crate) fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
     ) * view_projection
 }
 
-pub(crate) use crate::gpu_layouts::scene::PoseData;
+pub use crate::gpu_layouts::scene::PoseData;
 
-pub(crate) use crate::gpu_layouts::scene::ColorData;
+pub use crate::gpu_layouts::scene::ColorData;
 
-pub(crate) use crate::gpu_layouts::scene::GroundData;
+pub use crate::gpu_layouts::scene::GroundData;
 
-pub(crate) fn ground_data(
+pub fn ground_data(
     grounding: Option<engine_core::Grounding>,
     normal: [f32; 2],
     sink: f32,
@@ -291,7 +153,7 @@ impl From<&RenderInstance> for ColorData {
     }
 }
 
-pub(crate) use crate::gpu_layouts::scene::Vertex;
+pub use crate::gpu_layouts::scene::Vertex;
 
 impl From<&MeshVertex> for Vertex {
     fn from(vertex: &MeshVertex) -> Self {
@@ -303,10 +165,10 @@ impl From<&MeshVertex> for Vertex {
     }
 }
 
-pub(crate) use crate::gpu_layouts::scene::ExtraVertex;
+pub use crate::gpu_layouts::scene::ExtraVertex;
 
 impl ExtraVertex {
-    pub(crate) fn stream(mesh: &engine_core::Mesh) -> Option<Vec<Self>> {
+    pub fn stream(mesh: &engine_core::Mesh) -> Option<Vec<Self>> {
         if mesh.colors().is_none() && mesh.uv1().is_none() {
             return None;
         }
@@ -327,7 +189,7 @@ impl ExtraVertex {
     }
 }
 
-pub(crate) fn octahedral(normal: [f32; 3]) -> [i16; 2] {
+pub fn octahedral(normal: [f32; 3]) -> [i16; 2] {
     let [x, y, z] = normal;
     let length = x.abs() + y.abs() + z.abs();
     let (u, v) = (x / length, y / length);
@@ -340,10 +202,10 @@ pub(crate) fn octahedral(normal: [f32; 3]) -> [i16; 2] {
     [u, v].map(|value| (engine_core::math::clamp(value, -1.0, 1.0) * 32767.0).round() as i16)
 }
 
-pub(crate) use crate::gpu_layouts::scene::MaterialUniform;
+pub use crate::gpu_layouts::scene::MaterialUniform;
 
 impl MaterialUniform {
-    pub(crate) const DEFAULT: Self = Self {
+    pub const DEFAULT: Self = Self {
         transforms: [
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0],
@@ -363,7 +225,7 @@ impl MaterialUniform {
         layer: [0.0; 4],
     };
 
-    pub(crate) fn new(material: &Material) -> Self {
+    pub fn new(material: &Material) -> Self {
         let mut uniform = Self::DEFAULT;
         for (index, map) in material.maps().iter().enumerate() {
             if let Some(map) = map {
@@ -400,7 +262,7 @@ impl MaterialUniform {
     }
 }
 
-pub(crate) fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {
+pub fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {
     let (sin, cos) = engine_core::math::sin_cos(transform.rotation);
     let [sx, sy] = transform.scale;
     let [ox, oy] = transform.offset;
@@ -411,10 +273,10 @@ pub(crate) fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub(crate) struct Variant(u32);
+pub struct Variant(u32);
 
 impl Variant {
-    pub(crate) const BASIC: Self = Self(0);
+    pub const BASIC: Self = Self(0);
     const MAPS: u32 = constants::VARIANT_MAPS;
     const NORMAL_MAP: u32 = constants::VARIANT_NORMAL_MAP;
     const ALPHA_MASK: u32 = 4;
@@ -433,7 +295,7 @@ impl Variant {
     const PREPASS: u32 = 131072;
     const PRETESTED: u32 = 262144;
 
-    pub(crate) fn of(material: &Material) -> Self {
+    pub fn of(material: &Material) -> Self {
         let mode = material.alpha_mode();
         let base = material.base_color_texture();
         let maps = material.metallic_roughness_texture().is_some()
@@ -482,16 +344,16 @@ impl Variant {
         Self(bits)
     }
 
-    pub(crate) fn uber(self) -> Self {
+    pub fn uber(self) -> Self {
         let state = Self::EXTENDED | Self::ALPHA_MASK | Self::DOUBLE_SIDED;
         Self(self.0 & state | Self::UBER)
     }
 
-    pub(crate) fn bits(self) -> u32 {
+    pub fn bits(self) -> u32 {
         self.0
     }
 
-    pub(crate) fn constants(self) -> [(&'static str, f64); 15] {
+    pub fn constants(self) -> [(&'static str, f64); 15] {
         let set = |bit: u32| if self.0 & bit != 0 { 1.0 } else { 0.0 };
         [
             ("WORLD_MAPPING", set(Self::WORLD_MAPPING)),
@@ -512,15 +374,15 @@ impl Variant {
         ]
     }
 
-    pub(crate) fn double_sided(self) -> bool {
+    pub fn double_sided(self) -> bool {
         self.0 & Self::DOUBLE_SIDED != 0
     }
 
-    pub(crate) fn alpha_mask(self) -> bool {
+    pub fn alpha_mask(self) -> bool {
         self.0 & Self::ALPHA_MASK != 0
     }
 
-    pub(crate) fn opaque(self) -> Self {
+    pub fn opaque(self) -> Self {
         if self.alpha_mask() {
             Self(self.0 | Self::PRETESTED)
         } else {
@@ -528,19 +390,19 @@ impl Variant {
         }
     }
 
-    pub(crate) fn prepass(self) -> Self {
+    pub fn prepass(self) -> Self {
         Self(self.0 & !Self::PRETESTED | Self::PREPASS)
     }
 
-    pub(crate) fn depth_only(self) -> bool {
+    pub fn depth_only(self) -> bool {
         self.0 & Self::PREPASS != 0
     }
 
-    pub(crate) fn pretested(self) -> bool {
+    pub fn pretested(self) -> bool {
         self.0 & Self::PRETESTED != 0
     }
 
-    pub(crate) fn with_extended(self, extended: bool) -> Self {
+    pub fn with_extended(self, extended: bool) -> Self {
         Self(if extended {
             self.0 | Self::EXTENDED
         } else {
@@ -548,11 +410,11 @@ impl Variant {
         })
     }
 
-    pub(crate) fn extended(self) -> bool {
+    pub fn extended(self) -> bool {
         self.0 & Self::EXTENDED != 0
     }
 
-    pub(crate) fn with_fading(self, fading: bool) -> Self {
+    pub fn with_fading(self, fading: bool) -> Self {
         Self(if fading {
             self.0 | Self::FADING
         } else {
@@ -560,7 +422,7 @@ impl Variant {
         })
     }
 
-    pub(crate) fn with_grounding(self, grounding: bool) -> Self {
+    pub fn with_grounding(self, grounding: bool) -> Self {
         Self(if grounding {
             self.0 | Self::GROUNDING
         } else {
@@ -569,29 +431,19 @@ impl Variant {
     }
 }
 
-pub(crate) use crate::gpu_layouts::scene::ShadowUniform;
+pub use crate::gpu_layouts::scene::PostUniform;
 
-pub(crate) use crate::gpu_layouts::scene::ShadowCullUniform;
-
-pub(crate) use crate::gpu_layouts::scene::{ComposeData, RouteData};
-
-pub(crate) use crate::gpu_layouts::scene::PostUniform;
-
-pub(crate) use crate::gpu_layouts::scene::SkyUniform;
-
-pub(crate) fn mip_levels(width: u32, height: u32) -> u32 {
+pub fn mip_levels(width: u32, height: u32) -> u32 {
     u32::BITS - width.max(height).max(1).leading_zeros()
 }
 
-pub(crate) fn mip_chain_bytes(width: u32, height: u32) -> u64 {
+pub fn mip_chain_bytes(width: u32, height: u32) -> u64 {
     (1..mip_levels(width, height))
         .map(|level| u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * 4)
         .sum()
 }
 
-pub(crate) use crate::gpu_layouts::scene::ResolveUniform;
-
-pub(crate) const JITTER_SAMPLES: u32 = 8;
+pub const JITTER_SAMPLES: u32 = 8;
 
 fn halton(mut index: u32, base: u32) -> f32 {
     let (mut scale, mut value) = (1.0, 0.0);
@@ -603,27 +455,27 @@ fn halton(mut index: u32, base: u32) -> f32 {
     value
 }
 
-pub(crate) fn jitter_offset(frame: u32) -> [f32; 2] {
+pub fn jitter_offset(frame: u32) -> [f32; 2] {
     let index = frame % JITTER_SAMPLES + 1;
     [halton(index, 2) - 0.5, halton(index, 3) - 0.5]
 }
 
-pub(crate) fn jitter_clip(offset: [f32; 2], width: u32, height: u32) -> [f32; 2] {
+pub fn jitter_clip(offset: [f32; 2], width: u32, height: u32) -> [f32; 2] {
     [
         2.0 * offset[0] / width.max(1) as f32,
         -2.0 * offset[1] / height.max(1) as f32,
     ]
 }
 
-pub(crate) use crate::gpu_layouts::scene::PresentationFrame;
+pub use crate::gpu_layouts::scene::PresentationFrame;
 
-pub(crate) use crate::gpu_layouts::scene::CandidateData;
+pub use crate::gpu_layouts::scene::CandidateData;
 
-pub(crate) use crate::gpu_layouts::scene::BatchData;
+pub use crate::gpu_layouts::scene::BatchData;
 
-pub(crate) const FAR_DEPTH: f32 = 0.0;
+pub const FAR_DEPTH: f32 = 0.0;
 
-pub(crate) fn frustum_uniform(view_projection: glam::Mat4) -> ([[f32; 4]; 6], [[f32; 4]; 4]) {
+pub fn frustum_uniform(view_projection: glam::Mat4) -> ([[f32; 4]; 6], [[f32; 4]; 4]) {
     let rows = view_projection.transpose();
     let planes = [
         rows.w_axis + rows.x_axis,
@@ -643,7 +495,7 @@ pub(crate) fn frustum_uniform(view_projection: glam::Mat4) -> ([[f32; 4]; 6], [[
     (planes, absolute.to_cols_array_2d())
 }
 
-pub(crate) fn clamped_extent(width: u32, height: u32, limit: u32) -> Option<(u32, u32)> {
+pub fn clamped_extent(width: u32, height: u32, limit: u32) -> Option<(u32, u32)> {
     if width == 0 || height == 0 || limit == 0 {
         return None;
     }

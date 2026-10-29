@@ -18,8 +18,8 @@ struct SharedView {
     faces: [GrowableGroupCache; FACES],
 }
 
-pub(crate) struct CameraBindings {
-    pub(crate) buffer: wgpu::Buffer,
+pub struct CameraBindings {
+    pub buffer: wgpu::Buffer,
     lighting_buffer: wgpu::Buffer,
     lighting: Option<LightingUniform>,
     views: Vec<SharedView>,

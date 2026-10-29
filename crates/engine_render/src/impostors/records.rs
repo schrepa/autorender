@@ -207,7 +207,7 @@ impl ImpostorAtlas {
         });
     }
 
-    pub(crate) fn take_made(&mut self, out: &mut Vec<(RecordKey, Vec<u8>)>) {
+    pub fn take_made(&mut self, out: &mut Vec<(RecordKey, Vec<u8>)>) {
         let mut kept = Vec::with_capacity(self.readbacks.len());
         for readback in std::mem::take(&mut self.readbacks) {
             let read = match &*readback.mapped.borrow() {
@@ -227,7 +227,7 @@ impl ImpostorAtlas {
         self.readbacks = kept;
     }
 
-    pub(crate) fn after_submit(&mut self) {
+    pub fn after_submit(&mut self) {
         self.loaded = 0;
         if std::mem::take(&mut self.deferred) {
             self.generation += 1;
