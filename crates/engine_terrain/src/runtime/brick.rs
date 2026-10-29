@@ -42,8 +42,15 @@ impl Brick for TerrainBrick {
             )
             .extract(extract_terrains)
             .operation::<TerrainControl>()
+            .operation::<TerrainEditControl>()
+            .operation::<TerrainUndoControl>()
+            .operation::<TerrainRedoControl>()
+            .operation::<TerrainRiverControl>()
+            .operation::<TerrainHeightQuery>()
+            .operation::<TerrainRouteQuery>()
             .inspector::<Terrains, TerrainsView>(|_, terrains| TerrainsView::of(terrains))
-            .inspector::<TerrainDebug, TerrainDebugView>(|_, debug| TerrainDebugView::of(debug));
+            .inspector::<TerrainDebug, TerrainDebugView>(|_, debug| TerrainDebugView::of(debug))
+            .component_inspector::<TerrainPrefetch, TerrainPrefetch>(|_, _, prefetch| *prefetch);
     }
 }
 

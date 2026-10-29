@@ -10,6 +10,7 @@ mod queries;
 pub mod results;
 mod solids;
 mod terrain;
+mod terrain_sweep;
 mod types;
 mod views;
 mod world;
@@ -20,6 +21,7 @@ pub use queries::{
     OverlapQuery, RaycastQuery, ShapeCastQuery,
 };
 pub use solids::{ColliderSolid, GroundSolid, PlacedSolid, Solid};
+pub use terrain_sweep::TerrainSweepQuery;
 pub use types::*;
 pub use views::{
     ColliderShapeView, ColliderView, CollisionLimitsView, CollisionWorldView, collider_view,
@@ -62,7 +64,8 @@ impl Brick for Collision {
             .operation::<RaycastQuery>()
             .operation::<OverlapQuery>()
             .operation::<ShapeCastQuery>()
-            .operation::<CollisionEventsQuery>();
+            .operation::<CollisionEventsQuery>()
+            .operation::<TerrainSweepQuery>();
     }
 }
 

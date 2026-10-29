@@ -1,6 +1,7 @@
 mod components;
 mod environment;
 mod poses;
+mod terrain;
 
 use poses::presentation_view;
 
@@ -173,6 +174,7 @@ impl DevTools {
         let mut tools = Self::bare();
         tools.register_poses(schemas);
         tools.register_components(schemas);
+        tools.register_terrain(schemas);
         tools.register_environment(schemas);
         tools.builtins = Some(tools.inspectors.len());
         tools.schemas = schemas.clone();

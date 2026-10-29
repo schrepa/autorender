@@ -5,11 +5,13 @@ mod bridges;
 mod components;
 mod cook;
 mod dispatch;
+mod edits;
 mod extract;
 mod flow;
 mod ground_cover;
 mod identity;
 mod lighting;
+mod lookups;
 mod macro_colors;
 mod occupancy;
 mod operations;
@@ -41,10 +43,17 @@ pub use bridges::*;
 pub use components::*;
 use cook::CookTiles;
 use dispatch::*;
+pub use edits::{
+    TerrainEditControl, TerrainEdited, TerrainRedoControl, TerrainRiverControl, TerrainUndoControl,
+};
 pub use extract::*;
 pub use ground_cover::*;
 use identity::Generation;
 use lighting::{Basis, Lighting, ground_tiles, light, lighting_level, lit};
+pub use lookups::{
+    HeightSample, RouteFound, StandingWater, TerrainHeightQuery, TerrainHeightResult,
+    TerrainRouteQuery, TerrainRouteResult,
+};
 use macro_colors::{MacroColors, ask_colors, want_colors};
 pub use occupancy::*;
 pub use operations::{TerrainControl, TerrainControlResult, TerrainKey, terrain_key};

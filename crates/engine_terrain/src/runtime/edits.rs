@@ -1,21 +1,226 @@
-use std::sync::Arc;
+use super::operations::{coordinate, reply, terrains};
+use super::*;
+use crate::{MAX_GIVEN_RIVERS, StampOp};
+use engine_core::{Error, ErrorCode, Operation, authored_entity};
+#[cfg(feature = "schema")]
+use engine_settings::{rule::same, stated};
+use serde_json::Value;
 
-use engine_core::{
-    Engine, Feature,
-    bevy_ecs::prelude::{Entity, World},
-    glam::Vec2,
-};
-use engine_scene::SceneInstance;
-use engine_settings::ErrorCode;
-use engine_terrain::{GivenRiver, Stamp, StampOp, Terrain, TerrainEdit, TerrainRiver, Terrains};
+const CHANGE_SAMPLES: usize = 9;
 
-use super::TerrainRiverControl;
-use super::results::{Reach, TerrainEdited};
-use crate::DevError;
-use crate::coordinate;
-use crate::features::feature;
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TerrainEditControl {
+    #[serde(default)]
+    pub terrain: Option<String>,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(transform = stated(engine_settings::rule::id()))
+    )]
+    pub id: String,
+    pub center: [f64; 2],
+    #[cfg_attr(feature = "schema", schemars(transform = stamp_rule("radius")))]
+    pub radius: f64,
+    #[serde(default)]
+    #[cfg_attr(feature = "schema", schemars(transform = stamp_rule("falloff")))]
+    pub falloff: f64,
+    pub change: StampOp,
+}
 
-pub(super) enum TerrainEditing {
+impl Operation for TerrainEditControl {
+    const NAME: &'static str = "terrain_edit";
+    const CONTROL: bool = true;
+    const SHOWS: &'static str = "Terrain";
+    type Request = Self;
+
+    fn run(world: &mut World, request: Self) -> Result<Value, Error> {
+        let Self {
+            terrain,
+            id,
+            center,
+            radius,
+            falloff,
+            change,
+        } = request;
+        editing(
+            world,
+            terrain.as_deref(),
+            TerrainEditing::Edit {
+                id,
+                center,
+                radius,
+                falloff,
+                change,
+            },
+        )
+    }
+
+    #[cfg(feature = "schema")]
+    fn schema() -> schemars::Schema {
+        schemars::schema_for!(Self)
+    }
+
+    #[cfg(feature = "schema")]
+    fn result_schema() -> Option<schemars::Schema> {
+        Some(schemars::schema_for!(TerrainEdited))
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TerrainRiverControl {
+    #[serde(default)]
+    pub terrain: Option<String>,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(transform = stated(engine_settings::rule::id()))
+    )]
+    pub id: String,
+    #[serde(default)]
+    pub points: Vec<[f64; 2]>,
+    #[serde(default)]
+    #[cfg_attr(feature = "schema", schemars(transform = stated(same(GivenRiver::rule_of("width")))))]
+    pub width: Vec<f64>,
+    #[serde(default)]
+    #[cfg_attr(feature = "schema", schemars(transform = stated(same(GivenRiver::rule_of("depth")))))]
+    pub depth: Vec<f64>,
+    #[serde(default)]
+    #[cfg_attr(feature = "schema", schemars(transform = stated(same(GivenRiver::rule_of("discharge")))))]
+    pub discharge: Vec<f64>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+impl Operation for TerrainRiverControl {
+    const NAME: &'static str = "terrain_river";
+    const CONTROL: bool = true;
+    const SHOWS: &'static str = "Terrain";
+    type Request = Self;
+
+    fn run(world: &mut World, request: Self) -> Result<Value, Error> {
+        draw_river(world, &request).map(reply)
+    }
+
+    #[cfg(feature = "schema")]
+    fn schema() -> schemars::Schema {
+        schemars::schema_for!(Self)
+    }
+
+    #[cfg(feature = "schema")]
+    fn result_schema() -> Option<schemars::Schema> {
+        Some(schemars::schema_for!(TerrainEdited))
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TerrainUndoControl {
+    #[serde(default)]
+    pub terrain: Option<String>,
+}
+
+impl Operation for TerrainUndoControl {
+    const NAME: &'static str = "terrain_undo";
+    const CONTROL: bool = true;
+    const SHOWS: &'static str = "Terrain";
+    type Request = Self;
+
+    fn run(world: &mut World, request: Self) -> Result<Value, Error> {
+        editing(world, request.terrain.as_deref(), TerrainEditing::Undo)
+    }
+
+    #[cfg(feature = "schema")]
+    fn schema() -> schemars::Schema {
+        schemars::schema_for!(Self)
+    }
+
+    #[cfg(feature = "schema")]
+    fn result_schema() -> Option<schemars::Schema> {
+        Some(schemars::schema_for!(TerrainEdited))
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct TerrainRedoControl {
+    #[serde(default)]
+    pub terrain: Option<String>,
+}
+
+impl Operation for TerrainRedoControl {
+    const NAME: &'static str = "terrain_redo";
+    const CONTROL: bool = true;
+    const SHOWS: &'static str = "Terrain";
+    type Request = Self;
+
+    fn run(world: &mut World, request: Self) -> Result<Value, Error> {
+        editing(world, request.terrain.as_deref(), TerrainEditing::Redo)
+    }
+
+    #[cfg(feature = "schema")]
+    fn schema() -> schemars::Schema {
+        schemars::schema_for!(Self)
+    }
+
+    #[cfg(feature = "schema")]
+    fn result_schema() -> Option<schemars::Schema> {
+        Some(schemars::schema_for!(TerrainEdited))
+    }
+}
+
+#[cfg(feature = "schema")]
+fn stamp_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
+    stated(Stamp::rule_of(field).expect("stamps declare the field"))
+}
+
+#[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum TerrainEdited {
+    River {
+        temporary: bool,
+        applied: bool,
+        id: String,
+        rivers: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dirty: Option<Reach>,
+    },
+    Edit {
+        temporary: bool,
+        applied: bool,
+        id: String,
+        edits: usize,
+        dirty: Reach,
+        largest_change: f32,
+    },
+    Undo {
+        temporary: bool,
+        undone: Option<String>,
+        edits: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dirty: Option<Reach>,
+    },
+    Redo {
+        temporary: bool,
+        redone: Option<String>,
+        edits: usize,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        dirty: Option<Reach>,
+    },
+}
+
+#[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct Reach {
+    pub min: [f32; 2],
+    pub max: [f32; 2],
+}
+
+enum TerrainEditing {
     Edit {
         id: String,
         center: [f64; 2],
@@ -27,19 +232,26 @@ pub(super) enum TerrainEditing {
     Redo,
 }
 
-const CHANGE_SAMPLES: usize = 9;
+#[derive(Resource, Default)]
+struct TerrainRedo(Vec<(Entity, TerrainEdit)>);
 
-fn terrain_entity(
+fn editing(
     world: &mut World,
-    scene: Option<&SceneInstance>,
     name: Option<&str>,
-) -> Result<Entity, DevError> {
+    editing: TerrainEditing,
+) -> Result<Value, Error> {
+    let mut redo = world.remove_resource::<TerrainRedo>().unwrap_or_default();
+    let result = edit_terrain(world, name, &mut redo.0, editing);
+    world.insert_resource(redo);
+    result.map(reply)
+}
+
+fn terrain_entity(world: &mut World, name: Option<&str>) -> Result<Entity, Error> {
     match name {
-        Some(name) => scene
-            .and_then(|scene| scene.entity(name))
+        Some(name) => authored_entity(world, name)
             .filter(|&entity| world.get::<Terrain>(entity).is_some())
             .ok_or_else(|| {
-                DevError::new(
+                Error::new(
                     ErrorCode::UnknownTerrain,
                     "$.terrain",
                     format!("no terrain entity {name} in the scene"),
@@ -50,15 +262,15 @@ fn terrain_entity(
             .iter(world)
             .map(|(entity, _)| entity)
             .next()
-            .ok_or_else(|| DevError::new(ErrorCode::UnknownTerrain, "$.terrain", "no terrain")),
+            .ok_or_else(|| Error::new(ErrorCode::UnknownTerrain, "$.terrain", "no terrain")),
     }
 }
 
-fn valid_id(id: &str) -> Result<(), DevError> {
+fn valid_id(id: &str) -> Result<(), Error> {
     if engine_settings::is_id(id) {
         Ok(())
     } else {
-        Err(DevError::new(
+        Err(Error::new(
             ErrorCode::InvalidRequest,
             "$.id",
             format!(
@@ -73,15 +285,13 @@ fn valid_id(id: &str) -> Result<(), DevError> {
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
 )]
-pub(super) fn edit_terrain(
-    engine: &mut Engine,
-    scene: Option<&SceneInstance>,
+fn edit_terrain(
+    world: &mut World,
     name: Option<&str>,
     redo: &mut Vec<(Entity, TerrainEdit)>,
     editing: TerrainEditing,
-) -> Result<TerrainEdited, DevError> {
-    let world = engine.app.world_mut();
-    let entity = terrain_entity(world, scene, name)?;
+) -> Result<TerrainEdited, Error> {
+    let entity = terrain_entity(world, name)?;
     let terrain = world.get::<Terrain>(entity).cloned().expect("found above");
     let origin = terrain.origin;
     let mut edits = terrain.edits.to_vec();
@@ -131,18 +341,17 @@ pub(super) fn edit_terrain(
                     Some(rest) => format!("change{rest}"),
                     None => invalid.field.into_owned(),
                 };
-                DevError::new(ErrorCode::OutOfRange, format!("$.{field}"), invalid.rule)
+                Error::new(ErrorCode::OutOfRange, format!("$.{field}"), invalid.rule)
             })?;
-            let terrains = feature::<Terrains>(world, Feature::Terrain)?;
-            let before = terrains.layers(entity).ok_or_else(|| {
-                DevError::new(
+            let before = terrains(world)?.layers(entity).ok_or_else(|| {
+                Error::new(
                     ErrorCode::UnknownTerrain,
                     "$.terrain",
                     "the terrain does not stream yet",
                 )
             })?;
             let after = before.with_stamps(&[stamp]).map_err(|error| {
-                DevError::new(ErrorCode::InvalidRequest, "$.change", error.to_string())
+                Error::new(ErrorCode::InvalidRequest, "$.change", error.to_string())
             })?;
             let span = radius + falloff;
             let mut largest = 0.0_f32;
@@ -218,17 +427,12 @@ pub(super) fn edit_terrain(
     Ok(result)
 }
 
-pub(super) fn draw_river(
-    engine: &mut Engine,
-    scene: Option<&SceneInstance>,
-    drawing: &TerrainRiverControl,
-) -> Result<TerrainEdited, DevError> {
-    let world = engine.app.world_mut();
-    let entity = terrain_entity(world, scene, drawing.terrain.as_deref())?;
-    feature::<Terrains>(world, Feature::Terrain)?;
+fn draw_river(world: &mut World, drawing: &TerrainRiverControl) -> Result<TerrainEdited, Error> {
+    let entity = terrain_entity(world, drawing.terrain.as_deref())?;
+    terrains(world)?;
     let terrain = world.get::<Terrain>(entity).cloned().expect("found above");
     if !terrain.layers.has_hydrology() {
-        return Err(DevError::new(
+        return Err(Error::new(
             ErrorCode::InvalidRequest,
             "$.terrain",
             "the terrain has no hydrology layer to give rivers to",
@@ -274,12 +478,12 @@ pub(super) fn draw_river(
             .points
             .iter()
             .enumerate()
-            .map(|(index, &[x, z])| -> Result<[f32; 2], DevError> {
+            .map(|(index, &[x, z])| -> Result<[f32; 2], Error> {
                 let x = coordinate(x, &format!("$.points[{index}][0]"))?;
                 let z = coordinate(z, &format!("$.points[{index}][1]"))?;
                 Ok([x - origin.x, z - origin.y])
             })
-            .collect::<Result<Vec<_>, DevError>>()?;
+            .collect::<Result<Vec<_>, Error>>()?;
         let values =
             |values: &[f64]| -> Vec<f32> { values.iter().map(|&value| value as f32).collect() };
         let river = GivenRiver {
@@ -290,7 +494,7 @@ pub(super) fn draw_river(
             discharge: values(&drawing.discharge),
         };
         river.validate().map_err(|invalid| {
-            DevError::new(
+            Error::new(
                 ErrorCode::OutOfRange,
                 format!("$.{}", invalid.field),
                 invalid.rule,
@@ -299,9 +503,9 @@ pub(super) fn draw_river(
         if standing.is_some_and(|at| rivers[at].river == river) {
             return Ok(unchanged(&rivers, reach(&[&river])));
         }
-        let most = engine_terrain::MAX_GIVEN_RIVERS;
+        let most = MAX_GIVEN_RIVERS;
         if standing.is_none() && rivers.len() >= most {
-            return Err(DevError::new(
+            return Err(Error::new(
                 ErrorCode::OutOfRange,
                 "$.id",
                 format!("a terrain holds at most {most} drawn rivers"),

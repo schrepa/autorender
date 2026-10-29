@@ -117,7 +117,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_navigation/**",
             "crates/engine_core/src/**/grounded*",
             "crates/engine_scene/src/**/terrain*",
-            "crates/engine_dev/src/features/terrain/**",
+            "crates/engine_dev/src/inspect/terrain*",
             "crates/engine_collision/src/**/terrain*",
             "crates/engine_terrain/**",
         ],

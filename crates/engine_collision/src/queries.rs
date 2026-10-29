@@ -337,11 +337,16 @@ fn identity_rotation() -> [f64; 4] {
     [0.0, 0.0, 0.0, 1.0]
 }
 
-fn reply(result: impl Serialize) -> Value {
+pub(crate) fn reply(result: impl Serialize) -> Value {
     serde_json::to_value(result).expect("results serialize")
 }
 
-fn bounded<T: Setting>(value: T, rule: Rule, code: ErrorCode, path: &str) -> Result<T, Error> {
+pub(crate) fn bounded<T: Setting>(
+    value: T,
+    rule: Rule,
+    code: ErrorCode,
+    path: &str,
+) -> Result<T, Error> {
     match value.check("value", rule) {
         Ok(()) => Ok(value),
         Err(invalid) => Err(Error::new(code, path, invalid.rule)),
