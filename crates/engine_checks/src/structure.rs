@@ -1,3 +1,6 @@
+use engine_core::{Error, ErrorCode};
+use serde_json::json;
+
 use crate::{Exceptions, Repository};
 
 const MAX_FILE_LINES: usize = 1500;
@@ -23,14 +26,16 @@ pub fn check(repository: &Repository, exceptions: &Exceptions) -> Result<(), Str
         let lines = text.lines().count();
         if lines > MAX_FILE_LINES {
             long.push(path.clone());
-            match exceptions.long_files.iter().find(|(file, _)| *file == path) {
-                Some(&(_, most)) if lines > most => problems.push(format!(
-                    "{path}: {lines} lines, more than its {most}: it may only shrink (split it)"
-                )),
-                Some(_) => {}
-                None => problems.push(format!(
-                    "{path}: {lines} lines, more than {MAX_FILE_LINES}: split it"
-                )),
+            let most = match exceptions.long_files.iter().find(|(file, _)| *file == path) {
+                Some(&(_, most)) => most,
+                None => MAX_FILE_LINES,
+            };
+            if lines > most {
+                problems.push(
+                    Error::new(ErrorCode::FileTooLong, path.as_str())
+                        .at_most(most as u64)
+                        .got(lines),
+                );
             }
         }
         if !path.ends_with(".rs") {
@@ -41,35 +46,33 @@ pub fn check(repository: &Repository, exceptions: &Exceptions) -> Result<(), Str
                 continue;
             }
             wide.push((path.clone(), name.clone()));
-            match exceptions
+            let most = match exceptions
                 .wide_structs
                 .iter()
                 .find(|(file, wide, _)| *file == path && *wide == name)
             {
-                Some(&(_, _, most)) if fields > most => problems.push(format!(
-                    "{path}: struct {name} has {fields} fields, more than its {most}: it may only shrink"
-                )),
-                Some(_) => {}
-                None => problems.push(format!(
-                    "{path}: struct {name} has {fields} fields, more than {MAX_STRUCT_FIELDS}: split it"
-                )),
+                Some(&(_, _, most)) => most,
+                None => MAX_STRUCT_FIELDS,
+            };
+            if fields > most {
+                problems.push(
+                    Error::new(ErrorCode::StructTooWide, path.as_str())
+                        .at_most(most as u64)
+                        .got(json!({ name.as_str(): fields })),
+                );
             }
         }
     }
     for (path, _) in exceptions.long_files {
         if !long.iter().any(|file| file == path) {
-            problems.push(format!(
-                "{path} is listed in the exceptions' long_files but is no longer over \
-                 {MAX_FILE_LINES} lines: remove its entry"
-            ));
+            problems.push(Error::new(ErrorCode::ExceptionUnused, *path).got("long_files"));
         }
     }
     for (path, name, _) in exceptions.wide_structs {
         if !wide.iter().any(|(file, wide)| file == path && wide == name) {
-            problems.push(format!(
-                "{path}: struct {name} is listed in the exceptions' wide_structs but no longer \
-                 has over {MAX_STRUCT_FIELDS} fields: remove its entry"
-            ));
+            problems.push(
+                Error::new(ErrorCode::ExceptionUnused, *path).got(json!({ "wide_structs": name })),
+            );
         }
     }
     if problems.is_empty() {
@@ -81,7 +84,7 @@ pub fn check(repository: &Repository, exceptions: &Exceptions) -> Result<(), Str
         println!("{record}");
         return Ok(());
     }
-    Err(problems.join("\n"))
+    crate::report(&problems)
 }
 
 fn code(text: &str) -> String {

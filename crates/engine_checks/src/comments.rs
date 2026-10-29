@@ -1,3 +1,4 @@
+use engine_core::{Error, ErrorCode};
 use serde_json::json;
 
 use crate::Repository;
@@ -37,14 +38,14 @@ pub fn check(repository: &Repository) -> Result<(), String> {
         problems.extend(
             lines
                 .into_iter()
-                .map(|line| json!({"rule": "comment", "file": path, "line": line}).to_string()),
+                .map(|line| Error::new(ErrorCode::Comment, crate::at(&path, line))),
         );
     }
     if problems.is_empty() {
         println!("{}", json!({"event": "no_comments", "files": checked}));
         return Ok(());
     }
-    Err(problems.join("\n"))
+    crate::report(&problems)
 }
 
 fn rust_comments(source: &str) -> Vec<usize> {

@@ -2,7 +2,7 @@ use std::f32::consts::TAU;
 
 use engine_math::{clamp, max, min, sin_cos};
 
-use crate::codec::{self, Codec, CodecError, Reader, Writer};
+use crate::codec::{self, Codec, Error, Reader, Writer};
 use crate::gpu::control_at;
 use crate::lighting::{Ground, normalized, unorm};
 use crate::{BiomeRules, Layers, SampleShape};
@@ -53,10 +53,10 @@ impl Codec for TerrainBounce {
         codec::put_planes(out, &self.ground, blocks);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         let probes: u32 = input.get()?;
         if !(2..=MAX_PROBES).contains(&probes) || !probes.is_multiple_of(2) {
-            return Err(CodecError("bounce probes of another count"));
+            return Err(codec::invalid("$.probes").got(probes));
         }
         let blocks = (probes / 2) as usize;
         let detailed = codec::get_planes(input, blocks)?;
@@ -71,7 +71,7 @@ impl Codec for TerrainBounce {
             || records.len() != held * PROBE_BYTES
             || ground.len() != GROUND_PLANES * blocks * blocks
         {
-            return Err(CodecError("bounce of another size"));
+            return Err(codec::invalid("$.bounce"));
         }
         Ok(Self {
             probes,

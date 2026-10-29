@@ -6,18 +6,13 @@
 
 use std::sync::Arc;
 
+pub use engine_core::Error;
+use engine_core::{ErrorCode, Expected};
 use glam::{Vec2, Vec3};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CodecError(pub &'static str);
-
-impl std::fmt::Display for CodecError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "invalid terrain data: {}", self.0)
-    }
+pub fn invalid(path: impl Into<String>) -> Error {
+    Error::new(ErrorCode::InvalidRecord, path)
 }
-
-impl std::error::Error for CodecError {}
 
 #[derive(Default)]
 pub struct Writer {
@@ -52,15 +47,17 @@ impl<'a> Reader<'a> {
         Self { bytes }
     }
 
-    pub fn get<T: Codec>(&mut self) -> Result<T, CodecError> {
+    pub fn get<T: Codec>(&mut self) -> Result<T, Error> {
         T::read(self)
     }
 
-    pub fn finish(self) -> Result<(), CodecError> {
+    pub fn finish(self) -> Result<(), Error> {
         if self.bytes.is_empty() {
             Ok(())
         } else {
-            Err(CodecError("bytes left over"))
+            Err(invalid("$")
+                .expected(Expected::Absent)
+                .got(self.bytes.len()))
         }
     }
 
@@ -68,20 +65,20 @@ impl<'a> Reader<'a> {
         self.bytes.len()
     }
 
-    fn take<const N: usize>(&mut self) -> Result<[u8; N], CodecError> {
-        let (head, rest) = self
-            .bytes
-            .split_first_chunk::<N>()
-            .ok_or(CodecError("ends early"))?;
+    fn take<const N: usize>(&mut self) -> Result<[u8; N], Error> {
+        let Some((head, rest)) = self.bytes.split_first_chunk::<N>() else {
+            return Err(invalid("$").at_least(N as u64).got(self.bytes.len()));
+        };
         self.bytes = rest;
         Ok(*head)
     }
 
-    fn count(&mut self) -> Result<usize, CodecError> {
-        let count = usize::try_from(u64::from_le_bytes(self.take()?))
-            .map_err(|_| CodecError("count out of range"))?;
+    fn count(&mut self) -> Result<usize, Error> {
+        let count = size(u64::from_le_bytes(self.take()?), "$.count")?;
         if count > self.bytes.len() {
-            return Err(CodecError("count beyond the bytes left"));
+            return Err(invalid("$.count")
+                .at_most(self.bytes.len() as u64)
+                .got(count));
         }
         Ok(count)
     }
@@ -112,7 +109,11 @@ pub(crate) fn put_grid(out: &mut Writer, values: &[f32], stride: usize) {
     }
 }
 
-pub(crate) fn get_grid(input: &mut Reader<'_>, stride: usize) -> Result<Box<[f32]>, CodecError> {
+fn size(count: u64, path: &str) -> Result<usize, Error> {
+    usize::try_from(count).map_err(|_| invalid(path).at_most(usize::MAX as u64).got(count))
+}
+
+pub(crate) fn get_grid(input: &mut Reader<'_>, stride: usize) -> Result<Box<[f32]>, Error> {
     let count = input.count()?;
     let mut steps: Vec<Option<i64>> = Vec::with_capacity(count);
     for at in 0..count {
@@ -121,7 +122,7 @@ pub(crate) fn get_grid(input: &mut Reader<'_>, stride: usize) -> Result<Box<[f32
         loop {
             let [byte] = input.take::<1>()?;
             if shift > 63 {
-                return Err(CodecError("grid step out of range"));
+                return Err(invalid(format!("$.grid[{at}]")));
             }
             code |= u64::from(byte & 0x7f) << shift;
             shift += 7;
@@ -137,7 +138,7 @@ pub(crate) fn get_grid(input: &mut Reader<'_>, stride: usize) -> Result<Box<[f32
         let predicted = predict(at, stride, |at| steps[at]);
         let value = predicted
             .checked_add(residual)
-            .ok_or(CodecError("grid step out of range"))?;
+            .ok_or_else(|| invalid(format!("$.grid[{at}]")))?;
         steps.push(Some(value));
     }
     Ok(steps
@@ -159,11 +160,11 @@ pub fn put_planes(out: &mut Writer, planes: &[u8], side: usize) {
     out.raw(&residuals);
 }
 
-pub fn get_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u8]>, CodecError> {
+pub fn get_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u8]>, Error> {
     let count = input.count()?;
     let area = side * side;
     if area == 0 || count % area != 0 {
-        return Err(CodecError("planes of another size"));
+        return Err(invalid("$.planes").got(count));
     }
     let (residuals, rest) = input.bytes.split_at(count);
     input.bytes = rest;
@@ -190,19 +191,19 @@ pub(crate) fn put_wide_planes(out: &mut Writer, planes: &[u16], side: usize) {
     out.raw(&residuals);
 }
 
-pub(crate) fn get_wide_planes(
-    input: &mut Reader<'_>,
-    side: usize,
-) -> Result<Box<[u16]>, CodecError> {
-    let count = usize::try_from(u64::from_le_bytes(input.take()?))
-        .map_err(|_| CodecError("count out of range"))?;
+pub(crate) fn get_wide_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u16]>, Error> {
+    let count = size(u64::from_le_bytes(input.take()?), "$.count")?;
     let area = side * side;
     let bytes = count
         .checked_mul(2)
         .filter(|&bytes| bytes <= input.bytes.len())
-        .ok_or(CodecError("count beyond the bytes left"))?;
+        .ok_or_else(|| {
+            invalid("$.count")
+                .at_most((input.bytes.len() / 2) as u64)
+                .got(count)
+        })?;
     if area == 0 || count % area != 0 {
-        return Err(CodecError("planes of another size"));
+        return Err(invalid("$.planes").got(count));
     }
     let (residuals, rest) = input.bytes.split_at(bytes);
     input.bytes = rest;
@@ -232,10 +233,10 @@ pub(crate) fn put_records(out: &mut Writer, values: &[u8], stride: usize) {
     out.raw(&residuals);
 }
 
-pub(crate) fn get_records(input: &mut Reader<'_>, stride: usize) -> Result<Box<[u8]>, CodecError> {
+pub(crate) fn get_records(input: &mut Reader<'_>, stride: usize) -> Result<Box<[u8]>, Error> {
     let count = input.count()?;
     if stride == 0 || !count.is_multiple_of(stride) {
-        return Err(CodecError("records of another size"));
+        return Err(invalid("$.records").got(count));
     }
     let (residuals, rest) = input.bytes.split_at(count);
     input.bytes = rest;
@@ -302,7 +303,7 @@ fn predict(at: usize, stride: usize, steps: impl Fn(usize) -> Option<i64>) -> i6
     }
 }
 
-pub fn decode<T: Codec>(bytes: &[u8]) -> Result<T, CodecError> {
+pub fn decode<T: Codec>(bytes: &[u8]) -> Result<T, Error> {
     let mut reader = Reader::new(bytes);
     let value = reader.get()?;
     reader.finish()?;
@@ -317,7 +318,7 @@ pub fn encode<T: Codec>(value: &T) -> Vec<u8> {
 
 pub trait Codec: Sized {
     fn write(&self, out: &mut Writer);
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError>;
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error>;
 }
 
 macro_rules! number {
@@ -327,7 +328,7 @@ macro_rules! number {
                 out.raw(&self.to_le_bytes());
             }
 
-            fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+            fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
                 Ok(Self::from_le_bytes(input.take()?))
             }
         }
@@ -341,8 +342,8 @@ impl Codec for usize {
         (*self as u64).write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
-        usize::try_from(u64::read(input)?).map_err(|_| CodecError("size out of range"))
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
+        size(u64::read(input)?, "$.size")
     }
 }
 
@@ -351,11 +352,11 @@ impl Codec for bool {
         u8::from(*self).write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         match u8::read(input)? {
             0 => Ok(false),
             1 => Ok(true),
-            _ => Err(CodecError("invalid flag")),
+            flag => Err(invalid("$.flag").at_most(1).got(flag)),
         }
     }
 }
@@ -366,11 +367,11 @@ impl Codec for String {
         out.raw(self.as_bytes());
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         let count = input.count()?;
         let (text, rest) = input.bytes.split_at(count);
         input.bytes = rest;
-        String::from_utf8(text.to_vec()).map_err(|_| CodecError("invalid text"))
+        String::from_utf8(text.to_vec()).map_err(|_| Error::new(ErrorCode::InvalidUtf8, "$.text"))
     }
 }
 
@@ -382,7 +383,7 @@ impl<T: Codec> Codec for Vec<T> {
         }
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         let count = input.count()?;
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
@@ -400,7 +401,7 @@ impl<T: Codec> Codec for Box<[T]> {
         }
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         Vec::<T>::read(input).map(Vec::into_boxed_slice)
     }
 }
@@ -413,7 +414,7 @@ impl<T: Codec> Codec for Arc<[T]> {
         }
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         Vec::<T>::read(input).map(Arc::from)
     }
 }
@@ -423,7 +424,7 @@ impl<T: Codec> Codec for Arc<T> {
         self.as_ref().write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         T::read(input).map(Arc::new)
     }
 }
@@ -433,7 +434,7 @@ impl<T: Codec> Codec for Box<T> {
         self.as_ref().write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         T::read(input).map(Box::new)
     }
 }
@@ -449,7 +450,7 @@ impl<T: Codec> Codec for Option<T> {
         }
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         Ok(if bool::read(input)? {
             Some(T::read(input)?)
         } else {
@@ -465,7 +466,7 @@ impl<T: Codec + Copy + Default, const N: usize> Codec for [T; N] {
         }
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         let mut values = [T::default(); N];
         for value in &mut values {
             *value = T::read(input)?;
@@ -480,7 +481,7 @@ impl<A: Codec, B: Codec> Codec for (A, B) {
         self.1.write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         Ok((A::read(input)?, B::read(input)?))
     }
 }
@@ -490,7 +491,7 @@ impl Codec for Vec2 {
         self.to_array().write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         <[f32; 2]>::read(input).map(Vec2::from_array)
     }
 }
@@ -500,7 +501,7 @@ impl Codec for Vec3 {
         self.to_array().write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         <[f32; 3]>::read(input).map(Vec3::from_array)
     }
 }
@@ -515,7 +516,7 @@ macro_rules! record {
 
             fn read(
                 input: &mut $crate::codec::Reader<'_>,
-            ) -> Result<Self, $crate::codec::CodecError> {
+            ) -> Result<Self, $crate::codec::Error> {
                 Ok(Self { $( $field: $crate::codec::Codec::read(input)?, )* })
             }
         }
@@ -526,7 +527,7 @@ pub use record;
 
 #[macro_export]
 macro_rules! tagged {
-    ($type:ident, $invalid:literal { $($tag:literal => $variant:ident $(($field:ident))?,)* }) => {
+    ($type:ident { $($tag:literal => $variant:ident $(($field:ident))?,)* }) => {
         impl $crate::codec::Codec for $type {
             fn write(&self, out: &mut $crate::codec::Writer) {
                 match self {
@@ -539,13 +540,17 @@ macro_rules! tagged {
 
             fn read(
                 input: &mut $crate::codec::Reader<'_>,
-            ) -> Result<Self, $crate::codec::CodecError> {
+            ) -> Result<Self, $crate::codec::Error> {
                 Ok(match input.get::<u8>()? {
                     $($tag => Self::$variant $(({
                         let $field = input.get()?;
                         $field
                     }))?,)*
-                    _ => return Err($crate::codec::CodecError($invalid)),
+                    tag => {
+                        return Err($crate::codec::invalid(concat!("$.", stringify!($type)))
+                            .variants([$(stringify!($tag)),*])
+                            .got(tag));
+                    }
                 })
             }
         }

@@ -1084,7 +1084,7 @@ impl crate::codec::Codec for Rivers {
         self.rivers.write(out);
     }
 
-    fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
+    fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::Error> {
         Ok(Self::new(Vec::read(input)?))
     }
 }

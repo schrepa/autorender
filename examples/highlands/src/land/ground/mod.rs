@@ -3,14 +3,16 @@ mod noise;
 
 use engine::prelude::math::{clamp, ln, max, pow};
 use engine::prelude::{TextureSource, TextureUsage};
+use engine::{Error, ErrorCode};
 
 use noise::{low_pass, occlusion, saturate, scale};
 
 pub(super) const SIZE: usize = 1024;
 const SUPERSAMPLE: usize = 2;
 
-pub(super) fn sources(name: &str) -> Result<Vec<TextureSource>, String> {
-    let kind = Kind::named(name).ok_or_else(|| format!("no ground material is named {name}"))?;
+pub(super) fn sources(name: &str) -> engine::Result<Vec<TextureSource>> {
+    let kind = Kind::named(name)
+        .ok_or_else(|| Error::new(ErrorCode::UnknownVariant, "$.maps").got(name))?;
     let mut maps = kind.generate(SIZE * SUPERSAMPLE).downsample();
     maps.equalize();
     let encoded = Encoded::new(&maps, kind.relief());

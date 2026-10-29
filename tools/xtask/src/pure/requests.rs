@@ -2,10 +2,10 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use engine::{Engine, ErrorCode};
+use engine::{Engine, Error, ErrorCode};
 use engine_dev::{
-    Context, Control, DevError, DevTools, Envelope, InspectorDescriptor, MAX_INSPECTORS,
-    MAX_REQUEST_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
+    Context, Control, DevTools, Envelope, InspectorDescriptor, MAX_INSPECTORS, MAX_REQUEST_BYTES,
+    MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
 };
 use engine_scene::{SceneDocument, SceneInstance};
 use serde_json::{Value, json};
@@ -20,6 +20,10 @@ const BRIDGE: &str = "the agent bridge and its sessions answer it (web/scripts/a
 const WATCH: &str = "the watch tools answer it (web/scripts/iteration*.mjs and the build worker)";
 const PAGE: &str = "the page answers it (web/src/engine/dev.ts and the benchmark it runs)";
 const NATIVE_PROFILE: &str = "native profile captures answer it (crates/engine_native)";
+const CHECKS: &str = "the checks report it (crates/engine_checks)";
+const IMPORT: &str = "the glTF importer answers it (tools/assetc)";
+const RECORDS: &str = "records that do not decode answer it (crates/engine_terrain/src/codec.rs)";
+const LAYERS: &str = "terrain layer stacks answer it (crates/engine_terrain/src/layers.rs)";
 const COLLISION: &str = "engine_collision's own check, after the development tools' and scenes' bounds, \
                          or its budgets, which overflow only with more colliders than the corpora load";
 
@@ -31,6 +35,8 @@ const UNREACHED: &[(&str, &str)] = &[
     ("benchmark_failed", PAGE),
     ("benchmark_interrupted", PAGE),
     ("benchmark_timeout", PAGE),
+    ("brick_cycle", CHECKS),
+    ("brick_internal_path", CHECKS),
     ("bridge_error", BRIDGE),
     ("bridge_unreachable", BRIDGE),
     ("browser_command_failed", PAGE),
@@ -53,16 +59,28 @@ const UNREACHED: &[(&str, &str)] = &[
     ("collision_result_budget", COLLISION),
     ("command_busy", PAGE),
     ("command_timeout", BRIDGE),
+    ("comment", CHECKS),
     ("content_type", BRIDGE),
+    ("core_uses_brick", CHECKS),
+    ("crate_cycle", CHECKS),
     (
         "duplicate_brick",
         "a game adding a brick twice panics at startup (engine_core::AddBrick)",
     ),
     ("duplicate_request", BRIDGE),
+    ("error_type", CHECKS),
+    ("example_dependency", CHECKS),
+    ("example_named", CHECKS),
+    ("exception_unused", CHECKS),
+    ("facade_export", CHECKS),
+    ("face_missing", CHECKS),
+    ("file_too_long", CHECKS),
+    ("forbidden_code", CHECKS),
     (
         "game_rule",
-        "a game's own refusal (engine::Error::game_rule)",
+        "a game's own refusal (ErrorCode::GameRule)",
     ),
+    ("generated_stale", CHECKS),
     (
         "invalid_arguments",
         "hosts' and tools' command lines answer it (crates/engine_native/src/options.rs)",
@@ -72,11 +90,13 @@ const UNREACHED: &[(&str, &str)] = &[
     ("invalid_candidate", WATCH),
     ("invalid_command", BRIDGE),
     ("invalid_fingerprint", WATCH),
+    ("invalid_gltf", IMPORT),
     (
         "invalid_input",
         "the host checks it while it runs the control (crates/engine/src/dev_host/controls/input.rs): host-parity's invalid input case reaches it",
     ),
     ("invalid_measurement", PAGE),
+    ("invalid_record", RECORDS),
     ("invalid_request_id", BRIDGE),
     ("invalid_session", BRIDGE),
     (
@@ -86,7 +106,12 @@ const UNREACHED: &[(&str, &str)] = &[
     ("invalid_url", BRIDGE),
     ("iteration_error", WATCH),
     ("iteration_stopped", WATCH),
+    ("lint_allowed", CHECKS),
+    ("lint_missing", CHECKS),
+    ("marker", CHECKS),
+    ("missing_layer", LAYERS),
     ("missing_runtime_identity", BRIDGE),
+    ("not_inherited", CHECKS),
     ("origin_rejected", BRIDGE),
     ("pix_unavailable", NATIVE_PROFILE),
     ("profile_too_large", NATIVE_PROFILE),
@@ -94,6 +119,7 @@ const UNREACHED: &[(&str, &str)] = &[
     ("queue_full", BRIDGE),
     ("queue_timeout", BRIDGE),
     ("render_failed", "rendering needs a GPU"),
+    ("replaces_unknown", CHECKS),
     ("request_outcome_unknown", BRIDGE),
     (
         "response_too_large",
@@ -105,6 +131,8 @@ const UNREACHED: &[(&str, &str)] = &[
     ("runtime_panicked", PAGE),
     ("runtime_replaced", BRIDGE),
     ("runtime_unavailable", BRIDGE),
+    ("safety_missing", CHECKS),
+    ("schedule_ambiguity", CHECKS),
     ("session_cancelled", BRIDGE),
     ("session_closed", BRIDGE),
     ("session_mismatch", BRIDGE),
@@ -118,11 +146,15 @@ const UNREACHED: &[(&str, &str)] = &[
     ),
     ("source_symlink", WATCH),
     ("source_type", WATCH),
+    ("struct_too_wide", CHECKS),
     ("unsafe_output_path", WATCH),
+    ("unsafe_unlisted", CHECKS),
     (
         "unsupported_command",
         "the development bridge answers it while a host carries out a control (crates/engine/src/dev_host/bridge.rs): the native and surfaces smokes reach it",
     ),
+    ("unsupported_feature", IMPORT),
+    ("version_unpinned", CHECKS),
     ("watch_locked", WATCH),
 ];
 
@@ -191,15 +223,12 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         let code = error.code.as_str();
         observed.check(code == rule && error.path == path, || {
             format!(
-                "{name}: expected {rule} at {path}, found {code} at {}: {}",
-                error.path, error.message
+                "{name}: expected {rule} at {path}, found {code} at {}",
+                error.path
             )
         });
         reached.insert(code.to_owned());
-        observed.record(
-            name,
-            json!({"code": code, "path": error.path, "message": error.message}),
-        );
+        observed.record(name, json!(error));
     }
     for refusal in scenes["refusals"].as_array().into_iter().flatten() {
         if let Some(rule) = refusal["rule"].as_str() {
@@ -273,7 +302,7 @@ fn query(
     engine: &mut Engine,
     scene: Option<&SceneInstance>,
     source: &str,
-) -> Option<DevError> {
+) -> Option<Error> {
     let context = Context {
         scene,
         renderer: None,
@@ -283,12 +312,7 @@ fn query(
     if reply["ok"] == true {
         return None;
     }
-    let code = ErrorCode::named(reply["error"]["code"].as_str()?)?;
-    Some(DevError::new(
-        code,
-        reply["error"]["path"].as_str().unwrap_or_default(),
-        reply["error"]["message"].as_str().unwrap_or_default(),
-    ))
+    serde_json::from_value(reply["error"].clone()).ok()
 }
 
 fn control(
@@ -297,7 +321,7 @@ fn control(
     scene: Option<&SceneInstance>,
     source: &str,
     paused: bool,
-) -> Option<DevError> {
+) -> Option<Error> {
     let envelope = match Envelope::parse(source) {
         Ok(envelope) => envelope,
         Err(error) => return Some(error),
@@ -312,7 +336,7 @@ fn control(
     }
 }
 
-fn register(refusal: &Value) -> Option<DevError> {
+fn register(refusal: &Value) -> Option<Error> {
     let mut tools = DevTools::default();
     let count = match &refusal["count"] {
         Value::String(beyond) if beyond == "beyond" => MAX_INSPECTORS as u64 + 1,
@@ -339,7 +363,7 @@ fn register(refusal: &Value) -> Option<DevError> {
     last
 }
 
-fn authoring(root: &Path, refusal: &Value) -> Result<Option<DevError>, String> {
+fn authoring(root: &Path, refusal: &Value) -> Result<Option<Error>, String> {
     let folder = root
         .join(AUTHORING)
         .join(refusal["rule"].as_str().unwrap_or("refusal"));
@@ -383,7 +407,7 @@ fn authoring(root: &Path, refusal: &Value) -> Result<Option<DevError>, String> {
     };
     Ok(error.map(|mut error| {
         if error.code == ErrorCode::SourceIo {
-            "the operating system's message".clone_into(&mut error.message);
+            error.detail.got = None;
         }
         for named in [folder.join(".scene.json.engine-dev.lock"), file, target] {
             let shown = named.display().to_string();
@@ -394,8 +418,10 @@ fn authoring(root: &Path, refusal: &Value) -> Result<Option<DevError>, String> {
                 if !text.is_empty() && error.path.contains(&text) {
                     error.path = "FILE".to_owned();
                 }
-                if !text.is_empty() {
-                    error.message = error.message.replace(&text, "FILE");
+                if !text.is_empty()
+                    && let Some(Value::String(got)) = &mut error.detail.got
+                {
+                    *got = got.replace(&text, "FILE");
                 }
             }
         }

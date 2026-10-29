@@ -197,10 +197,9 @@ fn take_arrived(state: &mut TerrainState, slots: &mut JobBudget<'_>, frame: u64)
             }
             Err(error) => {
                 shading.failed.insert(key, frame);
-                state.failures.record(
-                    frame,
-                    format!("{kind}: its output does not decode: {error}"),
-                );
+                state
+                    .failures
+                    .record(frame, error.within(&format!("$.{kind}")).to_string());
             }
         }
     }

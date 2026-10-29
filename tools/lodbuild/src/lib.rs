@@ -9,6 +9,7 @@ mod distance;
 pub mod simplify;
 
 use engine_assets::{LodInput, MeshLods, MeshVertex};
+use engine_settings::Error;
 
 pub const KIND: &str = engine_assets::LOD_RECORD;
 
@@ -18,10 +19,9 @@ pub fn run(input: &[u8]) -> Result<Vec<u8>, String> {
     Ok(lods.to_bytes())
 }
 
-pub fn levels(vertices: &[MeshVertex], indices: &[u32]) -> Result<MeshLods, String> {
+pub fn levels(vertices: &[MeshVertex], indices: &[u32]) -> Result<MeshLods, Error> {
     chain::levels(&LodInput {
         vertices: vertices.to_vec(),
         indices: indices.to_vec(),
     })
-    .map_err(|error| error.to_string())
 }

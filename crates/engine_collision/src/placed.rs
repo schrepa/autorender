@@ -8,7 +8,7 @@ use glam::{Mat4, Quat, Vec2, Vec3};
 use crate::bvh::Bvh;
 use crate::geometry::{AffineShape, Bounds, Narrow, intersects};
 use crate::{
-    ColliderShape, CollisionError, CollisionLayers, CollisionRay, PlacedPart, QueryFilter, RayHit,
+    ColliderShape, CollisionLayers, CollisionRay, Fault, PlacedPart, QueryFilter, RayHit,
     SensorFilter, ShapeCastOptions, ShapeHit,
 };
 
@@ -242,7 +242,7 @@ impl PlacedShapes {
         shape: &AffineShape,
         filter: QueryFilter,
         output: &mut Vec<Entity>,
-    ) -> Result<(), CollisionError> {
+    ) -> Result<(), Fault> {
         for index in self.bvh.query(|bounds| bounds.overlaps(shape.bounds)) {
             let object = &self.objects[index];
             if !accepts(filter, object) || output.contains(&object.entity) {
@@ -261,7 +261,7 @@ impl PlacedShapes {
         displacement: Vec3,
         filter: QueryFilter,
         options: ShapeCastOptions,
-    ) -> Result<Option<ShapeHit>, CollisionError> {
+    ) -> Result<Option<ShapeHit>, Fault> {
         let swept = shape
             .bounds
             .swept(displacement)

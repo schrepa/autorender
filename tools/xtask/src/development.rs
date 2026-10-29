@@ -1,6 +1,7 @@
 use std::{path::Path, process::Command};
 
-use engine_dev::{CheckRequest, DevError, ErrorCode, PROTOCOL_VERSION, authoring};
+use engine_core::{Error, ErrorCode, Expected};
+use engine_dev::{CheckRequest, PROTOCOL_VERSION, authoring};
 use serde_json::{Value, json};
 
 use crate::Failure;
@@ -63,19 +64,19 @@ fn agent_help(root: &Path, arguments: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn check_request(arguments: &[String]) -> Result<CheckRequest, DevError> {
+fn check_request(arguments: &[String]) -> Result<CheckRequest, Error> {
     let source = match arguments {
         [] => "{}".to_owned(),
         [option, value] if option == "--json" => value.clone(),
-        [option, value] if option == "--file" => std::fs::read_to_string(value)
-            .map_err(|error| DevError::new(ErrorCode::SourceIo, "--file", error.to_string()))?,
+        [option, value] if option == "--file" => {
+            std::fs::read_to_string(value).map_err(|error| {
+                Error::new(ErrorCode::SourceIo, "$.file").got(format!("{:?}", error.kind()))
+            })?
+        }
         _ => {
-            return Err(DevError::new(
-                ErrorCode::InvalidArguments,
-                "$",
-                "cargo xtask agent check [--json JSON | --file PATH]",
-            )
-            .allowed(["--json", "--file"]));
+            return Err(Error::new(ErrorCode::InvalidArguments, "$")
+                .got(arguments)
+                .variants(["--json", "--file"]));
         }
     };
     Ok(engine_scene::parse_json(&source)?)
@@ -123,8 +124,11 @@ fn check(root: &Path, arguments: &[String]) -> Result<(), Failure> {
         .map(|step| {
             let mut step = step.clone();
             if step["ok"] != true {
-                let text = format!("{}\n{stderr}", step["failure"].as_str().unwrap_or_default());
-                step["locations"] = json!(locations(&text));
+                let failure = match &step["failure"] {
+                    Value::String(failure) => failure.clone(),
+                    failure => failure.to_string(),
+                };
+                step["locations"] = json!(locations(&format!("{failure}\n{stderr}")));
             }
             step
         })
@@ -146,13 +150,9 @@ fn check(root: &Path, arguments: &[String]) -> Result<(), Failure> {
         None => json!({
             "version": PROTOCOL_VERSION,
             "ok": false,
-            "error": {
-                "code": ErrorCode::InvalidArguments.as_str(),
-                "path": "$",
-                "message": "verify",
-                "exit": exit,
-                "locations": locations(&stderr),
-            },
+            "error": Error::new(ErrorCode::InvalidArguments, "$.verify")
+                .expected(Expected::Present)
+                .got(json!({ "exit": exit, "locations": locations(&stderr) })),
         }),
     };
     println!("{reply}");
@@ -234,7 +234,7 @@ pub fn scene(arguments: &[String]) -> Result<(), String> {
     }
 }
 
-fn scene_command(arguments: &[String]) -> Result<Value, DevError> {
+fn scene_command(arguments: &[String]) -> Result<Value, Error> {
     match arguments {
         [command, file, path] if command == "validate" && file == "--file" => {
             let source = authoring::read_scene_source(Path::new(path))?;
@@ -254,11 +254,9 @@ fn scene_command(arguments: &[String]) -> Result<Value, DevError> {
             && expected == "--expected-revision" =>
         {
             let revision = revision.parse::<u64>().map_err(|_| {
-                DevError::new(
-                    engine_dev::ErrorCode::InvalidRevision,
-                    "--expected-revision",
-                    "expected an unsigned 64-bit decimal integer",
-                )
+                Error::new(ErrorCode::InvalidRevision, "$.expected-revision")
+                    .expected(Expected::Integer)
+                    .got(revision)
             })?;
             let source = authoring::read_scene_source(Path::new(candidate_path))?;
             Ok(json!(authoring::save_scene(
@@ -275,10 +273,8 @@ fn scene_command(arguments: &[String]) -> Result<Value, DevError> {
                 .resource::<engine::bricks::BrickRegistry>();
             Ok(json!({"schema":engine_scene::SceneDocument::schema_json(registry)}))
         }
-        _ => Err(DevError::new(
-            engine_dev::ErrorCode::InvalidArguments,
-            "$",
-            "usage: cargo xtask scene validate --file PATH | save --file TARGET --candidate PATH --expected-revision N | schema",
-        )),
+        _ => Err(Error::new(ErrorCode::InvalidArguments, "$")
+            .got(arguments)
+            .variants(["validate", "save", "schema"])),
     }
 }

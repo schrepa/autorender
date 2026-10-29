@@ -1,6 +1,8 @@
+use engine_core::Error;
 use glam::Vec2;
 
 use crate::TILE_QUADS;
+use crate::surface::terrain_error;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TileKey {
@@ -16,32 +18,6 @@ impl TileKey {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum PyramidError {
-    Tiles(u32),
-    Spacing(f32),
-}
-
-impl std::fmt::Display for PyramidError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Tiles(tiles) => write!(
-                formatter,
-                "tiles must be 1 to {} along each axis (received {tiles})",
-                Pyramid::MAX_TILES
-            ),
-            Self::Spacing(spacing) => write!(
-                formatter,
-                "spacing must be {} to {} meters (received {spacing})",
-                Pyramid::MIN_SPACING,
-                Pyramid::MAX_SPACING
-            ),
-        }
-    }
-}
-
-impl std::error::Error for PyramidError {}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pyramid {
     tiles: [u32; 2],
     spacing: f32,
@@ -53,14 +29,18 @@ impl Pyramid {
     pub const MIN_SPACING: f32 = 1.0 / 64.0;
     pub const MAX_SPACING: f32 = 1024.0;
 
-    pub fn new(tiles: [u32; 2], spacing: f32) -> Result<Self, PyramidError> {
+    pub fn new(tiles: [u32; 2], spacing: f32) -> Result<Self, Error> {
         for count in tiles {
             if !(1..=Self::MAX_TILES).contains(&count) {
-                return Err(PyramidError::Tiles(count));
+                return Err(terrain_error("$.tiles")
+                    .range(1.0, f64::from(Self::MAX_TILES))
+                    .got(count));
             }
         }
         if !(spacing.is_finite() && (Self::MIN_SPACING..=Self::MAX_SPACING).contains(&spacing)) {
-            return Err(PyramidError::Spacing(spacing));
+            return Err(terrain_error("$.spacing")
+                .range(f64::from(Self::MIN_SPACING), f64::from(Self::MAX_SPACING))
+                .got(spacing));
         }
         let widest = tiles[0].max(tiles[1]);
         let levels = 1 + (u32::BITS - (widest - 1).leading_zeros());
@@ -163,9 +143,9 @@ impl crate::codec::Codec for Pyramid {
         out.put(&self.tiles).put(&self.spacing);
     }
 
-    fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
+    fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::Error> {
         let tiles = input.get()?;
         let spacing = input.get()?;
-        Self::new(tiles, spacing).map_err(|_| crate::codec::CodecError("invalid pyramid"))
+        Self::new(tiles, spacing)
     }
 }

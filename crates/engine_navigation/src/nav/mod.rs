@@ -2,10 +2,11 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::sync::Arc;
 
+use engine_core::ErrorCode;
 use engine_math::collections::HashMap;
 use engine_math::{max, min};
 use engine_settings::settings;
-use engine_terrain::codec::{self, CodecError, Reader, Writer};
+use engine_terrain::codec::{self, Error, Reader, Writer};
 use engine_terrain::{
     Generator, Layers, MAX_LEVEL, Obstacle, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, Tile,
     TileKey, TileWater, record, tagged,
@@ -63,13 +64,11 @@ record!(Gait {
 });
 
 impl Gait {
-    pub fn validate(&self, pyramid: &Pyramid) -> Result<(), String> {
+    pub fn validate(&self, pyramid: &Pyramid) -> Result<(), Error> {
         if self.level >= pyramid.levels() {
-            return Err(format!(
-                "gait level {} is past the pyramid's {} levels",
-                self.level,
-                pyramid.levels()
-            ));
+            return Err(Error::new(ErrorCode::OutOfRange, "$.level")
+                .at_most(u64::from(pyramid.levels().saturating_sub(1)))
+                .got(self.level));
         }
         NavOptions {
             level: self.level,
@@ -78,7 +77,7 @@ impl Gait {
             ..NavOptions::default()
         }
         .validate()
-        .map_err(|invalid| invalid.to_string())
+        .map_err(Error::from)
     }
 }
 

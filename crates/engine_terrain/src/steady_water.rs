@@ -5,7 +5,7 @@ use glam::{IVec2, Vec2};
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max, min};
 
-use crate::codec::{self, Reader, Writer, record};
+use crate::codec::{self, Error, Reader, Writer, record};
 use crate::hydraulics::GRAVITY;
 use crate::shading::gradient_word;
 use crate::shallow_water::{self, CELL_MEANS, DRY, UNHELD, WET_MOST, resistance, velocity};
@@ -29,7 +29,6 @@ pub const BLOCK_GROUND: usize = BLOCK_CORNERS + 4 * BLOCK_CELLS;
 pub const NO_BLOCK: u32 = u32::MAX;
 const SPREAD: u32 = 2;
 const SAMPLES: usize = TILE_SAMPLES as usize;
-const MISSING: &str = "settling water misses a part of the ground it reaches";
 const ENTRY: f32 = 2.0;
 const SOURCE_LEAST: f32 = 0.01;
 pub const COVER_POINTS: u32 = 4;
@@ -204,7 +203,7 @@ impl codec::Codec for SteadyWater {
         out.put(&self.live);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, codec::CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, codec::Error> {
         let key = input.get()?;
         let cell: f32 = input.get()?;
         let first = input.get()?;
@@ -232,7 +231,7 @@ impl codec::Codec for SteadyWater {
             || !solids.iter().all(Footprint::valid)
             || !live.valid()
         {
-            return Err(codec::CodecError("invalid settled water"));
+            return Err(codec::invalid("$.settled"));
         }
         Ok(Self {
             key,
@@ -264,7 +263,7 @@ pub struct SettledHead {
 }
 
 impl SteadyWater {
-    pub fn head(bytes: &[u8]) -> Result<(SettledHead, usize), codec::CodecError> {
+    pub fn head(bytes: &[u8]) -> Result<(SettledHead, usize), codec::Error> {
         let mut input = Reader::new(bytes);
         let key = input.get()?;
         let cell: f32 = input.get()?;
@@ -273,7 +272,7 @@ impl SteadyWater {
         let _: Vec<SteadySource> = input.get()?;
         let summary = input.get()?;
         if !(cell.is_finite() && cell > 0.0) {
-            return Err(codec::CodecError("invalid settled water"));
+            return Err(codec::invalid("$.cell").got(cell));
         }
         Ok((
             SettledHead { key, cell, summary },
@@ -648,14 +647,14 @@ impl PartMaking {
         }
     }
 
-    pub(crate) fn advance(&mut self, budget: &mut u64) -> Result<Option<WaterPart>, String> {
+    pub(crate) fn advance(&mut self, budget: &mut u64) -> Result<Option<WaterPart>, Error> {
         let Some(made) = self.generator.advance(budget) else {
             if self.generator.failed() {
-                return Err("the ground's heights are invalid".into());
+                return Err(crate::jobs::invalid_heights());
             }
             return Ok(None);
         };
-        let tile: Tile = codec::decode(&codec::encode(&made)).map_err(|error| error.to_string())?;
+        let tile: Tile = codec::decode(&codec::encode(&made))?;
         Ok(Some(WaterPart::of(
             &self.pyramid,
             &tile,
@@ -677,9 +676,9 @@ impl<'a> Reading<'a> {
         pyramid: &Pyramid,
         region: &SettleRegion,
         parts: &[&'a WaterPart],
-    ) -> Result<Self, String> {
-        if parts.iter().any(|part| part.cell != region.cell) {
-            return Err("a part of settling water on another lattice".into());
+    ) -> Result<Self, Error> {
+        if let Some(part) = parts.iter().find(|part| part.cell != region.cell) {
+            return Err(codec::invalid("$.cell").got(part.cell));
         }
         let reached = region.reached(pyramid);
         let span = |line: fn(&TileKey) -> u16| {
@@ -690,7 +689,7 @@ impl<'a> Reading<'a> {
                 .map(|(first, last)| (first, (last + 1 - first) as usize))
         };
         let (Some((x0, columns)), Some((z0, rows))) = (span(|key| key.x), span(|key| key.z)) else {
-            return Err(MISSING.into());
+            return Err(codec::invalid("$.parts"));
         };
         let mut grid = vec![None; columns * rows];
         for &part in parts {
@@ -703,7 +702,9 @@ impl<'a> Reading<'a> {
                 grid[z * columns + x] = Some(part);
             }
         }
-        let parts: Vec<&WaterPart> = grid.into_iter().collect::<Option<_>>().ok_or(MISSING)?;
+        let Some(parts) = grid.into_iter().collect::<Option<Vec<&WaterPart>>>() else {
+            return Err(codec::invalid("$.parts"));
+        };
         Ok(Self {
             tiles: pyramid.tiles(0),
             spacing: pyramid.spacing(0),
@@ -1150,7 +1151,7 @@ impl SettleStart {
         region: &SettleRegion,
         parts: &[&WaterPart],
         warm: Option<&dyn Fn(i64, i64) -> Option<SteadyCell>>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, Error> {
         let split = region.split;
         let cell = region.cell / split as f32;
         let (first_x, cells_x) = finer((region.first[0], region.cells[0]), split);
@@ -1158,7 +1159,7 @@ impl SettleStart {
         let (first, cells) = ([first_x, first_z], [cells_x, cells_z]);
         let [nx, nz] = cells;
         if nx == 0 || nz == 0 {
-            return Err("settling water over no cells".into());
+            return Err(codec::invalid("$.cells").got(cells));
         }
         let kept = kept_cells(pyramid, region)?;
         let reading = Reading::of(pyramid, region, parts)?;
@@ -1662,7 +1663,7 @@ impl Sum {
 fn kept_cells(
     pyramid: &Pyramid,
     region: &SettleRegion,
-) -> Result<Vec<(TileKey, [u32; 4])>, String> {
+) -> Result<Vec<(TileKey, [u32; 4])>, Error> {
     let size = pyramid.tile_size(0);
     let [nx, nz] = region.cells.map(i64::from);
     region
@@ -1674,7 +1675,7 @@ fn kept_cells(
             let (z, rows) = lattice(origin.y, origin.y + size, region.cell);
             let (x, z) = (x - region.first[0], z - region.first[1]);
             if x < 0 || z < 0 || x + i64::from(columns) > nx || z + i64::from(rows) > nz {
-                return Err("a tile settling water keeps lies outside its region".to_owned());
+                return Err(crate::jobs::outside(key));
             }
             Ok((key, [x as u32, z as u32, columns, rows]))
         })
@@ -1811,14 +1812,14 @@ impl codec::Codec for SteadySummary {
         }
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, codec::CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, codec::Error> {
         let stride = SUMMARY_SIDE as usize;
         let x = codec::get_wide_planes(input, stride)?;
         let z = codec::get_wide_planes(input, stride)?;
         let white = codec::get_wide_planes(input, stride)?;
         let swirl = codec::get_wide_planes(input, stride)?;
         if [x.len(), z.len(), white.len(), swirl.len()] != [stride * stride; 4] {
-            return Err(codec::CodecError("invalid settled water summary"));
+            return Err(codec::invalid("$.summary"));
         }
         Ok(Self {
             velocity: [x, z],
@@ -2302,14 +2303,14 @@ impl Steadying {
     pub(crate) fn advance(
         &mut self,
         budget: &mut u64,
-    ) -> Result<Option<Option<TileWater>>, String> {
+    ) -> Result<Option<Option<TileWater>>, Error> {
         let Some(made) = self.generator.advance(budget) else {
             if self.generator.failed() {
-                return Err("the ground's heights are invalid".into());
+                return Err(crate::jobs::invalid_heights());
             }
             return Ok(None);
         };
-        let tile: Tile = codec::decode(&codec::encode(&made)).map_err(|error| error.to_string())?;
+        let tile: Tile = codec::decode(&codec::encode(&made))?;
         let pyramid = &self.pyramid;
         let water = match &self.reads {
             SettledReads::Records(records) => {

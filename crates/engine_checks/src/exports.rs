@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use engine_core::{Error, ErrorCode, Expected};
+
 use crate::{Facade, Repository};
 
 pub fn check(repository: &Repository, facade: &Facade) -> Result<(), String> {
@@ -13,37 +15,42 @@ pub fn check(repository: &Repository, facade: &Facade) -> Result<(), String> {
     };
     let core = core_names(&folder(facade.inner)?)?;
     let lists = facade_lists(&repository.root, &folder(facade.package)?, facade.inner)?;
+    let root = repository
+        .relative(&folder(facade.package)?.join("lib.rs"))
+        .unwrap_or_default();
     let internal = facade.internal;
     let mut problems = Vec::new();
-    if internal.windows(2).any(|pair| pair[0] >= pair[1]) {
-        problems.push("the facade's internal list must be sorted and unique".to_owned());
+    if let Some(pair) = internal.windows(2).find(|pair| pair[0] >= pair[1]) {
+        problems.push(
+            Error::new(ErrorCode::FacadeExport, "$.facade.internal")
+                .expected(Expected::Sorted)
+                .got(pair[1]),
+        );
     }
     for name in internal {
         if !core.contains(*name) {
-            problems.push(format!(
-                "the facade's internal list names {name}, which {} does not export",
-                facade.inner
-            ));
+            problems.push(Error::new(ErrorCode::ExceptionUnused, "$.facade.internal").got(name));
         }
     }
     for name in &core {
         let places = lists.get(name).map_or(&[][..], Vec::as_slice);
         match (internal.contains(&name.as_str()), places) {
             (true, []) | (false, [_]) => {}
-            (true, places) => problems.push(format!(
-                "{name} is in the facade's internal list and exported by the facade ({})",
-                places.join(", ")
-            )),
-            (false, []) => problems.push(format!(
-                "{} exports {name}, which no facade list does: add it to one of {}'s lists or \
-                 to the facade's internal list",
-                facade.inner, facade.package
-            )),
-            (false, places) => problems.push(format!(
-                "{name} is in {} facade lists ({}): keep it in one",
-                places.len(),
-                places.join(", ")
-            )),
+            (true, places) => problems.push(
+                Error::new(ErrorCode::FacadeExport, places[0].as_str())
+                    .expected(Expected::Absent)
+                    .got(name),
+            ),
+            (false, []) => problems.push(
+                Error::new(ErrorCode::FacadeExport, root.as_str())
+                    .expected(Expected::Present)
+                    .got(name),
+            ),
+            (false, places) => problems.push(
+                Error::new(ErrorCode::FacadeExport, places[1].as_str())
+                    .expected(Expected::Unique)
+                    .got(name),
+            ),
         }
     }
     if problems.is_empty() {
@@ -56,7 +63,7 @@ pub fn check(repository: &Repository, facade: &Facade) -> Result<(), String> {
         println!("{record}");
         Ok(())
     } else {
-        Err(problems.join("\n"))
+        crate::report(&problems)
     }
 }
 

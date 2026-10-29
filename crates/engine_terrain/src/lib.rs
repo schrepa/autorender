@@ -50,8 +50,8 @@ pub use hydrology::{
     RIVER_FAR, WETNESS_RANGE,
 };
 pub use layers::{
-    Blend, ErosionStage, HeightImage, HeightmapLayer, HydrologyStage, Layer, LayerError, Layers,
-    NoiseLayer, PathStage, Stamp, StampOp,
+    Blend, ErosionStage, HeightImage, HeightmapLayer, HydrologyStage, Layer, Layers, NoiseLayer,
+    PathStage, Stamp, StampOp,
 };
 pub use path::{
     Bridge, HeightGrid, MASK_MARGIN, MAX_PATH_POINTS, PATH_FAR, PORTAL_HEIGHT, PROFILE_STEP,
@@ -61,7 +61,7 @@ pub use placement::{
     AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Footprint, Obstacle, Placed, PlacementChoice,
     PlacementLayer, Placing, Solid,
 };
-pub use pyramid::{Pyramid, PyramidError, TileKey};
+pub use pyramid::{Pyramid, TileKey};
 pub use relief::{HummocksLayer, StepsLayer};
 pub use rivers::{RIVER_STEP, Rivers};
 pub use runtime::{
@@ -95,9 +95,8 @@ pub use steady_water::{
     watered_tiles,
 };
 pub use surface::{
-    Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Control, Facing, MAX_BIOMES,
-    MAX_SURFACE_MATERIALS, MacroCauses, Mask, NoiseMask, Remap, SampleInputs, SampleShape, Steep,
-    SteepLayer,
+    Biome, BiomeLayer, BiomeRules, Biomes, Control, Facing, MAX_BIOMES, MAX_SURFACE_MATERIALS,
+    MacroCauses, Mask, NoiseMask, Remap, SampleInputs, SampleShape, Steep, SteepLayer,
 };
 pub use tile::{Generator, RIVER_EDGE_FAR, RIVER_EDGE_STEP, RIVER_EDGE_ZERO, Tile, TileSample};
 pub use tile_errors::{DRY_CELL, ERROR_CELLS, ERROR_MIPS, ERROR_TEXELS, ErrorPyramid};

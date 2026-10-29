@@ -1,8 +1,12 @@
+use engine_core::{Error, Expected};
 use engine_math::{clamp, max, min, sin_cos};
 use engine_settings::{ExtraRules, InvalidSetting, settings};
 use serde::{Deserialize, Serialize};
 
-use crate::surface::{Compiled, Control, Mask, Reads, RowInputs, RowScratch, erosion_row};
+use crate::surface::{
+    Compiled, Control, Mask, Reads, RowInputs, RowScratch, erosion_row, setting_error,
+    terrain_error, unknown,
+};
 use crate::{TILE_QUADS, TILE_STRIDE, Tile};
 
 pub const AUTHORED_LAYER: u16 = u16::MAX - 1;
@@ -154,20 +158,19 @@ pub(crate) struct CompiledAuthored {
 pub(crate) fn compile_authored(
     placed: &[AuthoredPlacement],
     assets: &[String],
-) -> Result<Vec<CompiledAuthored>, (String, String)> {
-    let fail = |path: String, rule: &str| (path, rule.to_owned());
+) -> Result<Vec<CompiledAuthored>, Error> {
     placed
         .iter()
         .enumerate()
         .map(|(index, object)| {
-            let at = format!("placed[{index}]");
+            let at = format!("$.placed[{index}]");
             let asset = assets
                 .iter()
                 .position(|id| *id == object.asset)
-                .ok_or_else(|| fail(format!("{at}.asset"), "must name an asset"))?;
-            object.validate().map_err(|invalid| {
-                (format!("{at}.{}", invalid.field), invalid.rule.into_owned())
-            })?;
+                .ok_or_else(|| unknown(format!("{at}.asset"), &object.asset, assets))?;
+            object
+                .validate()
+                .map_err(|invalid| setting_error(invalid, &at))?;
             Ok(CompiledAuthored {
                 asset: asset as u16,
                 position: object.position,
@@ -382,28 +385,35 @@ pub(crate) fn compile(
     layers: &[PlacementLayer],
     materials: &[String],
     assets: &[String],
-) -> Result<Vec<CompiledPlacement>, (String, String)> {
-    let fail = |path: String, rule: &str| (path, rule.to_owned());
+) -> Result<Vec<CompiledPlacement>, Error> {
     if layers.len() > MAX_LAYERS {
-        return Err(fail("placements".into(), "lists at most 64 layers"));
+        return Err(terrain_error("$.placements")
+            .at_most(MAX_LAYERS as u64)
+            .got(layers.len()));
     }
     for (index, id) in assets.iter().enumerate() {
         if assets[..index].contains(id) {
-            return Err(fail(format!("assets[{index}]"), "IDs must be unique"));
+            return Err(terrain_error(format!("$.assets[{index}]"))
+                .expected(Expected::Unique)
+                .got(id));
         }
     }
     let mut compiled = Vec::with_capacity(layers.len());
     for (index, layer) in layers.iter().enumerate() {
-        let at = format!("placements[{index}]");
+        let at = format!("$.placements[{index}]");
         if layers[..index].iter().any(|other| other.id == layer.id) {
-            return Err(fail(format!("{at}.id"), "IDs must be unique"));
+            return Err(terrain_error(format!("{at}.id"))
+                .expected(Expected::Unique)
+                .got(&layer.id));
         }
         if layer.assets.is_empty() || layer.assets.len() > MAX_CHOICES {
-            return Err(fail(format!("{at}.assets"), "chooses from 1 to 64 assets"));
+            return Err(terrain_error(format!("{at}.assets"))
+                .range(1.0, MAX_CHOICES as f64)
+                .got(layer.assets.len()));
         }
         layer
             .validate()
-            .map_err(|invalid| (format!("{at}.{}", invalid.field), invalid.rule.into_owned()))?;
+            .map_err(|invalid| setting_error(invalid, &at))?;
         let mut choices = Vec::with_capacity(layer.assets.len());
         let mut total = 0.0;
         for (choice_index, choice) in layer.assets.iter().enumerate() {
@@ -411,7 +421,7 @@ pub(crate) fn compile(
             let asset = assets
                 .iter()
                 .position(|id| *id == choice.asset)
-                .ok_or_else(|| fail(format!("{path}.asset"), "must name an asset"))?;
+                .ok_or_else(|| unknown(format!("{path}.asset"), &choice.asset, assets))?;
             total += choice.weight;
             choices.push((asset as u16, total));
         }
@@ -428,17 +438,13 @@ pub(crate) fn compile(
                     .iter()
                     .position(|known| known == id)
                     .ok_or_else(|| {
-                        fail(
-                            format!("{at}.materials[{material_index}]"),
-                            "must name a surface material",
-                        )
+                        unknown(format!("{at}.materials[{material_index}]"), id, materials)
                     })?;
                 set[material / 64] |= 1 << (material % 64);
             }
             Some(set)
         };
-        let mask = Compiled::from(&layer.mask, &format!("{at}.mask"), 0)
-            .map_err(|error| (error.path, error.rule))?;
+        let mask = Compiled::from(&layer.mask, &format!("{at}.mask"), 0)?;
         compiled.push(CompiledPlacement {
             level: layer.level,
             far: layer.far.map(|far| far.level),

@@ -1,23 +1,17 @@
 use gltf::accessor::Dimensions;
 use serde_json::Value;
 
-use crate::{ImportError, MAX_INPUT_BYTES, unsupported};
+use engine_core::{Error, ErrorCode, Expected};
 
-pub(crate) fn container(bytes: &[u8]) -> Result<Value, ImportError> {
+use crate::{MAX_INPUT_BYTES, gltf_error, unsupported};
+
+pub(crate) fn container(bytes: &[u8]) -> Result<Value, Error> {
     if bytes.len() > MAX_INPUT_BYTES {
-        return Err(ImportError::new(
-            "input_too_large",
-            "$",
-            "GLB source exceeds the format's 4 GiB length field",
-        ));
+        return Err(Error::new(ErrorCode::SourceTooLarge, "$")
+            .at_most(MAX_INPUT_BYTES as u64)
+            .got(bytes.len()));
     }
-    let invalid = || {
-        ImportError::new(
-            "invalid_glb",
-            "$",
-            "expected an exact GLB 2 container with JSON followed by one BIN chunk",
-        )
-    };
+    let invalid = || gltf_error("$");
     if bytes.len() < 28
         || &bytes[..4] != b"glTF"
         || number(bytes, 4) != Some(2)
@@ -40,8 +34,7 @@ pub(crate) fn container(bytes: &[u8]) -> Result<Value, ImportError> {
     if !binary_len.is_multiple_of(4) || json_end + 8 + binary_len != bytes.len() {
         return Err(invalid());
     }
-    serde_json::from_slice(&bytes[20..json_end])
-        .map_err(|error| ImportError::new("invalid_json", "$", error.to_string()))
+    serde_json::from_slice(&bytes[20..json_end]).map_err(|_| Error::new(ErrorCode::InvalidJson, "$"))
 }
 
 fn number(bytes: &[u8], offset: usize) -> Option<u32> {
@@ -50,25 +43,27 @@ fn number(bytes: &[u8], offset: usize) -> Option<u32> {
     ))
 }
 
+const MAX_DEPTH: usize = 64;
+
 pub(crate) const SUPPORTED_EXTENSIONS: [&str; 2] =
     ["KHR_texture_transform", "KHR_materials_emissive_strength"];
 
-pub(crate) fn structure(json: &Value) -> Result<Vec<String>, ImportError> {
-    if json["asset"]["version"] != "2.0"
-        || json["asset"]
-            .get("minVersion")
-            .is_some_and(|version| version != "2.0")
-    {
-        return Err(unsupported(
-            "$.asset",
-            "asset.version and any minVersion must be exactly 2.0",
-        ));
+pub(crate) fn structure(json: &Value) -> Result<Vec<String>, Error> {
+    if json["asset"]["version"] != "2.0" {
+        return Err(unsupported("$.asset.version")
+            .got(&json["asset"]["version"])
+            .variants(["2.0"]));
     }
-    if json["buffers"]
-        .as_array()
-        .is_some_and(|items| items.len() > 1)
+    if let Some(version) = json["asset"]
+        .get("minVersion")
+        .filter(|version| *version != "2.0")
     {
-        return Err(unsupported("$.buffers", "a GLB has at most one buffer"));
+        return Err(unsupported("$.asset.minVersion")
+            .got(version)
+            .variants(["2.0"]));
+    }
+    if let Some(buffers) = json["buffers"].as_array().filter(|items| items.len() > 1) {
+        return Err(unsupported("$.buffers").at_most(1).got(buffers.len()));
     }
     let names = |field: &str| -> Vec<&str> {
         json[field]
@@ -82,10 +77,9 @@ pub(crate) fn structure(json: &Value) -> Result<Vec<String>, ImportError> {
         .into_iter()
         .find(|name| !SUPPORTED_EXTENSIONS.contains(name))
     {
-        return Err(unsupported(
-            "$.extensionsRequired",
-            format!("required extension {required} is not supported"),
-        ));
+        return Err(unsupported("$.extensionsRequired")
+            .got(required)
+            .variants(SUPPORTED_EXTENSIONS));
     }
     let ignored = names("extensionsUsed")
         .into_iter()
@@ -95,33 +89,27 @@ pub(crate) fn structure(json: &Value) -> Result<Vec<String>, ImportError> {
     let scenes = json["scenes"]
         .as_array()
         .filter(|scenes| scenes.len() == 1)
-        .ok_or_else(|| unsupported("$.scenes", "exactly one scene is required"))?;
+        .ok_or_else(|| {
+            unsupported("$.scenes")
+                .range(1.0, 1.0)
+                .got(json["scenes"].as_array().map_or(0, Vec::len))
+        })?;
     let nodes = json["nodes"]
         .as_array()
-        .ok_or_else(|| ImportError::new("invalid_nodes", "$.nodes", "a node array is required"))?;
-    let roots = scenes[0]["nodes"].as_array().ok_or_else(|| {
-        ImportError::new(
-            "invalid_nodes",
-            "$.scenes[0].nodes",
-            "scene roots are required",
-        )
-    })?;
+        .ok_or_else(|| gltf_error("$.nodes").expected(Expected::Array))?;
+    let roots = scenes[0]["nodes"]
+        .as_array()
+        .ok_or_else(|| gltf_error("$.scenes[0].nodes").expected(Expected::Array))?;
     let mut visited = vec![false; nodes.len()];
     for root in roots {
         visit(root, nodes, &mut visited, 0)?;
     }
-    if visited.iter().any(|seen| !seen) {
-        return Err(unsupported(
-            "$.nodes",
-            "every node must belong to the single scene; disconnected nodes or cycles are rejected",
-        ));
+    if let Some(index) = visited.iter().position(|seen| !seen) {
+        return Err(unsupported(format!("$.nodes[{index}]")));
     }
     for (index, mesh) in json["meshes"].as_array().into_iter().flatten().enumerate() {
         if mesh.get("weights").is_some() {
-            return Err(unsupported(
-                format!("$.meshes[{index}].weights"),
-                "morph weights are unsupported",
-            ));
+            return Err(unsupported(format!("$.meshes[{index}].weights")).expected(Expected::Absent));
         }
     }
     Ok(ignored)
@@ -132,30 +120,25 @@ fn visit(
     nodes: &[Value],
     visited: &mut [bool],
     depth: usize,
-) -> Result<(), ImportError> {
-    if depth > 64 {
-        return Err(ImportError::new(
-            "depth_limit",
-            "$.nodes",
-            "node hierarchy exceeds 64 levels",
-        ));
+) -> Result<(), Error> {
+    if depth > MAX_DEPTH {
+        return Err(Error::new(ErrorCode::HierarchyDepth, "$.nodes")
+            .at_most(MAX_DEPTH as u64)
+            .got(depth));
     }
     let index = value
         .as_u64()
         .and_then(|index| usize::try_from(index).ok())
         .filter(|index| *index < nodes.len())
         .ok_or_else(|| {
-            ImportError::new(
-                "invalid_node",
-                "$.nodes",
-                "node reference is outside the node array",
-            )
+            gltf_error("$.nodes")
+                .at_most(nodes.len().saturating_sub(1) as u64)
+                .got(value)
         })?;
     if std::mem::replace(&mut visited[index], true) {
-        return Err(ImportError::new(
-            "invalid_node_tree",
+        return Err(Error::new(
+            ErrorCode::HierarchyCycle,
             format!("$.nodes[{index}]"),
-            "cycles, shared children and repeated roots are unsupported",
         ));
     }
     let node = &nodes[index];
@@ -164,11 +147,7 @@ fn visit(
             .iter()
             .any(|field| node.get(field).is_some())
     {
-        return Err(ImportError::new(
-            "invalid_transform",
-            format!("$.nodes[{index}]"),
-            "matrix and translation/rotation/scale cannot be combined",
-        ));
+        return Err(gltf_error(format!("$.nodes[{index}].matrix")).expected(Expected::Absent));
     }
     if let Some(rotation) = node.get("rotation") {
         let unit = rotation
@@ -179,18 +158,15 @@ fn visit(
                 (items.iter().map(|value| value * value).sum::<f64>() - 1.0).abs() <= 0.00001
             });
         if !unit {
-            return Err(ImportError::new(
-                "invalid_transform",
-                format!("$.nodes[{index}].rotation"),
-                "rotation must be a unit quaternion",
-            ));
+            return Err(
+                Error::new(ErrorCode::InvalidRotation, format!("$.nodes[{index}].rotation"))
+                    .expected(Expected::Normalized)
+                    .got(rotation),
+            );
         }
     }
     if node.get("weights").is_some() {
-        return Err(unsupported(
-            format!("$.nodes[{index}].weights"),
-            "morph weights are unsupported",
-        ));
+        return Err(unsupported(format!("$.nodes[{index}].weights")).expected(Expected::Absent));
     }
     for child in node["children"].as_array().into_iter().flatten() {
         visit(child, nodes, visited, depth + 1)?;
@@ -198,17 +174,14 @@ fn visit(
     Ok(())
 }
 
-pub(crate) fn buffers(document: &gltf::Document, binary: &[u8]) -> Result<(), ImportError> {
+pub(crate) fn buffers(document: &gltf::Document, binary: &[u8]) -> Result<(), Error> {
     let buffers: Vec<_> = document.buffers().collect();
     if buffers.len() != 1
         || !matches!(buffers[0].source(), gltf::buffer::Source::Bin)
         || buffers[0].length() > binary.len()
         || binary.len() - buffers[0].length() > 3
     {
-        return Err(unsupported(
-            "$.buffers",
-            "exactly one embedded buffer matching the BIN chunk is required; external and data URIs are rejected",
-        ));
+        return Err(unsupported("$.buffers"));
     }
     for view in document.views() {
         let path = format!("$.bufferViews[{}]", view.index());
@@ -218,21 +191,15 @@ pub(crate) fn buffers(document: &gltf::Document, binary: &[u8]) -> Result<(), Im
                 .checked_add(view.length())
                 .is_none_or(|end| end > buffers[0].length())
         {
-            return Err(ImportError::new(
-                "buffer_bounds",
-                path,
-                "buffer view exceeds the declared embedded buffer",
-            ));
+            return Err(gltf_error(path));
         }
-        if view
+        if let Some(stride) = view
             .stride()
-            .is_some_and(|stride| !(4..=252).contains(&stride) || stride % 4 != 0)
+            .filter(|stride| !(4..=252).contains(stride) || stride % 4 != 0)
         {
-            return Err(ImportError::new(
-                "invalid_stride",
-                path,
-                "vertex stride must be a multiple of four from 4 through 252",
-            ));
+            return Err(gltf_error(format!("{path}.byteStride"))
+                .range(4.0, 252.0)
+                .got(stride));
         }
     }
     for accessor in document.accessors() {
@@ -240,20 +207,13 @@ pub(crate) fn buffers(document: &gltf::Document, binary: &[u8]) -> Result<(), Im
         if accessor.sparse().is_some()
             || matches!(accessor.dimensions(), Dimensions::Mat2 | Dimensions::Mat3)
         {
-            return Err(unsupported(
-                path,
-                "sparse, MAT2 and MAT3 accessors are unsupported",
-            ));
+            return Err(unsupported(path));
         }
         let view = accessor
             .view()
-            .ok_or_else(|| unsupported(&path, "accessors must have a buffer view"))?;
+            .ok_or_else(|| unsupported(format!("{path}.bufferView")).expected(Expected::Present))?;
         if accessor.count() == 0 {
-            return Err(ImportError::new(
-                "count_limit",
-                path,
-                "accessors need at least one element",
-            ));
+            return Err(gltf_error(format!("{path}.count")).at_least(1).got(0));
         }
         let size = accessor.size();
         let stride = view.stride().unwrap_or(size);
@@ -268,11 +228,7 @@ pub(crate) fn buffers(document: &gltf::Document, binary: &[u8]) -> Result<(), Im
             || absolute.is_none_or(|offset| offset % component_size != 0)
             || end.is_none_or(|end| end > view.length())
         {
-            return Err(ImportError::new(
-                "accessor_bounds",
-                path,
-                "accessor alignment, stride or byte range is invalid",
-            ));
+            return Err(gltf_error(path));
         }
     }
     Ok(())

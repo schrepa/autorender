@@ -20,6 +20,23 @@ mod workspace;
 
 pub use workspace::{Dependency, DependencyKind, Package, Repository};
 
+use engine_core::Error;
+
+pub fn at(file: &str, line: usize) -> String {
+    format!("{file}:{line}")
+}
+
+pub fn report(failures: &[Error]) -> Result<(), String> {
+    if failures.is_empty() {
+        return Ok(());
+    }
+    let lines: Vec<String> = failures
+        .iter()
+        .map(|failure| serde_json::to_string(failure).unwrap_or_default())
+        .collect();
+    Err(lines.join("\n"))
+}
+
 #[derive(Clone, Copy)]
 pub struct Rules {
     pub exceptions: Exceptions,
@@ -66,7 +83,7 @@ pub struct Forbidden {
     pub within: &'static str,
     pub except: &'static str,
     pub code: &'static str,
-    pub rule: &'static str,
+    pub instead: &'static str,
 }
 
 #[derive(Clone, Copy)]

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::queries::{bounded, reply};
-use crate::{CollisionError, CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
+use crate::{CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
 
 const PLACED_RAY_HITS: usize = 16;
 
@@ -79,7 +79,7 @@ fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
 fn sweep(world: &mut World, center: Vec2, half_extent: f32, samples: u32) -> Result<Value, Error> {
     let collision = world.contains_resource::<CollisionWorld>();
     if collision {
-        refresh_collision_world(world).map_err(CollisionError::query_error)?;
+        refresh_collision_world(world)?;
     }
     let world = &*world;
     let terrains = world
@@ -121,8 +121,7 @@ fn sweep(world: &mut World, center: Vec2, half_extent: f32, samples: u32) -> Res
                         QueryFilter::default(),
                         &mut hits,
                         PLACED_RAY_HITS,
-                    )
-                    .map_err(CollisionError::query_error)?;
+                    )?;
                 placed_first += usize::from(hits.first().is_some_and(|hit| hit.placed.is_some()));
                 let hit = hits.into_iter().find(|hit| hit.placed.is_none());
                 match hit.filter(|hit| hit.entity == sample.terrain) {

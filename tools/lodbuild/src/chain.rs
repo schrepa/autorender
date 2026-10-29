@@ -4,8 +4,10 @@ use glam::Vec3;
 
 use crate::casters::caster_ranges;
 use crate::distance::{mean_edge, surface_distance};
+use engine_settings::Error;
+
 use crate::simplify::{
-    SimplifyError, SimplifyInput, SimplifyOptions, VertexFlags, protect_attribute_seams, simplify,
+    SimplifyInput, SimplifyOptions, VertexFlags, protect_attribute_seams, simplify,
 };
 
 const LEVEL_SHARES: [f32; 3] = [0.5, 0.25, 0.125];
@@ -16,7 +18,7 @@ const NORMAL_WEIGHT: f32 = 1.0;
 const UV_WEIGHT: f32 = 1.0;
 const SAMPLE_STEP: f32 = 0.5;
 
-pub(crate) fn levels(input: &LodInput) -> Result<MeshLods, SimplifyError> {
+pub(crate) fn levels(input: &LodInput) -> Result<MeshLods, Error> {
     let positions: Vec<[f32; 3]> = input
         .vertices
         .iter()

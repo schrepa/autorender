@@ -12,9 +12,7 @@ use parry3d::{
     shape::SupportMap,
 };
 
-use crate::{
-    ColliderShape, CollisionError, CollisionRay, ShapeCastOptions, validate_collider_transform,
-};
+use crate::{ColliderShape, CollisionRay, Fault, ShapeCastOptions, check_collider_transform};
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct Bounds {
@@ -85,8 +83,8 @@ pub(crate) struct AffineShape {
     pub inverse: DMat3,
 }
 impl AffineShape {
-    pub fn new(shape: ColliderShape, matrix: Mat4) -> Result<Self, CollisionError> {
-        validate_collider_transform(shape, matrix)?;
+    pub fn new(shape: ColliderShape, matrix: Mat4) -> Result<Self, Fault> {
+        check_collider_transform(shape, matrix)?;
         let basis = Mat3::from_mat4(matrix) * Mat3::from_diagonal(shape.dimensions());
         let center = matrix.w_axis.truncate();
         let half = match shape {
@@ -247,7 +245,7 @@ fn ball_radii(shape: ColliderShape, basis: Mat3) -> (f64, f64) {
 const PRETEST_MARGIN: f64 = 1.0 / 4096.0;
 
 #[cfg_attr(feature = "attribution", inline(never))]
-pub(crate) fn intersects(a: &AffineShape, b: &AffineShape) -> Result<bool, CollisionError> {
+pub(crate) fn intersects(a: &AffineShape, b: &AffineShape) -> Result<bool, Fault> {
     let offset = b.center.as_dvec3() - a.center.as_dvec3();
     let squared = offset.length_squared();
     let inner = (a.inner + b.inner) * (1.0 - PRETEST_MARGIN);
@@ -347,7 +345,7 @@ fn boxes_overlap(a: &AffineShape, b: &AffineShape) -> bool {
 }
 
 #[cfg_attr(feature = "attribution", inline(never))]
-fn intersects_support_maps(a: &AffineShape, b: &AffineShape) -> Result<bool, CollisionError> {
+fn intersects_support_maps(a: &AffineShape, b: &AffineShape) -> Result<bool, Fault> {
     let calls = Cell::new(0);
     let hit = details::intersection_test_support_map_support_map(
         &Pose::from_translation(b.center - a.center),
@@ -361,7 +359,7 @@ fn intersects_support_maps(a: &AffineShape, b: &AffineShape) -> Result<bool, Col
         },
     );
     if calls.get() >= 200 {
-        Err(CollisionError::NumericalFailure)
+        Err(Fault::NumericalFailure)
     } else {
         Ok(hit)
     }
@@ -379,7 +377,7 @@ impl Narrow {
         b: &AffineShape,
         displacement: Vec3,
         options: ShapeCastOptions,
-    ) -> Result<Option<(f32, Vec3, Vec3, bool)>, CollisionError> {
+    ) -> Result<Option<(f32, Vec3, Vec3, bool)>, Fault> {
         if matches!(a.shape, ColliderShape::Cuboid { .. })
             && matches!(b.shape, ColliderShape::Cuboid { .. })
         {
@@ -409,7 +407,7 @@ impl Narrow {
             &mut simplex,
         );
         if calls.get() >= 200 {
-            return Err(CollisionError::NumericalFailure);
+            return Err(Fault::NumericalFailure);
         }
         let contact = match proximity {
             GJKResult::Intersection => EPA_SCRATCH
@@ -418,14 +416,14 @@ impl Narrow {
             GJKResult::Proximity(_) | GJKResult::NoIntersection(_) => None,
         };
         if matches!(proximity, GJKResult::Intersection) && contact.is_none() {
-            return Err(CollisionError::NumericalFailure);
+            return Err(Fault::NumericalFailure);
         }
         if let Some((_p1, p2, outward)) = contact {
             let normal = (-outward)
                 .try_normalize()
-                .ok_or(CollisionError::NumericalFailure)?;
+                .ok_or(Fault::NumericalFailure)?;
             if !normal.is_finite() || !p2.is_finite() {
-                return Err(CollisionError::NumericalFailure);
+                return Err(Fault::NumericalFailure);
             }
             if !options.stop_at_penetration
                 && displacement.dot(normal) >= -1.0e-6 * math::max(displacement.length(), 1.0)
@@ -451,7 +449,7 @@ impl Narrow {
             },
         );
         if calls.get() >= 200 {
-            return Err(CollisionError::NumericalFailure);
+            return Err(Fault::NumericalFailure);
         }
         let Some(hit) = hit else {
             return Ok(None);
@@ -463,7 +461,7 @@ impl Narrow {
             || hit.normal2.length_squared() < 0.5
             || !(0.0..=1.0).contains(&hit.time_of_impact)
         {
-            return Err(CollisionError::NumericalFailure);
+            return Err(Fault::NumericalFailure);
         }
         Ok(Some((
             hit.time_of_impact,

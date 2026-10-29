@@ -92,11 +92,11 @@ pub const RULES: Rules = Rules {
         within: "crates/engine_terrain/src/runtime/",
         except: "crates/engine_terrain/src/runtime/tile_map.rs",
         code: "HashMap<TileKey",
-        rule: "keys a hash map by tile: use TileMap (tile_map.rs), whose tiles walk in key order",
+        instead: "TileMap",
     }],
     errors: Some(Errors {
         within: "crates/",
-        file: "crates/engine/src/error.rs",
+        file: "crates/engine_settings/src/error.rs",
     }),
 };
 

@@ -335,7 +335,8 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         parts.push(jobs::water_output(&bytes).map_err(|error| error.to_string())?);
     }
     let parts: Vec<&WaterPart> = parts.iter().collect();
-    let start = SettleStart::assemble(&baked, &pyramid, &region, &parts, None)?;
+    let start = SettleStart::assemble(&baked, &pyramid, &region, &parts, None)
+        .map_err(|error| error.to_string())?;
     observed.record(
         "water start",
         json!({

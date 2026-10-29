@@ -1,7 +1,7 @@
 use super::operations::{coordinate, reply, terrains};
 use super::*;
 use crate::{MAX_GIVEN_RIVERS, StampOp};
-use engine_core::{Error, ErrorCode, Operation, authored_entity};
+use engine_core::{Error, ErrorCode, Expected, Operation, authored_entity};
 #[cfg(feature = "schema")]
 use engine_settings::{rule::same, stated};
 use serde_json::Value;
@@ -246,19 +246,13 @@ fn terrain_entity(world: &mut World, name: Option<&str>) -> Result<Entity, Error
     match name {
         Some(name) => authored_entity(world, name)
             .filter(|&entity| world.get::<Terrain>(entity).is_some())
-            .ok_or_else(|| {
-                Error::new(
-                    ErrorCode::UnknownTerrain,
-                    "$.terrain",
-                    format!("no terrain entity {name} in the scene"),
-                )
-            }),
+            .ok_or_else(|| Error::new(ErrorCode::UnknownTerrain, "$.terrain").got(name)),
         None => world
             .query::<(Entity, &Terrain)>()
             .iter(world)
             .map(|(entity, _)| entity)
             .next()
-            .ok_or_else(|| Error::new(ErrorCode::UnknownTerrain, "$.terrain", "no terrain")),
+            .ok_or_else(|| Error::new(ErrorCode::UnknownTerrain, "$.terrain")),
     }
 }
 
@@ -266,14 +260,9 @@ fn valid_id(id: &str) -> Result<(), Error> {
     if engine_settings::is_id(id) {
         Ok(())
     } else {
-        Err(Error::new(
-            ErrorCode::InvalidRequest,
-            "$.id",
-            format!(
-                "id must be 1 to {} letters, digits, '_', '-' and '.'",
-                engine_settings::MAX_ID_BYTES
-            ),
-        ))
+        Err(Error::new(ErrorCode::InvalidRequest, "$.id")
+            .expected(Expected::Id)
+            .got(id))
     }
 }
 
@@ -339,21 +328,24 @@ fn edit_terrain(
                 op,
             };
             stamp.validate().map_err(|invalid| {
-                let field = match invalid.field.strip_prefix("op") {
-                    Some(rest) => format!("change{rest}"),
-                    None => invalid.field.into_owned(),
+                let error = Error::from(invalid);
+                let path = match error.path.strip_prefix("$.op") {
+                    Some(rest) => format!("$.change{rest}"),
+                    None => error.path.clone(),
                 };
-                Error::new(ErrorCode::OutOfRange, format!("$.{field}"), invalid.rule)
+                Error {
+                    code: ErrorCode::OutOfRange,
+                    path,
+                    ..error
+                }
             })?;
             let before = terrains(world)?.layers(entity).ok_or_else(|| {
-                Error::new(
-                    ErrorCode::UnknownTerrain,
-                    "$.terrain",
-                    "the terrain does not stream yet",
-                )
+                Error::new(ErrorCode::UnknownTerrain, "$.terrain").expected(Expected::Present)
             })?;
-            let after = before.with_stamps(&[stamp]).map_err(|error| {
-                Error::new(ErrorCode::InvalidRequest, "$.change", error.to_string())
+            let after = before.with_stamps(&[stamp]).map_err(|error| Error {
+                code: ErrorCode::InvalidRequest,
+                path: "$.change".to_owned(),
+                ..error
             })?;
             let span = radius + falloff;
             let mut largest = 0.0_f32;
@@ -437,11 +429,7 @@ fn draw_river(world: &mut World, drawing: &TerrainRiverControl) -> Result<Terrai
         .cloned()
         .expect("terrain_found");
     if !terrain.layers.has_hydrology() {
-        return Err(Error::new(
-            ErrorCode::InvalidRequest,
-            "$.terrain",
-            "the terrain has no hydrology layer to give rivers to",
-        ));
+        return Err(Error::new(ErrorCode::MissingLayer, "$.terrain").variants(["hydrology"]));
     }
     valid_id(&drawing.id)?;
     let origin = Vec2::new(terrain.origin.x, terrain.origin.z);
@@ -498,23 +486,18 @@ fn draw_river(world: &mut World, drawing: &TerrainRiverControl) -> Result<Terrai
             depth: values(&drawing.depth),
             discharge: values(&drawing.discharge),
         };
-        river.validate().map_err(|invalid| {
-            Error::new(
-                ErrorCode::OutOfRange,
-                format!("$.{}", invalid.field),
-                invalid.rule,
-            )
+        river.validate().map_err(|invalid| Error {
+            code: ErrorCode::OutOfRange,
+            ..Error::from(invalid)
         })?;
         if standing.is_some_and(|at| rivers[at].river == river) {
             return Ok(unchanged(&rivers, reach(&[&river])));
         }
         let most = MAX_GIVEN_RIVERS;
         if standing.is_none() && rivers.len() >= most {
-            return Err(Error::new(
-                ErrorCode::OutOfRange,
-                "$.id",
-                format!("a terrain holds at most {most} drawn rivers"),
-            ));
+            return Err(Error::new(ErrorCode::OutOfRange, "$.id")
+                .at_most(most as u64)
+                .got(rivers.len()));
         }
         let dirty = match standing {
             Some(at) => reach(&[&rivers[at].river, &river]),

@@ -5,7 +5,9 @@ use engine_scene::{
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 use serde_json::Value;
 
-use crate::{ImportError, ImportedFile, unsupported};
+use engine_core::{Error, ErrorCode, Expected};
+
+use crate::{ImportedFile, unsupported};
 
 const KTX2_IDENTIFIER: [u8; 12] = [
     0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -22,36 +24,28 @@ pub(crate) fn import(
     id: &str,
     scene: &mut SceneDocument,
     files: &mut Vec<ImportedFile>,
-) -> Result<(), ImportError> {
+) -> Result<(), Error> {
     for image in document.images() {
         let path = format!("$.images[{}]", image.index());
         let gltf::image::Source::View { view, mime_type } = image.source() else {
-            return Err(unsupported(
-                path,
-                "only images embedded in the GLB are supported; external and data URIs are rejected",
-            ));
+            return Err(unsupported(format!("{path}.uri")).expected(Expected::Absent));
         };
         let extension = match mime_type {
             "image/png" => "png",
             "image/jpeg" => "jpg",
             "image/ktx2" => "ktx2",
             _ => {
-                return Err(unsupported(
-                    path,
-                    "images must be image/png, image/jpeg or image/ktx2",
-                ));
+                return Err(unsupported(format!("{path}.mimeType"))
+                    .got(mime_type)
+                    .variants(["image/png", "image/jpeg", "image/ktx2"]));
             }
         };
         if view.stride().is_some() {
-            return Err(unsupported(path, "image buffer views must be contiguous"));
+            return Err(unsupported(format!("{path}.bufferView")));
         }
         let bytes = &binary[view.offset()..view.offset() + view.length()];
         if extension == "ktx2" && !bytes.starts_with(&KTX2_IDENTIFIER) {
-            return Err(ImportError::new(
-                "invalid_image",
-                path,
-                "image/ktx2 images start with the KTX 2.0 identifier",
-            ));
+            return Err(Error::new(ErrorCode::InvalidTexture, path));
         }
         let file = ImportedFile::named(
             id,
@@ -81,10 +75,9 @@ pub(crate) fn import(
                 Some(material.alpha_cutoff().unwrap_or(0.5)),
             ),
             gltf::material::AlphaMode::Blend => {
-                return Err(unsupported(
-                    format!("{path}.alphaMode"),
-                    "materials are OPAQUE or MASK",
-                ));
+                return Err(unsupported(format!("{path}.alphaMode"))
+                    .got("BLEND")
+                    .variants(["OPAQUE", "MASK"]));
             }
         };
         let map = |field: &str, info: &Value, texture: Option<gltf::Texture<'_>>| {
@@ -163,12 +156,10 @@ fn texture_map(
     texture: &gltf::Texture<'_>,
     id: &str,
     path: &str,
-) -> Result<SceneMap, ImportError> {
+) -> Result<SceneMap, Error> {
     let Some(image) = texture.source().map(|image| image.index()) else {
-        return Err(unsupported(
-            format!("$.textures[{}]", texture.index()),
-            "textures need an image",
-        ));
+        return Err(unsupported(format!("$.textures[{}].source", texture.index()))
+            .expected(Expected::Present));
     };
     let transform = &info["extensions"]["KHR_texture_transform"];
     let tex_coord = transform["texCoord"]
@@ -176,10 +167,9 @@ fn texture_map(
         .or_else(|| info["texCoord"].as_u64())
         .unwrap_or(0);
     if tex_coord > 1 {
-        return Err(unsupported(
-            format!("{path}.texCoord"),
-            "maps read TEXCOORD_0 or TEXCOORD_1",
-        ));
+        return Err(unsupported(format!("{path}.texCoord"))
+            .at_most(1)
+            .got(tex_coord));
     }
     let sampler = texture.sampler();
     let wrap = |mode| match mode {

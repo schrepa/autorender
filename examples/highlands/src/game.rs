@@ -44,11 +44,9 @@ impl Highlands {
 
     pub fn control(&mut self, engine: &mut Engine, name: &str, value: &str) -> engine::Result<()> {
         if !CONTROLS.contains(&name) {
-            return Err(Error::new(
-                ErrorCode::InvalidValue,
-                "$.control",
-                CONTROLS.join("|"),
-            ));
+            return Err(Error::new(ErrorCode::InvalidValue, "$.control")
+                .got(name)
+                .variants(CONTROLS));
         }
         let mut options = self.options.clone();
         options.set(name, value)?;

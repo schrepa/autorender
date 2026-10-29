@@ -75,9 +75,9 @@ impl Brick for Collision {
 
 pub mod prelude {
     pub use crate::{
-        Collider, ColliderShape, Collision, CollisionConfig, CollisionError, CollisionLayers,
-        CollisionRay, CollisionReport, CollisionSystems, CollisionWorld, PlacedPart, QueryFilter,
-        RayHit, SensorEvent, SensorEventKind, SensorEvents, SensorFilter, SensorPair,
-        ShapeCastOptions, ShapeHit, refresh_collision_world, validate_collider_transform,
+        Collider, ColliderShape, Collision, CollisionConfig, CollisionLayers, CollisionRay,
+        CollisionReport, CollisionSystems, CollisionWorld, PlacedPart, QueryFilter, RayHit,
+        SensorEvent, SensorEventKind, SensorEvents, SensorFilter, SensorPair, ShapeCastOptions,
+        ShapeHit, refresh_collision_world, validate_collider_transform,
     };
 }

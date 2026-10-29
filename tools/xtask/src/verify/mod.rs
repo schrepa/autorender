@@ -388,6 +388,22 @@ fn steps<'a>(
     Ok(steps)
 }
 
+fn failures(message: &str) -> serde_json::Value {
+    let errors: Option<Vec<serde_json::Value>> = message
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .filter(|error| error.get("code").is_some() && error.get("path").is_some())
+        })
+        .collect();
+    match errors {
+        Some(errors) if !errors.is_empty() => serde_json::Value::Array(errors),
+        _ => serde_json::Value::String(message.to_owned()),
+    }
+}
+
 struct Ran {
     steps: Vec<serde_json::Value>,
     outcome: Result<(), Failure>,
@@ -420,7 +436,7 @@ fn run_steps(steps: &[Step]) -> Ran {
             "ok": code.is_none(),
             "exit": code,
             "seconds": took.as_secs_f64(),
-            "failure": failure,
+            "failure": failure.as_deref().map(failures),
         }));
         results.push((&step.name, code, took));
     }

@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::World;
-use engine_core::{Error, ErrorCode, Operation};
+use engine_core::{Error, ErrorCode, Operation, missing_brick};
 use serde::{Deserialize, Serialize};
 
 use crate::{STREAMING_GRIDS, WorldCells, WorldChanges};
@@ -130,27 +130,19 @@ fn change_world(
 ) -> Result<serde_json::Value, Error> {
     for (ids, path) in [(remove, "$.remove"), (restore, "$.restore")] {
         if ids.len() > MAX_CHANGES {
-            return Err(Error::new(
-                ErrorCode::OutOfRange,
-                path,
-                format!("at most {MAX_CHANGES} IDs"),
-            ));
+            return Err(Error::new(ErrorCode::OutOfRange, path)
+                .at_most(MAX_CHANGES as u64)
+                .got(ids.len()));
         }
         if let Some(index) = ids.iter().position(|id| id.is_empty() || id.len() > 192) {
-            return Err(Error::new(
-                ErrorCode::OutOfRange,
-                format!("{path}[{index}]"),
-                "IDs are 1 to 192 bytes",
-            ));
+            return Err(Error::new(ErrorCode::OutOfRange, format!("{path}[{index}]"))
+                .range(1.0, 192.0)
+                .got(ids[index].len()));
         }
     }
-    let mut changes = world.get_resource_mut::<WorldChanges>().ok_or_else(|| {
-        Error::new(
-            ErrorCode::MissingPlugin,
-            "$.op",
-            "world_streaming is not added: add the world_streaming brick to the engine",
-        )
-    })?;
+    let mut changes = world
+        .get_resource_mut::<WorldChanges>()
+        .ok_or_else(|| missing_brick("world_streaming", "$.op"))?;
     if clear {
         changes.clear();
     }

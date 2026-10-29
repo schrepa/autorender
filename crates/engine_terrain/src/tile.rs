@@ -1225,8 +1225,8 @@ impl crate::codec::Codec for Tile {
         out.put(&self.placed).put(&self.placing).put(&self.water);
     }
 
-    fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
-        let invalid = crate::codec::CodecError("invalid tile");
+    fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::Error> {
+        let invalid = || crate::codec::invalid("$.tile");
         let stride = TILE_STRIDE as usize;
         let key = input.get()?;
         let spacing = input.get()?;
@@ -1245,15 +1245,17 @@ impl crate::codec::Codec for Tile {
         let placed: Option<Arc<[crate::Placed]>> = input.get()?;
         let placing = input.get()?;
         let water: Option<TileWater> = input.get()?;
-        let mut tile = Self::shaped(key, spacing, heights, holes).ok_or(invalid)?;
+        let mut tile = Self::shaped(key, spacing, heights, holes).ok_or_else(invalid)?;
         if culling.len() != tile.patch_bounds.len() {
-            return Err(invalid);
+            return Err(invalid());
         }
         tile.patch_culling = culling;
         if let Some(control) = control {
-            tile = tile.with_control(control).ok_or(invalid)?;
+            tile = tile.with_control(control).ok_or_else(invalid)?;
         }
-        tile = tile.with_rivers(river_edges, river_beds).ok_or(invalid)?;
+        tile = tile
+            .with_rivers(river_edges, river_beds)
+            .ok_or_else(invalid)?;
         tile.hold(water);
         tile.placed = placed;
         tile.placing = placing;

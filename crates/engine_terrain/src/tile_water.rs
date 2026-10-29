@@ -203,7 +203,7 @@ impl crate::codec::Codec for TileWater {
         out.put(&self.info).put(&self.held).put(&self.solids);
     }
 
-    fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::CodecError> {
+    fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::Error> {
         let stride = TILE_STRIDE as usize;
         let surface = crate::codec::get_grid(input, stride)?;
         let info: Box<[[u32; 2]]> = input.get()?;
@@ -213,7 +213,7 @@ impl crate::codec::Codec for TileWater {
             || info.len() != stride * stride
             || !solids.iter().all(Footprint::valid)
         {
-            return Err(crate::codec::CodecError("invalid tile water"));
+            return Err(crate::codec::invalid("$.tile_water"));
         }
         Ok(Self {
             surface,

@@ -31,13 +31,15 @@ fn terrain_setting(value: f32, name: &'static str) -> Result<f32, Error> {
     let rule = TerrainSettings::rule_of(name).expect("terrain_rule_declared");
     Setting::check(&value, name, rule)
         .map(|()| value)
-        .map_err(|invalid| {
-            Error::new(
-                ErrorCode::OutOfRange,
-                format!("$.{name}"),
-                invalid.to_string(),
-            )
-        })
+        .map_err(|invalid| out_of_range(invalid, format!("$.{name}")))
+}
+
+pub(super) fn out_of_range(invalid: InvalidSetting, path: impl Into<String>) -> Error {
+    Error {
+        code: ErrorCode::OutOfRange,
+        path: path.into(),
+        ..Error::from(invalid)
+    }
 }
 
 impl Operation for TerrainControl {
@@ -117,7 +119,7 @@ pub fn terrain_key(world: &World, entity: Entity) -> TerrainKey {
 pub(super) fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
     match Setting::check(&value, "value", bounds::COORDINATE) {
         Ok(()) => Ok(value as f32),
-        Err(invalid) => Err(Error::new(ErrorCode::OutOfRange, path, invalid.rule)),
+        Err(invalid) => Err(out_of_range(invalid, path)),
     }
 }
 

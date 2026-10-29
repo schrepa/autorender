@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::Path;
 
+use engine_core::{Error, ErrorCode};
+use serde_json::json;
 use toml_edit::{Document, Item, TableLike};
 
 use super::Problems;
@@ -57,10 +59,9 @@ pub fn check(
                 }
             }
         }
-        None if whole => problems.file(
-            "Cargo.toml",
-            "the workspace declares no [workspace.lints] table",
-        ),
+        None if whole => {
+            problems.push(Error::new(ErrorCode::LintMissing, "Cargo.toml").got("workspace.lints"));
+        }
         None => {}
     }
     let inherited_keys: Vec<&str> = table(workspace, "package")
@@ -97,21 +98,13 @@ fn pinned(workspace: &Item, problems: &mut Problems) {
         let local = dependency
             .as_table_like()
             .is_some_and(|table| table.contains_key("path"));
-        match version {
-            Some(version) if !version.starts_with('=') => problems.file(
-                "Cargo.toml",
-                &format!(
-                    "[workspace.dependencies] {name} = {version:?} must pin its version with `=` \
-                     (the version Cargo.lock holds)"
-                ),
-            ),
-            None if !local => problems.file(
-                "Cargo.toml",
-                &format!(
-                    "[workspace.dependencies] {name} names neither an exact version nor a path"
-                ),
-            ),
-            _ => {}
+        let unpinned = match version {
+            Some(version) if !version.starts_with('=') => Some(json!({ name: version })),
+            None if !local => Some(json!({ name: null })),
+            _ => None,
+        };
+        if let Some(unpinned) = unpinned {
+            problems.push(Error::new(ErrorCode::VersionUnpinned, "Cargo.toml").got(unpinned));
         }
     }
 }
@@ -123,26 +116,14 @@ fn check_member(path: &str, manifest: &Item, inherited_keys: &[&str], problems: 
             .and_then(|package| package.get(key))
             .is_some_and(inherited)
         {
-            problems.file(
-                path,
-                &format!(
-                    "[package] must inherit `{key}` from the workspace (`{key}.workspace = true`)"
-                ),
-            );
+            problems.push(Error::new(ErrorCode::NotInherited, path).got(format!("package.{key}")));
         }
     }
     let lints = manifest.get("lints");
     match lints.and_then(Item::as_table_like) {
         Some(table) if lints.is_some_and(inherited) && table.len() == 1 => {}
-        Some(_) => problems.file(
-            path,
-            "[lints] must be exactly `workspace = true`: one lint table, the workspace's, for \
-             every crate (no local [lints.*] tables)",
-        ),
-        None => problems.file(
-            path,
-            "add `[lints] workspace = true`: every crate takes the workspace's lints",
-        ),
+        Some(_) => problems.push(Error::new(ErrorCode::NotInherited, path).got("lints")),
+        None => problems.push(Error::new(ErrorCode::LintMissing, path).got("lints")),
     }
     let mut tables: Vec<(String, &dyn TableLike)> = Vec::new();
     for kind in DEPENDENCY_TABLES {
@@ -163,13 +144,7 @@ fn check_member(path: &str, manifest: &Item, inherited_keys: &[&str], problems: 
     for (kind, dependencies) in tables {
         for (name, dependency) in dependencies.iter() {
             if !inherited(dependency) {
-                problems.file(
-                    path,
-                    &format!(
-                        "[{kind}] {name} must come from the workspace (`{name}.workspace = true`, \
-                         declared once in [workspace.dependencies] with an exact version)"
-                    ),
-                );
+                problems.push(Error::new(ErrorCode::NotInherited, path).got(format!("{kind}.{name}")));
             }
         }
     }
@@ -184,10 +159,7 @@ fn check_toolchain(root: &Path, problems: &mut Problems) -> Result<(), String> {
         .and_then(Item::as_str)
         .unwrap_or_default();
     if !exact_version(channel) {
-        problems.file(
-            "rust-toolchain.toml",
-            &format!("the toolchain channel {channel:?} must be an exact version (1.2.3)"),
-        );
+        problems.push(Error::new(ErrorCode::VersionUnpinned, "rust-toolchain.toml").got(channel));
     }
     Ok(())
 }
@@ -201,9 +173,9 @@ fn check_package_json(root: &Path, path: &str, problems: &mut Problems) -> Resul
         for (name, version) in manifest[kind].as_object().into_iter().flatten() {
             let version = version.as_str().unwrap_or_default();
             if !exact_version(version) {
-                problems.file(
-                    path,
-                    &format!("{kind} {name} {version:?} must be an exact version (1.2.3)"),
+                problems.push(
+                    Error::new(ErrorCode::VersionUnpinned, path)
+                        .got(json!({ format!("{kind}.{name}"): version })),
                 );
             }
         }

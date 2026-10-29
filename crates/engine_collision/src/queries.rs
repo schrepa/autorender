@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::{Entity, World};
 use engine_core::bounds::{self, MAX_SCAN_ENTITIES, default_limit};
-use engine_core::{Error, ErrorCode, Operation, OperationScene};
+use engine_core::{Error, ErrorCode, Expected, Operation, OperationScene, missing_brick};
 use engine_settings::rule::range;
 #[cfg(feature = "schema")]
 use engine_settings::stated;
@@ -14,10 +14,10 @@ use crate::results::{
     SensorEventKindView, SensorEventRow, ShapeCastResult,
 };
 use crate::{
-    ColliderShape, CollisionError, CollisionLayers, CollisionRay, CollisionWorld,
-    CollisionWorldView, MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT, PlacedPart, QueryFilter,
-    SensorEvent, SensorEventKind, SensorEvents, SensorFilter, ShapeCastOptions,
-    refresh_collision_world, validate_collider_transform, validate_shape_cast,
+    ColliderShape, CollisionLayers, CollisionRay, CollisionWorld, CollisionWorldView,
+    MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT, PlacedPart, QueryFilter, SensorEvent,
+    SensorEventKind, SensorEvents, SensorFilter, ShapeCastOptions, refresh_collision_world,
+    validate_collider_transform, validate_shape_cast,
 };
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -47,11 +47,8 @@ impl Operation for RaycastQuery {
         } = request;
         let ray = ray(origin, direction, max_distance)?;
         let filter = query_filter(world, &filter)?;
-        refresh_collision_world(world).map_err(CollisionError::query_error)?;
-        let hit = world
-            .resource_mut::<CollisionWorld>()
-            .raycast(ray, filter)
-            .map_err(CollisionError::query_error)?;
+        refresh_collision_world(world)?;
+        let hit = world.resource_mut::<CollisionWorld>().raycast(ray, filter)?;
         let world = &*world;
         Ok(reply(RaycastResult {
             snapshot: CollisionWorldView::of(world.resource::<CollisionWorld>()),
@@ -105,14 +102,13 @@ impl Operation for OverlapQuery {
         page(limit)?;
         let shape = shape(&source)?;
         let matrix = pose(position, rotation)?;
-        validate_collider_transform(shape, matrix).map_err(CollisionError::query_error)?;
+        validate_collider_transform(shape, matrix)?;
         let filter = query_filter(world, &filter)?;
-        refresh_collision_world(world).map_err(CollisionError::query_error)?;
+        refresh_collision_world(world)?;
         let mut entities = Vec::new();
         world
             .resource_mut::<CollisionWorld>()
-            .overlap(shape, matrix, filter, &mut entities, limit)
-            .map_err(CollisionError::query_error)?;
+            .overlap(shape, matrix, filter, &mut entities, limit)?;
         let world = &*world;
         let mut hits: Vec<_> = entities
             .into_iter()
@@ -170,15 +166,17 @@ impl Operation for ShapeCastQuery {
         let ray = ray(position, direction, max_distance)?;
         let displacement = ray.direction * ray.max_distance;
         let options = ShapeCastOptions::default();
-        validate_shape_cast(shape, matrix, displacement, options)
-            .map_err(CollisionError::query_error)?;
+        validate_shape_cast(shape, matrix, displacement, options)?;
         let filter = query_filter(world, &filter)?;
-        refresh_collision_world(world).map_err(CollisionError::query_error)?;
+        refresh_collision_world(world)?;
         let world = &*world;
-        let hit = world
-            .resource::<CollisionWorld>()
-            .cast_shape(shape, matrix, displacement, filter, options)
-            .map_err(CollisionError::query_error)?;
+        let hit = world.resource::<CollisionWorld>().cast_shape(
+            shape,
+            matrix,
+            displacement,
+            filter,
+            options,
+        )?;
         Ok(reply(ShapeCastResult {
             snapshot: CollisionWorldView::of(world.resource::<CollisionWorld>()),
             complete: true,
@@ -240,7 +238,7 @@ impl Operation for CollisionEventsQuery {
             .transpose()?;
         let events = world
             .get_resource::<SensorEvents>()
-            .ok_or_else(|| CollisionError::MissingPlugin.query_error())?;
+            .ok_or_else(|| missing_brick("collision", "$.collision"))?;
         let matches = |event: &&SensorEvent| {
             entity.is_none_or(|entity| event.pair.first == entity || event.pair.second == entity)
         };
@@ -269,7 +267,7 @@ impl Operation for CollisionEventsQuery {
             complete: events.complete(),
             candidate_pairs: events.candidate_pairs(),
             active_pairs: events.pairs().len(),
-            error: events.error().map(CollisionError::query_error),
+            error: events.error(),
             total,
             events: rows,
             next_offset: (next < total).then_some(next),
@@ -349,21 +347,23 @@ pub(crate) fn bounded<T: Setting>(
 ) -> Result<T, Error> {
     match value.check("value", rule) {
         Ok(()) => Ok(value),
-        Err(invalid) => Err(Error::new(code, path, invalid.rule)),
+        Err(invalid) => Err(Error {
+            code,
+            path: path.to_owned(),
+            ..Error::from(invalid)
+        }),
     }
 }
 
 fn scan(world: &World) -> Result<(), Error> {
-    if world
+    if let Some(count) = world
         .get_resource::<OperationScene>()
         .map(OperationScene::entity_count)
-        .is_some_and(|count| count > MAX_SCAN_ENTITIES)
+        .filter(|&count| count > MAX_SCAN_ENTITIES)
     {
-        return Err(Error::new(
-            ErrorCode::ScanLimit,
-            "$.scene",
-            "collision identity lookup admits at most 10000 authored entities",
-        ));
+        return Err(Error::new(ErrorCode::ScanLimit, "$.scene")
+            .at_most(MAX_SCAN_ENTITIES as u64)
+            .got(count));
     }
     Ok(())
 }
@@ -402,20 +402,13 @@ fn shape(source: &CollisionShapeRequest) -> Result<ColliderShape, Error> {
             radius: dimension(radius)?,
         },
     };
-    shape.validate().map_err(CollisionError::query_error)?;
+    shape.validate()?;
     Ok(shape)
 }
 
 fn position(values: [f64; 3], path: &str) -> Result<Vec3, Error> {
-    if values
-        .iter()
-        .any(|value| value.check("value", bounds::COORDINATE).is_err())
-    {
-        return Err(Error::new(
-            ErrorCode::InvalidPosition,
-            path,
-            bounds::COORDINATE.describe(),
-        ));
+    for value in values {
+        bounded(value, bounds::COORDINATE, ErrorCode::InvalidPosition, path)?;
     }
     Ok(Vec3::from_array(values.map(|value| value as f32)))
 }
@@ -427,11 +420,9 @@ fn pose(translation: [f64; 3], rotation: [f64; 4]) -> Result<Mat4, Error> {
         || !length_squared.is_finite()
         || (length_squared - 1.0).abs() > 0.001
     {
-        return Err(Error::new(
-            ErrorCode::InvalidRotation,
-            "$.rotation",
-            "rotation must be a finite normalized XYZW quaternion (squared length within 0.001 of one)",
-        ));
+        return Err(Error::new(ErrorCode::InvalidRotation, "$.rotation")
+            .expected(Expected::Normalized)
+            .got(rotation));
     }
     let rotation = Quat::from_array(rotation.map(|value| value as f32)).normalize();
     Ok(Mat4::from_rotation_translation(rotation, translation))
@@ -449,32 +440,25 @@ fn ray(origin: [f64; 3], direction: [f64; 3], max_distance: f64) -> Result<Colli
         .iter()
         .fold(0.0_f64, |maximum, value| maximum.max(value.abs()));
     if direction.iter().any(|value| !value.is_finite()) || scale == 0.0 {
-        return Err(Error::new(
-            ErrorCode::InvalidRay,
-            "$.direction",
-            "direction must be a finite nonzero vector",
-        ));
+        return Err(Error::new(ErrorCode::InvalidRay, "$.direction")
+            .expected(Expected::Finite)
+            .got(direction));
     }
     let scaled = direction.map(|value| value / scale);
     let length = scaled.iter().map(|value| value * value).sum::<f64>().sqrt();
     let normalized = scaled.map(|value| value / length);
-    if origin
-        .into_iter()
-        .zip(normalized)
-        .any(|(origin, direction)| (origin + direction * max_distance).abs() > 1.0e6)
-    {
-        return Err(Error::new(
-            ErrorCode::InvalidRay,
-            "$.max_distance",
-            "ray endpoint must remain within +/-1000000",
-        ));
+    let end: [f64; 3] = std::array::from_fn(|axis| origin[axis] + normalized[axis] * max_distance);
+    if end.iter().any(|value| value.abs() > 1.0e6) {
+        return Err(Error::new(ErrorCode::InvalidRay, "$.max_distance")
+            .range(-1.0e6, 1.0e6)
+            .got(end));
     }
     let ray = CollisionRay {
         origin: position,
         direction: Vec3::from_array(normalized.map(|value| value as f32)),
         max_distance: max_distance as f32,
     };
-    ray.validate().map_err(CollisionError::query_error)?;
+    ray.validate()?;
     Ok(ray)
 }
 
@@ -517,32 +501,18 @@ fn resolve_entity(
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
     {
-        return Err(Error::new(
-            ErrorCode::InvalidSelector,
-            path,
-            "expected a bounded authored entity ID",
-        ));
+        return Err(Error::new(ErrorCode::InvalidSelector, path)
+            .expected(Expected::Id)
+            .got(id));
     }
-    let scene = world.get_resource::<OperationScene>().ok_or_else(|| {
-        Error::new(
-            ErrorCode::NoScene,
-            path,
-            "entity selectors require an active scene",
-        )
-    })?;
-    let entity = scene.entity(world, id).ok_or_else(|| {
-        Error::new(
-            ErrorCode::UnknownEntity,
-            path,
-            "entity is not in the active scene",
-        )
-    })?;
+    let scene = world
+        .get_resource::<OperationScene>()
+        .ok_or_else(|| Error::new(ErrorCode::NoScene, path))?;
+    let entity = scene
+        .entity(world, id)
+        .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, path).got(id))?;
     if require_alive && world.get_entity(entity).is_err() {
-        return Err(Error::new(
-            ErrorCode::EntityRemoved,
-            path,
-            "the authored entity is no longer alive",
-        ));
+        return Err(Error::new(ErrorCode::EntityRemoved, path).got(id));
     }
     Ok(entity)
 }

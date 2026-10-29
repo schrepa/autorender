@@ -1,10 +1,11 @@
 use engine_math::collections::HashMap;
 use std::sync::Arc;
 
+use engine_core::{ErrorCode, Expected};
 use glam::Vec2;
 
 use crate::bounce::{MAX_PROBES, TerrainBounce, bounce};
-use crate::codec::{self, CodecError, Reader, Writer, record};
+use crate::codec::{self, Error, Reader, Writer, record};
 use crate::lighting::{Ground, TerrainLighting, light};
 use crate::macro_colors::{MACRO_BLOCK, MAX_MACRO_TEXELS, macro_colors};
 use crate::shading::ShadingMaking;
@@ -56,7 +57,7 @@ impl JobKind {
     }
 }
 
-codec::tagged!(Placing, "invalid placing" {
+codec::tagged!(Placing {
     0 => All,
     1 => Near,
     2 => Far,
@@ -170,7 +171,7 @@ impl TileJob {
     }
 }
 
-pub fn tile_output(bytes: &[u8]) -> Result<Tile, CodecError> {
+pub fn tile_output(bytes: &[u8]) -> Result<Tile, Error> {
     codec::decode(bytes)
 }
 
@@ -190,7 +191,7 @@ impl BakeJob {
     }
 }
 
-pub fn bake_output(bytes: &[u8]) -> Result<Layers, CodecError> {
+pub fn bake_output(bytes: &[u8]) -> Result<Layers, Error> {
     codec::decode(bytes)
 }
 
@@ -218,15 +219,21 @@ impl LightingJob {
         codec::encode(self)
     }
 
-    fn valid(&self) -> bool {
-        (1..=MAX_LIGHTING_TEXELS).contains(&self.sky)
-            && (1..=MAX_LIGHTING_TEXELS).contains(&self.horizons)
+    fn check(&self) -> Result<(), Error> {
+        for (path, texels) in [("$.sky", self.sky), ("$.horizons", self.horizons)] {
+            if !(1..=MAX_LIGHTING_TEXELS).contains(&texels) {
+                return Err(Error::new(ErrorCode::OutOfRange, path)
+                    .range(1.0, f64::from(MAX_LIGHTING_TEXELS))
+                    .got(texels));
+            }
+        }
+        Ok(())
     }
 }
 
 pub const MAX_LIGHTING_TEXELS: u32 = 4096;
 
-pub fn lighting_output(bytes: &[u8]) -> Result<TerrainLighting, CodecError> {
+pub fn lighting_output(bytes: &[u8]) -> Result<TerrainLighting, Error> {
     codec::decode(bytes)
 }
 
@@ -255,10 +262,10 @@ impl WaterJob {
     }
 }
 
-pub fn water_output(bytes: &[u8]) -> Result<WaterPart, CodecError> {
+pub fn water_output(bytes: &[u8]) -> Result<WaterPart, Error> {
     let part: WaterPart = codec::decode(bytes)?;
     if !part.valid() {
-        return Err(CodecError("invalid part of settling water"));
+        return Err(codec::invalid("$.water_part"));
     }
     Ok(part)
 }
@@ -284,7 +291,7 @@ impl SteadiedJob {
     }
 }
 
-pub fn steadied_output(bytes: &[u8]) -> Result<Option<TileWater>, CodecError> {
+pub fn steadied_output(bytes: &[u8]) -> Result<Option<TileWater>, Error> {
     codec::decode(bytes)
 }
 
@@ -294,7 +301,7 @@ pub enum ShadingReads {
     Shadings(Vec<(TileKey, [u8; 32])>),
 }
 
-codec::tagged!(ShadingReads, "invalid shading reads" {
+codec::tagged!(ShadingReads {
     0 => Tiles(tiles),
     1 => Shadings(shadings),
 });
@@ -316,7 +323,7 @@ impl ShadingJob {
     }
 }
 
-pub fn shading_output(bytes: &[u8]) -> Result<TileShading, CodecError> {
+pub fn shading_output(bytes: &[u8]) -> Result<TileShading, Error> {
     codec::decode(bytes)
 }
 
@@ -342,12 +349,18 @@ impl BounceJob {
         codec::encode(self)
     }
 
-    fn valid(&self) -> bool {
-        (2..=MAX_PROBES).contains(&self.probes) && self.probes.is_multiple_of(2)
+    fn check(&self) -> Result<(), Error> {
+        if (2..=MAX_PROBES).contains(&self.probes) && self.probes.is_multiple_of(2) {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorCode::OutOfRange, "$.probes")
+                .range(2.0, f64::from(MAX_PROBES))
+                .got(self.probes))
+        }
     }
 }
 
-pub fn bounce_output(bytes: &[u8]) -> Result<TerrainBounce, CodecError> {
+pub fn bounce_output(bytes: &[u8]) -> Result<TerrainBounce, Error> {
     codec::decode(bytes)
 }
 
@@ -371,9 +384,16 @@ impl MacroJob {
         codec::encode(self)
     }
 
-    fn valid(&self) -> bool {
-        (MACRO_BLOCK..=MAX_MACRO_TEXELS).contains(&self.size)
+    fn check(&self) -> Result<(), Error> {
+        if (MACRO_BLOCK..=MAX_MACRO_TEXELS).contains(&self.size)
             && self.size.is_multiple_of(MACRO_BLOCK)
+        {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorCode::OutOfRange, "$.size")
+                .range(f64::from(MACRO_BLOCK), f64::from(MAX_MACRO_TEXELS))
+                .got(self.size))
+        }
     }
 }
 
@@ -386,19 +406,16 @@ struct Recipe {
 }
 
 impl Recipe {
-    fn stamped(&self, stamps: &[Stamp]) -> Result<Arc<Layers>, String> {
+    fn stamped(&self, stamps: &[Stamp]) -> Result<Arc<Layers>, Error> {
         stamped(&self.layers, stamps)
     }
 }
 
-pub fn stamped(layers: &Arc<Layers>, stamps: &[Stamp]) -> Result<Arc<Layers>, String> {
+pub fn stamped(layers: &Arc<Layers>, stamps: &[Stamp]) -> Result<Arc<Layers>, Error> {
     if stamps.is_empty() {
         return Ok(layers.clone());
     }
-    layers
-        .with_stamps(stamps)
-        .map(Arc::new)
-        .map_err(|error| error.to_string())
+    layers.with_stamps(stamps).map(Arc::new)
 }
 
 struct GroundMaking {
@@ -414,10 +431,10 @@ struct GroundMaking {
 }
 
 impl GroundMaking {
-    fn new(recipe: &Recipe, level: u32, tiles: Vec<(TileKey, Vec<Stamp>)>) -> Result<Self, String> {
+    fn new(recipe: &Recipe, level: u32, tiles: Vec<(TileKey, Vec<Stamp>)>) -> Result<Self, Error> {
         let pyramid = recipe.pyramid;
         if level >= pyramid.levels() {
-            return Err("heights of a level outside the pyramid".into());
+            return Err(level_outside(level, &pyramid));
         }
         let [columns, rows] = pyramid.tiles(level);
         let stands = |key: TileKey, held: TileKey| {
@@ -432,7 +449,7 @@ impl GroundMaking {
                 .zip(&tiles)
                 .all(|(key, &(held, _))| stands(key, held))
         {
-            return Err("heights of tiles standing in for none of their level".into());
+            return Err(Error::new(ErrorCode::InvalidValue, "$.tiles"));
         }
         let quads = TILE_QUADS as usize;
         let samples = [columns as usize * quads + 1, rows as usize * quads + 1];
@@ -449,7 +466,7 @@ impl GroundMaking {
         })
     }
 
-    fn advance(&mut self, budget: &mut u64) -> Result<bool, String> {
+    fn advance(&mut self, budget: &mut u64) -> Result<bool, Error> {
         let columns = self.pyramid.tiles(self.level)[0] as usize;
         while let Some(&(held, _)) = self.tiles.get(self.next) {
             if let Some((_, tile)) = self.made.iter().find(|(made, _)| *made == held) {
@@ -478,13 +495,12 @@ impl GroundMaking {
             };
             let Some(made) = generator.advance(budget) else {
                 if generator.failed() {
-                    return Err("the ground's heights are invalid".into());
+                    return Err(invalid_heights());
                 }
                 return Ok(false);
             };
             self.generator = None;
-            let tile: Tile =
-                codec::decode(&codec::encode(&made)).map_err(|error| error.to_string())?;
+            let tile: Tile = codec::decode(&codec::encode(&made))?;
             self.made.push((held, tile));
         }
         Ok(true)
@@ -567,30 +583,31 @@ impl TerrainWorker {
     }
 
     pub fn share(&mut self, key: &str, bytes: impl Into<Arc<[u8]>>) -> Result<(), String> {
-        let bytes: Arc<[u8]> = bytes.into();
-        let (&tag, rest) = bytes.split_first().ok_or("empty share")?;
+        self.keep(key, bytes.into())
+            .map_err(|error| error.to_string())
+    }
+
+    fn keep(&mut self, key: &str, bytes: Arc<[u8]>) -> Result<(), Error> {
+        let Some((&tag, rest)) = bytes.split_first() else {
+            return Err(codec::invalid("$.tag").expected(Expected::Present));
+        };
         match tag {
             STACK => {
-                let layers: Layers = codec::decode(rest).map_err(|error| error.to_string())?;
+                let layers: Layers = codec::decode(rest)?;
                 self.stacks.insert(key.to_owned(), Arc::new(layers));
             }
             RECIPE => {
-                let recipe: TerrainRecipe =
-                    codec::decode(rest).map_err(|error| error.to_string())?;
-                let stack = self
-                    .stacks
-                    .get(&recipe.stack)
-                    .ok_or_else(|| format!("recipe {key} names unknown stack {}", recipe.stack))?;
+                let recipe: TerrainRecipe = codec::decode(rest)?;
+                let stack = self.stacks.get(&recipe.stack).ok_or_else(|| {
+                    Error::new(ErrorCode::UnknownReference, "$.stack").got(&recipe.stack)
+                })?;
                 let layers = match recipe.view {
                     Some(view) => {
                         Arc::new(stack.surroundings(view.offset, (view.low, view.high), view.blend))
                     }
                     None => stack.clone(),
                 };
-                let rules = recipe
-                    .surface
-                    .compile()
-                    .map_err(|error| error.to_string())?;
+                let rules = recipe.surface.compile()?;
                 self.recipes.insert(
                     key.to_owned(),
                     Recipe {
@@ -605,7 +622,10 @@ impl TerrainWorker {
             SETTLED | SUMMARY | SHADING => {
                 self.records.insert(key.to_owned(), Arc::clone(&bytes));
             }
-            _ => return Err("unknown share".into()),
+            _ => {
+                let tags = [STACK, RECIPE, SETTLED, SUMMARY, SHADING].map(|tag| tag.to_string());
+                return Err(codec::invalid("$.tag").got(tag).variants(tags));
+            }
         }
         Ok(())
     }
@@ -631,20 +651,29 @@ impl TerrainWorker {
     }
 
     pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), String> {
-        let invalid = |error: CodecError| error.to_string();
-        let kind = JobKind::from_name(kind).ok_or_else(|| format!("unknown job kind {kind}"))?;
+        let running = self.begin(kind, input).map_err(|error| error.to_string())?;
+        self.running.insert(id, running);
+        Ok(())
+    }
+
+    fn begin(&self, kind: &str, input: &[u8]) -> Result<Running, Error> {
+        let kind = JobKind::from_name(kind).ok_or_else(|| {
+            Error::new(ErrorCode::UnknownVariant, "$.kind")
+                .got(kind)
+                .variants(JobKind::ALL.map(JobKind::name))
+        })?;
         let mut reader = Reader::new(input);
-        let running = match kind {
+        Ok(match kind {
             JobKind::Tile => {
                 let TileJob {
                     recipe,
                     key,
                     stamps,
-                } = reader.get().map_err(invalid)?;
-                reader.finish().map_err(invalid)?;
+                } = reader.get()?;
+                reader.finish()?;
                 let recipe = self.recipe(&recipe)?;
                 if !recipe.pyramid.contains(key) {
-                    return Err("tile outside its pyramid".into());
+                    return Err(outside(key));
                 }
                 let materials = recipe.materials && !TileShading::shades(key.level, recipe.around);
                 Running::Tile(Box::new(
@@ -654,16 +683,14 @@ impl TerrainWorker {
                 ))
             }
             JobKind::Bake => {
-                let BakeJob { layers, pyramid } = reader.get().map_err(invalid)?;
-                reader.finish().map_err(invalid)?;
+                let BakeJob { layers, pyramid } = reader.get()?;
+                reader.finish()?;
                 Running::Bake(Box::new((layers, pyramid)))
             }
             JobKind::Lighting => {
-                let mut job: LightingJob = reader.get().map_err(invalid)?;
-                reader.finish().map_err(invalid)?;
-                if !job.valid() {
-                    return Err("lighting of maps of an invalid size".into());
-                }
+                let mut job: LightingJob = reader.get()?;
+                reader.finish()?;
+                job.check()?;
                 let recipe = self.recipe(&job.recipe)?;
                 let making = GroundMaking::new(recipe, job.level, std::mem::take(&mut job.tiles))?;
                 Running::Lighting(Box::new((making, job)))
@@ -675,17 +702,17 @@ impl TerrainWorker {
                     stamps,
                     solids,
                     cell,
-                } = reader.get().map_err(invalid)?;
-                reader.finish().map_err(invalid)?;
+                } = reader.get()?;
+                reader.finish()?;
                 let recipe = self.recipe(&recipe)?;
-                if key.level != 0
-                    || !recipe.pyramid.contains(key)
-                    || !(cell.is_finite() && cell > 0.0)
-                {
-                    return Err("settled water of a tile outside its pyramid's finest level".into());
+                if key.level != 0 || !recipe.pyramid.contains(key) {
+                    return Err(outside(key));
+                }
+                if !(cell.is_finite() && cell > 0.0) {
+                    return Err(Error::new(ErrorCode::OutOfRange, "$.cell").got(cell));
                 }
                 if !solids.iter().flatten().all(Solid::valid) {
-                    return Err("settled water of objects standing as invalid solids".into());
+                    return Err(Error::new(ErrorCode::InvalidValue, "$.solids"));
                 }
                 Running::Water(Box::new(PartMaking::new(
                     (recipe.stamped(&stamps)?, recipe.rules.clone()),
@@ -695,22 +722,21 @@ impl TerrainWorker {
                 )))
             }
             JobKind::Bounce => {
-                let mut job: BounceJob = reader.get().map_err(invalid)?;
-                reader.finish().map_err(invalid)?;
-                if !job.valid() {
-                    return Err("bounce of an invalid count of probes".into());
-                }
+                let mut job: BounceJob = reader.get()?;
+                reader.finish()?;
+                job.check()?;
                 let recipe = self.recipe(&job.recipe)?;
                 let making = GroundMaking::new(recipe, job.level, std::mem::take(&mut job.tiles))?;
                 let (layers, rules) = (recipe.layers.clone(), recipe.rules.clone());
                 Running::Bounce(Box::new((making, job, layers, rules)))
             }
             JobKind::Macro => {
-                let job: MacroJob = reader.get().map_err(invalid)?;
-                reader.finish().map_err(invalid)?;
+                let job: MacroJob = reader.get()?;
+                reader.finish()?;
                 let recipe = self.recipe(&job.recipe)?;
-                if !job.valid() || job.level >= recipe.pyramid.levels() {
-                    return Err("macro colors of an invalid size or level".into());
+                job.check()?;
+                if job.level >= recipe.pyramid.levels() {
+                    return Err(level_outside(job.level, &recipe.pyramid));
                 }
                 let causes = recipe.rules.authored().macro_colors;
                 Running::Macro(Box::new((
@@ -721,114 +747,65 @@ impl TerrainWorker {
                 )))
             }
             JobKind::Steadied => {
-                let job: SteadiedJob = reader.get().map_err(invalid)?;
-                reader.finish().map_err(invalid)?;
+                let job: SteadiedJob = reader.get()?;
+                reader.finish()?;
                 Running::Steadied(Box::new(self.steadying(&job)?))
             }
             JobKind::Shading => {
-                let job: ShadingJob = reader.get().map_err(invalid)?;
-                reader.finish().map_err(invalid)?;
+                let job: ShadingJob = reader.get()?;
+                reader.finish()?;
                 Running::Shading(Box::new(self.shading(job)?))
             }
-        };
-        self.running.insert(id, running);
-        Ok(())
+        })
     }
 
     pub fn step(&mut self, id: u64, budget: u64) -> Result<Option<Vec<u8>>, String> {
         let Some(running) = self.running.get_mut(&id) else {
-            return Err("no such job".into());
+            return Err(Error::new(ErrorCode::UnknownReference, "$.id")
+                .got(id)
+                .to_string());
         };
-        let mut budget = budget.max(1);
-        let output = match running {
-            Running::Tile(generator) => match generator.advance(&mut budget) {
-                Some(tile) => Ok(codec::encode(&tile)),
-                None if generator.failed() => Err("the tile's heights are invalid".into()),
-                None => return Ok(None),
-            },
-            Running::Bake(bake) => {
-                let (layers, pyramid) = &**bake;
-                Ok(codec::encode(&layers.bake_all(pyramid)))
-            }
-            Running::Lighting(held) => {
-                let (making, job) = &mut **held;
-                match making.advance(&mut budget) {
-                    Ok(false) => return Ok(None),
-                    Ok(true) => Ok(codec::encode(&light(
-                        &making.ground(),
-                        making.extent(),
-                        job.sky,
-                        job.horizons,
-                    ))),
-                    Err(error) => Err(error),
-                }
-            }
-            Running::Water(part) => match part.advance(&mut budget)? {
-                Some(part) => Ok(codec::encode(&part)),
-                None => return Ok(None),
-            },
-            Running::Bounce(held) => {
-                let (making, job, layers, rules) = &mut **held;
-                match making.advance(&mut budget) {
-                    Ok(false) => return Ok(None),
-                    Ok(true) => Ok(codec::encode(&bounce(
-                        &making.ground(),
-                        making.extent(),
-                        (layers.as_ref(), rules.as_ref()),
-                        job.probes,
-                    ))),
-                    Err(error) => Err(error),
-                }
-            }
-            Running::Macro(colors) => {
-                let (layers, pyramid, causes, job) = &**colors;
-                macro_colors(layers, pyramid, job.level, job.size, causes)
-                    .ok_or_else(|| "the macro colors' heights are invalid".to_owned())
-            }
-            Running::Steadied(steadying) => match steadying.advance(&mut budget) {
-                Ok(Some(water)) => Ok(codec::encode(&water)),
-                Ok(None) => return Ok(None),
-                Err(error) => Err(error),
-            },
-            Running::Shading(making) => match making.advance(&mut budget) {
-                Ok(Some(shading)) => Ok(codec::encode(&shading)),
-                Ok(None) => return Ok(None),
-                Err(error) => Err(error),
-            },
+        let output = match advance(running, budget.max(1)) {
+            Ok(None) => return Ok(None),
+            Ok(Some(output)) => Ok(Some(output)),
+            Err(error) => Err(error.to_string()),
         };
         self.running.remove(&id);
-        output.map(Some)
+        output
     }
 
     pub fn cancel(&mut self, id: u64) {
         self.running.remove(&id);
     }
 
-    fn recipe(&self, key: &str) -> Result<&Recipe, String> {
+    fn recipe(&self, key: &str) -> Result<&Recipe, Error> {
         self.recipes
             .get(key)
-            .ok_or_else(|| format!("unknown recipe {key}"))
+            .ok_or_else(|| Error::new(ErrorCode::UnknownReference, "$.recipe").got(key))
     }
 
-    fn steadying(&self, job: &SteadiedJob) -> Result<Steadying, String> {
+    fn steadying(&self, job: &SteadiedJob) -> Result<Steadying, Error> {
         let recipe = self.recipe(&job.tile.recipe)?;
         let (key, cell) = (job.tile.key, job.cell);
-        if !recipe.pyramid.contains(key) || !(cell.is_finite() && cell > 0.0) {
-            return Err("settled water of a tile outside its pyramid".into());
+        if !recipe.pyramid.contains(key) {
+            return Err(outside(key));
+        }
+        if !(cell.is_finite() && cell > 0.0) {
+            return Err(Error::new(ErrorCode::OutOfRange, "$.cell").got(cell));
         }
         let reads = if key.level == 0 {
             SettledReads::Records(
                 job.settled
                     .iter()
                     .map(|&(at, record)| Ok((at, self.settled(&record, at, cell)?)))
-                    .collect::<Result<_, String>>()?,
+                    .collect::<Result<_, Error>>()?,
             )
         } else {
             SettledReads::Summaries(
                 job.settled
                     .iter()
                     .map(|&(at, record)| Ok((at, self.summary(&record, at, cell)?)))
-                    .collect::<Result<_, String>>()?,
+                    .collect::<Result<_, Error>>()?,
             )
         };
         Ok(Steadying::new(
@@ -839,40 +816,36 @@ impl TerrainWorker {
         ))
     }
 
-    fn settled(&self, record: &[u8; 32], key: TileKey, cell: f32) -> Result<SteadyWater, String> {
+    fn settled(&self, record: &[u8; 32], key: TileKey, cell: f32) -> Result<SteadyWater, Error> {
         let name = settled_key(record);
         let water: SteadyWater = match self.records.get(&name).map(|bytes| bytes.split_first()) {
-            Some(Some((&SETTLED, rest))) => {
-                codec::decode(rest).map_err(|error| error.to_string())?
-            }
-            _ => return Err(format!("unknown share {name}")),
+            Some(Some((&SETTLED, rest))) => codec::decode(rest)?,
+            _ => return Err(unshared("$.settled", &name)),
         };
         if water.key != key || water.cell != cell {
-            return Err(format!("share {name} holds another tile's settled water"));
+            return Err(mismatched("$.settled", &name));
         }
         Ok(water)
     }
 
-    fn summary(&self, record: &[u8; 32], key: TileKey, cell: f32) -> Result<SteadySummary, String> {
+    fn summary(&self, record: &[u8; 32], key: TileKey, cell: f32) -> Result<SteadySummary, Error> {
         let name = summary_key(record);
         let (head, _) = match self.records.get(&name).map(|bytes| bytes.split_first()) {
-            Some(Some((&SUMMARY, rest))) => {
-                SteadyWater::head(rest).map_err(|error| error.to_string())?
-            }
-            _ => return Err(format!("unknown share {name}")),
+            Some(Some((&SUMMARY, rest))) => SteadyWater::head(rest)?,
+            _ => return Err(unshared("$.settled", &name)),
         };
         if head.key != key || head.cell != cell {
-            return Err(format!("share {name} holds another tile's settled water"));
+            return Err(mismatched("$.settled", &name));
         }
         Ok(head.summary)
     }
 
-    fn shading(&self, job: ShadingJob) -> Result<ShadingMaking, String> {
+    fn shading(&self, job: ShadingJob) -> Result<ShadingMaking, Error> {
         let recipe = self.recipe(&job.recipe)?;
         let (pyramid, key) = (recipe.pyramid, job.key);
         let reads = TileShading::reads(&pyramid, key);
         if !pyramid.contains(key) || reads.is_empty() {
-            return Err("shading of a tile outside its pyramid's coarser levels".into());
+            return Err(outside(key));
         }
         match job.reads {
             ShadingReads::Tiles(tiles)
@@ -887,28 +860,103 @@ impl TerrainWorker {
                 let finer = shadings
                     .iter()
                     .map(|&(at, record)| self.shared_shading(&record, at))
-                    .collect::<Result<Vec<_>, String>>()?;
+                    .collect::<Result<Vec<_>, Error>>()?;
                 Ok(ShadingMaking::from_finer(pyramid, key, finer))
             }
             ShadingReads::Tiles(_) | ShadingReads::Shadings(_) => {
-                Err("shading reading other tiles than those under it and around it".into())
+                Err(Error::new(ErrorCode::InvalidValue, "$.reads"))
             }
         }
     }
 
-    fn shared_shading(&self, record: &[u8; 32], key: TileKey) -> Result<TileShading, String> {
+    fn shared_shading(&self, record: &[u8; 32], key: TileKey) -> Result<TileShading, Error> {
         let name = shading_key(record);
         let shading: TileShading = match self.records.get(&name).map(|bytes| bytes.split_first()) {
-            Some(Some((&SHADING, rest))) => {
-                codec::decode(rest).map_err(|error| error.to_string())?
-            }
-            _ => return Err(format!("unknown share {name}")),
+            Some(Some((&SHADING, rest))) => codec::decode(rest)?,
+            _ => return Err(unshared("$.reads", &name)),
         };
         if shading.key() != key {
-            return Err(format!("share {name} holds another tile's shading"));
+            return Err(mismatched("$.reads", &name));
         }
         Ok(shading)
     }
+}
+
+fn advance(running: &mut Running, mut budget: u64) -> Result<Option<Vec<u8>>, Error> {
+    let budget = &mut budget;
+    Ok(Some(match running {
+        Running::Tile(generator) => match generator.advance(budget) {
+            Some(tile) => codec::encode(&tile),
+            None if generator.failed() => return Err(invalid_heights()),
+            None => return Ok(None),
+        },
+        Running::Bake(bake) => {
+            let (layers, pyramid) = &**bake;
+            codec::encode(&layers.bake_all(pyramid))
+        }
+        Running::Lighting(held) => {
+            let (making, job) = &mut **held;
+            if !making.advance(budget)? {
+                return Ok(None);
+            }
+            codec::encode(&light(
+                &making.ground(),
+                making.extent(),
+                job.sky,
+                job.horizons,
+            ))
+        }
+        Running::Water(part) => match part.advance(budget)? {
+            Some(part) => codec::encode(&part),
+            None => return Ok(None),
+        },
+        Running::Bounce(held) => {
+            let (making, job, layers, rules) = &mut **held;
+            if !making.advance(budget)? {
+                return Ok(None);
+            }
+            codec::encode(&bounce(
+                &making.ground(),
+                making.extent(),
+                (layers.as_ref(), rules.as_ref()),
+                job.probes,
+            ))
+        }
+        Running::Macro(colors) => {
+            let (layers, pyramid, causes, job) = &**colors;
+            macro_colors(layers, pyramid, job.level, job.size, causes).ok_or_else(invalid_heights)?
+        }
+        Running::Steadied(steadying) => match steadying.advance(budget)? {
+            Some(water) => codec::encode(&water),
+            None => return Ok(None),
+        },
+        Running::Shading(making) => match making.advance(budget)? {
+            Some(shading) => codec::encode(&shading),
+            None => return Ok(None),
+        },
+    }))
+}
+
+pub(crate) fn invalid_heights() -> Error {
+    Error::new(ErrorCode::InvalidTerrain, "$.heights").expected(Expected::Finite)
+}
+
+pub(crate) fn outside(key: TileKey) -> Error {
+    Error::new(ErrorCode::OutOfRange, "$.key").got([u16::from(key.level), key.x, key.z])
+}
+
+fn level_outside(level: u32, pyramid: &Pyramid) -> Error {
+    Error::new(ErrorCode::OutOfRange, "$.level")
+        .at_most(u64::from(pyramid.levels().saturating_sub(1)))
+        .got(level)
+}
+
+fn unshared(path: &str, name: &str) -> Error {
+    Error::new(ErrorCode::UnknownReference, path).got(name)
+}
+
+fn mismatched(path: &str, name: &str) -> Error {
+    Error::new(ErrorCode::InvalidValue, path).got(name)
 }
 
 fn names(named: impl Iterator<Item = TileKey>, reads: &[TileKey]) -> bool {

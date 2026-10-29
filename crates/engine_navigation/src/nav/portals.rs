@@ -1,4 +1,5 @@
 use super::*;
+use engine_core::Expected;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Side {
@@ -8,7 +9,7 @@ pub enum Side {
     MaxZ,
 }
 
-tagged!(Side, "invalid tile side" {
+tagged!(Side {
     0 => MinX,
     1 => MaxX,
     2 => MinZ,
@@ -167,7 +168,7 @@ impl codec::Codec for TilePortals {
         out.put(&self.key).put(&self.portals).put(&self.costs);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         let key = input.get()?;
         let portals: Vec<Portal> = input.get()?;
         let costs: Vec<u32> = input.get()?;
@@ -177,7 +178,7 @@ impl codec::Codec for TilePortals {
         });
         let count = portals.len();
         if !placed || costs.len() != count * count.saturating_sub(1) / 2 {
-            return Err(CodecError("invalid portals"));
+            return Err(codec::invalid("$.portals"));
         }
         Ok(Self {
             key,
@@ -192,12 +193,14 @@ pub fn tile_portals(
     pyramid: &Pyramid,
     key: TileKey,
     gait: &Gait,
-) -> Result<TilePortals, String> {
+) -> Result<TilePortals, Error> {
     let mut whole = u64::MAX;
     let tile = Generator::new(layers.clone(), pyramid, key)
         .advance(&mut whole)
-        .ok_or("the tile's heights are invalid")?;
-    let tile: Tile = codec::decode(&codec::encode(&tile)).map_err(|error| error.to_string())?;
+        .ok_or_else(|| {
+            Error::new(ErrorCode::InvalidTerrain, "$.heights").expected(Expected::Finite)
+        })?;
+    let tile: Tile = codec::decode(&codec::encode(&tile))?;
     Ok(TilePortals::new(
         &WalkGround::new(&tile, layers, pyramid),
         pyramid,

@@ -3,8 +3,8 @@ use std::fs;
 use std::path::Path;
 
 use engine::bevy_ecs::world::World;
-use engine::{AssetBudget, AssetLibrary, Engine, EngineConfig, ErrorCode};
-use engine_scene::{MAX_SOURCE_BYTES, SceneDocument, SceneError, SceneFiles};
+use engine::{AssetBudget, AssetLibrary, Engine, EngineConfig, Error, ErrorCode};
+use engine_scene::{MAX_SOURCE_BYTES, SceneDocument, SceneFiles};
 use serde_json::{Value, json};
 
 use super::Observations;
@@ -53,15 +53,12 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         let code = error.code.as_str();
         observed.check(code == rule && error.path == path, || {
             format!(
-                "{name}: expected {rule} at {path}, found {code} at {}: {}",
-                error.path, error.message
+                "{name}: expected {rule} at {path}, found {code} at {}",
+                error.path
             )
         });
         refused.insert(code.to_owned());
-        observed.record(
-            name,
-            json!({"code": code, "path": error.path, "message": error.message}),
-        );
+        observed.record(name, json!(error));
     }
     let rules = scene_rules(root)?;
     for rule in &rules {
@@ -139,16 +136,15 @@ fn round_trip(name: &str, source: &str, observed: &mut Observations) {
         }
         Err(error) => observed.check(false, || {
             format!(
-                "document {name} is refused: {} at {}: {}",
+                "document {name} is refused: {} at {}",
                 error.code.as_str(),
-                error.path,
-                error.message
+                error.path
             )
         }),
     }
 }
 
-fn refuse(source: &str, stage: &str, world: Option<&str>) -> Result<(), SceneError> {
+fn refuse(source: &str, stage: &str, world: Option<&str>) -> Result<(), Error> {
     let document = SceneDocument::from_json(source)?;
     match stage {
         "files" => document.validate_with(&SceneFiles::new()),
