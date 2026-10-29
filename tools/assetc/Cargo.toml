@@ -9,6 +9,7 @@ publish.workspace = true
 engine_core.workspace = true
 engine_scene.workspace = true
 engine_terrain.workspace = true
+engine_layer_hydrology.workspace = true
 engine_lodbuild.workspace = true
 glam.workspace = true
 gltf.workspace = true

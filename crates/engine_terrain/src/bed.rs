@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::hydraulics::{GRAVITY, along_line};
 use crate::rivers::RIVER_STEP;
 
-pub(crate) const HEAD_FLOOD: f32 = 0.16;
+pub const HEAD_FLOOD: f32 = 0.16;
 pub const NARROWEST: f32 = 2.0;
 
 const FORMS: [f32; 4] = [0.015, 0.03, 0.08, 0.3];
@@ -75,13 +75,13 @@ pub struct Bed {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
-pub(crate) struct Crest {
+pub struct Crest {
     pub share: f32,
     pub drop: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
-pub(crate) struct Knob {
+pub struct Knob {
     pub segment: u32,
     pub middle: [f32; 2],
     pub radius: f32,
@@ -135,7 +135,7 @@ impl Shares {
     }
 }
 
-pub(crate) fn bankfull(flood: f32) -> (f32, f32) {
+pub fn bankfull(flood: f32) -> (f32, f32) {
     let width = WIDTH_LAW[0] * libm::powf(flood, WIDTH_LAW[1]);
     let depth = DEPTH_LAW[0] * libm::powf(flood, DEPTH_LAW[1]);
     let ratio = min(width / depth, WIDTH_DEPTH);

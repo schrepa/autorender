@@ -3,7 +3,8 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use engine_core::command_line::{self, CommandOption};
-use engine_terrain::{GivenRiver, RiversLayer};
+use engine_layer_hydrology::RiversLayer;
+use engine_terrain::GivenRiver;
 use serde_json::{Value, json};
 use tiff::decoder::{Decoder, DecodingResult, Limits};
 use tiff::tags::Tag;
@@ -1235,14 +1236,17 @@ fn scene(
         "atmosphere": {"preset": "golden_hour"},
     });
     let tiles = (size / 256.0) as u32;
-    let mut layers = vec![json!({"heightmap": heightmap})];
+    heightmap["type"] = json!("heightmap");
+    let mut layers = vec![heightmap];
     if options.detail > 0.0 {
-        layers.push(json!({"noise": {"seed": 7, "height": options.detail, "offset": -0.5 * options.detail, "wavelength": 260.0, "ridges": 0.35, "warp": 0.25, "erosion": 0.6, "smoothing": 0.7, "valleys": 0.0, "roughness": 0.55, "blend": "add"}}));
+        layers.push(json!({"type": "noise", "seed": 7, "height": options.detail, "offset": -0.5 * options.detail, "wavelength": 260.0, "ridges": 0.35, "warp": 0.25, "erosion": 0.6, "smoothing": 0.7, "valleys": 0.0, "roughness": 0.55, "blend": "add"}));
     }
     if let Some(rivers) = rivers {
-        layers.push(json!({ "rivers": rivers }));
+        let mut layer = json!(rivers);
+        layer["type"] = json!("rivers");
+        layers.push(layer);
     }
-    layers.push(json!({"hydrology": {"level": 4}}));
+    layers.push(json!({"type": "hydrology", "level": 4}));
     json!({
         "id": id,
         "revision": 1,

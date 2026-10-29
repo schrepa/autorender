@@ -12,7 +12,7 @@ const FLATTEST: f32 = 2.0e-4;
 const REACH_WIDTHS: f32 = 5.0;
 pub(crate) const FLOODS: f32 = 3.0;
 const HELD_DEPTH: f32 = 0.25;
-pub(crate) const BESIDE: f32 = 1.0;
+pub const BESIDE: f32 = 1.0;
 const FERGUSON: [f32; 2] = [6.5, 2.5];
 const CLING_SLOPE: f32 = 1.2;
 const LEAP_DEPTHS: f32 = 2.0;
@@ -23,24 +23,24 @@ const BRIDGE: f32 = 2.0;
 const SLOWEST: f32 = 0.5;
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Flow {
-    pub(crate) runoff: f32,
-    pub(crate) finest: f32,
+pub struct Flow {
+    pub runoff: f32,
+    pub finest: f32,
 }
 
-pub(crate) struct Course<'a> {
-    pub(crate) line: &'a RiverLine,
-    pub(crate) ground: &'a dyn Fn(Vec2) -> f32,
-    pub(crate) across: &'a dyn Fn(Vec2, Vec2, f32) -> Option<Across>,
-    pub(crate) start: Option<f32>,
+pub struct Course<'a> {
+    pub line: &'a RiverLine,
+    pub ground: &'a dyn Fn(Vec2) -> f32,
+    pub across: &'a dyn Fn(Vec2, Vec2, f32) -> Option<Across>,
+    pub start: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Across {
-    pub(crate) share: f32,
-    pub(crate) lowest: f32,
-    pub(crate) banks: f32,
-    pub(crate) beside: f32,
+pub struct Across {
+    pub share: f32,
+    pub lowest: f32,
+    pub banks: f32,
+    pub beside: f32,
 }
 
 pub(crate) fn friction_slope(discharge: f32, width: f32, depth: f32, d84: f32) -> f32 {
@@ -518,7 +518,7 @@ fn beds(
     }
 }
 
-pub(crate) fn river(course: &Course<'_>, flow: &Flow) -> (River, Vec<Fall>) {
+pub fn river(course: &Course<'_>, flow: &Flow) -> (River, Vec<Fall>) {
     let line = course.line;
     let count = line.points.len();
     let along = distances(&line.points);

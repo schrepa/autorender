@@ -605,7 +605,7 @@ fn bridge(
 }
 
 #[inline]
-pub(crate) fn distance_to_segment(point: Vec2, a: Vec2, b: Vec2) -> (f32, f32) {
+pub fn distance_to_segment(point: Vec2, a: Vec2, b: Vec2) -> (f32, f32) {
     let along = b - a;
     let length = along.length_squared();
     let t = if length > 0.0 {

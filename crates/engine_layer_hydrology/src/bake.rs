@@ -1,20 +1,19 @@
-use engine_math::collections::HashMap;
 use std::sync::Arc;
 
+use engine_math::collections::HashMap;
 use engine_math::{clamp, max, min};
+use engine_terrain::bake::Gather;
+use engine_terrain::bed::NARROWEST;
+use engine_terrain::given::GivenRiver;
+use engine_terrain::hydraulics::{Across, BESIDE, Course, Flow, river};
+use engine_terrain::hydrology::{Grid, MAP_LEVELS};
+use engine_terrain::layer::{FineRegion, LayerBake, TerrainLayer};
+use engine_terrain::rivers::Rivers;
+use engine_terrain::{Layers, Pyramid};
 use glam::Vec2;
 
-use super::{Bake, Gather};
-use crate::Pyramid;
-use crate::bed::NARROWEST;
-use crate::given::RiversLayer;
-use crate::hydraulics::{Across, BESIDE, Course, Flow, river};
-use crate::hydrology::{Grid, Hydrology, HydrologyLayer, MAP_LEVELS, bake};
-use crate::layers::{Layer, Layers};
-use crate::rivers::Rivers;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HydrologyBake;
+use crate::hydrology::{HydrologyLayer, bake};
+use crate::{HydrologyStage, RiversLayer};
 
 pub struct HydrologyWork {
     layer: HydrologyLayer,
@@ -22,54 +21,49 @@ pub struct HydrologyWork {
     landscape: Gather,
 }
 
-impl Bake for HydrologyBake {
-    type Layer = HydrologyLayer;
-    type Found = Hydrology;
-    type Work = HydrologyWork;
-
-    fn start(layer: &HydrologyLayer, pyramid: &Pyramid) -> HydrologyWork {
-        HydrologyWork {
+impl HydrologyWork {
+    pub fn new(layer: &HydrologyLayer, pyramid: &Pyramid) -> Self {
+        Self {
             layer: *layer,
             gather: Gather::new(layer.level, pyramid),
             landscape: Gather::new(layer.level + MAP_LEVELS, pyramid),
         }
     }
+}
 
+impl LayerBake for HydrologyWork {
     fn advance(
-        work: &mut HydrologyWork,
+        &mut self,
         below: &Arc<Layers>,
         pyramid: &Pyramid,
         budget: &mut u64,
-    ) -> Option<Hydrology> {
-        if !work.landscape.advance(below, pyramid, budget)
-            || !work.gather.advance(below, pyramid, budget)
+    ) -> Option<Arc<dyn TerrainLayer>> {
+        if !self.landscape.advance(below, pyramid, budget)
+            || !self.gather.advance(below, pyramid, budget)
         {
             return None;
         }
-        let HydrologyWork {
+        let Self {
             layer,
             gather,
             landscape,
-        } = work;
+        } = self;
         let grid = Grid {
             heights: &gather.heights,
             width: gather.width,
             spacing: pyramid.spacing(gather.level),
         };
-        let given: Vec<(usize, &RiversLayer)> = below
+        let given: Vec<(usize, &[GivenRiver], f32)> = below
             .layers()
             .iter()
             .enumerate()
-            .filter_map(|(index, layer)| match layer {
-                Layer::Rivers(rivers) => Some((index, rivers.as_ref())),
-                Layer::Noise(_)
-                | Layer::Heightmap(_)
-                | Layer::Stamp(_)
-                | Layer::Hydrology(_)
-                | Layer::Erosion(_)
-                | Layer::Path(_)
-                | Layer::Steps(_)
-                | Layer::Hummocks(_) => None,
+            .filter_map(|(index, entry)| {
+                let lines = entry.given_rivers()?;
+                let precision = entry
+                    .as_any()
+                    .downcast_ref::<RiversLayer>()
+                    .map_or(0.0, |rivers| rivers.precision);
+                Some((index, lines, precision))
             })
             .collect();
         let (mut hydrology, lines) = bake(
@@ -121,7 +115,7 @@ impl Bake for HydrologyBake {
             falls.extend(found);
         }
         for fall in &mut falls {
-            fall.sky = fall.path.iter().map(|&point| grid.sky(point)).collect();
+            fall.sky = fall.path.iter().map(|&point| sky(&grid, point)).collect();
         }
         let stats = &mut hydrology.stats;
         for river in &rivers {
@@ -135,7 +129,10 @@ impl Bake for HydrologyBake {
         stats.falls = falls.len();
         hydrology.rivers = Arc::new(Rivers::new(rivers));
         hydrology.falls = falls.into();
-        Some(hydrology)
+        Some(Arc::new(HydrologyStage {
+            layer: *layer,
+            baked: Some(Arc::new(hydrology)),
+        }))
     }
 }
 
@@ -144,7 +141,7 @@ const ACROSS: usize = 4;
 struct Imported<'a> {
     below: &'a Layers,
     pyramid: &'a Pyramid,
-    maps: Vec<(Vec2, Vec2, f32)>,
+    maps: Vec<FineRegion>,
 }
 
 impl<'a> Imported<'a> {
@@ -152,20 +149,7 @@ impl<'a> Imported<'a> {
         let maps = below
             .layers()
             .iter()
-            .filter_map(|layer| match layer {
-                Layer::Heightmap(map) => {
-                    let inside = Vec2::splat(map.falloff);
-                    Some((map.min + inside, map.min + map.size - inside, map.texel()))
-                }
-                Layer::Noise(_)
-                | Layer::Stamp(_)
-                | Layer::Rivers(_)
-                | Layer::Hydrology(_)
-                | Layer::Erosion(_)
-                | Layer::Path(_)
-                | Layer::Steps(_)
-                | Layer::Hummocks(_) => None,
-            })
+            .filter_map(|entry| entry.fine_region())
             .collect();
         Self {
             below,
@@ -178,8 +162,8 @@ impl<'a> Imported<'a> {
         let texel = self
             .maps
             .iter()
-            .filter(|(low, high, _)| point.cmpge(*low).all() && point.cmple(*high).all())
-            .fold(f32::INFINITY, |finest, &(_, _, texel)| min(finest, texel));
+            .filter(|region| point.cmpge(region.low).all() && point.cmple(region.high).all())
+            .fold(f32::INFINITY, |finest, region| min(finest, region.texel));
         if !texel.is_finite() {
             return None;
         }
@@ -240,19 +224,17 @@ const SKY_WAYS: [[f32; 2]; 8] = [
 const SKY_NEAREST: f32 = 16.0;
 const SKY_FARTHEST: f32 = 256.0;
 
-impl Grid<'_> {
-    fn sky(&self, point: [f32; 3]) -> f32 {
-        let mut open = 0.0;
-        for [x, z] in SKY_WAYS {
-            let mut steepest = 0.0_f32;
-            let mut reach = SKY_NEAREST;
-            while reach <= SKY_FARTHEST {
-                let rise = self.height(point[0] + x * reach, point[2] + z * reach) - point[1];
-                steepest = max(steepest, rise / reach);
-                reach *= 2.0;
-            }
-            open += 1.0 - steepest / (1.0 + steepest * steepest).sqrt();
+fn sky(grid: &Grid<'_>, point: [f32; 3]) -> f32 {
+    let mut open = 0.0;
+    for [x, z] in SKY_WAYS {
+        let mut steepest = 0.0_f32;
+        let mut reach = SKY_NEAREST;
+        while reach <= SKY_FARTHEST {
+            let rise = grid.height(point[0] + x * reach, point[2] + z * reach) - point[1];
+            steepest = max(steepest, rise / reach);
+            reach *= 2.0;
         }
-        open / SKY_WAYS.len() as f32
+        open += 1.0 - steepest / (1.0 + steepest * steepest).sqrt();
     }
+    open / SKY_WAYS.len() as f32
 }
