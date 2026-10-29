@@ -1,3 +1,9 @@
+import package::engine::math::maximum_abs;
+import package::engine::wind::{slot_sway, wind_sway};
+import package::frame::view::{camera, detail_across, stable_normalize};
+import package::meshes::declarations::{AffinePose, AffineVertexInput, GROUNDING, TemporalOutput,
+    VertexOutput, colors, poses, previous_poses, slot_fade, slot_index, slot_moved};
+
 fn pose_matrix(pose: AffinePose) -> mat4x4<f32> {
     return transpose(mat4x4<f32>(pose.row_0, pose.row_1, pose.row_2,
         vec4<f32>(0.0, 0.0, 0.0, 1.0)));

@@ -1,3 +1,5 @@
+import package::post::frame::{depth_texture, post};
+
 fn world_at(pixel: vec2<i32>) -> vec4<f32> {
     let depth = textureLoad(depth_texture, pixel, 0);
     let uv = (vec2<f32>(pixel) + 0.5) * post.size.zw;

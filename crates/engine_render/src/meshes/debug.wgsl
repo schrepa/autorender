@@ -1,3 +1,19 @@
+import package::cover::draw::{CoverOutput, cover_surface};
+import package::frame::view::{camera, eye_world, stable_normalize};
+import package::lighting::surface::SurfacePoint;
+import package::meshes::declarations::{AffineVertexInput, MOVED_SLOT, VertexOutput, slot_index};
+import package::meshes::impostor_frames::{IMPOSTOR_FADING, impostor_index};
+import package::meshes::impostors::{ImpostorInput, ImpostorOutput, impostor_card, impostor_point,
+    impostor_shaded};
+import package::meshes::surface::{extended_fragment, octahedral_coordinates, surface_point};
+import package::meshes::vertex::{ExtendedOutput, vertex_affine};
+import package::shadows::sample::{map_lookup, shadow};
+import package::sky::draw::SkyOutput;
+import package::terrain::horizons::terrain_visibility;
+import package::water::falls::{FallOutput, shade_fall};
+import package::water::surface::{WATER_SPAN_LEAST, WATER_SPAN_MOST, WaterAt, WaterOutput,
+    shade_water, water_drawn, water_eddy_froude, water_on_surface};
+
 const DEBUG_KIND_TERRAIN: u32 = 6u;
 const DEBUG_KIND_COVER: u32 = 7u;
 const DEBUG_KIND_WATER: u32 = 8u;

@@ -1,3 +1,9 @@
+import package::frame::encode::encoded;
+import package::meshes::declarations::{SceneTargets, TemporalOutput, TemporalTargets, VertexOutput};
+import package::meshes::surface::{extended_fragment, extended_temporal_output, fragment,
+    masked_depth, scene_targets, shade, shade_lit, temporal_output, temporal_targets};
+import package::meshes::vertex::{ExtendedOutput, ExtendedTemporalOutput};
+
 @fragment
 fn fs_masked_depth(input: VertexOutput) {
     masked_depth(fragment(input));
