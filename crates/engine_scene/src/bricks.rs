@@ -49,6 +49,9 @@ impl SceneDocument {
                 {
                     return Err(missing_brick(brick, format!("{list}[{index}].{field}")));
                 }
+                if let Some(terrain) = &object.terrain {
+                    terrain.check_layers(world, &format!("{list}[{index}].terrain"))?;
+                }
             }
         }
         if !self.streamed.is_empty() && !added(world, "world_streaming") {

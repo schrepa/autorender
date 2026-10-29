@@ -14,9 +14,8 @@ use engine_terrain::jobs::{
 use engine_terrain::lighting::{self, Ground};
 use engine_terrain::macro_colors;
 use engine_terrain::{
-    BiomeRules, Generator, Layer, Layers, Obstacle, PATCH_QUADS, PATCHES_PER_TILE, Pyramid,
-    SettleRegion, SettleStart, Stamp, StampOp, TILE_QUADS, Terrain, Tile, TileKey, WaterPart,
-    codec,
+    BiomeRules, Generator, Layers, Obstacle, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, SettleRegion,
+    SettleStart, Stamp, StampOp, TILE_QUADS, Terrain, Tile, TileKey, TileShading, WaterPart, codec,
 };
 use glam::Vec2;
 use serde_json::json;
@@ -79,6 +78,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         layers: baked.clone(),
         pyramid,
         rules: rules.clone(),
+        around: false,
     };
 
     let mut tiles = BTreeMap::new();
@@ -229,6 +229,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         layers: Arc::new(baked.surroundings(view.offset, (view.low, view.high), view.blend)),
         pyramid: around,
         rules: around_rules,
+        around: true,
     };
     observed.record("surroundings tiles", around.tiles(0)[0]);
     for level in (around.levels().saturating_sub(2)..around.levels()).rev() {
@@ -677,40 +678,36 @@ impl Graph {
 
 fn record_bakes(layers: &Layers, observed: &mut Observations) {
     for (index, layer) in layers.layers().iter().enumerate() {
-        let stats = match layer {
-            Layer::Hydrology(stage) => stage.baked.as_ref().map(|found| {
+        let stats = match layer.water() {
+            Some(found) => {
                 let stats = &found.stats;
-                json!({
+                Some(json!({
                     "samples": stats.samples,
                     "channel samples": stats.channel_samples,
                     "lake samples": stats.lake_samples,
                     "max area": stats.max_area,
                     "falls": stats.falls,
                     "rivers": found.rivers().len(),
-                })
+                }))
+            }
+            None => layer.stats().and_then(|stats| match layer.kind().name {
+                "erosion" => Some(json!({
+                    "samples": stats["samples"],
+                    "rounds": stats["rounds"],
+                    "deepest": stats["deepest"],
+                    "highest": stats["highest"],
+                })),
+                "path" => Some(json!({
+                    "length": stats["length"],
+                    "samples": stats["samples"],
+                    "steepest": stats["steepest"],
+                    "deepest cut": stats["deepest_cut"],
+                    "highest fill": stats["highest_fill"],
+                    "bridges": stats["bridges"],
+                    "tunnels": stats["tunnels"],
+                })),
+                _ => None,
             }),
-            Layer::Erosion(stage) => stage.baked.as_ref().map(|found| {
-                let stats = &found.stats;
-                json!({
-                    "samples": stats.samples,
-                    "rounds": stats.rounds,
-                    "deepest": stats.deepest,
-                    "highest": stats.highest,
-                })
-            }),
-            Layer::Path(stage) => stage.baked.as_ref().map(|found| {
-                let stats = &found.stats;
-                json!({
-                    "length": stats.length,
-                    "samples": stats.samples,
-                    "steepest": stats.steepest,
-                    "deepest cut": stats.deepest_cut,
-                    "highest fill": stats.highest_fill,
-                    "bridges": stats.bridges,
-                    "tunnels": stats.tunnels,
-                })
-            }),
-            _ => None,
         };
         if let Some(stats) = stats {
             observed.record(format!("bake {index}"), stats);
@@ -723,6 +720,7 @@ struct Recipe {
     layers: Arc<Layers>,
     pyramid: Pyramid,
     rules: Arc<BiomeRules>,
+    around: bool,
 }
 
 impl Recipe {
@@ -755,9 +753,10 @@ impl Recipe {
                     .map_err(|error| error.to_string())?,
             )
         };
+        let materials = !TileShading::shades(key.level, self.around);
         let mut generator = Generator::new(layers, &self.pyramid, key)
             .with_surface(self.rules.clone())
-            .with_materials(true);
+            .with_materials(materials);
         let mut unlimited = u64::MAX;
         let in_place = generator
             .advance(&mut unlimited)

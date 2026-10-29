@@ -25,6 +25,7 @@ pub struct SceneLoad {
 
 impl SceneLoad {
     pub fn new(source: &str) -> Result<Self> {
+        engine_worker::register_standard_layers();
         let document = SceneDocument::from_json(source)?;
         let entries: Vec<(String, SceneFileKind, Stage)> = document
             .files()

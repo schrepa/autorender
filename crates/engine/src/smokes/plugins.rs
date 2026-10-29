@@ -51,7 +51,7 @@ fn core() -> Value {
 fn ground() -> Value {
     json!({
         "id": "ground",
-        "terrain": { "origin": [-128, 0, -128], "tiles": [2, 2], "spacing": 1, "layers": [{ "noise": { "seed": 3, "height": 8, "wavelength": 120 } }] },
+        "terrain": { "origin": [-128, 0, -128], "tiles": [2, 2], "spacing": 1, "layers": [{ "type": "noise", "seed": 3, "height": 8, "wavelength": 120 }] },
     })
 }
 

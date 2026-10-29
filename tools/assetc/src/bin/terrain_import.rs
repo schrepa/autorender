@@ -1200,25 +1200,28 @@ fn scene(
         })
         .collect();
     let noise = |wavelength: f64, seed: u32, octaves: u32| json!({"noise": {"wavelength": wavelength, "seed": seed, "octaves": octaves}});
-    let scaled = |mask: Value, by: f64| json!({"multiply": [mask, {"constant": by}]});
+    let scaled = |mask: Value, by: f64| json!({"mul": [mask, {"constant": by}]});
     let remap =
-        |mask: Value, from: f64, to: f64| json!({"remap": {"mask": mask, "from": from, "to": to}});
+        |mask: Value, from: f64, to: f64| json!({"remap": {"of": mask, "from": from, "to": to}});
+    let ramp =
+        |map: &str, from: f64, to: f64| json!({"ramp": {"map": map, "from": from, "to": to}});
     let layer = |material: &str, mask: Value| json!({"material": material, "mask": mask});
     let biomes = json!([{
         "id": "alpine",
         "layers": [
             layer("grass", json!({"constant": 1.0})),
-            layer("dry_grass", remap(json!({"add": [scaled(noise(160.0, 11, 3), 0.6), scaled(noise(28.0, 12, 2), 0.25), scaled(json!({"height": [snow - 900.0, snow - 300.0]}), 0.3)]}), 0.5, 0.72)),
-            layer("dirt", remap(json!({"add": [scaled(noise(60.0, 13, 2), 0.45), scaled(json!({"slope": [18.0, 32.0]}), 0.5)]}), 0.6, 0.78)),
-            layer("wet_grass", remap(json!({"add": [{"wetness": [10.0, 13.5]}, scaled(noise(24.0, 41, 2), 0.35), {"constant": -0.15}]}), 0.35, 0.6)),
-            layer("scree", remap(json!({"add": [scaled(json!({"slope": [26.0, 36.0]}), 0.7), scaled(json!({"height": [snow - 700.0, snow - 200.0]}), 0.4), scaled(noise(40.0, 15, 2), 0.3)]}), 0.6, 0.8)),
-            layer("riverbed", remap(json!({"add": [{"multiply": [{"flow": [5.5, 5.7]}, {"invert": {"lake": [0.5, 2.0]}}]}, scaled(noise(12.0, 42, 2), 0.3)]}), 0.55, 0.75)),
-            layer("sand", json!({"multiply": [remap(json!({"add": [{"invert": {"height": [shore - 1.0, shore + 4.0]}}, scaled(noise(30.0, 51, 2), 0.3)]}), 0.5, 0.7), {"invert": {"slope": [16.0, 26.0]}}]})),
-            layer("rock", remap(json!({"add": [{"slope": [34.0, 46.0]}, scaled(noise(70.0, 1, 2), 0.3)]}), 0.55, 0.75)),
-            layer("snow", json!({"multiply": [remap(json!({"add": [{"height": [snow - 250.0, snow + 250.0]}, scaled(noise(80.0, 3, 2), 0.35), {"constant": -0.15}]}), 0.4, 0.6), {"invert": {"slope": [38.0, 52.0]}}]})),
+            layer("dry_grass", remap(json!({"add": [scaled(noise(160.0, 11, 3), 0.6), scaled(noise(28.0, 12, 2), 0.25), scaled(ramp("height", snow - 900.0, snow - 300.0), 0.3)]}), 0.5, 0.72)),
+            layer("dirt", remap(json!({"add": [scaled(noise(60.0, 13, 2), 0.45), scaled(ramp("slope", 18.0, 32.0), 0.5)]}), 0.6, 0.78)),
+            layer("wet_grass", remap(json!({"add": [ramp("wetness", 10.0, 13.5), scaled(noise(24.0, 41, 2), 0.35), {"constant": -0.15}]}), 0.35, 0.6)),
+            layer("scree", remap(json!({"add": [scaled(ramp("slope", 26.0, 36.0), 0.7), scaled(ramp("height", snow - 700.0, snow - 200.0), 0.4), scaled(noise(40.0, 15, 2), 0.3)]}), 0.6, 0.8)),
+            layer("riverbed", remap(json!({"add": [{"mul": [ramp("flow", 5.5, 5.7), {"invert": ramp("lake", 0.5, 2.0)}]}, scaled(noise(12.0, 42, 2), 0.3)]}), 0.55, 0.75)),
+            layer("sand", json!({"mul": [remap(json!({"add": [{"invert": ramp("height", shore - 1.0, shore + 4.0)}, scaled(noise(30.0, 51, 2), 0.3)]}), 0.5, 0.7), {"invert": ramp("slope", 16.0, 26.0)}]})),
+            layer("rock", remap(json!({"add": [ramp("slope", 34.0, 46.0), scaled(noise(70.0, 1, 2), 0.3)]}), 0.55, 0.75)),
+            layer("snow", json!({"mul": [remap(json!({"add": [ramp("height", snow - 250.0, snow + 250.0), scaled(noise(80.0, 3, 2), 0.35), {"constant": -0.15}]}), 0.4, 0.6), {"invert": ramp("slope", 38.0, 52.0)}]})),
         ],
     }]);
     let mut heightmap = json!({
+        "type": "heightmap",
         "uri": format!("{id}/height.r16"),
         "width": samples,
         "height": samples,
@@ -1236,15 +1239,14 @@ fn scene(
         "atmosphere": {"preset": "golden_hour"},
     });
     let tiles = (size / 256.0) as u32;
-    heightmap["type"] = json!("heightmap");
     let mut layers = vec![heightmap];
     if options.detail > 0.0 {
         layers.push(json!({"type": "noise", "seed": 7, "height": options.detail, "offset": -0.5 * options.detail, "wavelength": 260.0, "ridges": 0.35, "warp": 0.25, "erosion": 0.6, "smoothing": 0.7, "valleys": 0.0, "roughness": 0.55, "blend": "add"}));
     }
     if let Some(rivers) = rivers {
-        let mut layer = json!(rivers);
-        layer["type"] = json!("rivers");
-        layers.push(layer);
+        let mut given = json!(rivers);
+        given["type"] = json!("rivers");
+        layers.push(given);
     }
     layers.push(json!({"type": "hydrology", "level": 4}));
     json!({

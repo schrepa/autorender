@@ -38,8 +38,8 @@ fn fixture() -> Value {
         "entities": [{"id": "ground", "terrain": {
             "origin": [-512, 0, -512], "tiles": [4, 4], "spacing": 1,
             "layers": [
-                {"noise": {"seed": 3, "height": 140, "wavelength": 600}},
-                {"stamp": {"center": [512, 512], "radius": 40, "falloff": 60, "op": {"flatten": 30}}},
+                {"type": "noise", "seed": 3, "height": 140, "wavelength": 600},
+                {"type": "stamp", "center": [512, 512], "radius": 40, "falloff": 60, "op": {"flatten": 30}},
             ],
             "surface": {
                 "materials": [
@@ -48,8 +48,8 @@ fn fixture() -> Value {
                     {"id": "snow", "color": [0.85, 0.87, 0.9], "roughness": 0.5},
                 ],
                 "biomes": [
-                    {"id": "lowland", "layers": [{"material": "meadow"}, {"material": "rock", "mask": {"slope": [25, 35]}}]},
-                    {"id": "summit", "fitness": {"height": [110, 130]}, "layers": [{"material": "snow"}]},
+                    {"id": "lowland", "layers": [{"material": "meadow"}, {"material": "rock", "mask": {"ramp": {"map": "slope", "from": 25, "to": 35}}}]},
+                    {"id": "summit", "fitness": {"ramp": {"map": "height", "from": 110, "to": 130}}, "layers": [{"material": "snow"}]},
                 ],
             },
         }}],

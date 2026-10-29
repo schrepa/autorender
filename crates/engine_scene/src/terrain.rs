@@ -1,22 +1,22 @@
 use engine_settings::ErrorCode;
 use std::sync::Arc;
 
-use engine_core::bevy_ecs::world::EntityWorldMut;
-use engine_core::glam::{Vec2, Vec3};
+use engine_core::bevy_ecs::world::{EntityWorldMut, World};
+use engine_core::glam::Vec3;
 use engine_core::{Error, Expected, MaterialHandle, MeshHandle};
 use engine_settings::{Rule, Setting};
+use engine_terrain::layer::{self, LayerFiles, TerrainLayer, TerrainLayerKinds};
 use engine_terrain::{
-    Biome, Biomes, Blend, Cover, ErosionLayer, ErosionStage, HeightImage, HeightmapLayer,
-    HummocksLayer, HydrologyLayer, HydrologyStage, Layer, Layers, MAX_CREDIT, NoiseLayer,
-    PathLayer, PathStage, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
-    PlacementLod, PlacementPart, Pyramid, RiversLayer, Stamp, StepsLayer, SurfaceMaterial,
-    SurfaceProjection, Surroundings, Terrain, TerrainSurface,
+    Biome, Biomes, Cover, Layers, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
+    PlacementLod, PlacementPart, Pyramid, SurfaceMaterial, SurfaceProjection, Surroundings, Terrain,
+    TerrainSurface,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::components::{Placement, SceneComponent};
 use crate::instance::Lookups;
-use crate::validation::unknown;
+use crate::validation::{identifier, unknown};
 use crate::{SceneDocument, SceneFiles, SceneMaterial, SceneMesh, files::valid_uri};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -37,7 +37,8 @@ pub struct SceneTerrain {
     )]
     pub spacing: Option<f32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub layers: Vec<SceneTerrainLayer>,
+    #[cfg_attr(feature = "schema", schemars(schema_with = "layer_list_schema"))]
+    pub layers: Vec<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<SceneTerrainSurface>,
     #[serde(default = "yes", skip_serializing_if = "is_true")]
@@ -350,73 +351,115 @@ impl PreparedTerrain {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum SceneTerrainLayer {
-    Noise(NoiseLayer),
-    Stamp(Stamp),
-    Heightmap(SceneHeightmap),
-    Rivers(RiversLayer),
-    Hydrology(HydrologyLayer),
-    Erosion(ErosionLayer),
-    Path(PathLayer),
-    Steps(StepsLayer),
-    Hummocks(HummocksLayer),
-}
+#[cfg(feature = "schema")]
+const LAYER_DEFINITION: &str = "SceneTerrainLayer";
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(transform = state_heightmap_rules)
-)]
-#[serde(deny_unknown_fields)]
-pub struct SceneHeightmap {
-    pub uri: String,
-    #[cfg_attr(feature = "schema", schemars(range(min = 2, max = MAX_HEIGHTMAP)))]
-    pub width: u32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 2, max = MAX_HEIGHTMAP)))]
-    pub height: u32,
-    pub min: [f32; 2],
-    pub size: [f32; 2],
-    pub low: f32,
-    pub high: f32,
-    #[serde(default)]
-    pub falloff: f32,
-    #[serde(default)]
-    pub blend: Blend,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(length(max = MAX_CREDIT)))]
-    pub source: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(length(max = MAX_CREDIT)))]
-    pub attribution: Option<String>,
+#[cfg(feature = "schema")]
+fn layer_list_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let mut kinds = layer::layer_kinds();
+    kinds.sort_by_key(|kind| kind.name);
+    let definitions = generator.definitions_mut();
+    let variants: Vec<Value> = kinds
+        .into_iter()
+        .map(|kind| {
+            let definition = kind_definition(kind, definitions);
+            serde_json::json!({
+                "allOf": [{ "$ref": format!("#/$defs/{definition}") }],
+                "properties": {
+                    (layer::TYPE_KEY): { "const": kind.name },
+                    (layer::ID_KEY): { "type": "string" },
+                },
+                "required": [layer::TYPE_KEY],
+                "unevaluatedProperties": false,
+            })
+        })
+        .collect();
+    definitions.insert(LAYER_DEFINITION.to_owned(), serde_json::json!({ "oneOf": variants }));
+    schemars::json_schema!({
+        "type": "array",
+        "items": { "$ref": format!("#/$defs/{LAYER_DEFINITION}") },
+    })
 }
 
 #[cfg(feature = "schema")]
-fn state_heightmap_rules(schema: &mut schemars::Schema) {
-    for field in ["min", "size", "low", "high", "falloff"] {
-        let rule = engine_terrain::HeightmapLayer::rule_of(field).expect("heightmap_rule_declared");
-        engine_settings::state(schema, field, rule);
+fn kind_definition(
+    kind: &layer::LayerKind,
+    definitions: &mut serde_json::Map<String, Value>,
+) -> String {
+    let mut schema = serde_json::to_value((kind.schema)()).expect("schema_serializes");
+    let Some(fields) = schema.as_object_mut() else {
+        definitions.insert(kind.name.to_owned(), schema);
+        return kind.name.to_owned();
+    };
+    fields.remove("$schema");
+    if let Some(Value::Object(nested)) = fields.remove("$defs") {
+        for (name, definition) in nested {
+            definitions.entry(name).or_insert(definition);
+        }
+    }
+    fields.remove("additionalProperties");
+    let title = fields
+        .remove("title")
+        .and_then(|title| title.as_str().map(str::to_owned))
+        .unwrap_or_else(|| kind.name.to_owned());
+    definitions.insert(title.clone(), schema);
+    title
+}
+
+struct LayerBuffers<'a>(Option<&'a SceneFiles>);
+
+impl LayerFiles for LayerBuffers<'_> {
+    fn buffer(&self, uri: &str, path: &str) -> Result<Option<Arc<[u8]>>, Error> {
+        self.0
+            .map(|files| files.buffer(uri, path).map(Arc::<[u8]>::from))
+            .transpose()
     }
 }
 
-const MAX_HEIGHTMAP: u32 = 16_384;
+fn layer_files(item: &Value) -> Vec<String> {
+    let Some(object) = item.as_object() else {
+        return Vec::new();
+    };
+    let Some(kind) = object
+        .get(layer::TYPE_KEY)
+        .and_then(Value::as_str)
+        .and_then(layer::layer_kind)
+    else {
+        return Vec::new();
+    };
+    let mut settings = object.clone();
+    settings.remove(layer::TYPE_KEY);
+    settings.remove(layer::ID_KEY);
+    (kind.files)(&Value::Object(settings))
+}
+
+fn file_field(item: &Value, uri: &str, at: &str) -> String {
+    item.as_object()
+        .and_then(|object| object.iter().find(|(_, value)| value.as_str() == Some(uri)))
+        .map_or_else(|| at.to_owned(), |(field, _)| format!("{at}.{field}"))
+}
 
 impl SceneTerrain {
-    pub(crate) fn files(&self) -> impl Iterator<Item = &String> {
-        self.layers.iter().filter_map(|layer| match layer {
-            SceneTerrainLayer::Heightmap(map) => Some(&map.uri),
-            SceneTerrainLayer::Noise(_)
-            | SceneTerrainLayer::Stamp(_)
-            | SceneTerrainLayer::Rivers(_)
-            | SceneTerrainLayer::Hydrology(_)
-            | SceneTerrainLayer::Erosion(_)
-            | SceneTerrainLayer::Path(_)
-            | SceneTerrainLayer::Steps(_)
-            | SceneTerrainLayer::Hummocks(_) => None,
-        })
+    pub(crate) fn files(&self) -> Vec<String> {
+        self.layers.iter().flat_map(layer_files).collect()
+    }
+
+    pub(crate) fn check_layers(&self, world: &World, path: &str) -> Result<(), Error> {
+        let offered = world.get_resource::<TerrainLayerKinds>();
+        for (index, item) in self.layers.iter().enumerate() {
+            let Some(name) = item.get(layer::TYPE_KEY).and_then(Value::as_str) else {
+                continue;
+            };
+            if offered.is_none_or(|kinds| kinds.get(name).is_none()) {
+                return Err(Error::new(
+                    ErrorCode::MissingPlugin,
+                    format!("{path}.layers[{index}].{}", layer::TYPE_KEY),
+                )
+                .expected(Expected::Present)
+                .got(name));
+            }
+        }
+        Ok(())
     }
 
     #[expect(clippy::type_complexity, reason = "the surface and its indices")]
@@ -625,7 +668,6 @@ impl SceneTerrain {
         if self.layers.is_empty() {
             return Err(invalid("layers").expected(Expected::NonEmpty));
         }
-        let source = self.layers(path, files)?;
         let (Some(tiles), Some(spacing)) = (self.tiles, self.spacing) else {
             let field = if self.tiles.is_none() {
                 "tiles"
@@ -636,6 +678,7 @@ impl SceneTerrain {
         };
         let pyramid = Pyramid::new(tiles, spacing)
             .map_err(|error| error.coded(ErrorCode::InvalidTerrain).within(path))?;
+        let source = self.layers(path, files, &pyramid)?;
         Ok(Terrain {
             origin,
             pyramid,
@@ -648,37 +691,42 @@ impl SceneTerrain {
         })
     }
 
-    fn layers(&self, path: &str, files: Option<&SceneFiles>) -> Result<Layers, Error> {
-        let layers = self
-            .layers
-            .iter()
-            .enumerate()
-            .map(|(index, layer)| {
-                let at = format!("{path}.layers[{index}]");
-                Ok(match layer {
-                    SceneTerrainLayer::Noise(noise) => Layer::Noise(*noise),
-                    SceneTerrainLayer::Stamp(stamp) => Layer::Stamp(*stamp),
-                    SceneTerrainLayer::Heightmap(map) => {
-                        Layer::Heightmap(map.prepare(&format!("{at}.heightmap"), files)?)
-                    }
-                    SceneTerrainLayer::Rivers(layer) => Layer::Rivers(Arc::new(layer.clone())),
-                    SceneTerrainLayer::Hydrology(layer) => Layer::Hydrology(HydrologyStage {
-                        layer: *layer,
-                        baked: None,
-                    }),
-                    SceneTerrainLayer::Erosion(layer) => Layer::Erosion(ErosionStage {
-                        layer: *layer,
-                        baked: None,
-                    }),
-                    SceneTerrainLayer::Path(layer) => Layer::Path(PathStage {
-                        layer: Arc::new(layer.clone()),
-                        baked: None,
-                    }),
-                    SceneTerrainLayer::Steps(steps) => Layer::Steps(*steps),
-                    SceneTerrainLayer::Hummocks(hummocks) => Layer::Hummocks(*hummocks),
-                })
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
+    fn layers(
+        &self,
+        path: &str,
+        files: Option<&SceneFiles>,
+        pyramid: &Pyramid,
+    ) -> Result<Layers, Error> {
+        let buffers = LayerBuffers(files);
+        let mut layers: Vec<Arc<dyn TerrainLayer>> = Vec::with_capacity(self.layers.len());
+        let mut ids: Vec<&str> = Vec::new();
+        let mut named: Vec<(String, Arc<Layers>)> = Vec::new();
+        for (index, authored) in self.layers.iter().enumerate() {
+            let at = format!("{path}.layers[{index}]");
+            let mut item = authored.clone();
+            crate::rules::resolve_values(&mut item, &named, pyramid, &at)?;
+            for uri in layer_files(&item) {
+                valid_uri(&uri, &file_field(&item, &uri, &at))?;
+            }
+            layers.push(layer::layer_from_json(&item, &buffers, &at)?);
+            let Some(id) = authored.get(layer::ID_KEY) else {
+                continue;
+            };
+            let id_path = format!("{at}.{}", layer::ID_KEY);
+            let id = id.as_str().ok_or_else(|| {
+                Error::new(ErrorCode::InvalidType, &id_path).expected(Expected::String)
+            })?;
+            identifier(id, &id_path)?;
+            if ids.contains(&id) {
+                return Err(Error::new(ErrorCode::DuplicateId, id_path)
+                    .expected(Expected::Unique)
+                    .got(id));
+            }
+            ids.push(id);
+            if let Ok(through) = Layers::new(layers.clone()) {
+                named.push((id.to_owned(), Arc::new(through)));
+            }
+        }
         Layers::new(layers).map_err(|error| error.coded(ErrorCode::InvalidTerrain).within(path))
     }
 
@@ -751,29 +799,7 @@ impl SceneTerrain {
             .layers
             .layers()
             .iter()
-            .map(|layer| match layer {
-                Layer::Noise(noise) => SceneTerrainLayer::Noise(*noise),
-                Layer::Stamp(stamp) => SceneTerrainLayer::Stamp(*stamp),
-                Layer::Rivers(layer) => SceneTerrainLayer::Rivers(layer.as_ref().clone()),
-                Layer::Hydrology(stage) => SceneTerrainLayer::Hydrology(stage.layer),
-                Layer::Erosion(stage) => SceneTerrainLayer::Erosion(stage.layer),
-                Layer::Path(stage) => SceneTerrainLayer::Path(stage.layer.as_ref().clone()),
-                Layer::Steps(steps) => SceneTerrainLayer::Steps(*steps),
-                Layer::Hummocks(hummocks) => SceneTerrainLayer::Hummocks(*hummocks),
-                Layer::Heightmap(map) => SceneTerrainLayer::Heightmap(SceneHeightmap {
-                    uri: map.uri.clone().unwrap_or_default(),
-                    width: map.image.width(),
-                    height: map.image.height(),
-                    min: map.min.to_array(),
-                    size: map.size.to_array(),
-                    low: map.low,
-                    high: map.high,
-                    falloff: map.falloff,
-                    blend: map.blend,
-                    source: map.source.clone(),
-                    attribution: map.attribution.clone(),
-                }),
-            })
+            .map(|kept| layer::layer_json(&**kept))
             .collect();
         Self {
             origin: terrain.origin.to_array(),
@@ -787,60 +813,6 @@ impl SceneTerrain {
                 blend: surroundings.blend,
             }),
         }
-    }
-}
-
-impl SceneHeightmap {
-    fn prepare(&self, path: &str, files: Option<&SceneFiles>) -> Result<HeightmapLayer, Error> {
-        valid_uri(&self.uri, &format!("{path}.uri"))?;
-        for (field, text) in [("source", &self.source), ("attribution", &self.attribution)] {
-            let characters = text.as_ref().map_or(0, |text| text.chars().count());
-            if characters > MAX_CREDIT {
-                return Err(
-                    Error::new(ErrorCode::InvalidTerrain, format!("{path}.{field}"))
-                        .at_most(MAX_CREDIT as u64)
-                        .got(characters),
-                );
-            }
-        }
-        for (field, samples) in [("width", self.width), ("height", self.height)] {
-            if !(2..=MAX_HEIGHTMAP).contains(&samples) {
-                return Err(
-                    Error::new(ErrorCode::InvalidTerrain, format!("{path}.{field}"))
-                        .range(2.0, f64::from(MAX_HEIGHTMAP))
-                        .got(samples),
-                );
-            }
-        }
-        let image = match files {
-            Some(files) => {
-                let bytes = files.buffer(&self.uri, &format!("{path}.uri"))?;
-                HeightImage::from_le_bytes(self.width, self.height, bytes).ok_or_else(|| {
-                    let wanted = f64::from(self.width) * f64::from(self.height) * 2.0;
-                    Error::new(ErrorCode::InvalidTerrain, format!("{path}.uri"))
-                        .range(wanted, wanted)
-                        .got(bytes.len())
-                })?
-            }
-            None => HeightImage::new(
-                self.width,
-                self.height,
-                vec![0; self.width as usize * self.height as usize],
-            )
-            .expect("dimensions_checked"),
-        };
-        Ok(HeightmapLayer {
-            image: Arc::new(image),
-            min: Vec2::from_array(self.min),
-            size: Vec2::from_array(self.size),
-            low: self.low,
-            high: self.high,
-            falloff: self.falloff,
-            blend: self.blend,
-            uri: Some(self.uri.clone()),
-            source: self.source.clone(),
-            attribution: self.attribution.clone(),
-        })
     }
 }
 
