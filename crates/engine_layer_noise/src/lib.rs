@@ -5,8 +5,14 @@
 
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
+mod layer;
+mod tables;
+mod tile;
+
+pub use layer::{Noise, NoiseLayer};
+
 use engine_core::{Brick, Bricks};
-use engine_terrain::layer::{AddTerrainLayers, LayerKind};
+use engine_terrain::layer::{AddTerrainLayers, LayerKind, no_files};
 
 pub struct LayerNoiseBrick;
 
@@ -16,4 +22,14 @@ impl Brick for LayerNoiseBrick {
     }
 }
 
-pub static KINDS: &[&LayerKind] = &[];
+pub static NOISE_KIND: LayerKind = LayerKind {
+    name: "noise",
+    source: SOURCE,
+    from_json: layer::from_json,
+    read: layer::read,
+    files: no_files,
+    #[cfg(feature = "schema")]
+    schema: layer::schema,
+};
+
+pub static KINDS: &[&LayerKind] = &[&NOISE_KIND];
