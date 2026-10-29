@@ -1,3 +1,11 @@
+import package::terrain::draw::{TerrainGroundRise, TerrainGroundSamples, terrain_ground_rise,
+    terrain_ground_samples};
+import package::terrain::surface::terrain_level_height;
+import package::terrain::vertex::{TERRAIN_GRID, terrain};
+import package::water::surface::{NO_WATER_BLOCK, NO_WATER_SURFACE, WATER_GRAVITY, WATER_HELD,
+    WATER_LIVE_BLOCK, WATER_TILE_PATCHES, WATER_TURBULENT_SPEED, WaterCell, water_cell, water_info,
+    water_read, water_texel};
+
 struct SimSetup {
     counts: vec4<u32>,
     square: vec4<u32>,

@@ -1,3 +1,10 @@
+import package::engine::math::unit;
+import package::terrain::ground::{GroundTerrain, LevelTile, NOT_RESIDENT, directory, level_tile,
+    tile_height, true_height};
+import package::terrain::variety::{COVER_CLUMP_HEIGHT, COVER_LEAF_STEPS, COVER_LEAVES, CoverLaw,
+    cover_clump, cover_clump_lean, cover_clumped, cover_growth, cover_share, cover_tuft,
+    macro_tint};
+
 struct Grow {
     origin: vec4<f32>,
     eye: vec4<f32>,
@@ -42,9 +49,7 @@ struct Counts {
     straight: atomic<u32>,
 }
 
-@group(0) @binding(0) var heights: texture_2d_array<f32>;
 @group(0) @binding(1) var control: texture_2d_array<u32>;
-@group(0) @binding(2) var<storage, read> directory: array<u32>;
 const PALETTE_ENTRIES: u32 = 113u;
 @group(0) @binding(3) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
 @group(0) @binding(4) var<storage, read> covers: array<CoverSpec>;

@@ -1,6 +1,10 @@
-@group(2) @binding(24) var water_particles: texture_2d<f32>;
+import package::frame::view::{detail_across, detail_level, material_detail};
+import package::water::footprint::{WaterFootprint, water_spread};
+import package::water::particles::PARTICLE_SMALLEST;
+import package::water::surface::{WATER_BREAK_THINNEST, WATER_GRADIENT_RANGE, WATER_GRAVITY, water};
+
+@group(2) @binding(24) var water_particles: texture_2d_array<f32>;
 @group(2) @binding(25) var water_particles_sampler: sampler;
-@group(2) @binding(26) var water_particles_spread: texture_2d<f32>;
 @group(2) @binding(49) var water_foam_drawn: texture_2d<f32>;
 
 const WATER_FOAM_TEARING: vec2<f32> = vec2<f32>(0.7, 1.3);
@@ -80,8 +84,8 @@ fn water_splatted(world: vec3<f32>, footprint: WaterFootprint) -> WaterSplatted 
     let at = world.xz / side;
     let dx = footprint.dx / side;
     let dy = footprint.dy / side;
-    let splatted = textureSampleGrad(water_particles, water_particles_sampler, at, dx, dy);
-    let product = textureSampleGrad(water_particles_spread, water_particles_sampler, at, dx,
+    let splatted = textureSampleGrad(water_particles, water_particles_sampler, at, 0u, dx, dy);
+    let product = textureSampleGrad(water_particles, water_particles_sampler, at, 1u, dx,
         dy).x;
     let hidden = vec3<f32>(splatted.zw, product) - water_spread(splatted.xy);
     held.shown = 1.0 - picked.blend;

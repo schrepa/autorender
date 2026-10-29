@@ -20,8 +20,13 @@ fn main() {
         files: &[
             "src/water_bursts.wgsl",
             "src/water_sim.wgsl",
+            "src/water_sim_shared.wgsl",
             "src/meshes/water_setup.wgsl",
+            "src/meshes/water.wgsl",
             "src/meshes/terrain.wgsl",
+            "src/meshes/terrain_surface.wgsl",
+            "src/meshes/terrain_vertex.wgsl",
+            "src/meshes/surface.wgsl",
         ],
         crates: Some(&[]),
     }]);

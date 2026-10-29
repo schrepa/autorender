@@ -1,3 +1,23 @@
+import package::engine::color::luminance;
+import package::frame::encode::{encoded, stored};
+import package::frame::view::{PI, camera, detail_across, detail_level, eye_world, lighting,
+    stable_normalize};
+import package::lighting::brdf::{distribution, environment_brdf, fresnel, visibility};
+import package::lighting::sun::sun_visibility;
+import package::lighting::surface::{BODY_WATER, Shaded, SurfacePoint, finish};
+import package::meshes::declarations::{SceneTargets, TemporalTargets};
+import package::meshes::surface::{scene_targets, temporal_targets};
+import package::sky::air::{atmospheric_cover, sky_average};
+import package::terrain::subdivision::TerrainSubdivision;
+import package::terrain::surface::{surface_vertex, terrain_directory, terrain_level_height,
+    terrain_surface_leaves};
+import package::terrain::vertex::{TERRAIN_GRID, terrain, terrain_view};
+import package::water::flow::{water_detail, water_stirring};
+import package::water::foam::{water_blocking, water_contact, water_foam, water_foam_layers,
+    water_layers, water_splatted};
+import package::water::footprint::{water_footprint, water_roughness, water_turning};
+import package::water::refraction::refraction_sampler;
+
 @group(1) @binding(50) var water_surface: texture_2d_array<f32>;
 @group(1) @binding(51) var water_info: texture_2d_array<u32>;
 @group(1) @binding(60) var<uniform> water_tree: TerrainSubdivision;

@@ -139,7 +139,6 @@ fn needs(start: &SettleStart) -> Capacity {
 
 impl WaterSettle {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Water);
         Self {
             kernels: Kernels::new(device),
             buffers: None,
@@ -212,9 +211,8 @@ impl WaterSettle {
         &mut self,
         device: &wgpu::Device,
         queue: &crate::gpu_calls::Queue,
-        (shader, terrain): (&wgpu::ShaderModule, &TerrainPass),
+        terrain: &TerrainPass,
     ) {
-        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Water);
         self.clears.clear();
         self.copies.clear();
         self.raising = 0;
@@ -243,7 +241,7 @@ impl WaterSettle {
                 self.clears.extend(clears);
             }
         }
-        self.raise((device, queue), (shader, terrain));
+        self.raise((device, queue), terrain);
         let stepping: u64 = self
             .squares
             .iter()
@@ -267,7 +265,7 @@ impl WaterSettle {
     fn raise(
         &mut self,
         (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
-        (shader, terrain): (&wgpu::ShaderModule, &TerrainPass),
+        terrain: &TerrainPass,
     ) {
         let Some(buffers) = self.buffers.as_ref() else {
             return;
@@ -280,7 +278,7 @@ impl WaterSettle {
         let Some((slot, _)) = found else {
             return;
         };
-        self.setup.ensure(device, shader);
+        self.setup.ensure(device);
         let Some(square) = self.squares[slot].as_mut() else {
             return;
         };
@@ -655,7 +653,6 @@ impl WaterSettle {
     }
 
     pub(crate) fn encode(&self, encoder: &mut wgpu::CommandEncoder) {
-        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Water);
         let (Some(pipelines), Some(buffers)) = (self.kernels.created(), &self.buffers) else {
             return;
         };

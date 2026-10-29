@@ -1,3 +1,12 @@
+import package::frame::encode::encoded;
+import package::frame::view::{PI, camera, lighting, stable_normalize};
+import package::lighting::surface::{BODY_THIN, SurfacePoint, finish};
+import package::lights::shade::local_light;
+import package::meshes::declarations::{SceneTargets, TemporalTargets};
+import package::meshes::surface::{scene_targets, temporal_targets, widened};
+import package::terrain::variety::{COVER_FAR_SIDE, COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION,
+    COVER_ROUGHNESS};
+
 struct CoverBlade {
     root: vec3<f32>,
     size: u32,

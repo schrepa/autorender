@@ -25,6 +25,7 @@ use crate::water_sim::LONGEST_FRAME;
 const TEXEL_SPLIT: u32 = 16;
 const HANDOVER_PIXELS: f32 = 1.0;
 const TEXTURE_LEVELS: u32 = 6;
+const TEXTURE_LAYERS: u32 = 2;
 const WINDOW_MARGIN: u32 = MATERIAL_ANISOTROPY as u32 / HANDOVER_PIXELS as u32 + 1;
 const FOAM_PIXELS: u32 = 4;
 const WAVE_TEXELS: u32 = 16;
@@ -80,8 +81,6 @@ struct ParticleGrid {
     splat: wgpu::Buffer,
     texture: wgpu::Texture,
     view: wgpu::TextureView,
-    spread: wgpu::Texture,
-    spread_view: wgpu::TextureView,
     groups: Vec<wgpu::BindGroup>,
     held: Option<[i64; 2]>,
     read: u32,
@@ -226,21 +225,15 @@ impl WaterParticles {
         queue.write_buffer(&grid.frame, 0, bytemuck::bytes_of(&frame));
     }
 
-    pub(crate) fn ensure_pipelines(
-        &mut self,
-        device: &wgpu::Device,
-        shader: &wgpu::ShaderModule,
-        (camera, water): (&GroupLayout, &GroupLayout),
-    ) {
+    pub(crate) fn ensure_pipelines(&mut self, device: &wgpu::Device) {
         if self.grid.is_none() || self.pipelines.is_some() {
             return;
         }
-        let layout = crate::pipelines::pipeline_layout(
+        let layout = crate::pipelines::layout_of(
             device,
             &crate::pipeline_layouts::WATER_PARTICLE_PIPELINES,
-            &[camera, water, &self.layout],
         );
-        let entry = |entry| crate::pipelines::compute_entry(device, &layout, shader, entry);
+        let entry = |entry| crate::pipelines::compute_entry(device, &layout, entry);
         self.pipelines = Some(ParticlePipelines {
             begin: entry(meshes::particles_begin),
             gather: entry(meshes::particles_gather),
@@ -379,10 +372,6 @@ impl WaterParticles {
         self.grid.as_ref().map(|grid| &grid.view)
     }
 
-    pub(crate) fn spread_view(&self) -> Option<&wgpu::TextureView> {
-        self.grid.as_ref().map(|grid| &grid.spread_view)
-    }
-
     pub(crate) fn sampler(&self) -> &wgpu::Sampler {
         &self.sampler
     }
@@ -439,7 +428,7 @@ impl WaterParticles {
             .iter()
             .map(|buffer| buffer.size())
             .sum::<u64>()
-                + (texels(&grid.texture) + texels(&grid.spread)) * TEXEL_BYTES
+                + u64::from(TEXTURE_LAYERS) * texels(&grid.texture) * TEXEL_BYTES
         })
     }
 }
@@ -495,32 +484,33 @@ impl ParticleGrid {
             area * SPLAT_BYTES,
             wgpu::BufferUsages::empty(),
         );
-        let textures = |label| {
-            let texture = crate::targets::texture_2d(
-                device,
-                label,
-                (texels, texels),
-                1,
-                TEXTURE_LEVELS + 1,
-                wgpu::TextureFormat::Rgba16Float,
-                wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            );
-            let levels: Vec<wgpu::TextureView> = (0..=TEXTURE_LEVELS)
+        let texture = crate::targets::texture_2d(
+            device,
+            "engine/water-particles-splatted",
+            (texels, texels),
+            TEXTURE_LAYERS,
+            TEXTURE_LEVELS + 1,
+            wgpu::TextureFormat::Rgba16Float,
+            wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let layer_levels = |layer| -> Vec<wgpu::TextureView> {
+            (0..=TEXTURE_LEVELS)
                 .map(|level| {
                     texture.create_view(&wgpu::TextureViewDescriptor {
                         label: Some("engine/water-particles-level"),
+                        dimension: Some(wgpu::TextureViewDimension::D2),
                         base_mip_level: level,
                         mip_level_count: Some(1),
+                        base_array_layer: layer,
+                        array_layer_count: Some(1),
                         ..Default::default()
                     })
                 })
-                .collect();
-            (texture, levels)
+                .collect()
         };
-        let (texture, levels) = textures("engine/water-particles-splatted");
-        let (spread, spread_levels) = textures("engine/water-particles-spread");
+        let levels = layer_levels(0);
+        let spread_levels = layer_levels(1);
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let spread_view = spread.create_view(&wgpu::TextureViewDescriptor::default());
         let groups = (0..=TEXTURE_LEVELS as usize)
             .map(|level| {
                 let finer = if level == 0 { 1 } else { level - 1 };
@@ -566,8 +556,6 @@ impl ParticleGrid {
             splat,
             texture,
             view,
-            spread,
-            spread_view,
             groups,
             held: None,
             read: 0,

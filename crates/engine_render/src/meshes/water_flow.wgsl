@@ -1,3 +1,7 @@
+import package::engine::math::{pcg, unit};
+import package::frame::view::PI;
+import package::water::surface::{WATER_BREAK_THINNEST, WATER_GRAVITY, WATER_TURBULENT_SPEED};
+
 const WATER_STEEPEST: f32 = 0.44879895;
 
 fn water_stirring(speed: f32, eddy: f32, turbulence: f32) -> f32 {

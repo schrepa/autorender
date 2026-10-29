@@ -36,7 +36,6 @@ pub(crate) struct Live<'a> {
 }
 
 pub(crate) struct LiveGround<'a> {
-    pub(crate) layout: &'a GroupLayout,
     pub(crate) group: &'a wgpu::BindGroup,
     pub(crate) uniform: u32,
     pub(crate) terrain: u64,
@@ -55,10 +54,9 @@ impl LiveGround<'_> {
 }
 
 pub(crate) struct Setup {
-    empty_layout: GroupLayout,
     empty: wgpu::BindGroup,
     pub(crate) layout: GroupLayout,
-    terrain: Option<GroupLayout>,
+    grounded: bool,
     pipelines: Option<[wgpu::ComputePipeline; 3]>,
     ground: Option<(wgpu::BindGroup, u32)>,
 }
@@ -74,10 +72,9 @@ impl Setup {
             &[],
         );
         Self {
-            empty_layout,
             empty,
             layout: crate::pipelines::layout(device, &WATER_SETUP),
-            terrain: None,
+            grounded: false,
             pipelines: None,
             ground: None,
         }
@@ -85,26 +82,20 @@ impl Setup {
 
     pub(crate) fn hold(&mut self, ground: Option<&LiveGround<'_>>) {
         self.ground = ground.map(|ground| {
-            if self.terrain.is_none() {
-                self.terrain = Some(ground.layout.clone());
-            }
+            self.grounded = true;
             (ground.group.clone(), ground.uniform)
         });
     }
 
-    pub(crate) fn ensure(&mut self, device: &wgpu::Device, shader: &wgpu::ShaderModule) {
-        if self.pipelines.is_some() {
+    pub(crate) fn ensure(&mut self, device: &wgpu::Device) {
+        if self.pipelines.is_some() || !self.grounded {
             return;
         }
-        let Some(terrain) = self.terrain.as_ref() else {
-            return;
-        };
-        let layout = crate::pipelines::pipeline_layout(
+        let layout = crate::pipelines::layout_of(
             device,
             &crate::pipeline_layouts::WATER_SETUP_PIPELINES,
-            &[&self.empty_layout, terrain, &self.layout],
         );
-        let entry = |entry| crate::pipelines::compute_entry(device, &layout, shader, entry);
+        let entry = |entry| crate::pipelines::compute_entry(device, &layout, entry);
         self.pipelines = Some([
             entry(meshes::setup_blocks),
             entry(meshes::setup_ring),
@@ -463,8 +454,8 @@ impl WaterSim {
         self.touches
     }
 
-    pub(crate) fn ensure_setup(&mut self, device: &wgpu::Device, shader: &wgpu::ShaderModule) {
-        self.setup.ensure(device, shader);
+    pub(crate) fn ensure_setup(&mut self, device: &wgpu::Device) {
+        self.setup.ensure(device);
     }
 
     pub(crate) fn capacity_bytes(&self) -> u64 {
