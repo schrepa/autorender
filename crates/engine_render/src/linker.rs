@@ -73,10 +73,18 @@ impl Linker {
         linker
     }
 
-    pub fn add_generated(&mut self, path: String, brick: &'static str, source: String) {
+    pub fn add_generated(&mut self, path: String, brick: &'static str, source: String) -> bool {
+        if self
+            .sources
+            .iter()
+            .any(|known| known.path == path && known.brick == brick && known.text == source)
+        {
+            return false;
+        }
         self.sources.retain(|known| known.path != path);
         self.composed.retain(|key, _| key.module != path);
         self.add(path, brick, Cow::Owned(source));
+        true
     }
 
     fn add(&mut self, path: String, brick: &'static str, text: Cow<'static, str>) {
@@ -140,14 +148,54 @@ impl Linker {
         entry: Entry,
         layout: &ResolvedLayout,
     ) -> Result<Arc<Composed>, Error> {
-        let key = self.key(entry, layout);
+        self.compose_named(entry.module, entry.name, layout)
+    }
+
+    pub fn compose_named(
+        &mut self,
+        module: &str,
+        entry: &str,
+        layout: &ResolvedLayout,
+    ) -> Result<Arc<Composed>, Error> {
+        let key = ComposeKey {
+            module: module.to_owned(),
+            entry: entry.to_owned(),
+            layout: layout.label.to_owned(),
+            features: self.features_hash,
+        };
+        let path = format!("$.shaders.{module}.{entry}");
+        self.link(key, Some(entry), path, layout)
+    }
+
+    pub fn compose_module(
+        &mut self,
+        module: &str,
+        layout: &ResolvedLayout,
+    ) -> Result<Arc<Composed>, Error> {
+        let key = ComposeKey {
+            module: module.to_owned(),
+            entry: String::new(),
+            layout: layout.label.to_owned(),
+            features: self.features_hash,
+        };
+        let path = format!("$.shaders.{module}");
+        self.link(key, None, path, layout)
+    }
+
+    fn link(
+        &mut self,
+        key: ComposeKey,
+        keep: Option<&str>,
+        path: String,
+        layout: &ResolvedLayout,
+    ) -> Result<Arc<Composed>, Error> {
         if let Some(composed) = self.composed.get(&key) {
             return Ok(Arc::clone(composed));
         }
-        let path = format!("$.shaders.{}.{}", entry.module, entry.name);
-        if !self.sources.iter().any(|source| source.path == entry.module) {
+        let module = key.module.clone();
+        if !self.sources.iter().any(|source| source.path == module) {
             return Err(Error::new(ErrorCode::UnknownModule, path.clone())
-                .got(entry.module)
+                .got(&module)
                 .variants(self.paths().map(str::to_owned).collect::<Vec<_>>()));
         }
         if let Some(source) = self.sources.iter().find(|source| !source.hex_floats.is_empty()) {
@@ -181,12 +229,12 @@ impl Linker {
             sourcemap: false,
             mangler: wesl::ManglerKind::Escape,
             mangle_main: false,
-            keep: Some(vec![entry.name.to_owned()]),
-            keep_main: false,
+            keep: keep.map(|name| vec![name.to_owned()]),
+            keep_main: keep.is_none(),
             features,
             ..Default::default()
         };
-        let main = module_path(entry.module).map_err(|error| failed(&error))?;
+        let main = module_path(&module).map_err(|error| failed(&error))?;
         let mut result =
             wesl::compile(&main, &options, &resolver).map_err(|error| failed(&error))?;
         let order = |module: &wesl::syntax::ModulePath| {
@@ -215,7 +263,7 @@ impl Linker {
         let mut overrides = Vec::new();
         for source in &self.sources {
             for name in &source.overrides {
-                let mangled = if source.path == entry.module {
+                let mangled = if source.path == module {
                     name.clone()
                 } else {
                     let module = module_path(&source.path).map_err(|error| failed(&error))?;
@@ -237,6 +285,31 @@ impl Linker {
         self.composed.insert(key, Arc::clone(&composed));
         Ok(composed)
     }
+}
+
+pub fn unmangle(name: &str) -> Option<(String, String)> {
+    if !name.starts_with("package_") {
+        return None;
+    }
+    let (path, item) = wesl::mangler::EscapeMangler.unmangle(name)?;
+    let path = path.to_string();
+    let path = path.strip_prefix("package::")?;
+    Some((path.to_owned(), item))
+}
+
+pub fn declared_bindings(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter_map(|line| {
+            let (_, name, rest) = declared_binding(line)?;
+            let after = match rest.strip_prefix("var<") {
+                Some(spaced) => rest.len() - spaced.len() + spaced.find('>')? + 1,
+                None => "var".len(),
+            };
+            let at = after + rest.get(after..)?.find(name.as_str())?;
+            let start = line.len() - rest.len() + at;
+            line.get(start..start + name.len())
+        })
+        .collect()
 }
 
 fn module_path(path: &str) -> Result<wesl::syntax::ModulePath, String> {

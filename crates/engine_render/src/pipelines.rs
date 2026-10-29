@@ -17,7 +17,11 @@ use std::{
     },
 };
 
-use crate::bindings::{Format, Kind, Sample, Sampling, Stages, Table, View};
+use crate::bindings::{
+    Format, GroupRef, Kind, ResolvedBinding, ResolvedLayout, Sample, Sampling, SharedGroups,
+    Stages, Table, View,
+};
+use crate::linker::{Composed, Linker};
 use crate::pipeline_layouts::{PIPELINE_LAYOUTS, PipelineLayout, StageLimits};
 
 thread_local! {
@@ -37,18 +41,18 @@ fn take_created() -> u32 {
 struct Key {
     label: String,
     layout: String,
-    module: String,
     stages: KeyStages,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 enum KeyStages {
-    Compute { entry: String },
+    Compute { module: String, entry: String },
     Render(Box<RenderKey>),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct RenderKey {
+    vertex_module: String,
     vertex: String,
     vertex_constants: Vec<(String, f64)>,
     buffers: Vec<Option<BufferKey>>,
@@ -67,6 +71,7 @@ struct BufferKey {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct FragmentKey {
+    module: String,
     entry: String,
     constants: Vec<(String, f64)>,
     targets: Vec<Option<wgpu::ColorTargetState>>,
@@ -86,6 +91,18 @@ fn named(constants: &[(String, f64)]) -> Vec<(&str, f64)> {
         .collect()
 }
 
+#[derive(Clone, Debug)]
+struct Linked {
+    module: wgpu::ShaderModule,
+    constants: Vec<(String, f64)>,
+}
+
+#[derive(Clone, Debug)]
+struct Modules {
+    first: Linked,
+    fragment: Option<Linked>,
+}
+
 impl Key {
     fn text(&self) -> String {
         serde_json::to_string(self).expect("pipeline_key_serializes")
@@ -95,17 +112,17 @@ impl Key {
         &self,
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
-        module: &wgpu::ShaderModule,
+        modules: &Modules,
     ) -> Created {
         count(1);
         let render = match &self.stages {
-            KeyStages::Compute { entry } => {
+            KeyStages::Compute { entry, .. } => {
                 return Created::Compute(create_compute(
                     device,
                     &wgpu::ComputePipelineDescriptor {
                         label: Some(self.label.as_str()),
                         layout: Some(layout),
-                        module,
+                        module: &modules.first.module,
                         entry_point: Some(entry.as_str()),
                         compilation_options: Default::default(),
                         cache: None,
@@ -114,7 +131,7 @@ impl Key {
             }
             KeyStages::Render(render) => render,
         };
-        let vertex_constants = named(&render.vertex_constants);
+        let vertex_constants = named(&modules.first.constants);
         let buffers: Vec<Option<wgpu::VertexBufferLayout<'_>>> = render
             .buffers
             .iter()
@@ -126,7 +143,7 @@ impl Key {
                 })
             })
             .collect();
-        let fragment_constants = render
+        let fragment_constants = modules
             .fragment
             .as_ref()
             .map(|fragment| named(&fragment.constants))
@@ -137,7 +154,7 @@ impl Key {
                 label: Some(self.label.as_str()),
                 layout: Some(layout),
                 vertex: wgpu::VertexState {
-                    module,
+                    module: &modules.first.module,
                     entry_point: Some(render.vertex.as_str()),
                     compilation_options: wgpu::PipelineCompilationOptions {
                         constants: &vertex_constants,
@@ -154,8 +171,9 @@ impl Key {
                 fragment: render
                     .fragment
                     .as_ref()
-                    .map(|fragment| wgpu::FragmentState {
-                        module,
+                    .zip(modules.fragment.as_ref())
+                    .map(|(fragment, linked)| wgpu::FragmentState {
+                        module: &linked.module,
                         entry_point: Some(fragment.entry.as_str()),
                         compilation_options: wgpu::PipelineCompilationOptions {
                             constants: &fragment_constants,
@@ -169,10 +187,7 @@ impl Key {
         ))
     }
 
-    fn creatable(&self, device: &wgpu::Device) -> bool {
-        let Some(declared) = declared(&self.layout) else {
-            return false;
-        };
+    fn creatable(&self, device: &wgpu::Device, declared: &PipelineLayout) -> bool {
         if !fits(&declared.limits, &device.limits()) {
             return false;
         }
@@ -221,13 +236,6 @@ enum Created {
     Compute(wgpu::ComputePipeline),
 }
 
-fn declared(label: &str) -> Option<&'static PipelineLayout> {
-    PIPELINE_LAYOUTS
-        .iter()
-        .find(|(_, declared)| declared.label == label)
-        .map(|&(_, declared)| declared)
-}
-
 fn fits(limits: &StageLimits, device: &wgpu::Limits) -> bool {
     limits.bind_groups <= device.max_bind_groups
         && limits.uniform_buffers <= device.max_uniform_buffers_per_shader_stage
@@ -239,17 +247,40 @@ fn fits(limits: &StageLimits, device: &wgpu::Limits) -> bool {
         && limits.dynamic_storage_buffers <= device.max_dynamic_storage_buffers_per_pipeline_layout
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum GroupKey {
+    Own(&'static str),
+    Shared(&'static str, &'static [&'static str]),
+}
+
+impl GroupKey {
+    fn of(group: GroupRef) -> Self {
+        match group {
+            GroupRef::Own(table) => GroupKey::Own(table.label),
+            GroupRef::Shared { group, without } => GroupKey::Shared(group, without),
+        }
+    }
+}
+
 struct Registry {
     device: wgpu::Device,
     canvas: Option<wgpu::TextureFormat>,
+    linker: Linker,
+    shared: SharedGroups,
+    features: Vec<(&'static str, bool)>,
+    declared: BTreeMap<&'static str, PipelineLayout>,
+    resolved: BTreeMap<&'static str, Result<Arc<ResolvedLayout>, Error>>,
+    groups: BTreeMap<GroupKey, GroupLayout>,
     layouts: BTreeMap<&'static str, wgpu::PipelineLayout>,
     labels: HashMap<wgpu::PipelineLayout, &'static str>,
-    modules: BTreeMap<&'static str, wgpu::ShaderModule>,
+    modules: BTreeMap<u64, wgpu::ShaderModule>,
+    unlinked: Option<wgpu::ShaderModule>,
     render: BTreeMap<String, wgpu::RenderPipeline>,
     compute: BTreeMap<String, wgpu::ComputePipeline>,
     listed: Option<BTreeSet<String>>,
     up_front: u32,
     unlisted: u32,
+    errors: Vec<Error>,
 }
 
 impl Registry {
@@ -257,14 +288,22 @@ impl Registry {
         Self {
             device: device.clone(),
             canvas: None,
+            linker: Linker::new(crate::shaders::MODULES),
+            shared: SharedGroups::default(),
+            features: Vec::new(),
+            declared: BTreeMap::new(),
+            resolved: BTreeMap::new(),
+            groups: BTreeMap::new(),
             layouts: BTreeMap::new(),
             labels: HashMap::default(),
             modules: BTreeMap::new(),
+            unlinked: None,
             render: BTreeMap::new(),
             compute: BTreeMap::new(),
             listed: None,
             up_front: 0,
             unlisted: 0,
+            errors: Vec::new(),
         }
     }
 
@@ -275,44 +314,176 @@ impl Registry {
             .expect("layout_from_pipeline_layout")
     }
 
-    fn keep_layout(&mut self, label: &'static str, layout: wgpu::PipelineLayout) {
-        self.labels.insert(layout.clone(), label);
-        self.layouts.insert(label, layout);
+    fn declared(&self, label: &str) -> Option<PipelineLayout> {
+        self.declared.get(label).copied().or_else(|| {
+            PIPELINE_LAYOUTS
+                .iter()
+                .find(|(_, declared)| declared.label == label)
+                .map(|&(_, declared)| *declared)
+        })
     }
 
-    fn declared_layout(&mut self, label: &str) -> Option<wgpu::PipelineLayout> {
-        let declared = declared(label)?;
-        if let Some(layout) = self.layouts.get(declared.label) {
-            return Some(layout.clone());
+    fn resolved(&mut self, label: &str) -> Result<Arc<ResolvedLayout>, Error> {
+        if let Some(resolved) = self.resolved.get(label) {
+            return resolved.clone();
         }
+        let Some(declared) = self.declared(label) else {
+            return Err(failed("$.layouts")
+                .expected(Expected::Present)
+                .got(label));
+        };
+        let resolved = ResolvedLayout::resolve(declared.label, declared.groups, &self.shared)
+            .and_then(|resolved| resolved.check(&declared.limits).map(|()| resolved))
+            .map(Arc::new);
+        if let Err(error) = &resolved {
+            self.errors.push(error.clone());
+        }
+        self.resolved.insert(declared.label, resolved.clone());
+        resolved
+    }
+
+    fn group_layout(&mut self, group: GroupRef) -> GroupLayout {
+        let key = GroupKey::of(group);
+        if let Some(found) = self.groups.get(&key) {
+            return found.clone();
+        }
+        let made = match group {
+            GroupRef::Own(table) => layout(&self.device, table),
+            GroupRef::Shared { group, without } => {
+                let bindings = self
+                    .shared
+                    .view(group, without)
+                    .map(|binding| ResolvedBinding {
+                        group: 0,
+                        number: binding.number,
+                        name: binding.decl.name,
+                        kind: binding.decl.kind,
+                        stages: binding.decl.stages,
+                        owner: binding.brick,
+                    })
+                    .collect();
+                group_layout(&self.device, key, &format!("engine/{group}-group"), bindings)
+            }
+        };
+        self.groups.insert(key, made.clone());
+        made
+    }
+
+    fn layout_of(&mut self, declared: &PipelineLayout) -> wgpu::PipelineLayout {
+        self.declared.insert(declared.label, *declared);
+        if let Some(layout) = self.layouts.get(declared.label) {
+            return layout.clone();
+        }
+        let _ = self.resolved(declared.label);
         let groups: Vec<GroupLayout> = declared
             .groups
             .iter()
-            .map(|&table| layout(&self.device, table))
+            .map(|&group| self.group_layout(group))
             .collect();
         let layouts: Vec<Option<&wgpu::BindGroupLayout>> =
             groups.iter().map(|group| Some(&group.layout)).collect();
         let layout = create_layout(&self.device, declared.label, &layouts);
-        self.keep_layout(declared.label, layout.clone());
-        Some(layout)
+        self.labels.insert(layout.clone(), declared.label);
+        self.layouts.insert(declared.label, layout.clone());
+        layout
     }
 
-    fn module(&mut self, name: &str) -> Option<wgpu::ShaderModule> {
-        let &(name, source) = crate::shaders::MODULES
-            .iter()
-            .find(|(module, _)| *module == name)?;
+    fn shader_module(&mut self, composed: &Composed) -> wgpu::ShaderModule {
         let device = &self.device;
-        Some(
-            self.modules
-                .entry(name)
-                .or_insert_with(|| {
-                    device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: Some(name),
-                        source: wgpu::ShaderSource::Wgsl(source.into()),
-                    })
+        self.modules
+            .entry(composed.hash)
+            .or_insert_with(|| {
+                device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some(&format!("{}::{}", composed.key.module, composed.key.entry)),
+                    source: wgpu::ShaderSource::Wgsl(composed.text.as_str().into()),
                 })
-                .clone(),
-        )
+            })
+            .clone()
+    }
+
+    fn unlinked(&mut self) -> wgpu::ShaderModule {
+        let device = &self.device;
+        self.unlinked
+            .get_or_insert_with(|| {
+                device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("engine/unlinked"),
+                    source: wgpu::ShaderSource::Wgsl("".into()),
+                })
+            })
+            .clone()
+    }
+
+    fn try_linked(
+        &mut self,
+        layout: &str,
+        module: &str,
+        entry: &str,
+        constants: &[(String, f64)],
+    ) -> Result<Linked, Error> {
+        let resolved = self.resolved(layout)?;
+        let composed = self.linker.compose_named(module, entry, &resolved)?;
+        let values = named(constants);
+        let constants = composed
+            .constants(&values)
+            .into_iter()
+            .map(|(name, value)| (name.to_owned(), value))
+            .collect();
+        Ok(Linked {
+            module: self.shader_module(&composed),
+            constants,
+        })
+    }
+
+    fn try_modules(&mut self, key: &Key) -> Result<Modules, Error> {
+        match &key.stages {
+            KeyStages::Compute { module, entry } => Ok(Modules {
+                first: self.try_linked(&key.layout, module, entry, &[])?,
+                fragment: None,
+            }),
+            KeyStages::Render(render) => {
+                let first = self.try_linked(
+                    &key.layout,
+                    &render.vertex_module,
+                    &render.vertex,
+                    &render.vertex_constants,
+                )?;
+                let fragment = match &render.fragment {
+                    Some(fragment) => Some(self.try_linked(
+                        &key.layout,
+                        &fragment.module,
+                        &fragment.entry,
+                        &fragment.constants,
+                    )?),
+                    None => None,
+                };
+                Ok(Modules { first, fragment })
+            }
+        }
+    }
+
+    fn modules_for(&mut self, key: &Key) -> Modules {
+        match self.try_modules(key) {
+            Ok(modules) => modules,
+            Err(error) => {
+                if !self.errors.contains(&error) {
+                    self.errors.push(error);
+                }
+                let unlinked = Linked {
+                    module: self.unlinked(),
+                    constants: Vec::new(),
+                };
+                let fragment = match &key.stages {
+                    KeyStages::Render(render) if render.fragment.is_some() => {
+                        Some(unlinked.clone())
+                    }
+                    KeyStages::Render(_) | KeyStages::Compute { .. } => None,
+                };
+                Modules {
+                    first: unlinked,
+                    fragment,
+                }
+            }
+        }
     }
 
     fn creating(&mut self, text: &str) {
@@ -327,6 +498,11 @@ impl Registry {
 
     fn keys(&self) -> BTreeSet<&String> {
         self.render.keys().chain(self.compute.keys()).collect()
+    }
+
+    fn forget_pipelines(&mut self) {
+        self.render.clear();
+        self.compute.clear();
     }
 }
 
@@ -346,13 +522,73 @@ fn with_registry<R>(device: &wgpu::Device, act: impl FnOnce(&mut Registry) -> R)
     })
 }
 
+pub(crate) fn install(
+    device: &wgpu::Device,
+    shared: &SharedGroups,
+    features: Vec<(&'static str, bool)>,
+) {
+    with_registry(device, |registry| {
+        let mut changed = false;
+        if registry.shared != *shared {
+            registry.shared = shared.clone();
+            registry.resolved.clear();
+            registry.groups.clear();
+            registry.layouts.clear();
+            changed = true;
+        }
+        if registry.features != features {
+            registry.features.clone_from(&features);
+            changed = true;
+        }
+        registry.linker.set_features(features);
+        if changed {
+            registry.forget_pipelines();
+        }
+    });
+}
+
+pub(crate) fn add_generated(
+    device: &wgpu::Device,
+    path: String,
+    brick: &'static str,
+    source: String,
+) {
+    with_registry(device, |registry| {
+        let named = format!("\"{path}\"");
+        if registry.linker.add_generated(path, brick, source) {
+            registry.render.retain(|text, _| !text.contains(&named));
+            registry.compute.retain(|text, _| !text.contains(&named));
+        }
+    });
+}
+
+pub(crate) fn layout_of(device: &wgpu::Device, declared: &PipelineLayout) -> wgpu::PipelineLayout {
+    with_registry(device, |registry| registry.layout_of(declared))
+}
+
+pub(crate) fn shared_layout(
+    device: &wgpu::Device,
+    group: &'static str,
+    without: &'static [&'static str],
+) -> GroupLayout {
+    with_registry(device, |registry| {
+        registry.group_layout(GroupRef::Shared { group, without })
+    })
+}
+
 const LIST: &[u8; 4] = b"PIPL";
 
-fn read_list(record: &[u8]) -> Result<(Option<wgpu::TextureFormat>, Vec<Key>), Error> {
+type Listed = (Option<wgpu::TextureFormat>, Vec<Key>, Vec<Composed>);
+
+fn read_list(record: &[u8]) -> Result<Listed, Error> {
     let broken = |expected: Expected| failed("$.pipelines").expected(expected);
-    let mut rest = record
+    let rest = record
         .strip_prefix(LIST)
         .ok_or_else(|| broken(Expected::Matching))?;
+    let (count, mut rest) = rest
+        .split_first_chunk::<4>()
+        .ok_or_else(|| broken(Expected::Present))?;
+    let count = u32::from_le_bytes(*count) as usize;
     let mut texts = Vec::new();
     while let Some((length, after)) = rest.split_first_chunk::<4>() {
         let length = u32::from_le_bytes(*length) as usize;
@@ -362,9 +598,13 @@ fn read_list(record: &[u8]) -> Result<(Option<wgpu::TextureFormat>, Vec<Key>), E
         texts.push(std::str::from_utf8(text).map_err(|_| broken(Expected::Utf8))?);
         rest = &after[length..];
     }
-    let Some((canvas, keys)) = texts.split_first().filter(|_| rest.is_empty()) else {
+    let Some((canvas, entries)) = texts
+        .split_first()
+        .filter(|(_, entries)| rest.is_empty() && entries.len() >= count)
+    else {
         return Err(broken(Expected::Present));
     };
+    let (keys, composed) = entries.split_at(count);
     let unreadable = |text: &str| broken(Expected::Json).got(text);
     let canvas = match *canvas {
         "" => None,
@@ -374,10 +614,14 @@ fn read_list(record: &[u8]) -> Result<(Option<wgpu::TextureFormat>, Vec<Key>), E
         .iter()
         .map(|text| serde_json::from_str(text).map_err(|_| unreadable(text)))
         .collect::<Result<_, Error>>()?;
-    Ok((canvas, keys))
+    let composed = composed
+        .iter()
+        .map(|text| serde_json::from_str(text).map_err(|_| unreadable(text)))
+        .collect::<Result<_, Error>>()?;
+    Ok((canvas, keys, composed))
 }
 
-type Wanted = (String, Key, wgpu::PipelineLayout, wgpu::ShaderModule);
+type Wanted = (String, Key, wgpu::PipelineLayout, Modules);
 
 #[cfg(not(target_arch = "wasm32"))]
 fn create_all(device: &wgpu::Device, wanted: &[Wanted]) -> Vec<(String, Created)> {
@@ -390,9 +634,9 @@ fn create_all(device: &wgpu::Device, wanted: &[Wanted]) -> Vec<(String, Created)
                 scope.spawn(move || {
                     let made: Vec<(String, Created)> = part
                         .iter()
-                        .filter_map(|(text, key, layout, module)| {
+                        .filter_map(|(text, key, layout, modules)| {
                             let errors = crate::gpu_calls::validation_scope(device);
-                            let created = key.create(device, layout, module);
+                            let created = key.create(device, layout, modules);
                             let failed = crate::platform::ready(errors.pop()).flatten();
                             failed.is_none().then(|| (text.clone(), created))
                         })
@@ -419,7 +663,7 @@ fn create_all(device: &wgpu::Device, wanted: &[Wanted]) -> Vec<(String, Created)
     let errors = crate::gpu_calls::validation_scope(device);
     let made = wanted
         .iter()
-        .map(|(text, key, layout, module)| (text.clone(), key.create(device, layout, module)))
+        .map(|(text, key, layout, modules)| (text.clone(), key.create(device, layout, modules)))
         .collect();
     wasm_bindgen_futures::spawn_local(async move {
         if let Some(error) = errors.pop().await {
@@ -499,8 +743,18 @@ impl PipelineCounts {
                 .canvas
                 .map(|canvas| serde_json::to_string(&canvas).expect("formats_serialize"))
                 .unwrap_or_default();
+            let keys = registry.keys();
+            let composed: Vec<String> = registry
+                .linker
+                .composed()
+                .map(|composed| serde_json::to_string(composed).expect("composed_serializes"))
+                .collect();
             let mut record = LIST.to_vec();
-            for text in std::iter::once(&canvas).chain(registry.keys()) {
+            record.extend((keys.len() as u32).to_le_bytes());
+            for text in std::iter::once(&canvas)
+                .chain(keys)
+                .chain(composed.iter())
+            {
                 record.extend((text.len() as u32).to_le_bytes());
                 record.extend(text.as_bytes());
             }
@@ -509,9 +763,10 @@ impl PipelineCounts {
     }
 
     pub(crate) fn create_listed(&self, record: &[u8]) -> Result<u32, Error> {
-        let (listed_canvas, keys) = read_list(record)?;
+        let (listed_canvas, keys, composed) = read_list(record)?;
         let device = &self.device;
         with_registry(device, |registry| {
+            registry.linker.preload(composed);
             let keys: Vec<(String, Key)> = keys
                 .into_iter()
                 .map(|key| match (listed_canvas, registry.canvas) {
@@ -524,19 +779,20 @@ impl PipelineCounts {
             registry.unlisted = 0;
             let mut wanted = Vec::new();
             for (text, key) in keys {
-                if registry.render.contains_key(&text)
-                    || registry.compute.contains_key(&text)
-                    || !key.creatable(device)
-                {
+                if registry.render.contains_key(&text) || registry.compute.contains_key(&text) {
                     continue;
                 }
-                let (Some(layout), Some(module)) = (
-                    registry.declared_layout(&key.layout),
-                    registry.module(&key.module),
-                ) else {
+                let Some(declared) = registry.declared(&key.layout) else {
                     continue;
                 };
-                wanted.push((text, key, layout, module));
+                if !key.creatable(device, &declared) {
+                    continue;
+                }
+                let layout = registry.layout_of(&declared);
+                let Ok(modules) = registry.try_modules(&key) else {
+                    continue;
+                };
+                wanted.push((text, key, layout, modules));
             }
             let mut created = 0;
             for (text, made) in create_all(device, &wanted) {
@@ -559,6 +815,10 @@ impl PipelineCounts {
         with_registry(&self.device, |registry| {
             (registry.up_front, registry.unlisted)
         })
+    }
+
+    pub(crate) fn take_errors(&self) -> Vec<Error> {
+        with_registry(&self.device, |registry| std::mem::take(&mut registry.errors))
     }
 
     pub(crate) fn frame_submitted(&mut self, queue: &crate::gpu_calls::Queue) -> u32 {
@@ -661,30 +921,63 @@ fn shader_stages(stages: Stages) -> wgpu::ShaderStages {
     shader
 }
 
-pub(crate) fn layout(device: &wgpu::Device, table: &'static Table) -> GroupLayout {
-    let entries: Vec<wgpu::BindGroupLayoutEntry> = table
-        .bindings
+fn group_layout(
+    device: &wgpu::Device,
+    key: GroupKey,
+    label: &str,
+    bindings: Vec<ResolvedBinding>,
+) -> GroupLayout {
+    let entries: Vec<wgpu::BindGroupLayoutEntry> = bindings
         .iter()
         .map(|binding| wgpu::BindGroupLayoutEntry {
-            binding: binding.binding,
+            binding: binding.number,
             visibility: shader_stages(binding.stages),
             ty: binding_type(binding.kind),
             count: None,
         })
         .collect();
     GroupLayout {
-        table,
+        key,
+        bindings,
         layout: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some(table.label),
+            label: Some(label),
             entries: &entries,
         }),
     }
 }
 
+pub(crate) fn layout(device: &wgpu::Device, table: &'static Table) -> GroupLayout {
+    let bindings = table
+        .bindings
+        .iter()
+        .zip(0..)
+        .map(|(binding, number)| ResolvedBinding {
+            group: 0,
+            number,
+            name: binding.name,
+            kind: binding.kind,
+            stages: binding.stages,
+            owner: table.label,
+        })
+        .collect();
+    group_layout(device, GroupKey::Own(table.label), table.label, bindings)
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct GroupLayout {
-    table: &'static Table,
+    key: GroupKey,
+    bindings: Vec<ResolvedBinding>,
     layout: wgpu::BindGroupLayout,
+}
+
+impl GroupLayout {
+    fn number(&self, name: &str) -> u32 {
+        self.bindings
+            .iter()
+            .find(|binding| binding.name == name)
+            .map(|binding| binding.number)
+            .unwrap_or_else(|| panic!("binding_unknown {:?} {name}", self.key))
+    }
 }
 
 impl std::ops::Deref for GroupLayout {
@@ -705,20 +998,11 @@ pub(crate) fn pipeline_layout(
             && groups
                 .iter()
                 .zip(declared.groups)
-                .all(|(group, table)| group.table.label == table.label),
+                .all(|(group, &declared)| group.key == GroupKey::of(declared)),
         "groups_as_declared {}",
         declared.label
     );
-    with_registry(device, |registry| {
-        if let Some(layout) = registry.layouts.get(declared.label) {
-            return layout.clone();
-        }
-        let layouts: Vec<Option<&wgpu::BindGroupLayout>> =
-            groups.iter().map(|group| Some(&group.layout)).collect();
-        let layout = create_layout(device, declared.label, &layouts);
-        registry.keep_layout(declared.label, layout.clone());
-        layout
-    })
+    layout_of(device, declared)
 }
 
 pub(crate) struct Family {
@@ -729,10 +1013,13 @@ pub(crate) struct Family {
 impl Family {
     pub(crate) fn new(
         device: &wgpu::Device,
-        declared: &'static crate::pipeline_layouts::PipelineLayout,
+        declared: &PipelineLayout,
         more: &[&GroupLayout],
     ) -> Self {
-        let group = layout(device, declared.groups[0]);
+        let group = match declared.groups[0] {
+            GroupRef::Own(table) => layout(device, table),
+            GroupRef::Shared { group, without } => shared_layout(device, group, without),
+        };
         let groups: Vec<&GroupLayout> = std::iter::once(&group)
             .chain(more.iter().copied())
             .collect();
@@ -747,14 +1034,7 @@ impl Family {
         resources: &[(&str, wgpu::BindingResource<'_>)],
         fillers: &Fillers,
     ) -> wgpu::BindGroup {
-        filled_group(
-            device,
-            label,
-            self.group.table,
-            &self.group,
-            resources,
-            fillers,
-        )
+        fill(device, label, &self.group, resources, fillers)
     }
 }
 
@@ -890,7 +1170,11 @@ pub(crate) fn group(
     layout: &GroupLayout,
     resources: &[(&str, wgpu::BindingResource<'_>)],
 ) -> wgpu::BindGroup {
-    debug_assert_eq!(layout.table.label, table.label, "layout_matches {label}");
+    debug_assert_eq!(
+        layout.key,
+        GroupKey::Own(table.label),
+        "layout_matches {label}"
+    );
     debug_assert_eq!(
         resources.len(),
         table.bindings.len(),
@@ -900,7 +1184,7 @@ pub(crate) fn group(
     let entries: Vec<wgpu::BindGroupEntry<'_>> = resources
         .iter()
         .map(|(name, resource)| wgpu::BindGroupEntry {
-            binding: table.binding(name).binding,
+            binding: layout.number(name),
             resource: resource.clone(),
         })
         .collect();
@@ -915,12 +1199,36 @@ pub(crate) fn filled_group(
     resources: &[(&str, wgpu::BindingResource<'_>)],
     fillers: &Fillers,
 ) -> wgpu::BindGroup {
-    debug_assert_eq!(layout.table.label, table.label, "layout_matches {label}");
+    debug_assert_eq!(
+        layout.key,
+        GroupKey::Own(table.label),
+        "layout_matches {label}"
+    );
+    fill(device, label, layout, resources, fillers)
+}
+
+pub(crate) fn shared_group(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &GroupLayout,
+    resources: &[(&str, wgpu::BindingResource<'_>)],
+    fillers: &Fillers,
+) -> wgpu::BindGroup {
+    fill(device, label, layout, resources, fillers)
+}
+
+fn fill(
+    device: &wgpu::Device,
+    label: &str,
+    layout: &GroupLayout,
+    resources: &[(&str, wgpu::BindingResource<'_>)],
+    fillers: &Fillers,
+) -> wgpu::BindGroup {
     for (name, _) in resources {
-        table.binding(name);
+        layout.number(name);
     }
     let mut written = 0;
-    let entries: Vec<wgpu::BindGroupEntry<'_>> = table
+    let entries: Vec<wgpu::BindGroupEntry<'_>> = layout
         .bindings
         .iter()
         .map(|binding| {
@@ -934,7 +1242,7 @@ pub(crate) fn filled_group(
                     filler
                 });
             wgpu::BindGroupEntry {
-                binding: binding.binding,
+                binding: binding.number,
                 resource,
             }
         })
@@ -960,15 +1268,14 @@ fn bind_group(
 pub(crate) fn compute_entry(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
-    module: &wgpu::ShaderModule,
     entry: Entry,
 ) -> wgpu::ComputePipeline {
     with_registry(device, |registry| {
         let key = Key {
             label: entry.name.to_owned(),
             layout: registry.label(layout).to_owned(),
-            module: entry.module.to_owned(),
             stages: KeyStages::Compute {
+                module: entry.module.to_owned(),
                 entry: entry.name.to_owned(),
             },
         };
@@ -977,7 +1284,8 @@ pub(crate) fn compute_entry(
             return pipeline.clone();
         }
         registry.creating(&text);
-        let Created::Compute(pipeline) = key.create(device, layout, module) else {
+        let modules = registry.modules_for(&key);
+        let Created::Compute(pipeline) = key.create(device, layout, &modules) else {
             unreachable!("compute_key_compute_pipeline");
         };
         registry.compute.insert(text, pipeline.clone());
@@ -988,7 +1296,6 @@ pub(crate) fn compute_entry(
 pub(crate) struct Geometry<'a> {
     pub label: &'a str,
     pub layout: &'a wgpu::PipelineLayout,
-    pub module: &'a wgpu::ShaderModule,
     pub vertex: Entry,
     pub vertex_constants: &'a [(&'a str, f64)],
     pub buffers: &'a [Option<wgpu::VertexBufferLayout<'a>>],
@@ -1012,20 +1319,12 @@ pub(crate) fn sampled(
     geometry: &Geometry<'_>,
     samples: u32,
 ) -> wgpu::RenderPipeline {
-    debug_assert!(
-        geometry
-            .fragment
-            .as_ref()
-            .is_none_or(|fragment| fragment.entry.module == geometry.vertex.module),
-        "stages_one_module {}",
-        geometry.label
-    );
     with_registry(device, |registry| {
         let key = Key {
             label: geometry.label.to_owned(),
             layout: registry.label(geometry.layout).to_owned(),
-            module: geometry.vertex.module.to_owned(),
             stages: KeyStages::Render(Box::new(RenderKey {
+                vertex_module: geometry.vertex.module.to_owned(),
                 vertex: geometry.vertex.name.to_owned(),
                 vertex_constants: constants(geometry.vertex_constants),
                 buffers: geometry
@@ -1043,6 +1342,7 @@ pub(crate) fn sampled(
                 depth: geometry.depth.clone(),
                 samples,
                 fragment: geometry.fragment.as_ref().map(|fragment| FragmentKey {
+                    module: fragment.entry.module.to_owned(),
                     entry: fragment.entry.name.to_owned(),
                     constants: constants(fragment.constants),
                     targets: fragment.targets.to_vec(),
@@ -1054,7 +1354,8 @@ pub(crate) fn sampled(
             return pipeline.clone();
         }
         registry.creating(&text);
-        let Created::Render(pipeline) = key.create(device, geometry.layout, geometry.module) else {
+        let modules = registry.modules_for(&key);
+        let Created::Render(pipeline) = key.create(device, geometry.layout, &modules) else {
             unreachable!("render_key_render_pipeline");
         };
         registry.render.insert(text, pipeline.clone());
@@ -1065,7 +1366,6 @@ pub(crate) fn sampled(
 pub(crate) struct Fullscreen<'a> {
     pub label: &'a str,
     pub layout: &'a wgpu::PipelineLayout,
-    pub module: &'a wgpu::ShaderModule,
     pub vertex: Entry,
     pub fragment: Entry,
     pub constants: &'a [(&'a str, f64)],
@@ -1094,7 +1394,6 @@ pub(crate) fn fullscreen(device: &wgpu::Device, pass: &Fullscreen<'_>) -> wgpu::
         &Geometry {
             label: pass.label,
             layout: pass.layout,
-            module: pass.module,
             vertex_constants: &[],
             vertex: pass.vertex,
             buffers: &[],

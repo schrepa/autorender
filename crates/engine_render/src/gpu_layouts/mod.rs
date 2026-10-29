@@ -49,10 +49,10 @@ const fn same(a: &str, b: &str) -> bool {
 
 macro_rules! gpu_structs {
     (@module) => { None };
-    (@module $module:ident) => { Some(stringify!($module)) };
+    (@module $module:literal) => { Some($module) };
     ($(
         $(#[$meta:meta])*
-        $vis:vis struct $name:ident $(as [$($mirror:literal $(in $module:ident)?),* $(,)?])? {
+        $vis:vis struct $name:ident $(as [$($mirror:literal $(in $module:literal)?),* $(,)?])? {
             $($(#[$field_meta:meta])* $field_vis:vis $field:ident: $ty:ty),* $(,)?
         }
     )*) => {
@@ -94,7 +94,7 @@ pub struct Constant {
 macro_rules! gpu_consts {
     ($(
         $(#[$meta:meta])*
-        $vis:vis const $name:ident: $ty:ty = $value:expr => [$($mirror:literal $(in $module:ident)?),+ $(,)?];
+        $vis:vis const $name:ident: $ty:ty = $value:expr => [$($mirror:literal $(in $module:literal)?),+ $(,)?];
     )*) => {
         $($(#[$meta])* $vis const $name: $ty = $value;)*
 
@@ -112,7 +112,7 @@ macro_rules! gpu_consts {
 }
 
 macro_rules! gpu_mirrors {
-    ($($path:path => [$($mirror:literal $(in $module:ident)?),+ $(,)?];)*) => {
+    ($($path:path => [$($mirror:literal $(in $module:literal)?),+ $(,)?];)*) => {
         pub const MIRRORED: &[$crate::gpu_layouts::Constant] = &[$(
             $crate::gpu_layouts::Constant {
                 rust: stringify!($path),

@@ -5,7 +5,7 @@ pub(crate) const PALETTE_BYTES: usize = PALETTE_ENTRIES * size_of::<PaletteEntry
 
 gpu_structs! {
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct PaletteEntry as ["TerrainPaletteEntry", "PaletteEntry" in COVER_GROW_SHADER, "PaletteEntry" in BOUNCE_SHADER, "PaletteEntry" in SCATTER_SNAP_SHADER, "PaletteEntry" in REFLECTIONS_SHADER] {
+    pub(crate) struct PaletteEntry as ["TerrainPaletteEntry", "PaletteEntry" in "cover::grow", "PaletteEntry" in "terrain::bounce_maps", "PaletteEntry" in "scatter::snap", "PaletteEntry" in "post::reflections"] {
         pub color: [f32; 4],
         pub params: [f32; 4],
         pub maps: [f32; 4],

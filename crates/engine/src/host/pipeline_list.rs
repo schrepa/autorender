@@ -46,6 +46,10 @@ impl PipelineList {
         let world = engine.app.world_mut();
         identity.extend(format!("{:?}", Environment::current(world).sanitized()).bytes());
         if let Some(registry) = world.get_resource::<engine_core::BrickRegistry>() {
+            for brick in registry.names() {
+                identity.extend(brick.bytes());
+                identity.push(0);
+            }
             for section in registry.sections() {
                 identity.extend(section.key.bytes());
                 identity.extend(section.sanitized(world).to_string().bytes());

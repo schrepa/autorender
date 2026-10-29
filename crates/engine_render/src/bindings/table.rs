@@ -6,6 +6,9 @@ impl Stages {
     pub const FRAGMENT: Self = Self(2);
     pub const COMPUTE: Self = Self(4);
     pub const VERTEX_FRAGMENT: Self = Self(3);
+    pub const VERTEX_COMPUTE: Self = Self(5);
+    pub const FRAGMENT_COMPUTE: Self = Self(6);
+    pub const VERTEX_FRAGMENT_COMPUTE: Self = Self(7);
 
     pub fn vertex(self) -> bool {
         self.0 & 1 != 0
@@ -17,6 +20,10 @@ impl Stages {
 
     pub fn compute(self) -> bool {
         self.0 & 4 != 0
+    }
+
+    pub fn covers(self, stage: Stages) -> bool {
+        self.0 & stage.0 != 0
     }
 }
 
@@ -64,48 +71,25 @@ pub enum Kind {
     Sampler(Sampling),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Binding {
-    pub binding: u32,
     pub name: &'static str,
     pub kind: Kind,
     pub stages: Stages,
 }
 
 #[derive(Debug)]
-pub struct Serves {
-    pub module: &'static str,
-    pub group: u32,
-}
-
-#[derive(Debug)]
 pub struct Table {
     pub label: &'static str,
-    pub serves: &'static [Serves],
     pub bindings: &'static [Binding],
 }
 
-impl Table {
-    pub(crate) fn binding(&self, name: &str) -> &Binding {
-        self.bindings
-            .iter()
-            .find(|binding| binding.name == name)
-            .unwrap_or_else(|| panic!("binding_unknown {} {name}", self.label))
-    }
+pub const fn bind(name: &'static str, kind: Kind, stages: Stages) -> Binding {
+    Binding { name, kind, stages }
 }
 
-pub(super) const fn bind(binding: u32, name: &'static str, kind: Kind, stages: Stages) -> Binding {
-    Binding {
-        binding,
-        name,
-        kind,
-        stages,
-    }
-}
-
-pub(super) const fn uniform(binding: u32, name: &'static str, stages: Stages) -> Binding {
+pub const fn uniform(name: &'static str, stages: Stages) -> Binding {
     bind(
-        binding,
         name,
         Kind::Uniform {
             min_size: 0,
@@ -115,14 +99,8 @@ pub(super) const fn uniform(binding: u32, name: &'static str, stages: Stages) ->
     )
 }
 
-pub(super) const fn uniform_of(
-    binding: u32,
-    name: &'static str,
-    size: usize,
-    stages: Stages,
-) -> Binding {
+pub const fn uniform_of(name: &'static str, size: usize, stages: Stages) -> Binding {
     bind(
-        binding,
         name,
         Kind::Uniform {
             min_size: size as u64,
@@ -132,14 +110,8 @@ pub(super) const fn uniform_of(
     )
 }
 
-pub(super) const fn dynamic_uniform(
-    binding: u32,
-    name: &'static str,
-    size: usize,
-    stages: Stages,
-) -> Binding {
+pub const fn dynamic_uniform(name: &'static str, size: usize, stages: Stages) -> Binding {
     bind(
-        binding,
         name,
         Kind::Uniform {
             min_size: size as u64,
@@ -149,18 +121,12 @@ pub(super) const fn dynamic_uniform(
     )
 }
 
-pub(super) const fn read(binding: u32, name: &'static str, stages: Stages) -> Binding {
-    bind(binding, name, Kind::Read { min_size: 0 }, stages)
+pub const fn read(name: &'static str, stages: Stages) -> Binding {
+    bind(name, Kind::Read { min_size: 0 }, stages)
 }
 
-pub(super) const fn read_of(
-    binding: u32,
-    name: &'static str,
-    size: usize,
-    stages: Stages,
-) -> Binding {
+pub const fn read_of(name: &'static str, size: usize, stages: Stages) -> Binding {
     bind(
-        binding,
         name,
         Kind::Read {
             min_size: size as u64,
@@ -169,25 +135,14 @@ pub(super) const fn read_of(
     )
 }
 
-pub(super) const fn write(binding: u32, name: &'static str, stages: Stages) -> Binding {
-    bind(binding, name, Kind::Write, stages)
+pub const fn write(name: &'static str, stages: Stages) -> Binding {
+    bind(name, Kind::Write, stages)
 }
 
-pub(super) const fn texture(
-    binding: u32,
-    name: &'static str,
-    sample: Sample,
-    view: View,
-    stages: Stages,
-) -> Binding {
-    bind(binding, name, Kind::Texture { sample, view }, stages)
+pub const fn texture(name: &'static str, sample: Sample, view: View, stages: Stages) -> Binding {
+    bind(name, Kind::Texture { sample, view }, stages)
 }
 
-pub(super) const fn sampler(
-    binding: u32,
-    name: &'static str,
-    sampling: Sampling,
-    stages: Stages,
-) -> Binding {
-    bind(binding, name, Kind::Sampler(sampling), stages)
+pub const fn sampler(name: &'static str, sampling: Sampling, stages: Stages) -> Binding {
+    bind(name, Kind::Sampler(sampling), stages)
 }

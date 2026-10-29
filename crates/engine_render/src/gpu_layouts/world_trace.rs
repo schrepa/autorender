@@ -13,7 +13,7 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct PlacedGroup as ["PlacedGroup" in REFLECTIONS_SHADER] {
+    pub(crate) struct PlacedGroup as ["PlacedGroup" in "post::reflections"] {
         pub impostor: ImpostorRecord,
         pub color: [u32; 2],
         pub pad: [u32; 2],

@@ -37,27 +37,47 @@ fn varyings(
     }
 }
 
+type Written<'m> = (&'m str, &'m str, Vec<(u32, Varying)>);
+
+fn written(modules: &[Checked]) -> Vec<Written<'_>> {
+    let mut written = Vec::new();
+    for checked in modules {
+        let module = &checked.module;
+        for point in module
+            .entry_points
+            .iter()
+            .filter(|point| point.stage == naga::ShaderStage::Vertex)
+        {
+            let result = point.function.result.as_ref();
+            let values = result
+                .map(|result| varyings(module, result.ty, result.binding.as_ref()))
+                .unwrap_or_default();
+            written.push((checked.name.as_str(), point.name.as_str(), values));
+        }
+    }
+    written
+}
+
 pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
     let mut errors = Vec::new();
     let mut fragments = 0;
+    let written = written(modules);
     for checked in modules {
         let module = &checked.module;
-        let stages = |stage| {
-            module
-                .entry_points
-                .iter()
-                .filter(move |point| point.stage == stage)
-        };
-        let written: Vec<(&str, Vec<(u32, Varying)>)> = stages(naga::ShaderStage::Vertex)
-            .map(|point| {
-                let result = point.function.result.as_ref();
-                let values = result
-                    .map(|result| varyings(module, result.ty, result.binding.as_ref()))
-                    .unwrap_or_default();
-                (point.name.as_str(), values)
-            })
+        let own: Vec<&Written<'_>> = written
+            .iter()
+            .filter(|(owner, _, _)| *owner == checked.name)
             .collect();
-        for point in stages(naga::ShaderStage::Fragment) {
+        let candidates: Vec<&Written<'_>> = if own.is_empty() {
+            written.iter().collect()
+        } else {
+            own
+        };
+        for point in module
+            .entry_points
+            .iter()
+            .filter(|point| point.stage == naga::ShaderStage::Fragment)
+        {
             let read: Vec<(u32, Varying)> = point
                 .function
                 .arguments
@@ -74,20 +94,23 @@ pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
                     .map(|(location, _)| *location)
                     .collect()
             };
-            if written.iter().any(|(_, values)| missing(values).is_empty()) {
+            if candidates
+                .iter()
+                .any(|(_, _, values)| missing(values).is_empty())
+            {
                 continue;
             }
-            let closest = written
+            let closest = candidates
                 .iter()
-                .map(|(name, values)| (name, missing(values)))
-                .min_by_key(|(_, missing)| missing.len());
+                .map(|(owner, name, values)| (owner, name, missing(values)))
+                .min_by_key(|(_, _, missing)| missing.len());
             errors.push(match closest {
-                Some((name, missing)) => format!(
-                    "{} `{}` reads locations no vertex stage of the module writes alike: the closest, `{name}`, does not write {missing:?} with their type, interpolation and sampling",
+                Some((owner, name, missing)) => format!(
+                    "{} `{}` reads locations no vertex stage writes alike: the closest, {owner} `{name}`, does not write {missing:?} with their type, interpolation and sampling",
                     checked.name, point.name
                 ),
                 None => format!(
-                    "{} `{}` reads locations, but the module has no vertex stage",
+                    "{} `{}` reads locations, but no module has a vertex stage",
                     checked.name, point.name
                 ),
             });
@@ -96,9 +119,6 @@ pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
     if errors.is_empty() {
         Ok(fragments)
     } else {
-        Err(errors.join(
-            "
-",
-        ))
+        Err(errors.join("\n"))
     }
 }

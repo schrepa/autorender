@@ -12,7 +12,7 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct LightInput as ["Input" in LIGHT_SHADER] {
+    pub(crate) struct LightInput as ["Input" in "lights::binning"] {
         pub position: [f32; 3],
         pub range: f32,
         pub color: [f32; 3],

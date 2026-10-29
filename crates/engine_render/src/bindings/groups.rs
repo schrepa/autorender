@@ -1,14 +1,9 @@
 use engine_core::{Error, ErrorCode, Expected};
 
-use super::table::{Kind, Stages, Table};
+use super::table::{Binding, Kind, Stages, Table};
 use crate::pipeline_layouts::StageLimits;
 
-#[derive(Clone, Copy, Debug)]
-pub struct BindingDecl {
-    pub name: &'static str,
-    pub kind: Kind,
-    pub stages: Stages,
-}
+pub type BindingDecl = Binding;
 
 #[derive(Debug)]
 pub struct Contribution {
@@ -26,7 +21,7 @@ pub enum GroupRef {
     },
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SharedBinding {
     pub number: u32,
     pub set: &'static str,
@@ -34,7 +29,7 @@ pub struct SharedBinding {
     pub decl: BindingDecl,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SharedGroups {
     groups: Vec<(&'static str, Vec<SharedBinding>)>,
 }
@@ -82,6 +77,12 @@ impl SharedGroups {
         Ok(())
     }
 
+    pub fn groups(&self) -> impl Iterator<Item = (&'static str, &[SharedBinding])> + '_ {
+        self.groups
+            .iter()
+            .map(|(name, bindings)| (*name, bindings.as_slice()))
+    }
+
     pub fn group(&self, name: &str) -> Option<&[SharedBinding]> {
         self.groups
             .iter()
@@ -101,7 +102,7 @@ impl SharedGroups {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResolvedBinding {
     pub group: u32,
     pub number: u32,
