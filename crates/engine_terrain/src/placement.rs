@@ -3,9 +3,11 @@ use engine_math::{clamp, max, min, sin_cos};
 use engine_settings::{ExtraRules, InvalidSetting, settings};
 use serde::{Deserialize, Serialize};
 
+use crate::expr::Expr;
+use crate::expr_layer::{producer, read_map};
 use crate::surface::{
-    Compiled, Control, Mask, Reads, RowInputs, RowScratch, erosion_row, setting_error,
-    terrain_error, unknown,
+    Compiled, Control, Reads, RowInputs, RowScratch, Scope, erosion_row, setting_error,
+    terrain_error, unknown, unknown_map,
 };
 use crate::{TILE_QUADS, TILE_STRIDE, Tile};
 
@@ -47,8 +49,8 @@ settings! {
         pub footprint: f32 = 1.0 => range(0.25, 256.0),
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub materials: Vec<String> = Vec::new() => any,
-        #[serde(default = "Mask::one")]
-        pub mask: Mask = Mask::one() => any,
+        #[serde(default = "Expr::one")]
+        pub mask: Expr = Expr::one() => any,
         #[serde(default = "unit_scale")]
         pub scale: [f32; 2] = unit_scale() => range(MIN_SCALE, MAX_SCALE),
         #[serde(default)]
@@ -107,8 +109,6 @@ settings! {
 
 const MIN_SCALE: f32 = 0.001;
 const MAX_SCALE: f32 = 1000.0;
-
-impl engine_settings::Setting for Mask {}
 
 fn is_zero(level: &u8) -> bool {
     *level == 0
@@ -380,6 +380,7 @@ pub(crate) struct CompiledPlacement {
     materials: Option<[u64; 4]>,
     mask: Compiled,
     reads: Reads,
+    users: Vec<(String, String)>,
     scale: [f32; 2],
     align: f32,
     downhill: f32,
@@ -450,7 +451,8 @@ pub(crate) fn compile(
             }
             Some(set)
         };
-        let mask = Compiled::from(&layer.mask, &format!("{at}.mask"), 0)?;
+        let mut scope = Scope::cpu();
+        let mask = Compiled::from(&layer.mask, &format!("{at}.mask"), 0, &mut scope)?;
         compiled.push(CompiledPlacement {
             level: layer.level,
             far: layer.far.map(|far| far.level),
@@ -459,6 +461,7 @@ pub(crate) fn compile(
             footprint: layer.footprint,
             materials: set,
             reads: mask.reads(),
+            users: scope.users(),
             mask,
             scale: layer.scale,
             align: layer.align,
@@ -468,6 +471,22 @@ pub(crate) fn compile(
         });
     }
     Ok(compiled)
+}
+
+pub(crate) fn check_maps(
+    layers: &[CompiledPlacement],
+    stack: &crate::Layers,
+) -> Result<(), Error> {
+    let published: Vec<String> = (stack.layers().iter())
+        .flat_map(|layer| layer.outputs())
+        .collect();
+    for layer in layers {
+        let missing = (layer.users.iter()).find(|(name, _)| !published.contains(name));
+        if let Some((name, path)) = missing {
+            return Err(unknown_map(path, name, published));
+        }
+    }
+    Ok(())
 }
 
 fn hash(value: u32) -> u32 {
@@ -545,10 +564,11 @@ struct MaskInputs {
     water: Vec<crate::HydrologySample>,
     erosion: Vec<f32>,
     path: Vec<crate::PathSample>,
+    maps: Vec<Vec<f32>>,
 }
 
 impl MaskInputs {
-    fn clear(&mut self) {
+    fn clear(&mut self, users: usize) {
         for list in [
             &mut self.xs,
             &mut self.zs,
@@ -561,6 +581,10 @@ impl MaskInputs {
         self.gradient.clear();
         self.water.clear();
         self.path.clear();
+        self.maps.resize_with(users, Vec::new);
+        for map in &mut self.maps {
+            map.clear();
+        }
     }
 
     fn push(
@@ -602,6 +626,26 @@ impl MaskInputs {
         } else {
             crate::PathSample::FAR
         });
+    }
+
+    fn push_maps(
+        &mut self,
+        (stack, users, producers): (&crate::Layers, &[(String, String)], &[Option<usize>]),
+        ([x, z], spacing, height): ([f32; 2], f32, f32),
+    ) {
+        let at = glam::Vec2::new(x, z);
+        let row = crate::layer::Row {
+            xs: std::slice::from_ref(&x),
+            z,
+            spacing,
+            low: at,
+            high: at,
+        };
+        for ((values, (name, _)), &producer) in self.maps.iter_mut().zip(users).zip(producers) {
+            let mut value = [0.0_f32];
+            read_map(stack, producer, name, &row, &[height], &mut value);
+            values.push(value[0]);
+        }
     }
 
     fn row(&self, spacing: f32) -> RowInputs<'_> {
@@ -686,7 +730,10 @@ pub(crate) fn place_row(
         controls,
     } = scratch;
     candidates.clear();
-    inputs.clear();
+    inputs.clear(layer.users.len());
+    let producers: Vec<Option<usize>> = (layer.users.iter())
+        .map(|(name, _)| producer(stack.layers(), name))
+        .collect();
     for square_x in first[0]..=last[0] {
         let square = hash(
             layer_seed
@@ -749,10 +796,11 @@ pub(crate) fn place_row(
             share_of_materials,
         });
         inputs.push((tile, stack, layer.reads), (point, local, nearest), &sample);
+        inputs.push_maps((stack, &layer.users, &producers), (point, spacing, sample.height));
     }
     values.clear();
     values.resize(candidates.len(), 0.0);
-    layer.mask.evaluate_row(&inputs.row(spacing), values, rows);
+    layer.mask.evaluate_row(&inputs.row(spacing), &inputs.maps, values, rows);
     for (candidate, &mask) in candidates.iter().zip(values.iter()) {
         let Candidate {
             square,

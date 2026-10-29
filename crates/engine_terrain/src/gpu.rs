@@ -1,9 +1,9 @@
 use crate::hydrology::{FLOW_RANGE, Hydrology, LAKE_RANGE, WETNESS_RANGE};
+use crate::layer::{ChangeMap, TerrainLayer};
 use crate::layers::HeightImage;
-use crate::path::PathProfile;
-use crate::surface::{BiomeRules, Control, SampleInputs, SampleShape, erosion_row, erosions};
+use crate::surface::{BiomeRules, Control, SampleInputs, SampleShape, erosion_row};
 use crate::tile::RiverInputs;
-use crate::{Erosion, HydrologySample, Layers, PathSample, TILE_STRIDE, Tile};
+use crate::{HydrologySample, Layers, PathSample, TILE_STRIDE, Tile};
 
 pub mod op {
     pub const CONSTANT: u32 = 0;
@@ -28,7 +28,8 @@ pub mod op {
     pub const WORN: u32 = 19;
     pub const DEPOSIT: u32 = 20;
     pub const FACING: u32 = 21;
-    pub const END: u32 = 22;
+    pub const VALUE: u32 = 22;
+    pub const END: u32 = 23;
 }
 
 pub const BIOME_WORDS: u32 = 3;
@@ -76,15 +77,18 @@ impl SurfaceData {
             words[header::HYDROLOGY] = words.len() as u32;
             write_hydrology(hydrology, &mut words);
         }
-        let paths: Vec<&PathProfile> = layers.path_profiles().collect();
+        let paths: Vec<&dyn TerrainLayer> = (layers.layers().iter())
+            .filter(|layer| layer.has_path())
+            .map(|layer| &**layer)
+            .collect();
         if !paths.is_empty() {
             words[header::PATHS] = words.len() as u32;
             write_paths(&paths, &mut words);
         }
-        let stages: Vec<&Erosion> = erosions(layers).collect();
-        if reads.erosion && !stages.is_empty() {
+        let changes: Vec<ChangeMap<'_>> = layers.changes().collect();
+        if reads.erosion && !changes.is_empty() {
             words[header::EROSION] = words.len() as u32;
-            write_erosions(&stages, &mut words);
+            write_erosions(&changes, &mut words);
         }
         if let Some(fade) = layers.fade {
             words[header::FADE] = words.len() as u32;
@@ -234,22 +238,22 @@ fn write_hydrology(hydrology: &Hydrology, words: &mut Vec<u32>) {
     );
 }
 
-fn write_erosions(stages: &[&Erosion], words: &mut Vec<u32>) {
+fn write_erosions(changes: &[ChangeMap<'_>], words: &mut Vec<u32>) {
     let table = words.len();
-    words.push(stages.len() as u32);
-    words.extend(std::iter::repeat_n(0, stages.len()));
-    for (index, erosion) in stages.iter().enumerate() {
+    words.push(changes.len() as u32);
+    words.extend(std::iter::repeat_n(0, changes.len()));
+    for (index, change) in changes.iter().enumerate() {
         words[table + 1 + index] = words.len() as u32;
         push_f32(
             words,
             [
-                1.0 / erosion.spacing,
-                erosion.spacing,
-                erosion.range[0],
-                erosion.range[1],
+                1.0 / change.spacing,
+                change.spacing,
+                change.range[0],
+                change.range[1],
             ],
         );
-        write_images(&[&erosion.change], words);
+        write_images(&[change.image], words);
     }
 }
 
@@ -278,31 +282,12 @@ fn write_images(images: &[&HeightImage], words: &mut Vec<u32>) {
     }
 }
 
-fn write_paths(paths: &[&PathProfile], words: &mut Vec<u32>) {
+fn write_paths(paths: &[&dyn TerrainLayer], words: &mut Vec<u32>) {
     let table = words.len();
     words.push(paths.len() as u32);
     words.extend(std::iter::repeat_n(0, paths.len()));
     for (index, path) in paths.iter().enumerate() {
         words[table + 1 + index] = words.len() as u32;
-        let at = words.len();
-        push_f32(
-            words,
-            [path.half, path.radius, path.cell, path.min.x, path.min.y],
-        );
-        words.push(path.columns as u32);
-        words.push(path.rows as u32);
-        words.extend([0; 6]);
-        words[at + 7] = words.len() as u32;
-        words.extend(path.starts.iter().copied());
-        words[at + 8] = words.len() as u32;
-        words.extend(path.segments.iter().copied());
-        words[at + 9] = words.len() as u32;
-        push_f32(words, path.line.iter().flat_map(|point| [point.x, point.y]));
-        words[at + 10] = words.len() as u32;
-        push_f32(words, path.along.iter().copied());
-        words[at + 11] = words.len() as u32;
-        let spans: Vec<[f32; 2]> = path.spans.iter().chain(&path.tunnels).copied().collect();
-        push_f32(words, spans.iter().flat_map(|span| *span));
-        words[at + 12] = spans.len() as u32;
+        path.gpu_path(words);
     }
 }

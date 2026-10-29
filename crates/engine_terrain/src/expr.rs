@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::layer::LayerKind;
 use crate::surface::{Facing, NoiseMask};
 
+pub use crate::expr_layer::{EXPRESSION, ExpressionLayer, ExpressionSettings};
+
 pub const MAX_EXPR_DEPTH: usize = 8;
 pub const MAX_EXPR_LIST: usize = 16;
 
@@ -47,7 +49,9 @@ impl Expr {
     }
 }
 
-pub static KINDS: &[&LayerKind] = &[];
+impl engine_settings::Setting for Expr {}
+
+pub static KINDS: &[&LayerKind] = &[&EXPRESSION];
 
 crate::codec::tagged!(Expr {
     0 => Constant(value),
