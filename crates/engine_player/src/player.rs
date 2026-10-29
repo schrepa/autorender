@@ -1,7 +1,7 @@
-use engine::ErrorCode;
 use engine::collision::CollisionConfig;
 use engine::prelude::*;
-use engine::scene::{SceneError, SceneFiles};
+use engine::scene::SceneFiles;
+use engine::{Error, ErrorCode, Expected};
 
 pub struct ScenePlayer {
     instance: Option<SceneInstance>,
@@ -15,7 +15,7 @@ impl ScenePlayer {
         source: &str,
         files: &SceneFiles,
         without: &[&'static str],
-    ) -> Result<(Engine, Self), SceneError> {
+    ) -> Result<(Engine, Self), Error> {
         let mut engine = Engine::default();
         engine
             .app
@@ -36,7 +36,7 @@ impl ScenePlayer {
         engine: &mut Engine,
         source: &str,
         files: &SceneFiles,
-    ) -> Result<(), SceneError> {
+    ) -> Result<(), Error> {
         let document = SceneDocument::from_json(source)?;
         let expanded = document.expanded_entities()?;
         let players: Vec<_> = expanded
@@ -44,23 +44,21 @@ impl ScenePlayer {
             .filter(|object| object.tags.iter().any(|tag| tag == "player"))
             .collect();
         if players.len() > 1 {
-            return Err(SceneError {
-                code: ErrorCode::GameRule,
-                path: "$.entities".into(),
-                message: format!("player tags: {}, allowed: 0 or 1", players.len()),
-            });
+            return Err(Error::new(ErrorCode::GameRule, "$.entities")
+                .at_most(1)
+                .got(players.len()));
         }
         if let Some(player) = players.first()
             && (player.parent.is_some() || player.collider.is_none())
         {
-            return Err(SceneError {
-                code: ErrorCode::GameRule,
-                path: "$.entities".into(),
-                message: format!(
-                    "player {}: expected a root entity with a collider",
-                    player.id
-                ),
-            });
+            let expected = if player.parent.is_some() {
+                Expected::Absent
+            } else {
+                Expected::Present
+            };
+            return Err(Error::new(ErrorCode::GameRule, "$.entities")
+                .expected(expected)
+                .got(&player.id));
         }
         let player_id = players.first().map(|player| player.id.clone());
         let world = engine.app.world_mut();
@@ -133,7 +131,7 @@ impl Game for ScenePlayer {
         engine: &mut Engine,
         source: &str,
         files: &SceneFiles,
-    ) -> Result<(), SceneError> {
+    ) -> Result<(), Error> {
         self.load(engine, source, files)
     }
 

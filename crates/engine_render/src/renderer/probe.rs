@@ -24,7 +24,7 @@ const TERRAIN: u64 = 1024;
 const DEPTH: u64 = 1280;
 const ROW_ALIGNMENT: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 
-type Mapped = Rc<RefCell<Option<Result<Vec<u8>, String>>>>;
+type Mapped = Rc<RefCell<Option<Result<Vec<u8>, Error>>>>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Stage {
@@ -89,7 +89,7 @@ impl Renderer {
         });
     }
 
-    pub fn probe_result(&mut self) -> Option<Result<PixelProbe, RenderError>> {
+    pub fn probe_result(&mut self) -> Option<Result<PixelProbe, Error>> {
         if self.display.probe.armed.as_ref()?.stage != Stage::Mapping {
             return None;
         }
@@ -107,11 +107,7 @@ impl Renderer {
             .borrow_mut()
             .take()?;
         let armed = self.display.probe.armed.take()?;
-        Some(
-            mapped
-                .map(|bytes| armed.result(&bytes))
-                .map_err(RenderError),
-        )
+        Some(mapped.map(|bytes| armed.result(&bytes)))
     }
 
     pub(super) fn encode_probe(
@@ -179,19 +175,18 @@ impl Renderer {
         armed.buffer.slice(..).map_async(
             wgpu::MapMode::Read,
             crate::platform::map_callback(move |result| {
-                let failed = |error: &dyn std::fmt::Display| {
-                    format!("The pixel probe's read-back failed: {error}")
-                };
-                let bytes = result.map_err(|error| failed(&error)).and_then(|()| {
-                    let view = buffer
-                        .slice(..)
-                        .get_mapped_range()
-                        .map_err(|error| failed(&error))?;
-                    let bytes = view.to_vec();
-                    drop(view);
-                    buffer.unmap();
-                    Ok(bytes)
-                });
+                let bytes = result
+                    .map_err(|error| failed_with("$.probe", error))
+                    .and_then(|()| {
+                        let view = buffer
+                            .slice(..)
+                            .get_mapped_range()
+                            .map_err(|error| failed_with("$.probe", error))?;
+                        let bytes = view.to_vec();
+                        drop(view);
+                        buffer.unmap();
+                        Ok(bytes)
+                    });
                 *mapped.borrow_mut() = Some(bytes);
             }),
         );

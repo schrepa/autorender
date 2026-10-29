@@ -2,7 +2,10 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use engine::{Error, ErrorCode};
 use engine_worker::{JobCache, PACK_HEADER, PackEntry, PackIndex, pack_directory, unpack};
+
+use crate::file_error;
 
 const INDEX: &str = "index.json";
 pub const DEFAULT_BUDGET: u64 = engine::host::policy::JOB_CACHE_MIB * 1024 * 1024;
@@ -180,7 +183,7 @@ pub fn read(sources: &[Source]) -> Option<(usize, Vec<u8>)> {
                     file.read_exact(&mut stored)?;
                     Ok::<_, std::io::Error>(stored)
                 })()
-                .map_err(|error| error.to_string())
+                .map_err(|error| file_error("$", path, &error))
                 .and_then(|stored| unpack(entry, &stored));
                 if let Err(error) = &read {
                     eprintln!("A record of {} does not read: {error}", path.display());
@@ -218,16 +221,21 @@ fn open_packs(folder: &Path) -> Vec<Pack> {
         .collect()
 }
 
-fn open_pack(path: &Path) -> Result<Pack, String> {
-    let mut file = File::open(path).map_err(|error| error.to_string())?;
+fn open_pack(path: &Path) -> Result<Pack, Error> {
+    let io = |error: std::io::Error| file_error("$", path, &error);
+    let mut file = File::open(path).map_err(io)?;
     let mut header = [0; PACK_HEADER];
-    file.read_exact(&mut header)
-        .map_err(|error| error.to_string())?;
+    file.read_exact(&mut header).map_err(io)?;
     let (offset, stored, _) = pack_directory(&header)?;
-    let mut directory = vec![0; usize::try_from(stored).map_err(|error| error.to_string())?];
+    let length = usize::try_from(stored).map_err(|_| {
+        Error::new(ErrorCode::InvalidPack, "$.directory")
+            .at_most(usize::MAX as u64)
+            .got(stored)
+    })?;
+    let mut directory = vec![0; length];
     file.seek(SeekFrom::Start(offset))
         .and_then(|_| file.read_exact(&mut directory))
-        .map_err(|error| error.to_string())?;
+        .map_err(io)?;
     let index = PackIndex::open(&header, &directory)?;
     Ok(Pack {
         path: path.to_owned(),

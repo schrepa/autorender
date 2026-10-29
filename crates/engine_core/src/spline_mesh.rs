@@ -1,5 +1,6 @@
 use bevy_ecs::{lifecycle::HookContext, prelude::*, world::DeferredWorld};
 use engine_assets::{AssetLibrary, MaterialHandle, Mesh, MeshHandle, MeshVertex};
+use engine_settings::{Error, ErrorCode, Expected};
 use glam::Vec3;
 
 use crate::hierarchy::set_parents;
@@ -25,7 +26,7 @@ pub struct SplineChunks {
     pub length: f32,
     pub copies: u32,
     pub vertices: u32,
-    pub error: Option<String>,
+    pub error: Option<Error>,
     built: Option<SplineMesh>,
 }
 
@@ -89,9 +90,12 @@ pub(crate) fn build(world: &mut World) {
         };
         let parented = world.get::<Transform>(entity).is_some();
         for mesh in built.meshes {
-            let Ok(handle) = world.resource_mut::<AssetLibrary>().insert_mesh(mesh) else {
-                chunks.error = Some("the asset library refused a chunk's mesh".into());
-                break;
+            let handle = match world.resource_mut::<AssetLibrary>().insert_mesh(mesh) {
+                Ok(handle) => handle,
+                Err(error) => {
+                    chunks.error = Some(error);
+                    break;
+                }
             };
             chunks.meshes.push(handle);
             let child = world
@@ -112,7 +116,7 @@ pub(crate) fn build(world: &mut World) {
                 .map(|&child| (child, Some(entity)))
                 .collect();
             if let Err(error) = set_parents(world, &changes) {
-                chunks.error = Some(error.to_string());
+                chunks.error = Some(error);
             }
         }
         world.entity_mut(entity).insert(chunks);
@@ -185,26 +189,38 @@ pub(crate) fn point_at(samples: &[Vec3], along: &[f32], distance: f32) -> (Vec3,
     (a + (b - a) * t, direction.normalize_or(b - a))
 }
 
-fn bend(assets: &AssetLibrary, spline: &SplineMesh) -> Result<Bent, String> {
+fn bend(assets: &AssetLibrary, spline: &SplineMesh) -> Result<Bent, Error> {
+    let invalid = |path: &str| Error::new(ErrorCode::InvalidSpline, path);
     if !(2..=MAX_SPLINE_POINTS).contains(&spline.points.len()) {
-        return Err(format!("a curve names 2 to {MAX_SPLINE_POINTS} points"));
+        return Err(invalid("$.points")
+            .expected(Expected::Array)
+            .range(2.0, MAX_SPLINE_POINTS as f64)
+            .got(spline.points.len()));
     }
-    if spline.points.iter().any(|point| !point.is_finite()) {
-        return Err("curve points must be finite".into());
+    if let Some(index) = spline.points.iter().position(|point| !point.is_finite()) {
+        return Err(invalid(&format!("$.points[{index}]"))
+            .expected(Expected::Finite)
+            .got(spline.points[index].to_array()));
     }
     let mesh = assets
         .mesh(spline.mesh)
-        .ok_or("its mesh is not resident")?
+        .ok_or_else(|| invalid("$.mesh").expected(Expected::Live))?
         .clone();
     let bounds = mesh.bounds();
     let (start, span) = (bounds.min().x, bounds.max().x - bounds.min().x);
     if span <= 1.0e-3 {
-        return Err("its mesh must span more than a millimeter along x".into());
+        return Err(invalid("$.mesh")
+            .expected(Expected::Above)
+            .range(1.0e-3, f64::MAX)
+            .got(span));
     }
     let (samples, along) = curve(&spline.points);
-    let length = *along.last().expect("curves hold samples");
+    let length = *along.last().expect("curve_has_samples");
     if length <= 1.0e-3 {
-        return Err("its curve must be longer than a millimeter".into());
+        return Err(invalid("$.points")
+            .expected(Expected::Above)
+            .range(1.0e-3, f64::MAX)
+            .got(length));
     }
     let copies = max((length / span).round(), 1.0) as u32;
     let copy = length / copies as f32;
@@ -234,7 +250,7 @@ fn bend(assets: &AssetLibrary, spline: &SplineMesh) -> Result<Bent, String> {
             }
             indices.extend(mesh.indices().iter().map(|&vertex| base + vertex));
         }
-        meshes.push(Mesh::new(vertices, indices).map_err(|error| error.to_string())?);
+        meshes.push(Mesh::new(vertices, indices)?);
         first = end;
     }
     Ok(Bent {

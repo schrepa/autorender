@@ -4,12 +4,12 @@ use engine_core::{
     ExplainedEntity, Mesh3d,
 };
 use engine_scene::{SceneDocument, SceneFiles, SceneInstance};
-use engine_settings::ErrorCode;
+use engine_settings::{Error, ErrorCode, Expected};
 use serde_json::Value;
 
+use crate::DevTools;
 use crate::protocol::{Detail, MAX_EXPLAINED};
 use crate::results::ExplainResult;
-use crate::{DevError, DevTools};
 
 #[derive(Clone, Copy, Debug)]
 pub struct EntityFacts {
@@ -24,18 +24,22 @@ impl DevTools {
         world: &World,
         scene: Option<&SceneInstance>,
         id: &str,
-    ) -> Result<Entity, DevError> {
+    ) -> Result<Entity, Error> {
         crate::inspect::validate_name(id, "$.entity")?;
         let scene = scene.ok_or_else(|| {
-            DevError::new(ErrorCode::NoScene, "$.entity", id)
-                .expected("an authored entity of the active scene")
+            Error::new(ErrorCode::NoScene, "$.entity")
+                .expected(Expected::Entity)
+                .got(id)
         })?;
         let entity = scene.authored_entity(world, id).ok_or_else(|| {
-            DevError::new(ErrorCode::UnknownEntity, "$.entity", id)
-                .expected("an authored entity of the active scene")
+            Error::new(ErrorCode::UnknownEntity, "$.entity")
+                .expected(Expected::Entity)
+                .got(id)
         })?;
         if world.get_entity(entity).is_err() {
-            return Err(DevError::new(ErrorCode::EntityRemoved, "$.entity", id));
+            return Err(Error::new(ErrorCode::EntityRemoved, "$.entity")
+                .expected(Expected::Live)
+                .got(id));
         }
         Ok(entity)
     }
@@ -67,10 +71,11 @@ impl DevTools {
         stats: &Value,
         top: usize,
         detail: Detail,
-    ) -> Result<ExplainResult, DevError> {
+    ) -> Result<ExplainResult, Error> {
         let costs = world.get_resource::<BrickCosts>().ok_or_else(|| {
-            DevError::new(ErrorCode::ProfilingUnavailable, "$", "BrickCosts")
-                .expected("a dev or profiling build, which measures every brick")
+            Error::new(ErrorCode::ProfilingUnavailable, "$")
+                .expected(Expected::Present)
+                .got("BrickCosts")
         })?;
         let mut records = slow_frame(costs, top, detail);
         if let Some(registry) = world.get_resource::<BrickRegistry>() {
@@ -222,24 +227,23 @@ fn slow_frame(costs: &BrickCosts, top: usize, detail: Detail) -> Vec<ExplainReco
         .collect()
 }
 
-fn refusal(world: &World, source: &str, files: Option<&SceneFiles>) -> Option<DevError> {
+fn refusal(world: &World, source: &str, files: Option<&SceneFiles>) -> Option<Error> {
     let document = match SceneDocument::from_json(source) {
         Ok(document) => document,
-        Err(error) => return Some(error.into()),
+        Err(error) => return Some(error),
     };
     if let Some(files) = files
         && let Err(error) = document.validate_with(files)
     {
-        return Some(error.into());
+        return Some(error);
     }
     document
         .environment
         .as_ref()
         .and_then(|environment| environment.check(world, "$.environment").err())
-        .map(DevError::from)
 }
 
-fn refused(world: &World, error: &DevError) -> ExplainRecord {
+fn refused(world: &World, error: &Error) -> ExplainRecord {
     let brick = error
         .path
         .strip_prefix("$.environment.")
@@ -255,7 +259,8 @@ fn refused(world: &World, error: &DevError) -> ExplainRecord {
         .of(brick)
         .with("code", error.code)
         .with("path", &error.path)
-        .with("message", &error.message)
-        .with("expected", &error.hints.expected)
-        .with("allowed", &error.hints.allowed)
+        .with("expected", error.detail.expected)
+        .with("allowed", &error.detail.allowed)
+        .with("nearest", &error.detail.nearest)
+        .with("got", &error.detail.got)
 }

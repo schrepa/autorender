@@ -1,18 +1,13 @@
 use std::fmt;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RenderError(pub String);
+use engine_core::{Error, ErrorCode, Expected};
 
-impl fmt::Display for RenderError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
+pub(crate) fn failed(path: &str) -> Error {
+    Error::new(ErrorCode::RenderFailed, path)
 }
 
-impl std::error::Error for RenderError {}
-
-pub(crate) fn render_error(context: &str, error: impl fmt::Display) -> RenderError {
-    RenderError(format!("{context}: {error}"))
+pub(crate) fn failed_with(path: &str, error: impl fmt::Display) -> Error {
+    failed(path).got(error.to_string())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -350,8 +345,9 @@ pub(crate) fn poll(device: &wgpu::Device) {
 pub fn read_range(
     url: &str,
     range: std::ops::Range<u64>,
-    arrive: impl FnOnce(Result<Vec<u8>, String>) + 'static,
+    arrive: impl FnOnce(Result<Vec<u8>, Error>) + 'static,
 ) {
+    let unread = |path: &str| Error::new(ErrorCode::SourceIo, path).expected(Expected::Readable);
     #[cfg(target_arch = "wasm32")]
     {
         use wasm_bindgen::JsCast;
@@ -370,29 +366,26 @@ pub fn read_range(
             .map(|(request, window)| window.fetch_with_request(&request));
         let url = url.to_owned();
         wasm_bindgen_futures::spawn_local(async move {
-            let reason = |what: &str, error: wasm_bindgen::JsValue| {
-                format!(
-                    "{what} {url}: {}",
-                    error.as_string().unwrap_or_else(|| format!("{error:?}"))
-                )
+            let failed = |error: wasm_bindgen::JsValue| {
+                unread("$.url").got(error.as_string().unwrap_or_else(|| url.clone()))
             };
             let bytes = async {
-                let promise = promise.ok_or_else(|| format!("cannot request {url}"))?;
+                let promise = promise.ok_or_else(|| unread("$.url").got(&url))?;
                 let response: web_sys::Response = wasm_bindgen_futures::JsFuture::from(promise)
                     .await
-                    .map_err(|error| reason("cannot fetch", error))?
+                    .map_err(failed)?
                     .dyn_into()
-                    .map_err(|_| format!("fetching {url} answered no response"))?;
+                    .map_err(|_| unread("$.url").got(&url))?;
                 if !response.ok() {
-                    return Err(format!("{url} answered HTTP {}", response.status()));
+                    return Err(Error::new(ErrorCode::SourceIo, "$.status")
+                        .range(200.0, 299.0)
+                        .got(response.status()));
                 }
                 let whole = response.status() == 200;
-                let buffer = response
-                    .array_buffer()
-                    .map_err(|error| reason("cannot read", error))?;
+                let buffer = response.array_buffer().map_err(failed)?;
                 let buffer = wasm_bindgen_futures::JsFuture::from(buffer)
                     .await
-                    .map_err(|error| reason("cannot read", error))?;
+                    .map_err(failed)?;
                 let bytes = js_sys::Uint8Array::new(&buffer).to_vec();
                 if whole {
                     let length = bytes.len();
@@ -400,10 +393,9 @@ pub fn read_range(
                         .get(range.start as usize..range.end as usize)
                         .map(<[u8]>::to_vec)
                         .ok_or_else(|| {
-                            format!(
-                                "{url} holds {length} bytes, not bytes {}..{}",
-                                range.start, range.end
-                            )
+                            Error::new(ErrorCode::SourceIo, "$.range")
+                                .at_most(length as u64)
+                                .got([range.start, range.end])
                         })
                 } else {
                     Ok(bytes)
@@ -423,11 +415,6 @@ pub fn read_range(
             file.read_exact(&mut bytes)?;
             Ok::<_, std::io::Error>(bytes)
         })();
-        arrive(bytes.map_err(|error| {
-            format!(
-                "cannot read bytes {}..{} of {url}: {error}",
-                range.start, range.end
-            )
-        }));
+        arrive(bytes.map_err(|_| unread("$.url").got(url)));
     }
 }

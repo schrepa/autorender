@@ -145,7 +145,7 @@ pub(super) struct EncodeReport {
 }
 
 impl Renderer {
-    pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, RenderError> {
+    pub fn render_frame(&mut self, frame: RenderFrame<'_>) -> Result<RenderStats, Error> {
         self.render_inner(frame, false)
     }
 
@@ -195,7 +195,7 @@ impl Renderer {
     pub fn render_display_frame(
         &mut self,
         frame: RenderFrame<'_>,
-    ) -> Result<RenderStats, RenderError> {
+    ) -> Result<RenderStats, Error> {
         self.render_inner(frame, true)
     }
 
@@ -232,7 +232,7 @@ impl Renderer {
         &mut self,
         frame: RenderFrame<'_>,
         display: bool,
-    ) -> Result<RenderStats, RenderError> {
+    ) -> Result<RenderStats, Error> {
         let snapshot = frame.snapshot();
         let _profile = engine_profile::span("render", "render_snapshot");
         self.check_health()?;
@@ -336,7 +336,7 @@ impl Renderer {
         if let Err(invalid) = graph.compile() {
             self.graph = graph;
             self.queue.settle();
-            return Err(RenderError(invalid.to_string()));
+            return Err(invalid.error());
         }
         let mut report = EncodeReport {
             passes: graph.kept(),

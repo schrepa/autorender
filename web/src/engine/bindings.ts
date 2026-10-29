@@ -1,3 +1,5 @@
+import { engineFailure } from "../generated/errors";
+
 const simdProbe = new Uint8Array([
   0, 97, 115, 109, 1, 0, 0, 0,
   1, 4, 1, 96, 0, 0,
@@ -18,7 +20,7 @@ export function requireWasmSimd(): void {
     }
   }
   if (!simdSupported) {
-    throw new Error("This game build requires WebAssembly SIMD (simd128). Use an updated browser with WebAssembly SIMD and WebGPU enabled.");
+    throw engineFailure({ code: "runtime_unavailable", path: "$", expected: "supported", got: "simd128" });
   }
 }
 
@@ -32,7 +34,7 @@ export function generationModule(name: string): string | undefined {
   if (!import.meta.env.DEV) return;
   const generation = new URLSearchParams(location.search).get("engine_build");
   if (!generation) return;
-  if (!/^[A-Za-z0-9_-]{1,100}$/.test(generation)) throw new Error("Invalid development build identifier.");
+  if (!/^[A-Za-z0-9_-]{1,100}$/.test(generation)) throw engineFailure({ code: "invalid_id", path: "?engine_build", expected: "id", got: generation });
   return `/_engine/builds/${generation}/${name}.js`;
 }
 

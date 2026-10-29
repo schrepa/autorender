@@ -1,7 +1,7 @@
 use crate::app_host::AppHost;
 use crate::game::Game;
 use crate::host::{FrameLoop, FramePhase, InputGatherer, JobOrder, JobScheduler};
-use engine_core::{ActionInput, Engine, ErrorCode, JobId};
+use engine_core::{ActionInput, Engine, JobId};
 use engine_render::RenderTarget;
 use engine_scene::SceneFiles;
 
@@ -23,8 +23,7 @@ impl<G: Game> GameHost<G> {
         build: impl FnOnce() -> Result<(Engine, G), E>,
     ) -> crate::Result<Self> {
         engine_panic::install();
-        let input = InputGatherer::new(G::ACTIONS)
-            .map_err(|message| crate::Error::new(ErrorCode::InvalidInput, "$.actions", message))?;
+        let input = InputGatherer::new(G::ACTIONS)?;
         let mut game = None;
         let app = AppHost::launch(target, || {
             let (engine, built) = build().map_err(Into::into)?;
@@ -262,8 +261,7 @@ impl<G: Game> GameHost<G> {
 
     pub fn reload_scene(&mut self, source: &str, files: &SceneFiles) -> crate::Result<()> {
         self.game
-            .reload_scene(self.app.engine_mut(), source, files)
-            .map_err(crate::Error::from)?;
+            .reload_scene(self.app.engine_mut(), source, files)?;
         self.app.apply_overrides();
         self.app.forget_pipeline_list();
         self.suspend();
@@ -324,7 +322,6 @@ impl<G: Game> GameHost<G> {
         self.app
             .renderer
             .stop_debugger_capture()
-            .map_err(crate::app_host::render_failure)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -332,7 +329,6 @@ impl<G: Game> GameHost<G> {
         self.app
             .renderer
             .wait_for_gpu()
-            .map_err(crate::app_host::render_failure)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -345,7 +341,6 @@ impl<G: Game> GameHost<G> {
         self.app
             .renderer
             .wait_for_mark(mark)
-            .map_err(crate::app_host::render_failure)
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -353,7 +348,6 @@ impl<G: Game> GameHost<G> {
         self.app
             .renderer
             .read_offscreen()
-            .map_err(crate::app_host::render_failure)
     }
 
     pub fn frame_stats(&self) -> engine_core::FrameStats {
@@ -409,11 +403,11 @@ impl<G: Game> GameHost<G> {
 
     pub(crate) fn probe_result(
         &mut self,
-    ) -> Option<Result<engine_dev::results::ProbeResult, String>> {
+    ) -> Option<Result<engine_dev::results::ProbeResult, crate::Error>> {
         use engine_core::DrawnKind;
         let probe = match self.app.renderer.probe_result()? {
             Ok(probe) => probe,
-            Err(error) => return Some(Err(error.to_string())),
+            Err(error) => return Some(Err(error)),
         };
         let slot = probe
             .object
@@ -449,41 +443,36 @@ impl<G: Game> GameHost<G> {
         revision: &str,
         files: Option<&SceneFiles>,
     ) -> String {
-        use engine_core::ErrorCode;
-        use engine_scene::{SceneDocument, SceneError};
+        use engine_core::{Error, ErrorCode, Expected};
+        use engine_scene::SceneDocument;
         let none = SceneFiles::default();
         let files = files.unwrap_or(&none);
         let result = (|| {
             let Some(scene) = self.game.scene() else {
-                return Err(SceneError {
-                    code: ErrorCode::UnsupportedCommand,
-                    path: "$.name".into(),
-                    message: "this game runs no authored scene to reload".into(),
-                });
+                return Err(Error::new(ErrorCode::UnsupportedCommand, "$.name").got("reload"));
             };
             let (Ok(expected), Ok(target)) =
                 (expected_revision.parse::<u64>(), revision.parse::<u64>())
             else {
-                return Err(SceneError {
-                    code: ErrorCode::InvalidRevision,
-                    path: "$.args.revision".into(),
-                    message: "revisions must be unsigned decimal strings".into(),
-                });
+                return Err(Error::new(ErrorCode::InvalidRevision, "$.args.revision")
+                    .expected(Expected::Integer)
+                    .got(revision));
             };
             if scene.revision() != expected {
-                return Err(SceneError {
-                    code: ErrorCode::RevisionConflict,
-                    path: "$.args.expected_revision".into(),
-                    message: format!("active revision is {}", scene.revision()),
-                });
+                return Err(
+                    Error::new(ErrorCode::RevisionConflict, "$.args.expected_revision")
+                        .got(expected_revision)
+                        .nearest(scene.revision().to_string()),
+                );
             }
             let document = SceneDocument::from_json(source)?;
             if document.id != scene.id() || document.revision != target {
-                return Err(SceneError {
-                    code: ErrorCode::RevisionConflict,
-                    path: "$.args.revision".into(),
-                    message: "saved scene ID and revision must match the requested scene".into(),
-                });
+                return Err(Error::new(ErrorCode::RevisionConflict, "$.args.revision")
+                    .expected(Expected::Matching)
+                    .got(serde_json::json!({
+                        "id": document.id,
+                        "revision": document.revision.to_string(),
+                    })));
             }
             self.game.reload_scene(self.app.engine_mut(), source, files)
         })();
@@ -498,24 +487,20 @@ impl<G: Game> GameHost<G> {
                     serde_json::json!({"reloaded": true, "saved_by_reload": false}),
                 )
             }
-            Err(error) => self.development.error(
-                &mut self.app,
-                self.game.scene(),
-                error.code,
-                &error.path,
-                &error.message,
-            ),
+            Err(error) => self
+                .development
+                .refusal(&mut self.app, self.game.scene(), &error),
         }
     }
 }
 
 #[cfg(feature = "profiling")]
 impl<G: Game> GameHost<G> {
-    pub fn profiling_start(&mut self, max_events: usize) -> Result<(), &'static str> {
+    pub fn profiling_start(&mut self, max_events: usize) -> crate::Result<()> {
         self.app.profiling_start(max_events)
     }
 
-    pub fn profiling_stop(&mut self) -> Result<serde_json::Value, &'static str> {
+    pub fn profiling_stop(&mut self) -> crate::Result<serde_json::Value> {
         self.app.profiling_stop()
     }
 

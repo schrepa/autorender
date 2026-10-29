@@ -6,11 +6,11 @@ use std::time::{Duration, Instant};
 
 use engine::dev::{Artifact, Effect, HostContext, Outcome, Step};
 use engine::scene::SceneFiles;
-use engine::{ErrorCode, Game, GameHost};
+use engine::{Error, ErrorCode, Expected, Game, GameHost};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::files;
+use crate::{file_error, files};
 #[cfg(feature = "profiling")]
 use crate::{Frames, PixRecord, ProfileRecord, Record};
 use crate::{Offscreen, Pix};
@@ -169,16 +169,16 @@ impl<G: Game> DevSession<G> {
                 | Value::Bool(_)
                 | Value::Number(_)
                 | Value::String(_)
-                | Value::Array(_) => {
-                    self.error(ErrorCode::InvalidType, "$.deep", "deep is an object")
-                }
+                | Value::Array(_) => self.error(
+                    &Error::new(ErrorCode::InvalidType, "$.deep").expected(Expected::Object),
+                ),
             };
         }
         let context = self.context();
         let mut step = self.game.host_mut().dev_request(line, &context);
         loop {
             if let Err(error) = self.game.host().wait_for_gpu() {
-                return self.error(ErrorCode::RenderFailed, "$", &error.to_string());
+                return self.error(&Error::new(ErrorCode::RenderFailed, "$").got(error));
             }
             match step {
                 Step::Reply(reply) => return reply,
@@ -188,8 +188,8 @@ impl<G: Game> DevSession<G> {
     }
 
     fn carry(&mut self, effect: Effect) -> Step {
-        let failed = |message: String| Outcome {
-            failed: Some(message),
+        let failed = |error: Error| Outcome {
+            failed: Some(error.to_string()),
             ..Outcome::default()
         };
         let outcome = match effect {
@@ -203,14 +203,14 @@ impl<G: Game> DevSession<G> {
             },
             Effect::Frame { timestamp } => match self.game.frame(timestamp) {
                 Ok(()) => Outcome::default(),
-                Err(error) => failed(error.to_string()),
+                Err(error) => failed(error),
             },
             Effect::Show => match self.keep_frame() {
                 Ok(artifact) => Outcome {
                     artifact: Some(artifact),
                     ..Outcome::default()
                 },
-                Err(message) => failed(message),
+                Err(error) => failed(error),
             },
             Effect::Game { name, args } => match self.controls.get_mut(&name) {
                 Some(control) => match (control.run)(self.game.host_mut(), &args) {
@@ -218,7 +218,10 @@ impl<G: Game> DevSession<G> {
                         result: Some(result),
                         ..Outcome::default()
                     },
-                    Err(message) => failed(message),
+                    Err(error) => Outcome {
+                        failed: Some(error),
+                        ..Outcome::default()
+                    },
                 },
                 None => Outcome {
                     missing: Some(self.controls.keys().cloned().collect()),
@@ -237,14 +240,14 @@ impl<G: Game> DevSession<G> {
                     missing: Some(Vec::new()),
                     ..Outcome::default()
                 },
-                Err(message) => failed(message),
+                Err(error) => failed(error),
             },
             Effect::Save { name, contents } => match self.keep_file(&name, &contents) {
                 Ok(artifact) => Outcome {
                     artifact: Some(artifact),
                     ..Outcome::default()
                 },
-                Err(message) => failed(message),
+                Err(error) => failed(error),
             },
             Effect::Stream { records } => {
                 for record in records {
@@ -270,26 +273,26 @@ impl<G: Game> DevSession<G> {
         }
     }
 
-    fn read_source(&self) -> Result<Option<(String, SceneFiles)>, String> {
+    fn read_source(&self) -> Result<Option<(String, SceneFiles)>, Error> {
         let Some(path) = &self.source else {
             return Ok(None);
         };
-        let source = std::fs::read_to_string(path)
-            .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-        let files = files::scene_files(path, &source).map_err(|error| error.to_string())?;
+        let source =
+            std::fs::read_to_string(path).map_err(|error| file_error("$.source", path, &error))?;
+        let files = files::scene_files(path, &source)?;
         Ok(Some((source, files)))
     }
 
-    fn keep_frame(&mut self) -> Result<Artifact, String> {
+    fn keep_frame(&mut self) -> Result<Artifact, Error> {
         self.captures += 1;
         let path = self
             .artifacts
             .join(format!("capture-{}.png", self.captures));
-        std::fs::create_dir_all(&self.artifacts).map_err(|error| error.to_string())?;
-        self.game
-            .save_png(&path)
-            .map_err(|error| error.to_string())?;
-        let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&self.artifacts)
+            .map_err(|error| file_error("$.artifacts", &self.artifacts, &error))?;
+        self.game.save_png(&path)?;
+        let bytes =
+            std::fs::read(&path).map_err(|error| file_error("$.artifact", &path, &error))?;
         Ok(Artifact {
             path: path.display().to_string(),
             mime_type: "image/png".to_owned(),
@@ -301,14 +304,16 @@ impl<G: Game> DevSession<G> {
         })
     }
 
-    fn keep_file(&mut self, name: &str, contents: &Value) -> Result<Artifact, String> {
+    fn keep_file(&mut self, name: &str, contents: &Value) -> Result<Artifact, Error> {
         self.captures += 1;
         let path = self
             .artifacts
             .join(format!("{name}-{}.json", self.captures));
-        std::fs::create_dir_all(&self.artifacts).map_err(|error| error.to_string())?;
-        let bytes = serde_json::to_vec(contents).map_err(|error| error.to_string())?;
-        std::fs::write(&path, &bytes).map_err(|error| error.to_string())?;
+        std::fs::create_dir_all(&self.artifacts)
+            .map_err(|error| file_error("$.artifacts", &self.artifacts, &error))?;
+        let bytes = serde_json::to_vec(contents)
+            .map_err(|_| Error::new(ErrorCode::InvalidJson, "$.contents"))?;
+        std::fs::write(&path, &bytes).map_err(|error| file_error("$.artifact", &path, &error))?;
         Ok(Artifact {
             path: path.display().to_string(),
             mime_type: "application/json".to_owned(),
@@ -320,8 +325,8 @@ impl<G: Game> DevSession<G> {
         })
     }
 
-    fn error(&mut self, code: ErrorCode, path: &str, message: &str) -> Value {
-        self.game.host_mut().dev_refusal(code, path, message)
+    fn error(&mut self, error: &Error) -> Value {
+        self.game.host_mut().dev_refusal(error)
     }
 
     #[cfg(feature = "profiling")]
@@ -342,9 +347,9 @@ impl<G: Game> DevSession<G> {
         let options = ["duration_ms", "max_events", "cpu_samples", "vendor"];
         if let Some(unknown) = command.keys().find(|key| !options.contains(&key.as_str())) {
             return self.error(
-                ErrorCode::UnknownField,
-                &format!("$.deep.{unknown}"),
-                "deep profiles take duration_ms, max_events, cpu_samples and vendor",
+                &Error::new(ErrorCode::UnknownField, format!("$.deep.{unknown}"))
+                    .got(unknown)
+                    .variants(options),
             );
         }
         let bounded =
@@ -355,35 +360,40 @@ impl<G: Game> DevSession<G> {
                     .filter(|value| (minimum..=maximum).contains(value)),
             };
         let max = engine::profiling::MAX_EVENTS as u64;
-        let (Some(duration), Some(max_events)) = (
+        let out_of_range = |name: &str, (minimum, maximum): (u64, u64)| {
+            Error::new(ErrorCode::OutOfRange, format!("$.deep.{name}"))
+                .range(minimum as f64, maximum as f64)
+                .got(command.get(name))
+        };
+        let (duration, max_events) = match (
             bounded("duration_ms", (100, 5000), 5000),
             bounded("max_events", (256, max), max),
-        ) else {
-            return self.error(
-                ErrorCode::OutOfRange,
-                "$.deep",
-                &format!("duration_ms must be 100..5000 and max_events 256..{max}"),
-            );
+        ) {
+            (Some(duration), Some(max_events)) => (duration, max_events),
+            (None, _) => return self.error(&out_of_range("duration_ms", (100, 5000))),
+            (Some(_), None) => return self.error(&out_of_range("max_events", (256, max))),
         };
         let pix = match command.get("vendor") {
             None => false,
             Some(vendor) if vendor == "pix" => true,
-            Some(_) => {
-                return self.error(ErrorCode::UnknownVariant, "$.deep.vendor", "vendor is pix");
+            Some(vendor) => {
+                return self.error(
+                    &Error::new(ErrorCode::UnknownVariant, "$.deep.vendor")
+                        .got(vendor)
+                        .variants(["pix"]),
+                );
             }
         };
         if pix && self.pix.is_none() {
             return self.error(
-                ErrorCode::PixUnavailable,
-                "$.deep.vendor",
-                "PIX's counters need the session started with --vendor pix, where PIX is installed",
+                &Error::new(ErrorCode::PixUnavailable, "$.deep.vendor")
+                    .expected(Expected::Supported)
+                    .got("pix"),
             );
         }
         if !self.paused {
             return self.error(
-                ErrorCode::PauseRequired,
-                "$",
-                "pause before starting a controlled profiling capture",
+                &Error::new(ErrorCode::PauseRequired, "$").expected(Expected::Paused),
             );
         }
         let before = self.status();
@@ -418,7 +428,9 @@ impl<G: Game> DevSession<G> {
             self.pix.as_ref(),
         ) {
             Ok(recorded) => recorded,
-            Err(error) => return self.error(ErrorCode::CaptureFailed, "$", &error.message),
+            Err(error) => {
+                return self.error(&Error::new(ErrorCode::CaptureFailed, "$").got(error));
+            }
         };
         let after = self.status();
         let files = recorded.profile.unwrap_or_default();
@@ -431,7 +443,7 @@ impl<G: Game> DevSession<G> {
         json!({"ok": true, "observation": after["observation"], "result": {
             "temporary": true, "paused": true,
             "complete": files["complete"] == true && recorded.failed.is_none(),
-            "frame_failed": recorded.failed.map(|error| error.to_string()),
+            "frame_failed": recorded.failed,
             "artifacts": {
                 "trace": files["report"],
                 "firefox": files["firefox"],
@@ -447,9 +459,7 @@ impl<G: Game> DevSession<G> {
     #[cfg(not(feature = "profiling"))]
     fn profile(&mut self, _: &Map<String, Value>) -> Value {
         self.error(
-            ErrorCode::ProfilingUnavailable,
-            "$",
-            "native profiling captures need a build with the profiling feature",
+            &Error::new(ErrorCode::ProfilingUnavailable, "$.deep").expected(Expected::Supported),
         )
     }
 }

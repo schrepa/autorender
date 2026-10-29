@@ -70,7 +70,7 @@ impl Pix {
         }
     }
 
-    pub fn begin(&self, path: &Path) -> Result<(), String> {
+    pub fn begin(&self, path: &Path) -> Result<(), engine::Error> {
         #[cfg(windows)]
         {
             let file = wide(path.as_os_str());
@@ -81,36 +81,39 @@ impl Pix {
             // SAFETY: PIX reads the parameters, and copies the file name,
             // during the call.
             let result = unsafe { (self.begin)(&parameters) };
-            checked("start", result)
+            checked("$.start", result)
         }
         #[cfg(not(windows))]
         {
             let _ = path;
-            Err("PIX runs on Windows".into())
+            Err(unsupported())
         }
     }
 
-    pub fn end(&self) -> Result<(), String> {
+    pub fn end(&self) -> Result<(), engine::Error> {
         #[cfg(windows)]
         {
             // SAFETY: ends the capture begun above; FALSE keeps it.
             let result = unsafe { (self.end)(0) };
-            checked("end", result)
+            checked("$.end", result)
         }
         #[cfg(not(windows))]
         {
-            Err("PIX runs on Windows".into())
+            Err(unsupported())
         }
     }
 }
 
+#[cfg(not(windows))]
+fn unsupported() -> engine::Error {
+    engine::Error::new(engine::ErrorCode::PixUnavailable, "$").expected(engine::Expected::Supported)
+}
+
 #[cfg(windows)]
-fn checked(what: &str, result: i32) -> Result<(), String> {
+fn checked(path: &str, result: i32) -> Result<(), engine::Error> {
     if result < 0 {
-        Err(format!(
-            "PIX could not {what} its capture: {:#010x}",
-            result as u32
-        ))
+        Err(engine::Error::new(engine::ErrorCode::CaptureFailed, path)
+            .got(format!("{:#010x}", result as u32)))
     } else {
         Ok(())
     }

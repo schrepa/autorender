@@ -4,8 +4,17 @@ use std::sync::{
 };
 
 use bevy_ecs::prelude::Resource;
+use engine_settings::{Error, ErrorCode, Expected};
 
-use crate::{AssetError, Material, Mesh, MeshLods, Texture, takes_levels};
+use crate::{Material, Mesh, MeshLods, Texture, takes_levels};
+
+fn full(path: &str, limit: usize) -> Error {
+    Error::new(ErrorCode::AssetBudgetExceeded, path).at_most(limit as u64)
+}
+
+fn dead(code: ErrorCode, path: &str) -> Error {
+    Error::new(code, path).expected(Expected::Live)
+}
 
 static NEXT_LIBRARY: AtomicU64 = AtomicU64::new(1);
 
@@ -264,11 +273,9 @@ impl AssetLibrary {
         }
     }
 
-    pub fn insert_mesh(&mut self, mesh: Mesh) -> Result<MeshHandle, AssetError> {
+    pub fn insert_mesh(&mut self, mesh: Mesh) -> Result<MeshHandle, Error> {
         if !self.meshes.has_capacity(self.budget.max_meshes) {
-            return Err(AssetError::MeshCapacity {
-                limit: self.budget.max_meshes,
-            });
+            return Err(full("$.meshes", self.budget.max_meshes));
         }
         self.reserve_bytes(mesh.byte_len())?;
         let held = HeldMesh::new(mesh);
@@ -280,19 +287,17 @@ impl AssetLibrary {
         Ok(handle)
     }
 
-    pub fn reserve_mesh(&mut self) -> Result<MeshHandle, AssetError> {
+    pub fn reserve_mesh(&mut self) -> Result<MeshHandle, Error> {
         if !self.meshes.has_capacity(self.budget.max_meshes) {
-            return Err(AssetError::MeshCapacity {
-                limit: self.budget.max_meshes,
-            });
+            return Err(full("$.meshes", self.budget.max_meshes));
         }
         self.revision = self.revision.saturating_add(1);
         Ok(MeshHandle(self.meshes.reserve(self.id)))
     }
 
-    pub fn fill_mesh(&mut self, handle: MeshHandle, mesh: Mesh) -> Result<(), AssetError> {
+    pub fn fill_mesh(&mut self, handle: MeshHandle, mesh: Mesh) -> Result<(), Error> {
         if !self.meshes.holds(self.id, handle.0) || self.mesh(handle).is_some() {
-            return Err(AssetError::InvalidMeshHandle);
+            return Err(dead(ErrorCode::InvalidMesh, "$.mesh"));
         }
         self.reserve_bytes(mesh.byte_len())?;
         let held = HeldMesh::new(mesh);
@@ -307,16 +312,12 @@ impl AssetLibrary {
         std::mem::take(&mut self.awaiting_lods)
     }
 
-    pub fn settle_lods(
-        &mut self,
-        handle: MeshHandle,
-        lods: Option<MeshLods>,
-    ) -> Result<(), AssetError> {
+    pub fn settle_lods(&mut self, handle: MeshHandle, lods: Option<MeshLods>) -> Result<(), Error> {
         let held = self
             .meshes
             .get_mut(self.id, handle.0)
             .filter(|held| held.lods.is_none())
-            .ok_or(AssetError::InvalidMeshHandle)?;
+            .ok_or_else(|| dead(ErrorCode::InvalidMesh, "$.mesh"))?;
         if let Some(lods) = &lods {
             lods.check(held.mesh.indices().len(), held.mesh.vertices().len())?;
         }
@@ -332,17 +333,15 @@ impl AssetLibrary {
         held.lods.as_ref().map(Option::as_ref)
     }
 
-    pub fn insert_material(&mut self, material: Material) -> Result<MaterialHandle, AssetError> {
+    pub fn insert_material(&mut self, material: Material) -> Result<MaterialHandle, Error> {
         if material
             .textures()
             .any(|texture| !self.textures.holds(self.id, texture.0))
         {
-            return Err(AssetError::InvalidTextureHandle);
+            return Err(dead(ErrorCode::InvalidTexture, "$.textures"));
         }
         if !self.materials.has_capacity(self.budget.max_materials) {
-            return Err(AssetError::MaterialCapacity {
-                limit: self.budget.max_materials,
-            });
+            return Err(full("$.materials", self.budget.max_materials));
         }
         self.reserve_bytes(size_of::<Material>())?;
         Ok(MaterialHandle(
@@ -354,27 +353,25 @@ impl AssetLibrary {
         &mut self,
         handle: MaterialHandle,
         material: Material,
-    ) -> Result<(), AssetError> {
+    ) -> Result<(), Error> {
         if material
             .textures()
             .any(|texture| !self.textures.holds(self.id, texture.0))
         {
-            return Err(AssetError::InvalidTextureHandle);
+            return Err(dead(ErrorCode::InvalidTexture, "$.textures"));
         }
         let slot = self
             .materials
             .get_mut(self.id, handle.0)
-            .ok_or(AssetError::InvalidMaterialHandle)?;
+            .ok_or_else(|| dead(ErrorCode::InvalidMaterial, "$.material"))?;
         self.material_revision = self.material_revision.saturating_add(1);
         *slot = (material, self.material_revision);
         Ok(())
     }
 
-    pub fn insert_texture(&mut self, texture: Texture) -> Result<TextureHandle, AssetError> {
+    pub fn insert_texture(&mut self, texture: Texture) -> Result<TextureHandle, Error> {
         if !self.textures.has_capacity(self.budget.max_textures) {
-            return Err(AssetError::TextureCapacity {
-                limit: self.budget.max_textures,
-            });
+            return Err(full("$.textures", self.budget.max_textures));
         }
         self.reserve_bytes(texture.byte_len())?;
         self.texture_bytes += texture.byte_len();
@@ -383,23 +380,17 @@ impl AssetLibrary {
         ))
     }
 
-    pub fn reserve_texture(&mut self) -> Result<TextureHandle, AssetError> {
+    pub fn reserve_texture(&mut self) -> Result<TextureHandle, Error> {
         if !self.textures.has_capacity(self.budget.max_textures) {
-            return Err(AssetError::TextureCapacity {
-                limit: self.budget.max_textures,
-            });
+            return Err(full("$.textures", self.budget.max_textures));
         }
         self.revision = self.revision.saturating_add(1);
         Ok(TextureHandle(self.textures.reserve(self.id)))
     }
 
-    pub fn fill_texture(
-        &mut self,
-        handle: TextureHandle,
-        texture: Texture,
-    ) -> Result<(), AssetError> {
+    pub fn fill_texture(&mut self, handle: TextureHandle, texture: Texture) -> Result<(), Error> {
         if !self.textures.holds(self.id, handle.0) || self.texture(handle).is_some() {
-            return Err(AssetError::InvalidTextureHandle);
+            return Err(dead(ErrorCode::InvalidTexture, "$.texture"));
         }
         self.reserve_bytes(texture.byte_len())?;
         self.texture_bytes += texture.byte_len();
@@ -505,16 +496,13 @@ impl AssetLibrary {
         self.resident_bytes
     }
 
-    fn reserve_bytes(&mut self, requested: usize) -> Result<(), AssetError> {
+    fn reserve_bytes(&mut self, requested: usize) -> Result<(), Error> {
         let available = self
             .budget
             .max_cpu_bytes
             .saturating_sub(self.resident_bytes);
         if requested > available {
-            return Err(AssetError::CpuBudget {
-                requested,
-                available,
-            });
+            return Err(full("$.cpu_bytes", available).got(requested));
         }
         self.resident_bytes += requested;
         self.revision = self.revision.saturating_add(1);

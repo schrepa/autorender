@@ -8,7 +8,8 @@ use engine_core::{
     MaterialHandle, MeshHandle, RecordKey, RenderFrame, RenderSnapshot, TextureHandle,
 };
 
-use crate::platform::{RenderError, RenderTarget, render_error};
+use crate::platform::{RenderTarget, failed, failed_with};
+use engine_core::{Error, ErrorCode, Expected};
 
 use crate::RenderStats;
 use crate::batches::{BatchPlan, DrawBatch};

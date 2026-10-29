@@ -3,8 +3,10 @@
     reason = "keys serialize, and layouts come from pipeline_layout"
 )]
 
+use crate::platform::failed;
 use crate::shaders::Entry;
 use engine_core::collections::HashMap;
+use engine_core::{Error, Expected};
 use serde::{Deserialize, Serialize};
 use std::{
     cell::{Cell, RefCell},
@@ -346,28 +348,32 @@ fn with_registry<R>(device: &wgpu::Device, act: impl FnOnce(&mut Registry) -> R)
 
 const LIST: &[u8; 4] = b"PIPL";
 
-fn read_list(record: &[u8]) -> Result<(Option<wgpu::TextureFormat>, Vec<Key>), String> {
+fn read_list(record: &[u8]) -> Result<(Option<wgpu::TextureFormat>, Vec<Key>), Error> {
+    let broken = |expected: Expected| failed("$.pipelines").expected(expected);
     let mut rest = record
         .strip_prefix(LIST)
-        .ok_or("not a pipeline list's record")?;
+        .ok_or_else(|| broken(Expected::Matching))?;
     let mut texts = Vec::new();
     while let Some((length, after)) = rest.split_first_chunk::<4>() {
         let length = u32::from_le_bytes(*length) as usize;
-        let text = after.get(..length).ok_or("the pipeline list ends early")?;
-        texts.push(std::str::from_utf8(text).map_err(|error| error.to_string())?);
+        let text = after
+            .get(..length)
+            .ok_or_else(|| broken(Expected::Present))?;
+        texts.push(std::str::from_utf8(text).map_err(|_| broken(Expected::Utf8))?);
         rest = &after[length..];
     }
     let Some((canvas, keys)) = texts.split_first().filter(|_| rest.is_empty()) else {
-        return Err("the pipeline list ends early".into());
+        return Err(broken(Expected::Present));
     };
+    let unreadable = |text: &str| broken(Expected::Json).got(text);
     let canvas = match *canvas {
         "" => None,
-        canvas => Some(serde_json::from_str(canvas).map_err(|error| error.to_string())?),
+        canvas => Some(serde_json::from_str(canvas).map_err(|_| unreadable(canvas))?),
     };
     let keys = keys
         .iter()
-        .map(|text| serde_json::from_str(text).map_err(|error| error.to_string()))
-        .collect::<Result<_, String>>()?;
+        .map(|text| serde_json::from_str(text).map_err(|_| unreadable(text)))
+        .collect::<Result<_, Error>>()?;
     Ok((canvas, keys))
 }
 
@@ -498,7 +504,7 @@ impl PipelineCounts {
         })
     }
 
-    pub(crate) fn create_listed(&self, record: &[u8]) -> Result<u32, String> {
+    pub(crate) fn create_listed(&self, record: &[u8]) -> Result<u32, Error> {
         let (listed_canvas, keys) = read_list(record)?;
         let device = &self.device;
         with_registry(device, |registry| {

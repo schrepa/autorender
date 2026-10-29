@@ -94,12 +94,9 @@ impl PageSceneLoad {
 }
 
 fn ended() -> JsValue {
-    crate::Error::new(
-        engine_core::ErrorCode::InvalidRequest,
-        "$",
-        "the scene's files were taken",
-    )
-    .into()
+    crate::Error::new(engine_core::ErrorCode::InvalidRequest, "$")
+        .expected(crate::Expected::Present)
+        .into()
 }
 
 pub struct PageHost<G: Game> {
@@ -229,13 +226,9 @@ impl<G: Game> PageHost<G> {
         let mut settings = crate::host::HostSettings::default();
         for setting in crate::host::SETTINGS {
             if let Some(value) = parameters.get(setting.name) {
-                settings.set(setting.name, &value).map_err(|message| {
-                    crate::Error::new(
-                        engine_core::ErrorCode::InvalidValue,
-                        format!("?{}", setting.name),
-                        message,
-                    )
-                })?;
+                settings
+                    .set(setting.name, &value)
+                    .map_err(|error| error.within(&format!("?{}", setting.name)))?;
             }
         }
         settings.apply(&mut self.host);
@@ -251,20 +244,20 @@ impl<G: Game> PageHost<G> {
 #[cfg(feature = "dev")]
 impl<G: Game> PageHost<G> {
     pub fn dev_request(&mut self, line: &str, context: &str) -> String {
-        let step = match read::<engine_dev::HostContext>(context, "host context") {
+        let step = match read::<engine_dev::HostContext>(context, "$.context") {
             Ok(context) => self.host.dev_request(line, &context),
-            Err(message) => self.unreadable(&message),
+            Err(error) => self.unreadable(&error),
         };
         written(&step)
     }
 
     pub fn dev_resume(&mut self, outcome: &str, context: &str) -> String {
         let step = match (
-            read::<engine_dev::Outcome>(outcome, "outcome"),
-            read::<engine_dev::HostContext>(context, "host context"),
+            read::<engine_dev::Outcome>(outcome, "$.outcome"),
+            read::<engine_dev::HostContext>(context, "$.context"),
         ) {
             (Ok(outcome), Ok(context)) => self.host.dev_resume(outcome, &context),
-            (Err(message), _) | (_, Err(message)) => self.unreadable(&message),
+            (Err(error), _) | (_, Err(error)) => self.unreadable(&error),
         };
         written(&step)
     }
@@ -275,34 +268,30 @@ impl<G: Game> PageHost<G> {
         context: &str,
         files: Option<SceneFileSet>,
     ) -> String {
-        let step = match read::<engine_dev::HostContext>(context, "host context") {
+        let step = match read::<engine_dev::HostContext>(context, "$.context") {
             Ok(context) => {
                 self.host
                     .dev_reloaded(source, files.as_ref().map(SceneFileSet::files), &context)
             }
-            Err(message) => self.unreadable(&message),
+            Err(error) => self.unreadable(&error),
         };
         written(&step)
     }
 
-    pub fn dev_refusal(&mut self, code: &str, path: &str, message: &str) -> String {
-        let code = engine_core::ErrorCode::named(code)
-            .unwrap_or(engine_core::ErrorCode::BrowserCommandFailed);
-        self.host.dev_refusal(code, path, message).to_string()
+    pub fn dev_refusal(&mut self, error: &str) -> String {
+        let error = engine_core::parse_json::<crate::Error>(error)
+            .unwrap_or_else(|error| error.within("$.error"));
+        self.host.dev_refusal(&error).to_string()
     }
 
-    fn unreadable(&mut self, message: &str) -> engine_dev::Step {
-        engine_dev::Step::Reply(self.host.dev_refusal(
-            engine_core::ErrorCode::InvalidRequest,
-            "$",
-            message,
-        ))
+    fn unreadable(&mut self, error: &crate::Error) -> engine_dev::Step {
+        engine_dev::Step::Reply(self.host.dev_refusal(error))
     }
 }
 
 #[cfg(feature = "dev")]
-fn read<T: serde::de::DeserializeOwned>(json: &str, what: &str) -> Result<T, String> {
-    serde_json::from_str(json).map_err(|error| format!("invalid {what}: {error}"))
+fn read<T: serde::de::DeserializeOwned>(json: &str, at: &str) -> crate::Result<T> {
+    engine_core::parse_json(json).map_err(|error| error.within(at))
 }
 
 #[cfg(feature = "dev")]
@@ -313,16 +302,11 @@ fn written(step: &engine_dev::Step) -> String {
 #[cfg(feature = "profiling")]
 impl<G: Game> PageHost<G> {
     pub fn profiling_start(&mut self, max_events: u32) -> Result<(), JsValue> {
-        self.host
-            .profiling_start(max_events as usize)
-            .map_err(capture_failed)
+        Ok(self.host.profiling_start(max_events as usize)?)
     }
 
     pub fn profiling_stop(&mut self) -> Result<String, JsValue> {
-        self.host
-            .profiling_stop()
-            .map(|report| report.to_string())
-            .map_err(capture_failed)
+        Ok(self.host.profiling_stop()?.to_string())
     }
 
     pub fn profiling_report(&mut self) -> String {
@@ -336,9 +320,4 @@ impl<G: Game> PageHost<G> {
 
 fn job_id(id: f64) -> Option<JobId> {
     (id.is_finite() && id >= 1.0).then_some(JobId(id as u64))
-}
-
-#[cfg(feature = "profiling")]
-fn capture_failed(message: &str) -> JsValue {
-    crate::Error::new(engine_core::ErrorCode::CaptureFailed, "$", message).into()
 }

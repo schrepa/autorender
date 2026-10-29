@@ -9,7 +9,8 @@ mod astc;
 mod bc7;
 mod mips;
 
-use engine_assets::{AssetError, Texture, TextureFormat, TextureSummary};
+use engine_assets::{Texture, TextureFormat, TextureSummary};
+use engine_settings::{Error, ErrorCode, Expected};
 
 pub const COOK_JOB: &str = "texture_cook";
 
@@ -150,13 +151,13 @@ pub fn levels(source: &Source) -> Vec<Vec<u8>> {
     mips::chain(source.width, source.height, &source.pixels, source.usage)
 }
 
-pub fn cook(source: &Source, family: Family) -> Result<Texture, AssetError> {
+pub fn cook(source: &Source, family: Family) -> Result<Texture, Error> {
     let expected = TextureFormat::Rgba8.level_bytes(source.width, source.height);
     if source.pixels.len() != expected {
-        return Err(AssetError::InvalidTextureLength {
-            expected,
-            actual: source.pixels.len(),
-        });
+        return Err(Error::new(ErrorCode::InvalidTexture, "$.pixels")
+            .expected(Expected::Matching)
+            .range(expected as f64, expected as f64)
+            .got(source.pixels.len()));
     }
     let levels = levels(source);
     let compressed = levels
@@ -241,11 +242,9 @@ pub fn solid_block(format: TextureFormat, color: [u8; 4]) -> Option<[u8; 16]> {
     }
 }
 
-pub fn decompress(texture: &Texture) -> Result<Texture, AssetError> {
+pub fn decompress(texture: &Texture) -> Result<Texture, Error> {
     if texture.format() != TextureFormat::Bc7 {
-        return Err(AssetError::InvalidCompressedTexture {
-            reason: "only BC7 textures decompress",
-        });
+        return Err(Error::new(ErrorCode::InvalidTexture, "$.format").expected(Expected::Supported));
     }
     let levels = texture
         .levels()

@@ -1,4 +1,6 @@
-use crate::{AssetError, Mesh, MeshVertex};
+use engine_settings::{Error, ErrorCode, Expected};
+
+use crate::{Mesh, MeshVertex};
 
 pub const LOD_RECORD: &str = "mesh_lods";
 
@@ -43,12 +45,14 @@ impl MeshLods {
         bytes
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, AssetError> {
-        let invalid = |reason| AssetError::InvalidLevels { reason };
-        let mut words = Words::new(bytes, LODS_MAGIC).ok_or(invalid("not levels of detail"))?;
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+        let mut words = Words::new(bytes, LODS_MAGIC)
+            .ok_or_else(|| invalid("$.lods").expected(Expected::Matching))?;
         let counts = [words.next(), words.next(), words.next()];
         let [Some(levels), Some(casters), Some(indices)] = counts else {
-            return Err(invalid("levels of detail start with their counts"));
+            return Err(invalid("$.lods")
+                .expected(Expected::Present)
+                .got(bytes.len()));
         };
         let expected = (levels as usize)
             .checked_mul(12)
@@ -56,15 +60,15 @@ impl MeshLods {
             .and_then(|size| size.checked_add(indices as usize * 4))
             .and_then(|size| size.checked_add(16));
         if expected != Some(bytes.len()) {
-            return Err(invalid("the bytes must match their counts"));
+            return Err(sized("$.lods", expected, bytes.len()));
         }
         let mut lods = Self::default();
-        for _ in 0..levels {
+        for level in 0..levels {
             let (first_index, index_count, error) = (words.next(), words.next(), words.next());
             let (Some(first_index), Some(index_count), Some(error)) =
                 (first_index, index_count, error)
             else {
-                return Err(invalid("a level holds three words"));
+                return Err(invalid(format!("$.lods.levels[{level}]")).expected(Expected::Present));
             };
             lods.levels.push(LodLevel {
                 first_index,
@@ -72,9 +76,11 @@ impl MeshLods {
                 error: f32::from_bits(error),
             });
         }
-        for _ in 0..casters {
+        for caster in 0..casters {
             let (Some(first), Some(count)) = (words.next(), words.next()) else {
-                return Err(invalid("a caster range holds two words"));
+                return Err(
+                    invalid(format!("$.lods.casters[{caster}]")).expected(Expected::Present)
+                );
             };
             lods.casters.push((first, count));
         }
@@ -82,8 +88,7 @@ impl MeshLods {
         Ok(lods)
     }
 
-    pub fn check(&self, index_count: usize, vertices: usize) -> Result<(), AssetError> {
-        let invalid = |reason| Err(AssetError::InvalidLevels { reason });
+    pub fn check(&self, index_count: usize, vertices: usize) -> Result<(), Error> {
         let total = index_count + self.indices.len();
         let within = |first: u32, count: u32| {
             count.is_multiple_of(3)
@@ -91,28 +96,51 @@ impl MeshLods {
                     .checked_add(count as usize)
                     .is_some_and(|end| end <= total)
         };
+        let outside = |path: String, first: u32, count: u32| {
+            invalid(path)
+                .expected(Expected::Triangles)
+                .at_most(total as u64)
+                .got([first, count])
+        };
         let mut last = 0.0;
-        for level in &self.levels {
+        for (index, level) in self.levels.iter().enumerate() {
             if !within(level.first_index, level.index_count) {
-                return invalid("a level's indices lie within the mesh's and the levels'");
+                return Err(outside(
+                    format!("$.lods.levels[{index}]"),
+                    level.first_index,
+                    level.index_count,
+                ));
             }
             if !(level.error.is_finite() && level.error > last) {
-                return invalid("levels' errors are finite, positive and grow");
+                return Err(invalid(format!("$.lods.levels[{index}].error"))
+                    .expected(Expected::Above)
+                    .range(f64::from(last), f64::MAX)
+                    .got(level.error));
             }
             last = level.error;
         }
         if !(self.casters.is_empty() || self.casters.len() == self.levels.len() + 1) {
-            return invalid("caster ranges cover the mesh and every level, or none");
+            return Err(invalid("$.lods.casters")
+                .expected(Expected::Matching)
+                .got(self.casters.len())
+                .nearest(self.levels.len() + 1));
         }
-        if !self
+        if let Some(index) = self
             .casters
             .iter()
-            .all(|&(first, count)| within(first, count))
+            .position(|&(first, count)| !within(first, count))
         {
-            return invalid("a caster range lies within the mesh's and the levels' indices");
+            let (first, count) = self.casters[index];
+            return Err(outside(format!("$.lods.casters[{index}]"), first, count));
         }
-        if self.indices.iter().any(|&index| index as usize >= vertices) {
-            return invalid("the levels' indices name the mesh's vertices");
+        if let Some(index) = self
+            .indices
+            .iter()
+            .position(|&index| index as usize >= vertices)
+        {
+            return Err(invalid(format!("$.lods.indices[{index}]"))
+                .at_most(vertices.saturating_sub(1) as u64)
+                .got(self.indices[index]));
         }
         Ok(())
     }
@@ -158,18 +186,20 @@ pub fn lod_input(mesh: &Mesh) -> Option<Vec<u8>> {
 }
 
 impl LodInput {
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, AssetError> {
-        let invalid = |reason| AssetError::InvalidLevels { reason };
-        let mut words = Words::new(bytes, INPUT_MAGIC).ok_or(invalid("not a level job's input"))?;
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+        let mut words = Words::new(bytes, INPUT_MAGIC)
+            .ok_or_else(|| invalid("$.input").expected(Expected::Matching))?;
         let (Some(vertices), Some(indices)) = (words.next(), words.next()) else {
-            return Err(invalid("a level job's input starts with its counts"));
+            return Err(invalid("$.input")
+                .expected(Expected::Present)
+                .got(bytes.len()));
         };
         let expected = (vertices as usize)
             .checked_mul(32)
             .and_then(|size| size.checked_add(indices as usize * 4))
             .and_then(|size| size.checked_add(12));
         if expected != Some(bytes.len()) {
-            return Err(invalid("the input must match its counts"));
+            return Err(sized("$.input", expected, bytes.len()));
         }
         let mut float = || words.next().map_or(0.0, f32::from_bits);
         let vertices = (0..vertices)
@@ -181,6 +211,18 @@ impl LodInput {
             .collect();
         let indices = (0..indices).filter_map(|_| words.next()).collect();
         Ok(Self { vertices, indices })
+    }
+}
+
+fn invalid(path: impl Into<String>) -> Error {
+    Error::new(ErrorCode::InvalidMesh, path)
+}
+
+fn sized(path: &str, expected: Option<usize>, got: usize) -> Error {
+    let error = invalid(path).expected(Expected::Matching).got(got);
+    match expected {
+        Some(expected) => error.range(expected as f64, expected as f64),
+        None => error,
     }
 }
 

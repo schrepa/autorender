@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use engine::collections::HashSet;
+use engine::{Error, ErrorCode};
+
+use crate::file_error;
 
 const LEVEL: i32 = 19;
 
@@ -33,7 +36,7 @@ impl PackWriter {
         kinds
     }
 
-    pub(crate) fn write(&self, path: &Path) -> Result<u64, String> {
+    pub(crate) fn write(&self, path: &Path) -> Result<u64, Error> {
         let listing =
             engine_worker::listing_bytes(self.records.iter().map(|(key, kind, _)| (key, *kind)));
         let records: Vec<([u8; 32], &[u8])> =
@@ -54,17 +57,18 @@ impl PackWriter {
                         records
                             .iter()
                             .map(|(_, bytes)| compress(bytes))
-                            .collect::<Result<Vec<_>, String>>()
+                            .collect::<Result<Vec<_>, Error>>()
                     })
                 })
                 .collect();
             parts
                 .into_iter()
                 .map(|part| {
-                    part.join()
-                        .unwrap_or_else(|_| Err("a compressor panicked".into()))
+                    part.join().unwrap_or_else(|_| {
+                        Err(Error::new(ErrorCode::RuntimePanicked, "$.compress"))
+                    })
                 })
-                .collect::<Result<Vec<Vec<Vec<u8>>>, String>>()
+                .collect::<Result<Vec<Vec<Vec<u8>>>, Error>>()
                 .map(|parts| parts.into_iter().flatten().collect())
         })?;
         let records: Vec<([u8; 32], &[u8], Vec<u8>)> = records
@@ -76,15 +80,16 @@ impl PackWriter {
             compress(directory).unwrap_or_default()
         });
         if let Some(folder) = path.parent() {
-            std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
+            std::fs::create_dir_all(folder).map_err(|error| file_error("$", folder, &error))?;
         }
         let partial = path.with_extension("pack.partial");
-        std::fs::write(&partial, &bytes).map_err(|error| error.to_string())?;
-        std::fs::rename(&partial, path).map_err(|error| error.to_string())?;
+        std::fs::write(&partial, &bytes).map_err(|error| file_error("$", &partial, &error))?;
+        std::fs::rename(&partial, path).map_err(|error| file_error("$", path, &error))?;
         Ok(bytes.len() as u64)
     }
 }
 
-fn compress(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    zstd::bulk::compress(bytes, LEVEL).map_err(|error| error.to_string())
+fn compress(bytes: &[u8]) -> Result<Vec<u8>, Error> {
+    zstd::bulk::compress(bytes, LEVEL)
+        .map_err(|error| Error::new(ErrorCode::SourceIo, "$.compress").got(error.to_string()))
 }

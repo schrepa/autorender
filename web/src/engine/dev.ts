@@ -1,9 +1,9 @@
 import type { Runtime } from "./host";
 import { adapterInfo } from "./adapter";
 import { fatal } from "./panic";
-import { engineError, type ErrorCode } from "../generated/errors";
+import { engineError, engineFailure, type EngineError } from "../generated/errors";
 import type { AdapterStatus } from "../generated/host";
-import type { Effect, HostContext, Outcome, Reply, Step } from "../generated/reply";
+import type { Effect, Error as Failure, HostContext, Outcome, Reply, Step } from "../generated/reply";
 import { parseJson } from "../generated/runtime";
 import protocol from "../generated/protocol.json";
 
@@ -49,7 +49,7 @@ export function connectDevelopment(host: Host): () => void {
   let disposed = false;
   let busy = false;
   const runtime = host.game;
-  if (!runtime.dev_request) throw new Error("Development Wasm is missing; run cargo xtask dev.");
+  if (!runtime.dev_request) throw engineFailure({ code: "runtime_unavailable", path: "$", expected: "present", got: "dev_request" });
   const closed = () => disposed || host.signal.aborted;
   let gpuWaits = 0;
   const saved = new Map<string, string>();
@@ -68,7 +68,7 @@ export function connectDevelopment(host: Host): () => void {
       return;
     }
     gpuWaits++;
-    const gpu = within(done, GPU_WORK_LIMIT_MS, "the GPU did not finish its work", host.signal)
+    const gpu = within(done, GPU_WORK_LIMIT_MS, "gpu_work", host.signal)
       .finally(() => { gpuWaits--; });
     await animationFrames(count, host.signal, undefined, gpu);
   }
@@ -80,15 +80,15 @@ export function connectDevelopment(host: Host): () => void {
     };
     return JSON.stringify(page);
   }
-  function refuse(code: ErrorCode, path: string, message: string): Reply {
+  function refuse(failure: Failure): Reply {
     if (!closed() && !host.stopped()) {
-      try { return parseJson(runtime.dev_refusal!(code, path, message)); } catch {}
+      try { return parseJson(runtime.dev_refusal!(JSON.stringify(failure))); } catch {}
     }
-    return { ok: false, error: { code, path, message } };
+    return { ok: false, error: failure };
   }
   async function carry(effect: Effect): Promise<Step> {
     const resumed = (outcome: Outcome): Step => {
-      if (closed()) throw new Error("session closed");
+      if (closed()) throw engineFailure(CLOSED);
       return parseJson(runtime.dev_resume!(JSON.stringify(outcome), context()));
     };
     switch (effect.kind) {
@@ -101,7 +101,7 @@ export function connectDevelopment(host: Host): () => void {
       }
       case "frame":
         await presented(1);
-        if (closed()) throw new Error("session closed");
+        if (closed()) throw engineFailure(CLOSED);
         host.frame(effect.timestamp);
         return resumed({});
       case "show":
@@ -119,7 +119,7 @@ export function connectDevelopment(host: Host): () => void {
         if (!host.source) return resumed({ missing: [] });
         const source = await host.source.load(host.signal);
         const files = await host.source.files?.(source, host.signal);
-        if (closed()) throw new Error("session closed");
+        if (closed()) throw engineFailure(CLOSED);
         return parseJson(runtime.dev_reloaded!(source, context(), files));
       }
       case "save":
@@ -142,34 +142,34 @@ export function connectDevelopment(host: Host): () => void {
       return text;
     },
     async request(command: Command): Promise<Reply> {
-      if (closed()) return refuse("session_closed", "$", "the browser runtime was disposed");
+      if (closed()) return refuse(CLOSED);
       const stopped = host.stopped();
-      if (stopped) return { ok: false, error: { code: "runtime_panicked", path: "$", message: stopped } };
-      if (busy || host.isBusy?.()) return refuse("command_busy", "$", "one development command is already running");
+      if (stopped) return { ok: false, error: { code: "runtime_panicked", path: "$", got: stopped } };
+      if (busy || host.isBusy?.()) return refuse({ code: "command_busy", path: "$" });
       let line: string;
       try { line = JSON.stringify(command) ?? "null"; }
-      catch { return refuse("invalid_request", "$.command", "command must be serializable JSON"); }
+      catch { return refuse({ code: "invalid_request", path: "$.command", expected: "json" }); }
       busy = true;
       host.setBusy(true);
       try {
         let step = parseJson(runtime.dev_request!(line, context()));
         while ("effect" in step) step = await carry(step.effect);
         const reply = step.reply;
-        if (closed()) return refuse("session_closed", "$", "runtime was disposed during command");
+        if (closed()) return refuse(CLOSED);
         if (reply.ok) {
           await nameAdapters(reply);
           host.poll();
         }
         return reply;
       } catch (cause) {
-        if (closed()) return refuse("session_closed", "$", "runtime was disposed during command");
+        if (closed()) return refuse(CLOSED);
         if (fatal(cause)) {
           host.fail(cause);
-          return { ok: false, error: { code: "runtime_panicked", path: "$", message: host.stopped() ?? String(cause) } };
+          return { ok: false, error: { code: "runtime_panicked", path: "$", got: host.stopped() ?? String(cause) } };
         }
         const thrown = engineError(cause);
-        if (thrown) return refuse(thrown.code, thrown.path, thrown.message);
-        return refuse("browser_command_failed", "$", String(cause));
+        if (thrown) return refuse(failure(thrown));
+        return refuse({ code: "browser_command_failed", path: "$", got: String(cause) });
       } finally {
         busy = false;
         host.setBusy(false);
@@ -185,6 +185,11 @@ export function connectDevelopment(host: Host): () => void {
   return dispose;
 }
 
+function failure(thrown: EngineError): Failure {
+  const { code, path, expected, allowed, nearest, got } = thrown;
+  return { code, path, expected, allowed, nearest, got };
+}
+
 async function nameAdapters(reply: Reply) {
   const result = reply.result as { adapter?: AdapterStatus; benchmark?: { environment?: { adapter?: AdapterStatus } } } | null | undefined;
   for (const holder of [result, result?.benchmark?.environment]) {
@@ -195,17 +200,18 @@ async function nameAdapters(reply: Reply) {
 }
 
 const PRESENTATION_TIMEOUT_MS = 5000;
+const CLOSED: Failure = { code: "session_closed", path: "$" };
 const GPU_WORK_LIMIT_MS = 180_000;
 
-function within<T>(promise: Promise<T>, limit: number, message: string, signal: AbortSignal): Promise<T> {
+function within<T>(promise: Promise<T>, limit: number, waited: string, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => finish(() => reject(new Error(`${message} within ${limit / 1000} s`))), limit);
+    const timeout = setTimeout(() => finish(() => reject(engineFailure({ code: "command_timeout", path: "$", got: { waited, limit_ms: limit } }))), limit);
     function finish(settle: () => void) {
       clearTimeout(timeout);
       signal.removeEventListener("abort", aborted);
       settle();
     }
-    function aborted() { finish(() => reject(new Error("session closed"))); }
+    function aborted() { finish(() => reject(engineFailure(CLOSED))); }
     signal.addEventListener("abort", aborted, { once: true });
     if (signal.aborted) { aborted(); return; }
     promise.then(value => finish(() => resolve(value)), cause => finish(() => reject(cause)));
@@ -221,7 +227,7 @@ function animationFrames(count: number, signal: AbortSignal, within?: number, gp
     const arm = () => {
       if (settled) return;
       timeout = within === undefined
-        ? setTimeout(() => finish(new Error("browser presentation timed out")), PRESENTATION_TIMEOUT_MS)
+        ? setTimeout(() => finish(engineFailure({ code: "command_timeout", path: "$", got: { waited: "presentation", limit_ms: PRESENTATION_TIMEOUT_MS } })), PRESENTATION_TIMEOUT_MS)
         : setTimeout(() => finish(undefined, performance.now()), within);
     };
     function finish(error?: Error, timestamp = 0) {
@@ -232,7 +238,7 @@ function animationFrames(count: number, signal: AbortSignal, within?: number, gp
       signal.removeEventListener("abort", aborted);
       if (error) reject(error); else resolve(timestamp);
     }
-    function aborted() { finish(new Error("session closed")); }
+    function aborted() { finish(engineFailure(CLOSED)); }
     function next(timestamp: number) {
       if (--left <= 0) finish(undefined, timestamp);
       else request = requestAnimationFrame(next);

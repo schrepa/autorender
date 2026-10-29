@@ -5,7 +5,7 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use engine::host::median;
-use engine::{Game, GameHost};
+use engine::{Error, ErrorCode, Expected, Game, GameHost};
 use fxprof_processed_profile::{
     CategoryColor, CategoryHandle, CpuDelta, Frame, FrameFlags, FrameInfo, MarkerFieldFlags,
     MarkerFieldFormat, MarkerTiming, Profile, ReferenceTimestamp, SamplingInterval,
@@ -77,8 +77,8 @@ impl DeepCapture {
         host: &mut GameHost<G>,
         threads: Vec<SampledThread>,
         max_events: usize,
-    ) -> Result<Self, String> {
-        host.profiling_start(max_events).map_err(String::from)?;
+    ) -> Result<Self, Error> {
+        host.profiling_start(max_events)?;
         HEAP.lock().unwrap_or_else(PoisonError::into_inner).clear();
         engine::profiling::sample_allocations(Some(sample_heap));
         crate::counters::begin();
@@ -94,12 +94,12 @@ impl DeepCapture {
         folder: &Path,
         stem: &str,
         context: Value,
-    ) -> Result<ProfileFiles, String> {
+    ) -> Result<ProfileFiles, Error> {
         let samples = self.sampler.map(Sampler::finish);
         engine::profiling::sample_allocations(None);
         let heap = std::mem::take(&mut *HEAP.lock().unwrap_or_else(PoisonError::into_inner));
-        let mut report = host.profiling_stop().map_err(String::from)?;
-        host.wait_for_gpu().map_err(|error| error.to_string())?;
+        let mut report = host.profiling_stop()?;
+        host.wait_for_gpu()?;
         host.profiling_poll();
         report["gpu"] = host.profiling_report();
         report["context"] = context;
@@ -110,7 +110,12 @@ impl DeepCapture {
         report["heap_samples_by_brick"] = heap_by_brick(&heap, &symbols);
         let profile = firefox_profile(&report, samples.as_ref(), &symbols, host.adapter());
         let summary = summary(&report, samples.as_ref(), &symbols, host.adapter());
-        std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
+        let unwritable = |path: &Path| {
+            Error::new(ErrorCode::SourceIo, "$.folder")
+                .expected(Expected::Writable)
+                .got(path.display().to_string())
+        };
+        std::fs::create_dir_all(folder).map_err(|_| unwritable(folder))?;
         let files = ProfileFiles {
             report: folder.join(format!("{stem}.json")),
             firefox: folder.join(format!("{stem}.firefox.json")),
@@ -119,11 +124,11 @@ impl DeepCapture {
                 && report["cpu"]["complete"] == true
                 && samples.is_some(),
         };
-        let write = |path: &Path, value: &dyn erased::Write| -> Result<(), String> {
-            let file = std::fs::File::create(path).map_err(|error| error.to_string())?;
+        let write = |path: &Path, value: &dyn erased::Write| -> Result<(), Error> {
+            let file = std::fs::File::create(path).map_err(|_| unwritable(path))?;
             value
                 .write(&mut std::io::BufWriter::new(file))
-                .map_err(|error| format!("cannot write {}: {error}", path.display()))
+                .map_err(|_| unwritable(path))
         };
         write(&files.report, &report)?;
         write(&files.firefox, &profile)?;
@@ -737,7 +742,10 @@ fn summary(
                 })).collect::<Vec<_>>(),
                 "symbols": "in process, from the program's and libraries' debug information",
             })),
-            "cpu_samples_unavailable": (!sampled).then_some("this operating system's threads cannot be sampled in process"),
+            "cpu_samples_unavailable": (!sampled).then(|| {
+                Error::new(ErrorCode::ProfilingUnavailable, "$.cpu_samples")
+                    .expected(Expected::Supported)
+            }),
             "engine_spans": {
                 "events": report["cpu"]["events"].as_array().map_or(0, Vec::len),
                 "complete": report["cpu"]["complete"],

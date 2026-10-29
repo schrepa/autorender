@@ -2,12 +2,12 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use engine::host::FramePhase;
-use engine::{Engine, Game, GameHost, GpuPreference, RenderTarget};
+use engine::{Engine, Error, ErrorCode, Expected, Game, GameHost, GpuPreference, RenderTarget};
 use serde_json::Value;
 
 use crate::files::Image;
 use crate::jobs::{JobOptions, JobPool};
-use crate::{Pix, RenderDoc, host_error};
+use crate::{Pix, RenderDoc, file_error};
 
 pub struct Offscreen<G: Game> {
     host: Box<GameHost<G>>,
@@ -94,11 +94,9 @@ impl<G: Game> Offscreen<G> {
         if !cfg!(feature = "profiling")
             && (record.profile.is_some() || record.pix_counters.is_some())
         {
-            return Err(engine::Error::new(
-                engine::ErrorCode::UnsupportedCommand,
-                "$",
-                "profiles and PIX's counters need a build with the profiling feature",
-            ));
+            return Err(
+                Error::new(ErrorCode::UnsupportedCommand, "$").expected(Expected::Supported)
+            );
         }
         let gpu_capture = record.gpu_capture.clone().or_else(|| {
             record
@@ -107,9 +105,8 @@ impl<G: Game> Offscreen<G> {
                 .map(|dive| dive.folder.join("frame.wpix"))
         });
         if let Some(dive) = &record.pix_counters {
-            std::fs::create_dir_all(&dive.folder).map_err(|error| {
-                host_error(&format!("Cannot create {}", dive.folder.display()), error)
-            })?;
+            std::fs::create_dir_all(&dive.folder)
+                .map_err(|error| file_error("$.folder", &dive.folder, &error))?;
         }
         #[cfg(feature = "profiling")]
         let capture = match &record.profile {
@@ -150,7 +147,7 @@ impl<G: Game> Offscreen<G> {
             (Some(capture), Some(profile)) => {
                 let mut context = profile.context.clone();
                 context["frames"] = drawn.into();
-                context["frame_failed"] = failed.as_ref().map(ToString::to_string).into();
+                context["frame_failed"] = serde_json::json!(failed);
                 let files =
                     self.finish_profile(capture, &profile.folder, &profile.stem, context)?;
                 Some(serde_json::json!({
@@ -168,23 +165,18 @@ impl<G: Game> Offscreen<G> {
         let pix_counters = match (&record.pix_counters, &gpu_capture) {
             (Some(dive), Some(path)) if failed.is_none() => {
                 if captured != Some("pix") {
-                    return Err(engine::Error::new(
-                        engine::ErrorCode::PixUnavailable,
-                        "$",
-                        format!(
-                            "PIX's counters replay D3D12 frames PIX captured, where it is installed; \
-                         this one drew on {} ({})",
-                            self.host.adapter().backend,
-                            captured.unwrap_or("no capture"),
-                        ),
-                    ));
+                    return Err(Error::new(ErrorCode::PixUnavailable, "$")
+                        .expected(Expected::Supported)
+                        .got(serde_json::json!({
+                            "backend": self.host.adapter().backend,
+                            "captured": captured,
+                        })));
                 }
-                Some(
-                    engine_profiler::vendor::pix_counters(path, &dive.folder, &dive.counters)
-                        .map_err(|reason| {
-                            engine::Error::new(engine::ErrorCode::PixUnavailable, "$", reason)
-                        })?,
-                )
+                Some(engine_profiler::vendor::pix_counters(
+                    path,
+                    &dive.folder,
+                    &dive.counters,
+                )?)
             }
             _ => None,
         };
@@ -217,7 +209,6 @@ impl<G: Game> Offscreen<G> {
             Vec::new()
         };
         engine_profiler::DeepCapture::start(&mut self.host, threads, max_events)
-            .map_err(|error| host_error("Profiling could not start", error))
     }
 
     #[cfg(feature = "profiling")]
@@ -228,9 +219,7 @@ impl<G: Game> Offscreen<G> {
         stem: &str,
         context: Value,
     ) -> engine::Result<engine_profiler::ProfileFiles> {
-        capture
-            .finish(&mut self.host, folder, stem, context)
-            .map_err(|error| host_error("Profiling failed", error))
+        capture.finish(&mut self.host, folder, stem, context)
     }
 
     pub fn exchange_jobs(&mut self) {
@@ -280,19 +269,15 @@ impl<G: Game> Offscreen<G> {
         let pix = pix.filter(|_| self.host.adapter().backend == "Dx12");
         self.host.wait_for_gpu()?;
         if let Some(pix) = pix {
-            pix.begin(path).map_err(|error| host_error("PIX", error))?;
+            pix.begin(path)?;
             let frame = self.frame(timestamp);
-            pix.end().map_err(|error| host_error("PIX", error))?;
+            pix.end()?;
             return frame.map(|()| "pix");
         }
         if let Some(renderdoc) = RenderDoc::attached() {
-            renderdoc
-                .begin(path)
-                .map_err(|error| host_error("RenderDoc", error))?;
+            renderdoc.begin(path)?;
             let frame = self.frame(timestamp);
-            renderdoc
-                .end()
-                .map_err(|error| host_error("RenderDoc", error))?;
+            renderdoc.end()?;
             return frame.map(|()| "renderdoc");
         }
         self.host.start_debugger_capture();
@@ -315,18 +300,18 @@ impl<G: Game> Offscreen<G> {
 
     pub fn save_png(&self, path: &Path) -> engine::Result<()> {
         let image = self.image()?;
-        let failed = |error: &dyn std::fmt::Display| {
-            host_error(&format!("Could not write {}", path.display()), error)
+        let failed = |_| {
+            Error::new(ErrorCode::SourceIo, "$")
+                .expected(Expected::Writable)
+                .got(path.display().to_string())
         };
-        let file = std::fs::File::create(path).map_err(|error| failed(&error))?;
+        let file = std::fs::File::create(path).map_err(|error| file_error("$", path, &error))?;
         let mut encoder =
             png::Encoder::new(std::io::BufWriter::new(file), image.width, image.height);
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().map_err(|error| failed(&error))?;
-        writer
-            .write_image_data(&image.pixels)
-            .map_err(|error| failed(&error))?;
-        writer.finish().map_err(|error| failed(&error))
+        let mut writer = encoder.write_header().map_err(failed)?;
+        writer.write_image_data(&image.pixels).map_err(failed)?;
+        writer.finish().map_err(failed)
     }
 }

@@ -1,4 +1,4 @@
-use engine_core::ErrorCode;
+use engine_core::{ErrorCode, Expected};
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 pub use engine_worker::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 
@@ -52,11 +52,9 @@ impl SceneLoad {
             .iter()
             .position(|(file, _, _)| file == uri)
             .ok_or_else(|| {
-                Error::new(
-                    ErrorCode::MissingFile,
-                    "$",
-                    format!("the scene names no file {uri}"),
-                )
+                Error::new(ErrorCode::MissingFile, "$")
+                    .got(uri)
+                    .variants(self.entries.iter().map(|(file, _, _)| file.clone()))
             })?;
         match self.entries[at].1 {
             SceneFileKind::Buffer => {
@@ -66,7 +64,9 @@ impl SceneLoad {
             }
             SceneFileKind::Image => {
                 engine_worker::image_format(&bytes).ok_or_else(|| {
-                    invalid_texture(format!("{uri} is not a PNG, JPEG or KTX2 image"))
+                    Error::new(ErrorCode::InvalidTexture, "$")
+                        .expected(Expected::Image)
+                        .got(uri)
                 })?;
                 self.entries[at].2 = Stage::Decoding;
                 Ok(Some(bytes))
@@ -81,7 +81,7 @@ impl SceneLoad {
     }
 
     pub fn decode(&mut self, uri: &str, bytes: &[u8]) -> Result<()> {
-        let image = decode_image(uri, bytes).map_err(invalid_texture)?;
+        let image = decode_image(uri, bytes)?;
         self.image(uri, image);
         Ok(())
     }
@@ -92,11 +92,9 @@ impl SceneLoad {
             .iter()
             .find(|(_, _, stage)| *stage != Stage::Held)
         {
-            return Err(Error::new(
-                ErrorCode::MissingFile,
-                "$",
-                format!("the scene's file {uri} did not load"),
-            ));
+            return Err(Error::new(ErrorCode::MissingFile, "$")
+                .expected(Expected::Present)
+                .got(uri));
         }
         Ok(self.files)
     }
@@ -106,8 +104,4 @@ impl SceneLoad {
             entry.2 = Stage::Held;
         }
     }
-}
-
-fn invalid_texture(message: String) -> Error {
-    Error::new(ErrorCode::InvalidTexture, "$", message)
 }

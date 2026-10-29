@@ -1,13 +1,13 @@
 use engine_core::{
-    MAX_SPLINE_POINTS, MaterialHandle, MeshHandle, SplineMesh, bevy_ecs::world::EntityWorldMut,
-    glam::Vec3,
+    Error, Expected, MAX_SPLINE_POINTS, MaterialHandle, MeshHandle, SplineMesh,
+    bevy_ecs::world::EntityWorldMut, glam::Vec3,
 };
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
 use crate::components::{Placement, Reach, SceneComponent};
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneError, SceneFiles};
+use crate::{SceneDocument, SceneFiles};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -40,24 +40,24 @@ impl SceneSpline {
         }
     }
 
-    pub(crate) fn validate(&self, path: &str) -> Result<(), SceneError> {
+    pub(crate) fn validate(&self, path: &str) -> Result<(), Error> {
         if !(2..=MAX_SPLINE_POINTS).contains(&self.points.len()) {
-            return Err(SceneError::new(
-                ErrorCode::InvalidSpline,
-                format!("{path}.points"),
-                format!("a curve names 2 to {MAX_SPLINE_POINTS} points"),
-            ));
+            return Err(Error::new(ErrorCode::InvalidSpline, format!("{path}.points"))
+                .expected(Expected::Array)
+                .range(2.0, MAX_SPLINE_POINTS as f64)
+                .got(self.points.len()));
         }
         if let Some(index) = self.points.iter().position(|point| {
             !point
                 .iter()
                 .all(|value| value.is_finite() && value.abs() <= 1.0e7)
         }) {
-            return Err(SceneError::new(
-                ErrorCode::InvalidSpline,
-                format!("{path}.points[{index}]"),
-                "points must be finite and within 1e7",
-            ));
+            return Err(
+                Error::new(ErrorCode::InvalidSpline, format!("{path}.points[{index}]"))
+                    .expected(Expected::Finite)
+                    .range(-1.0e7, 1.0e7)
+                    .got(self.points[index]),
+            );
         }
         Ok(())
     }
@@ -78,12 +78,7 @@ impl SceneComponent for SceneSpline {
 
     const PLACEMENT: Placement = Placement::Anywhere;
 
-    fn prepare(
-        &self,
-        _: &str,
-        _: &SceneDocument,
-        _: Option<&SceneFiles>,
-    ) -> Result<Self, SceneError> {
+    fn prepare(&self, _: &str, _: &SceneDocument, _: Option<&SceneFiles>) -> Result<Self, Error> {
         Ok(self.clone())
     }
 

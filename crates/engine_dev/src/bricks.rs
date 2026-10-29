@@ -3,13 +3,13 @@ use std::collections::BTreeMap;
 use engine_core::bevy_ecs::prelude::World;
 use engine_core::{BrickRegistry, InspectedKind, missing_brick};
 use engine_scene::SceneEnvironment;
-use engine_settings::ErrorCode;
+use engine_settings::{Error, ErrorCode, Expected};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::inspect::Inspector;
 use crate::protocol::{Envelope, Query, Verb};
-use crate::{BrowserControl, Control, DevError, DevTools, InspectorDescriptor, InspectorKind};
+use crate::{BrowserControl, Control, DevTools, InspectorDescriptor, InspectorKind};
 
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct StandardBrick {
@@ -89,21 +89,19 @@ pub fn operation_names(world: &World, verb: Verb) -> Vec<&'static str> {
         .collect()
 }
 
-pub(crate) fn run(world: &mut World, name: &str, args: Value) -> Result<Value, DevError> {
+pub(crate) fn run(world: &mut World, name: &str, args: Value) -> Result<Value, Error> {
     let operation = world
         .get_resource::<BrickRegistry>()
         .and_then(|registry| registry.operation(name))
         .copied()
         .ok_or_else(|| {
-            DevError::new(
-                ErrorCode::MissingPlugin,
-                "$.name",
-                format!("no added brick answers {name}"),
-            )
+            Error::new(ErrorCode::MissingPlugin, "$.name")
+                .expected(Expected::Present)
+                .got(name)
         })?;
     operation
         .run(world, args)
-        .map_err(|error| DevError::from(error).in_args())
+        .map_err(|error| error.within("$.args"))
 }
 
 impl DevTools {
@@ -111,7 +109,7 @@ impl DevTools {
         &self,
         world: &World,
         name: &str,
-    ) -> Result<Option<&'static str>, DevError> {
+    ) -> Result<Option<&'static str>, Error> {
         if let Some(name) = registered(world, name, false) {
             return Ok(Some(name));
         }
@@ -119,9 +117,9 @@ impl DevTools {
         Ok(None)
     }
 
-    fn unadded(&self, world: &World, name: &str) -> Result<(), DevError> {
+    fn unadded(&self, world: &World, name: &str) -> Result<(), Error> {
         match self.standard.of_operation(name) {
-            Some(brick) if !added(world, brick) => Err(missing_brick(brick, "$.name").into()),
+            Some(brick) if !added(world, brick) => Err(missing_brick(brick, "$.name")),
             Some(_) | None => Ok(()),
         }
     }
@@ -131,16 +129,14 @@ impl DevTools {
         world: &World,
         envelope: &Envelope,
         paused: bool,
-    ) -> Result<Control, DevError> {
+    ) -> Result<Control, Error> {
         let name = envelope.name()?;
         let args = envelope.args()?;
         if let Some(name) = registered(world, name, true) {
             if !paused {
-                return Err(DevError::new(
-                    ErrorCode::PauseRequired,
-                    "$",
-                    format!("pause the host before {name}"),
-                ));
+                return Err(Error::new(ErrorCode::PauseRequired, "$")
+                    .expected(Expected::Paused)
+                    .got(name));
             }
             return Ok(Control::Operation(crate::controls::OperationCall::Brick {
                 name,
@@ -149,33 +145,31 @@ impl DevTools {
         }
         self.unadded(world, name)?;
         if !BrowserControl::NAMES.contains(&name) {
-            return Err(DevError::unknown(
-                "$.name",
-                name,
-                operation_names(world, Verb::Control),
-            ));
+            return Err(Error::new(ErrorCode::UnknownVariant, "$.name")
+                .got(name)
+                .variants(operation_names(world, Verb::Control)));
         }
         if name == "environment" {
             let mut sections = args.clone();
             if let Some(fields) = sections.as_object_mut() {
                 fields.remove("merge");
             }
-            let environment: SceneEnvironment = engine_scene::parse_value(sections)
-                .map_err(|error| DevError::from(error).in_args())?;
+            let environment: SceneEnvironment = engine_core::parse_value(sections)
+                .map_err(|error| error.within("$.args"))?;
             environment
                 .check(world, "$")
-                .map_err(|error| self.named_brick(DevError::from(error)).in_args())?;
+                .map_err(|error| self.named_brick(error).within("$.args"))?;
         }
         Ok(BrowserControl::parse(name, args, paused)?.route())
     }
 
-    pub(crate) fn named_brick(&self, error: DevError) -> DevError {
+    pub(crate) fn named_brick(&self, error: Error) -> Error {
         if error.code != ErrorCode::MissingPlugin {
             return error;
         }
         let key = error.path.rsplit('.').next().unwrap_or_default();
         match self.standard.of_section(key) {
-            Some(brick) => missing_brick(brick, error.path).into(),
+            Some(brick) => missing_brick(brick, error.path),
             None => error,
         }
     }

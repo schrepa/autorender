@@ -153,14 +153,14 @@ fn error_codes() -> String {
         .collect();
     let name = engine::JS_ERROR_NAME;
     format!(
-        "/** An error's code, as replies name it; protocol.json's `errors` say what each \
-         means. */\nexport type ErrorCode ={codes};\n\n\
-         /** An error the engine threw on the page: its code and where (a JSON path, or\n \
-         * `?NAME` for a page parameter), its message saying both and what is wrong. */\n\
-         export interface EngineError extends Error {{\n  code: ErrorCode;\n  path: string;\n}}\n\n\
-         /** `thrown` as an error the engine threw, where it is one. */\n\
+        "import type {{ Error as Failure }} from \"./reply\";\n\n\
+         export type ErrorCode ={codes};\n\n\
+         export type EngineError = Error & Failure;\n\n\
          export function engineError(thrown: unknown): EngineError | undefined {{\n  \
          return thrown instanceof Error && thrown.name === \"{name}\" ? thrown as EngineError : undefined;\n\
+         }}\n\n\
+         export function engineFailure(failure: Failure): EngineError {{\n  \
+         return Object.assign(new Error(JSON.stringify(failure)), failure, {{ name: \"{name}\" }});\n\
          }}\n"
     )
 }

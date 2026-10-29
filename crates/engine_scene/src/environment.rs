@@ -1,13 +1,11 @@
 use std::collections::BTreeMap;
 
 use engine_core::{
-    Atmosphere, BrickRegistry, InvalidSetting, SettingsEntry, bevy_ecs::prelude::World, glam::Vec3,
+    Atmosphere, BrickRegistry, Error, SettingsEntry, bevy_ecs::prelude::World, glam::Vec3,
 };
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-use crate::SceneError;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -103,21 +101,13 @@ macro_rules! scene_atmosphere {
 engine_core::atmosphere_fields!(scene_atmosphere);
 
 impl SceneAtmosphere {
-    pub fn resolve(&self, path: &str) -> Result<Atmosphere, SceneError> {
+    pub fn resolve(&self, path: &str) -> Result<Atmosphere, Error> {
         let atmosphere = self.atmosphere();
         atmosphere
             .validate()
-            .map_err(|invalid| section_error(path, invalid))?;
+            .map_err(|invalid| invalid.error(ErrorCode::InvalidEnvironment, path))?;
         Ok(atmosphere)
     }
-}
-
-fn section_error(path: &str, invalid: InvalidSetting) -> SceneError {
-    SceneError::new(
-        ErrorCode::InvalidEnvironment,
-        format!("{path}.{}", invalid.field),
-        invalid.rule,
-    )
 }
 
 const ATMOSPHERE: &str = "atmosphere";
@@ -185,7 +175,7 @@ impl SceneEnvironment {
             .collect()
     }
 
-    pub fn validate(&self, path: &str) -> Result<(), SceneError> {
+    pub fn validate(&self, path: &str) -> Result<(), Error> {
         if let Some(value) = self.value(ATMOSPHERE) {
             let path = format!("{path}.{ATMOSPHERE}");
             let atmosphere: SceneAtmosphere = engine_core::parse_value_at(value.clone(), &path)?;
@@ -194,7 +184,7 @@ impl SceneEnvironment {
         Ok(())
     }
 
-    pub fn check(&self, world: &World, path: &str) -> Result<(), SceneError> {
+    pub fn check(&self, world: &World, path: &str) -> Result<(), Error> {
         self.validate(path)?;
         for key in self.keys() {
             if key == ATMOSPHERE {
@@ -207,7 +197,7 @@ impl SceneEnvironment {
         Ok(())
     }
 
-    pub fn apply_sections(&self, world: &mut World, path: &str) -> Result<(), SceneError> {
+    pub fn apply_sections(&self, world: &mut World, path: &str) -> Result<(), Error> {
         self.check(world, path)?;
         if let Some(atmosphere) = self.atmosphere() {
             world.insert_resource(atmosphere.atmosphere());
@@ -223,7 +213,7 @@ impl SceneEnvironment {
         Ok(())
     }
 
-    pub(crate) fn apply_all(&self, world: &mut World, path: &str) -> Result<(), SceneError> {
+    pub(crate) fn apply_all(&self, world: &mut World, path: &str) -> Result<(), Error> {
         world.insert_resource(
             self.atmosphere()
                 .map_or_else(Atmosphere::default, |atmosphere| atmosphere.atmosphere()),
@@ -249,23 +239,17 @@ fn registered(world: &World) -> impl Iterator<Item = &SettingsEntry> {
         .flat_map(BrickRegistry::sections)
 }
 
-fn section_of<'w>(
-    world: &'w World,
-    key: &str,
-    path: &str,
-) -> Result<&'w SettingsEntry, SceneError> {
+fn section_of<'w>(world: &'w World, key: &str, path: &str) -> Result<&'w SettingsEntry, Error> {
     world
         .get_resource::<BrickRegistry>()
         .and_then(|registry| registry.section(key))
         .ok_or_else(|| {
-            SceneError::new(
-                ErrorCode::MissingPlugin,
-                path,
-                format!(
-                    "no added brick reads the {key} section: add the brick that owns it, or the \
-                     standard bricks, to the engine"
-                ),
-            )
+            Error::new(ErrorCode::MissingPlugin, path)
+                .got(key)
+                .variants(
+                    std::iter::once(ATMOSPHERE)
+                        .chain(registered(world).map(|section| section.key)),
+                )
         })
 }
 

@@ -1,5 +1,4 @@
 mod attribution;
-mod error;
 mod explain;
 mod extracted;
 mod registry;
@@ -10,7 +9,9 @@ pub use attribution::{
     BrickCost, BrickCosts, BrickRow, BrickTable, CORE_PASSES, CORE_ROW, UNATTRIBUTED_ROW,
     WARMUP_FRAMES,
 };
-pub use error::{Error, parse_json, parse_value, parse_value_at};
+pub use engine_settings::{
+    Allowed, Detail, Error, Expected, parse_json, parse_value, parse_value_at,
+};
 pub use explain::{
     DrawState, ExplainEntry, ExplainRecord, ExplainRequest, ExplainedEntity, Explainer, source_line,
 };
@@ -367,14 +368,9 @@ impl BrickList {
             .filter(|name| !name.is_empty())
             .map(|name| {
                 self.names().find(|&listed| listed == name).ok_or_else(|| {
-                    Error::new(
-                        ErrorCode::InvalidArguments,
-                        path,
-                        format!(
-                            "{name}, allowed: {}",
-                            self.names().collect::<Vec<_>>().join(", ")
-                        ),
-                    )
+                    Error::new(ErrorCode::InvalidArguments, path)
+                        .got(name)
+                        .variants(self.names())
                 })
             })
             .collect()
@@ -435,9 +431,7 @@ fn intern(name: &str) -> &'static str {
 }
 
 pub fn missing_brick(name: &str, path: impl Into<String>) -> Error {
-    Error::new(
-        ErrorCode::MissingPlugin,
-        path,
-        format!("the {name} brick is not added: add it, or the standard bricks, to the engine"),
-    )
+    Error::new(ErrorCode::MissingPlugin, path)
+        .expected(Expected::Present)
+        .got(name)
 }

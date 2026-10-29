@@ -19,7 +19,7 @@ impl Renderer {
         true
     }
 
-    pub fn stop_debugger_capture(&mut self) -> Result<(), RenderError> {
+    pub fn stop_debugger_capture(&mut self) -> Result<(), Error> {
         if !self.debugger_capture {
             return Ok(());
         }
@@ -32,28 +32,28 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn wait_for_gpu(&self) -> Result<(), RenderError> {
+    pub fn wait_for_gpu(&self) -> Result<(), Error> {
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
             .map(drop)
-            .map_err(|error| render_error("The GPU failed", error))
+            .map_err(|error| failed_with("$.gpu", error))
     }
 
     pub fn gpu_mark(&self) -> GpuMark {
         GpuMark(self.queue.submit([]))
     }
 
-    pub fn wait_for_mark(&self, mark: GpuMark) -> Result<(), RenderError> {
+    pub fn wait_for_mark(&self, mark: GpuMark) -> Result<(), Error> {
         self.device
             .poll(wgpu::PollType::Wait {
                 submission_index: Some(mark.0),
                 timeout: None,
             })
             .map(drop)
-            .map_err(|error| render_error("The GPU failed", error))
+            .map_err(|error| failed_with("$.gpu", error))
     }
 
-    pub fn read_offscreen(&self) -> Result<Option<(u32, u32, Vec<u8>)>, RenderError> {
+    pub fn read_offscreen(&self) -> Result<Option<(u32, u32, Vec<u8>)>, Error> {
         let Some(texture) = self.display.offscreen() else {
             return Ok(None);
         };
@@ -95,18 +95,18 @@ impl Renderer {
             });
         self.device
             .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|error| render_error("Could not read the offscreen frame", error))?;
+            .map_err(|error| failed_with("$.offscreen", error))?;
         match mapped.get() {
             Some(Ok(())) => {}
             Some(Err(error)) => {
-                return Err(render_error("Could not read the offscreen frame", error));
+                return Err(failed_with("$.offscreen", error));
             }
-            None => return Err(RenderError("The offscreen frame never mapped.".into())),
+            None => return Err(failed("$.offscreen").expected(Expected::Present)),
         }
         let view = buffer
             .slice(..)
             .get_mapped_range()
-            .map_err(|error| render_error("Could not read the offscreen frame", error))?;
+            .map_err(|error| failed_with("$.offscreen", error))?;
         let mut pixels = Vec::with_capacity((width * height * 4) as usize);
         for rows in view.chunks_exact(row as usize) {
             for texel in rows[..(width * 4) as usize].as_chunks::<4>().0 {

@@ -1,5 +1,5 @@
 import { type Distribution, FRAME_PHASES } from "../generated/host";
-import { engineError } from "../generated/errors";
+import { engineError, engineFailure } from "../generated/errors";
 import { parseJson, type Runtime } from "../generated/runtime";
 import type { FrameStats } from "../generated/stats";
 import { BrowserInput } from "./input";
@@ -38,13 +38,13 @@ function ensurePage() {
   }
   const missing = PAGE_ELEMENTS.filter(id => !document.getElementById(id));
   if (missing.length) {
-    throw new Error(`The page lacks elements the host fills: ${missing.map(id => `#${id}`).join(", ")}; leave out #scene to use the engine's own page.`);
+    throw engineFailure({ code: "missing_resource", path: "$", expected: "present", got: missing.map(id => `#${id}`) });
   }
 }
 
 function element<T extends HTMLElement>(id: string): T {
   const found = document.getElementById(id);
-  if (!found) throw new Error(`Missing element #${id}`);
+  if (!found) throw engineFailure({ code: "missing_resource", path: "$", expected: "present", got: `#${id}` });
   return found as T;
 }
 
@@ -268,7 +268,7 @@ function started() {
 function frame(timestamp: number) {
   request = 0;
   if (disposed || !game || paused || document.hidden || failed) return;
-  if (panicReport()) { fail(new Error("the engine panicked")); return; }
+  if (panicReport()) { fail(engineFailure({ code: "runtime_panicked", path: "$" })); return; }
   try {
     if (!preparing) options.beforeFrame?.(game, timestamp);
     const phase = game.animation_frame(timestamp, pixelWidth, pixelHeight);
@@ -352,7 +352,7 @@ async function start() {
   if (disposed) return;
   pause.disabled = true;
   reset.disabled = true;
-  if (!("gpu" in navigator)) throw new Error("WebGPU is not available in this browser or execution context.");
+  if (!("gpu" in navigator)) throw engineFailure({ code: "runtime_unavailable", path: "$", expected: "gpu" });
   const created = await options.create(canvas, lifecycle.signal);
   if (disposed) { created.free(); return; }
   game = created;
@@ -368,7 +368,7 @@ async function start() {
   reset.disabled = false;
   options.ready?.(created, {
     mutate(action) {
-      if (disposed || failed || developmentBusy || !game) throw new Error("The runtime is busy or unavailable.");
+      if (disposed || failed || developmentBusy || !game) throw engineFailure({ code: "runtime_busy", path: "$" });
       stopClock();
       try {
         action(game);
@@ -382,7 +382,9 @@ async function start() {
       } finally { resume(); }
     },
     setResolutionScale(scale) {
-      if (!Number.isFinite(scale) || scale < 0.25 || scale > 2) throw new Error("Resolution scale must be 0.25–2.");
+      if (!Number.isFinite(scale) || scale < 0.25 || scale > 2) {
+        throw engineFailure({ code: "out_of_range", path: "$.scale", allowed: { kind: "range", min: 0.25, max: 2 }, got: scale });
+      }
       if (!failed) game?.set_resolution_scale(scale);
     },
     setInputEnabled(enabled) {
@@ -426,7 +428,10 @@ async function start() {
         verb: "control", name: "environment", version: window.__engineDev!.version, args: { merge: true, ...JSON.parse(environment) as Record<string, unknown> },
       });
       if (playing) setPaused(false);
-      if (!reply.ok) throw new Error(`?environment: ${reply.error?.message ?? "refused"} (${reply.error?.path ?? "$"})`);
+      if (!reply.ok) {
+        const refused = reply.error ?? { code: "invalid_environment", path: "$" };
+        throw engineFailure({ ...refused, path: `?environment${refused.path.replace(/^\$(\.args)?/, "")}` });
+      }
     }
   }
   resume();

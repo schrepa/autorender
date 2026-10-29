@@ -47,31 +47,20 @@ pub enum PresentationMode {
 }
 
 impl PresentationMode {
-    pub fn validate(self) -> Result<(), InterpolationError> {
+    pub fn validate(self) -> Result<(), engine_settings::Error> {
         if let Self::Interpolated { alpha } = self
             && (!alpha.is_finite() || !(0.0..=1.0).contains(&alpha))
         {
-            return Err(InterpolationError { alpha });
+            return Err(engine_settings::Error::new(
+                engine_settings::ErrorCode::InvalidPresentationAlpha,
+                "$.alpha",
+            )
+            .range(0.0, 1.0)
+            .got(alpha));
         }
         Ok(())
     }
 }
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct InterpolationError {
-    pub alpha: f32,
-}
-
-impl std::fmt::Display for InterpolationError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "interpolation alpha must be finite and within 0..=1 (received {})",
-            self.alpha
-        )
-    }
-}
-impl std::error::Error for InterpolationError {}
 
 #[derive(Resource, Debug, Default)]
 pub struct PresentationState {

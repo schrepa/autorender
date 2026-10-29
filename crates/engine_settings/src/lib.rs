@@ -8,34 +8,93 @@ use std::borrow::Cow;
 use glam::Vec3;
 
 mod codes;
+mod error;
 pub use codes::ErrorCode;
+pub use error::{
+    Allowed, Detail, Error, Expected, JS_ERROR_NAME, MAX_GOT_BYTES, closest, parse_json,
+    parse_value, parse_value_at,
+};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct InvalidSetting {
     pub field: Cow<'static, str>,
-    pub rule: Cow<'static, str>,
+    pub detail: Detail,
 }
 
 impl InvalidSetting {
-    pub fn new(field: &'static str, rule: impl Into<Cow<'static, str>>) -> Self {
+    pub fn new(field: &'static str, expected: Expected) -> Self {
         Self {
             field: Cow::Borrowed(field),
-            rule: rule.into(),
+            detail: Detail {
+                expected: Some(expected),
+                ..Detail::default()
+            },
         }
+    }
+
+    pub fn broken(field: &'static str, rule: Rule) -> Self {
+        Self {
+            field: Cow::Borrowed(field),
+            detail: rule.detail(),
+        }
+    }
+
+    #[must_use]
+    pub fn allowed(mut self, allowed: Allowed) -> Self {
+        self.detail.allowed = Some(allowed);
+        self
+    }
+
+    #[must_use]
+    pub fn got(mut self, value: impl serde::Serialize) -> Self {
+        self.detail.got = Error::new(ErrorCode::OutOfRange, "$").got(value).detail.got;
+        self
+    }
+
+    #[must_use]
+    pub fn nearest(mut self, value: impl serde::Serialize) -> Self {
+        self.detail.nearest = Error::new(ErrorCode::OutOfRange, "$")
+            .nearest(value)
+            .detail
+            .nearest;
+        self
     }
 
     #[must_use]
     pub fn within(self, parent: &'static str) -> Self {
         Self {
             field: Cow::Owned(format!("{parent}.{}", self.field)),
-            rule: self.rule,
+            detail: self.detail,
         }
+    }
+
+    #[must_use]
+    pub fn indexed(self, field: &str, index: usize) -> Self {
+        let rest = self.field.strip_prefix(field).unwrap_or_default();
+        Self {
+            field: Cow::Owned(format!("{field}[{index}]{rest}")),
+            detail: self.detail,
+        }
+    }
+
+    pub fn error(self, code: ErrorCode, path: &str) -> Error {
+        Error {
+            code,
+            path: format!("{path}.{}", self.field),
+            detail: Box::new(self.detail),
+        }
+    }
+}
+
+impl From<InvalidSetting> for Error {
+    fn from(invalid: InvalidSetting) -> Self {
+        invalid.error(ErrorCode::OutOfRange, "$")
     }
 }
 
 impl std::fmt::Display for InvalidSetting {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "{} {}", self.field, self.rule)
+        Error::from(self.clone()).fmt(formatter)
     }
 }
 
@@ -113,24 +172,50 @@ impl Rule {
         Self::Count(min, max)
     }
 
-    pub fn describe(self) -> String {
-        match self {
-            Self::Any => "may be anything".to_owned(),
-            Self::Finite => "must be finite".to_owned(),
-            Self::Range(min, max) => format!("must be in [{min}, {max}]"),
-            Self::AboveTo(min, max) => format!("must be in ({min}, {max}]"),
-            Self::Above(min) => format!("must be finite and above {min}"),
-            Self::AtLeast(min) => format!("must be at least {min}"),
-            Self::Budget => "must be at least 1, or omitted for no budget".to_owned(),
-            Self::PowerOfTwo(min, max) => format!("must be a power of two in [{min}, {max}]"),
-            Self::Multiple(step, min, max) => {
-                format!("must be a multiple of {step} in [{min}, {max}]")
-            }
-            Self::Id => format!(
-                "must contain 1 to {MAX_ID_BYTES} ASCII letters, digits, underscores, hyphens or periods"
+    pub fn detail(self) -> Detail {
+        let (expected, allowed) = match self {
+            Self::Any => (None, None),
+            Self::Finite => (Some(Expected::Finite), None),
+            Self::Range(min, max) => (None, Some(Allowed::Range { min, max })),
+            Self::AboveTo(min, max) => (Some(Expected::Above), Some(Allowed::Range { min, max })),
+            Self::Above(min) => (
+                Some(Expected::Above),
+                Some(Allowed::Range { min, max: f64::MAX }),
             ),
-            Self::Count(min, max) if min > 0.0 => format!("must hold {min} to {max} values"),
-            Self::Count(_, max) => format!("must hold at most {max} values"),
+            Self::AtLeast(min) if min >= 0.0 && min.fract() == 0.0 => (
+                Some(Expected::Finite),
+                Some(Allowed::AtLeast { min: min as u64 }),
+            ),
+            Self::AtLeast(min) => (
+                Some(Expected::Finite),
+                Some(Allowed::Range { min, max: f64::MAX }),
+            ),
+            Self::Budget => (Some(Expected::Integer), Some(Allowed::AtLeast { min: 1 })),
+            Self::PowerOfTwo(min, max) => (
+                Some(Expected::PowerOfTwo),
+                Some(Allowed::Range { min, max }),
+            ),
+            Self::Multiple(_, min, max) => {
+                (Some(Expected::Multiple), Some(Allowed::Range { min, max }))
+            }
+            Self::Id => (
+                Some(Expected::Id),
+                Some(Allowed::AtMost {
+                    max: MAX_ID_BYTES as u64,
+                }),
+            ),
+            Self::Count(min, max) if min > 0.0 => {
+                (Some(Expected::Array), Some(Allowed::Range { min, max }))
+            }
+            Self::Count(_, max) => (
+                Some(Expected::Array),
+                Some(Allowed::AtMost { max: max as u64 }),
+            ),
+        };
+        Detail {
+            expected,
+            allowed,
+            ..Detail::default()
         }
     }
 
@@ -371,10 +456,6 @@ pub trait Setting: Clone {
     }
 }
 
-fn broken(field: &'static str, rule: Rule) -> InvalidSetting {
-    InvalidSetting::new(field, rule.describe())
-}
-
 impl Setting for f32 {
     fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
         let value = *self;
@@ -393,7 +474,7 @@ impl Setting for f32 {
         if keeps {
             Ok(())
         } else {
-            Err(broken(field, rule))
+            Err(InvalidSetting::broken(field, rule).got(crate::rule::Bound::bound(value)))
         }
     }
 
@@ -460,10 +541,13 @@ macro_rules! whole_settings {
     ($($ty:ty),*) => {$(
         impl Setting for $ty {
             fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
-                if whole_keeps(u64::from(*self), rule) {
+                let value = u64::from(*self);
+                if whole_keeps(value, rule) {
                     Ok(())
                 } else {
-                    Err(broken(field, rule))
+                    Err(InvalidSetting::broken(field, rule)
+                        .got(value)
+                        .nearest(whole_kept(value, rule)))
                 }
             }
 
@@ -504,7 +588,7 @@ impl Setting for f64 {
         if keeps {
             Ok(())
         } else {
-            Err(broken(field, rule))
+            Err(InvalidSetting::broken(field, rule).got(value))
         }
     }
 
@@ -520,7 +604,7 @@ impl Setting for String {
         match rule {
             Rule::Any => Ok(()),
             Rule::Id if is_id(self) => Ok(()),
-            Rule::Id => Err(broken(field, rule)),
+            Rule::Id => Err(InvalidSetting::broken(field, rule).got(self)),
             Rule::Finite
             | Rule::Range(..)
             | Rule::AboveTo(..)
@@ -557,14 +641,12 @@ impl<T: Setting> Setting for Option<T> {
 
 impl<T: Setting, const N: usize> Setting for [T; N] {
     fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
-        if self.iter().all(|value| value.check(field, rule).is_ok()) {
-            Ok(())
-        } else {
-            Err(InvalidSetting::new(
-                field,
-                format!("each value {}", rule.describe()),
-            ))
+        for (index, value) in self.iter().enumerate() {
+            value
+                .check(field, rule)
+                .map_err(|invalid| invalid.indexed(field, index))?;
         }
+        Ok(())
     }
 
     fn kept(self, rule: Rule, default: Self) -> Self {
@@ -586,17 +668,13 @@ impl<T: Setting> Setting for Vec<T> {
             return if (min as usize..=max as usize).contains(&self.len()) {
                 Ok(())
             } else {
-                Err(broken(field, rule))
+                Err(InvalidSetting::broken(field, rule).got(self.len()))
             };
         }
         for (index, value) in self.iter().enumerate() {
-            value.check(field, rule).map_err(|invalid| {
-                let rest = invalid.field.strip_prefix(field).unwrap_or_default();
-                InvalidSetting {
-                    field: format!("{field}[{index}]{rest}").into(),
-                    rule: invalid.rule,
-                }
-            })?;
+            value
+                .check(field, rule)
+                .map_err(|invalid| invalid.indexed(field, index))?;
         }
         Ok(())
     }

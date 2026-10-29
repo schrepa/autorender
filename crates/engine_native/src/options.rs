@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use engine::host::{HostSettings, SETTINGS, policy};
-use engine::{Engine, Game, GpuPreference};
+use engine::{Engine, Error, ErrorCode, Expected, Game, GpuPreference};
 use serde_json::json;
 
 use crate::{
     CacheOptions, Frames, JobOptions, Measure, Method, Offscreen, Pix, PixRecord, ProfileRecord,
-    Record, Window, WindowReport, host_error,
+    Record, Window, WindowReport, file_error,
 };
 
 const USAGE_HOST: &str = "\
@@ -136,8 +136,12 @@ pub struct Argument {
 }
 
 impl Argument {
-    pub fn unknown(&self) -> String {
-        format!("unknown option {}", self.name)
+    pub fn unknown(&self) -> Error {
+        Error::new(ErrorCode::UnknownField, &self.name).expected(Expected::Absent)
+    }
+
+    pub fn invalid(&self, value: &str) -> Error {
+        Error::new(ErrorCode::InvalidValue, &self.name).got(value)
     }
 }
 
@@ -156,31 +160,34 @@ impl Arguments {
         }
     }
 
-    pub fn include(&mut self, argument: &Argument) -> Result<(), String> {
+    pub fn include(&mut self, argument: &Argument) -> Result<(), Error> {
         let path = self.value(argument)?;
         self.included += 1;
         if self.included > MAX_OPTION_FILES {
-            return Err(format!(
-                "{} {path}: more than {MAX_OPTION_FILES} option files",
-                argument.name
-            ));
+            return Err(Error::new(ErrorCode::InvalidArguments, &argument.name)
+                .at_most(MAX_OPTION_FILES as u64)
+                .got(self.included));
         }
-        let failed = |what: String| format!("{} {path}: {what}", argument.name);
-        let text = std::fs::read_to_string(&path).map_err(|error| failed(error.to_string()))?;
+        let name = argument.name.as_str();
+        let text = std::fs::read_to_string(&path)
+            .map_err(|error| file_error(name, Path::new(&path), &error))?;
         let file: serde_json::Value =
-            serde_json::from_str(&text).map_err(|error| failed(error.to_string()))?;
-        let fields = file
-            .as_object()
-            .ok_or_else(|| failed("an option file is a JSON object".into()))?;
+            engine::bricks::parse_json(&text).map_err(|error| error.within(name))?;
+        let fields = file.as_object().ok_or_else(|| {
+            Error::new(ErrorCode::InvalidType, name).expected(Expected::Object)
+        })?;
         if let Some(field) = fields.keys().find(|field| *field != "options") {
-            return Err(failed(format!(
-                "{field} is not a field; option files hold `options`"
-            )));
+            return Err(Error::new(ErrorCode::UnknownField, format!("{name}.{field}"))
+                .got(field)
+                .variants(["options"]));
         }
         let options = fields
             .get("options")
             .and_then(serde_json::Value::as_object)
-            .ok_or_else(|| failed("`options` is an object of options by name".into()))?;
+            .ok_or_else(|| {
+                Error::new(ErrorCode::InvalidType, format!("{name}.options"))
+                    .expected(Expected::Object)
+            })?;
         let mut expanded = Vec::with_capacity(options.len() * 2);
         for (name, value) in options {
             let value = match value {
@@ -189,7 +196,11 @@ impl Arguments {
                 serde_json::Value::Bool(false) => "off".into(),
                 serde_json::Value::Number(number) => number.to_string(),
                 serde_json::Value::Null => {
-                    return Err(failed(format!("option {name} has no value")));
+                    return Err(Error::new(
+                        ErrorCode::MissingField,
+                        format!("{}.options.{name}", argument.name),
+                    )
+                    .expected(Expected::Present));
                 }
                 json @ (serde_json::Value::Array(_) | serde_json::Value::Object(_)) => {
                     json.to_string()
@@ -203,34 +214,41 @@ impl Arguments {
         Ok(())
     }
 
-    pub fn value(&mut self, argument: &Argument) -> Result<String, String> {
+    pub fn value(&mut self, argument: &Argument) -> Result<String, Error> {
         argument
             .inline
             .clone()
             .or_else(|| self.rest.pop_front())
-            .ok_or_else(|| format!("{} takes a value", argument.name))
+            .ok_or_else(|| {
+                Error::new(ErrorCode::MissingField, &argument.name).expected(Expected::Present)
+            })
     }
 
-    pub fn switch(&mut self, argument: &Argument) -> Result<bool, String> {
+    pub fn switch(&mut self, argument: &Argument) -> Result<bool, Error> {
         match self.value(argument)?.as_str() {
             "on" => Ok(true),
             "off" => Ok(false),
-            value => Err(format!("{} is on or off, not {value}", argument.name)),
+            value => Err(argument.invalid(value).variants(["on", "off"])),
         }
     }
 
-    pub fn count(&mut self, argument: &Argument) -> Result<u32, String> {
+    pub fn count(&mut self, argument: &Argument) -> Result<u32, Error> {
         let value = self.value(argument)?;
         value
             .parse()
             .ok()
             .filter(|&count: &u32| count > 0)
-            .ok_or_else(|| format!("{} takes a count, not {value}", argument.name))
+            .ok_or_else(|| {
+                argument
+                    .invalid(&value)
+                    .expected(Expected::Integer)
+                    .range(1.0, f64::from(u32::MAX))
+            })
     }
 
-    pub fn flag(&self, argument: &Argument) -> Result<(), String> {
-        match argument.inline {
-            Some(_) => Err(format!("{} takes no value", argument.name)),
+    pub fn flag(&self, argument: &Argument) -> Result<(), Error> {
+        match &argument.inline {
+            Some(value) => Err(argument.invalid(value).expected(Expected::Absent)),
             None => Ok(()),
         }
     }
@@ -329,7 +347,7 @@ pub const PARAMETERS: &[(&str, &str)] = &[
 ];
 
 impl HostOptions {
-    pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Self, String> {
+    pub fn parse(arguments: impl IntoIterator<Item = String>) -> Result<Self, Error> {
         let mut options = Self::default();
         let mut arguments = Arguments::new(arguments);
         while let Some(argument) = arguments.next() {
@@ -341,7 +359,7 @@ impl HostOptions {
         Ok(options)
     }
 
-    pub fn take(&mut self, argument: &Argument, arguments: &mut Arguments) -> Result<bool, String> {
+    pub fn take(&mut self, argument: &Argument, arguments: &mut Arguments) -> Result<bool, Error> {
         let name = argument.name.as_str();
         match name {
             "--size" => {
@@ -350,14 +368,15 @@ impl HostOptions {
                     .split_once('x')
                     .and_then(|(width, height)| Some((width.parse().ok()?, height.parse().ok()?)))
                     .filter(|&(width, height): &(u32, u32)| width > 0 && height > 0);
-                self.size =
-                    Some(parsed.ok_or_else(|| format!("--size is WIDTHxHEIGHT, not {size}"))?);
+                self.size = Some(parsed.ok_or_else(|| argument.invalid(&size))?);
             }
             "--gpu" => {
                 self.gpu = match arguments.value(argument)?.as_str() {
                     "discrete" => GpuPreference::HighPerformance,
                     "integrated" => GpuPreference::LowPower,
-                    other => return Err(format!("--gpu is discrete or integrated, not {other}")),
+                    other => {
+                        return Err(argument.invalid(other).variants(["discrete", "integrated"]));
+                    }
                 }
             }
             "--workers" => {
@@ -370,10 +389,9 @@ impl HostOptions {
                         .ok()
                         .filter(|&count: &u32| count <= policy::MAX_WORKERS)
                         .ok_or_else(|| {
-                            format!(
-                                "--workers is off or 0 to {}, not {workers}",
-                                policy::MAX_WORKERS
-                            )
+                            argument
+                                .invalid(&workers)
+                                .range(0.0, f64::from(policy::MAX_WORKERS))
                         })? as usize,
                 };
             }
@@ -388,7 +406,9 @@ impl HostOptions {
                             .ok()
                             .filter(|&mebibytes| mebibytes <= policy::MAX_JOB_CACHE_MIB)
                             .ok_or_else(|| {
-                                format!("--jobcache is off, verify or MiB, not {cache}")
+                                argument
+                                    .invalid(&cache)
+                                    .range(0.0, policy::MAX_JOB_CACHE_MIB as f64)
                             })?
                             * 1024
                             * 1024,
@@ -400,7 +420,7 @@ impl HostOptions {
                 let value = arguments.value(argument)?;
                 self.settings
                     .set(&switch[2..], &value)
-                    .map_err(|error| format!("--{error}"))?;
+                    .map_err(|error| error.within(switch))?;
             }
             "--packs" => self.jobs.packs = Some(arguments.value(argument)?.into()),
             "--cook" => self.cook = Some(arguments.value(argument)?.into()),
@@ -409,7 +429,7 @@ impl HostOptions {
                 let settle = arguments.value(argument)?;
                 self.settle_ms = settle
                     .parse()
-                    .map_err(|_| format!("--settle-ms takes milliseconds, not {settle}"))?;
+                    .map_err(|_| argument.invalid(&settle).expected(Expected::Integer))?;
             }
             "--offscreen" => self.offscreen = Some(arguments.count(argument)?),
             "--capture" => self.capture = Some(arguments.value(argument)?.into()),
@@ -420,7 +440,7 @@ impl HostOptions {
                 self.vendor = Some(match arguments.value(argument)?.as_str() {
                     "pix" => Vendor::Pix,
                     "nsight" => Vendor::Nsight,
-                    other => return Err(format!("--vendor is pix or nsight, not {other}")),
+                    other => return Err(argument.invalid(other).variants(["pix", "nsight"])),
                 });
             }
             "--vendor-dir" => self.vendor_dir = Some(arguments.value(argument)?.into()),
@@ -439,8 +459,8 @@ impl HostOptions {
             "--measure" => {
                 let path = arguments.value(argument)?;
                 let text = std::fs::read_to_string(&path)
-                    .map_err(|error| format!("--measure {path}: {error}"))?;
-                self.measure = Some(Method::parse(&text)?);
+                    .map_err(|error| file_error(name, Path::new(&path), &error))?;
+                self.measure = Some(Method::parse(&text).map_err(|error| error.within(name))?);
             }
             "--settings" => arguments.include(argument)?,
             "--shader-hash" => {
@@ -452,50 +472,61 @@ impl HostOptions {
         Ok(true)
     }
 
-    pub fn check(&self) -> Result<(), String> {
+    pub fn check(&self) -> Result<(), Error> {
+        let needs = |option: &str| {
+            Error::new(ErrorCode::InvalidArguments, option).expected(Expected::Present)
+        };
+        let excludes = |option: &str| {
+            Error::new(ErrorCode::InvalidArguments, option).expected(Expected::Absent)
+        };
         if (self.capture.is_some() || self.gpu_capture.is_some() || self.profile.is_some())
             && self.offscreen.is_none()
         {
-            return Err("--capture, --gpu-capture and --profile need --offscreen".into());
+            return Err(needs("--offscreen"));
         }
-        let profiling = self.profile.is_some() || self.counters.is_some() || self.vendor.is_some();
-        if profiling && !cfg!(feature = "profiling") {
-            return Err(
-                "--profile, --counters and --vendor need a build with the profiling feature".into(),
-            );
+        let profiling = [
+            ("--profile", self.profile.is_some()),
+            ("--counters", self.counters.is_some()),
+            ("--vendor", self.vendor.is_some()),
+        ];
+        if let Some((option, _)) = profiling.iter().find(|(_, given)| *given)
+            && !cfg!(feature = "profiling")
+        {
+            return Err(Error::new(ErrorCode::ProfilingUnavailable, *option)
+                .expected(Expected::Supported));
         }
         if self.dev && !cfg!(feature = "dev") {
-            return Err("--dev needs a build with the dev feature".into());
-        }
-        let others = self.frames.is_some()
-            || self.offscreen.is_some()
-            || self.dev
-            || self.vendor.is_some()
-            || self.counters.is_some();
-        if self.cook.is_some() && (others || self.measure.is_some()) {
             return Err(
-                "--cook runs alone: without --frames, --offscreen, --measure, --dev, --counters and --vendor"
-                    .into(),
+                Error::new(ErrorCode::InvalidArguments, "--dev").expected(Expected::Supported)
             );
         }
-        if self.measure.is_some() && others {
-            return Err(
-                "--measure runs alone: without --frames, --offscreen, --dev, --counters and --vendor"
-                    .into(),
-            );
+        let others = [
+            ("--frames", self.frames.is_some()),
+            ("--offscreen", self.offscreen.is_some()),
+            ("--dev", self.dev),
+            ("--vendor", self.vendor.is_some()),
+            ("--counters", self.counters.is_some()),
+        ];
+        let other = others.iter().find(|(_, given)| *given).map(|(option, _)| *option);
+        if self.cook.is_some()
+            && let Some(other) = other.or(self.measure.is_some().then_some("--measure"))
+        {
+            return Err(excludes(other));
+        }
+        if self.measure.is_some()
+            && let Some(other) = other
+        {
+            return Err(excludes(other));
         }
         if self.counters.is_some() && self.profile.is_none() && !self.dev {
-            return Err("--counters counts profiles: --profile or --dev".into());
+            return Err(needs("--profile"));
         }
         match self.vendor {
             Some(Vendor::Pix) if self.dev => Ok(()),
-            Some(Vendor::Pix) if self.offscreen.is_none() => {
-                Err("--vendor pix captures an --offscreen frame, or --dev's profiles".into())
-            }
-            Some(Vendor::Nsight) if self.offscreen.is_some() || self.dev => {
-                Err("--vendor nsight traces a window's frames".into())
-            }
-            Some(_) if self.vendor_dir.is_none() => Err("--vendor needs --vendor-dir".into()),
+            Some(Vendor::Pix) if self.offscreen.is_none() => Err(needs("--offscreen")),
+            Some(Vendor::Nsight) if self.offscreen.is_some() => Err(excludes("--offscreen")),
+            Some(Vendor::Nsight) if self.dev => Err(excludes("--dev")),
+            Some(_) if self.vendor_dir.is_none() => Err(needs("--vendor-dir")),
             _ => Ok(()),
         }
     }
@@ -602,9 +633,7 @@ impl HostOptions {
                 "on" => Selection::First,
                 names => Selection::Named(names.split(',').map(str::to_owned).collect()),
             };
-            engine_profiler::counters::enable(selection).map_err(|reason| {
-                engine::Error::new(engine::ErrorCode::ProfilingUnavailable, "$", reason)
-            })?;
+            engine_profiler::counters::enable(selection).map_err(|error| error.within("--counters"))?;
         }
         Ok(())
     }
@@ -647,15 +676,11 @@ impl HostOptions {
                 break;
             }
             if moved.elapsed() > COOK_STALL {
-                return Err(engine::Error::new(
-                    engine::ErrorCode::RenderFailed,
-                    "$",
-                    format!(
-                        "the cook stalled: {left} records left and {held} jobs held, \
-                         unchanged for {} s",
-                        COOK_STALL.as_secs()
-                    ),
-                ));
+                return Err(Error::new(ErrorCode::RenderFailed, "--cook").got(json!({
+                    "records_left": left,
+                    "jobs_held": held,
+                    "unchanged_s": COOK_STALL.as_secs(),
+                })));
             }
             if said.elapsed() > Duration::from_secs(5) {
                 said = Instant::now();
@@ -666,12 +691,10 @@ impl HostOptions {
                 eprintln!("Cooking: {left} records left, {held} jobs held: {features:?}");
             }
         }
-        let written = game.jobs_mut().write_pack(path).map_err(|reason| {
-            host_error(
-                &format!("The pack {} was not written", path.display()),
-                reason,
-            )
-        })?;
+        let written = game
+            .jobs_mut()
+            .write_pack(path)
+            .map_err(|error| error.within("--cook"))?;
         let stats: serde_json::Value =
             serde_json::from_str(&game.host().stats()).expect("frame statistics are JSON");
         println!(
@@ -785,9 +808,7 @@ impl HostOptions {
             arguments.extend(["--frames".to_owned(), "120".to_owned()]);
         }
         let trace = engine_profiler::vendor::nsight_trace(&arguments, self.settle_ms, 5, folder)
-            .map_err(|reason| {
-                engine::Error::new(engine::ErrorCode::ProfilingUnavailable, "$", reason)
-            })?;
+            .map_err(|error| error.within("--vendor"))?;
         println!("{trace:#}");
         Ok(())
     }

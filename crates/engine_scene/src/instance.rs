@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use engine_core::{
-    AssetError, AssetLibrary, MaterialHandle, Mesh3d, MeshHandle, TextureHandle, Transform,
+    AssetLibrary, Error, MaterialHandle, Mesh3d, MeshHandle, TextureHandle, Transform,
     bevy_ecs::{
         self,
         prelude::{Component, Entity, World},
@@ -14,7 +14,7 @@ use engine_core::{
 use engine_world_streaming::{StreamSet, Streamed, StreamedItem, WorldCells, remove_streamed};
 
 use crate::{
-    SceneDocument, SceneError, SceneFiles,
+    SceneDocument, SceneFiles,
     hierarchy::ExpandedObject,
     validation::{PreparedEntity, PreparedScene, PreparedStreamed},
 };
@@ -113,15 +113,13 @@ fn insert_each<T, H>(
     items: Vec<T>,
     handles: &mut Vec<H>,
     field: &str,
-    mut insert: impl FnMut(T) -> Result<H, AssetError>,
-) -> Result<(), SceneError> {
+    mut insert: impl FnMut(T) -> Result<H, Error>,
+) -> Result<(), Error> {
     for (index, item) in items.into_iter().enumerate() {
         let handle = insert(item).map_err(|error| {
-            SceneError::new(
-                ErrorCode::AssetBudgetExceeded,
-                format!("$.{field}[{index}]"),
-                error.to_string(),
-            )
+            error
+                .coded(ErrorCode::AssetBudgetExceeded)
+                .within(&format!("$.{field}[{index}]"))
         })?;
         handles.push(handle);
     }
@@ -227,7 +225,7 @@ impl SceneInstance {
 }
 
 impl SceneDocument {
-    pub fn instantiate(&self, world: &mut World) -> Result<SceneInstance, SceneError> {
+    pub fn instantiate(&self, world: &mut World) -> Result<SceneInstance, Error> {
         self.instantiate_with(world, &SceneFiles::default())
     }
 
@@ -235,7 +233,7 @@ impl SceneDocument {
         &self,
         world: &mut World,
         files: &SceneFiles,
-    ) -> Result<SceneInstance, SceneError> {
+    ) -> Result<SceneInstance, Error> {
         let mut prepared = self.prepare(Some(files))?;
         self.check_bricks(world)?;
         let owned = self.insert_assets(world, &mut prepared)?;
@@ -265,11 +263,9 @@ impl SceneDocument {
                 world.despawn(entity);
             }
             owned.remove(&mut world.resource_mut::<AssetLibrary>());
-            return Err(SceneError::new(
-                ErrorCode::HierarchyInstallFailed,
-                "$.entities",
-                error.to_string(),
-            ));
+            return Err(error
+                .coded(ErrorCode::HierarchyInstallFailed)
+                .within("$.entities"));
         }
         propagate_transforms(world);
         world.insert_resource(self.camera.camera());
@@ -342,15 +338,11 @@ impl SceneDocument {
         &self,
         world: &mut World,
         prepared: &mut PreparedScene,
-    ) -> Result<OwnedAssets, SceneError> {
+    ) -> Result<OwnedAssets, Error> {
         let mut owned = OwnedAssets::default();
-        let mut assets = world.get_resource_mut::<AssetLibrary>().ok_or_else(|| {
-            SceneError::new(
-                ErrorCode::MissingAssetLibrary,
-                "$",
-                "install AssetLibrary in the world before instantiating a scene",
-            )
-        })?;
+        let mut assets = world
+            .get_resource_mut::<AssetLibrary>()
+            .ok_or_else(|| Error::new(ErrorCode::MissingAssetLibrary, "$"))?;
         let inserted = (|| {
             insert_each(
                 std::mem::take(&mut prepared.meshes),

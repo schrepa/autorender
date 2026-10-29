@@ -1,6 +1,5 @@
-use engine_core::ErrorCode;
-use engine_core::{Engine, bevy_ecs::resource::Resource};
-use engine_scene::{SceneError, SceneFiles, SceneInstance};
+use engine_core::{Engine, Error, ErrorCode, bevy_ecs::resource::Resource};
+use engine_scene::{SceneFiles, SceneInstance};
 
 pub trait Game: 'static {
     const ACTIONS: &'static [(&'static str, u32)] = &[("Space", 0)];
@@ -22,12 +21,8 @@ pub trait Game: 'static {
         _engine: &mut Engine,
         _source: &str,
         _files: &SceneFiles,
-    ) -> Result<(), SceneError> {
-        Err(SceneError {
-            code: ErrorCode::UnsupportedCommand,
-            path: "$.op".into(),
-            message: "this game runs no authored scene".into(),
-        })
+    ) -> Result<(), Error> {
+        Err(Error::new(ErrorCode::UnsupportedCommand, "$.op").got("reload"))
     }
 
     fn inspectors(_inspectors: &mut Inspectors) {}

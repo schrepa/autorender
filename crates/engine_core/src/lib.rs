@@ -60,10 +60,10 @@ pub use debug_view::*;
 pub use detail_eye::*;
 pub use effects::*;
 pub use engine_assets::{
-    Aabb, AlphaImage, AlphaMode, AssetBudget, AssetError, AssetLibrary, Filter, Grounding,
-    LOD_RECORD, LodInput, LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding,
-    MaterialHandle, Mesh, MeshHandle, MeshLods, MeshVertex, Sampler, Surface, Texture,
-    TextureFormat, TextureHandle, TextureRef, TopLayer, UvTransform, Wrap, lod_input, trim_cards,
+    Aabb, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, Filter, Grounding, LOD_RECORD,
+    LodInput, LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding, MaterialHandle, Mesh,
+    MeshHandle, MeshLods, MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureHandle,
+    TextureRef, TopLayer, UvTransform, Wrap, lod_input, trim_cards,
 };
 pub use engine_settings::ErrorCode;
 pub use engine_tables as table_data;
@@ -159,38 +159,15 @@ pub enum ViewSyncSystems {
 pub const MAX_DEV_TICKS: u32 = 120;
 
 #[cfg(feature = "dev")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DevStepError {
-    pub ticks: u32,
-}
-
-#[cfg(feature = "dev")]
-impl DevStepError {
-    pub const MAX_TICKS: u32 = MAX_DEV_TICKS;
-
-    pub fn validate(ticks: u32) -> Result<(), Self> {
-        if (1..=Self::MAX_TICKS).contains(&ticks) {
-            Ok(())
-        } else {
-            Err(Self { ticks })
-        }
+pub fn check_dev_ticks(ticks: u32) -> Result<(), Error> {
+    if (1..=MAX_DEV_TICKS).contains(&ticks) {
+        Ok(())
+    } else {
+        Err(Error::new(ErrorCode::InvalidStep, "$.ticks")
+            .range(1.0, f64::from(MAX_DEV_TICKS))
+            .got(ticks))
     }
 }
-
-#[cfg(feature = "dev")]
-impl std::fmt::Display for DevStepError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            formatter,
-            "Development steps require 1..={} ticks (received {}).",
-            Self::MAX_TICKS,
-            self.ticks
-        )
-    }
-}
-
-#[cfg(feature = "dev")]
-impl std::error::Error for DevStepError {}
 
 pub struct Engine {
     pub app: App,
@@ -334,8 +311,8 @@ impl Engine {
     }
 
     #[cfg(feature = "dev")]
-    pub fn step_fixed(&mut self, ticks: u32) -> Result<FrameReport, DevStepError> {
-        DevStepError::validate(ticks)?;
+    pub fn step_fixed(&mut self, ticks: u32) -> Result<FrameReport, Error> {
+        check_dev_ticks(ticks)?;
         self.finalize_plugins();
         self.forget_ticks_ahead();
         self.clock.reset();
@@ -567,7 +544,7 @@ impl Engine {
         &mut self,
         aspect: f32,
         alpha: f32,
-    ) -> Result<RenderFrame<'_>, InterpolationError> {
+    ) -> Result<RenderFrame<'_>, Error> {
         let _profile = engine_profile::span("cpu", "extraction");
         PresentationMode::Interpolated { alpha }.validate()?;
         self.finalize_plugins();

@@ -1,4 +1,4 @@
-use engine_core::InputState;
+use engine_core::{Error, ErrorCode, InputState};
 
 use super::policy::{LOOK_LIMIT, MAX_ACTIONS};
 
@@ -97,16 +97,19 @@ pub struct InputGatherer {
 }
 
 impl InputGatherer {
-    pub fn new(actions: &[(&str, u32)]) -> Result<Self, String> {
+    pub fn new(actions: &[(&str, u32)]) -> Result<Self, Error> {
         let mut bits = [0; KEYS.len()];
-        for &(name, action) in actions {
+        for (at, &(name, action)) in actions.iter().enumerate() {
             if action >= MAX_ACTIONS {
-                return Err(format!(
-                    "action {action} of {name} must be 0 to {}",
-                    MAX_ACTIONS - 1
-                ));
+                return Err(Error::new(ErrorCode::InvalidInput, format!("$.actions[{at}]"))
+                    .at_most(u64::from(MAX_ACTIONS - 1))
+                    .got(action));
             }
-            let index = index(name).ok_or_else(|| format!("{name} names no key"))?;
+            let index = index(name).ok_or_else(|| {
+                Error::new(ErrorCode::InvalidInput, format!("$.actions[{at}]"))
+                    .got(name)
+                    .variants(KEYS.iter().copied())
+            })?;
             bits[index] |= 1 << action;
         }
         let movement = std::array::from_fn(|entry| {

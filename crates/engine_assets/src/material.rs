@@ -1,14 +1,13 @@
-use engine_settings::{InvalidSetting, Rule, Setting, settings};
+use engine_settings::{Error, ErrorCode, Expected, InvalidSetting, Rule, Setting, settings};
 
-use crate::{AssetError, TextureHandle};
+use crate::TextureHandle;
 
-fn invalid_part(part: Option<&'static str>, invalid: InvalidSetting) -> AssetError {
-    AssetError::InvalidSurface {
-        field: match part {
-            Some(part) => invalid.within(part).field,
-            None => invalid.field,
-        },
-    }
+fn invalid(setting: InvalidSetting) -> Error {
+    setting.error(ErrorCode::InvalidMaterial, "$")
+}
+
+fn invalid_part(part: &'static str, setting: InvalidSetting) -> Error {
+    invalid(setting.within(part))
 }
 
 settings! {
@@ -212,14 +211,12 @@ impl Material {
     pub const EMISSIVE: Rule = Rule::at_least(0.0);
     pub const WORLD_TILING: Rule = Rule::above_to(0.0, MAX_WORLD_TILING as f64);
 
-    pub fn new(color: [f32; 4]) -> Result<Self, AssetError> {
-        for (channel, value) in color.iter().enumerate() {
-            if value.check("color", Self::COLOR).is_err() {
-                return Err(AssetError::InvalidColor { channel });
-            }
-        }
+    pub fn new(color: [f32; 4]) -> Result<Self, Error> {
+        color.check("color", Self::COLOR).map_err(invalid)?;
         if color[3] != 1.0 {
-            return Err(AssetError::UnsupportedAlpha);
+            return Err(Error::new(ErrorCode::InvalidMaterial, "$.color[3]")
+                .expected(Expected::Opaque)
+                .got(color[3]));
         }
         Ok(Self {
             color,
@@ -241,28 +238,25 @@ impl Material {
         })
     }
 
-    pub fn with_opacity(mut self, opacity: f32) -> Result<Self, AssetError> {
-        if opacity.check("opacity", Self::OPACITY).is_err() {
-            return Err(AssetError::InvalidOpacity);
-        }
+    pub fn with_opacity(mut self, opacity: f32) -> Result<Self, Error> {
+        opacity.check("opacity", Self::OPACITY).map_err(invalid)?;
         if opacity < 1.0 && self.alpha_mode == AlphaMode::Opaque {
-            return Err(AssetError::UnsupportedAlpha);
+            return Err(Error::new(ErrorCode::InvalidMaterial, "$.opacity")
+                .expected(Expected::Opaque)
+                .got(opacity));
         }
         self.color[3] = opacity;
         Ok(self)
     }
 
-    pub fn with_alpha_mode(mut self, mode: AlphaMode) -> Result<Self, AssetError> {
+    pub fn with_alpha_mode(mut self, mode: AlphaMode) -> Result<Self, Error> {
         match mode {
             AlphaMode::Opaque => self.color[3] = 1.0,
-            AlphaMode::Mask { cutoff }
-                if cutoff.check("alpha_cutoff", Self::ALPHA_CUTOFF).is_err() =>
-            {
-                return Err(AssetError::InvalidMaterialMap {
-                    field: "alpha_cutoff",
-                });
+            AlphaMode::Mask { cutoff } => {
+                cutoff
+                    .check("alpha_cutoff", Self::ALPHA_CUTOFF)
+                    .map_err(invalid)?;
             }
-            AlphaMode::Mask { .. } => {}
         }
         self.alpha_mode = mode;
         Ok(self)
@@ -276,12 +270,10 @@ impl Material {
         self.alpha_mode
     }
 
-    pub fn with_world_mapping(mut self, tiling: f32) -> Result<Self, AssetError> {
-        if tiling.check("world_tiling", Self::WORLD_TILING).is_err() {
-            return Err(AssetError::InvalidSurface {
-                field: "world_tiling".into(),
-            });
-        }
+    pub fn with_world_mapping(mut self, tiling: f32) -> Result<Self, Error> {
+        tiling
+            .check("world_tiling", Self::WORLD_TILING)
+            .map_err(invalid)?;
         self.world_tiling = Some(tiling);
         Ok(self)
     }
@@ -290,9 +282,9 @@ impl Material {
         self.world_tiling
     }
 
-    pub fn with_top_layer(mut self, top: TopLayer) -> Result<Self, AssetError> {
+    pub fn with_top_layer(mut self, top: TopLayer) -> Result<Self, Error> {
         top.validate()
-            .map_err(|invalid| invalid_part(Some("top"), invalid))?;
+            .map_err(|setting| invalid_part("top", setting))?;
         self.top = Some(top);
         Ok(self)
     }
@@ -301,10 +293,10 @@ impl Material {
         self.top
     }
 
-    pub fn with_grounding(mut self, grounding: Grounding) -> Result<Self, AssetError> {
+    pub fn with_grounding(mut self, grounding: Grounding) -> Result<Self, Error> {
         grounding
             .validate()
-            .map_err(|invalid| invalid_part(Some("grounding"), invalid))?;
+            .map_err(|setting| invalid_part("grounding", setting))?;
         self.grounding = Some(grounding);
         Ok(self)
     }
@@ -313,43 +305,34 @@ impl Material {
         self.grounding
     }
 
-    pub fn with_surface(mut self, surface: Surface) -> Result<Self, AssetError> {
+    pub fn with_surface(mut self, surface: Surface) -> Result<Self, Error> {
         surface
             .validate()
-            .map_err(|invalid| invalid_part(None, invalid))?;
+            .map_err(|setting| invalid_part("surface", setting))?;
         self.surface = surface;
         Ok(self)
     }
 
-    pub fn textured(color: [f32; 4], texture: TextureHandle) -> Result<Self, AssetError> {
+    pub fn textured(color: [f32; 4], texture: TextureHandle) -> Result<Self, Error> {
         let mut material = Self::new(color)?;
         material.base_color = Some(TextureRef::new(texture).with_sampler(Sampler::CLAMP));
         Ok(material)
     }
 
-    pub fn with_base_color_texture(mut self, texture: TextureRef) -> Result<Self, AssetError> {
+    pub fn with_base_color_texture(mut self, texture: TextureRef) -> Result<Self, Error> {
         self.base_color = Some(checked(texture)?);
         Ok(self)
     }
 
-    pub fn with_metallic_roughness_texture(
-        mut self,
-        texture: TextureRef,
-    ) -> Result<Self, AssetError> {
+    pub fn with_metallic_roughness_texture(mut self, texture: TextureRef) -> Result<Self, Error> {
         self.metallic_roughness = Some(checked(texture)?);
         Ok(self)
     }
 
-    pub fn with_normal_texture(
-        mut self,
-        texture: TextureRef,
-        scale: f32,
-    ) -> Result<Self, AssetError> {
-        if scale.check("normal_scale", Self::NORMAL_SCALE).is_err() {
-            return Err(AssetError::InvalidMaterialMap {
-                field: "normal_scale",
-            });
-        }
+    pub fn with_normal_texture(mut self, texture: TextureRef, scale: f32) -> Result<Self, Error> {
+        scale
+            .check("normal_scale", Self::NORMAL_SCALE)
+            .map_err(invalid)?;
         self.normal = Some(checked(texture)?);
         self.normal_scale = scale;
         Ok(self)
@@ -359,29 +342,22 @@ impl Material {
         mut self,
         texture: TextureRef,
         strength: f32,
-    ) -> Result<Self, AssetError> {
-        if strength
+    ) -> Result<Self, Error> {
+        strength
             .check("occlusion_strength", Self::OCCLUSION_STRENGTH)
-            .is_err()
-        {
-            return Err(AssetError::InvalidMaterialMap {
-                field: "occlusion_strength",
-            });
-        }
+            .map_err(invalid)?;
         self.occlusion = Some(checked(texture)?);
         self.occlusion_strength = strength;
         Ok(self)
     }
 
-    pub fn with_emissive(mut self, color: [f32; 3]) -> Result<Self, AssetError> {
-        if color.check("emissive", Self::EMISSIVE).is_err() {
-            return Err(AssetError::InvalidMaterialMap { field: "emissive" });
-        }
+    pub fn with_emissive(mut self, color: [f32; 3]) -> Result<Self, Error> {
+        color.check("emissive", Self::EMISSIVE).map_err(invalid)?;
         self.emissive = color;
         Ok(self)
     }
 
-    pub fn with_emissive_texture(mut self, texture: TextureRef) -> Result<Self, AssetError> {
+    pub fn with_emissive_texture(mut self, texture: TextureRef) -> Result<Self, Error> {
         self.emissive_texture = Some(checked(texture)?);
         Ok(self)
     }
@@ -518,12 +494,16 @@ pub struct MaterialBinding {
     foliage: bool,
 }
 
-fn checked(texture: TextureRef) -> Result<TextureRef, AssetError> {
+fn checked(texture: TextureRef) -> Result<TextureRef, Error> {
     if !texture.transform.is_finite() {
-        return Err(AssetError::InvalidMaterialMap { field: "transform" });
+        return Err(
+            Error::new(ErrorCode::InvalidMaterial, "$.transform").expected(Expected::Finite)
+        );
     }
     if texture.tex_coord > 1 {
-        return Err(AssetError::InvalidMaterialMap { field: "tex_coord" });
+        return Err(Error::new(ErrorCode::InvalidMaterial, "$.tex_coord")
+            .at_most(1)
+            .got(texture.tex_coord));
     }
     Ok(texture)
 }

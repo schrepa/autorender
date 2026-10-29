@@ -7,7 +7,6 @@ mod bricks;
 mod bridge;
 mod controls;
 mod digest;
-mod error;
 mod explain;
 mod inspect;
 mod profile;
@@ -26,7 +25,6 @@ pub use bricks::operation_names;
 pub use bridge::{Artifact, Effect, HostContext, Outcome, Step};
 pub use controls::{OperationCall, validated_camera, validated_presentation_alpha};
 pub use engine_settings::ErrorCode;
-pub use error::{DevError, nearest};
 pub use explain::EntityFacts;
 pub use inspect::{
     Context, DevTools, InspectorDescriptor, InspectorKind, RenderedMesh, RendererFacts,
@@ -54,9 +52,12 @@ pub(crate) fn bounded<T: engine_settings::Setting>(
     rule: engine_settings::Rule,
     code: engine_settings::ErrorCode,
     path: &str,
-) -> Result<T, DevError> {
+) -> Result<T, engine_settings::Error> {
     match value.check("value", rule) {
         Ok(()) => Ok(value),
-        Err(invalid) => Err(DevError::new(code, path, invalid.rule)),
+        Err(invalid) => Err(engine_settings::Error {
+            path: path.to_owned(),
+            ..invalid.error(code, "$")
+        }),
     }
 }

@@ -1,8 +1,13 @@
 use std::sync::Arc;
 
+use engine_settings::{Error, ErrorCode, Expected};
 use glam::Vec3;
 
-use crate::{AssetError, MeshLods};
+use crate::MeshLods;
+
+fn invalid(path: impl Into<String>) -> Error {
+    Error::new(ErrorCode::InvalidMesh, path)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MeshVertex {
@@ -38,41 +43,45 @@ pub struct Mesh {
 }
 
 impl Mesh {
-    pub fn new(mut vertices: Vec<MeshVertex>, indices: Vec<u32>) -> Result<Self, AssetError> {
+    pub fn new(mut vertices: Vec<MeshVertex>, indices: Vec<u32>) -> Result<Self, Error> {
         if vertices.is_empty() {
-            return Err(AssetError::EmptyMesh);
+            return Err(invalid("$.vertices").expected(Expected::NonEmpty).got(0));
         }
         if indices.is_empty() || !indices.len().is_multiple_of(3) {
-            return Err(AssetError::InvalidTriangleCount {
-                indices: indices.len(),
-            });
+            return Err(invalid("$.indices")
+                .expected(Expected::Triangles)
+                .got(indices.len()));
         }
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
         for (index, vertex) in vertices.iter_mut().enumerate() {
             if !vertex.position.iter().all(|value| value.is_finite()) {
-                return Err(AssetError::InvalidVertex { vertex: index });
+                return Err(invalid(format!("$.vertices[{index}].position"))
+                    .expected(Expected::Finite)
+                    .got(vertex.position));
             }
             let position = Vec3::from_array(vertex.position);
             min = min.min(position);
             max = max.max(position);
             if !vertex.uv.iter().all(|value| value.is_finite()) {
-                return Err(AssetError::InvalidUv { vertex: index });
+                return Err(invalid(format!("$.vertices[{index}].uv"))
+                    .expected(Expected::Finite)
+                    .got(vertex.uv));
             }
             let normal = Vec3::from_array(vertex.normal);
             let scale = normal.abs().max_element();
             if !normal.is_finite() || scale == 0.0 {
-                return Err(AssetError::InvalidNormal { vertex: index });
+                return Err(invalid(format!("$.vertices[{index}].normal"))
+                    .expected(Expected::Nonzero)
+                    .got(vertex.normal));
             }
             vertex.normal = (normal / scale).normalize().to_array();
         }
         for (index, value) in indices.iter().copied().enumerate() {
             if value as usize >= vertices.len() {
-                return Err(AssetError::IndexOutOfBounds {
-                    index,
-                    value,
-                    vertices: vertices.len(),
-                });
+                return Err(invalid(format!("$.indices[{index}]"))
+                    .at_most(vertices.len() as u64 - 1)
+                    .got(value));
             }
         }
         Ok(Self {
@@ -85,7 +94,7 @@ impl Mesh {
         })
     }
 
-    pub fn with_lods(mut self, lods: MeshLods) -> Result<Self, AssetError> {
+    pub fn with_lods(mut self, lods: MeshLods) -> Result<Self, Error> {
         lods.check(self.indices.len(), self.vertices.len())?;
         self.lods = Some(Arc::new(lods));
         Ok(self)
@@ -95,46 +104,44 @@ impl Mesh {
         self.lods.as_ref()
     }
 
-    pub fn with_colors(mut self, colors: Vec<[f32; 4]>) -> Result<Self, AssetError> {
+    pub fn with_colors(mut self, colors: Vec<[f32; 4]>) -> Result<Self, Error> {
         self.check_count("colors", colors.len())?;
         if let Some(vertex) = colors.iter().position(|color| {
             !color
                 .iter()
                 .all(|value| value.is_finite() && (0.0..=1.0).contains(value))
         }) {
-            return Err(AssetError::InvalidAttribute {
-                attribute: "colors",
-                vertex,
-            });
+            return Err(invalid(format!("$.colors[{vertex}]"))
+                .range(0.0, 1.0)
+                .got(colors[vertex]));
         }
         self.colors = Some(colors.into_boxed_slice());
         Ok(self)
     }
 
-    pub fn with_uv1(mut self, uv1: Vec<[f32; 2]>) -> Result<Self, AssetError> {
+    pub fn with_uv1(mut self, uv1: Vec<[f32; 2]>) -> Result<Self, Error> {
         self.check_count("uv1", uv1.len())?;
         if let Some(vertex) = uv1
             .iter()
             .position(|uv| !uv.iter().all(|value| value.is_finite()))
         {
-            return Err(AssetError::InvalidAttribute {
-                attribute: "uv1",
-                vertex,
-            });
+            return Err(invalid(format!("$.uv1[{vertex}]"))
+                .expected(Expected::Finite)
+                .got(uv1[vertex]));
         }
         self.uv1 = Some(uv1.into_boxed_slice());
         Ok(self)
     }
 
-    fn check_count(&self, attribute: &'static str, actual: usize) -> Result<(), AssetError> {
-        if actual == self.vertices.len() {
+    fn check_count(&self, attribute: &'static str, actual: usize) -> Result<(), Error> {
+        let vertices = self.vertices.len();
+        if actual == vertices {
             Ok(())
         } else {
-            Err(AssetError::AttributeCount {
-                attribute,
-                expected: self.vertices.len(),
-                actual,
-            })
+            Err(invalid(format!("$.{attribute}"))
+                .expected(Expected::Array)
+                .range(vertices as f64, vertices as f64)
+                .got(actual))
         }
     }
 

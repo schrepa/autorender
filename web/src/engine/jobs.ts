@@ -1,4 +1,5 @@
 import workerWasmUrl from "../../pkg/engine_worker_bg.wasm?url";
+import { engineFailure } from "../generated/errors";
 import { FRAME_CORES, MAX_WORKERS, PANIC_PREFIX } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
 import { engineWorkerModule } from "./bindings";
@@ -279,7 +280,7 @@ async function fetchWorkerWasm(): Promise<ArrayBuffer | undefined> {
     const pinned = engineWorkerModule();
     const url = pinned ? pinned.replace(/\.js$/, "_bg.wasm") : workerWasmUrl;
     const response = await fetch(url);
-    if (!response.ok) throw new Error(`${url}: ${response.status}`);
+    if (!response.ok) throw engineFailure({ code: "source_io", path: "$", got: { url, status: response.status } });
     return await response.arrayBuffer();
   } catch (error) {
     console.warn(`The job worker module was not fetched: ${String(error)}`);
@@ -313,5 +314,5 @@ function workerCount(requested: string | null): number {
   }
   if (requested === "off") return 0;
   if (/^\d+$/.test(requested) && Number(requested) <= MAX_WORKERS) return Number(requested);
-  throw new Error(`?workers is off or 0 to ${MAX_WORKERS}, not ${requested}.`);
+  throw engineFailure({ code: "invalid_value", path: "?workers", allowed: { kind: "range", min: 0, max: MAX_WORKERS }, got: requested });
 }

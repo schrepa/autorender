@@ -5,10 +5,10 @@ mod terrain;
 
 use poses::presentation_view;
 
-use engine_settings::ErrorCode;
+use engine_settings::{Error, ErrorCode, Expected};
 use std::{collections::BTreeMap, io::Write};
 
-use engine_collision::{CollisionError, CollisionWorld, refresh_collision_world};
+use engine_collision::{CollisionWorld, refresh_collision_world};
 use engine_core::{
     ActionId, ActionInput, AssetLibrary, Atmosphere, BrickRegistry, Camera, Engine, FixedTime,
     FrameTime, GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle,
@@ -34,7 +34,7 @@ use crate::results::{
     StatusResult, TextureAsset, TextureState, TypeKind, result,
 };
 use crate::{
-    BrowserControl, DevError, MAX_INSPECTOR_BYTES, MAX_INSPECTORS, MAX_PAGE_SIZE,
+    BrowserControl, MAX_INSPECTOR_BYTES, MAX_INSPECTORS, MAX_PAGE_SIZE,
     MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
     views::{
         CameraView, GlobalTransformView, HierarchyView, InputView, InterpolateTransformView,
@@ -191,7 +191,7 @@ impl Default for DevTools {
     }
 }
 
-fn scene_schema(definition: Option<&str>) -> Result<Value, DevError> {
+fn scene_schema(definition: Option<&str>) -> Result<Value, Error> {
     let mut schema: Value = serde_json::from_str(include_str!("../generated/scene.schema.json"))
         .expect("generated scene schema is JSON");
     let definitions = schema
@@ -200,11 +200,14 @@ fn scene_schema(definition: Option<&str>) -> Result<Value, DevError> {
         .unwrap_or_default();
     match definition {
         Some(name) => definitions.get(name).cloned().ok_or_else(|| {
-            DevError::new(
-                ErrorCode::UnknownDefinition,
-                "$.definition",
-                "not a definition of the scene schema; describe SceneDocument lists them",
-            )
+            Error::new(ErrorCode::UnknownDefinition, "$.definition")
+                .got(name)
+                .variants(
+                    definitions
+                        .as_object()
+                        .into_iter()
+                        .flat_map(|definitions| definitions.keys().cloned()),
+                )
         }),
         None => {
             let names: Vec<&String> = definitions
@@ -242,7 +245,7 @@ impl DevTools {
         &mut self,
         descriptor: InspectorDescriptor,
         inspect: impl Fn(&T) -> Value + Send + Sync + 'static,
-    ) -> Result<(), DevError> {
+    ) -> Result<(), Error> {
         self.insert(Inspector {
             descriptor,
             kind: InspectorKind::Component,
@@ -258,7 +261,7 @@ impl DevTools {
         &mut self,
         descriptor: InspectorDescriptor,
         inspect: impl Fn(&T) -> Value + Send + Sync + 'static,
-    ) -> Result<(), DevError> {
+    ) -> Result<(), Error> {
         self.insert(Inspector {
             descriptor,
             kind: InspectorKind::Resource,
@@ -268,39 +271,29 @@ impl DevTools {
         })
     }
 
-    pub(crate) fn insert(&mut self, inspector: Inspector) -> Result<(), DevError> {
+    pub(crate) fn insert(&mut self, inspector: Inspector) -> Result<(), Error> {
         let name = &inspector.descriptor.name;
         validate_name(name, "$.name")?;
         if reserved_names().any(|reserved| reserved == name) {
-            return Err(DevError::new(
-                ErrorCode::ReservedInspector,
-                "$.name",
-                format!("describe answers {name} itself: choose another inspector name"),
-            ));
+            return Err(Error::new(ErrorCode::ReservedInspector, "$.name")
+                .expected(Expected::Unique)
+                .got(name));
         }
         if self.inspectors.contains_key(name) {
-            return Err(DevError::new(
-                ErrorCode::DuplicateInspector,
-                "$.name",
-                "inspector name is already registered",
-            ));
+            return Err(Error::new(ErrorCode::DuplicateInspector, "$.name")
+                .expected(Expected::Unique)
+                .got(name));
         }
         if let Some(builtins) = self.builtins
             && self.inspectors.len() >= builtins + MAX_INSPECTORS
         {
-            return Err(DevError::new(
-                ErrorCode::InspectorLimit,
-                "$.name",
-                format!("a game may register at most {MAX_INSPECTORS} inspectors"),
-            ));
+            return Err(Error::new(ErrorCode::InspectorLimit, "$.name")
+                .at_most(MAX_INSPECTORS as u64)
+                .got(name));
         }
         if encode(&inspector.descriptor, MAX_INSPECTOR_BYTES).is_err() {
-            return Err(DevError::new(
-                ErrorCode::InspectorTooLarge,
-                "$.schema",
-                format!("descriptor must fit {MAX_INSPECTOR_BYTES} bytes"),
-            )
-            .expected(format!("at most {MAX_INSPECTOR_BYTES} bytes")));
+            return Err(Error::new(ErrorCode::InspectorTooLarge, "$.schema")
+                .at_most(MAX_INSPECTOR_BYTES as u64));
         }
         self.inspectors.insert(name.clone(), inspector);
         Ok(())
@@ -337,11 +330,10 @@ impl DevTools {
             let refused = Reply {
                 ok: false,
                 result: None,
-                error: Some(DevError::new(
-                    ErrorCode::ResponseTooLarge,
-                    "$",
-                    "response exceeds 65536 bytes; reduce limit or select one component",
-                )),
+                error: Some(
+                    Error::new(ErrorCode::ResponseTooLarge, "$")
+                        .at_most(MAX_RESPONSE_BYTES as u64),
+                ),
                 ..reply
             };
             serde_json::to_string(&refused).expect("replies serialize")
@@ -353,18 +345,12 @@ impl DevTools {
         engine: &mut Engine,
         context: Context<'_>,
         source: &str,
-    ) -> Result<Value, DevError> {
+    ) -> Result<Value, Error> {
         let envelope = Envelope::parse(source)?;
         let scene = context.scene;
         let wrong_world =
             |engine: &Engine| scene.is_some_and(|scene| !scene.belongs_to(engine.app.world()));
-        let refused = || {
-            DevError::new(
-                ErrorCode::WrongWorld,
-                "$.scene",
-                "scene instance belongs to a different engine world",
-            )
-        };
+        let refused = || Error::new(ErrorCode::WrongWorld, "$.scene");
         match envelope.verb {
             Verb::Query => {
                 let name = envelope.name()?;
@@ -376,11 +362,12 @@ impl DevTools {
                     return crate::bricks::run(engine.app.world_mut(), name, args);
                 }
                 if !Query::NAMES.contains(&name) {
-                    return Err(DevError::unknown(
-                        "$.name",
-                        name,
-                        crate::bricks::operation_names(engine.app.world(), Verb::Query),
-                    ));
+                    return Err(Error::new(ErrorCode::UnknownVariant, "$.name")
+                        .got(name)
+                        .variants(crate::bricks::operation_names(
+                            engine.app.world(),
+                            Verb::Query,
+                        )));
                 }
                 let query: Query = parse_named(name, args)?;
                 if wrong_world(engine) {
@@ -409,12 +396,9 @@ impl DevTools {
             | Verb::Profile
             | Verb::Explain
             | Verb::Watch
-            | Verb::Check) => {
-                Err(
-                    DevError::new(ErrorCode::UnsupportedCommand, "$.verb", verb.name())
-                        .allowed([Verb::Describe, Verb::Inspect, Verb::Query].map(Verb::name)),
-                )
-            }
+            | Verb::Check) => Err(Error::new(ErrorCode::UnsupportedCommand, "$.verb")
+                .got(verb.name())
+                .variants([Verb::Describe, Verb::Inspect, Verb::Query].map(Verb::name))),
         }
     }
 
@@ -423,7 +407,7 @@ impl DevTools {
         engine: &mut Engine,
         context: Context<'_>,
         query: Query,
-    ) -> Result<Value, DevError> {
+    ) -> Result<Value, Error> {
         let scene = context.scene;
         if matches!(query, Query::Digest {}) {
             engine.refresh_transforms();
@@ -453,12 +437,10 @@ impl DevTools {
             ))),
             Query::Distribution { values } => {
                 if values.len() > crate::bounds::MAX_VALUES {
-                    return Err(DevError::new(
-                        ErrorCode::OutOfRange,
-                        "$.args.values",
-                        format!("{} values", values.len()),
-                    )
-                    .expected(format!("at most {}", crate::bounds::MAX_VALUES)));
+                    return Err(Error::new(ErrorCode::OutOfRange, "$.args.values")
+                        .expected(Expected::Array)
+                        .at_most(crate::bounds::MAX_VALUES as u64)
+                        .got(values.len()));
                 }
                 Ok(result::distribution(DistributionResult {
                     distribution: engine_core::Distribution::of(&values),
@@ -472,7 +454,7 @@ impl DevTools {
         engine: &mut Engine,
         context: Context<'_>,
         request: &InspectRequest,
-    ) -> Result<InspectResult, DevError> {
+    ) -> Result<InspectResult, Error> {
         let selector = InspectSelector {
             entity: request.entity.as_deref(),
             parent: request.parent.as_deref(),
@@ -486,7 +468,7 @@ impl DevTools {
         {
             self.inspect(engine.app.world(), context, selector)?;
             if engine.app.world().contains_resource::<CollisionWorld>() {
-                refresh_collision_world(engine.app.world_mut()).map_err(collision_error)?;
+                refresh_collision_world(engine.app.world_mut())?;
             }
         }
         engine.refresh_transforms();
@@ -529,7 +511,7 @@ impl DevTools {
         &self,
         world: &World,
         request: &DescribeRequest,
-    ) -> Result<DescribeResult, DevError> {
+    ) -> Result<DescribeResult, Error> {
         let bricks = self.brick_inspectors(world);
         let registry = world.get_resource::<BrickRegistry>();
         let full = request.detail == Detail::Full;
@@ -625,12 +607,11 @@ impl DevTools {
             .or_else(|| self.standard.of_operation(name))
             && !registry.is_some_and(|registry| registry.has(brick))
         {
-            return Err(engine_core::missing_brick(brick, "$.name").into());
+            return Err(engine_core::missing_brick(brick, "$.name"));
         }
-        Err(DevError {
-            code: ErrorCode::UnknownInspector,
-            ..DevError::unknown("$.name", name, self.describable(world, &bricks))
-        })
+        Err(Error::new(ErrorCode::UnknownInspector, "$.name")
+            .got(name)
+            .variants(self.describable(world, &bricks)))
     }
 
     fn described_operation(&self, world: &World, name: &str) -> Option<DescribeResult> {
@@ -697,7 +678,7 @@ impl DevTools {
         world: &World,
         bricks: &'a BrickInspectors,
         name: &str,
-    ) -> Result<&'a Inspector, DevError> {
+    ) -> Result<&'a Inspector, Error> {
         validate_name(name, "$.component")?;
         if let Some(inspector) = self.inspectors.get(name).or_else(|| bricks.get(name)) {
             return Ok(inspector);
@@ -707,16 +688,15 @@ impl DevTools {
                 .get_resource::<BrickRegistry>()
                 .is_some_and(|registry| registry.has(brick))
         {
-            return Err(engine_core::missing_brick(brick, "$.component").into());
+            return Err(engine_core::missing_brick(brick, "$.component"));
         }
         let known: Vec<String> = self
             .all_inspectors(bricks)
             .map(|inspector| inspector.descriptor.name.clone())
             .collect();
-        Err(DevError {
-            code: ErrorCode::UnknownInspector,
-            ..DevError::unknown("$.component", name, known)
-        })
+        Err(Error::new(ErrorCode::UnknownInspector, "$.component")
+            .got(name)
+            .variants(known))
     }
 
     #[expect(
@@ -728,7 +708,7 @@ impl DevTools {
         world: &World,
         context: Context<'_>,
         selector: InspectSelector<'_>,
-    ) -> Result<InspectResult, DevError> {
+    ) -> Result<InspectResult, Error> {
         let scene = context.scene;
         let InspectSelector {
             entity,
@@ -738,18 +718,17 @@ impl DevTools {
             limit,
         } = selector;
         if entity.is_some() && parent.is_some() {
-            return Err(DevError::new(
-                ErrorCode::InvalidSelector,
-                "$.parent",
-                "entity and parent selectors are mutually exclusive",
-            ));
+            return Err(Error::new(ErrorCode::InvalidSelector, "$.parent").expected(Expected::Absent));
         }
-        if !(1..=MAX_PAGE_SIZE).contains(&limit) || offset > MAX_SCAN_ENTITIES {
-            return Err(DevError::new(
-                ErrorCode::InvalidPage,
-                "$.limit",
-                "limit must be 1..100 and offset 0..10000",
-            ));
+        if !(1..=MAX_PAGE_SIZE).contains(&limit) {
+            return Err(Error::new(ErrorCode::InvalidPage, "$.limit")
+                .range(1.0, MAX_PAGE_SIZE as f64)
+                .got(limit));
+        }
+        if offset > MAX_SCAN_ENTITIES {
+            return Err(Error::new(ErrorCode::InvalidPage, "$.offset")
+                .at_most(MAX_SCAN_ENTITIES as u64)
+                .got(offset));
         }
         let bricks = self.brick_inspectors(world);
         let inspector = component
@@ -759,11 +738,9 @@ impl DevTools {
             inspector.filter(|inspector| inspector.kind == InspectorKind::Resource)
         {
             if entity.is_some() || parent.is_some() || offset != 0 {
-                return Err(DevError::new(
-                    ErrorCode::InvalidSelector,
-                    "$.entity",
-                    "resources have no entity or parent selector or pagination offset",
-                ));
+                return Err(Error::new(ErrorCode::InvalidSelector, "$.entity")
+                    .expected(Expected::Absent)
+                    .got(&inspector.descriptor.name));
             }
             let value = read_value(inspector, world, None, &context)?;
             return Ok(InspectResult::Resource {
@@ -771,42 +748,29 @@ impl DevTools {
                 value,
             });
         }
-        let scene = scene.ok_or_else(|| {
-            DevError::new(
-                ErrorCode::NoScene,
-                "$.entity",
-                "authored entity inspection requires an active scene instance",
-            )
-        })?;
+        let scene = scene
+            .ok_or_else(|| Error::new(ErrorCode::NoScene, "$.entity").expected(Expected::Entity))?;
         if scene.entity_count() > MAX_SCAN_ENTITIES {
-            return Err(DevError::new(
-                ErrorCode::ScanLimit,
-                "$.scene",
-                "scene exceeds the 10000 authored-record scan budget",
-            ));
+            return Err(Error::new(ErrorCode::ScanLimit, "$.scene")
+                .at_most(MAX_SCAN_ENTITIES as u64)
+                .got(scene.entity_count()));
         }
         if let Some(id) = entity {
             validate_name(id, "$.entity")?;
             if offset != 0 {
-                return Err(DevError::new(
-                    ErrorCode::InvalidSelector,
-                    "$.offset",
-                    "a selected entity has no pagination offset",
-                ));
+                return Err(Error::new(ErrorCode::InvalidSelector, "$.offset")
+                    .range(0.0, 0.0)
+                    .got(offset));
             }
             let entity = authored_entity(world, scene, id).ok_or_else(|| {
-                DevError::new(
-                    ErrorCode::UnknownEntity,
-                    "$.entity",
-                    "authored ID does not exist in the active scene (streamed entities only while their cell is loaded)",
-                )
+                Error::new(ErrorCode::UnknownEntity, "$.entity")
+                    .expected(Expected::Entity)
+                    .got(id)
             })?;
             if world.get_entity(entity).is_err() {
-                return Err(DevError::new(
-                    ErrorCode::EntityRemoved,
-                    "$.entity",
-                    "gameplay removed this authored entity",
-                ));
+                return Err(Error::new(ErrorCode::EntityRemoved, "$.entity")
+                    .expected(Expected::Live)
+                    .got(id));
             }
             return Ok(InspectResult::Entity {
                 entity: self.entity_row(
@@ -822,18 +786,14 @@ impl DevTools {
             .map(|id| {
                 validate_name(id, "$.parent")?;
                 let entity = authored_entity(world, scene, id).ok_or_else(|| {
-                    DevError::new(
-                        ErrorCode::UnknownEntity,
-                        "$.parent",
-                        "parent authored ID does not exist in the active scene",
-                    )
+                    Error::new(ErrorCode::UnknownEntity, "$.parent")
+                        .expected(Expected::Entity)
+                        .got(id)
                 })?;
                 if world.get_entity(entity).is_err() {
-                    return Err(DevError::new(
-                        ErrorCode::EntityRemoved,
-                        "$.parent",
-                        "gameplay removed this authored parent",
-                    ));
+                    return Err(Error::new(ErrorCode::EntityRemoved, "$.parent")
+                        .expected(Expected::Live)
+                        .got(id));
                 }
                 Ok(entity)
             })
@@ -877,7 +837,7 @@ impl DevTools {
         scene: &SceneInstance,
         (id, entity): (&str, Entity),
         inspector: Option<&Inspector>,
-    ) -> Result<EntityRow, DevError> {
+    ) -> Result<EntityRow, Error> {
         let metadata = world.get::<SceneEntity>(entity);
         let components = if let Some(inspector) = inspector {
             let context = Context {
@@ -915,36 +875,31 @@ fn read_value(
     world: &World,
     entity: Option<Entity>,
     context: &Context<'_>,
-) -> Result<Value, DevError> {
+) -> Result<Value, Error> {
     let value = (inspector.read)(world, entity, context).ok_or_else(|| {
-        DevError::new(
-            ErrorCode::MissingComponent,
-            "$.component",
-            "selected component or resource is absent",
-        )
+        Error::new(ErrorCode::MissingComponent, "$.component")
+            .expected(Expected::Present)
+            .got(&inspector.descriptor.name)
     })?;
     encode(&value, MAX_INSPECTOR_BYTES).map_err(|_| {
-        DevError::new(
-            ErrorCode::InspectorTooLarge,
-            "$.component",
-            "inspector projection exceeds 16384 encoded bytes",
-        )
+        Error::new(ErrorCode::InspectorTooLarge, "$.component")
+            .at_most(MAX_INSPECTOR_BYTES as u64)
+            .got(&inspector.descriptor.name)
     })?;
     Ok(value)
 }
 
-pub(crate) fn validate_name(name: &str, path: &str) -> Result<(), DevError> {
+pub(crate) fn validate_name(name: &str, path: &str) -> Result<(), Error> {
     if name.is_empty()
         || name.len() > 64
         || !name
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
     {
-        return Err(DevError::new(
-            ErrorCode::InvalidName,
-            path,
-            "names require 1..64 ASCII letters, digits, underscores, dots, or hyphens",
-        ));
+        return Err(Error::new(ErrorCode::InvalidName, path)
+            .expected(Expected::Id)
+            .at_most(64)
+            .got(name));
     }
     Ok(())
 }
@@ -957,7 +912,7 @@ struct BoundedWriter {
 impl Write for BoundedWriter {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
-            return Err(std::io::Error::other("JSON byte budget exceeded"));
+            return Err(std::io::Error::other("byte_budget"));
         }
         self.bytes.extend_from_slice(bytes);
         Ok(bytes.len())
@@ -981,18 +936,11 @@ pub(crate) fn authored_entity(world: &World, scene: &SceneInstance, id: &str) ->
     scene.authored_entity(world, id)
 }
 
-pub(crate) fn collision_error(error: CollisionError) -> DevError {
-    let error = error.query_error();
-    DevError::new(error.code, error.path, error.message)
-}
-
-fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, DevError> {
+fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, Error> {
     let assets = world.get_resource::<AssetLibrary>().ok_or_else(|| {
-        DevError::new(
-            ErrorCode::MissingResource,
-            "$.assets",
-            "AssetLibrary is not installed",
-        )
+        Error::new(ErrorCode::MissingResource, "$.assets")
+            .expected(Expected::Present)
+            .got("AssetLibrary")
     })?;
     let texture_assets = context
         .scene

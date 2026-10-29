@@ -3,14 +3,15 @@ use serde_json::Value;
 use super::rendered;
 use crate::app_host::AppHost;
 use engine_dev::results::{EnvironmentResult, result};
-use engine_dev::{DevError, EnvironmentControl};
+use engine_core::Error;
+use engine_dev::EnvironmentControl;
 
 pub(super) fn set(
     app: &mut AppHost,
     args: Value,
     control: EnvironmentControl,
     (width, height): (u32, u32),
-) -> Result<Value, DevError> {
+) -> Result<Value, Error> {
     let current = |app: &AppHost| {
         serde_json::to_value(engine_scene::SceneEnvironment::current(
             app.engine.app.world(),
@@ -35,7 +36,7 @@ pub(super) fn set(
         control.sections()
     };
     environment.apply_sections(app.engine.app.world_mut(), "$")?;
-    rendered(app.dev_render(width, height), "environment changed")?;
+    rendered(app.dev_render(width, height))?;
     let after = current(app);
     let named = environment.ordered_keys(app.engine.app.world());
     let pick = |all: &Value| {

@@ -2,12 +2,12 @@ use serde_json::Value;
 
 use super::super::{DevHost, InputBatch};
 use crate::app_host::AppHost;
-use engine_core::{ActionInput, DevStepError, ErrorCode, InputState};
+use engine_core::{ActionInput, Error, ErrorCode, InputState};
+use engine_dev::bounds;
 use engine_dev::results::{InputResult, StepResult, result};
-use engine_dev::{DevError, bounds};
 use engine_settings::Setting;
 
-pub(super) fn batch(host: &mut DevHost, input: InputBatch) -> Result<Value, DevError> {
+pub(super) fn batch(host: &mut DevHost, input: InputBatch) -> Result<Value, Error> {
     for (value, field, rule) in [
         (input.forward, "forward", bounds::AXIS),
         (input.right, "right", bounds::AXIS),
@@ -16,11 +16,7 @@ pub(super) fn batch(host: &mut DevHost, input: InputBatch) -> Result<Value, DevE
         (input.pitch, "pitch", bounds::TURN),
     ] {
         if let Err(invalid) = value.check(field, rule) {
-            return Err(DevError::new(
-                ErrorCode::InvalidInput,
-                format!("$.{field}"),
-                invalid.rule,
-            ));
+            return Err(invalid.error(ErrorCode::InvalidInput, "$"));
         }
     }
     host.input = input;
@@ -35,9 +31,8 @@ pub(super) fn step(
     app: &mut AppHost,
     ticks: u32,
     (width, height): (u32, u32),
-) -> Result<Value, DevError> {
-    DevStepError::validate(ticks)
-        .map_err(|error| DevError::new(ErrorCode::InvalidStep, "$.ticks", error.to_string()))?;
+) -> Result<Value, Error> {
+    engine_core::check_dev_ticks(ticks)?;
     app.engine
         .app
         .world_mut()
@@ -54,13 +49,8 @@ pub(super) fn step(
     host.input.released = 0;
     host.input.yaw = 0.0;
     host.input.pitch = 0.0;
-    app.dev_step(ticks, width, height, input).map_err(|error| {
-        DevError::new(
-            ErrorCode::RenderFailed,
-            "$",
-            format!("simulation may have advanced: {error}"),
-        )
-    })?;
+    app.dev_step(ticks, width, height, input)
+        .map_err(|error| Error::new(ErrorCode::RenderFailed, "$").got(error))?;
     Ok(result::step(StepResult {
         ticks,
         temporary: true,

@@ -3,13 +3,12 @@ use engine_settings::ErrorCode;
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine_core::{
-    Mesh, Texture, Transform,
+    Error, Expected, Mesh, Texture, Transform,
     glam::{Mat4, Vec3},
 };
 
-use crate::error::broken_rule;
 use crate::{
-    MeshSource, SceneDocument, SceneError, SceneFile, SceneFileKind, SceneFiles,
+    MeshSource, SceneDocument, SceneFile, SceneFileKind, SceneFiles,
     components::{PreparedComponents, Reach},
     hierarchy::{ExpandedObject, ExpandedScene},
     material::PreparedMaterial,
@@ -52,11 +51,11 @@ struct CpuAssets {
 }
 
 impl SceneDocument {
-    pub fn validate(&self) -> Result<(), SceneError> {
+    pub fn validate(&self) -> Result<(), Error> {
         self.prepare(None).map(|_| ())
     }
 
-    pub fn validate_with(&self, files: &SceneFiles) -> Result<(), SceneError> {
+    pub fn validate_with(&self, files: &SceneFiles) -> Result<(), Error> {
         self.prepare(Some(files)).map(|_| ())
     }
 
@@ -98,7 +97,7 @@ impl SceneDocument {
         files
     }
 
-    pub(crate) fn prepare(&self, files: Option<&SceneFiles>) -> Result<PreparedScene, SceneError> {
+    pub(crate) fn prepare(&self, files: Option<&SceneFiles>) -> Result<PreparedScene, Error> {
         identifier(&self.id, "$.id")?;
         self.validate_camera()?;
         let mesh_ids = unique_ids(self.meshes.iter().map(|mesh| mesh.id.as_str()), "$.meshes")?;
@@ -153,7 +152,7 @@ impl SceneDocument {
         &self,
         streamed: &ExpandedScene,
         files: Option<&SceneFiles>,
-    ) -> Result<Vec<PreparedEntity>, SceneError> {
+    ) -> Result<Vec<PreparedEntity>, Error> {
         streamed
             .entities
             .iter()
@@ -268,7 +267,7 @@ impl SceneDocument {
         }
     }
 
-    fn prepare_assets(&self, files: Option<&SceneFiles>) -> Result<CpuAssets, SceneError> {
+    fn prepare_assets(&self, files: Option<&SceneFiles>) -> Result<CpuAssets, Error> {
         for (mesh_index, mesh) in self.meshes.iter().enumerate() {
             if let MeshSource::Inline { vertices, .. } = &mesh.source {
                 let path = format!("$.meshes[{mesh_index}].source");
@@ -313,17 +312,17 @@ impl SceneDocument {
         &self,
         entity: &ExpandedObject,
         files: Option<&SceneFiles>,
-    ) -> Result<PreparedEntity, SceneError> {
+    ) -> Result<PreparedEntity, Error> {
         let (source, path) = (&entity.source, &entity.path);
         Ok(PreparedEntity {
             components: source.prepare_components(path, self, files)?,
         })
     }
 
-    fn validate_camera(&self) -> Result<(), SceneError> {
+    fn validate_camera(&self) -> Result<(), Error> {
         self.camera
             .validate()
-            .map_err(|invalid| broken_rule(ErrorCode::InvalidCamera, "$.camera", invalid))
+            .map_err(|invalid| invalid.error(ErrorCode::InvalidCamera, "$.camera"))
     }
 }
 
@@ -345,28 +344,23 @@ fn item_roots(entities: &[ExpandedObject], indices: &BTreeMap<&str, usize>) -> V
         .collect()
 }
 
-pub(crate) fn identifier(id: &str, path: &str) -> Result<(), SceneError> {
+pub(crate) fn identifier(id: &str, path: &str) -> Result<(), Error> {
     if engine_settings::is_id(id) {
         return Ok(());
     }
-    Err(SceneError::new(
-        ErrorCode::InvalidId,
-        path,
-        format!("IDs {}", engine_settings::Rule::Id.describe()),
-    ))
+    Err(Error::new(ErrorCode::InvalidId, path)
+        .expected(Expected::Id)
+        .at_most(engine_settings::MAX_ID_BYTES as u64)
+        .got(id))
 }
 
 pub(crate) const MAX_NAME_BYTES: usize = 128;
 
-pub(crate) fn display_name(name: &str, path: &str) -> Result<(), SceneError> {
+pub(crate) fn display_name(name: &str, path: &str) -> Result<(), Error> {
     if name.len() > MAX_NAME_BYTES || name.chars().any(char::is_control) {
-        return Err(SceneError::new(
-            ErrorCode::InvalidName,
-            path,
-            format!(
-                "names must be at most {MAX_NAME_BYTES} UTF-8 bytes without control characters"
-            ),
-        ));
+        return Err(Error::new(ErrorCode::InvalidName, path)
+            .at_most(MAX_NAME_BYTES as u64)
+            .got(name));
     }
     Ok(())
 }
@@ -374,42 +368,62 @@ pub(crate) fn display_name(name: &str, path: &str) -> Result<(), SceneError> {
 pub(crate) fn unique_ids<'a>(
     ids: impl Iterator<Item = &'a str>,
     collection_path: &str,
-) -> Result<BTreeSet<&'a str>, SceneError> {
+) -> Result<BTreeSet<&'a str>, Error> {
     let mut known = BTreeSet::new();
     for (index, id) in ids.enumerate() {
         let path = format!("{collection_path}[{index}].id");
         identifier(id, &path)?;
         if !known.insert(id) {
-            return Err(SceneError::new(
-                ErrorCode::DuplicateId,
-                path,
-                format!("authored ID '{id}' is already used in this collection"),
-            ));
+            return Err(Error::new(ErrorCode::DuplicateId, path)
+                .expected(Expected::Unique)
+                .got(id));
         }
     }
     Ok(known)
 }
 
-pub(crate) fn reference(id: &str, known: &BTreeSet<&str>, path: &str) -> Result<(), SceneError> {
+pub(crate) fn reference(id: &str, known: &BTreeSet<&str>, path: &str) -> Result<(), Error> {
     identifier(id, path)?;
     if !known.contains(id) {
-        return Err(SceneError::new(
-            ErrorCode::UnknownReference,
-            path,
-            format!("no authored object in this collection has ID '{id}'"),
+        return Err(unknown(
+            Error::new(ErrorCode::UnknownReference, path),
+            id,
+            known.iter().copied(),
         ));
     }
     Ok(())
 }
 
-fn bounded_vector(value: [f32; 3], path: &str, maximum: f32) -> Result<(), SceneError> {
+pub(crate) fn unknown<S: Into<String>>(
+    error: Error,
+    id: &str,
+    known: impl IntoIterator<Item = S>,
+) -> Error {
+    let known: Vec<String> = known.into_iter().map(Into::into).collect();
+    let error = error.got(id);
+    match engine_settings::closest(id, &known) {
+        Some(nearest) => error.nearest(nearest),
+        None => error,
+    }
+}
+
+pub(crate) fn moved(error: Error, code: ErrorCode, path: impl Into<String>) -> Error {
+    Error {
+        code,
+        path: path.into(),
+        detail: error.detail,
+    }
+}
+
+fn bounded_vector(value: [f32; 3], path: &str, maximum: f32) -> Result<(), Error> {
     for (index, coordinate) in value.iter().enumerate() {
         if !coordinate.is_finite() || coordinate.abs() > maximum {
-            return Err(SceneError::new(
-                ErrorCode::InvalidNumber,
-                format!("{path}[{index}]"),
-                format!("value must be finite and within ±{maximum}"),
-            ));
+            return Err(
+                Error::new(ErrorCode::InvalidNumber, format!("{path}[{index}]"))
+                    .expected(Expected::Finite)
+                    .range(-f64::from(maximum), f64::from(maximum))
+                    .got(coordinate),
+            );
         }
     }
     Ok(())

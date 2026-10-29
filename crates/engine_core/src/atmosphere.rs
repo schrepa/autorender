@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::Resource;
 use glam::Vec3;
 
-use engine_settings::{InvalidSetting, Setting};
+use engine_settings::{Expected, InvalidSetting, Setting};
 
 #[macro_export]
 macro_rules! atmosphere_fields {
@@ -46,10 +46,8 @@ macro_rules! core_atmosphere {
             pub fn validate(&self) -> Result<(), InvalidSetting> {
                 $(Setting::check(&self.$field, stringify!($field), engine_settings::rule::$rule($($($arg),*)?))?;)*
                 if !self.sun_direction.is_finite() || self.sun_direction.length_squared() == 0.0 {
-                    return Err(InvalidSetting::new(
-                        "sun_direction",
-                        "must be finite and nonzero",
-                    ));
+                    return Err(InvalidSetting::new("sun_direction", Expected::Nonzero)
+                        .got(self.sun_direction.to_array()));
                 }
                 Ok(())
             }

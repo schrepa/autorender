@@ -8,6 +8,7 @@ publish.workspace = true
 [dependencies]
 engine_assets.workspace = true
 engine_math.workspace = true
+engine_settings.workspace = true
 libm.workspace = true
 
 [build-dependencies]

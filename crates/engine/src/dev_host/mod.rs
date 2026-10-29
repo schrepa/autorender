@@ -2,9 +2,9 @@ pub(crate) mod bridge;
 mod controls;
 
 use crate::app_host::AppHost;
-use engine_core::ErrorCode;
+use engine_core::{Error, ErrorCode, Expected};
 use engine_dev::{
-    CaptureRequest, Context, Control, DevError, DevTools, Envelope, ExplainQuestion, HostControl,
+    CaptureRequest, Context, Control, DevTools, Envelope, ExplainQuestion, HostControl,
     ProfileRequest, RenderedMesh, RendererFacts, Verb, WatchRequest,
 };
 use engine_scene::SceneInstance;
@@ -113,10 +113,7 @@ impl DevHost {
                 looped(&envelope, paused)
             }
             Verb::Check => {
-                Err(
-                    DevError::new(ErrorCode::UnsupportedCommand, "$.verb", Verb::Check.name())
-                        .expected("cargo xtask agent check"),
-                )
+                Err(Error::new(ErrorCode::UnsupportedCommand, "$.verb").got(Verb::Check.name()))
             }
         };
         match answered {
@@ -153,7 +150,7 @@ impl DevHost {
         envelope: &Envelope,
         (width, height): (u32, u32),
         paused: bool,
-    ) -> Result<Value, DevError> {
+    ) -> Result<Value, Error> {
         let control = self
             .tools
             .parse_control(app.engine.app.world(), envelope, paused)?;
@@ -173,22 +170,11 @@ impl DevHost {
         envelope.to_string()
     }
 
-    pub fn error(
-        &mut self,
-        app: &mut AppHost,
-        scene: Option<&SceneInstance>,
-        code: ErrorCode,
-        path: &str,
-        message: &str,
-    ) -> String {
-        self.refusal(app, scene, &DevError::new(code, path, message))
-    }
-
     pub fn refusal(
         &mut self,
         app: &mut AppHost,
         scene: Option<&SceneInstance>,
-        error: &DevError,
+        error: &Error,
     ) -> String {
         let mut envelope = self.observation(app, scene);
         envelope["ok"] = json!(false);
@@ -207,7 +193,7 @@ impl DevHost {
     }
 }
 
-fn looped(envelope: &Envelope, paused: bool) -> Result<Value, DevError> {
+fn looped(envelope: &Envelope, paused: bool) -> Result<Value, Error> {
     let needs_pause = match envelope.verb {
         Verb::Capture => {
             let request: CaptureRequest = envelope.body()?;
@@ -218,10 +204,8 @@ fn looped(envelope: &Envelope, paused: bool) -> Result<Value, DevError> {
             let request: ProfileRequest = envelope.body()?;
             request.validate()?;
             if request.deep.is_some() {
-                return Err(
-                    DevError::new(ErrorCode::ProfilingUnavailable, "$.deep", "deep")
-                        .expected("a native session or the agent bridge, which take deep profiles"),
-                );
+                return Err(Error::new(ErrorCode::ProfilingUnavailable, "$.deep")
+                    .expected(Expected::Absent));
             }
             true
         }
@@ -236,19 +220,13 @@ fn looped(envelope: &Envelope, paused: bool) -> Result<Value, DevError> {
             true
         }
         verb @ (Verb::Describe | Verb::Inspect | Verb::Query | Verb::Control | Verb::Check) => {
-            return Err(DevError::new(
-                ErrorCode::UnsupportedCommand,
-                "$.verb",
-                verb.name(),
-            ));
+            return Err(Error::new(ErrorCode::UnsupportedCommand, "$.verb").got(verb.name()));
         }
     };
     if needs_pause && !paused {
-        return Err(DevError::new(
-            ErrorCode::PauseRequired,
-            "$",
-            format!("pause the host before {}", envelope.verb.name()),
-        ));
+        return Err(Error::new(ErrorCode::PauseRequired, "$")
+            .expected(Expected::Paused)
+            .got(envelope.verb.name()));
     }
     let mut control = envelope.fields.clone();
     control.insert("op".to_owned(), json!(envelope.verb.name()));

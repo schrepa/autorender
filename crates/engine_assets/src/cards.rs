@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::{AssetError, MAX_TEXTURE_DIMENSION, Mesh, MeshVertex};
+use engine_settings::{Error, ErrorCode, Expected};
+
+use crate::{MAX_TEXTURE_DIMENSION, Mesh, MeshVertex};
 
 #[derive(Debug, Clone, Copy)]
 pub struct AlphaImage<'a> {
@@ -15,12 +17,10 @@ const SAVING: f64 = 0.1;
 const SNAP: f32 = 1.0 / 64.0;
 const SLACK: f64 = 1.0e-6;
 
-pub fn trim_cards(mesh: &Mesh, alpha: AlphaImage<'_>, cutoff: f32) -> Result<Mesh, AssetError> {
+pub fn trim_cards(mesh: &Mesh, alpha: AlphaImage<'_>, cutoff: f32) -> Result<Mesh, Error> {
     let coverage = Coverage::new(alpha, cutoff)?;
     if mesh.lods().is_some() {
-        return Err(AssetError::InvalidLevels {
-            reason: "cards are trimmed before their mesh's levels of detail are made",
-        });
+        return Err(Error::new(ErrorCode::InvalidMesh, "$.mesh.lods").expected(Expected::Absent));
     }
     let cards = find_cards(mesh, coverage.snap);
     let mut fitted = BTreeMap::new();
@@ -204,31 +204,31 @@ struct Coverage<'a> {
 }
 
 impl<'a> Coverage<'a> {
-    fn new(image: AlphaImage<'a>, cutoff: f32) -> Result<Self, AssetError> {
+    fn new(image: AlphaImage<'a>, cutoff: f32) -> Result<Self, Error> {
         let AlphaImage {
             width,
             height,
             rgba,
         } = image;
         let sides = 1..=MAX_TEXTURE_DIMENSION;
-        if !sides.contains(&width) || !sides.contains(&height) {
-            return Err(AssetError::InvalidTextureDimensions {
-                width,
-                height,
-                limit: MAX_TEXTURE_DIMENSION,
-            });
+        for (path, side) in [("$.alpha.width", width), ("$.alpha.height", height)] {
+            if !sides.contains(&side) {
+                return Err(Error::new(ErrorCode::InvalidTexture, path)
+                    .range(1.0, f64::from(MAX_TEXTURE_DIMENSION))
+                    .got(side));
+            }
         }
         let expected = width as usize * height as usize * 4;
         if rgba.len() != expected {
-            return Err(AssetError::InvalidTextureLength {
-                expected,
-                actual: rgba.len(),
-            });
+            return Err(Error::new(ErrorCode::InvalidTexture, "$.alpha.rgba")
+                .expected(Expected::Matching)
+                .range(expected as f64, expected as f64)
+                .got(rgba.len()));
         }
         if !(0.0..=1.0).contains(&cutoff) {
-            return Err(AssetError::InvalidMaterialMap {
-                field: "alpha_cutoff",
-            });
+            return Err(Error::new(ErrorCode::InvalidMaterial, "$.cutoff")
+                .range(0.0, 1.0)
+                .got(cutoff));
         }
         Ok(Self {
             width,
@@ -466,7 +466,7 @@ impl<'a> Trimmed<'a> {
             })
     }
 
-    fn finish(self) -> Result<Mesh, AssetError> {
+    fn finish(self) -> Result<Mesh, Error> {
         let mesh = self.mesh;
         let own = mesh.vertices().len();
         let mut used = vec![false; own];
@@ -491,13 +491,17 @@ impl<'a> Trimmed<'a> {
                 } else {
                     kept.len() + index - own
                 };
-                u32::try_from(index).map_err(|_| AssetError::MeshCapacity {
-                    limit: u32::MAX as usize,
+                u32::try_from(index).map_err(|_| {
+                    Error::new(ErrorCode::AssetBudgetExceeded, "$.indices")
+                        .at_most(u64::from(u32::MAX))
+                        .got(index)
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
         if indices.is_empty() {
-            return Err(AssetError::EmptyMesh);
+            return Err(Error::new(ErrorCode::InvalidMesh, "$.indices")
+                .expected(Expected::NonEmpty)
+                .got(0));
         }
         let (vertices, added) = (mesh.vertices(), &self.added);
         let blended = added.iter().map(|vertex| MeshVertex {

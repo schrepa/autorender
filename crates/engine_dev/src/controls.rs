@@ -2,27 +2,27 @@ use crate::protocol::{
     CaptureRequest, ExplainQuestion, MAX_WATCHED, ProfileRequest, WatchRequest, bounds,
 };
 use crate::results::{DebugMissingAssetResult, result};
-use crate::{BrowserControl, DevError, bounded};
+use crate::{BrowserControl, bounded};
 use engine_core::{AssetLibrary, Camera, Engine, Mesh3d, glam::Vec3};
 use engine_scene::SceneInstance;
-use engine_settings::ErrorCode;
+use engine_settings::{Error, ErrorCode, Expected};
 use serde_json::Value;
 
 impl BrowserControl {
-    pub fn parse(name: &str, args: Value, paused: bool) -> Result<Self, DevError> {
+    pub fn parse(name: &str, args: Value, paused: bool) -> Result<Self, Error> {
         let control: Self = crate::protocol::parse_named(name, args)?;
-        control.validate().map_err(DevError::in_args)?;
+        control
+            .validate()
+            .map_err(|error| error.within("$.args"))?;
         if control.needs_pause() && !paused {
-            return Err(DevError::new(
-                ErrorCode::PauseRequired,
-                "$",
-                format!("pause the host before {name}"),
-            ));
+            return Err(Error::new(ErrorCode::PauseRequired, "$")
+                .expected(Expected::Paused)
+                .got(name));
         }
         Ok(control)
     }
 
-    pub fn validate(&self) -> Result<(), DevError> {
+    pub fn validate(&self) -> Result<(), Error> {
         match self {
             Self::Benchmark {
                 warmup, samples, ..
@@ -64,11 +64,10 @@ impl BrowserControl {
                         byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'
                     });
                 if !valid {
-                    return Err(DevError::new(
-                        ErrorCode::InvalidName,
-                        "$.name",
-                        "game control names are 1 to 64 lowercase letters, digits and underscores",
-                    ));
+                    return Err(Error::new(ErrorCode::InvalidName, "$.name")
+                        .expected(Expected::Id)
+                        .at_most(64)
+                        .got(name));
                 }
             }
             Self::Reload {
@@ -85,11 +84,9 @@ impl BrowserControl {
                         && (value == "0" || !value.starts_with('0'))
                         && value.parse::<u64>().is_ok();
                     if !decimal {
-                        return Err(DevError::new(
-                            ErrorCode::InvalidRevision,
-                            path,
-                            "revisions are unsigned decimal strings without leading zeros",
-                        ));
+                        return Err(Error::new(ErrorCode::InvalidRevision, path)
+                            .expected(Expected::Integer)
+                            .got(value));
                     }
                 }
             }
@@ -112,7 +109,7 @@ impl BrowserControl {
 }
 
 impl CaptureRequest {
-    pub fn validate(&self) -> Result<(), DevError> {
+    pub fn validate(&self) -> Result<(), Error> {
         if let Some(alpha) = self.alpha {
             validated_presentation_alpha(alpha)?;
         }
@@ -121,7 +118,7 @@ impl CaptureRequest {
 }
 
 impl ProfileRequest {
-    pub fn validate(&self) -> Result<(), DevError> {
+    pub fn validate(&self) -> Result<(), Error> {
         bounded(
             self.frames,
             bounds::FRAMES,
@@ -139,7 +136,7 @@ impl ProfileRequest {
 }
 
 impl ExplainQuestion {
-    pub fn validate(&self) -> Result<(), DevError> {
+    pub fn validate(&self) -> Result<(), Error> {
         match self {
             Self::Frame { top, .. } => page_limit(*top, "$.top"),
             Self::Entity { .. } | Self::Scene {} => Ok(()),
@@ -148,7 +145,7 @@ impl ExplainQuestion {
 }
 
 impl WatchRequest {
-    pub fn validate(&self) -> Result<(), DevError> {
+    pub fn validate(&self) -> Result<(), Error> {
         bounded(
             self.frames,
             bounds::FRAMES,
@@ -162,24 +159,19 @@ impl WatchRequest {
             "$.interval_ms",
         )?;
         if self.stats.is_empty() && self.entities.is_empty() {
-            return Err(DevError::new(
-                ErrorCode::InvalidRequest,
-                "$",
-                "watch names stats or entities",
-            )
-            .allowed(["stats", "entities"]));
+            return Err(Error::new(ErrorCode::InvalidRequest, "$")
+                .expected(Expected::NonEmpty)
+                .variants(["stats", "entities"]));
         }
         for (field, count) in [
             ("$.stats", self.stats.len()),
             ("$.entities", self.entities.len()),
         ] {
             if count > MAX_WATCHED {
-                return Err(DevError::new(
-                    ErrorCode::OutOfRange,
-                    field,
-                    format!("{count} watched"),
-                )
-                .expected(format!("at most {MAX_WATCHED}")));
+                return Err(Error::new(ErrorCode::OutOfRange, field)
+                    .expected(Expected::Array)
+                    .at_most(MAX_WATCHED as u64)
+                    .got(count));
             }
         }
         for (index, stat) in self.stats.iter().enumerate() {
@@ -189,29 +181,26 @@ impl WatchRequest {
                     byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_.".contains(&byte)
                 });
             if !valid {
-                return Err(DevError::new(
-                    ErrorCode::InvalidName,
-                    format!("$.stats[{index}]"),
-                    stat.clone(),
-                )
-                .expected("a dot path of lowercase stat names, at most 128 bytes"));
+                return Err(Error::new(ErrorCode::InvalidName, format!("$.stats[{index}]"))
+                    .expected(Expected::Path)
+                    .at_most(128)
+                    .got(stat));
             }
         }
         Ok(())
     }
 }
 
-pub(crate) fn page_limit(value: usize, path: &str) -> Result<(), DevError> {
+pub(crate) fn page_limit(value: usize, path: &str) -> Result<(), Error> {
     if (1..=bounds::MAX_PAGE_SIZE).contains(&value) {
         return Ok(());
     }
-    Err(
-        DevError::new(ErrorCode::InvalidPage, path, value.to_string())
-            .expected(format!("1..{}", bounds::MAX_PAGE_SIZE)),
-    )
+    Err(Error::new(ErrorCode::InvalidPage, path)
+        .range(1.0, bounds::MAX_PAGE_SIZE as f64)
+        .got(value))
 }
 
-pub fn validated_presentation_alpha(alpha: f64) -> Result<f32, DevError> {
+pub fn validated_presentation_alpha(alpha: f64) -> Result<f32, Error> {
     bounded(
         alpha,
         bounds::ALPHA,
@@ -227,7 +216,7 @@ pub fn validated_camera(
     vertical_fov_radians: f32,
     near: f32,
     far: f32,
-) -> Result<Camera, DevError> {
+) -> Result<Camera, Error> {
     let camera = Camera {
         position: Vec3::from_array(position),
         target: Vec3::from_array(target),
@@ -235,19 +224,11 @@ pub fn validated_camera(
         near,
         far,
     };
-    camera.validate().map_err(|invalid| {
-        DevError::new(
-            ErrorCode::InvalidCamera,
-            format!("$.{}", invalid.field),
-            invalid.rule,
-        )
-    })?;
+    camera
+        .validate()
+        .map_err(|invalid| invalid.error(ErrorCode::InvalidCamera, "$"))?;
     if !camera.view_projection(1.0).is_finite() {
-        return Err(DevError::new(
-            ErrorCode::InvalidCamera,
-            "$",
-            "camera must produce a finite projection",
-        ));
+        return Err(Error::new(ErrorCode::InvalidCamera, "$").expected(Expected::Finite));
     }
     Ok(camera)
 }
@@ -258,24 +239,17 @@ pub enum OperationCall {
 }
 
 impl OperationCall {
-    pub fn changed(&self) -> String {
-        match self {
-            Self::Brick { name, .. } => format!("{name} changed"),
-            Self::MissingAsset { .. } => "asset removed".to_owned(),
-        }
-    }
-
     pub fn apply(
         &self,
         engine: &mut Engine,
         scene: Option<&SceneInstance>,
-    ) -> Result<Value, DevError> {
+    ) -> Result<Value, Error> {
         match self {
             Self::Brick { name, request } => {
                 crate::bricks::run(engine.app.world_mut(), name, request.clone())
             }
             Self::MissingAsset { entity } => {
-                missing_asset(engine, scene, entity).map_err(DevError::in_args)
+                missing_asset(engine, scene, entity).map_err(|error| error.within("$.args"))
             }
         }
     }
@@ -285,24 +259,20 @@ fn missing_asset(
     engine: &mut Engine,
     scene: Option<&SceneInstance>,
     entity: &str,
-) -> Result<Value, DevError> {
+) -> Result<Value, Error> {
     let scene = scene.ok_or_else(|| {
-        DevError::new(
-            ErrorCode::NoScene,
-            "$.entity",
-            "the meshes it removes are authored entities'",
-        )
+        Error::new(ErrorCode::NoScene, "$.entity")
+            .expected(Expected::Entity)
+            .got(entity)
     })?;
     let world = engine.app.world_mut();
     let mesh = crate::inspect::authored_entity(world, scene, entity)
         .and_then(|entity| world.get::<Mesh3d>(entity))
         .map(|mesh3d| mesh3d.mesh)
         .ok_or_else(|| {
-            DevError::new(
-                ErrorCode::UnknownEntity,
-                "$.entity",
-                format!("no entity {entity} drawing a mesh in the scene"),
-            )
+            Error::new(ErrorCode::UnknownEntity, "$.entity")
+                .expected(Expected::Entity)
+                .got(entity)
         })?;
     let entities = world.try_query::<&Mesh3d>().map_or(0, |mut meshes| {
         meshes
@@ -311,11 +281,9 @@ fn missing_asset(
             .count()
     });
     let mut assets = world.get_resource_mut::<AssetLibrary>().ok_or_else(|| {
-        DevError::new(
-            ErrorCode::MissingResource,
-            "$",
-            "AssetLibrary is not installed",
-        )
+        Error::new(ErrorCode::MissingResource, "$")
+            .expected(Expected::Present)
+            .got("AssetLibrary")
     })?;
     assets.remove_mesh(mesh);
     Ok(result::debug_missing_asset(DebugMissingAssetResult {
