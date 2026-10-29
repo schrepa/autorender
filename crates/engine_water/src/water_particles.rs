@@ -3,23 +3,23 @@ use std::rc::Rc;
 
 use engine_core::glam::{Vec2, Vec3};
 use engine_core::math::{clamp, max};
+use engine_faces::heightfield::WaterDraws;
+use engine_render::buffers::ReadbackRing;
+use engine_render::gpu_layouts::constants::MATERIAL_ANISOTROPY;
+use engine_render::pipelines::GroupLayout;
+use engine_render::profiling::GpuProfiler;
+use engine_render::targets::FrameSize;
 use engine_terrain::shallow_water::step_seconds;
 use engine_terrain::{RenderTerrain, Water};
 
 use crate::bindings::WATER_PARTICLES;
-use crate::buffers::ReadbackRing;
 use crate::gpu_layouts::constants::{
-    MATERIAL_ANISOTROPY, PARTICLE_ARGS, PARTICLE_DRAW, PARTICLE_FOAM_BEFORE, PARTICLE_FOAM_BORN,
-    PARTICLE_FOAM_DROPPED, PARTICLE_FOAM_LIVE, PARTICLE_GROUP, PARTICLE_ITEMS, PARTICLE_LATTICE,
-    PARTICLE_MARGIN, PARTICLE_SIDE, PARTICLE_WAVES_BORN, PARTICLE_WAVES_DROPPED,
-    PARTICLE_WAVES_LIVE,
+    PARTICLE_ARGS, PARTICLE_DRAW, PARTICLE_FOAM_BEFORE, PARTICLE_FOAM_BORN, PARTICLE_FOAM_DROPPED,
+    PARTICLE_FOAM_LIVE, PARTICLE_GROUP, PARTICLE_ITEMS, PARTICLE_LATTICE, PARTICLE_MARGIN,
+    PARTICLE_SIDE, PARTICLE_WAVES_BORN, PARTICLE_WAVES_DROPPED, PARTICLE_WAVES_LIVE,
 };
 use crate::gpu_layouts::water::ParticleFrame;
-use crate::pipelines::GroupLayout;
-use crate::profiling::GpuProfiler;
 use crate::shaders::entry::meshes;
-use crate::targets::FrameSize;
-use crate::terrain::TerrainWaterDraws;
 use crate::water_sim::LONGEST_FRAME;
 
 const TEXEL_SPLIT: u32 = 16;
@@ -111,7 +111,7 @@ pub(crate) struct ParticleStats {
 impl WaterParticles {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         Self {
-            layout: crate::pipelines::layout(device, &WATER_PARTICLES),
+            layout: engine_render::pipelines::layout(device, &WATER_PARTICLES),
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("engine/water-particles-sampler"),
                 address_mode_u: wgpu::AddressMode::Repeat,
@@ -134,7 +134,7 @@ impl WaterParticles {
 
     pub(crate) fn prepare(
         &mut self,
-        (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
+        (device, queue): (&wgpu::Device, &engine_render::gpu_calls::Queue),
         terrain: Option<u32>,
         seen: ParticleView,
         (settings, ridden, wind, seconds): (&Water, f32, [f32; 2], f64),
@@ -229,9 +229,11 @@ impl WaterParticles {
         if self.grid.is_none() || self.pipelines.is_some() {
             return;
         }
-        let layout =
-            crate::pipelines::layout_of(device, &crate::pipeline_layouts::WATER_PARTICLE_PIPELINES);
-        let entry = |entry| crate::pipelines::compute_entry(device, &layout, entry);
+        let layout = engine_render::pipelines::layout_of(
+            device,
+            &crate::pipeline_layouts::WATER_PARTICLE_PIPELINES,
+        );
+        let entry = |entry| engine_render::pipelines::compute_entry(device, &layout, entry);
         self.pipelines = Some(ParticlePipelines {
             begin: entry(meshes::particles_begin),
             gather: entry(meshes::particles_gather),
@@ -447,12 +449,13 @@ impl ParticleGrid {
         let pooled = u64::from(pools[0]) + u64::from(pools[1]);
         let sites = u64::from(points) * u64::from(points);
         let scanned = (pooled + sites).div_ceil(u64::from(PARTICLE_GROUP));
-        let frame = crate::buffers::uniform(
+        let frame = engine_render::buffers::uniform(
             device,
             "engine/water-particles-frame",
             size_of::<ParticleFrame>() as u64,
         );
-        let storage = |label, bytes, extra| crate::buffers::storage(device, label, bytes, extra);
+        let storage =
+            |label, bytes, extra| engine_render::buffers::storage(device, label, bytes, extra);
         let lattice = storage(
             "engine/water-particles-lattice",
             sites * POINT_BYTES,
@@ -468,7 +471,7 @@ impl ParticleGrid {
             (u64::from(PARTICLE_ITEMS) + pooled + sites + 2 * scanned) * 4,
             wgpu::BufferUsages::COPY_SRC,
         );
-        let args = crate::memory::buffer(
+        let args = engine_render::memory::buffer(
             device,
             &wgpu::BufferDescriptor {
                 label: Some("engine/water-particles-args"),
@@ -482,7 +485,7 @@ impl ParticleGrid {
             area * SPLAT_BYTES,
             wgpu::BufferUsages::empty(),
         );
-        let texture = crate::targets::texture_2d(
+        let texture = engine_render::targets::texture_2d(
             device,
             "engine/water-particles-splatted",
             (texels, texels),
@@ -512,26 +515,26 @@ impl ParticleGrid {
         let groups = (0..=TEXTURE_LEVELS as usize)
             .map(|level| {
                 let finer = if level == 0 { 1 } else { level - 1 };
-                crate::pipelines::group(
+                engine_render::pipelines::group(
                     device,
                     "engine/water-particles-group",
                     &WATER_PARTICLES,
                     layout,
                     &[
                         ("particle_frame", frame.as_entire_binding()),
-                        crate::buffers::entry("particle_lattice", &lattice),
-                        crate::buffers::entry("particle_pool", &pool),
-                        crate::buffers::entry("particle_counts", &counts),
-                        crate::buffers::entry("particle_splat", &splat),
-                        ("particle_source", crate::pipelines::view(&levels[finer])),
-                        ("particle_target", crate::pipelines::view(&levels[level])),
+                        engine_render::buffers::entry("particle_lattice", &lattice),
+                        engine_render::buffers::entry("particle_pool", &pool),
+                        engine_render::buffers::entry("particle_counts", &counts),
+                        engine_render::buffers::entry("particle_splat", &splat),
+                        ("particle_source", engine_render::pipelines::view(&levels[finer])),
+                        ("particle_target", engine_render::pipelines::view(&levels[level])),
                         (
                             "particle_spread_source",
-                            crate::pipelines::view(&spread_levels[finer]),
+                            engine_render::pipelines::view(&spread_levels[finer]),
                         ),
                         (
                             "particle_spread_target",
-                            crate::pipelines::view(&spread_levels[level]),
+                            engine_render::pipelines::view(&spread_levels[level]),
                         ),
                     ],
                 )
@@ -619,7 +622,7 @@ fn lattice_points(square: u32) -> u32 {
 }
 
 pub(crate) fn particle_terrain(
-    tiles: &TerrainWaterDraws<'_>,
+    tiles: &WaterDraws<'_>,
     terrains: &[RenderTerrain],
     eye: Vec3,
 ) -> Option<u32> {

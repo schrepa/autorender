@@ -12,6 +12,13 @@ default = []
 engine_core.workspace = true
 engine_faces.workspace = true
 engine_render.workspace = true
+engine_terrain.workspace = true
+bytemuck.workspace = true
+serde_json.workspace = true
+wgpu.workspace = true
+
+[build-dependencies]
+engine_sources.workspace = true
 
 [lints]
 workspace = true

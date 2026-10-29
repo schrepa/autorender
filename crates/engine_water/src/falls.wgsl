@@ -1,16 +1,14 @@
 import package::engine::color::luminance;
-import package::frame::encode::{encoded, stored};
-import package::frame::view::{camera, detail_resolved, detail_span, eye_world, lighting,
-    stable_normalize};
-import package::lighting::brdf::environment_brdf;
-import package::lighting::sun::sun_visibility;
-import package::lighting::surface::{Shaded, SurfacePoint, finish};
+import package::face::dither::{encoded, stored};
+import package::face::heightfield::{WATER_HELD, terrain};
+import package::face::lighting::{SurfacePoint, environment_brdf, finish, sun_visibility};
+import package::face::sun::{sun_color, sun_direction};
+import package::frame::view::{camera, detail_resolved, detail_span, eye_world, stable_normalize};
 import package::meshes::declarations::{SceneTargets, TemporalTargets};
-import package::meshes::surface::{scene_targets, temporal_targets};
-import package::terrain::vertex::terrain;
+import package::meshes::surface::{Shaded, scene_targets, temporal_targets};
 import package::water::footprint::WATER_SMOOTHEST;
-import package::water::surface::{WATER_HELD, water_body, water_ground, water_pixel,
-    water_scattered, water_scene, water_transmitted};
+import package::water::surface::{water_body, water_ground, water_pixel, water_scattered,
+    water_scene, water_transmitted};
 
 struct FallInput {
     @location(0) position: vec3<f32>,
@@ -140,12 +138,12 @@ fn shade_fall(input: FallOutput) -> FallShade {
     let scattering = fall_white(path, white);
     let clarity = water_transmitted(path, 0.0);
     let coverage = shares.x * clear * (1.0 - luminance(clarity) * scattering.x);
-    let sun = lighting.sun.xyz;
+    let sun = sun_direction();
     let backlit = dot(sun, seen) < 0.0;
     var sunlight = vec3<f32>(0.0);
     if sun.y > 0.0 {
-        sunlight = lighting.sun_color.rgb * sun_visibility(world, select(seen, -seen, backlit),
-            world_dx, world_dy, length(input.relative), false);
+        sunlight = sun_color() * sun_visibility(world, select(seen, -seen, backlit),
+            world_dx, world_dy, length(input.relative), false, 0.0);
     }
     var glow = vec3<f32>(0.0);
     if backlit {
@@ -205,7 +203,7 @@ fn fs_fall(input: FallOutput) -> @location(0) vec4<f32> {
 fn fs_fall_post(input: FallOutput) -> SceneTargets {
     let pixel = input.clip_position.xy;
     let shade = fall_mirroring(shade_fall(input), pixel);
-    var targets = scene_targets(shade.shaded, pixel);
+    var targets = scene_targets(shade.shaded, stored(shade.shaded.color, pixel));
     targets.color = vec4<f32>(stored(shade.shaded.color, pixel) * shade.shown, shade.coverage);
     return targets;
 }
@@ -214,7 +212,8 @@ fn fs_fall_post(input: FallOutput) -> SceneTargets {
 fn fs_fall_temporal(input: FallTemporalOutput) -> TemporalTargets {
     let pixel = input.clip_position.xy;
     let shade = fall_mirroring(shade_fall(fall_temporal_output(input)), pixel);
-    var targets = temporal_targets(shade.shaded, input.clip_position, input.previous);
+    var targets = temporal_targets(shade.shaded, stored(shade.shaded.color, pixel),
+        input.clip_position, input.previous);
     targets.color = vec4<f32>(stored(shade.shaded.color, pixel) * shade.shown, shade.coverage);
     return targets;
 }

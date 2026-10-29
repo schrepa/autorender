@@ -1,13 +1,13 @@
+import package::face::heightfield::{WATER_HELD, terrain, terrain_view};
 import package::frame::view::{PI, detail_across, eye_world};
-import package::terrain::vertex::{terrain, terrain_view};
 import package::water::bursts::{water_burst_bits, water_burst_life, water_burst_slot,
     water_burst_weight};
 import package::water::flow::{WATER_STEEPEST, water_stirring};
 import package::water::foam::water_eddy_size;
 import package::water::footprint::{WATER_SMOOTHEST, water_spread};
 import package::water::surface::{WATER_BREAK_FULL, WATER_BREAK_ONSET, WATER_BREAK_THINNEST,
-    WATER_GRAVITY, WATER_HELD, water_depth, water_eddies, water_eddy_froude, water_lift,
-    water_pixel, water_relative};
+    WATER_GRAVITY, water_depth, water_eddies, water_eddy_froude, water_lift, water_pixel,
+    water_relative};
 
 const PARTICLE_GROUP: u32 = 256u;
 const PARTICLE_SIDE: u32 = 8u;

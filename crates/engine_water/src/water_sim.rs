@@ -3,22 +3,23 @@ use std::sync::Arc;
 
 use bytemuck::Zeroable;
 use engine_core::WaterObstacle;
-use engine_core::collections::HashMap;
 use engine_core::glam::{Mat3, Vec2, Vec3};
+use engine_faces::heightfield::HeightfieldFace;
+use engine_render::bindings::EMPTY;
+use engine_render::pipelines::GroupLayout;
 use engine_terrain::shallow_water::step_seconds;
 use engine_terrain::{
-    BLOCK_SIDE, Footprint, NO_BLOCK, SIM_TOUCHES, StoredBlocks, Tile, TileKey, WaterRead,
-    WaterWindow, live_steps,
+    BLOCK_SIDE, Footprint, NO_BLOCK, SIM_TOUCHES, StoredBlocks, WaterRead, WaterWindow,
+    live_steps,
 };
 
-use crate::bindings::{EMPTY, WATER_SETUP};
+use crate::bindings::WATER_SETUP;
 use crate::gpu_layouts::constants::{
     LIVE_CELL, LIVE_HEAD, LIVE_HELD, LIVE_NONE, NO_WATER_SURFACE, SETUP_RISEN, SETUP_SOLID_ENTRIES,
     SETUP_STANDS, SETUP_WHOLE, SIM_BURSTING, SIM_LIVE, SIM_STANDING, SIM_STEPPING,
     WATER_SETUP_RING_GROUP,
 };
 use crate::gpu_layouts::water::{SimSetup, SimSlot, SimTouch, SimTouches};
-use crate::pipelines::GroupLayout;
 use crate::shaders::entry::meshes;
 use crate::water_kernels::{
     Capacity, Kernels, SlotBuffers, encode_drawn, encode_steps, grid, live_largest_bytes,
@@ -39,7 +40,7 @@ pub(crate) struct LiveGround<'a> {
     pub(crate) group: &'a wgpu::BindGroup,
     pub(crate) uniform: u32,
     pub(crate) terrain: u64,
-    pub(crate) held: &'a HashMap<(u64, TileKey), Arc<Tile>>,
+    pub(crate) held: &'a dyn HeightfieldFace,
 }
 
 impl LiveGround<'_> {
@@ -47,8 +48,7 @@ impl LiveGround<'_> {
         read.ready
             && read.tile.as_ref().is_some_and(|tile| {
                 self.held
-                    .get(&(self.terrain, read.key))
-                    .is_some_and(|held| Arc::ptr_eq(held, tile))
+                    .holds(self.terrain, read.key, Arc::as_ptr(tile).cast())
             })
     }
 }
@@ -63,8 +63,8 @@ pub(crate) struct Setup {
 
 impl Setup {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let empty_layout = crate::pipelines::layout(device, &EMPTY);
-        let empty = crate::pipelines::group(
+        let empty_layout = engine_render::pipelines::layout(device, &EMPTY);
+        let empty = engine_render::pipelines::group(
             device,
             "engine/water-setup-empty",
             &EMPTY,
@@ -73,7 +73,7 @@ impl Setup {
         );
         Self {
             empty,
-            layout: crate::pipelines::layout(device, &WATER_SETUP),
+            layout: engine_render::pipelines::layout(device, &WATER_SETUP),
             grounded: false,
             pipelines: None,
             ground: None,
@@ -91,9 +91,11 @@ impl Setup {
         if self.pipelines.is_some() || !self.grounded {
             return;
         }
-        let layout =
-            crate::pipelines::layout_of(device, &crate::pipeline_layouts::WATER_SETUP_PIPELINES);
-        let entry = |entry| crate::pipelines::compute_entry(device, &layout, entry);
+        let layout = engine_render::pipelines::layout_of(
+            device,
+            &crate::pipeline_layouts::WATER_SETUP_PIPELINES,
+        );
+        let entry = |entry| engine_render::pipelines::compute_entry(device, &layout, entry);
         self.pipelines = Some([
             entry(meshes::setup_blocks),
             entry(meshes::setup_ring),
@@ -174,33 +176,36 @@ impl SetupBuffers {
     ) -> Self {
         let room = entries.max(1).next_power_of_two();
         let live_room = words.max(4).next_power_of_two();
-        let frame =
-            crate::buffers::uniform(device, "engine/water-setup", size_of::<SimSetup>() as u64);
-        let list = crate::buffers::storage(
+        let frame = engine_render::buffers::uniform(
+            device,
+            "engine/water-setup",
+            size_of::<SimSetup>() as u64,
+        );
+        let list = engine_render::buffers::storage(
             device,
             "engine/water-setup-list",
             room as u64 * 16,
             wgpu::BufferUsages::empty(),
         );
-        let live = crate::buffers::storage(
+        let live = engine_render::buffers::storage(
             device,
             "engine/water-setup-live",
             live_room as u64 * 4,
             wgpu::BufferUsages::empty(),
         );
-        let group = crate::pipelines::group(
+        let group = engine_render::pipelines::group(
             device,
             "engine/water-setup",
             &WATER_SETUP,
             layout,
             &[
-                crate::buffers::entry("setup_frame", &frame),
-                crate::buffers::entry("setup_list", &list),
-                crate::buffers::entry("setup_ground", &buffers.ground),
-                crate::buffers::entry("setup_cells", &buffers.cells),
-                crate::buffers::entry("setup_looks", &buffers.averages),
-                crate::buffers::entry("setup_edges", &buffers.inputs),
-                crate::buffers::entry("setup_live", &live),
+                engine_render::buffers::entry("setup_frame", &frame),
+                engine_render::buffers::entry("setup_list", &list),
+                engine_render::buffers::entry("setup_ground", &buffers.ground),
+                engine_render::buffers::entry("setup_cells", &buffers.cells),
+                engine_render::buffers::entry("setup_looks", &buffers.averages),
+                engine_render::buffers::entry("setup_edges", &buffers.inputs),
+                engine_render::buffers::entry("setup_live", &live),
             ],
         );
         Self {
@@ -282,7 +287,7 @@ impl WaterSim {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         live: Option<Live<'_>>,
         seconds: f64,
     ) {
@@ -384,7 +389,7 @@ impl WaterSim {
     pub(crate) fn encode(
         &self,
         encoder: &mut wgpu::CommandEncoder,
-        profiler: &crate::profiling::GpuProfiler,
+        profiler: &engine_render::profiling::GpuProfiler,
     ) {
         let (Some(pipelines), Some(window)) = (self.kernels.created(), &self.window) else {
             return;
@@ -467,7 +472,7 @@ impl SimWindow {
     fn new(
         (device, queue, layouts): (
             &wgpu::Device,
-            &crate::gpu_calls::Queue,
+            &engine_render::gpu_calls::Queue,
             (&GroupLayout, &GroupLayout),
         ),
         source: &Arc<WaterWindow>,
@@ -512,7 +517,7 @@ impl SimWindow {
         &mut self,
         gpu: (
             &wgpu::Device,
-            &crate::gpu_calls::Queue,
+            &engine_render::gpu_calls::Queue,
             (&GroupLayout, &GroupLayout),
         ),
         source: &Arc<WaterWindow>,
@@ -532,7 +537,7 @@ impl SimWindow {
         &mut self,
         (device, queue, (layout, setup)): (
             &wgpu::Device,
-            &crate::gpu_calls::Queue,
+            &engine_render::gpu_calls::Queue,
             (&GroupLayout, &GroupLayout),
         ),
     ) {
@@ -574,7 +579,7 @@ impl SimWindow {
 
     fn set_up(
         &mut self,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         sets_up: bool,
         resident: &dyn Fn(&WaterRead) -> bool,
     ) {
@@ -696,7 +701,7 @@ impl SimWindow {
         });
     }
 
-    fn write_table(&self, queue: &crate::gpu_calls::Queue) {
+    fn write_table(&self, queue: &engine_render::gpu_calls::Queue) {
         let side = self.fitted.blocks();
         let corner = self
             .fitted
@@ -877,7 +882,7 @@ fn largest_bytes(blocks: u32, (sources, solids): (usize, usize)) -> u64 {
 }
 
 fn write_sources(
-    queue: &crate::gpu_calls::Queue,
+    queue: &engine_render::gpu_calls::Queue,
     buffers: &SlotBuffers,
     window: &WaterWindow,
     stored: &StoredBlocks,
@@ -903,7 +908,11 @@ fn write_sources(
     sources.len() as u32
 }
 
-fn write_solids(queue: &crate::gpu_calls::Queue, list: &wgpu::Buffer, solids: &[Footprint]) -> u32 {
+fn write_solids(
+    queue: &engine_render::gpu_calls::Queue,
+    list: &wgpu::Buffer,
+    solids: &[Footprint],
+) -> u32 {
     let mut entries: Vec<[f32; 4]> = Vec::with_capacity(SETUP_SOLID_ENTRIES * solids.len());
     for solid in solids {
         let axes = Mat3::from_cols_array(&solid.axes);
