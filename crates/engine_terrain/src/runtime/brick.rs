@@ -75,6 +75,7 @@ impl Brick for TerrainBrick {
             .inspector::<TerrainDebug, TerrainDebugView>(|_, debug| TerrainDebugView::of(debug))
             .component_inspector::<TerrainPrefetch, TerrainPrefetch>(|_, _, prefetch| *prefetch)
             .explain(explain_residency);
+        crate::smokes::register(bricks);
     }
 }
 

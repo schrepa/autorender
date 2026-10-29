@@ -1,0 +1,185 @@
+use engine::smoke::{SmokeResult, SmokeSession};
+use engine::terrain::data::smokes::{Checked, above, control, environment, number, render};
+use engine::{smoke_check, smoke_eq};
+use serde_json::{Value, json};
+
+use super::{aim, open};
+
+const STREAMS: [&str; 3] = ["torrent", "rapids", "meadow_river"];
+
+const WATER_VIEWS: [&str; 9] = [
+    "water_depth",
+    "water_speed",
+    "water_froude",
+    "water_turbulence",
+    "water_white",
+    "water_reach",
+    "water_span",
+    "water_eddies",
+    "water_roughness",
+];
+
+const REACHES: [&str; 5] = ["pool", "plane", "steps", "cascade", "falls"];
+
+const NOT_WORK: [&str; 6] = [
+    "frame",
+    "tick",
+    "read_back_age",
+    "simulation_ms",
+    "extraction_ms",
+    "render_ms",
+];
+
+const QUIET_FRAMES: u32 = 20_000;
+
+const PROBES_ACROSS: u32 = 7;
+
+pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
+    open(session, false)?;
+    for stream in STREAMS {
+        aim(session, stream)?;
+        environment(session, json!({"debug_view": {"view": "off"}}))?;
+        quiet(session)?;
+        for view in WATER_VIEWS {
+            environment(session, json!({"debug_view": {"view": view}}))?;
+            let shown = quiet(session)?;
+            let passes = &shown["render_passes"];
+            smoke_check!(
+                passes
+                    .as_array()
+                    .is_some_and(|passes| passes.iter().any(|pass| pass == "debug_view")),
+                "the_water_views_draw",
+                passes,
+                &json!({ "includes": "debug_view" })
+            );
+        }
+    }
+    probed(session)?;
+    environment(session, json!({"debug_view": {"view": "off"}}))?;
+    Ok(())
+}
+
+fn probed(session: &mut dyn SmokeSession) -> Checked<()> {
+    aim(session, "torrent")?;
+    environment(session, json!({"debug_view": {"view": "water_depth"}}))?;
+    let rendering = quiet(session)?;
+    let width = number(&rendering["resolution"]["display_width"]);
+    let height = number(&rendering["resolution"]["display_height"]);
+    let mut pixels: Vec<[f64; 2]> = (1..PROBES_ACROSS)
+        .flat_map(|row| {
+            (1..PROBES_ACROSS).map(move |column| {
+                let across = f64::from(PROBES_ACROSS);
+                [
+                    (width * f64::from(column) / across).floor(),
+                    (height * f64::from(row) / across).floor(),
+                ]
+            })
+        })
+        .collect();
+    let off_center = |pixel: &[f64; 2]| (pixel[0] - width / 2.0).hypot(pixel[1] - height / 2.0);
+    pixels.sort_by(|a, b| off_center(a).total_cmp(&off_center(b)));
+    let mut probe = Value::Null;
+    for [x, y] in pixels {
+        probe = control(session, "probe", json!({"x": x as u32, "y": y as u32}))?;
+        if probe["kind"] == "water" {
+            break;
+        }
+    }
+    smoke_eq!(
+        &probe["kind"],
+        &json!("water"),
+        "the_torrent_view_holds_water"
+    );
+    smoke_eq!(&probe["terrain"], &Value::Null, "water_is_probed_as_water");
+    let water = &probe["water"];
+    let depth = number(&water["depth"]);
+    smoke_check!(
+        depth > 0.0 && depth.is_finite(),
+        "the_probe_reads_a_depth",
+        water,
+        &json!({ "depth": above(0) })
+    );
+    smoke_check!(
+        number(&water["speed"]) >= 0.0 && number(&water["froude"]) >= 0.0,
+        "the_probe_reads_the_flow",
+        water,
+        &json!({"speed": {"at_least": 0}, "froude": {"at_least": 0}})
+    );
+    let share = |field: &str| (0.0..=1.0).contains(&number(&water[field]));
+    smoke_check!(
+        share("turbulence") && share("white") && share("roughness"),
+        "the_probe_reads_its_shares",
+        water,
+        &json!({"turbulence": [0, 1], "white": [0, 1], "roughness": [0, 1]})
+    );
+    smoke_check!(
+        water["reach"].is_null() || REACHES.iter().any(|reach| water["reach"] == *reach),
+        "the_probe_names_its_reach",
+        &water["reach"],
+        &REACHES
+    );
+    smoke_check!(
+        number(&water["span"]) > 0.0 && number(&water["eddies"]) >= 0.0,
+        "the_probe_reads_span_and_eddies",
+        water,
+        &json!({"span": above(0), "eddies": {"at_least": 0}})
+    );
+    Ok(())
+}
+
+fn quiet(session: &mut dyn SmokeSession) -> Checked<Value> {
+    let (mut previous, mut calm) = (Vec::new(), 0);
+    let mut rendering = Value::Null;
+    for _ in 0..QUIET_FRAMES {
+        rendering = render(session)?;
+        let busy = rendering["loading"] == true || rendering["pipelines_compiling"] == true;
+        let mut counters = Vec::new();
+        work(&rendering, "", &mut counters);
+        calm = if !busy && counters == previous {
+            calm + 1
+        } else {
+            0
+        };
+        previous = counters;
+        if calm >= 3 {
+            break;
+        }
+    }
+    let busy = json!({
+        "loading": rendering["loading"],
+        "pipelines_compiling": rendering["pipelines_compiling"],
+    });
+    smoke_check!(
+        calm >= 3,
+        "the_view_settles",
+        &busy,
+        &json!({"loading": false, "pipelines_compiling": false})
+    );
+    for _ in 0..30 {
+        rendering = render(session)?;
+    }
+    Ok(rendering)
+}
+
+fn work(stats: &Value, prefix: &str, out: &mut Vec<(String, Value)>) {
+    let Some(fields) = stats.as_object() else {
+        return;
+    };
+    for (key, value) in fields {
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        match value {
+            Value::Array(items) => out.push((path, json!(items.len()))),
+            Value::Object(_) => work(value, &path, out),
+            Value::Number(_) | Value::Bool(_) => {
+                if !NOT_WORK.contains(&path.as_str()) {
+                    out.push((path, value.clone()));
+                }
+            }
+            Value::Null | Value::String(_) => {}
+        }
+    }
+}

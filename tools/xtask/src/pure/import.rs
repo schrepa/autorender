@@ -87,6 +87,14 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         heights.push((id, height, report));
     }
     let (_, first, report) = &heights[0];
+    let resampled = report["samples"] == 513
+        && report["highest"]
+            .as_f64()
+            .is_some_and(|highest| (highest - RANGE[1]).abs() < 1e-6)
+        && report["filled_gaps"]
+            .as_u64()
+            .is_some_and(|filled| filled > 0);
+    observed.check(resampled, || format!("the RAW import's report: {report}"));
     for (id, height, _) in &heights[1..] {
         observed.check(height == first, || {
             format!("the {id} import's height.r16 differs from the RAW import's")
