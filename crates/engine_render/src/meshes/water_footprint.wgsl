@@ -1,3 +1,6 @@
+import package::frame::view::material_detail;
+import package::meshes::surface::{SPECULAR_LIMIT, SPECULAR_VARIANCE};
+
 const WATER_SMOOTHEST: f32 = 0.03;
 const WATER_ROUGHEST: f32 = 0.6;
 

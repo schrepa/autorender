@@ -1,3 +1,17 @@
+import package::engine::color::luminance;
+import package::frame::encode::{encoded, stored};
+import package::frame::view::{camera, detail_resolved, detail_span, eye_world, lighting,
+    stable_normalize};
+import package::lighting::brdf::environment_brdf;
+import package::lighting::sun::sun_visibility;
+import package::lighting::surface::{Shaded, SurfacePoint, finish};
+import package::meshes::declarations::{SceneTargets, TemporalTargets};
+import package::meshes::surface::{scene_targets, temporal_targets};
+import package::terrain::vertex::terrain;
+import package::water::footprint::WATER_SMOOTHEST;
+import package::water::surface::{WATER_HELD, water_body, water_ground, water_pixel,
+    water_scattered, water_scene, water_transmitted};
+
 struct FallInput {
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,

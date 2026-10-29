@@ -1,3 +1,6 @@
+import package::water::bursts::water_burst;
+import package::water::sim_shared::sim_minmod;
+
 const WATER_SIM_GROUP: u32 = 8u;
 const WATER_SIM_SOURCE_GROUP: u32 = 64u;
 const SIM_SLOTS: u32 = 64u;
@@ -423,16 +426,6 @@ fn sim_dry(q: Square, state: u32, at: u32) -> bool {
         return false;
     }
     return sim_cell(q, state, at).x - sim_bed(q, at) <= SIM_DRY;
-}
-
-fn sim_minmod(a: f32, b: f32, c: f32) -> f32 {
-    if a > 0.0 && b > 0.0 && c > 0.0 {
-        return min(a, min(b, c));
-    }
-    if a < 0.0 && b < 0.0 && c < 0.0 {
-        return max(a, max(b, c));
-    }
-    return 0.0;
 }
 
 fn sim_half_slope(before: f32, middle: f32, after: f32) -> f32 {

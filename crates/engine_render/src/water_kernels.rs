@@ -42,19 +42,12 @@ impl Kernels {
     }
 
     pub(crate) fn pipelines(&mut self, device: &wgpu::Device) -> &Pipelines {
-        let layout = &self.layout;
         self.pipelines.get_or_insert_with(|| {
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("engine/water_sim.wgsl"),
-                source: wgpu::ShaderSource::Wgsl(crate::gpu_data::WATER_SIM_SHADER.into()),
-            });
-            let pipeline_layout = crate::pipelines::pipeline_layout(
+            let pipeline_layout = crate::pipelines::layout_of(
                 device,
                 &crate::pipeline_layouts::WATER_SIM_PIPELINES,
-                &[layout],
             );
-            let entry =
-                |entry| crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry);
+            let entry = |entry| crate::pipelines::compute_entry(device, &pipeline_layout, entry);
             Pipelines {
                 exchange: entry(water_sim::sim_exchange),
                 waves: entry(water_sim::sim_waves),

@@ -4,17 +4,50 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use engine_core::glam::{Mat4, Vec3, Vec4};
+use engine_core::{RenderSnapshot, RenderStats};
 use engine_terrain::{Cover, GroundCover};
 
 use crate::bindings::{COVER_DRAW, COVER_GROW};
 use crate::buffers::ReadbackRing;
 use crate::cached::Cached;
+use crate::entries::PassKind;
 use crate::gpu_layouts::constants::{BLADE_BYTES, COVER_LEAVES, COVER_LUSH_RATIO};
-use crate::render_features::{Encode, FeaturePass, RenderFeature};
-use crate::render_graph::Targets;
-use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
+use crate::graph::{
+    FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage, Targets,
+};
+use crate::parts::{
+    Begin, BeginOut, Create, DrawAt, Encode, GpuPart, Hook, OpaqueSlot, PartDecl, PartEntry, Step,
+    View,
+};
+use crate::renderer::Core;
 use crate::scene_shading::SceneShading;
 use crate::terrain::TerrainPass;
+
+pub(crate) static PART: PartEntry = PartEntry {
+    decl: PartDecl {
+        name: "ground_cover",
+        brick: "terrain",
+        passes: &[PassDecl {
+            name: "ground_cover",
+            stage: Stage::Prepare,
+        }],
+        resources: &[ResourceDecl {
+            name: "cover",
+            lifetime: Lifetime::Kept,
+        }],
+        hooks: &[Hook::Opaque(OpaqueSlot::Cover)],
+        contributes: &[],
+        effects: &[],
+        labels: &[],
+        lazy: false,
+    },
+    create,
+};
+
+fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
+    let _owner = crate::memory::owned(PART.decl.brick);
+    Box::new(GroundCoverPass::new(&cx.core.device))
+}
 
 const SLOT: u64 = 512;
 pub(crate) const GROW_BYTES: u64 = size_of::<GrowUniform>() as u64;
@@ -55,11 +88,14 @@ pub(crate) struct GroundCoverPass {
     totals: Rc<Cell<Option<[u32; 2]>>>,
     reach: f32,
     tiers: u32,
+    drawn: bool,
+    framed: bool,
+    pass: Option<PassId>,
+    cover: Option<ResourceId>,
 }
 
 impl GroundCoverPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::GroundCover);
         Self {
             grow_layout: crate::pipelines::layout(device, &COVER_GROW),
             draw_layout: crate::pipelines::layout(device, &COVER_DRAW),
@@ -102,22 +138,22 @@ impl GroundCoverPass {
             totals: Rc::new(Cell::new(None)),
             reach: 0.0,
             tiers: 0,
+            drawn: false,
+            framed: false,
+            pass: None,
+            cover: None,
         }
     }
 
-    pub(crate) fn reach(&self) -> (f32, u32) {
+    fn reach(&self) -> (f32, u32) {
         (self.reach, self.tiers)
     }
 
-    pub(crate) fn totals(&self) -> [u32; 2] {
+    fn totals(&self) -> [u32; 2] {
         self.totals.get().unwrap_or([0; 2])
     }
 
-    pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.blades.size()
-    }
-
-    pub(crate) fn prepare(
+    fn prepare_growth(
         &mut self,
         device: &wgpu::Device,
         queue: &crate::gpu_calls::Queue,
@@ -258,8 +294,7 @@ impl GroundCoverPass {
             blades: [self.capacity, 0, 0, 0],
         };
         queue.write_buffer(&self.frame, 0, bytemuck::bytes_of(&frame));
-        self.compute
-            .get_or_insert_with(|| compute(device, &self.grow_layout));
+        self.compute.get_or_insert_with(|| compute(device));
         let key = (
             sources.generation.0,
             sources.generation.1,
@@ -342,31 +377,50 @@ impl GroundCoverPass {
             .record(device, encoder, &self.counts, 16, self.capacity);
     }
 
-    pub(crate) fn growing(&self) -> bool {
+    fn growing(&self) -> bool {
         self.compute.is_some() && self.grow_group.get().is_some() && !self.growths.is_empty()
     }
 
-    pub(crate) fn warm(&mut self, device: &wgpu::Device) {
-        self.compute
-            .get_or_insert_with(|| compute(device, &self.grow_layout));
+    fn warm(&mut self, device: &wgpu::Device) {
+        self.compute.get_or_insert_with(|| compute(device));
     }
 
-    pub(crate) fn specialize(&mut self, shading: SceneShading) {
+    fn specialize(&mut self, shading: SceneShading) {
         if self.shading != shading {
             self.shading = shading;
             self.pipelines.clear();
         }
     }
 
-    pub(crate) fn ensure_pipeline(
+    fn warm_cover(&mut self, core: &Core, snapshot: &RenderSnapshot, opaque_kind: PassKind) {
+        let terrains = &engine_terrain::RenderTerrains::of(snapshot).terrains;
+        if terrains.is_empty() {
+            return;
+        }
+        let lit = opaque_kind.lit;
+        let terrain_environment = engine_terrain::TerrainEnvironment::of(snapshot);
+        let cover = terrain_environment.ground_cover.sanitized();
+        let grows = cover.enabled
+            && cover.density > 0.0
+            && terrains.iter().any(|terrain| {
+                !terrain.surroundings && terrain.surface.iter().any(|look| look.cover.is_some())
+            });
+        if grows {
+            self.warm(&core.device);
+            if let Some(targets) = opaque_kind.targets() {
+                self.ensure_pipeline(
+                    &core.device,
+                    (targets, lit),
+                    core.display.format(),
+                    crate::renderer::DEPTH_FORMAT,
+                );
+            }
+        }
+    }
+
+    fn ensure_pipeline(
         &mut self,
         device: &wgpu::Device,
-        shader: &wgpu::ShaderModule,
-        (camera, empty, lights): (
-            &crate::pipelines::GroupLayout,
-            &crate::pipelines::GroupLayout,
-            Option<&crate::pipelines::GroupLayout>,
-        ),
         (targets, lit): (Targets, bool),
         canvas: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
@@ -375,20 +429,9 @@ impl GroundCoverPass {
             return;
         }
         let layout = if lit {
-            let Some(lights) = lights else {
-                return;
-            };
-            crate::pipelines::pipeline_layout(
-                device,
-                &crate::pipeline_layouts::LIT_COVER_PIPELINES,
-                &[camera, &self.draw_layout, empty, lights],
-            )
+            crate::pipelines::layout_of(device, &crate::pipeline_layouts::LIT_COVER_PIPELINES)
         } else {
-            crate::pipelines::pipeline_layout(
-                device,
-                &crate::pipeline_layouts::COVER_PIPELINES,
-                &[camera, &self.draw_layout],
-            )
+            crate::pipelines::layout_of(device, &crate::pipeline_layouts::COVER_PIPELINES)
         };
         let (vertex, fragment) = crate::entries::cover(targets, lit);
         let color_targets = targets.color_targets(canvas);
@@ -397,7 +440,6 @@ impl GroundCoverPass {
             &crate::pipelines::Geometry {
                 label: "engine/cover",
                 layout: &layout,
-                module: shader,
                 vertex_constants: &[],
                 vertex,
                 buffers: &[],
@@ -423,7 +465,23 @@ impl GroundCoverPass {
         self.pipelines.insert((targets, lit), pipeline);
     }
 
-    pub(crate) fn draw(&self, pass: &mut wgpu::RenderPass<'_>, targets: Targets, lit: bool) -> u32 {
+    fn draw_cover(&self, cx: &View<'_>, pass: &mut wgpu::RenderPass<'_>) -> u32 {
+        let Some(passes) = cx.frame.passes else {
+            return 0;
+        };
+        let kind = passes.opaque_kind;
+        let Some(targets) = kind.targets().filter(|_| self.drawn) else {
+            return 0;
+        };
+        pass.set_bind_group(0, cx.core.shared_group("frame", &["refraction"]), &[]);
+        if kind.lit {
+            pass.set_bind_group(2, &cx.core.mesh_pipelines.empty_group, &[]);
+            pass.set_bind_group(3, cx.core.shared_group("lights", &[]), &[]);
+        }
+        self.draw_blades(pass, targets, kind.lit)
+    }
+
+    fn draw_blades(&self, pass: &mut wgpu::RenderPass<'_>, targets: Targets, lit: bool) -> u32 {
         let (Some(pipeline), Some(group)) =
             (self.pipelines.get(&(targets, lit)), self.draw_group.get())
         else {
@@ -562,54 +620,95 @@ pub(crate) fn planes(view_projection: Mat4) -> [[f32; 4]; 6] {
     })
 }
 
-fn compute(
-    device: &wgpu::Device,
-    layout: &crate::pipelines::GroupLayout,
-) -> (wgpu::ComputePipeline, wgpu::ComputePipeline) {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("engine/cover-grow.wgsl"),
-        source: wgpu::ShaderSource::Wgsl(crate::gpu_data::COVER_GROW_SHADER.into()),
-    });
-    let pipeline_layout = crate::pipelines::pipeline_layout(
-        device,
-        &crate::pipeline_layouts::COVER_GROW_PIPELINES,
-        &[layout],
-    );
+fn compute(device: &wgpu::Device) -> (wgpu::ComputePipeline, wgpu::ComputePipeline) {
+    let pipeline_layout =
+        crate::pipelines::layout_of(device, &crate::pipeline_layouts::COVER_GROW_PIPELINES);
     (
-        crate::pipelines::compute_entry(device, &pipeline_layout, &module, cover_grow::grow_cover),
-        crate::pipelines::compute_entry(
-            device,
-            &pipeline_layout,
-            &module,
-            cover_grow::finish_cover,
-        ),
+        crate::pipelines::compute_entry(device, &pipeline_layout, cover_grow::grow_cover),
+        crate::pipelines::compute_entry(device, &pipeline_layout, cover_grow::finish_cover),
     )
 }
 
-pub(crate) struct CoverFrame;
+impl GpuPart for GroundCoverPass {
+    fn install(&mut self, table: &GraphTable) {
+        self.pass = table.pass_named("ground_cover");
+        self.cover = table.resource("cover");
+    }
 
-impl RenderFeature for GroundCoverPass {
-    type Frame = CoverFrame;
-    type Stats = engine_core::GroundCoverStats;
+    fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
+        self.specialize(SceneShading::of(cx.snapshot));
+    }
 
-    fn declare(_frame: &CoverFrame, _shape: &FrameShape, graph: &mut RenderGraph) {
-        graph
-            .add(Pass::Feature(FeaturePass::GroundCover))
-            .write(Resource::Cover);
+    fn prepare_draws(&mut self, cx: &mut Step<'_>, _encoder: &mut wgpu::CommandEncoder) {
+        self.drawn = false;
+        self.framed = false;
+        let (Some(terrain), Some(passes)) = (cx.parts.get::<TerrainPass>(), cx.frame.passes)
+        else {
+            return;
+        };
+        let core = &*cx.core;
+        let snapshot = cx.frame.snapshot;
+        let opaque_kind = passes.opaque_kind;
+        self.warm_cover(core, snapshot, opaque_kind);
+        if !terrain.drawn() {
+            return;
+        }
+        self.drawn = true;
+        let terrains = engine_terrain::RenderTerrains::of(snapshot);
+        let terrain_environment = engine_terrain::TerrainEnvironment::of(snapshot);
+        let covered = self.prepare_growth(
+            &core.device,
+            &core.queue,
+            terrain,
+            terrains,
+            (
+                &terrain_environment.ground_cover,
+                terrain_environment.wind.velocity,
+                snapshot.view_projection,
+                snapshot.detail_eye,
+                snapshot.elapsed_seconds,
+            ),
+            (
+                core.display.size().height as f32,
+                snapshot.environment.foliage.sanitized().ground_blend > 0.0,
+            ),
+        );
+        if let (true, Some(targets)) = (covered, opaque_kind.targets()) {
+            self.ensure_pipeline(
+                &core.device,
+                (targets, opaque_kind.lit),
+                core.display.format(),
+                crate::renderer::DEPTH_FORMAT,
+            );
+        }
+        self.framed = self.growing();
+    }
+
+    fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
+        if let (true, Some(pass)) = (self.framed, self.pass) {
+            let _ = graph.add(cx.table, pass).write(self.cover);
+        }
     }
 
     fn encode(
-        &self,
-        _frame: &CoverFrame,
-        _node: &Node,
-        encode: &Encode<'_>,
+        &mut self,
+        _pass: usize,
+        cx: &mut Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        self.encode_growth(encode.device, encoder, encode.profiler);
+        self.encode_growth(&cx.core.device, encoder, &cx.core.profiler);
         0
     }
 
-    fn after_submit(&mut self, _frame: Option<&CoverFrame>) {
+    fn draw(&self, at: DrawAt<'_>, cx: &View<'_>, pass: &mut wgpu::RenderPass<'_>) -> u32 {
+        if at.hook() == Hook::Opaque(OpaqueSlot::Cover) {
+            self.draw_cover(cx, pass)
+        } else {
+            0
+        }
+    }
+
+    fn after_submit(&mut self) {
         let totals = Rc::clone(&self.totals);
         self.readbacks.after_submit(move |words, capacity| {
             let grown = words.get(0);
@@ -618,21 +717,16 @@ impl RenderFeature for GroundCoverPass {
     }
 
     fn capacity_bytes(&self) -> u64 {
-        GroundCoverPass::capacity_bytes(self)
+        self.blades.size()
     }
 
-    fn stats(
-        this: Option<&Self>,
-        _frame: Option<&CoverFrame>,
-        _snapshot: &engine_core::RenderSnapshot,
-    ) -> engine_core::GroundCoverStats {
-        let (totals, (reach, tiers)) =
-            this.map_or(([0; 2], (0.0, 0)), |cover| (cover.totals(), cover.reach()));
-        engine_core::GroundCoverStats {
+    fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
+        let (totals, (reach, tiers)) = (self.totals(), self.reach());
+        stats.ground_cover = engine_core::GroundCoverStats {
             blades: totals[0],
             dropped: totals[1],
             reach: reach.round() as u32,
             tiers,
-        }
+        };
     }
 }
