@@ -4,16 +4,27 @@
 )]
 
 use crate::shaders::entry::{haze, post, reflections};
-use engine_core::{Applied, RenderSnapshot, glam::Mat4};
+use engine_core::{Applied, RenderSnapshot, RenderStats, glam::Mat4};
 
-use crate::bindings::{HAZE, POST, REFLECTIONS};
+use crate::bindings::{GroupRef, HAZE, POST, REFLECTIONS};
 use crate::cached::{Bound, GroupCache, Versioned};
+use crate::composite::{
+    PLAIN_RESOLVE, PixelEffect, PostStage, RESOLVES, composite_entry, composite_path,
+    composite_source, pixel_effects,
+};
 use crate::depth_pyramid::{DepthPyramid, Reduction};
-use crate::gpu_data::{HAZE_SHADER, POST_SHADER, PostUniform, REFLECTIONS_SHADER};
+use crate::gpu_data::PostUniform;
+use crate::graph::{
+    Access, BLACK, Clear, FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl,
+    ResourceId, Stage,
+};
+use crate::lazy::Lazy;
+use crate::parts::{
+    Begin, BeginOut, Create, Encode, GpuPart, PartDecl, PartEntry, Parts, Prelude, Step, View,
+};
+use crate::pipeline_layouts::{HAZE_PIPELINES, POST_PIPELINES, REFLECTION_PIPELINES};
 use crate::pipelines::{self, Fillers, Fullscreen, filled_group, fullscreen};
 use crate::profiling::{GpuProfiler, Span};
-use crate::render_features::{Encode, FeaturePass, RenderFeature};
-use crate::render_graph::{Access, BLACK, Clear, FrameShape, Node, Pass, RenderGraph, Resource};
 use crate::screen_effects::{Effects, UniformFrame};
 use crate::targets::{FrameRegion, FrameSize, ScreenTarget, draw_within};
 
@@ -39,6 +50,343 @@ const SCENE_LEVELS: u32 = 6;
 
 const HAZE_TEXTURE: usize = 8;
 const HAZE_HISTORY: usize = 9;
+
+pub(crate) static PART: PartEntry = PartEntry {
+    decl: PartDecl {
+        name: "post",
+        brick: "post_effects",
+        passes: &[
+            PassDecl {
+                name: "effects",
+                stage: Stage::PostScene,
+            },
+            PassDecl {
+                name: "composite",
+                stage: Stage::Composite,
+            },
+        ],
+        resources: &[
+            ResourceDecl {
+                name: "scene",
+                lifetime: Lifetime::Frame,
+            },
+            ResourceDecl {
+                name: "glow",
+                lifetime: Lifetime::Frame,
+            },
+            ResourceDecl {
+                name: "surface",
+                lifetime: Lifetime::Frame,
+            },
+            ResourceDecl {
+                name: "effects",
+                lifetime: Lifetime::Frame,
+            },
+            ResourceDecl {
+                name: "haze",
+                lifetime: Lifetime::Kept,
+            },
+        ],
+        hooks: &[],
+        contributes: &[],
+        effects: &[
+            PixelEffect {
+                stage: PostStage::Light,
+                module: "post::haze",
+            },
+            PixelEffect {
+                stage: PostStage::Light,
+                module: "post::bloom",
+            },
+            PixelEffect {
+                stage: PostStage::Display,
+                module: "post::dither",
+            },
+        ],
+        labels: &["engine/post-", "engine/post.", "engine/haze."],
+        lazy: true,
+    },
+    create,
+};
+
+const EFFECTS_PASS: usize = 0;
+const COMPOSITE_PASS: usize = 1;
+
+fn create(_: &Create<'_>) -> Box<dyn GpuPart> {
+    Box::new(PostPass::default())
+}
+
+#[derive(Clone, Copy, Default)]
+struct Ids {
+    effects_pass: Option<PassId>,
+    composite_pass: Option<PassId>,
+    canvas: Option<ResourceId>,
+    scene: Option<ResourceId>,
+    effects: Option<ResourceId>,
+    haze: Option<ResourceId>,
+}
+
+#[derive(Default)]
+pub(crate) struct PostPass {
+    post: Lazy<Post>,
+    frame: Option<Effects>,
+    ids: Ids,
+    linked: bool,
+}
+
+impl PostPass {
+    pub(crate) fn active(&self) -> bool {
+        self.frame.is_some()
+    }
+
+    pub(crate) fn scene(&self) -> Option<Bound<'_>> {
+        self.post.get()?.scene()
+    }
+
+    pub(crate) fn scene_texture(&self) -> Option<&wgpu::Texture> {
+        self.post.get()?.scene_texture()
+    }
+
+    pub(crate) fn resolve_inputs(&self) -> Option<([Bound<'_>; 5], Bound<'_>)> {
+        self.post.get()?.resolve_inputs()
+    }
+}
+
+fn link_composites(device: &wgpu::Device, parts: &Parts) {
+    let effects = pixel_effects(parts);
+    for resolve in RESOLVES {
+        if let Ok(source) = composite_source(resolve, &effects, None) {
+            pipelines::add_generated(device, composite_path(resolve), PART.decl.brick, source);
+        }
+    }
+}
+
+fn shared_group<'c>(
+    core: &'c crate::renderer::Core,
+    layout: &'static crate::pipeline_layouts::PipelineLayout,
+) -> Option<&'c wgpu::BindGroup> {
+    match *layout.groups.first()? {
+        GroupRef::Shared { group, without } => Some(core.shared_group(group, without)),
+        GroupRef::Own(_) => None,
+    }
+}
+
+impl GpuPart for PostPass {
+    fn install(&mut self, table: &GraphTable) {
+        self.ids = Ids {
+            effects_pass: table.pass_named("effects"),
+            composite_pass: table.pass_named("composite"),
+            canvas: table.resource("canvas"),
+            scene: table.resource("scene"),
+            effects: table.resource("effects"),
+            haze: table.resource("haze"),
+        };
+        self.linked = false;
+    }
+
+    fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
+        if !self.linked {
+            self.linked = true;
+            link_composites(&cx.core.device, cx.parts);
+        }
+    }
+
+    fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
+        if cx.frame.kind.debug {
+            self.frame = None;
+            return;
+        }
+        let snapshot = cx.frame.snapshot;
+        let core = &*cx.core;
+        let effects = crate::screen_effects::targets_read(&snapshot.environment);
+        let region = core.display.region;
+        let needs = cx.frame.temporal.is_some() || effects || region.upscales();
+        let (device, queue) = (&core.device, &core.queue);
+        let sky = cx
+            .parts
+            .get::<crate::shadows::ShadowPass>()
+            .map(crate::shadows::ShadowPass::sky_bindings);
+        self.frame = if needs {
+            let format = core.canvas_format();
+            self.post
+                .create(device, "engine/post-", || Post::new(device, format));
+            self.post.get_mut().map(|post| {
+                post.begin(
+                    device,
+                    queue,
+                    snapshot,
+                    (region, &core.depth.view),
+                    cx.frame.kind.display,
+                    sky,
+                )
+            })
+        } else {
+            None
+        };
+        if !needs && let Some(post) = self.post.get_mut() {
+            post.release_targets();
+        }
+    }
+
+    fn finish(&mut self, cx: &mut Step<'_>) {
+        let Some(frame) = self.frame else {
+            return;
+        };
+        let Some(post) = self.post.get_mut() else {
+            return;
+        };
+        let core = &*cx.core;
+        let (Some(terrain), Some(scatter)) = (
+            cx.parts.get::<crate::terrain::TerrainPass>(),
+            cx.parts.get::<crate::scatter::ScatterPass>(),
+        ) else {
+            post.forget_reflections();
+            return;
+        };
+        let snapshot = cx.frame.snapshot;
+        let terrains = engine_terrain::RenderTerrains::of(snapshot);
+        let infos: Vec<crate::scatter::TerrainInfo> = terrains
+            .terrains
+            .iter()
+            .enumerate()
+            .filter(|_| frame.reflections)
+            .map(|(index, rendered)| crate::world_trace::terrain_info(terrain, index, rendered))
+            .collect();
+        let cover = engine_terrain::TerrainEnvironment::of(snapshot)
+            .ground_cover
+            .sanitized();
+        let trace = frame.reflections.then(|| crate::world_trace::TraceFrame {
+            terrains,
+            infos: &infos,
+            terrain,
+            placed: scatter.placements(),
+            cover: if cover.enabled { cover.density } else { 0.0 },
+        });
+        post.prepare_reflections(
+            (&core.device, &core.queue),
+            (frame, &core.depth.view),
+            trace.as_ref(),
+            (
+                terrain.trace_sources(),
+                scatter.slot_buffers(),
+                core.impostors.placed.frames(),
+            ),
+        );
+    }
+
+    fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
+        let (Some(effects), Some(shape)) = (self.frame, cx.frame.shape) else {
+            return;
+        };
+        let ids = self.ids;
+        let targets = shape.targets;
+        if targets != crate::graph::Targets::Canvas
+            && effects.any()
+            && let Some(pass) = ids.effects_pass
+        {
+            let _ = effects
+                .reads(cx.table, graph.add(cx.table, pass))
+                .write(ids.effects)
+                .write_if(effects.haze, ids.haze);
+        }
+        if targets == crate::graph::Targets::Post
+            && let (Some(pass), Some(canvas)) = (ids.composite_pass, ids.canvas)
+        {
+            let _ = graph
+                .add(cx.table, pass)
+                .read(ids.scene)
+                .read_written(ids.effects)
+                .color(canvas, Access::Clear(Clear::Color(BLACK)));
+        }
+    }
+
+    fn encode(
+        &mut self,
+        pass: usize,
+        cx: &mut Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        let (Some(post), Some(effects)) = (self.post.get(), self.frame) else {
+            return 0;
+        };
+        if pass == COMPOSITE_PASS {
+            let render = cx.render_pass(
+                encoder,
+                "engine/post-composite",
+                cx.core.profiler.span("post_composite").map(Span::render),
+            );
+            post.draw_composite(render);
+            return 0;
+        }
+        if pass == EFFECTS_PASS
+            && let (Some(camera), Some(terrain_camera)) = (
+                shared_group(cx.core, &HAZE_PIPELINES),
+                shared_group(cx.core, &REFLECTION_PIPELINES),
+            )
+        {
+            post.encode_effects(
+                encoder,
+                effects,
+                (camera, terrain_camera),
+                &cx.core.profiler,
+            );
+        }
+        0
+    }
+
+    fn attachment(&self, resource: &str) -> Option<wgpu::TextureView> {
+        let (scene, glow, surface) = self.post.get()?.targets()?;
+        match resource {
+            "scene" => Some(scene.clone()),
+            "glow" => Some(glow.clone()),
+            "surface" => Some(surface.clone()),
+            _ => None,
+        }
+    }
+
+    fn after_submit(&mut self) {
+        let frame = self.frame;
+        if let Some(post) = self.post.get_mut() {
+            post.after_submit(frame.as_ref());
+        }
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        self.post.get().map_or(0, Post::capacity_bytes)
+    }
+
+    fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
+        let applied = |effect: fn(&Effects) -> bool| Applied {
+            active: self.frame.as_ref().is_some_and(effect),
+        };
+        stats.ambient_occlusion = applied(|effects| effects.occlusion);
+        stats.bloom = applied(|effects| effects.bloom);
+        stats.haze = applied(|effects| effects.haze);
+        stats.reflections = applied(|effects| effects.reflections);
+    }
+
+    fn poll(&mut self) -> bool {
+        self.post.poll()
+    }
+
+    fn disable(&mut self) -> bool {
+        self.post.disable()
+    }
+
+    fn disabled(&self) -> bool {
+        self.post.disabled()
+    }
+
+    #[cfg(feature = "dev")]
+    fn inject(&mut self) -> bool {
+        self.post.inject()
+    }
+
+    #[cfg(feature = "dev")]
+    fn encode_fault(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.post.encode_fault(encoder);
+    }
+}
 
 struct Targets {
     textures: [wgpu::Texture; 10],
@@ -77,7 +425,7 @@ type TraceInputs<'a> = (
     Option<(&'a wgpu::TextureView, u64)>,
 );
 
-pub(crate) struct PostPass {
+struct Post {
     layout: crate::pipelines::GroupLayout,
     fillers: Fillers,
     occlusion: wgpu::RenderPipeline,
@@ -119,37 +467,21 @@ struct HazeHistory {
     drawn: (u32, u32),
 }
 
-impl PostPass {
+impl Post {
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    pub(crate) fn new(
-        device: &wgpu::Device,
-        surface_format: wgpu::TextureFormat,
-        (camera_layout, terrain_camera_layout): (
-            &crate::pipelines::GroupLayout,
-            &crate::pipelines::GroupLayout,
-        ),
-    ) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/post.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(POST_SHADER.into()),
-        });
+    fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
         let bloom_format = bloom_format(device);
         let layout = pipelines::layout(device, &POST);
-        let pipeline_layout = crate::pipelines::pipeline_layout(
-            device,
-            &crate::pipeline_layouts::POST_PIPELINES,
-            &[&layout],
-        );
+        let pipeline_layout = pipelines::layout_of(device, &POST_PIPELINES);
         let pipeline = |label, entry: crate::shaders::Entry, format: wgpu::TextureFormat, blend| {
             fullscreen(
                 device,
                 &Fullscreen {
                     label,
                     layout: &pipeline_layout,
-                    module: &module,
                     vertex: post::vs_fullscreen,
                     fragment: entry,
                     constants: &[],
@@ -168,7 +500,6 @@ impl PostPass {
                 &Fullscreen {
                     label,
                     layout: &pipeline_layout,
-                    module: &module,
                     vertex: post::vs_fullscreen,
                     fragment: entry,
                     constants: &[],
@@ -200,21 +531,12 @@ impl PostPass {
             ..Default::default()
         });
         let haze_layout = pipelines::layout(device, &HAZE);
-        let haze_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/haze.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(HAZE_SHADER.into()),
-        });
-        let haze_pipeline_layout = crate::pipelines::pipeline_layout(
-            device,
-            &crate::pipeline_layouts::HAZE_PIPELINES,
-            &[camera_layout, &haze_layout],
-        );
+        let haze_pipeline_layout = pipelines::layout_of(device, &HAZE_PIPELINES);
         let march = fullscreen(
             device,
             &Fullscreen {
                 label: "engine/post-haze",
                 layout: &haze_pipeline_layout,
-                module: &haze_module,
                 vertex: haze::vs_fullscreen,
                 fragment: haze::fs_haze,
                 constants: &[],
@@ -222,7 +544,7 @@ impl PostPass {
                 depth: None,
             },
         );
-        let (reflections, reflections_layout) = reflections_pipeline(device, terrain_camera_layout);
+        let (reflections, reflections_layout) = reflections_pipeline(device);
         Self {
             layout,
             fillers: Fillers::new(device),
@@ -277,7 +599,7 @@ impl PostPass {
             levels_down: levels_pipeline("engine/post-levels-down", post::fs_levels_down),
             composite: pipeline(
                 "engine/post-composite",
-                post::fs_composite,
+                composite_entry(PLAIN_RESOLVE),
                 surface_format,
                 None,
             ),
@@ -294,7 +616,7 @@ impl PostPass {
         }
     }
 
-    pub(crate) fn release_targets(&mut self) {
+    fn release_targets(&mut self) {
         self.targets.release();
         self.occlusion_group.clear();
         self.effects_filter_group.clear();
@@ -305,7 +627,11 @@ impl PostPass {
         self.world_trace.release();
     }
 
-    pub(crate) fn capacity_bytes(&self) -> u64 {
+    fn forget_reflections(&mut self) {
+        self.reflections_group.clear();
+    }
+
+    fn capacity_bytes(&self) -> u64 {
         self.targets.size().map_or(0, |size| {
             let pixels = u64::from(size.width) * u64::from(size.height);
             pixels * 48 + pixels * 4 / 3 + pixels / 4 * 8 * 4 / 3
@@ -313,14 +639,14 @@ impl PostPass {
             + self.world_trace.capacity_bytes()
     }
 
-    pub(crate) fn begin(
+    fn begin(
         &mut self,
         device: &wgpu::Device,
         queue: &crate::gpu_calls::Queue,
         snapshot: &RenderSnapshot,
         (region, depth): (FrameRegion, &Versioned<wgpu::TextureView>),
         display: bool,
-        sky: [(&'static str, Bound<'_>); 3],
+        sky: Option<[(&'static str, Bound<'_>); 3]>,
     ) -> Effects {
         let size = region.display;
         if self.targets.resizes(size) {
@@ -386,7 +712,7 @@ impl PostPass {
         frame
     }
 
-    pub(crate) fn prepare_reflections(
+    fn prepare_reflections(
         &mut self,
         (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
         (frame, depth): (Effects, &Versioned<wgpu::TextureView>),
@@ -449,14 +775,15 @@ impl PostPass {
         device: &wgpu::Device,
         frame: Effects,
         depth: &Versioned<wgpu::TextureView>,
-        sky: [(&'static str, Bound<'_>); 3],
+        sky: Option<[(&'static str, Bound<'_>); 3]>,
     ) {
         let targets = self.targets.get().expect("sized_in_begin");
         let post = || Bound::fixed(self.uniform.as_entire_binding());
         let target = |view| Bound::of(targets, pipelines::view(view));
         let shared = (&POST, &self.layout);
-        if frame.occlusion || frame.sky {
-            let [sky_maps, sky_sampler, sky] = sky;
+        if (frame.occlusion || frame.sky)
+            && let Some([sky_maps, sky_sampler, sky]) = sky
+        {
             self.occlusion_group.bind_filled(
                 device,
                 "engine/post-occlusion-group",
@@ -525,6 +852,14 @@ impl PostPass {
         (self.haze_history, turn - turn.floor())
     }
 
+    fn after_submit(&mut self, frame: Option<&Effects>) {
+        let kept = self.haze_kept.take();
+        self.haze_history = frame.and(kept);
+        if self.haze_history.is_some() {
+            self.haze_frames = self.haze_frames.wrapping_add(1);
+        }
+    }
+
     fn group(
         &self,
         device: &wgpu::Device,
@@ -534,24 +869,24 @@ impl PostPass {
         filled_group(device, label, &POST, &self.layout, resources, &self.fillers)
     }
 
-    pub(crate) fn targets(&self) -> (&wgpu::TextureView, &wgpu::TextureView, &wgpu::TextureView) {
-        let targets = self.targets.get().expect("sized_in_begin");
-        (&targets.scene, &targets.glow, &targets.surface)
+    fn targets(&self) -> Option<(&wgpu::TextureView, &wgpu::TextureView, &wgpu::TextureView)> {
+        let targets = self.targets.get()?;
+        Some((&targets.scene, &targets.glow, &targets.surface))
     }
 
-    pub(crate) fn scene_texture(&self) -> &wgpu::Texture {
-        &self.targets.get().expect("sized_in_begin").textures[0]
+    fn scene_texture(&self) -> Option<&wgpu::Texture> {
+        Some(&self.targets.get()?.textures[0])
     }
 
-    pub(crate) fn scene(&self) -> Bound<'_> {
-        let targets = self.targets.get().expect("sized_in_begin");
-        Bound::of(targets, pipelines::view(&targets.scene))
+    fn scene(&self) -> Option<Bound<'_>> {
+        let targets = self.targets.get()?;
+        Some(Bound::of(targets, pipelines::view(&targets.scene)))
     }
 
-    pub(crate) fn resolve_inputs(&self) -> ([Bound<'_>; 5], Bound<'_>) {
-        let targets = self.targets.get().expect("sized_in_begin");
+    fn resolve_inputs(&self) -> Option<([Bound<'_>; 5], Bound<'_>)> {
+        let targets = self.targets.get()?;
         let target = |view| Bound::of(targets, pipelines::view(view));
-        (
+        Some((
             [
                 target(&targets.scene),
                 target(&targets.occlusion),
@@ -560,7 +895,7 @@ impl PostPass {
                 target(&targets.haze),
             ],
             Bound::fixed(self.uniform.as_entire_binding()),
-        )
+        ))
     }
 
     fn encode_effects(
@@ -945,6 +1280,7 @@ impl PostPass {
             sampler.clone(),
             texture_entry("reflections", &reflections),
             texture_entry("haze", &haze),
+            ("bloom_sampler", pipelines::sampler(&self.sampler)),
         ]);
         Targets {
             textures,
@@ -973,24 +1309,14 @@ impl PostPass {
 
 fn reflections_pipeline(
     device: &wgpu::Device,
-    terrain_camera_layout: &crate::pipelines::GroupLayout,
 ) -> (wgpu::RenderPipeline, crate::pipelines::GroupLayout) {
     let layout = pipelines::layout(device, &REFLECTIONS);
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("engine/post-reflections.wgsl"),
-        source: wgpu::ShaderSource::Wgsl(REFLECTIONS_SHADER.into()),
-    });
-    let pipeline_layout = crate::pipelines::pipeline_layout(
-        device,
-        &crate::pipeline_layouts::REFLECTION_PIPELINES,
-        &[terrain_camera_layout, &layout],
-    );
+    let pipeline_layout = pipelines::layout_of(device, &REFLECTION_PIPELINES);
     let pipeline = fullscreen(
         device,
         &Fullscreen {
             label: "engine/post-reflections",
             layout: &pipeline_layout,
-            module: &module,
             vertex: reflections::vs_fullscreen,
             fragment: reflections::fs_reflections,
             constants: &[],
@@ -1054,89 +1380,4 @@ fn fullscreen_pass<'e>(
     });
     draw_within(&mut pass, drawn);
     pass
-}
-
-pub(crate) struct EffectStats {
-    pub(crate) ambient_occlusion: Applied,
-    pub(crate) bloom: Applied,
-    pub(crate) haze: Applied,
-    pub(crate) reflections: Applied,
-}
-
-impl RenderFeature for PostPass {
-    type Frame = Effects;
-    type Stats = EffectStats;
-
-    const LABELS: &'static [&'static str] = &["engine/post-", "engine/post.", "engine/haze."];
-
-    fn declare(effects: &Effects, shape: &FrameShape, graph: &mut RenderGraph) {
-        let targets = shape.targets;
-        if targets != crate::render_graph::Targets::Canvas && effects.any() {
-            effects
-                .reads(graph.add(Pass::Feature(FeaturePass::Effects)))
-                .write(Resource::Effects)
-                .write_if(effects.haze, Resource::Haze);
-        }
-        if targets == crate::render_graph::Targets::Post {
-            graph
-                .add(Pass::Feature(FeaturePass::Composite))
-                .read(Resource::Scene)
-                .read_if(effects.any(), Resource::Effects)
-                .color(Resource::Canvas, Access::Clear(Clear::Color(BLACK)));
-        }
-    }
-
-    fn encode(
-        &self,
-        effects: &Effects,
-        node: &Node,
-        encode: &Encode<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-    ) -> u32 {
-        if node.pass() == Pass::Feature(FeaturePass::Composite) {
-            let pass = encode.render_pass(
-                encoder,
-                node,
-                "engine/post-composite",
-                encode.profiler.span("post_composite").map(Span::render),
-            );
-            self.draw_composite(pass);
-        } else {
-            self.encode_effects(
-                encoder,
-                *effects,
-                (encode.camera, encode.terrain_camera),
-                encode.profiler,
-            );
-        }
-        0
-    }
-
-    fn after_submit(&mut self, frame: Option<&Effects>) {
-        let kept = self.haze_kept.take();
-        self.haze_history = frame.and(kept);
-        if self.haze_history.is_some() {
-            self.haze_frames = self.haze_frames.wrapping_add(1);
-        }
-    }
-
-    fn capacity_bytes(&self) -> u64 {
-        PostPass::capacity_bytes(self)
-    }
-
-    fn stats(
-        _this: Option<&Self>,
-        effects: Option<&Effects>,
-        _snapshot: &RenderSnapshot,
-    ) -> EffectStats {
-        let applied = |effect: fn(&Effects) -> bool| Applied {
-            active: effects.is_some_and(effect),
-        };
-        EffectStats {
-            ambient_occlusion: applied(|effects| effects.occlusion),
-            bloom: applied(|effects| effects.bloom),
-            haze: applied(|effects| effects.haze),
-            reflections: applied(|effects| effects.reflections),
-        }
-    }
 }

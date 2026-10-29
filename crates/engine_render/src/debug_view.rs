@@ -16,8 +16,12 @@ use crate::gpu_layouts::constants::{
     DEBUG_VIEW_WATER_TURBULENCE, DEBUG_VIEW_WATER_WHITE,
 };
 use crate::gpu_layouts::debug_view::DebugViewUniform;
-use crate::render_features::{Encode, FeaturePass, RenderFeature};
-use crate::render_graph::{Access, Clear, FrameShape, Node, Pass, RenderGraph, Resource};
+use crate::graph::{
+    Access, Clear, FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId,
+    Stage,
+};
+use crate::lazy::Lazy;
+use crate::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Step, View};
 use crate::shaders::entry::debug_view;
 use crate::targets::{FrameSize, ScreenTarget};
 
@@ -71,8 +75,8 @@ pub(crate) fn bind_record(
     records: Option<&DebugViewPass>,
     record: DrawRecord,
 ) {
-    if let Some(records) = records {
-        pass.set_vertex_buffer(RECORD_SLOT, records.record(record));
+    if let Some(slice) = records.and_then(|records| records.record(record)) {
+        pass.set_vertex_buffer(RECORD_SLOT, slice);
     }
 }
 
@@ -196,7 +200,79 @@ impl Drop for Targets {
     }
 }
 
+pub(crate) static PART: PartEntry = PartEntry {
+    decl: PartDecl {
+        name: "debug_view",
+        brick: "debug_view",
+        passes: &[PassDecl {
+            name: "debug_view",
+            stage: Stage::Composite,
+        }],
+        resources: &[
+            ResourceDecl {
+                name: "debug_ids",
+                lifetime: Lifetime::Frame,
+            },
+            ResourceDecl {
+                name: "debug_count",
+                lifetime: Lifetime::Frame,
+            },
+            ResourceDecl {
+                name: "debug_terrain",
+                lifetime: Lifetime::Frame,
+            },
+        ],
+        hooks: &[],
+        contributes: &[],
+        effects: &[],
+        labels: &["engine/debug-view"],
+        lazy: true,
+    },
+    create,
+};
+
+fn create(_: &Create<'_>) -> Box<dyn GpuPart> {
+    Box::new(DebugViewPass::default())
+}
+
+#[derive(Clone, Copy, Default)]
+struct Ids {
+    pass: Option<PassId>,
+    canvas: Option<ResourceId>,
+    depth: Option<ResourceId>,
+    ids: Option<ResourceId>,
+    count: Option<ResourceId>,
+    terrain: Option<ResourceId>,
+}
+
+#[derive(Default)]
 pub(crate) struct DebugViewPass {
+    view: Lazy<DebugTargets>,
+    frame: Option<DebugViewFrame>,
+    ids: Ids,
+}
+
+impl DebugViewPass {
+    pub(crate) fn shows(&self, snapshot: &RenderSnapshot, forced: Option<bool>) -> bool {
+        let showing = forced.unwrap_or(snapshot.environment.debug_view.showing());
+        showing && !self.view.disabled()
+    }
+
+    pub(crate) fn records(&self) -> Option<&Self> {
+        self.view.get().map(|_| self)
+    }
+
+    pub(crate) fn record(&self, record: DrawRecord) -> Option<wgpu::BufferSlice<'_>> {
+        Some(self.view.get()?.record(record))
+    }
+
+    #[cfg(feature = "dev")]
+    pub(crate) fn textures(&self) -> Option<[&wgpu::Texture; 3]> {
+        self.view.get()?.textures()
+    }
+}
+
+struct DebugTargets {
     layout: crate::pipelines::GroupLayout,
     pipeline: wgpu::RenderPipeline,
     uniform: wgpu::Buffer,
@@ -204,26 +280,19 @@ pub(crate) struct DebugViewPass {
     targets: ScreenTarget<Targets>,
 }
 
-pub(crate) struct DebugViewFrame;
+#[derive(Clone, Copy)]
+struct DebugViewFrame;
 
-impl DebugViewPass {
-    pub(crate) fn new(device: &wgpu::Device, canvas: wgpu::TextureFormat) -> Self {
+impl DebugTargets {
+    fn new(device: &wgpu::Device, canvas: wgpu::TextureFormat) -> Self {
         let layout = crate::pipelines::layout(device, &DEBUG_VIEW);
-        let pipeline_layout = crate::pipelines::pipeline_layout(
-            device,
-            &crate::pipeline_layouts::DEBUG_VIEW_PIPELINES,
-            &[&layout],
-        );
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/debug-view.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(crate::gpu_data::DEBUG_VIEW_SHADER.into()),
-        });
+        let pipeline_layout =
+            crate::pipelines::layout_of(device, &crate::pipeline_layouts::DEBUG_VIEW_PIPELINES);
         let pipeline = crate::pipelines::fullscreen(
             device,
             &crate::pipelines::Fullscreen {
                 label: "engine/debug-view",
                 layout: &pipeline_layout,
-                module: &module,
                 vertex: debug_view::vs_fullscreen,
                 fragment: debug_view::fs_debug_view,
                 constants: &[],
@@ -261,14 +330,14 @@ impl DebugViewPass {
         }
     }
 
-    pub(crate) fn prepare(
+    fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &crate::gpu_calls::Queue,
         size: FrameSize,
         settings: DebugView,
         sun: [f32; 3],
-    ) -> Option<DebugViewFrame> {
+    ) -> DebugViewFrame {
         self.begin(device, size);
         let view = if settings.showing() {
             settings.view
@@ -280,7 +349,7 @@ impl DebugViewPass {
             sun: [sun[0], sun[1], sun[2], 0.0],
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
-        Some(DebugViewFrame)
+        DebugViewFrame
     }
 
     fn begin(&mut self, device: &wgpu::Device, size: FrameSize) {
@@ -334,54 +403,19 @@ impl DebugViewPass {
     }
 
     #[cfg(feature = "dev")]
-    pub(crate) fn textures(&self) -> [&wgpu::Texture; 3] {
-        let targets = self.targets.get().expect("sized_in_prepare");
-        targets.textures.each_ref()
+    fn textures(&self) -> Option<[&wgpu::Texture; 3]> {
+        let targets = self.targets.get()?;
+        Some(targets.textures.each_ref())
     }
 
-    pub(crate) fn views(&self) -> [&wgpu::TextureView; 3] {
-        let targets = self.targets.get().expect("sized_in_prepare");
-        [&targets.ids, &targets.count, &targets.terrain]
+    fn views(&self) -> Option<[&wgpu::TextureView; 3]> {
+        let targets = self.targets.get()?;
+        Some([&targets.ids, &targets.count, &targets.terrain])
     }
 
-    pub(crate) fn record(&self, record: DrawRecord) -> wgpu::BufferSlice<'_> {
+    fn record(&self, record: DrawRecord) -> wgpu::BufferSlice<'_> {
         let offset = record.index() * RECORD_BYTES;
         self.records.slice(offset..offset + RECORD_BYTES)
-    }
-}
-
-impl RenderFeature for DebugViewPass {
-    type Frame = DebugViewFrame;
-    type Stats = ();
-
-    const LABELS: &'static [&'static str] = &["engine/debug-view"];
-
-    fn declare(_frame: &DebugViewFrame, shape: &FrameShape, graph: &mut RenderGraph) {
-        graph
-            .add(Pass::Feature(FeaturePass::DebugView))
-            .read(Resource::DebugIds)
-            .read(Resource::DebugCount)
-            .read(Resource::DebugTerrain)
-            .read(Resource::Depth)
-            .color(
-                Resource::Canvas,
-                Access::Clear(Clear::Color(shape.canvas_clear)),
-            );
-    }
-
-    fn encode(
-        &self,
-        _frame: &DebugViewFrame,
-        node: &Node,
-        encode: &Encode<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-    ) -> u32 {
-        let targets = self.targets.get().expect("sized_in_prepare");
-        let mut pass = encode.render_pass(encoder, node, "engine/debug-view", None);
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &targets.group, &[]);
-        pass.draw(0..3, 0..1);
-        0
     }
 
     fn capacity_bytes(&self) -> u64 {
@@ -389,6 +423,110 @@ impl RenderFeature for DebugViewPass {
             u64::from(size.width) * u64::from(size.height) * 26 + self.records.size()
         })
     }
+}
 
-    fn stats(_this: Option<&Self>, _frame: Option<&DebugViewFrame>, _snapshot: &RenderSnapshot) {}
+impl GpuPart for DebugViewPass {
+    fn install(&mut self, table: &GraphTable) {
+        self.ids = Ids {
+            pass: table.pass_named("debug_view"),
+            canvas: table.resource("canvas"),
+            depth: table.resource("depth"),
+            ids: table.resource("debug_ids"),
+            count: table.resource("debug_count"),
+            terrain: table.resource("debug_terrain"),
+        };
+    }
+
+    fn finish(&mut self, cx: &mut Step<'_>) {
+        if !cx.frame.kind.debug {
+            self.frame = None;
+            return;
+        }
+        let snapshot = cx.frame.snapshot;
+        let core = &*cx.core;
+        let (device, queue) = (&core.device, &core.queue);
+        let (size, format) = (core.display.size(), core.canvas_format());
+        let sun = snapshot
+            .environment
+            .atmosphere
+            .sun_direction
+            .normalize_or_zero()
+            .to_array();
+        self.view.create(device, "engine/debug-view", || {
+            DebugTargets::new(device, format)
+        });
+        self.frame = self.view.get_mut().map(|view| {
+            view.prepare(device, queue, size, snapshot.environment.debug_view, sun)
+        });
+    }
+
+    fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
+        let (Some(_), Some(shape)) = (self.frame, cx.frame.shape) else {
+            return;
+        };
+        let ids = self.ids;
+        let (Some(pass), Some(canvas)) = (ids.pass, ids.canvas) else {
+            return;
+        };
+        let _ = graph
+            .add(cx.table, pass)
+            .read(ids.ids)
+            .read(ids.count)
+            .read(ids.terrain)
+            .read(ids.depth)
+            .color(canvas, Access::Clear(Clear::Color(shape.canvas_clear)));
+    }
+
+    fn encode(
+        &mut self,
+        _pass: usize,
+        cx: &mut Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        let Some(view) = self.view.get() else {
+            return 0;
+        };
+        let targets = view.targets.get().expect("sized_in_prepare");
+        let mut pass = cx.render_pass(encoder, "engine/debug-view", None);
+        pass.set_pipeline(&view.pipeline);
+        pass.set_bind_group(0, &targets.group, &[]);
+        pass.draw(0..3, 0..1);
+        0
+    }
+
+    fn attachment(&self, resource: &str) -> Option<wgpu::TextureView> {
+        let [ids, count, terrain] = self.view.get()?.views()?;
+        match resource {
+            "debug_ids" => Some(ids.clone()),
+            "debug_count" => Some(count.clone()),
+            "debug_terrain" => Some(terrain.clone()),
+            _ => None,
+        }
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        self.view.get().map_or(0, DebugTargets::capacity_bytes)
+    }
+
+    fn poll(&mut self) -> bool {
+        self.view.poll()
+    }
+
+    fn disable(&mut self) -> bool {
+        self.view.disable()
+    }
+
+    fn disabled(&self) -> bool {
+        self.view.disabled()
+    }
+
+    #[cfg(feature = "dev")]
+    fn inject(&mut self) -> bool {
+        self.view.inject()
+    }
+
+    #[cfg(feature = "dev")]
+    fn encode_fault(&self, encoder: &mut wgpu::CommandEncoder) {
+        self.view.encode_fault(encoder);
+    }
 }

@@ -1,12 +1,9 @@
-@group(0) @binding(0) var<uniform> post: Post;
-@group(0) @binding(1) var depth_texture: texture_depth_2d;
-@group(0) @binding(2) var scene: texture_2d<f32>;
-@group(0) @binding(3) var glow: texture_2d<f32>;
+import package::engine::color::luminance;
+import package::engine::screen_points::{depth_normal, world_at};
+import package::post::frame::{drawn_texels, drawn_uv, glow, linear, post, scene};
+import package::post::haze::haze;
+
 @group(0) @binding(4) var source: texture_2d<f32>;
-@group(0) @binding(5) var occlusion: texture_2d<f32>;
-@group(0) @binding(6) var bloom: texture_2d<f32>;
-@group(0) @binding(7) var linear: sampler;
-@group(0) @binding(8) var reflections: texture_2d<f32>;
 @group(0) @binding(9) var marched: texture_2d<f32>;
 @group(0) @binding(12) var raw_occlusion: texture_2d<f32>;
 @group(0) @binding(15) var bloom_source: texture_2d<f32>;
@@ -21,7 +18,6 @@ struct Sky {
 @group(0) @binding(16) var sky_maps: texture_depth_2d_array;
 @group(0) @binding(17) var sky_sampler: sampler_comparison;
 @group(0) @binding(18) var<uniform> sky: Sky;
-@group(0) @binding(19) var haze: texture_2d<f32>;
 
 const TAU: f32 = 6.2831853;
 const SAMPLES: u32 = 8u;
@@ -371,51 +367,4 @@ fn fs_bloom_up(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32>
         + level_tap(source, at + vec2<f32>(1.0, -1.0), drawn, size)
         + level_tap(source, at + vec2<f32>(-1.0, 1.0), drawn, size)) * 2.0;
     return vec4<f32>(sum / 12.0, 1.0);
-}
-
-fn upscaled_scene(pixel: vec2<f32>) -> vec4<f32> {
-    let center = floor(pixel - 0.5) + 0.5;
-    let f = pixel - center;
-    let w0 = f * (-0.5 + f * (1.0 - 0.5 * f));
-    let w1 = 1.0 + f * f * (-2.5 + 1.5 * f);
-    let w2 = f * (0.5 + f * (2.0 - 1.5 * f));
-    let w3 = f * f * (-0.5 + 0.5 * f);
-    let w12 = w1 + w2;
-    let middle = center + w2 / w12;
-    let before = center - 1.0;
-    let after = center + 2.0;
-    let weights = vec4<f32>(w12.x * w0.y, w0.x * w12.y, w3.x * w12.y, w12.x * w3.y);
-    let middle_weight = w12.x * w12.y;
-    let sum = middle_weight + weights.x + weights.y + weights.z + weights.w;
-    let color = scene_tap(middle) * middle_weight
-        + scene_tap(vec2<f32>(middle.x, before.y)) * weights.x
-        + scene_tap(vec2<f32>(before.x, middle.y)) * weights.y
-        + scene_tap(vec2<f32>(after.x, middle.y)) * weights.z
-        + scene_tap(vec2<f32>(middle.x, after.y)) * weights.w;
-    return clamp(color / sum, vec4<f32>(0.0), vec4<f32>(1.0));
-}
-
-fn scene_tap(pixel: vec2<f32>) -> vec4<f32> {
-    return textureSampleLevel(scene, linear, drawn_uv(pixel, post), 0.0);
-}
-
-@fragment
-fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let uv = position.xy * post.extent.zw;
-    let whole = all(post.size.xy == post.extent.xy);
-    let rendered = select(uv * post.size.xy, position.xy, whole);
-    let pixel = min(vec2<i32>(rendered), vec2<i32>(post.size.xy) - 1);
-    var texel = textureLoad(scene, pixel, 0);
-    if !whole {
-        texel = upscaled_scene(rendered);
-    }
-    let visible = occlusion_at(occlusion, pixel, post);
-    let shaded = texel.rgb * effect_shade(texel.a, visible, post);
-    let mirrored = reflected(shaded, reflections, linear, uv, post);
-    let color = effect_light(mirrored, haze_at(haze, pixel, post), bloom, linear, uv, post);
-    var encoded = encode_srgb(color);
-    if post.sun_direction.w != 0.0 {
-        encoded = dithered(encoded, position.xy, 0.0, 1u);
-    }
-    return vec4<f32>(encoded, 1.0);
 }

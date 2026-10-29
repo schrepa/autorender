@@ -1,5 +1,9 @@
-@group(1) @binding(0) var<uniform> post: Post;
-@group(1) @binding(1) var depth_texture: texture_depth_2d;
+import package::engine::math::{pcg, unit};
+import package::frame::view::{PI, camera, eye_world, lighting, pixel_noise};
+import package::post::frame::{depth_texture, inverse_distance_at, post};
+import package::shadows::sample::{SHADOW_MAPS, shadow};
+import package::sky::air::{air_light, air_visibility, cloud_passing};
+import package::terrain::bounce::{bounce_at, bounce_seen};
 
 const HAZE_STEPS: u32 = 24u;
 const HAZE_OCTAVES: u32 = 3u;

@@ -15,6 +15,14 @@ struct Post {
     detail: vec4<f32>,
 }
 
+@group(0) @binding(0) var<uniform> post: Post;
+@group(0) @binding(1) var depth_texture: texture_depth_2d;
+@group(0) @binding(2) var scene: texture_2d<f32>;
+@group(0) @binding(3) var glow: texture_2d<f32>;
+@group(0) @binding(5) var occlusion: texture_2d<f32>;
+@group(0) @binding(7) var linear: sampler;
+@group(0) @binding(8) var reflections: texture_2d<f32>;
+
 fn drawn_uv(pixel: vec2<f32>, settings: Post) -> vec2<f32> {
     return clamp(pixel, vec2<f32>(0.5), settings.size.xy - 0.5) * settings.extent.zw;
 }
@@ -42,13 +50,6 @@ fn occlusion_at(occlusion: texture_2d<f32>, pixel: vec2<i32>, settings: Post) ->
     return textureLoad(occlusion, pixel, 0).x;
 }
 
-fn haze_at(hazed: texture_2d<f32>, pixel: vec2<i32>, settings: Post) -> vec3<f32> {
-    if settings.haze.w == 0.0 {
-        return vec3<f32>(0.0);
-    }
-    return textureLoad(hazed, pixel, 0).rgb;
-}
-
 fn reflected(color: vec3<f32>, reflections: texture_2d<f32>, linear: sampler,
         uv: vec2<f32>, settings: Post) -> vec3<f32> {
     if settings.reflections.z == 0.0 {
@@ -61,38 +62,9 @@ fn reflected(color: vec3<f32>, reflections: texture_2d<f32>, linear: sampler,
         vec3<f32>(1.0));
 }
 
-fn with_haze(color: vec3<f32>, light: vec3<f32>, settings: Post) -> vec3<f32> {
-    if settings.haze.w == 0.0 {
-        return color;
-    }
-    let share = light / (vec3<f32>(1.0) + abs(light));
-    let added = vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - share);
-    return select(color * (vec3<f32>(1.0) + share), added, share >= vec3<f32>(0.0));
-}
-
-fn glowing(color: vec3<f32>, bloom: texture_2d<f32>, linear: sampler, uv: vec2<f32>,
-        settings: Post) -> vec3<f32> {
-    if settings.bloom.y == 0.0 {
-        return color;
-    }
-    let glow = max(textureSampleLevel(bloom, linear, uv, 0.0).rgb * settings.bloom.x,
-        vec3<f32>(0.0));
-    let light = glow / (vec3<f32>(1.0) + glow);
-    return vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - light);
-}
-
 fn effect_shade(ambient: f32, visible: f32, settings: Post) -> f32 {
     if settings.occlusion.w == 0.0 && settings.sky.w == 0.0 {
         return 1.0;
     }
     return 1.0 - ambient * (1.0 - visible);
-}
-
-fn effect_light(color: vec3<f32>, light: vec3<f32>, bloom: texture_2d<f32>,
-        linear: sampler, uv: vec2<f32>, settings: Post) -> vec3<f32> {
-    let lit = with_haze(color, light, settings);
-    let size = vec2<f32>(textureDimensions(bloom));
-    let drawn = drawn_texels(size, settings);
-    return glowing(lit, bloom, linear, clamp(uv * drawn, vec2<f32>(0.5), drawn - 0.5) / size,
-        settings);
 }
