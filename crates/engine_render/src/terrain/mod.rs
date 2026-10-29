@@ -7,7 +7,10 @@ use engine_terrain::gpu::SurfaceData;
 use engine_terrain::{RenderTerrain, RenderTerrains, TileKey};
 use std::sync::Arc;
 
-use crate::bindings::{SHADOW_VIEW, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS};
+use crate::bindings::{
+    Contribution, Sample, Sampling, Stages, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS, View,
+    sampler, texture, uniform_of,
+};
 use crate::cached::{Bound, Cached};
 use crate::gpu_calls::Queue;
 use crate::gpu_layouts::constants::NOT_RESIDENT;
@@ -17,8 +20,10 @@ use crate::gpu_layouts::constants::{CONTROL_GROUP, NORMALS_GROUP};
 use crate::gpu_layouts::terrain::{
     CoverEntry, PALETTE_BYTES, PALETTE_ENTRIES, PaletteEntry, TerrainUniform, ViewUniform,
 };
+use crate::graph::{Lifetime, PassDecl, ResourceDecl, Stage, Targets};
 use crate::mipmaps::MipGenerator;
-use crate::render_graph::Targets;
+use crate::parts::{Hook, OpaqueSlot, PartDecl, PartEntry};
+use crate::targets::ScreenTarget;
 use crate::terrain_bounce::{Bounce, SceneSources, TerrainSources};
 use crate::terrain_horizons::Horizons;
 use crate::terrain_macro::MacroMaps;
@@ -28,6 +33,7 @@ use crate::terrain_sky::SkyMaps;
 mod atlas;
 #[cfg(debug_assertions)]
 mod invariants;
+mod part;
 mod patches;
 mod pipelines;
 mod surface;
@@ -35,6 +41,7 @@ mod tables;
 mod water_blocks;
 
 use atlas::TileAtlas;
+use part::{Slots, TerrainIds};
 pub(crate) use patches::{PatchDraws, planes};
 use pipelines::{GroupSources, TerrainPipelines};
 pub(crate) use surface::{SurfaceDraw, SurfaceTrees};
@@ -42,6 +49,78 @@ use tables::TerrainTables;
 pub(crate) use water_blocks::TerrainWaterDraws;
 
 pub(crate) use crate::gpu_layouts::terrain::PatchRecord;
+
+pub(crate) static FRAME_HORIZONS: Contribution = Contribution {
+    group: "frame",
+    set: "horizons",
+    bindings: &[
+        texture(
+            "terrain_horizons",
+            Sample::Float,
+            View::D2Array,
+            Stages::FRAGMENT,
+        ),
+        uniform_of(
+            "terrain_horizon_records",
+            crate::bindings::HORIZON_RECORDS_BYTES,
+            Stages::FRAGMENT,
+        ),
+        sampler(
+            "terrain_horizon_sampler",
+            Sampling::Filtering,
+            Stages::FRAGMENT,
+        ),
+    ],
+};
+
+pub(crate) static PART: PartEntry = PartEntry {
+    decl: PartDecl {
+        name: "terrain",
+        brick: "terrain",
+        passes: &[
+            PassDecl {
+                name: "subdivision",
+                stage: Stage::Prepare,
+            },
+            PassDecl {
+                name: "bounce",
+                stage: Stage::Prepare,
+            },
+            PassDecl {
+                name: "terrain_ids",
+                stage: Stage::Deferred,
+            },
+            PassDecl {
+                name: "terrain_resolve",
+                stage: Stage::Deferred,
+            },
+        ],
+        resources: &[
+            ResourceDecl {
+                name: "leaves",
+                lifetime: Lifetime::Kept,
+            },
+            ResourceDecl {
+                name: "bounce",
+                lifetime: Lifetime::Kept,
+            },
+            ResourceDecl {
+                name: "terrain_ids",
+                lifetime: Lifetime::Frame,
+            },
+        ],
+        hooks: &[
+            Hook::Opaque(OpaqueSlot::Ground),
+            Hook::ShadowCasters,
+            Hook::ProbeFace,
+        ],
+        contributes: std::slice::from_ref(&FRAME_HORIZONS),
+        effects: &[],
+        labels: &[],
+        lazy: false,
+    },
+    create: part::create,
+};
 
 const LAYER_SIZE: u32 = engine_terrain::TILE_STRIDE;
 const SLOT: u64 = 256;
@@ -157,11 +236,15 @@ pub(crate) struct TerrainPass {
     pub(crate) cooking: bool,
     pub(crate) macro_maps: MacroMaps,
     pub(crate) water: water_blocks::WaterBlocks,
+    ids: ScreenTarget<TerrainIds>,
+    slots: Slots,
+    drawn: bool,
+    deferred: bool,
 }
 
 impl TerrainPass {
     pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
-        let _owner = crate::memory::owned(crate::render_graph::Pass::Subdivision);
+        let _owner = crate::memory::owned(PART.decl.brick);
         Self {
             atlas: TileAtlas::new(device),
             tables: TerrainTables::new(device),
@@ -175,6 +258,10 @@ impl TerrainPass {
             cooking: false,
             macro_maps: MacroMaps::new(device, queue),
             water: water_blocks::WaterBlocks::new(device),
+            ids: ScreenTarget::default(),
+            slots: Slots::default(),
+            drawn: false,
+            deferred: false,
         }
     }
 
@@ -186,15 +273,12 @@ impl TerrainPass {
         self.atlas.slots.len() as u32
     }
 
-    pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.atlas.capacity_bytes()
-            + self.surface.capacity_bytes()
-            + self.horizons.capacity_bytes()
-            + self.sky.capacity_bytes()
-            + self.bounce.capacity_bytes()
-            + self.macro_maps.capacity_bytes()
-            + self.maps.capacity_bytes()
-            + self.water.capacity_bytes()
+    pub(crate) fn drawn(&self) -> bool {
+        self.drawn
+    }
+
+    pub(crate) fn horizon_records(&self) -> u32 {
+        self.horizons.record_count()
     }
 
     pub(crate) fn water_draws(&self, terrains: &RenderTerrains) -> Option<TerrainWaterDraws<'_>> {
@@ -211,7 +295,7 @@ impl TerrainPass {
         })
     }
 
-    pub(crate) fn prepare(
+    fn prepare_terrains(
         &mut self,
         device: &wgpu::Device,
         queue: &Queue,
@@ -432,23 +516,20 @@ impl TerrainPass {
         draws
     }
 
-    pub(crate) fn encode_subdivision(
+    fn encode_subdivision(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        shader: &wgpu::ShaderModule,
         camera: &wgpu::Buffer,
         profiler: &crate::profiling::GpuProfiler,
     ) {
         let Some(group) = self.pipelines.surface_group() else {
             return;
         };
-        let terrain = (&self.pipelines.layout, group);
-        self.surface
-            .encode(device, encoder, shader, camera, terrain, profiler);
+        self.surface.encode(device, encoder, camera, group, profiler);
     }
 
-    pub(crate) fn encode_bounce(
+    fn encode_bounce(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,

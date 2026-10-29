@@ -1,3 +1,9 @@
+import package::frame::view::{PI, lighting};
+import package::sky::air::{cloud_passing, sky_average};
+import package::terrain::horizons::{HORIZON_LAYERS, HORIZON_RECORD_VECTORS, terrain_horizon_records,
+    terrain_horizon_sampler, terrain_horizons, terrain_visibility};
+import package::terrain::variety::{COVER_FAR_SIDE, cover_seen, macro_tint};
+
 struct BounceFrame {
     bins: array<vec4<f32>, BOUNCE_BINS>,
 }

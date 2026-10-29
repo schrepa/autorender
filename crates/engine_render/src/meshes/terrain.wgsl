@@ -1,9 +1,27 @@
+import package::frame::encode::encoded;
+import package::frame::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail_distance, detail_level,
+    detail_resolved, detail_span, eye_world, lighting, material_detail, stable_normalize};
+import package::lighting::surface::{BODY_GROUND, Shaded, SurfacePoint, finish_ground};
+import package::lights::shade::local_light;
+import package::meshes::declarations::{SceneTargets, TemporalTargets};
+import package::meshes::surface::{scene_targets, temporal_targets, widened, world_plane};
+import package::shadows::sample::{KeptLift, fade_noise, kept_lift, shadow, shadow_level};
+import package::terrain::bounce::bounce_light;
+import package::terrain::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
+import package::terrain::sky::terrain_sky_map;
+import package::terrain::surface::{SURFACE_MESHLET_LEVEL, surface_leaf, surface_relative,
+    surface_vertex, terrain_directory, terrain_level_height, terrain_true_height};
+import package::terrain::variety::{COVER_FAR_SIDE, COVER_ROUGHNESS, CoverLaw, cover_clump_layer,
+    cover_clump_spacing, cover_clumped, cover_growth, cover_seen, cover_share, cover_shown,
+    macro_tint, spread_slopes};
+import package::terrain::vertex::{terrain, terrain_view};
+import package::water::surface::{WATER_HELD, WaterCell, water_cell, water_level};
+
 @group(1) @binding(20) var<storage, read> terrain_holes: array<u32>;
 
 override TERRAIN_HOLES: bool = false;
 
 @group(1) @binding(21) var terrain_normals: texture_2d_array<u32>;
-@group(1) @binding(22) var terrain_sky_sampler: sampler;
 @group(1) @binding(24) var terrain_control: texture_2d_array<u32>;
 @group(1) @binding(32) var terrain_control_sampler: sampler;
 
@@ -156,50 +174,6 @@ fn vs_terrain_temporal(@builtin(instance_index) leaf: u32,
     temporal.previous = (camera.previous_view_projection
         * vec4<f32>(eye_world(output.relative.xyz), 1.0)).xyw;
     return temporal;
-}
-
-fn terrain_value(p: vec2<f32>) -> f32 {
-    let cell = floor(p);
-    let f = p - cell;
-    let u = f * f * (3.0 - 2.0 * f);
-    let q = vec2<u32>(vec2<i32>(cell));
-    let x0 = q.x * 0x8da6b343u;
-    let x1 = x0 + 0x8da6b343u;
-    let y0 = q.y * 0xd8163841u;
-    let y1 = y0 + 0xd8163841u;
-    let a = terrain_hash_of(x0 ^ y0);
-    let b = terrain_hash_of(x1 ^ y0);
-    let c = terrain_hash_of(x0 ^ y1);
-    let d = terrain_hash_of(x1 ^ y1);
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
-}
-
-fn terrain_hash_of(mixed: u32) -> f32 {
-    var h = mixed;
-    h = (h ^ (h >> 16u)) * 0x7feb352du;
-    h = (h ^ (h >> 15u)) * 0x846ca68bu;
-    return f32((h ^ (h >> 16u)) >> 8u) * (1.0 / 16777216.0);
-}
-
-fn terrain_hash2(mixed: u32) -> vec2<f32> {
-    var h = mixed;
-    h = (h ^ (h >> 16u)) * 0x7feb352du;
-    h = (h ^ (h >> 15u)) * 0x846ca68bu;
-    h = h ^ (h >> 16u);
-    return vec2<f32>(f32(h >> 16u), f32(h & 0xffffu)) * (1.0 / 65535.0);
-}
-
-fn terrain_value2(p: vec2<f32>) -> vec2<f32> {
-    let cell = floor(p);
-    let f = p - cell;
-    let u = f * f * (3.0 - 2.0 * f);
-    let q = vec2<u32>(vec2<i32>(cell));
-    let x0 = q.x * 0x8da6b343u;
-    let x1 = x0 + 0x8da6b343u;
-    let y0 = q.y * 0xd8163841u;
-    let y1 = y0 + 0xd8163841u;
-    return mix(mix(terrain_hash2(x0 ^ y0), terrain_hash2(x1 ^ y0), u.x),
-        mix(terrain_hash2(x0 ^ y1), terrain_hash2(x1 ^ y1), u.x), u.y);
 }
 
 fn terrain_detail(p: vec2<f32>, size: f32, resolved: f32) -> f32 {

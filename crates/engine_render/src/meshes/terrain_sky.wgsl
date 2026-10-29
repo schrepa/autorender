@@ -1,3 +1,7 @@
+import package::terrain::surface::terrain_directory;
+import package::terrain::vertex::terrain;
+
+@group(1) @binding(22) var terrain_sky_sampler: sampler;
 @group(1) @binding(30) var terrain_sky: texture_2d_array<f32>;
 
 fn terrain_sky_uv(local: vec2<f32>) -> vec2<f32> {

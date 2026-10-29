@@ -62,7 +62,7 @@ impl BounceLevels {
 pub(crate) struct SceneSources<'a> {
     pub(crate) lighting: &'a wgpu::Buffer,
     pub(crate) shadow: (&'static str, Bound<'a>),
-    pub(crate) cloud_shadows: &'a wgpu::Buffer,
+    pub(crate) cloud_shadows: (&'static str, Bound<'a>),
 }
 
 pub(crate) struct TerrainSources<'a> {
@@ -264,7 +264,7 @@ impl Bounce {
         self.levels = 0;
         let count = self.slots.iter().flatten().count();
         if cooking && count > 0 && self.pipelines.is_none() {
-            self.pipelines = Some(pipelines(device, &self.layout));
+            self.pipelines = Some(pipelines(device));
         }
         let side = terrains
             .terrains
@@ -420,9 +420,7 @@ impl Bounce {
         else {
             return;
         };
-        let pipelines = self
-            .pipelines
-            .get_or_insert_with(|| pipelines(device, &self.layout));
+        let pipelines = self.pipelines.get_or_insert_with(|| pipelines(device));
         let generation = self.maps_generation;
         let shared = Shared {
             frame: Bound::fixed(self.frame.as_entire_binding()),
@@ -445,10 +443,7 @@ impl Bounce {
             scene: [
                 ("lighting", Bound::fixed(scene.lighting.as_entire_binding())),
                 scene.shadow,
-                (
-                    "cloud_shadows",
-                    Bound::fixed(scene.cloud_shadows.as_entire_binding()),
-                ),
+                scene.cloud_shadows,
             ],
         };
         let level =
@@ -791,23 +786,13 @@ fn maps(device: &wgpu::Device, side: u32, slots: usize) -> Maps {
     }
 }
 
-fn pipelines(
-    device: &wgpu::Device,
-    layout: &crate::pipelines::GroupLayout,
-) -> [wgpu::ComputePipeline; 3] {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("engine/terrain_bounce.wgsl"),
-        source: wgpu::ShaderSource::Wgsl(crate::gpu_data::BOUNCE_SHADER.into()),
-    });
-    let pipeline_layout = crate::pipelines::pipeline_layout(
-        device,
-        &crate::pipeline_layouts::BOUNCE_PIPELINES,
-        &[layout],
-    );
+fn pipelines(device: &wgpu::Device) -> [wgpu::ComputePipeline; 3] {
+    let pipeline_layout =
+        crate::pipelines::layout_of(device, &crate::pipeline_layouts::BOUNCE_PIPELINES);
     [
         terrain_bounce::bounce_ground,
         terrain_bounce::bounce_down,
         terrain_bounce::bounce_gather,
     ]
-    .map(|entry| crate::pipelines::compute_entry(device, &pipeline_layout, &module, entry))
+    .map(|entry| crate::pipelines::compute_entry(device, &pipeline_layout, entry))
 }

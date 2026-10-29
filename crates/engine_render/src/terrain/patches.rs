@@ -194,6 +194,10 @@ impl PatchDraws {
         &self.ground_changes
     }
 
+    pub(super) fn forget_ground_changes(&mut self) {
+        self.ground_changes.clear();
+    }
+
     pub(super) fn write(
         &mut self,
         queue: &crate::gpu_calls::Queue,

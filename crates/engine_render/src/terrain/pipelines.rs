@@ -189,12 +189,6 @@ impl TerrainPipelines {
     pub(crate) fn ensure_pipeline(
         &mut self,
         device: &wgpu::Device,
-        shader: &wgpu::ShaderModule,
-        (camera, empty, lights): (
-            &crate::pipelines::GroupLayout,
-            &crate::pipelines::GroupLayout,
-            Option<&crate::pipelines::GroupLayout>,
-        ),
         (targets, lit, holes): (Targets, bool, bool),
         canvas: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
@@ -202,14 +196,11 @@ impl TerrainPipelines {
         if self.pipelines.contains_key(&(targets, lit, holes)) {
             return;
         }
-        let Some(layout) = pipeline_layout(device, camera, &self.layout, empty, lights, lit) else {
-            return;
-        };
+        let layout = pipeline_layout(device, lit);
         let (vertex, fragment) = crate::entries::terrain(Some(targets), lit);
         let color_targets = targets.color_targets(canvas);
         let pipeline = geometry(
             device,
-            shader,
             &layout,
             (vertex, fragment, holes, Some(self.shading)),
             &color_targets,
@@ -217,38 +208,23 @@ impl TerrainPipelines {
             wgpu::FrontFace::Ccw,
         );
         self.pipelines.insert((targets, lit, holes), pipeline);
-        self.ensure_deferred(
-            device,
-            shader,
-            (camera, lights),
-            (targets, lit, holes),
-            depth,
-        );
+        self.ensure_deferred(device, (targets, lit, holes), depth);
     }
 
     fn ensure_deferred(
         &mut self,
         device: &wgpu::Device,
-        shader: &wgpu::ShaderModule,
-        (camera, lights): (
-            &crate::pipelines::GroupLayout,
-            Option<&crate::pipelines::GroupLayout>,
-        ),
         (targets, lit, holes): (Targets, bool, bool),
         depth: wgpu::TextureFormat,
     ) {
         if !self.deferred_ids.contains_key(&holes) {
-            let layout = crate::pipelines::pipeline_layout(
-                device,
-                &crate::pipeline_layouts::TERRAIN_PIPELINES,
-                &[camera, &self.layout],
-            );
+            let layout =
+                crate::pipelines::layout_of(device, &crate::pipeline_layouts::TERRAIN_PIPELINES);
             let ids = [Some(wgpu::ColorTargetState::from(
                 wgpu::TextureFormat::Rg32Uint,
             ))];
             let pipeline = geometry(
                 device,
-                shader,
                 &layout,
                 (meshes::vs_terrain, meshes::fs_terrain_ids, holes, None),
                 &ids,
@@ -267,30 +243,20 @@ impl TerrainPipelines {
         if self.resolves.contains_key(&(targets, lit)) {
             return;
         }
-        let groups = (camera, &self.layout, &self.resolve_layout);
-        let layout = if lit {
-            let Some(lights) = lights else {
-                return;
-            };
-            crate::pipelines::pipeline_layout(
-                device,
-                &crate::pipeline_layouts::LIT_TERRAIN_RESOLVE_PIPELINES,
-                &[groups.0, groups.1, groups.2, lights],
-            )
-        } else {
-            crate::pipelines::pipeline_layout(
-                device,
-                &crate::pipeline_layouts::TERRAIN_RESOLVE_PIPELINES,
-                &[groups.0, groups.1, groups.2],
-            )
-        };
+        let layout = crate::pipelines::layout_of(
+            device,
+            if lit {
+                &crate::pipeline_layouts::LIT_TERRAIN_RESOLVE_PIPELINES
+            } else {
+                &crate::pipeline_layouts::TERRAIN_RESOLVE_PIPELINES
+            },
+        );
         let color_targets = targets.color_targets(wgpu::TextureFormat::Bgra8Unorm);
         let pipeline = crate::pipelines::fullscreen(
             device,
             &crate::pipelines::Fullscreen {
                 label: "engine/terrain-resolve",
                 layout: &layout,
-                module: shader,
                 vertex: meshes::vs_fullscreen,
                 fragment,
                 constants: &self.shading.constants(),
@@ -310,12 +276,6 @@ impl TerrainPipelines {
     pub(crate) fn ensure_probe_pipeline(
         &mut self,
         device: &wgpu::Device,
-        shader: &wgpu::ShaderModule,
-        (camera, empty, lights): (
-            &crate::pipelines::GroupLayout,
-            &crate::pipelines::GroupLayout,
-            Option<&crate::pipelines::GroupLayout>,
-        ),
         (lit, holes): (bool, bool),
         format: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
@@ -323,13 +283,10 @@ impl TerrainPipelines {
         if self.probe_pipelines.contains_key(&(lit, holes)) {
             return;
         }
-        let Some(layout) = pipeline_layout(device, camera, &self.layout, empty, lights, lit) else {
-            return;
-        };
+        let layout = pipeline_layout(device, lit);
         let (vertex, fragment) = crate::entries::terrain(None, lit);
         let pipeline = geometry(
             device,
-            shader,
             &layout,
             (vertex, fragment, holes, Some(self.shading)),
             &[Some(wgpu::ColorTargetState::from(format))],
@@ -343,22 +300,13 @@ impl TerrainPipelines {
         if self.shadow.is_some() {
             return;
         }
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/terrain-shadow"),
-            source: wgpu::ShaderSource::Wgsl(crate::gpu_data::TERRAIN_SHADOW_SHADER.into()),
-        });
-        let view_layout = crate::pipelines::layout(device, &SHADOW_VIEW);
-        let layout = crate::pipelines::pipeline_layout(
-            device,
-            &crate::pipeline_layouts::TERRAIN_CASTER_PIPELINES,
-            &[&view_layout, &self.layout],
-        );
+        let layout =
+            crate::pipelines::layout_of(device, &crate::pipeline_layouts::TERRAIN_CASTER_PIPELINES);
         self.shadow = Some(crate::pipelines::geometry(
             device,
             &crate::pipelines::Geometry {
                 label: "engine/terrain-shadow",
                 layout: &layout,
-                module: &module,
                 vertex_constants: &[],
                 vertex: crate::entries::TERRAIN_SHADOW_VERTEX,
                 buffers: &[Some(patch_layout())],
@@ -380,32 +328,19 @@ impl TerrainPipelines {
     }
 }
 
-fn pipeline_layout(
-    device: &wgpu::Device,
-    camera: &crate::pipelines::GroupLayout,
-    terrain: &crate::pipelines::GroupLayout,
-    empty: &crate::pipelines::GroupLayout,
-    lights: Option<&crate::pipelines::GroupLayout>,
-    lit: bool,
-) -> Option<wgpu::PipelineLayout> {
-    Some(if lit {
-        crate::pipelines::pipeline_layout(
-            device,
-            &crate::pipeline_layouts::LIT_TERRAIN_PIPELINES,
-            &[camera, terrain, empty, lights?],
-        )
-    } else {
-        crate::pipelines::pipeline_layout(
-            device,
-            &crate::pipeline_layouts::TERRAIN_PIPELINES,
-            &[camera, terrain],
-        )
-    })
+fn pipeline_layout(device: &wgpu::Device, lit: bool) -> wgpu::PipelineLayout {
+    crate::pipelines::layout_of(
+        device,
+        if lit {
+            &crate::pipeline_layouts::LIT_TERRAIN_PIPELINES
+        } else {
+            &crate::pipeline_layouts::TERRAIN_PIPELINES
+        },
+    )
 }
 
 fn geometry(
     device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     (vertex, fragment, holes, shading): (
         crate::shaders::Entry,
@@ -429,7 +364,6 @@ fn geometry(
         &crate::pipelines::Geometry {
             label: "engine/terrain",
             layout,
-            module: shader,
             vertex_constants: &[],
             vertex,
             buffers: &[],
