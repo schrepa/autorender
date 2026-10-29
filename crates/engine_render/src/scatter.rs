@@ -1,15 +1,25 @@
 use std::cell::Cell;
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use crate::shaders::entry::{scatter_cull, scatter_snap};
 use engine_core::glam::{Mat4, Vec3};
+use engine_core::{MeshHandle, RenderStats};
 
 use crate::bindings::{RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP, SHADOW_POSES, TEMPORAL_POSES};
 use crate::buffers::{Growable, ReadbackRing};
 use crate::cached::Cached;
 use crate::gpu_data::{ColorData, GroundData, PoseData};
-use crate::render_features::{Encode, FeaturePass, RenderFeature};
-use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
+use crate::graph::{
+    FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
+};
+use crate::impostors::ImpostorRecord;
+use crate::occupancy::Cover;
+use crate::parts::{
+    Begin, BeginOut, Create, DrawAt, Encode, GpuPart, Hook, OpaqueSlot, PartDecl, PartEntry,
+    Prelude, Step, View,
+};
+use crate::renderer::scatter_draws::ScatterDraws;
 use crate::shadows::KeptRefresh;
 
 use crate::gpu_layouts::constants::CARD_VERTICES;
@@ -109,6 +119,18 @@ pub(crate) struct ScatterPass {
     terrains_generation: u64,
     left_out: LeftOut,
     pub(crate) resident: u32,
+    held: Held,
+}
+
+#[derive(Default)]
+struct Held {
+    draws: ScatterDraws,
+    meshes: (BTreeSet<MeshHandle>, u64),
+    prepared: bool,
+    moved: Vec<(Vec3, Vec3)>,
+    restyled: bool,
+    pass: Option<PassId>,
+    placed: Option<ResourceId>,
 }
 
 struct RegionsPlaceholder {
@@ -146,7 +168,7 @@ struct LeftOut {
 
 impl ScatterPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Scatter);
+        let _owner = crate::memory::owned(PART.decl.brick);
         let growable =
             |label, bytes| Growable::new(device, label, bytes, wgpu::BufferUsages::empty());
         let regions_placeholder = crate::targets::texture_2d(
@@ -233,6 +255,7 @@ impl ScatterPass {
                 readback: ReadbackRing::new("engine/scatter-readback"),
             },
             resident: 0,
+            held: Held::default(),
         }
     }
 
@@ -268,7 +291,6 @@ impl ScatterPass {
         groups: &[GroupLayout],
         counts: &[u32],
     ) {
-        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Scatter);
         let mut data = Vec::with_capacity(groups.len());
         self.args.template.clear();
         self.args.casters.clear();
@@ -329,7 +351,6 @@ impl ScatterPass {
         (poses, colors, records, grounds): (&[PoseData], &[ColorData], &[Record], &[GroundData]),
         dirty: Option<std::ops::Range<u32>>,
     ) -> Option<std::ops::Range<u32>> {
-        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Scatter);
         let room = [
             (&self.poses, size_of::<PoseData>()),
             (&self.colors, size_of::<ColorData>()),
@@ -405,10 +426,9 @@ impl ScatterPass {
     }
 
     pub(crate) fn warm(&mut self, device: &wgpu::Device) {
-        self.pipeline
-            .get_or_insert_with(|| pipeline(device, &self.layout));
+        self.pipeline.get_or_insert_with(|| pipeline(device));
         self.snap_pipeline
-            .get_or_insert_with(|| snap_pipeline(device, &self.snap_layout));
+            .get_or_insert_with(|| snap_pipeline(device));
     }
 
     pub(crate) fn prepare(
@@ -419,7 +439,6 @@ impl ScatterPass {
         (pixel_error, height, impostors, fade): (Option<f32>, f32, Option<f32>, f32),
         regions: &[(usize, KeptRefresh)],
     ) -> bool {
-        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Scatter);
         self.frame_views.maps.clear();
         if self.resident == 0 {
             return false;
@@ -479,8 +498,7 @@ impl ScatterPass {
             });
         }
         queue.write_buffer(&self.draws, 0, bytemuck::cast_slice(&self.args.lists));
-        self.pipeline
-            .get_or_insert_with(|| pipeline(device, &self.layout));
+        self.pipeline.get_or_insert_with(|| pipeline(device));
         if self.cull_group.stale(&self.generation) {
             let group = crate::pipelines::group(
                 device,
@@ -558,7 +576,6 @@ impl ScatterPass {
         sources: Option<SnapSources<'_>>,
         eye: Vec3,
     ) {
-        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Scatter);
         self.snapping = false;
         let Some(sources) = sources.filter(|sources| !sources.terrains.is_empty()) else {
             return;
@@ -578,7 +595,7 @@ impl ScatterPass {
         };
         queue.write_buffer(&self.snap, 0, bytemuck::bytes_of(&uniform));
         self.snap_pipeline
-            .get_or_insert_with(|| snap_pipeline(device, &self.snap_layout));
+            .get_or_insert_with(|| snap_pipeline(device));
         let key = (
             self.generation,
             self.terrains_generation,
@@ -743,72 +760,153 @@ impl ScatterPass {
     }
 }
 
-fn snap_pipeline(
-    device: &wgpu::Device,
-    layout: &crate::pipelines::GroupLayout,
-) -> wgpu::ComputePipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("engine/scatter-snap.wgsl"),
-        source: wgpu::ShaderSource::Wgsl(crate::gpu_data::SCATTER_SNAP_SHADER.into()),
-    });
-    let pipeline_layout = crate::pipelines::pipeline_layout(
+fn snap_pipeline(device: &wgpu::Device) -> wgpu::ComputePipeline {
+    let pipeline_layout = crate::pipelines::layout_of(
         device,
         &crate::pipeline_layouts::SCATTER_SNAP_PIPELINES,
-        &[layout],
     );
-    crate::pipelines::compute_entry(
-        device,
-        &pipeline_layout,
-        &module,
-        scatter_snap::snap_scatter,
-    )
+    crate::pipelines::compute_entry(device, &pipeline_layout, scatter_snap::snap_scatter)
 }
 
-fn pipeline(
-    device: &wgpu::Device,
-    layout: &crate::pipelines::GroupLayout,
-) -> wgpu::ComputePipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("engine/scatter-cull.wgsl"),
-        source: wgpu::ShaderSource::Wgsl(crate::gpu_data::SCATTER_CULL_SHADER.into()),
-    });
-    let pipeline_layout = crate::pipelines::pipeline_layout(
+fn pipeline(device: &wgpu::Device) -> wgpu::ComputePipeline {
+    let pipeline_layout = crate::pipelines::layout_of(
         device,
         &crate::pipeline_layouts::SCATTER_CULL_PIPELINES,
-        &[layout],
     );
-    crate::pipelines::compute_entry(
-        device,
-        &pipeline_layout,
-        &module,
-        scatter_cull::cull_scatter,
-    )
+    crate::pipelines::compute_entry(device, &pipeline_layout, scatter_cull::cull_scatter)
 }
 
-pub(crate) struct ScatterFrame;
+pub(crate) static PART: PartEntry = PartEntry {
+    decl: PartDecl {
+        name: "scatter",
+        brick: "terrain",
+        passes: &[PassDecl {
+            name: "scatter",
+            stage: Stage::Prepare,
+        }],
+        resources: &[ResourceDecl {
+            name: "placed",
+            lifetime: Lifetime::Frame,
+        }],
+        hooks: &[
+            Hook::Opaque(OpaqueSlot::Prepass),
+            Hook::Opaque(OpaqueSlot::Objects),
+            Hook::ShadowCasters,
+        ],
+        contributes: &[],
+        effects: &[],
+        labels: &[],
+        lazy: false,
+    },
+    create,
+};
 
-impl RenderFeature for ScatterPass {
-    type Frame = ScatterFrame;
-    type Stats = ();
+fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
+    Box::new(ScatterPass::new(&cx.core.device))
+}
 
-    fn declare(_frame: &ScatterFrame, _shape: &FrameShape, graph: &mut RenderGraph) {
-        graph
-            .add(Pass::Feature(FeaturePass::Scatter))
-            .write(Resource::Placed);
+impl ScatterPass {
+    pub(crate) fn placed_meshes(&self) -> &BTreeSet<MeshHandle> {
+        &self.held.meshes.0
+    }
+
+    pub(crate) fn placed_generation(&self) -> u64 {
+        self.held.meshes.1
+    }
+
+    pub(crate) fn impostors(&self) -> &[ImpostorRecord] {
+        self.held.draws.impostors()
+    }
+
+    pub(crate) fn placements(&self) -> crate::world_trace::Placements<'_> {
+        self.held.draws.placements()
+    }
+
+    pub(crate) fn covers(&self) -> &[Cover] {
+        self.held.draws.covers()
+    }
+
+    pub(crate) fn moved(&self) -> &[(Vec3, Vec3)] {
+        &self.held.moved
+    }
+
+    pub(crate) fn restyled(&self) -> bool {
+        self.held.restyled
+    }
+}
+
+impl GpuPart for ScatterPass {
+    fn install(&mut self, table: &GraphTable) {
+        self.held.pass = table.pass_named("scatter");
+        self.held.placed = table.resource("placed");
+    }
+
+    fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
+        let placed: BTreeSet<MeshHandle> = engine_terrain::RenderTerrains::of(cx.snapshot)
+            .terrains
+            .iter()
+            .flat_map(|terrain| terrain.assets.iter().flatten())
+            .flat_map(|asset| asset.meshes().map(|mesh| mesh.handle))
+            .collect();
+        if placed != self.held.meshes.0 {
+            self.held.meshes = (placed, self.held.meshes.1 + 1);
+        }
+    }
+
+    fn prepare(&mut self, cx: &mut Step<'_>, prelude: &mut Prelude) {
+        self.held.restyled = self.held.draws.prepare_impostors(cx, prelude);
+    }
+
+    fn prepare_draws(&mut self, cx: &mut Step<'_>, _encoder: &mut wgpu::CommandEncoder) {
+        let mut draws = std::mem::take(&mut self.held.draws);
+        let mut moved = std::mem::take(&mut self.held.moved);
+        moved.clear();
+        self.held.prepared = draws.prepare(self, cx, &mut moved);
+        self.held.draws = draws;
+        self.held.moved = moved;
+    }
+
+    fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
+        if let (true, Some(pass)) = (self.held.prepared, self.held.pass) {
+            let _ = graph.add(cx.table, pass).write(self.held.placed);
+        }
     }
 
     fn encode(
-        &self,
-        _frame: &ScatterFrame,
-        _node: &Node,
-        encode: &Encode<'_>,
+        &mut self,
+        _pass: usize,
+        cx: &mut Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        self.encode_culling(encode.device, encoder, encode.profiler);
+        self.encode_culling(&cx.core.device, encoder, &cx.core.profiler);
         0
     }
 
-    fn after_submit(&mut self, _frame: Option<&ScatterFrame>) {
+    fn draw(&self, at: DrawAt<'_>, cx: &View<'_>, pass: &mut wgpu::RenderPass<'_>) -> u32 {
+        if !self.held.prepared {
+            return 0;
+        }
+        let draws = &self.held.draws;
+        match at {
+            DrawAt::Opaque {
+                slot: OpaqueSlot::Prepass,
+                phase: 0,
+            } => draws.draw(self, cx, pass, true),
+            DrawAt::Opaque {
+                slot: OpaqueSlot::Objects,
+                ..
+            } => draws.draw(self, cx, pass, false),
+            DrawAt::ShadowCasters {
+                map,
+                casters,
+                cards,
+            } => draws.draw_shadow(self, cx, pass, (map, casters, cards)),
+            DrawAt::Opaque { .. } | DrawAt::ProbeFace { .. } => 0,
+        }
+    }
+
+    fn after_submit(&mut self) {
+        self.held.prepared = false;
         let entries = Rc::clone(&self.left_out.entries);
         self.left_out
             .readback
@@ -819,10 +917,10 @@ impl RenderFeature for ScatterPass {
         ScatterPass::capacity_bytes(self)
     }
 
-    fn stats(
-        _this: Option<&Self>,
-        _frame: Option<&ScatterFrame>,
-        _snapshot: &engine_core::RenderSnapshot,
-    ) {
+    fn stats(&self, cx: &View<'_>, stats: &mut RenderStats) {
+        stats.terrain.placed_objects = self.resident;
+        stats.terrain.placed_far_objects = self.held.draws.far_objects();
+        stats.terrain.placed_impostors = ScatterDraws::placed_impostors(cx.core);
+        stats.terrain.dropped_placed_objects = self.left_out();
     }
 }

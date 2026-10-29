@@ -60,7 +60,7 @@ mod probe;
 mod probe_captures;
 mod queries;
 mod records;
-mod scatter_draws;
+pub(crate) mod scatter_draws;
 mod scatter_pool;
 mod startup;
 mod terrain_draws;

@@ -21,10 +21,11 @@ use crate::gpu_layouts::constants::IMPOSTOR_KINDS as KINDS;
 use crate::gpu_layouts::constants::IMPOSTOR_MASKED as MASKED;
 use crate::gpu_layouts::constants::VARIANT_FOLIAGE;
 pub(crate) use crate::gpu_layouts::impostors::ImpostorRecord;
+use crate::graph::Targets;
 use crate::mesh_arena::MeshDraw;
 use crate::mipmaps::MipGenerator;
+use crate::parts::{Prelude, PreludeStage};
 use crate::scene_shading::SceneShading;
-use crate::targets::Targets;
 pub(crate) use content::Contents;
 
 const IMPOSTOR_RECORD: &str = "impostor";
@@ -272,15 +273,26 @@ fn layer_limit(device: &wgpu::Device, budget: Option<u32>) -> u32 {
     most_layers(device).min(budget.unwrap_or(u32::MAX))
 }
 
-fn prelude<'e>(
-    device: &wgpu::Device,
-    encoder: &'e mut Option<wgpu::CommandEncoder>,
-) -> &'e mut wgpu::CommandEncoder {
-    encoder.get_or_insert_with(|| {
-        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("engine/texture-mips"),
+const MIPS_LABEL: &str = "engine/texture-mips";
+
+pub(crate) trait MipEncoder {
+    fn mips(&mut self, device: &wgpu::Device) -> &mut wgpu::CommandEncoder;
+}
+
+impl MipEncoder for Option<wgpu::CommandEncoder> {
+    fn mips(&mut self, device: &wgpu::Device) -> &mut wgpu::CommandEncoder {
+        self.get_or_insert_with(|| {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some(MIPS_LABEL),
+            })
         })
-    })
+    }
+}
+
+impl MipEncoder for Prelude {
+    fn mips(&mut self, device: &wgpu::Device) -> &mut wgpu::CommandEncoder {
+        self.encoder(device, PreludeStage::Uploads, "pre_mips", MIPS_LABEL)
+    }
 }
 
 pub(crate) type ImpostorKey = (MeshHandle, Option<MaterialHandle>);
@@ -338,9 +350,8 @@ pub(crate) struct BakePart<'a> {
 pub(crate) struct BakeGpu<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a crate::gpu_calls::Queue,
-    pub encoder: &'a mut Option<wgpu::CommandEncoder>,
+    pub encoder: &'a mut dyn MipEncoder,
     pub mips: &'a MipGenerator,
-    pub shader: &'a wgpu::ShaderModule,
     pub pipelines: &'a mut ImpostorPipelines,
 }
 
@@ -356,16 +367,11 @@ pub(crate) struct ImpostorPipelines {
 }
 
 impl ImpostorPipelines {
-    pub(crate) fn new(
-        device: &wgpu::Device,
-        material_layout: &crate::pipelines::GroupLayout,
-        empty_layout: &crate::pipelines::GroupLayout,
-    ) -> Self {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
         let bake_layout = crate::pipelines::layout(device, &IMPOSTOR_BAKE);
-        let bake_pipeline_layout = crate::pipelines::pipeline_layout(
+        let bake_pipeline_layout = crate::pipelines::layout_of(
             device,
             &crate::pipeline_layouts::IMPOSTOR_BAKE_PIPELINES,
-            &[empty_layout, material_layout, &bake_layout],
         );
         let draw_layout = crate::pipelines::layout(device, &IMPOSTOR_DRAW);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -668,7 +674,7 @@ impl ImpostorAtlas {
     fn layer(
         &mut self,
         device: &wgpu::Device,
-        encoder: &mut Option<wgpu::CommandEncoder>,
+        encoder: &mut dyn MipEncoder,
         budget: Option<u32>,
     ) -> Option<u32> {
         if self.layers.live() >= layer_limit(device, budget) {
@@ -712,7 +718,7 @@ impl ImpostorAtlas {
     fn ensure_layers(
         &mut self,
         device: &wgpu::Device,
-        encoder: &mut Option<wgpu::CommandEncoder>,
+        encoder: &mut dyn MipEncoder,
         layers: u32,
     ) {
         if self
@@ -745,7 +751,7 @@ impl ImpostorAtlas {
             },
         );
         if let Some(old) = &self.arrays {
-            let encoder = prelude(device, encoder);
+            let encoder = encoder.mips(device);
             for kind in 0..KINDS {
                 for level in 0..levels {
                     let size = size >> level;
@@ -871,7 +877,6 @@ const CARD_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
 
 pub(crate) fn draw_pipeline(
     device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     (targets, lit): (Targets, bool),
     shading: SceneShading,
@@ -895,7 +900,6 @@ pub(crate) fn draw_pipeline(
         &crate::pipelines::Geometry {
             label: "engine/impostors",
             layout,
-            module: shader,
             vertex_constants: &[],
             vertex,
             buffers: &buffers,

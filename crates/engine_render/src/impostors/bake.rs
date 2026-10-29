@@ -33,15 +33,14 @@ impl ImpostorAtlas {
             queue: _,
             encoder,
             mips,
-            shader,
             pipelines,
         } = gpu;
-        let encoder = prelude(device, encoder);
+        let encoder = encoder.mips(device);
         let shape = self.shape;
         let targets = self
             .targets
             .get_or_insert_with(|| bake_targets(device, shape));
-        draw_layer(device, encoder, shader, pipelines, targets, source, shape);
+        draw_layer(device, encoder, pipelines, targets, source, shape);
         for texture in &targets.layer {
             mips.record(device, encoder, texture);
         }
@@ -54,7 +53,6 @@ type BakeDraw<'a> = (&'a MeshDraw<'a>, bool, &'a wgpu::BindGroup, Variant);
 fn draw_layer(
     device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
-    shader: &wgpu::ShaderModule,
     pipelines: &mut ImpostorPipelines,
     targets: &BakeTargets,
     source: &BakeSource<'_>,
@@ -82,11 +80,11 @@ fn draw_layer(
         pipelines
             .bake_pipelines
             .entry(variant)
-            .or_insert_with(|| bake_pipeline(device, shader, layout, variant, false));
+            .or_insert_with(|| bake_pipeline(device, layout, variant, false));
         pipelines
             .shade_pipelines
             .entry(variant)
-            .or_insert_with(|| bake_pipeline(device, shader, layout, variant, true));
+            .or_insert_with(|| bake_pipeline(device, layout, variant, true));
     }
     let no_shade = pipelines
         .no_shade
@@ -394,7 +392,6 @@ fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
 
 fn bake_pipeline(
     device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     variant: Variant,
     shade: bool,
@@ -418,7 +415,6 @@ fn bake_pipeline(
         &crate::pipelines::Geometry {
             label: "engine/impostor-bake",
             layout,
-            module: shader,
             vertex,
             vertex_constants: &[],
             buffers: &buffers,
