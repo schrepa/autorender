@@ -7,7 +7,7 @@ pub fn coverage(
     engine_checks::coverage::coverage(
         &mut crate::bricks::standard_engine(),
         development,
-        &crate::smoke::scripts(root)?,
+        &engine_checks::coverage::smokes(root)?,
     )
 }
 

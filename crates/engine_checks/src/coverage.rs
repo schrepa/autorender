@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use engine::Engine;
 use engine::bricks::BrickRegistry;
@@ -109,10 +110,7 @@ pub fn check(coverage: &str) -> Result<(), String> {
     if unchecked.is_empty() {
         return Ok(());
     }
-    Err(format!(
-        "no smoke (web/scripts/*-smoke.mjs) checks {}: add one that does",
-        unchecked.join(", ")
-    ))
+    Err(format!("unchecked: {}", unchecked.join(", ")))
 }
 
 #[derive(Debug, Default)]
@@ -124,325 +122,357 @@ pub struct Claims {
 
 impl Claims {
     pub fn of(source: &str) -> Self {
-        let code: Vec<char> = stripped(source, true).chars().collect();
-        let bare: Vec<char> = stripped(source, false).chars().collect();
-        assert_eq!(code.len(), bare.len(), "strippings keep positions");
+        let tokens = tokens(source);
         let mut claims = Self::default();
-        let mut open: Option<(usize, char)> = None;
-        let mut literals: Vec<(usize, String, Option<&'static str>)> = Vec::new();
-        for (at, &c) in bare.iter().enumerate() {
-            if c != '"' && c != '\'' {
-                continue;
-            }
-            match open {
-                Some((start, quote)) if quote == c => {
-                    open = None;
-                    let value: String = code[start + 1..at].iter().collect();
-                    let field = field_before(&bare, start);
-                    let named = named_after(&bare, &literals, start, field);
-                    if matches!(field, Some("op" | "verb")) || first_argument(&bare, start) || named
-                    {
+        for (at, token) in tokens.iter().enumerate() {
+            let before = |back: usize| at.checked_sub(back).and_then(|at| tokens.get(at));
+            let after = |ahead: usize| tokens.get(at + ahead);
+            match token {
+                Token::Text(value) => {
+                    let keyed = after(1) == Some(&Token::Mark(':'))
+                        && after(2) != Some(&Token::Mark(':'));
+                    let indexed = before(1) == Some(&Token::Mark('['))
+                        && after(1) == Some(&Token::Mark(']'));
+                    if keyed || indexed {
+                        claims.properties.insert(value.clone());
+                    }
+                    let field = match (before(2), before(1)) {
+                        (Some(Token::Text(field)), Some(Token::Mark(':'))) => Some(field.as_str()),
+                        _ => None,
+                    };
+                    if matches!(field, Some("name" | "op" | "verb")) {
                         claims.ops.insert(value.clone());
                     }
-                    literals.push((at, value.clone(), field));
-                    let inspecting = enclosing_call(&bare, start)
-                        .is_some_and(|name| name.starts_with("inspect"));
-                    if field == Some("component") || inspecting {
-                        claims.inspectors.insert(value);
+                    if field == Some("component") {
+                        claims.inspectors.insert(value.clone());
+                    }
+                    match enclosing_call(&tokens, at) {
+                        Some(call) if call == "request" && before(1) == Some(&Token::Mark('(')) => {
+                            claims.ops.insert(value.clone());
+                        }
+                        Some(call) if call.starts_with("inspect") => {
+                            claims.inspectors.insert(value.clone());
+                        }
+                        Some(call) if call.starts_with("query") || call.starts_with("control") => {
+                            claims.ops.insert(value.clone());
+                        }
+                        Some(_) | None => {}
                     }
                 }
-                Some(_) => {}
-                None => open = Some((at, c)),
+                Token::Name(name) => {
+                    let member = before(1) == Some(&Token::Mark('.'));
+                    let field = after(1) == Some(&Token::Mark(':'))
+                        && after(2) != Some(&Token::Mark(':'))
+                        && before(1) != Some(&Token::Mark(':'));
+                    if (member || field) && !name.starts_with(|c: char| c.is_ascii_digit()) {
+                        claims.properties.insert(name.clone());
+                    }
+                }
+                Token::Mark(_) => {}
             }
-        }
-        let mut at = 0;
-        while at < bare.len() {
-            if !is_name(bare[at]) {
-                at += 1;
-                continue;
-            }
-            let end = (at..bare.len())
-                .find(|&end| !is_name(bare[end]))
-                .unwrap_or(bare.len());
-            let before = previous(&bare, at).map(|(_, c)| c);
-            let after = (end..bare.len()).find(|&next| !bare[next].is_whitespace());
-            let after_char = after.map(|next| bare[next]);
-            let key =
-                after_char == Some(':') && after.and_then(|next| bare.get(next + 1)) != Some(&':');
-            let member = before == Some('.');
-            let shorthand =
-                matches!(before, Some('{' | ',')) && matches!(after_char, Some('}' | ','));
-            if (key || member || shorthand) && !bare[at].is_ascii_digit() {
-                claims.properties.insert(bare[at..end].iter().collect());
-            }
-            at = end;
         }
         claims
     }
 }
 
-fn is_name(c: char) -> bool {
-    c.is_alphanumeric() || c == '_' || c == '$'
-}
-
-fn previous(code: &[char], at: usize) -> Option<(usize, char)> {
-    (0..at)
-        .rev()
-        .find(|&before| !code[before].is_whitespace())
-        .map(|before| (before, code[before]))
-}
-
-fn name_before(code: &[char], end: usize) -> Option<(usize, String)> {
-    let (last, c) = previous(code, end)?;
-    if !is_name(c) {
-        return None;
-    }
-    let start = (0..=last)
-        .rev()
-        .take_while(|&at| is_name(code[at]))
-        .last()?;
-    Some((start, code[start..=last].iter().collect()))
-}
-
-fn field_before(code: &[char], at: usize) -> Option<&'static str> {
-    let (colon, c) = previous(code, at)?;
-    if c != ':' {
-        return None;
-    }
-    let (_, name) = name_before(code, colon)?;
-    ["op", "verb", "name", "component"]
+pub fn smokes(root: &Path) -> Result<Vec<(String, String)>, String> {
+    let files: Vec<Source> = crate::files::listed(root, &["crates", "examples"])?
         .into_iter()
-        .find(|field| *field == name)
+        .filter(|path| path.ends_with(".rs") && crate::files::ours(path))
+        .filter_map(|path| {
+            let (krate, _) = path.split_once("/src/")?;
+            let krate = krate.to_owned();
+            let text = std::fs::read_to_string(root.join(&path)).ok()?;
+            let tokens = tokens(&text);
+            Some(Source {
+                path,
+                krate,
+                text,
+                tokens,
+            })
+        })
+        .collect();
+    let mut smokes: Vec<(String, String)> = Vec::new();
+    for file in &files {
+        for (name, run) in registrations(&file.tokens) {
+            if smokes.iter().any(|(known, _)| *known == name) {
+                continue;
+            }
+            let Some((function, module)) = run.split_last() else {
+                continue;
+            };
+            let defining: Vec<&Source> = files
+                .iter()
+                .filter(|other| other.krate == file.krate && defines(&other.tokens, function))
+                .collect();
+            let in_module: Vec<&Source> = defining
+                .iter()
+                .copied()
+                .filter(|other| module.last().is_some_and(|module| other.is_module(module)))
+                .collect();
+            let chosen = if in_module.is_empty() {
+                defining
+            } else {
+                in_module
+            };
+            if chosen.is_empty() {
+                continue;
+            }
+            let source = chosen
+                .iter()
+                .map(|other| other.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            smokes.push((name, source));
+        }
+    }
+    smokes.sort();
+    Ok(smokes)
 }
 
-fn named_after(
-    code: &[char],
-    literals: &[(usize, String, Option<&'static str>)],
-    start: usize,
-    field: Option<&'static str>,
-) -> bool {
-    let (anchor, after_verb) = match field {
-        Some("name") => {
-            let Some((colon, _)) = previous(code, start) else {
-                return false;
-            };
-            let Some((key, _)) = name_before(code, colon) else {
-                return false;
-            };
-            (key, true)
-        }
-        Some(_) => return false,
-        None => (start, false),
-    };
-    let Some((comma, ',')) = previous(code, anchor) else {
-        return false;
-    };
-    let Some((end, quote)) = previous(code, comma) else {
-        return false;
-    };
-    if quote != '"' && quote != '\'' {
-        return false;
+struct Source {
+    path: String,
+    krate: String,
+    text: String,
+    tokens: Vec<Token>,
+}
+
+impl Source {
+    fn is_module(&self, module: &str) -> bool {
+        let stem = self.path.strip_suffix(".rs").unwrap_or(&self.path);
+        stem.ends_with(&format!("/{module}")) || stem.ends_with(&format!("/{module}/mod"))
     }
-    literals.iter().any(|(closed, value, field)| {
-        *closed == end
-            && ["query", "control"].contains(&value.as_str())
-            && (!after_verb || *field == Some("verb"))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Token {
+    Text(String),
+    Name(String),
+    Mark(char),
+}
+
+fn registrations(tokens: &[Token]) -> Vec<(String, Vec<String>)> {
+    let mut found = Vec::new();
+    for (at, token) in tokens.iter().enumerate() {
+        match token {
+            Token::Mark('(') => {
+                let (Some(Token::Text(name)), Some(Token::Mark(',')), Some(Token::Name(gpu))) =
+                    (tokens.get(at + 1), tokens.get(at + 2), tokens.get(at + 3))
+                else {
+                    continue;
+                };
+                if !["true", "false"].contains(&gpu.as_str())
+                    || tokens.get(at + 4) != Some(&Token::Mark(','))
+                {
+                    continue;
+                }
+                let run = path_at(tokens, at + 5);
+                if !run.is_empty() {
+                    found.push((name.clone(), run));
+                }
+            }
+            Token::Name(name) if name == "SmokeEntry" => {
+                if tokens.get(at + 1) != Some(&Token::Mark('{')) {
+                    continue;
+                }
+                let end = closing(tokens, at + 1);
+                let fields = &tokens[at + 2..end];
+                let named = fields.windows(3).find_map(|window| match window {
+                    [Token::Name(field), Token::Mark(':'), Token::Text(value)] if field == "name" => {
+                        Some(value.clone())
+                    }
+                    _ => None,
+                });
+                let run = fields.windows(3).enumerate().find_map(|(index, window)| {
+                    match window {
+                        [Token::Name(field), Token::Mark(':'), Token::Name(_)] if field == "run" => {
+                            Some(path_at(fields, index + 2))
+                        }
+                        _ => None,
+                    }
+                });
+                if let (Some(name), Some(run)) = (named, run) {
+                    found.push((name, run));
+                }
+            }
+            Token::Text(_) | Token::Name(_) | Token::Mark(_) => {}
+        }
+    }
+    found
+}
+
+fn path_at(tokens: &[Token], mut at: usize) -> Vec<String> {
+    let mut path = Vec::new();
+    while let Some(Token::Name(segment)) = tokens.get(at) {
+        path.push(segment.clone());
+        if tokens.get(at + 1) == Some(&Token::Mark(':'))
+            && tokens.get(at + 2) == Some(&Token::Mark(':'))
+        {
+            at += 3;
+        } else {
+            break;
+        }
+    }
+    path
+}
+
+fn closing(tokens: &[Token], open: usize) -> usize {
+    let mut depth = 0usize;
+    for (at, token) in tokens.iter().enumerate().skip(open) {
+        match token {
+            Token::Mark('(' | '[' | '{') => depth += 1,
+            Token::Mark(')' | ']' | '}') => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return at;
+                }
+            }
+            Token::Text(_) | Token::Name(_) | Token::Mark(_) => {}
+        }
+    }
+    tokens.len()
+}
+
+fn defines(tokens: &[Token], function: &str) -> bool {
+    tokens.windows(3).enumerate().any(|(at, window)| match window {
+        [Token::Name(keyword), Token::Name(name), Token::Mark('(' | '<')]
+            if keyword == "fn" && name == function =>
+        {
+            let end = closing(tokens, at + 2);
+            tokens[at + 2..end]
+                .iter()
+                .any(|token| matches!(token, Token::Name(name) if name == "SmokeSession"))
+        }
+        _ => false,
     })
 }
 
-fn first_argument(code: &[char], at: usize) -> bool {
-    match previous(code, at) {
-        Some((paren, '(')) => plain_call(code, paren).is_some(),
-        _ => false,
-    }
-}
-
-fn plain_call(code: &[char], paren: usize) -> Option<String> {
-    const KEYWORDS: [&str; 9] = [
-        "if", "while", "for", "switch", "return", "catch", "function", "typeof", "await",
-    ];
-    let (start, name) = name_before(code, paren)?;
-    let method = previous(code, start).is_some_and(|(_, c)| c == '.');
-    (!method && !KEYWORDS.contains(&name.as_str())).then_some(name)
-}
-
-fn enclosing_call(code: &[char], at: usize) -> Option<String> {
+fn enclosing_call(tokens: &[Token], at: usize) -> Option<&str> {
+    const KEYWORDS: [&str; 6] = ["if", "while", "for", "match", "return", "in"];
     let mut depth = 0usize;
     for before in (0..at).rev() {
-        match code[before] {
-            ')' | ']' | '}' => depth += 1,
-            '[' | '{' => {
+        match &tokens[before] {
+            Token::Mark(')' | ']' | '}') => depth += 1,
+            Token::Mark('[' | '{') => {
                 if depth == 0 {
                     return None;
                 }
                 depth -= 1;
             }
-            '(' => {
+            Token::Mark('(') => {
                 if depth == 0 {
-                    return plain_call(code, before);
+                    return match before.checked_sub(1).and_then(|at| tokens.get(at)) {
+                        Some(Token::Name(name)) if !KEYWORDS.contains(&name.as_str()) => {
+                            Some(name.as_str())
+                        }
+                        Some(_) | None => None,
+                    };
                 }
                 depth -= 1;
             }
-            _ => {}
+            Token::Text(_) | Token::Name(_) | Token::Mark(_) => {}
         }
     }
     None
 }
 
-fn stripped(source: &str, keep: bool) -> String {
+fn tokens(source: &str) -> Vec<Token> {
     let chars: Vec<char> = source.chars().collect();
-    let mut out = String::with_capacity(source.len());
-    let text = |c: char| if keep { c } else { ' ' };
-    let mut holes: Vec<usize> = Vec::new();
-    let mut depth = 0usize;
+    let mut tokens = Vec::new();
     let mut at = 0;
-    let mut template = false;
-    while at < chars.len() {
-        let c = chars[at];
+    while let Some(&c) = chars.get(at) {
         let next = chars.get(at + 1).copied();
-        if template {
+        if c.is_whitespace() {
             at += 1;
-            match c {
-                '\\' => {
-                    out.push(text(c));
-                    if let Some(escaped) = next {
-                        out.push(text(escaped));
-                        at += 1;
-                    }
-                }
-                '`' => {
-                    out.push(c);
-                    template = false;
-                }
-                '$' if next == Some('{') => {
-                    out.push_str("${");
-                    at += 1;
-                    holes.push(depth);
-                    depth += 1;
-                    template = false;
-                }
-                _ => out.push(text(c)),
-            }
-            continue;
-        }
-        match c {
-            '/' if next == Some('/') => {
-                while at < chars.len() && chars[at] != '\n' {
-                    at += 1;
-                }
-                out.push(' ');
-            }
-            '/' if next == Some('*') => {
-                at += 2;
-                while at < chars.len() && !(chars[at] == '*' && chars.get(at + 1) == Some(&'/')) {
-                    at += 1;
-                }
-                at += 2;
-                out.push(' ');
-            }
-            '"' | '\'' => {
-                out.push(c);
-                at += 1;
-                while at < chars.len() && chars[at] != c && chars[at] != '\n' {
-                    if chars[at] == '\\' && at + 1 < chars.len() {
-                        out.push(text(chars[at]));
-                        at += 1;
-                    }
-                    out.push(text(chars[at]));
-                    at += 1;
-                }
-                if at < chars.len() && chars[at] == c {
-                    out.push(c);
-                    at += 1;
-                }
-            }
-            '`' => {
-                out.push(c);
-                at += 1;
-                template = true;
-            }
-            '/' if regex_starts(&out) => {
-                out.push(c);
-                at += 1;
-                let mut class = false;
-                while at < chars.len() && chars[at] != '\n' {
-                    let inside = chars[at];
-                    at += 1;
-                    match inside {
-                        '\\' if at < chars.len() => {
-                            out.push(text(inside));
-                            out.push(text(chars[at]));
-                            at += 1;
-                        }
-                        '/' if !class => {
-                            out.push(inside);
-                            break;
-                        }
-                        _ => {
-                            class = match inside {
-                                '[' => true,
-                                ']' => false,
-                                _ => class,
-                            };
-                            out.push(text(inside));
-                        }
-                    }
-                }
-            }
-            '{' => {
-                depth += 1;
-                out.push(c);
+        } else if c == '/' && next == Some('/') {
+            while chars.get(at).is_some_and(|&c| c != '\n') {
                 at += 1;
             }
-            '}' => {
-                depth = depth.saturating_sub(1);
-                out.push(c);
+        } else if c == '/' && next == Some('*') {
+            at = comment_end(&chars, at);
+        } else if let Some((text, end)) = literal(&chars, at) {
+            tokens.push(Token::Text(text));
+            at = end;
+        } else if c == '\'' {
+            at = quoted_end(&chars, at);
+        } else if c.is_alphanumeric() || c == '_' {
+            let start = at;
+            while chars.get(at).is_some_and(|&c| c.is_alphanumeric() || c == '_') {
                 at += 1;
-                if holes.last() == Some(&depth) {
-                    holes.pop();
-                    template = true;
-                }
             }
-            _ => {
-                out.push(c);
-                at += 1;
-            }
+            tokens.push(Token::Name(chars[start..at].iter().collect()));
+        } else {
+            tokens.push(Token::Mark(c));
+            at += 1;
         }
     }
-    out
+    tokens
 }
 
-fn regex_starts(before: &str) -> bool {
-    let trimmed = before.trim_end();
-    let Some(last) = trimmed.chars().next_back() else {
-        return true;
-    };
-    if last.is_alphanumeric() || last == '_' || last == '$' {
-        let word: String = trimmed
-            .chars()
-            .rev()
-            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect();
-        return matches!(
-            word.as_str(),
-            "return"
-                | "typeof"
-                | "case"
-                | "of"
-                | "in"
-                | "void"
-                | "yield"
-                | "await"
-                | "delete"
-                | "throw"
-                | "new"
-                | "else"
-                | "do"
-                | "instanceof"
-        );
+fn comment_end(chars: &[char], start: usize) -> usize {
+    let mut depth = 0usize;
+    let mut at = start;
+    while at < chars.len() {
+        match (chars[at], chars.get(at + 1).copied()) {
+            ('/', Some('*')) => {
+                depth += 1;
+                at += 2;
+            }
+            ('*', Some('/')) => {
+                depth = depth.saturating_sub(1);
+                at += 2;
+                if depth == 0 {
+                    return at;
+                }
+            }
+            _ => at += 1,
+        }
     }
-    !matches!(last, ')' | ']' | '}' | '"' | '\'' | '`')
+    at
+}
+
+fn literal(chars: &[char], start: usize) -> Option<(String, usize)> {
+    let mut at = start;
+    if matches!(chars.get(at), Some('b' | 'c')) {
+        at += 1;
+    }
+    let raw = chars.get(at) == Some(&'r');
+    if raw {
+        at += 1;
+    }
+    let hashes = chars[at.min(chars.len())..]
+        .iter()
+        .take_while(|&&c| c == '#')
+        .count();
+    if hashes > 0 && !raw {
+        return None;
+    }
+    at += hashes;
+    if chars.get(at) != Some(&'"') {
+        return None;
+    }
+    at += 1;
+    let open = at;
+    while at < chars.len() {
+        match chars[at] {
+            '\\' if !raw => at += 2,
+            '"' if chars[at + 1..].iter().take(hashes).filter(|&&c| c == '#').count() == hashes => {
+                let text = chars[open..at].iter().collect();
+                return Some((text, at + 1 + hashes));
+            }
+            _ => at += 1,
+        }
+    }
+    Some((chars[open.min(chars.len())..].iter().collect(), chars.len()))
+}
+
+fn quoted_end(chars: &[char], start: usize) -> usize {
+    match (chars.get(start + 1), chars.get(start + 2)) {
+        (Some('\\'), _) => chars
+            .get(start + 3..)
+            .and_then(|rest| rest.iter().position(|&c| c == '\''))
+            .map_or(chars.len(), |offset| start + 4 + offset),
+        (Some(_), Some('\'')) => start + 3,
+        _ => start + 1,
+    }
 }

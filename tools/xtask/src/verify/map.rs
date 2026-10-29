@@ -1,6 +1,6 @@
 use Check::{
-    AllSmokes, Browser, Equivalence, Everything, ItsSmoke, Project, Pure, PureWasm, Shaders,
-    Smokes, Tools,
+    AllSmokes, Browser, CoreSmokes, Equivalence, Everything, Project, Pure, PureWasm, Shaders,
+    Tools,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9,8 +9,7 @@ pub(crate) enum Check {
     Pure(&'static str),
     PureWasm,
     Shaders,
-    Smokes(&'static str),
-    ItsSmoke,
+    CoreSmokes,
     AllSmokes,
     Project,
     Equivalence,
@@ -65,7 +64,7 @@ pub(crate) const MAP: &[Rule] = &[
     },
     Rule {
         paths: &["bricks.json"],
-        checks: &[Smokes("plugins")],
+        checks: &[CoreSmokes],
     },
     Rule {
         paths: &[
@@ -91,19 +90,14 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_world_streaming/**",
             "crates/engine_time_of_day/**",
         ],
-        checks: &[
-            Pure("caches"),
-            Pure("scenes"),
-            Equivalence,
-            Smokes("plugins"),
-        ],
+        checks: &[CoreSmokes, Pure("caches"), Pure("scenes"), Equivalence],
     },
     Rule {
         paths: &[
             "crates/engine/src/**/browser*",
             "crates/engine/src/**/dev_host*",
         ],
-        checks: &[Smokes("parity"), Browser],
+        checks: &[CoreSmokes, Browser],
     },
     Rule {
         paths: &[
@@ -117,12 +111,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_core/src/**/entity_indices*",
             "crates/engine_core/src/**/extraction*",
         ],
-        checks: &[
-            Smokes("hierarchy"),
-            Smokes("interpolation"),
-            Smokes("presentation"),
-            Smokes("culling"),
-        ],
+        checks: &[CoreSmokes],
     },
     Rule {
         paths: &[
@@ -133,59 +122,11 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_collision/src/**/terrain*",
             "crates/engine_terrain/**",
         ],
-        checks: &[Pure("terrain"), Smokes("terrain"), Smokes("jobs")],
+        checks: &[Pure("terrain")],
     },
     Rule {
         paths: &["crates/engine_terrain/**", "crates/engine_navigation/**"],
         checks: &[PureWasm, Equivalence],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_terrain/src/runtime/ground_cover*",
-            "crates/engine_terrain/src/runtime/wind*",
-            "crates/engine_terrain/src/runtime/occupancy*",
-            "crates/engine_render/src/**/ground_cover*",
-            "crates/engine_render/src/**/cover_grow*",
-            "crates/engine_render/src/**/occupancy*",
-            "crates/engine_render/src/**/shadow*",
-            "crates/engine_render/src/**/shadows/**",
-        ],
-        checks: &[Smokes("surface")],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/water*",
-            "crates/engine_terrain/src/runtime/water*",
-            "crates/engine_core/src/**/clouds*",
-            "crates/engine_core/src/**/sky*",
-            "crates/engine_time_of_day/**",
-            "crates/engine_core/src/**/atmosphere*",
-            "crates/engine_render/src/**/clouds*",
-            "crates/engine_render/src/**/sky*",
-            "crates/engine_render/src/**/water*",
-            "crates/engine_render/src/**/environment*",
-            "crates/engine_render/src/**/terrain_sky*",
-            "crates/engine_render/src/**/terrain_horizon*",
-            "crates/engine_core/src/**/tables*",
-            "crates/engine_tables/**",
-        ],
-        checks: &[Smokes("sky")],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/*water*",
-            "crates/engine_render/src/**/*water*",
-            "crates/engine_terrain/src/**/*water*",
-        ],
-        checks: &[Smokes("torrent")],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/gpu_culling*",
-            "crates/engine_render/src/**/depth_pyramid*",
-            "crates/engine_render/src/**/scatter*",
-        ],
-        checks: &[Smokes("culling")],
     },
     Rule {
         paths: &[
@@ -198,7 +139,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_core/src/**/mesh_lods*",
             "tools/lodbuild/**",
         ],
-        checks: &[Smokes("lod"), Pure("simplify")],
+        checks: &[Pure("simplify")],
     },
     Rule {
         paths: &[
@@ -206,37 +147,21 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_worker/**",
             "crates/engine_sources/**",
         ],
-        checks: &[Smokes("jobs"), PureWasm, Pure("terrain")],
+        checks: &[CoreSmokes, PureWasm, Pure("terrain")],
     },
     Rule {
         paths: &[
             "crates/engine_sources/**",
             "crates/engine_core/src/**/records*",
         ],
-        checks: &[Pure("terrain"), Pure("caches"), Smokes("jobs")],
+        checks: &[CoreSmokes, Pure("terrain"), Pure("caches")],
     },
     Rule {
         paths: &[
             "crates/engine_core/src/**/tables*",
             "crates/engine_tables/**",
         ],
-        checks: &[Pure("tables"), PureWasm, Smokes("jobs")],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/spline_mesh*",
-            "crates/engine_scene/src/**/spline*",
-        ],
-        checks: &[Smokes("spline")],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/streaming*",
-            "crates/engine_core/src/**/streaming/**",
-            "crates/engine_world_streaming/**",
-            "crates/engine_terrain/src/runtime/streaming*",
-        ],
-        checks: &[Smokes("streaming")],
+        checks: &[CoreSmokes, Pure("tables"), PureWasm],
     },
     Rule {
         paths: &[
@@ -245,96 +170,29 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_render/src/**/meshes/debug*",
             "crates/engine_render/src/**/renderer/probe*",
         ],
-        checks: &[Smokes("debug"), Shaders],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/effects*",
-            "crates/engine_core/src/**/antialiasing*",
-            "crates/engine_render/src/**/temporal*",
-            "crates/engine_render/src/**/post*",
-            "crates/engine_render/src/**/haze*",
-        ],
-        checks: &[Smokes("taa")],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/foliage*",
-            "crates/engine_render/src/meshes/cover*",
-            "crates/engine_render/src/meshes/impostors*",
-        ],
-        checks: &[Smokes("taa")],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_core/src/**/probes*",
-            "crates/engine_render/src/**/probes*",
-            "crates/engine_render/src/**/exposure*",
-        ],
-        checks: &[Smokes("sky")],
+        checks: &[Shaders],
     },
     Rule {
         paths: &["crates/engine_render/**"],
-        checks: &[Shaders, Equivalence, Browser],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_render/src/**/terrain*",
-            "crates/engine_render/src/**/terrain*/**",
-            "crates/engine_render/src/**/bounce*",
-            "crates/engine_render/src/**/scatter*",
-        ],
-        checks: &[Smokes("terrain")],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_render/src/**/gpu_presentation/**",
-            "crates/engine_render/src/**/presentation*",
-        ],
-        checks: &[Smokes("presentation"), Smokes("interpolation")],
-    },
-    Rule {
-        paths: &[
-            "crates/engine_render/src/**/materials*",
-            "crates/engine_render/src/**/mipmaps*",
-            "crates/engine_assets/src/**/texture*",
-            "crates/engine_assets/src/**/ktx2*",
-        ],
-        checks: &[Smokes("texture"), Smokes("surfaces")],
+        checks: &[Shaders, Equivalence, Browser, AllSmokes],
     },
     Rule {
         paths: &[
             "crates/engine_textures/**",
             "crates/engine_core/src/records*",
         ],
-        checks: &[
-            Pure("textures"),
-            PureWasm,
-            Smokes("texture"),
-            Smokes("jobs"),
-        ],
+        checks: &[CoreSmokes, Pure("textures"), PureWasm],
     },
     Rule {
         paths: &["crates/engine_assets/**"],
-        checks: &[
-            Pure("gltf"),
-            Pure("simplify"),
-            Smokes("meshes"),
-            Smokes("texture"),
-            Equivalence,
-        ],
+        checks: &[CoreSmokes, Pure("gltf"), Pure("simplify"), Equivalence],
     },
     Rule {
         paths: &[
             "crates/engine_collision/**",
             "crates/engine_dev/src/features/collision/**",
         ],
-        checks: &[
-            Smokes("collision"),
-            Smokes("terrain"),
-            Pure("caches"),
-            Equivalence,
-        ],
+        checks: &[Pure("caches"), Equivalence],
     },
     Rule {
         paths: &[
@@ -345,43 +203,25 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_terrain/src/runtime/flow*",
             "crates/engine_terrain/src/flow*",
         ],
-        checks: &[
-            Smokes("physics"),
-            Smokes("plugins"),
-            Smokes("sky"),
-            Pure("caches"),
-            Equivalence,
-        ],
+        checks: &[Pure("caches"), Equivalence],
     },
     Rule {
         paths: &["crates/engine_scene/**", "crates/engine_settings/**"],
         checks: &[
+            CoreSmokes,
             Pure("scenes"),
             Pure("requests"),
             Pure("gltf"),
-            Smokes("agent"),
-            Smokes("plugins"),
             Equivalence,
         ],
     },
     Rule {
         paths: &["crates/engine_dev/**"],
-        checks: &[
-            Pure("requests"),
-            Smokes("agent"),
-            Smokes("native"),
-            Smokes("parity"),
-            Equivalence,
-        ],
+        checks: &[CoreSmokes, Pure("requests"), Equivalence],
     },
     Rule {
         paths: &["crates/engine_native/**", "crates/engine_panic/**"],
-        checks: &[
-            Smokes("native"),
-            Smokes("parity"),
-            Smokes("agent"),
-            Equivalence,
-        ],
+        checks: &[CoreSmokes, Equivalence],
     },
     Rule {
         paths: &[
@@ -389,7 +229,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_profile/**",
             "crates/engine_profiler/**",
         ],
-        checks: &[Smokes("native"), Tools("measure")],
+        checks: &[CoreSmokes, Tools("measure")],
     },
     Rule {
         paths: &["crates/engine_player/**"],
@@ -397,7 +237,7 @@ pub(crate) const MAP: &[Rule] = &[
     },
     Rule {
         paths: &["tools/assetc/**"],
-        checks: &[Smokes("files"), Pure("import")],
+        checks: &[Pure("import")],
     },
     Rule {
         paths: &["tools/coresmoke/**"],
@@ -500,38 +340,38 @@ pub(crate) const MAP: &[Rule] = &[
             "tools/xtask/src/heavy.rs",
             "tools/xtask/src/pipeline.rs",
         ],
-        checks: &[Smokes("lifecycle")],
+        checks: &[CoreSmokes],
     },
     Rule {
         paths: &["tools/xtask/src/importing.rs"],
         checks: &[Pure("gltf")],
     },
     Rule {
-        paths: &["web/scripts/*-smoke.mjs"],
-        checks: &[ItsSmoke],
-    },
-    Rule {
         paths: &[
-            "web/scripts/harness.mjs",
             "web/scripts/browser-launch.mjs",
-            "web/scripts/heavy-run.mjs",
-            "web/scripts/workspace.mjs",
-            "web/scripts/exit-codes.mjs",
-            "web/scripts/exercised.mjs",
+            "web/scripts/smoke-browser.mjs",
         ],
         checks: &[AllSmokes],
     },
     Rule {
         paths: &[
-            "web/scripts/terrain-fixture.mjs",
+            "web/scripts/heavy-run.mjs",
+            "web/scripts/workspace.mjs",
+            "web/scripts/exit-codes.mjs",
+            "web/scripts/exercised.mjs",
+        ],
+        checks: &[CoreSmokes],
+    },
+    Rule {
+        paths: &[
             "web/scripts/fixtures/terrain*",
             "web/scripts/fixtures/terrain-smoke/**",
         ],
-        checks: &[Smokes("terrain"), Pure("terrain"), Pure("import")],
+        checks: &[Pure("terrain"), Pure("import")],
     },
     Rule {
         paths: &["web/scripts/fixtures/**"],
-        checks: &[AllSmokes, Pure("scenes")],
+        checks: &[CoreSmokes, Pure("scenes")],
     },
     Rule {
         paths: &[
@@ -542,7 +382,7 @@ pub(crate) const MAP: &[Rule] = &[
             "web/scripts/agent-ab.mjs",
             "web/scripts/agent-profile.mjs",
         ],
-        checks: &[Smokes("agent"), Smokes("parity"), Smokes("native")],
+        checks: &[CoreSmokes],
     },
     Rule {
         paths: &["web/scripts/pure-wasm.mjs", "web/scripts/pack-wasm.mjs"],
@@ -561,12 +401,7 @@ pub(crate) const MAP: &[Rule] = &[
     },
     Rule {
         paths: &["web/src/**", "web/*.html"],
-        checks: &[
-            Smokes("parity"),
-            Smokes("presentation"),
-            Smokes("agent"),
-            Browser,
-        ],
+        checks: &[CoreSmokes, Browser],
     },
     Rule {
         paths: &[
@@ -574,7 +409,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_native/src/window*",
             "web/src/engine/host.ts",
         ],
-        checks: &[Smokes("loop"), Smokes("streaming"), Smokes("terrain")],
+        checks: &[CoreSmokes],
     },
     Rule {
         paths: &[
@@ -583,15 +418,15 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_native/src/input*",
             "web/src/engine/input*",
         ],
-        checks: &[Smokes("input"), Smokes("interpolation")],
+        checks: &[CoreSmokes],
     },
     Rule {
         paths: &["web/src/engine/job*"],
-        checks: &[Smokes("jobs")],
+        checks: &[CoreSmokes],
     },
     Rule {
         paths: &["web/src/engine/ktx2*", "web/src/engine/decode*"],
-        checks: &[Smokes("texture")],
+        checks: &[CoreSmokes],
     },
     Rule {
         paths: &[
@@ -644,10 +479,6 @@ pub(crate) fn project_of(path: &str) -> Option<&'static str> {
                 .is_some_and(|rest| rest.starts_with('/'))
         })
         .max_by_key(|folder| folder.len())
-}
-
-pub(crate) fn covers(topic: &str, smoke: &str) -> bool {
-    smoke.split('-').any(|word| word == topic)
 }
 
 pub(crate) fn checks_of(path: &str) -> Option<Vec<Check>> {

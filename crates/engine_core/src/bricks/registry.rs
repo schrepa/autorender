@@ -14,6 +14,7 @@ use super::{
     short_type_name,
 };
 use crate::RenderSnapshot;
+use crate::smoke::SmokeEntry;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Owned {
@@ -44,6 +45,7 @@ pub struct BrickRecord {
     pub explainers: Vec<ExplainEntry>,
     pub extractions: Vec<fn(&World, &mut RenderSnapshot)>,
     pub passes: Vec<&'static str>,
+    pub smokes: Vec<SmokeEntry>,
     pub resources: Vec<Owned>,
     pub components: Vec<Owned>,
 }
@@ -64,6 +66,7 @@ impl BrickRecord {
             explainers: Vec::new(),
             extractions: Vec::new(),
             passes: Vec::new(),
+            smokes: Vec::new(),
             resources: Vec::new(),
             components: Vec::new(),
         }
@@ -195,6 +198,14 @@ impl BrickRegistry {
         })
     }
 
+    pub fn smokes(&self) -> impl Iterator<Item = &SmokeEntry> + '_ {
+        self.bricks.iter().flat_map(|brick| &brick.smokes)
+    }
+
+    pub fn smoke(&self, name: &str) -> Option<&SmokeEntry> {
+        self.smokes().find(|smoke| smoke.name == name)
+    }
+
     pub fn pass_owner(&self, pass: &str) -> Option<&'static str> {
         if CORE_PASSES.contains(&pass) {
             return Some(CORE_ROW);
@@ -311,6 +322,11 @@ impl BrickRegistry {
         for &pass in &record.passes {
             if let Some(known) = self.pass_owner(pass) {
                 return Err(taken("passes", pass, known));
+            }
+        }
+        for smoke in &record.smokes {
+            if let Some(known) = self.smoke(smoke.name) {
+                return Err(taken("smokes", smoke.name, known.brick));
             }
         }
         let mut record = record;

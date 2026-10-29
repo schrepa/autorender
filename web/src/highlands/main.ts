@@ -1,5 +1,6 @@
 import { loadGame } from "../engine/bindings";
 import { type GameOptions, startGame } from "../engine/host";
+import { runSmokes, smokeSelection, type SmokeRun } from "../engine/smokes";
 import type { HighlandsGame, HighlandsRocks } from "../../pkg/highlands";
 
 declare const __PUBLIC_KTX2__: readonly string[];
@@ -18,7 +19,17 @@ async function rocks(found: HighlandsRocks, signal: AbortSignal): Promise<Highla
   return found;
 }
 
-startGame<HighlandsGame>({
+type HighlandsSmokes = (canvas: HTMLCanvasElement, names: string, report: (line: string) => void, query: string) => Promise<boolean>;
+
+const smoke = smokeSelection();
+if (smoke !== null) {
+  void runSmokes(smoke, async (): Promise<SmokeRun | undefined> => {
+    const { default: init, HighlandsGame } = await loadGame("highlands", () => import("../../pkg/highlands"));
+    await init();
+    const smokes = (HighlandsGame as unknown as { smokes?: HighlandsSmokes }).smokes;
+    return smokes && ((canvas, names, report) => smokes.call(HighlandsGame, canvas, names, report, location.search));
+  });
+} else startGame<HighlandsGame>({
   parameters,
   controls,
   async create(canvas, signal) {

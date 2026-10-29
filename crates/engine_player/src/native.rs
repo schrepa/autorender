@@ -6,7 +6,8 @@ use engine_native::{Arguments, HostOptions, files};
 
 use crate::{ScenePlayer, bricks};
 
-const USAGE: &str = "Usage: engine-player-native --source PATH [--without BRICK,...] [OPTIONS]";
+const USAGE: &str = "Usage: engine-player-native --source PATH [--without BRICK,...] [OPTIONS]
+       engine-player-native --smoke NAME,...|all|list [OPTIONS]";
 
 #[cfg(feature = "dev")]
 const PARAMETERS: [(&str, &str); 2] = [
@@ -27,7 +28,7 @@ pub fn main(arguments: impl Iterator<Item = String>) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     match Options::parse(arguments) {
-        Ok(options) => engine_native::exit(options.run()),
+        Ok(options) => options.start(),
         Err(message) => {
             eprintln!("{message}\n\n{USAGE}\n\n{}", engine_native::usage());
             ExitCode::from(2)
@@ -55,6 +56,20 @@ impl Options {
         }
         options.host.check()?;
         Ok(options)
+    }
+
+    fn start(&self) -> ExitCode {
+        #[cfg(feature = "dev")]
+        if let Some(names) = &self.host.smoke {
+            return engine_native::smoke::run::<engine::smokes::SmokeGame>(
+                &self.host,
+                names,
+                &engine::smokes::standard(),
+                &engine::smokes::standard_game,
+                &|session| session,
+            );
+        }
+        engine_native::exit(self.run())
     }
 
     fn run(&self) -> engine::Result<()> {

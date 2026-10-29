@@ -5,6 +5,8 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use engine_checks::bricks::Recorded;
+
 use crate::Failure;
 use crate::measure::git;
 use map::Check;
@@ -57,6 +59,7 @@ struct Selection {
     pure_wasm: bool,
     shaders: bool,
     smokes: BTreeSet<String>,
+    core_smokes: bool,
     all_smokes: bool,
     projects: BTreeSet<&'static str>,
     equivalence: bool,
@@ -67,7 +70,13 @@ struct Selection {
 }
 
 impl Selection {
-    fn add(&mut self, root: &Path, smokes: &[String], path: &str) {
+    fn add(&mut self, root: &Path, bricks: &[Recorded], path: &str) {
+        for brick in bricks {
+            if brick.paths.iter().any(|pattern| map::matches(pattern, path)) {
+                self.smokes
+                    .extend(brick.smokes.iter().map(|(smoke, _)| smoke.clone()));
+            }
+        }
         let Some(checks) = map::checks_of(path) else {
             self.unmapped.push(path.to_owned());
             self.everything = true;
@@ -81,22 +90,7 @@ impl Selection {
                 }
                 Check::PureWasm => self.pure_wasm = true,
                 Check::Shaders => self.shaders = true,
-                Check::Smokes(topic) => {
-                    self.smokes.extend(
-                        smokes
-                            .iter()
-                            .filter(|smoke| map::covers(topic, smoke))
-                            .cloned(),
-                    );
-                }
-                Check::ItsSmoke => {
-                    let name = path
-                        .rsplit('/')
-                        .next()
-                        .and_then(|file| file.strip_suffix("-smoke.mjs"))
-                        .filter(|name| smokes.iter().any(|smoke| smoke == name));
-                    self.smokes.extend(name.map(str::to_owned));
-                }
+                Check::CoreSmokes => self.core_smokes = true,
                 Check::AllSmokes => self.all_smokes = true,
                 Check::Project => self.projects.extend(map::project_of(path)),
                 Check::Equivalence => self.equivalence = true,
@@ -184,10 +178,10 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
             .lines()
             .map(str::to_owned),
     );
-    let smokes = smoke_names(root)?;
+    let bricks = engine_checks::bricks::recorded(crate::rules::repository(root)?)?;
     let mut selection = Selection::default();
     for path in &changed {
-        selection.add(root, &smokes, path);
+        selection.add(root, &bricks, path);
     }
     println!(
         "{} files changed since {}.",
@@ -285,51 +279,36 @@ fn steps<'a>(
     steps.push(Step::new("lint", move || {
         Ok(engine_checks::stages::run(root, crate::lint::LINT)?)
     }));
-    let smokes: Vec<String> = if level == Level::Merge || everything || selection.all_smokes {
-        vec!["--all".into()]
-    } else {
-        selection.smokes.iter().cloned().collect()
-    };
-    if !smokes.is_empty() {
-        let mut options = vec!["--serve".to_owned(), "--keep-going".to_owned()];
-        options.extend(smokes);
-        steps.push(Step::new(
-            format!("smoke {}", options.join(" ")),
-            move || crate::smoke::smoke(root, &options),
-        ));
+    let all_smokes = level == Level::Merge || everything || selection.all_smokes;
+    let mut smokes: BTreeSet<String> = selection.smokes.clone();
+    if selection.core_smokes {
+        smokes.extend(
+            engine::smokes::core()
+                .iter()
+                .map(|smoke| smoke.name.to_owned()),
+        );
+    }
+    let mut runs: Vec<Vec<String>> = Vec::new();
+    if all_smokes {
+        runs.push(Vec::new());
+    } else if !smokes.is_empty() {
+        runs.push(smokes.into_iter().collect());
     }
     if level == Level::Merge {
-        let mut options = vec!["--native-profile".to_owned(), "dev".to_owned()];
-        options.extend(
-            smoke_names(root)?
-                .into_iter()
-                .filter(|smoke| map::covers("native", smoke)),
-        );
-        if options.len() > 2 {
-            steps.push(Step::new(
-                format!("smoke {}", options.join(" ")),
-                move || crate::smoke::smoke(root, &options),
-            ));
-        }
+        runs.push(vec!["--native-profile".to_owned(), "dev".to_owned()]);
+        runs.push(vec!["--browser".to_owned()]);
     }
     let every_project = level == Level::Merge || everything;
     for client in crate::process::clients() {
         let folder = client.folder.as_str();
         let wanted = every_project || selection.projects.contains(folder);
-        if !wanted || crate::smoke::checks(root, folder)?.is_empty() {
-            continue;
+        if wanted && client.native.is_some() && folder != crate::smoke::PLAYER {
+            runs.push(vec!["--project".to_owned(), folder.to_owned()]);
         }
-        let options = vec![
-            "--serve".to_owned(),
-            "--keep-going".to_owned(),
-            "--project".to_owned(),
-            folder.to_owned(),
-            "--all".to_owned(),
-        ];
-        steps.push(Step::new(
-            format!("smoke {}", options.join(" ")),
-            move || crate::smoke::smoke(root, &options),
-        ));
+    }
+    for options in runs {
+        let name = format!("smoke {}", options.join(" ")).trim_end().to_owned();
+        steps.push(Step::new(name, move || crate::smoke::smoke(root, &options)));
     }
     if level == Level::Merge || everything || selection.pure_wasm {
         steps.push(Step::new("pure --wasm terrain tables", move || {
@@ -471,13 +450,6 @@ fn tabled(results: &[(&str, Option<u8>, Duration)]) -> Result<(), Failure> {
     }
 }
 
-fn smoke_names(root: &Path) -> Result<Vec<String>, String> {
-    Ok(crate::smoke::scripts(root)?
-        .into_iter()
-        .map(|(name, _)| name)
-        .collect())
-}
-
 pub(crate) fn check(root: &Path) -> Result<(), String> {
     let mut problems = Vec::new();
     let tracked = git(root, &["ls-files"])?;
@@ -488,18 +460,13 @@ pub(crate) fn check(root: &Path) -> Result<(), String> {
     if !unmapped.is_empty() {
         problems.push(format!("no rule covers {}", unmapped.join(", ")));
     }
-    let smokes = smoke_names(root)?;
     let corpora: Vec<&str> = crate::pure::CORPORA
         .iter()
         .map(|corpus| corpus.name)
         .collect();
-    let mut topics = BTreeSet::new();
     for rule in map::MAP {
         for check in rule.checks {
             match check {
-                Check::Smokes(topic) => {
-                    topics.insert(*topic);
-                }
                 Check::Pure(corpus) if !corpora.contains(corpus) => {
                     problems.push(format!(
                         "a rule names the pure corpus {corpus}, which does not exist"
@@ -514,22 +481,10 @@ pub(crate) fn check(root: &Path) -> Result<(), String> {
             }
         }
     }
-    let uncovered: Vec<&str> = smokes
-        .iter()
-        .filter(|smoke| !topics.iter().any(|topic| map::covers(topic, smoke)))
-        .map(String::as_str)
-        .collect();
-    if !uncovered.is_empty() {
-        problems.push(format!(
-            "no rule's topic covers the smoke checks {}",
-            uncovered.join(", ")
-        ));
-    }
     if problems.is_empty() {
         println!(
-            "The path map covers {} tracked files and calls for {} smoke checks.",
-            tracked.lines().count(),
-            smokes.len()
+            "The path map covers {} tracked files.",
+            tracked.lines().count()
         );
         return Ok(());
     }

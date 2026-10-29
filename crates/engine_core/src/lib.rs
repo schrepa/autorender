@@ -41,6 +41,7 @@ mod scene;
 mod sections;
 mod sky;
 mod sky_occlusion;
+pub mod smoke;
 mod spline_mesh;
 mod statistics;
 mod tables;

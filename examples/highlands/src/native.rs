@@ -20,7 +20,7 @@ pub fn main(arguments: impl Iterator<Item = String>) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     match Native::parse(arguments) {
-        Ok(native) => engine_native::exit(native.run()),
+        Ok(native) => native.start(),
         Err(message) => {
             let record = serde_json::json!({"event": "arguments_rejected", "error": message});
             eprintln!("{record}");
@@ -75,6 +75,30 @@ impl Native {
         Ok(native)
     }
 
+    fn start(&self) -> ExitCode {
+        #[cfg(feature = "dev")]
+        if let Some(names) = &self.host.smoke {
+            let build = |without: &[&str]| {
+                if without.is_empty() {
+                    self.build()
+                } else {
+                    Err(
+                        engine::Error::new(engine::ErrorCode::UnsupportedCommand, "$.without")
+                            .got(without),
+                    )
+                }
+            };
+            return engine_native::smoke::run::<Highlands>(
+                &self.host,
+                names,
+                &crate::smokes(),
+                &build,
+                &controlled,
+            );
+        }
+        engine_native::exit(self.run())
+    }
+
     fn run(&self) -> engine::Result<()> {
         let build = || self.build();
         #[cfg(feature = "dev")]
@@ -98,24 +122,31 @@ impl Native {
         &self,
         build: impl FnOnce() -> engine::Result<(Engine, Highlands)>,
     ) -> engine::Result<()> {
-        let mut session = self.host.dev_session(build)?.parameters(options());
-        for (name, description) in crate::controls() {
-            session = session.control(name, &description, move |host, args| {
-                let value = args
-                    .get("name")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                let (engine, highlands) = host.parts_mut();
-                highlands
-                    .control(engine, name, value)
-                    .map_err(|error| error.to_string())?;
-                let mut reply = serde_json::Map::new();
-                reply.insert(name.to_owned(), value.into());
-                Ok(reply.into())
-            });
-        }
-        session.run()
+        let session = self.host.dev_session(build)?.parameters(options());
+        controlled(session).run()
     }
+}
+
+#[cfg(feature = "dev")]
+fn controlled(
+    mut session: engine_native::dev::DevSession<Highlands>,
+) -> engine_native::dev::DevSession<Highlands> {
+    for (name, description) in crate::controls() {
+        session = session.control(name, &description, move |host, args| {
+            let value = args
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let (engine, highlands) = host.parts_mut();
+            highlands
+                .control(engine, name, value)
+                .map_err(|error| error.to_string())?;
+            let mut reply = serde_json::Map::new();
+            reply.insert(name.to_owned(), value.into());
+            Ok(reply.into())
+        });
+    }
+    session
 }
 
 fn rocks(folder: &Path) -> RockMaps {

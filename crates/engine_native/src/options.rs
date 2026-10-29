@@ -80,13 +80,17 @@ const USAGE_TOOLS: &str = "\
                        and output, drawing offscreen and starting paused
   --dev-artifacts DIR  with --dev: where captures and profiles go (default
                        the system's temporary folder)
+  --smoke NAME,...|all|list
+                       run the smokes named, or all, offscreen and print one
+                       JSON record per smoke, or list them; a GPU smoke is
+                       skipped where no adapter exists
   --help               this text
 
 --profile, --counters and --vendor need a build with the profiling feature,
---dev one with the dev feature. WGPU_BACKEND=dx12|vulkan|metal chooses the
-GPU interface; by default the one browsers use on the platform: on Windows
-D3D12 where DXC (dxcompiler.dll, which Chrome and Firefox ship) is beside
-the program or on the path, else Vulkan.";
+--dev and --smoke one with the dev feature. WGPU_BACKEND=dx12|vulkan|metal
+chooses the GPU interface; by default the one browsers use on the platform:
+on Windows D3D12 where DXC (dxcompiler.dll, which Chrome and Firefox ship)
+is beside the program or on the path, else Vulkan.";
 
 pub fn usage() -> String {
     let mut text = format!("{USAGE_HOST}\n");
@@ -279,6 +283,7 @@ pub struct HostOptions {
     pub vendor_counters: Vec<String>,
     pub dev: bool,
     pub dev_artifacts: Option<PathBuf>,
+    pub smoke: Option<String>,
     pub measure: Option<Method>,
     pub shader_hash: bool,
     pub cook: Option<PathBuf>,
@@ -305,6 +310,7 @@ impl Default for HostOptions {
             vendor_counters: Vec::new(),
             dev: false,
             dev_artifacts: None,
+            smoke: None,
             measure: None,
             shader_hash: false,
             cook: None,
@@ -436,6 +442,7 @@ impl HostOptions {
                 self.dev = true;
             }
             "--dev-artifacts" => self.dev_artifacts = Some(arguments.value(argument)?.into()),
+            "--smoke" => self.smoke = Some(arguments.value(argument)?),
             "--measure" => {
                 let path = arguments.value(argument)?;
                 let text = std::fs::read_to_string(&path)
@@ -467,11 +474,20 @@ impl HostOptions {
         if self.dev && !cfg!(feature = "dev") {
             return Err("--dev needs a build with the dev feature".into());
         }
+        if self.smoke.is_some() && !cfg!(feature = "dev") {
+            return Err("--smoke needs a build with the dev feature".into());
+        }
         let others = self.frames.is_some()
             || self.offscreen.is_some()
             || self.dev
             || self.vendor.is_some()
             || self.counters.is_some();
+        if self.smoke.is_some() && (others || self.cook.is_some() || self.measure.is_some()) {
+            return Err(
+                "--smoke runs alone: without --frames, --offscreen, --measure, --cook, --dev, --counters and --vendor"
+                    .into(),
+            );
+        }
         if self.cook.is_some() && (others || self.measure.is_some()) {
             return Err(
                 "--cook runs alone: without --frames, --offscreen, --measure, --dev, --counters and --vendor"
@@ -508,6 +524,12 @@ impl HostOptions {
         if self.shader_hash {
             println!("{}", json!({ "shader_hash": shader_hash() }));
             return Ok(());
+        }
+        if let Some(names) = &self.smoke {
+            if names == engine::smokes::LIST {
+                return Ok(());
+            }
+            return engine::smokes::select(&[], names).map(drop);
         }
         self.start_tools()?;
         #[cfg(feature = "profiling")]

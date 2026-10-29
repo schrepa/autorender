@@ -16,3 +16,7 @@ include!(concat!(env!("OUT_DIR"), "/source.rs"));
 pub use game::Highlands;
 pub use land::RockMaps;
 pub use options::{Options, controls, parameters};
+
+pub fn smokes() -> Vec<engine::smoke::SmokeEntry> {
+    Vec::new()
+}
