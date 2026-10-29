@@ -3,6 +3,7 @@ pub mod display;
 pub mod environment;
 pub mod heightfield;
 pub mod lights;
+pub mod occupancy;
 pub mod placed;
 pub mod shadows;
 pub mod slots;

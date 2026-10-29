@@ -59,8 +59,6 @@ mod probe;
 pub(crate) mod probe_captures;
 mod queries;
 mod records;
-pub(crate) mod scatter_draws;
-pub(crate) mod scatter_pool;
 mod startup;
 
 pub use attribution::GpuPassTimes;

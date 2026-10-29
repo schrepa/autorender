@@ -1,8 +1,7 @@
-import package::terrain::ground::{
-    GroundTerrain, LevelTile, NOT_RESIDENT, directory, heights, level_tile, tile_height,
-    true_height
+import package::face::heightfield::{
+    GroundTerrain, LevelTile, NOT_RESIDENT, directory, heights, level_tile, macro_tint,
+    tile_height, true_height
 };
-import package::terrain::variety::macro_tint;
 
 struct Snap {
     counts: vec4<u32>,

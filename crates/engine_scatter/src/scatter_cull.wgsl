@@ -1,4 +1,4 @@
-import package::terrain::variety::seen_share;
+import package::face::heightfield::seen_share;
 
 struct Frame {
     eye: vec4<f32>,

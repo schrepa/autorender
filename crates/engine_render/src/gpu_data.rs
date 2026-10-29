@@ -495,6 +495,26 @@ pub fn frustum_uniform(view_projection: glam::Mat4) -> ([[f32; 4]; 6], [[f32; 4]
     (planes, absolute.to_cols_array_2d())
 }
 
+pub fn planes(view_projection: glam::Mat4) -> [[f32; 4]; 6] {
+    let rows = [
+        view_projection.row(0),
+        view_projection.row(1),
+        view_projection.row(2),
+        view_projection.row(3),
+    ];
+    [
+        rows[3] + rows[0],
+        rows[3] - rows[0],
+        rows[3] + rows[1],
+        rows[3] - rows[1],
+        rows[2],
+        rows[3] - rows[2],
+    ]
+    .map(|plane: glam::Vec4| {
+        (plane / engine_core::math::max(plane.truncate().length(), 1.0e-12)).to_array()
+    })
+}
+
 pub fn clamped_extent(width: u32, height: u32, limit: u32) -> Option<(u32, u32)> {
     if width == 0 || height == 0 || limit == 0 {
         return None;

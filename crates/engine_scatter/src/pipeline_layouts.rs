@@ -1,0 +1,7 @@
+use crate::bindings::{OCCUPANCY, SCATTER_CULL, SCATTER_SNAP};
+
+engine_render::pipeline_layouts! {
+    OCCUPANCY_PIPELINES = [OCCUPANCY];
+    SCATTER_SNAP_PIPELINES = [SCATTER_SNAP];
+    SCATTER_CULL_PIPELINES = [SCATTER_CULL];
+}

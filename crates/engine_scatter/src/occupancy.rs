@@ -1,22 +1,28 @@
 use crate::shaders::entry::occupancy;
-use engine_core::RenderStats;
 use engine_core::glam::Vec3;
+use engine_core::{RenderSnapshot, RenderStats};
+use engine_faces::occupancy::OccupancyFace;
+use engine_faces::placed::PlacedFace;
 use engine_terrain::Occupancy;
 
-use crate::bindings::{Contribution, OCCUPANCY, Sample, Stages, texture};
-use crate::buffers::Growable;
-use crate::cached::{Bound, GroupCache, Versioned};
-use crate::gpu_data::LightingUniform;
-use crate::gpu_layouts::constants::{OCCUPANCY_CELLS as CELLS, OCCUPANCY_GROUP, OCCUPANCY_QUAD};
-use crate::gpu_layouts::occupancy::{ListedDraw, SplatUniform};
-use crate::gpu_layouts::scene::MAX_OCCUPANCY_LEVELS;
-use crate::graph::{
+use crate::bindings::OCCUPANCY;
+use crate::gpu_layouts::{
+    CanopyPiece, ListedDraw, MAX_OCCUPANCY_LEVELS, OCCUPANCY_CELLS as CELLS, OCCUPANCY_GROUP,
+    OCCUPANCY_QUAD, SplatUniform,
+};
+use crate::scatter::PlacedCovers;
+use engine_render::bindings::{Contribution, Sample, Sampling, Stages, sampler, texture};
+use engine_render::buffers::Growable;
+use engine_render::cached::{Bound, GroupCache, Versioned};
+use engine_render::graph::{
     FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
 };
-use crate::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Step, UniformsOut, View};
-use crate::pipelines::{Fillers, GroupLayout};
-use crate::scatter::ScatterPass;
-use crate::shaders::Entry;
+use engine_render::parts::{
+    Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Shading, Step, View,
+};
+use engine_render::pieces::PieceDecl;
+use engine_render::pipelines::{Fillers, GroupLayout};
+use engine_render::shaders::Entry;
 
 pub(crate) static FRAME_OCCUPANCY: Contribution = Contribution {
     group: "frame",
@@ -25,22 +31,23 @@ pub(crate) static FRAME_OCCUPANCY: Contribution = Contribution {
         texture(
             "occupancy_coverage",
             Sample::Float,
-            crate::bindings::View::D2Array,
+            engine_render::bindings::View::D2Array,
             Stages::FRAGMENT,
         ),
         texture(
             "occupancy_heights",
             Sample::Unfilterable,
-            crate::bindings::View::D2Array,
+            engine_render::bindings::View::D2Array,
             Stages::FRAGMENT,
         ),
+        sampler("occupancy_sampler", Sampling::Filtering, Stages::FRAGMENT),
     ],
 };
 
 pub(crate) static PART: PartEntry = PartEntry {
     decl: PartDecl {
         name: "occupancy",
-        brick: "terrain",
+        brick: "scatter",
         passes: &[PassDecl {
             name: "occupancy",
             stage: Stage::Prepare,
@@ -54,9 +61,14 @@ pub(crate) static PART: PartEntry = PartEntry {
         effects: &[],
         labels: &[],
         lazy: false,
-        faces: &[],
+        faces: &[engine_render::offer_face!(OccupancyPass => dyn OccupancyFace)],
         needs: &[],
-        piece: None,
+        piece: Some(PieceDecl {
+            name: "canopy",
+            module: "scatter::piece",
+            ty: "CanopyPiece",
+            size: size_of::<CanopyPiece>() as u64,
+        }),
     },
     create,
 };
@@ -76,7 +88,7 @@ const _: () = assert!(CELLS == 16, "word_holds_two_rows");
 
 const REACH_SHARE: f32 = 3.0 / 8.0;
 
-pub(crate) use crate::gpu_layouts::occupancy::Cover;
+use crate::gpu_layouts::Cover;
 
 impl Cover {
     pub(crate) fn of(min: Vec3, max: Vec3) -> Self {
@@ -210,8 +222,10 @@ struct Pipelines {
 
 impl Pipelines {
     fn new(device: &wgpu::Device) -> Self {
-        let pipeline_layout =
-            crate::pipelines::layout_of(device, &crate::pipeline_layouts::OCCUPANCY_PIPELINES);
+        let pipeline_layout = engine_render::pipelines::layout_of(
+            device,
+            &crate::pipeline_layouts::OCCUPANCY_PIPELINES,
+        );
         let blend = |dst_factor, operation| {
             let component = wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::One,
@@ -226,9 +240,9 @@ impl Pipelines {
         let draw = |label: &str,
                     (vertex, fragment): (Entry, Entry),
                     (coverage, heights): (Option<wgpu::BlendState>, Option<wgpu::BlendState>)| {
-            crate::pipelines::geometry(
+            engine_render::pipelines::geometry(
                 device,
-                &crate::pipelines::Geometry {
+                &engine_render::pipelines::Geometry {
                     label,
                     layout: &pipeline_layout,
                     vertex,
@@ -236,7 +250,7 @@ impl Pipelines {
                     buffers: &[],
                     primitive: wgpu::PrimitiveState::default(),
                     depth: None,
-                    fragment: Some(crate::pipelines::Fragment {
+                    fragment: Some(engine_render::pipelines::Fragment {
                         entry: fragment,
                         constants: &[],
                         targets: &[
@@ -273,7 +287,7 @@ impl Pipelines {
                 (occupancy::vs_means, occupancy::fs_means),
                 (None, None),
             ),
-            select: crate::pipelines::compute_entry(
+            select: engine_render::pipelines::compute_entry(
                 device,
                 &pipeline_layout,
                 occupancy::select_covers,
@@ -307,6 +321,9 @@ pub(crate) struct OccupancyPass {
     pub(crate) averages: u32,
     frame: Option<OccupancyFrame>,
     slots: Slots,
+    sampler: wgpu::Sampler,
+    share: f32,
+    canopy: CanopyPiece,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -318,10 +335,10 @@ struct Slots {
 
 impl OccupancyPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let _owner = crate::memory::owned(PART.decl.brick);
+        let _owner = engine_render::memory::owned(PART.decl.brick);
         let (targets, views, layers) = targets(device, 1, 1);
         let unfiner = |label, format| {
-            crate::targets::texture_2d(
+            engine_render::targets::texture_2d(
                 device,
                 label,
                 (1, 1),
@@ -333,7 +350,7 @@ impl OccupancyPass {
             .create_view(&wgpu::TextureViewDescriptor::default())
         };
         Self {
-            layout: crate::pipelines::layout(device, &OCCUPANCY),
+            layout: engine_render::pipelines::layout(device, &OCCUPANCY),
             fillers: Fillers::new(device),
             pipelines: None,
             uniforms: Vec::new(),
@@ -370,6 +387,14 @@ impl OccupancyPass {
             averages: 0,
             frame: None,
             slots: Slots::default(),
+            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("engine/occupancy-sampler"),
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            }),
+            share: 0.0,
+            canopy: CanopyPiece::default(),
         }
     }
 
@@ -384,7 +409,7 @@ impl OccupancyPass {
     fn prepare_windows(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         settings: &Occupancy,
         eye: Vec3,
         (covers, slots): (&[Cover], u32),
@@ -525,12 +550,12 @@ impl OccupancyPass {
 
     fn size(&mut self, device: &wgpu::Device, maps: usize) {
         while self.uniforms.len() < maps {
-            self.uniforms.push(crate::buffers::uniform(
+            self.uniforms.push(engine_render::buffers::uniform(
                 device,
                 "engine/occupancy-splat",
                 size_of::<SplatUniform>() as u64,
             ));
-            self.draws.push(crate::buffers::storage(
+            self.draws.push(engine_render::buffers::storage(
                 device,
                 "engine/occupancy-draw",
                 size_of::<ListedDraw>() as u64,
@@ -598,9 +623,9 @@ impl OccupancyPass {
             let finer = |target: usize| match map.checked_sub(1) {
                 Some(finer) => Bound::of(
                     &self.views[target],
-                    crate::pipelines::view(&self.layers[target][finer]),
+                    engine_render::pipelines::view(&self.layers[target][finer]),
                 ),
-                None => Bound::fixed(crate::pipelines::view(&self.unfiner[target])),
+                None => Bound::fixed(engine_render::pipelines::view(&self.unfiner[target])),
             };
             self.groups[map].bind_filled(
                 device,
@@ -650,7 +675,7 @@ impl OccupancyPass {
         &self,
         encoder: &mut wgpu::CommandEncoder,
         frame: &OccupancyFrame,
-        profiler: &crate::profiling::GpuProfiler,
+        profiler: &engine_render::profiling::GpuProfiler,
     ) {
         let Some(pipelines) = &self.pipelines else {
             return;
@@ -726,6 +751,37 @@ struct OccupancyFrame {
     workgroups: u32,
 }
 
+fn canopy(lit: Option<Lit>, foliage: &engine_core::Foliage, temporal: bool) -> CanopyPiece {
+    let foliage = foliage.sanitized();
+    let mut canopy = CanopyPiece {
+        occupancy: [0.0; 4],
+        occupancy_maps: [0.0; 4],
+        occupancy_centers: [[0.0; 4]; MAX_OCCUPANCY_LEVELS / 2],
+        foliage: [
+            foliage.transmission,
+            foliage.variation,
+            if foliage.hashed_cutoff && temporal {
+                1.0
+            } else {
+                0.0
+            },
+            foliage.ground_blend,
+        ],
+    };
+    if let Some(maps) = lit {
+        canopy.occupancy = maps.occupancy;
+        canopy.occupancy_maps = maps.maps;
+        canopy.occupancy_centers = maps.centers;
+    }
+    canopy
+}
+
+impl OccupancyFace for OccupancyPass {
+    fn texel_share(&self) -> f32 {
+        self.share
+    }
+}
+
 impl GpuPart for OccupancyPass {
     fn install(&mut self, table: &GraphTable) {
         self.slots = Slots {
@@ -735,31 +791,34 @@ impl GpuPart for OccupancyPass {
         };
     }
 
-    fn uniforms(
-        &mut self,
-        cx: &mut Step<'_>,
-        lighting: &mut LightingUniform,
-        _out: &mut UniformsOut,
-    ) {
+    fn shading(&self, snapshot: &RenderSnapshot, shading: &mut Shading) {
+        let occupancy = engine_terrain::TerrainEnvironment::of(snapshot).occupancy;
+        let on = occupancy.enabled && occupancy.strength > 0.0;
+        shading.set("OCCUPANCY", if on { 1.0 } else { 0.0 });
+    }
+
+    fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         let snapshot = cx.frame.snapshot;
         let settings = engine_terrain::TerrainEnvironment::of(snapshot).occupancy;
-        let scatter = cx.parts.get::<ScatterPass>();
+        let scatter = cx.parts.face::<dyn PlacedCovers>();
         let placed = (
-            scatter.map_or(&[][..], ScatterPass::covers),
-            scatter.map_or(0, ScatterPass::objects),
+            scatter.map_or(&[][..], |scatter| scatter.covers()),
+            scatter.map_or(0, |scatter| scatter.objects()),
         );
         let core = &*cx.core;
-        if let Some(maps) = self.prepare_windows(
+        let lit = self.prepare_windows(
             &core.device,
             &core.queue,
             &settings,
             snapshot.detail_eye,
             placed,
-        ) {
-            lighting.occupancy = maps.occupancy;
-            lighting.occupancy_maps = maps.maps;
-            lighting.occupancy_centers = maps.centers;
-        }
+        );
+        self.share = texel_share(&settings);
+        self.canopy = canopy(lit, &snapshot.environment.foliage, cx.frame.kind.temporal);
+    }
+
+    fn piece(&self) -> Option<&[u8]> {
+        Some(bytemuck::bytes_of(&self.canopy))
     }
 
     fn prepare_draws(&mut self, cx: &mut Step<'_>, _encoder: &mut wgpu::CommandEncoder) {
@@ -773,7 +832,7 @@ impl GpuPart for OccupancyPass {
         {
             self.warm(device);
         }
-        let Some(scatter) = cx.parts.get::<ScatterPass>() else {
+        let Some(scatter) = cx.parts.face::<dyn PlacedFace>() else {
             self.frame = None;
             return;
         };
@@ -812,6 +871,10 @@ impl GpuPart for OccupancyPass {
             out.extend([
                 ("occupancy_coverage", coverage),
                 ("occupancy_heights", heights),
+                (
+                    "occupancy_sampler",
+                    Bound::fixed(engine_render::pipelines::sampler(&self.sampler)),
+                ),
             ]);
         }
     }
@@ -852,7 +915,7 @@ fn targets(
     [Vec<wgpu::TextureView>; 2],
 ) {
     let target = |label, format| {
-        crate::memory::texture(
+        engine_render::memory::texture(
             device,
             &wgpu::TextureDescriptor {
                 label: Some(label),

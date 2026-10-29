@@ -3,9 +3,9 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use engine_core::glam::Vec3;
+use engine_render::gpu_data::{ColorData, GroundData, PoseData};
 use engine_terrain::{Tile, TileKey};
 
-use crate::gpu_data::{ColorData, GroundData, PoseData};
 use crate::scatter::{DEAD, NEAR_LEVEL_MASK, NEAR_LEVEL_SHIFT, Record, STATE_ADOPT, STATE_FRESH};
 
 pub(super) type TileObjects = (Vec<PoseData>, Vec<ColorData>, Vec<Record>, Vec<GroundData>);

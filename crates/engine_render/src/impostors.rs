@@ -37,8 +37,6 @@ const RGBA8_SIZE: u32 = 512;
 
 const LOAD_BUDGET: usize = 16 << 20;
 
-const PLACED_FRAMES: u32 = 12;
-
 const FIRST_BYTES: u64 = 16 << 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,15 +52,6 @@ impl AtlasShape {
         texels: 16,
         hemisphere: false,
     };
-
-    pub fn placed(pixels: f32) -> Self {
-        let texels = (pixels.ceil() as u32).clamp(2, 1 << 15);
-        Self {
-            frames: PLACED_FRAMES,
-            texels: texels.next_power_of_two(),
-            hemisphere: true,
-        }
-    }
 
     pub fn size(self) -> u32 {
         self.frames * self.texels
