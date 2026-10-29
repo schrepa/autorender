@@ -9,6 +9,7 @@ use super::requests::{
 
 const GARDEN: &str = include_str!("../../../../web/scripts/fixtures/garden.scene.json");
 pub(crate) const PLAYER: &str = "player";
+const SETTLE_RENDERS: usize = 240;
 
 pub(crate) fn garden() -> Asked {
     let parsed = serde_json::from_str::<Value>(GARDEN);
@@ -496,12 +497,25 @@ fn reloaded(session: &mut dyn SmokeSession, source: &Value, revision: u64) -> Sm
         json!({ "local_lights": rendering["local_lights"], "particles": rendering["particles"] }),
         json!({ "shaded": ">= 1", "drawn": "> 0" })
     );
-    engine_core::smoke_eq!(
-        effects(rendering),
-        json!([true, false, true]),
-        "saved_effects"
-    );
+    let drawn = settled(session, rendering.clone())?;
+    engine_core::smoke_eq!(effects(&drawn), json!([true, false, true]), "saved_effects");
     Ok(())
+}
+
+fn settled(session: &mut dyn SmokeSession, mut rendering: Value) -> Asked {
+    for _ in 0..SETTLE_RENDERS {
+        if rendering["missing_assets"] == 0 {
+            break;
+        }
+        let rendered = control(session, "render", json!({}), "renders_reloaded_scene")?;
+        rendering = rendered["result"]["rendering"].clone();
+    }
+    engine_core::smoke_eq!(
+        rendering["missing_assets"].clone(),
+        json!(0),
+        "reloaded_scene_settles"
+    );
+    Ok(rendering)
 }
 
 fn saved(session: &mut dyn SmokeSession, look: &Value, night: &Value) -> SmokeResult {

@@ -348,7 +348,8 @@
         "host_images",
         "host_parity",
         "navigation_walks",
-        "physics"
+        "physics",
+        "terrain_water_sky"
       ]
     },
     {
@@ -565,6 +566,7 @@
     {
       "op": "render",
       "smokes": [
+        "agent",
         "culling_settings",
         "foliage_settings",
         "gpu_presentation",
@@ -603,6 +605,7 @@
         "streamed_scene",
         "surfaces",
         "temporal_antialiasing",
+        "terrain_water_sky",
         "texture",
         "world_streaming"
       ]
@@ -617,7 +620,8 @@
         "host_faults",
         "host_images",
         "host_parity",
-        "native"
+        "native",
+        "terrain_water_sky"
       ]
     },
     {
@@ -876,6 +880,9 @@
       "section": "haze",
       "smokes": [
         "agent",
+        "culling_settings",
+        "foliage_settings",
+        "temporal_antialiasing",
         "terrain_water_sky"
       ],
       "stats": true
@@ -893,7 +900,11 @@
       "section": "shadows",
       "smokes": [
         "agent",
+        "culling_settings",
+        "debug_view",
+        "foliage_settings",
         "gpu_presentation",
+        "temporal_antialiasing",
         "terrain_draws",
         "terrain_surface",
         "terrain_water_sky"

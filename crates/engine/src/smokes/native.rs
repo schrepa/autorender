@@ -1,4 +1,4 @@
-use engine_core::smoke::{SmokeResult, SmokeSession};
+use engine_core::smoke::{SmokeFailure, SmokeResult, SmokeSession};
 use serde_json::{Value, json};
 
 use super::agent::{PLAYER, garden};
@@ -8,6 +8,7 @@ use super::requests::{
 };
 
 const CRYSTAL: &str = "crystal-6";
+const READ_BACK_FRAMES: u32 = 3;
 
 pub(crate) fn native(session: &mut dyn SmokeSession) -> SmokeResult {
     let source = garden()?;
@@ -138,7 +139,7 @@ fn lit(session: &mut dyn SmokeSession) -> SmokeResult {
         artifact.clone(),
         json!({ "mime_type": "image/png", "bytes": "> 1000" })
     );
-    let night = json!({ "merge": true, "atmosphere": { "preset": "night" } });
+    let night = json!({ "atmosphere": { "preset": "night" } });
     environment(session, night, "night_falls")?;
     let dark = accepted(session, "capture", json!({}), "captures_night")?;
     if let (Some(light), Some(darker)) = (pixels(&day)?, pixels(&dark)?) {
@@ -208,6 +209,21 @@ fn records(reply: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+fn read_back(
+    session: &mut dyn SmokeSession,
+    about: &Value,
+    check: &'static str,
+) -> Result<Vec<Value>, SmokeFailure> {
+    accepted(session, "explain", about.clone(), check)?;
+    frames(session, READ_BACK_FRAMES, "frames_read_back")?;
+    Ok(records(&accepted(
+        session,
+        "explain",
+        about.clone(),
+        check,
+    )?))
+}
+
 fn look(session: &mut dyn SmokeSession, position: [f64; 3], target: [f64; 3]) -> SmokeResult {
     let args = json!({ "position": position, "target": target, "vertical_fov_radians": 0.8, "near": 0.1, "far": 150 });
     control(session, "camera", args, "camera_moves")?;
@@ -227,12 +243,7 @@ fn explained(session: &mut dyn SmokeSession) -> SmokeResult {
     );
     let about = json!({ "about": "entity", "entity": CRYSTAL });
     look(session, [0.0, 20.0, 60.0], [0.0, 20.0, 120.0])?;
-    let culled = records(&accepted(
-        session,
-        "explain",
-        about.clone(),
-        "explains_culled",
-    )?);
+    let culled = read_back(session, &about, "explains_culled")?;
     let core = culled.iter().find(|record| record["brick"] == "core");
     engine_core::smoke_check!(
         core.is_some_and(|record| record["decided"] == "culled")
@@ -244,7 +255,7 @@ fn explained(session: &mut dyn SmokeSession) -> SmokeResult {
         json!({ "core": "culled", "culling": "culled" })
     );
     look(session, [17.0, 21.0, 26.0], [0.0, 0.0, 0.0])?;
-    let drawn = records(&accepted(session, "explain", about, "explains_drawn")?);
+    let drawn = read_back(session, &about, "explains_drawn")?;
     engine_core::smoke_check!(
         drawn
             .iter()

@@ -325,6 +325,12 @@ fn sweep(session: &mut dyn SmokeSession) -> SmokeResult {
 
 fn changes(session: &mut dyn SmokeSession, ray: &Value) -> SmokeResult {
     let invalid_before = state(session)?;
+    let refused = Collider::new(cuboid_shape([0.0, 0.5, 0.5]));
+    smoke_eq!(
+        json!(refused.as_ref().err().map(|error| error.code)),
+        json!(ErrorCode::CollisionInvalidShape),
+        "invalid_shape_refused"
+    );
     let flat = collider(cuboid_shape([0.5; 3]), 1, 2, false);
     smoke_check!(
         flat.is_ok(),
@@ -346,11 +352,11 @@ fn changes(session: &mut dyn SmokeSession, ray: &Value) -> SmokeResult {
         json!(1),
         "invalid_collider_counted"
     );
-    let still = query(session, "raycast", ray.clone())?;
+    let incomplete = refuse(session, "query", json!({"name": "raycast", "args": ray}))?;
     smoke_eq!(
-        json!(still["hit"]["entity"]["id"]),
-        json!("target"),
-        "invalid_collider_preserves_world"
+        json!(incomplete["code"]),
+        json!("collision_incomplete_world"),
+        "invalid_collider_blocks_queries"
     );
     smoke_eq!(
         component(session, "player", "Transform")?,

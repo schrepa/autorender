@@ -2,6 +2,7 @@ use engine_core::smoke::{SmokeFailure, SmokeResult, SmokeSession};
 use engine_core::{smoke_check, smoke_eq};
 use serde_json::{Value, json};
 
+use super::requests::{FRAME_MS, idle};
 use super::scene_kit::{SceneFixture, ask, capture, component, control, query, render, residency};
 
 const TEXTURES: [(&str, u32, u32); 2] = [("bark", 16, 16), ("leaf", 8, 8)];
@@ -86,7 +87,8 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     let source = fixture(false);
     let (mut scene, _) = SceneFixture::load(session, &source)?;
     ask(session, "control", json!({"name": "pause"}))?;
-    render(session)?;
+    let rendering = render(session)?;
+    settled(session, rendering)?;
     let initial = residency(session)?;
     smoke_eq!(
         json!([
@@ -191,9 +193,9 @@ fn replacement(
     reloaded(scene, session, source)?;
     let baseline = capture(session)?;
     let changed = fixture(true);
-    let replaced = reloaded(scene, session, &changed)?;
+    let uploaded = reloaded(scene, session, &changed)?;
     smoke_eq!(
-        json!(replaced["rendering"]["texture_upload_bytes"]),
+        json!(uploaded),
         json!(texture_bytes()),
         "replacement_uploads_once"
     );
@@ -260,7 +262,7 @@ fn reloaded(
     scene: &mut SceneFixture,
     session: &mut dyn SmokeSession,
     document: &Value,
-) -> Result<Value, SmokeFailure> {
+) -> Result<u64, SmokeFailure> {
     let reloaded = scene.reload(session, document);
     smoke_check!(
         reloaded.is_ok(),
@@ -268,5 +270,25 @@ fn reloaded(
         json!(reloaded.as_ref().err()),
         json!(null)
     );
-    Ok(reloaded.unwrap_or_default())
+    let rendering = reloaded.unwrap_or_default()["rendering"].clone();
+    settled(session, rendering)
+}
+
+fn settled(session: &mut dyn SmokeSession, mut rendering: Value) -> Result<u64, SmokeFailure> {
+    let uploads = |rendering: &Value| rendering["texture_upload_bytes"].as_u64().unwrap_or(0);
+    let mut uploaded = uploads(&rendering);
+    for _ in 0..600 {
+        if rendering["missing_assets"] == 0 {
+            return Ok(uploaded);
+        }
+        idle(FRAME_MS);
+        rendering = render(session)?;
+        uploaded += uploads(&rendering);
+    }
+    smoke_eq!(
+        rendering["missing_assets"].clone(),
+        json!(0),
+        "scene_draws_every_entity"
+    );
+    Ok(uploaded)
 }

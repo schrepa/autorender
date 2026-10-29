@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::Entity;
 use engine_core::smoke::{SmokeResult, SmokeSession};
 use engine_core::{Bricks, Mesh3d, Transform, smoke_check, smoke_eq};
+use engine_terrain::Terrain;
 use engine_terrain::smokes::{
     Checked, Fixture, SETTLE_FRAMES, above, component, control, height_at, inspect, name, near,
     number, open, query, refuse, render,
@@ -18,17 +19,18 @@ pub(crate) fn register(bricks: &mut Bricks<'_>) {
 
 fn walks(session: &mut dyn SmokeSession) -> SmokeResult {
     let (fixture, _) = open(session)?;
-    around_a_hole(session)?;
+    around_a_hole(session, fixture.ground)?;
     let hiker = hiker(session, &fixture);
     hikes(session, hiker)
 }
 
-fn around_a_hole(session: &mut dyn SmokeSession) -> Checked<()> {
+fn around_a_hole(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
     let (start, end): ([f64; 2], [f64; 2]) = ([-300.0, -250.0], [-100.0, -250.0]);
+    let (center, radius): ([f64; 2], f64) = ([-200.0, -250.0], 18.0);
     control(
         session,
         "terrain_edit",
-        json!({"id": "smoke-pit", "center": [-200.0, -250.0], "radius": 18.0, "change": "hole"}),
+        json!({"id": "smoke-pit", "center": center, "radius": radius, "change": "hole"}),
     )?;
     let mut found = Value::Null;
     for _ in 0..SETTLE_FRAMES {
@@ -48,14 +50,27 @@ fn around_a_hole(session: &mut dyn SmokeSession) -> Checked<()> {
         &json!({"points": above(2)})
     );
     let straight = (end[0] - start[0]).hypot(end[1] - start[1]);
-    let clear = points
-        .iter()
-        .all(|point| (number(&point[0]) + 200.0).hypot(number(&point[2]) + 250.0) > 18.0);
+    let level = walk["level"]
+        .as_u64()
+        .and_then(|level| u32::try_from(level).ok())
+        .unwrap_or_default();
+    let spacing = session
+        .app()
+        .world()
+        .get::<Terrain>(ground)
+        .map_or(f32::NAN, |terrain| terrain.pyramid.spacing(level));
+    let rim = radius - f64::from(spacing);
+    let away = |point: &Value| {
+        let (x, z) = (number(&point[0]), number(&point[2]));
+        (x - center[0]).hypot(z - center[1])
+    };
+    let clear = points.iter().all(|point| away(point) > rim);
+    let nearest = points.iter().map(away).fold(f64::INFINITY, f64::min);
     smoke_check!(
         clear && number(&walk["length"]) > straight,
         "the_walk_goes_around_the_hole",
-        &walk["length"],
-        &above(straight)
+        &json!({"length": walk["length"], "nearest": nearest}),
+        &json!({"length": above(straight), "nearest": above(rim)})
     );
     let steep = refuse(
         session,

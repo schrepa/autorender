@@ -66,6 +66,7 @@ struct Runner<'a, G: Game> {
 enum Backend<G: Game> {
     Gpu(Box<DevSession<G>>),
     Headless(Box<Headless<G>>),
+    Closed(Box<App>, Value),
 }
 
 impl<'a, G: Game> Runner<'a, G> {
@@ -144,6 +145,7 @@ impl<G: Game> Native<'_, '_, G> {
                 session.game.exchange_jobs();
                 reply
             }
+            Backend::Closed(_, error) => serde_json::json!({"ok": false, "error": error}),
         }
     }
 }
@@ -153,6 +155,7 @@ impl<G: Game> SmokeSession for Native<'_, '_, G> {
         match &mut self.backend {
             Backend::Gpu(session) => &mut session.game.host_mut().engine_mut().app,
             Backend::Headless(headless) => &mut headless.engine.app,
+            Backend::Closed(app, _) => app,
         }
     }
 
@@ -186,12 +189,19 @@ impl<G: Game> SmokeSession for Native<'_, '_, G> {
     }
 
     fn restart(&mut self, without: &[&str]) {
+        self.backend = Backend::Closed(Box::new(App::new()), Value::Null);
         match self.runner.open(self.source.as_deref(), without) {
             Ok(backend) => {
                 self.backend = backend;
                 self.clock = 0.0;
             }
-            Err(error) => self.faults.push(fault("restart", &error)),
+            Err(error) => {
+                self.faults.push(fault("restart", &error));
+                self.backend = Backend::Closed(
+                    Box::new(App::new()),
+                    serde_json::to_value(&error).unwrap_or(Value::Null),
+                );
+            }
         }
     }
 

@@ -6,6 +6,8 @@ use crate::{Cube, Transform};
 
 const SIDE: usize = 12;
 const FRAME_MS: f64 = 1000.0 / 60.0;
+const QUIET_FRAMES: u32 = 13;
+const SETTLE_LIMIT: u32 = 600;
 const PAINTS: [[f32; 4]; 4] = [
     [0.85, 0.35, 0.2, 1.0],
     [0.25, 0.6, 0.85, 1.0],
@@ -142,7 +144,29 @@ fn sha(reply: &Value) -> Value {
     reply["result"]["artifact"]["sha256"].clone()
 }
 
+fn settled(session: &mut dyn SmokeSession) -> SmokeResult {
+    let (mut calm, mut shadows) = (0, Value::Null);
+    for _ in 0..SETTLE_LIMIT {
+        let reply = control(session, "render", json!({}), "renders_until_settled")?;
+        shadows = reply["result"]["rendering"]["shadows"].clone();
+        let idle = |field: &str| shadows[field].as_u64() == Some(0);
+        let still = idle("tiles_missing") && idle("tiles_drawn") && idle("sky_drawn");
+        calm = if still { calm + 1 } else { 0 };
+        if calm >= QUIET_FRAMES {
+            return Ok(());
+        }
+    }
+    crate::smoke_check!(
+        calm >= QUIET_FRAMES,
+        "exact_frames_settle",
+        shadows,
+        json!({ "quiet_frames": QUIET_FRAMES })
+    );
+    Ok(())
+}
+
 fn exact(session: &mut dyn SmokeSession, check: &'static str) -> Asked {
+    settled(session)?;
     let reply = accepted(session, "capture", json!({}), check)?;
     crate::smoke_check!(
         sha(&reply).is_string(),
@@ -155,6 +179,8 @@ fn exact(session: &mut dyn SmokeSession, check: &'static str) -> Asked {
 
 pub(crate) fn temporal_antialiasing(session: &mut dyn SmokeSession) -> SmokeResult {
     grid(session)?;
+    let still = json!({ "haze": { "spread": 0.0 } });
+    control(session, "environment", still, "haze_holds_still")?;
     let inspect = "inspects_temporal_antialiasing";
     let value = inspected(session, "TemporalAntialiasing", inspect)?;
     crate::smoke_eq!(value, taa_defaults(false), "off_by_default");

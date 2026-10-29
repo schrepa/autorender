@@ -1,5 +1,7 @@
 use engine::smoke::{SmokeResult, SmokeSession};
-use engine::terrain::data::smokes::{Checked, above, camera, heights, inspect, number, render};
+use engine::terrain::data::smokes::{
+    Checked, above, camera, height_at, heights, inspect, number, render,
+};
 use engine::{smoke_check, smoke_eq};
 use serde_json::{Value, json};
 
@@ -88,7 +90,15 @@ fn look(session: &mut dyn SmokeSession, in_place: bool) -> Checked<Looked> {
     if !in_place {
         walks(session)?;
     }
-    let floor = number(&heights(session, &[EYE])?[0]["height"]);
+    settle(session)?;
+    let ground = height_at(session, EYE)?;
+    let floor = number(&ground["height"]);
+    smoke_check!(
+        floor.is_finite(),
+        "the_eye_has_ground",
+        &ground,
+        &json!({"height": "finite"})
+    );
     camera(
         session,
         json!({

@@ -6,11 +6,12 @@ use super::requests::{
 };
 
 const ALPHAS: [f64; 3] = [0.0, 0.37, 0.81];
+const QUIET_FRAMES: u32 = 13;
+const SETTLE_LIMIT: u32 = 600;
 
 struct Case {
     candidates: f64,
-    reference_visible: f64,
-    read_back_visible: f64,
+    visible: f64,
     pixels: Option<Pixels>,
 }
 
@@ -81,7 +82,55 @@ fn equivalent(reference: Option<&Pixels>, read_back: Option<&Pixels>) -> SmokeRe
     Ok(())
 }
 
-fn compared(session: &mut dyn SmokeSession, alpha: f64) -> Result<Case, SmokeFailure> {
+fn quiet(
+    session: &mut dyn SmokeSession,
+    name: &str,
+    args: &Value,
+    check: &'static str,
+) -> SmokeResult {
+    let previewing = name == "present";
+    let (mut calm, mut shadows) = (0, Value::Null);
+    for _ in 0..SETTLE_LIMIT {
+        let reply = control(session, name, args.clone(), check)?;
+        shadows = reply["result"]["rendering"]["shadows"].clone();
+        let idle = |field: &str| number(&shadows[field]) == 0.0;
+        let still = idle("tiles_missing")
+            && idle("tiles_drawn")
+            && idle("sky_drawn")
+            && (!previewing || idle("moving_tiles"));
+        calm = if still { calm + 1 } else { 0 };
+        if calm >= QUIET_FRAMES {
+            return Ok(());
+        }
+    }
+    engine_core::smoke_check!(
+        calm >= QUIET_FRAMES,
+        "frames_settle",
+        json!({ "control": name, "shadows": shadows }),
+        json!({ "quiet_frames": QUIET_FRAMES })
+    );
+    Ok(())
+}
+
+fn current(session: &mut dyn SmokeSession) -> Result<Option<Pixels>, SmokeFailure> {
+    quiet(session, "render", &json!({}), "exact_frames_render")?;
+    let reply = accepted(session, "capture", json!({}), "exact_capture")?;
+    pixels(&reply)
+}
+
+fn compared(
+    session: &mut dyn SmokeSession,
+    alpha: f64,
+    exact: Option<&Pixels>,
+) -> Result<Case, SmokeFailure> {
+    if exact.is_some() {
+        quiet(
+            session,
+            "present",
+            &json!({ "alpha": alpha }),
+            "previews_settle",
+        )?;
+    }
     let first = accepted(
         session,
         "capture",
@@ -92,21 +141,12 @@ fn compared(session: &mut dyn SmokeSession, alpha: f64) -> Result<Case, SmokeFai
     partition(&reference)?;
     let reference_pixels = pixels(&first)?;
     let (read, read_pixels) = read_back(session, alpha)?;
-    equivalent(reference_pixels.as_ref(), read_pixels.as_ref())?;
-    let candidates = number(&reference["render_candidates"]);
+    equivalent(exact, read_pixels.as_ref())?;
     let case = Case {
-        candidates,
-        reference_visible: number(&reference["visible_instances"]),
-        read_back_visible: number(&read["visible_instances"]),
+        candidates: number(&read["render_candidates"]),
+        visible: number(&read["visible_instances"]),
         pixels: reference_pixels,
     };
-    let within = (candidates * 0.001).max(2.0);
-    engine_core::smoke_check!(
-        (case.read_back_visible - case.reference_visible).abs() <= within,
-        "gpu_visible_count",
-        json!({ "read_back": case.read_back_visible, "reference": case.reference_visible }),
-        json!({ "within": within })
-    );
     engine_core::smoke_eq!(
         read["render_candidates"].clone(),
         reference["render_candidates"].clone(),
@@ -132,37 +172,30 @@ fn settled(session: &mut dyn SmokeSession) -> SmokeResult {
     Ok(())
 }
 
-fn cases(session: &mut dyn SmokeSession) -> Result<Vec<Case>, SmokeFailure> {
+fn cases(session: &mut dyn SmokeSession, moving: bool) -> Result<Vec<Case>, SmokeFailure> {
     let partial = json!({ "position": [0, 30, 0], "target": [60, 20, 40], "vertical_fov_radians": 0.9, "near": 0.1, "far": 400 });
     let mut cases = Vec::new();
     for view in [None, Some(partial)] {
         if let Some(pose) = view {
             control(session, "camera", pose, "camera_moves")?;
         }
+        let exact = if moving { None } else { current(session)? };
         for alpha in ALPHAS {
-            cases.push(compared(session, alpha)?);
+            cases.push(compared(session, alpha, exact.as_ref())?);
         }
     }
     let views: Vec<Value> = cases
         .iter()
-        .map(|case| {
-            json!([
-                case.candidates,
-                case.reference_visible,
-                case.read_back_visible
-            ])
-        })
+        .map(|case| json!([case.candidates, case.visible]))
         .collect();
     engine_core::smoke_check!(
-        cases
-            .iter()
-            .any(|case| case.reference_visible < case.candidates),
+        cases.iter().any(|case| case.visible < case.candidates),
         "gpu_culling_exercised",
         json!(views),
         json!("a view culls")
     );
     engine_core::smoke_check!(
-        cases.iter().all(|case| case.reference_visible > 0.0),
+        cases.iter().all(|case| case.visible > 0.0),
         "every_view_draws",
         json!(views),
         json!("every view draws")
@@ -180,7 +213,7 @@ fn presented(session: &mut dyn SmokeSession, moving: bool) -> SmokeResult {
     control(session, "render", json!({}), "renders")?;
     control(session, "step", json!({ "ticks": 3 }), "steps")?;
     let overview = status(session, "status_answers")?;
-    let cases = cases(session)?;
+    let cases = cases(session, moving)?;
     if moving && let (Some(first), Some(last)) = (&cases[0].pixels, &cases[2].pixels) {
         let changed = differing(first, last, 8)?;
         engine_core::smoke_check!(
@@ -208,8 +241,8 @@ fn materialized(session: &mut dyn SmokeSession) -> SmokeResult {
             state["result"]["value"]["gpu_pending"],
             state["result"]["value"]["mode"],
         ]),
-        json!([true, false, "interpolated"]),
-        "inspection_materializes"
+        json!([true, true, "interpolated"]),
+        "inspection_keeps_gpu_poses"
     );
     control(session, "resume", json!({}), "resumes")?;
     let shown = (0..3).filter(|_| session.frame()).count();

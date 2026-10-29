@@ -4,9 +4,9 @@ use engine_core::{smoke_check, smoke_eq};
 use serde_json::{Value, json};
 
 use super::{
-    Checked, SETTLE_FRAMES, WAIT_FRAMES, above, camera, capture, environment, fast, height_at,
-    heights, inspect, not, number, open, overview, refuse, render, renders_until, seen, settle,
-    view, with,
+    COMPILE_FRAMES, Checked, SETTLE_FRAMES, WAIT_FRAMES, above, camera, capture, control,
+    environment, fast, height_at, heights, inspect, not, number, open, overview, query, refuse,
+    render, renders_until, seen, settle, view, with,
 };
 
 const SIDE: usize = 513;
@@ -25,11 +25,25 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     let (current, atmosphere) = horizons(session)?;
     bounce(session)?;
     aerial(session, &current, &atmosphere)?;
-    let (captured, rendering) = renders_until(session, SETTLE_FRAMES, |rendering| {
-        number(&rendering["reflection_probes"]["ready"]) > 0.0
-    })?;
+    captures(session)
+}
+
+fn captures(session: &mut dyn SmokeSession) -> Checked<()> {
+    control(session, "resume", json!({}))?;
+    let mut rendering = Value::Null;
+    for _ in 0..COMPILE_FRAMES {
+        if !session.frame() {
+            break;
+        }
+        let mut status = query(session, "status", json!({}))?;
+        rendering = status["rendering"].take();
+        if number(&rendering["reflection_probes"]["ready"]) > 0.0 {
+            break;
+        }
+    }
+    control(session, "pause", json!({}))?;
     smoke_check!(
-        captured,
+        number(&rendering["reflection_probes"]["ready"]) > 0.0,
         "a_probe_captures",
         &rendering["reflection_probes"],
         &json!({"ready": above(0)})
@@ -170,9 +184,18 @@ fn clouds(session: &mut dyn SmokeSession) -> Checked<()> {
         eye([0.0, 60.0, 0.0], [300.0, 400.0, 200.0], 4000.0),
     )?;
     let clear = capture(session)?;
-    let clouded = environment(session, json!({ "clouds": layer() }))?;
+    environment(session, json!({ "clouds": layer() }))?;
+    let (marched, clouded) = renders_until(session, COMPILE_FRAMES, |rendering| {
+        rendering["clouds"]["rows"] != 0
+    })?;
+    smoke_check!(
+        marched,
+        "the_cloud_noise_arrives",
+        &clouded["clouds"],
+        &json!({"rows": above(0)})
+    );
     smoke_eq!(
-        &clouded["rendering"]["clouds"]["rows"],
+        &clouded["clouds"]["rows"],
         &json!(256),
         "exact_frames_march_the_whole_dome"
     );
@@ -269,9 +292,16 @@ fn sky(session: &mut dyn SmokeSession) -> Checked<Value> {
         eye([0.0, 60.0, 0.0], [300.0, 200.0, 200.0], 4000.0),
     )?;
     let authored = capture(session)?;
-    let first = environment(session, json!({"sky": {}, "time_of_day": {"hours": 12.0}}))?;
+    let mut lit = environment(session, json!({"sky": {}, "time_of_day": {"hours": 12.0}}))?;
+    let mut first = lit["rendering"].take();
+    for _ in 0..COMPILE_FRAMES {
+        if first["sky"]["tables"] != 0 {
+            break;
+        }
+        first = render(session)?;
+    }
     smoke_eq!(
-        &first["rendering"]["sky"]["tables"],
+        &first["sky"]["tables"],
         &json!(3),
         "the_air_tables_and_the_sky_view_build"
     );

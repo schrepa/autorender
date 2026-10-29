@@ -24,6 +24,7 @@ const KINDS: [&str; 9] = [
     "sky",
 ];
 const SLOTTED: [&str; 2] = ["mesh", "card"];
+const QUIET_FRAMES: u32 = 13;
 
 pub(crate) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     let built = build(session.app().world_mut());
@@ -276,8 +277,9 @@ fn settle(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
         json!(false)
     );
     let (mut previous, mut stable, mut rendering) = (Value::Null, 0, Value::Null);
+    let mut calm = 0;
     for frame in 1..=600_u64 {
-        if frame > 8 && stable >= 5 {
+        if frame > 8 && stable >= 5 && calm >= QUIET_FRAMES {
             return Ok(rendering);
         }
         rendering = present(session)?;
@@ -297,6 +299,11 @@ fn settle(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
             0
         };
         previous = if current { counts } else { Value::Null };
+        calm = if quiet(&rendering["shadows"]) {
+            calm + 1
+        } else {
+            0
+        };
     }
     smoke_check!(
         stable >= 5,
@@ -304,7 +311,19 @@ fn settle(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
         json!(rendering),
         json!({"stable": 5})
     );
+    smoke_check!(
+        calm >= QUIET_FRAMES,
+        "shadows_settle",
+        json!(rendering["shadows"]),
+        json!({"quiet_frames": QUIET_FRAMES})
+    );
     Ok(rendering)
+}
+
+fn quiet(shadows: &Value) -> bool {
+    ["tiles_missing", "tiles_drawn", "moving_tiles", "sky_drawn"]
+        .iter()
+        .all(|field| shadows[*field].as_u64() == Some(0))
 }
 
 fn present(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {

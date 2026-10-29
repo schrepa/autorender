@@ -108,7 +108,7 @@ fn wind(session: &mut dyn SmokeSession) -> Checked<()> {
     );
     smoke_eq!(
         &gale["path"],
-        &json!("$.args.wind.velocity"),
+        &json!("$.args.wind.velocity[0]"),
         "winds_past_40_m_s_are_refused_at"
     );
     environment(session, json!({ "wind": calm }))?;

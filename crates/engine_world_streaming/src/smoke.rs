@@ -90,6 +90,7 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     let world = session.app().world_mut();
     remove_streamed(world, set);
     stream(world, &ITEMS[..1]);
+    render(session)?;
     let cells = inspect_cells(session)?;
     smoke_eq!(json!(cells["items"]), json!(1), "replaced_items");
     Ok(())

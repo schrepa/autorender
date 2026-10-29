@@ -33,6 +33,8 @@ fn fixture() -> Value {
     json!({
         "id": "terrain-views-fixture", "revision": 1,
         "camera": {"position": [0, 80, 140], "target": [0, 30, 0], "fov_degrees": 60, "near": 0.5, "far": 4000},
+        "materials": [],
+        "meshes": [],
         "entities": [{"id": "ground", "terrain": {
             "origin": [-512, 0, -512], "tiles": [4, 4], "spacing": 1,
             "layers": [

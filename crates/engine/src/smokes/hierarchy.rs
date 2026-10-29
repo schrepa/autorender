@@ -4,13 +4,14 @@ use engine_core::{edit_transform, smoke_check, smoke_eq};
 use serde_json::{Value, json};
 
 use super::scene_kit::{
-    SceneFixture, ask, capture, component, near_all, numbers, query, refuse, residency,
+    SceneFixture, ask, capture, component, near_all, numbers, query, refuse, render, residency,
 };
 
 const SCENE: &str = "hierarchy-fixture";
 const PREFAB: &str = "garden-lantern";
 const PARTS: [&str; 2] = ["lantern", "planter"];
 const EPSILON: f64 = 0.0002;
+const SETTLE_RENDERS: usize = 240;
 
 fn fixture() -> Value {
     json!({
@@ -53,6 +54,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
         "fixture_transforms_valid"
     );
     ask(session, "control", json!({"name": "pause"}))?;
+    settled(session, loaded["rendering"].clone())?;
     discovery(session)?;
     children(session)?;
     let initial = residency(session)?;
@@ -566,6 +568,21 @@ fn reload(
         json!(rendering["invalid_transforms"]),
         json!(0),
         "reload_transforms_valid"
+    );
+    settled(session, rendering)
+}
+
+fn settled(session: &mut dyn SmokeSession, mut rendering: Value) -> Result<Value, SmokeFailure> {
+    for _ in 0..SETTLE_RENDERS {
+        if rendering["missing_assets"] == 0 {
+            break;
+        }
+        rendering = render(session)?;
+    }
+    smoke_eq!(
+        json!(rendering["missing_assets"]),
+        json!(0),
+        "scene_settles"
     );
     Ok(rendering)
 }

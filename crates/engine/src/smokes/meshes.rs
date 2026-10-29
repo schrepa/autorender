@@ -1,9 +1,13 @@
+use engine_core::Cooking;
 use engine_core::math::{cos, sin};
 use engine_core::smoke::{SmokeFailure, SmokeResult, SmokeSession};
 use engine_core::{smoke_check, smoke_eq};
 use serde_json::{Value, json};
 
+use super::requests::{FRAME_MS, idle};
 use super::scene_kit::{SceneFixture, ask, component, render};
+
+const COOKS_LEVELS: bool = !cfg!(target_arch = "wasm32");
 
 fn ball(rings: u32, segments: u32) -> Value {
     let mut vertices = Vec::new();
@@ -59,6 +63,12 @@ fn fixture() -> Value {
 }
 
 pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
+    if COOKS_LEVELS {
+        session
+            .app()
+            .world_mut()
+            .insert_resource(Cooking::default());
+    }
     let (_scene, _) = SceneFixture::load(session, &fixture())?;
     ask(session, "control", json!({"name": "pause"}))?;
     render(session)?;
@@ -71,12 +81,17 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
         json!({"vertices": 6, "indices": 12, "double_sided": true}),
         "inspects"
     );
-    let near = component(session, "near-ball", "Mesh3d")?;
-    let levels = &near["mesh"]["rendered"]["levels"];
+    if !COOKS_LEVELS {
+        return Ok(());
+    }
+    let rendered = settled_levels(session, "near-ball")?;
+    session.app().world_mut().remove_resource::<Cooking>();
     smoke_check!(
-        levels.as_array().is_some_and(|levels| !levels.is_empty()),
+        rendered["levels"]
+            .as_array()
+            .is_some_and(|levels| !levels.is_empty()),
         "ball_has_coarser_levels",
-        json!(near["mesh"]["rendered"]),
+        rendered,
         json!({"levels": "at least one"})
     );
     let near_level = drawn_level(session, "near-ball")?;
@@ -94,6 +109,24 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
         json!({"above": near_level})
     );
     Ok(())
+}
+
+fn settled_levels(session: &mut dyn SmokeSession, entity: &str) -> Result<Value, SmokeFailure> {
+    for _ in 0..600 {
+        let rendered = component(session, entity, "Mesh3d")?["mesh"]["rendered"].clone();
+        if rendered.is_object() {
+            return Ok(rendered);
+        }
+        idle(FRAME_MS);
+        render(session)?;
+    }
+    smoke_check!(
+        false,
+        "cooked_levels_settle",
+        json!(entity),
+        json!("rendered levels")
+    );
+    Ok(Value::Null)
 }
 
 fn drawn_level(session: &mut dyn SmokeSession, entity: &str) -> Result<u64, SmokeFailure> {
