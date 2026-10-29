@@ -306,17 +306,8 @@ fn prepared_parts(
     }
     let counts: Vec<usize> = prepared.iter().map(|(_, meshes)| meshes.len()).collect();
     let levels = 1 + asset.lods.len();
-    if let Err((part, _)) = PlacementPart::check(&counts, levels) {
-        return Err(match part {
-            Some(part) => invalid(format!("{at}.parts[{part}].meshes"))
-                .expected(Expected::Array)
-                .range(1.0, levels as f64)
-                .got(counts[part]),
-            None => invalid(format!("{at}.parts"))
-                .expected(Expected::Array)
-                .at_most(MAX_PLACEMENT_PARTS as u64)
-                .got(counts.len()),
-        });
+    if let Err(error) = PlacementPart::check(&counts, levels) {
+        return Err(error.within(&at));
     }
     Ok(prepared)
 }
@@ -518,22 +509,8 @@ impl SceneTerrain {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let errors: Vec<f32> = lods.iter().map(|&(_, error)| error).collect();
-            if let Err((level, _)) = PlacementLod::check(&errors) {
-                return Err(match level {
-                    Some(level) => invalid(format!("{at}.lods[{level}].error"))
-                        .expected(Expected::Above)
-                        .range(
-                            level
-                                .checked_sub(1)
-                                .map_or(0.0, |previous| f64::from(errors[previous])),
-                            f64::MAX,
-                        )
-                        .got(errors[level]),
-                    None => invalid(format!("{at}.lods"))
-                        .expected(Expected::Array)
-                        .at_most(MAX_PLACEMENT_LODS as u64)
-                        .got(errors.len()),
-                });
+            if let Err(error) = PlacementLod::check(&errors) {
+                return Err(error.within(&at));
             }
             let parts = prepared_parts(asset, (materials, meshes), (&at, &invalid))?;
             let shadow = asset

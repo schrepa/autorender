@@ -65,7 +65,7 @@ impl ExtraRules for MotionDetail {
         if self.fastest >= self.speed {
             Ok(())
         } else {
-            Err(InvalidSetting::new("fastest", "must be at least speed"))
+            Err(InvalidSetting::new("fastest", engine_settings::Expected::Above))
         }
     }
 

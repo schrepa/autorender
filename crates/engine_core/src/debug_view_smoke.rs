@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use crate::smoke::{SmokeFailure, SmokeResult, SmokeSession};
 use crate::{
-    AssetError, AssetLibrary, Camera, Material, Mesh, Mesh3d, Texture, Transform, set_parents,
+    AssetLibrary, Error, Camera, Material, Mesh, Mesh3d, Texture, Transform, set_parents,
     smoke_check, smoke_eq,
 };
 
@@ -330,7 +330,7 @@ fn checker() -> Vec<u8> {
 }
 
 fn build(world: &mut World) -> Result<(), String> {
-    let found = |error: AssetError| format!("{error:?}");
+    let found = |error: Error| format!("{error:?}");
     let paints = [
         [0.85, 0.35, 0.2, 1.0],
         [0.25, 0.6, 0.85, 1.0],

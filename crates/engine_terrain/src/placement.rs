@@ -69,22 +69,16 @@ settings! {
 impl ExtraRules for PlacementLayer {
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         if self.density * self.footprint * self.footprint / 10_000.0 > 1.0 {
-            return Err(InvalidSetting::new(
-                "density",
-                "places at most one object per footprint square",
-            ));
+            return Err(InvalidSetting::new("density", engine_settings::Expected::Number));
         }
         if self.scale[0] > self.scale[1] {
-            return Err(InvalidSetting::new("scale", "must list the smaller first"));
+            return Err(InvalidSetting::new("scale", engine_settings::Expected::Sorted));
         }
         if self.assets.iter().map(|choice| choice.weight).sum::<f32>() <= 0.0 {
-            return Err(InvalidSetting::new("assets", "needs a positive weight"));
+            return Err(InvalidSetting::new("assets", engine_settings::Expected::Nonzero));
         }
         if self.far.is_some_and(|far| far.level <= self.level) {
-            return Err(InvalidSetting::new(
-                "far.level",
-                "must be coarser than the layer's level",
-            ));
+            return Err(InvalidSetting::new("far.level", engine_settings::Expected::Above));
         }
         Ok(())
     }

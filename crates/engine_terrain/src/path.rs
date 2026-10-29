@@ -62,10 +62,7 @@ impl ExtraRules for PathLayer {
         if (2..=MAX_PATH_POINTS).contains(&self.points.len()) {
             Ok(())
         } else {
-            Err(InvalidSetting::new(
-                "points",
-                format!("must hold 2 to {MAX_PATH_POINTS} points"),
-            ))
+            Err(InvalidSetting::new("points", engine_settings::Expected::Array).allowed(engine_settings::Allowed::Range { min: 2.0, max: MAX_PATH_POINTS as f64 }))
         }
     }
 }

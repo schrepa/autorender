@@ -9,7 +9,8 @@ use engine_core::{
 use glam::{EulerRot, Quat, Vec3};
 use serde_json::{Value, json};
 
-use crate::{Collider, ColliderShape, CollisionError, CollisionLayers};
+use crate::{Collider, ColliderShape, CollisionLayers};
+use engine_core::{Error, ErrorCode};
 
 const SCENE: &str = "collision-fixture";
 const TICK_DISTANCE: f32 = 6.5 / 60.0;
@@ -255,7 +256,7 @@ fn changes(session: &mut dyn SmokeSession, ray: &Value) -> SmokeResult {
     Ok(())
 }
 
-fn build(world: &mut World) -> Result<(), CollisionError> {
+fn build(world: &mut World) -> Result<(), Error> {
     let fixture = [
         (
             "player",
@@ -302,7 +303,7 @@ fn build(world: &mut World) -> Result<(), CollisionError> {
         named.insert(id.to_owned(), spawned.id());
     }
     if set_parent(world, named["sheared"], Some(named["parent"])).is_err() {
-        return Err(CollisionError::InvalidTransform);
+        return Err(Error::new(ErrorCode::CollisionInvalidTransform, "$"));
     }
     world.insert_resource(OperationScene {
         id: SCENE.to_owned(),
@@ -318,7 +319,7 @@ fn collider(
     memberships: u32,
     filter: u32,
     sensor: bool,
-) -> Result<Collider, CollisionError> {
+) -> Result<Collider, Error> {
     Ok(Collider::new(shape)?
         .with_layers(CollisionLayers::new(memberships, filter))
         .with_sensor(sensor))

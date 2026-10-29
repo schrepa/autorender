@@ -24,7 +24,7 @@ fn walks(session: &mut dyn SmokeSession) -> SmokeResult {
 }
 
 fn around_a_hole(session: &mut dyn SmokeSession) -> Checked<()> {
-    let (start, end) = ([-300.0, -250.0], [-100.0, -250.0]);
+    let (start, end): ([f64; 2], [f64; 2]) = ([-300.0, -250.0], [-100.0, -250.0]);
     control(
         session,
         "terrain_edit",

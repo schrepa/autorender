@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::{Entity, World};
-use engine_collision::{Collider, ColliderShape, CollisionError};
+use engine_collision::{Collider, ColliderShape};
+use engine_core::{Error, ErrorCode};
 use engine_core::smoke::{SmokeFailure, SmokeResult, SmokeSession};
 use engine_core::{AuthoredId, OperationScene, Transform, set_parent, smoke_check, smoke_eq};
 use glam::Vec3;
@@ -132,7 +133,7 @@ fn parented(session: &mut dyn SmokeSession) -> SmokeResult {
     Ok(())
 }
 
-fn build(world: &mut World) -> Result<(), CollisionError> {
+fn build(world: &mut World) -> Result<(), Error> {
     let solid = |half: [f32; 3]| {
         Collider::new(ColliderShape::Cuboid {
             half_extents: Vec3::from_array(half),
@@ -182,9 +183,9 @@ fn build(world: &mut World) -> Result<(), CollisionError> {
     Ok(())
 }
 
-fn hang(world: &mut World) -> Result<(), CollisionError> {
+fn hang(world: &mut World) -> Result<(), Error> {
     let Some(floor) = entity(world, "floor") else {
-        return Err(CollisionError::InvalidTransform);
+        return Err(Error::new(ErrorCode::CollisionInvalidTransform, "$"));
     };
     let hung = world
         .spawn((
@@ -194,7 +195,7 @@ fn hang(world: &mut World) -> Result<(), CollisionError> {
         ))
         .id();
     if set_parent(world, hung, Some(floor)).is_err() {
-        return Err(CollisionError::InvalidTransform);
+        return Err(Error::new(ErrorCode::CollisionInvalidTransform, "$"));
     }
     let mut named = world
         .get_resource::<OperationScene>()

@@ -147,10 +147,7 @@ impl ExtraRules for SteepLayer {
         if self.slope[0] < self.slope[1] {
             Ok(())
         } else {
-            Err(InvalidSetting::new(
-                "slope",
-                "must rise: its first slope below its second",
-            ))
+            Err(InvalidSetting::new("slope", engine_settings::Expected::Sorted))
         }
     }
 }
@@ -1229,7 +1226,7 @@ impl BiomeRules {
 
 use crate::codec::{record, tagged};
 
-tagged!(Mask, "invalid mask" {
+tagged!(Mask {
     0 => Constant(value),
     1 => Height(ends),
     2 => Slope(ends),
