@@ -1,0 +1,746 @@
+{
+  "bricks": [
+    {
+      "components": [],
+      "crate": "engine_terrain",
+      "dependencies": [
+        "engine_assets",
+        "engine_core",
+        "engine_math",
+        "engine_profile",
+        "engine_settings",
+        "engine_textures"
+      ],
+      "inspectors": [
+        "Terrains",
+        "TerrainDebug",
+        "TerrainPrefetch"
+      ],
+      "lists": [],
+      "name": "terrain",
+      "operations": [
+        {
+          "control": true,
+          "name": "terrain"
+        },
+        {
+          "control": true,
+          "name": "terrain_edit"
+        },
+        {
+          "control": true,
+          "name": "terrain_undo"
+        },
+        {
+          "control": true,
+          "name": "terrain_redo"
+        },
+        {
+          "control": true,
+          "name": "terrain_river"
+        },
+        {
+          "control": false,
+          "name": "terrain_height"
+        },
+        {
+          "control": false,
+          "name": "terrain_route"
+        }
+      ],
+      "reads": [],
+      "resources": [
+        "engine_terrain::runtime::settings::TerrainSettings",
+        "engine_terrain::runtime::ground_cover::GroundCover",
+        "engine_terrain::runtime::wind::Wind",
+        "engine_terrain::runtime::occupancy::Occupancy",
+        "engine_terrain::runtime::water::Water",
+        "engine_terrain::runtime::residency::Terrains",
+        "engine_core::ground::Ground",
+        "engine_core::water::WaterObstacles"
+      ],
+      "settings": [
+        {
+          "key": "terrain",
+          "name": "TerrainSettings",
+          "opt_in": false
+        },
+        {
+          "key": "ground_cover",
+          "name": "GroundCover",
+          "opt_in": false
+        },
+        {
+          "key": "wind",
+          "name": "Wind",
+          "opt_in": false
+        },
+        {
+          "key": "occupancy",
+          "name": "Occupancy",
+          "opt_in": false
+        },
+        {
+          "key": "water",
+          "name": "Water",
+          "opt_in": false
+        }
+      ],
+      "slot": null,
+      "stats": [],
+      "system_set": "terrain",
+      "type": "engine_terrain::runtime::brick::TerrainBrick",
+      "version": "b43c1775a62ea611a5a67559e6e34eb2548e74b500da5c5eda5c2a44c17d9e1f"
+    },
+    {
+      "components": [],
+      "crate": "engine_world_streaming",
+      "dependencies": [
+        "engine_core",
+        "engine_profile",
+        "engine_settings"
+      ],
+      "inspectors": [
+        "WorldCells",
+        "WorldChanges"
+      ],
+      "lists": [],
+      "name": "world_streaming",
+      "operations": [
+        {
+          "control": true,
+          "name": "world_changes"
+        }
+      ],
+      "reads": [],
+      "resources": [
+        "engine_world_streaming::WorldStreaming",
+        "engine_world_streaming::WorldCells",
+        "engine_world_streaming::WorldChanges",
+        "engine_world_streaming::CellStats"
+      ],
+      "settings": [
+        {
+          "key": "world_streaming",
+          "name": "WorldStreaming",
+          "opt_in": false
+        }
+      ],
+      "slot": null,
+      "stats": [
+        "world_streaming"
+      ],
+      "system_set": "world_streaming",
+      "type": "engine_world_streaming::WorldStreamingBrick",
+      "version": "128912056a148d65ce0a3cc7c7f8660a2a72ab701c6bedc91c595e341c10f506"
+    },
+    {
+      "components": [],
+      "crate": "engine_navigation",
+      "dependencies": [
+        "engine_core",
+        "engine_math",
+        "engine_settings",
+        "engine_terrain"
+      ],
+      "inspectors": [
+        "NavAgent",
+        "NavAgents"
+      ],
+      "lists": [],
+      "name": "navigation",
+      "operations": [
+        {
+          "control": true,
+          "name": "nav_go"
+        },
+        {
+          "control": false,
+          "name": "nav_path"
+        }
+      ],
+      "reads": [
+        "terrain"
+      ],
+      "resources": [
+        "engine_navigation::agents::Navigation",
+        "engine_navigation::agents::NavAgents",
+        "engine_navigation::agents::NavStats"
+      ],
+      "settings": [
+        {
+          "key": "navigation",
+          "name": "Navigation",
+          "opt_in": false
+        }
+      ],
+      "slot": null,
+      "stats": [
+        "navigation"
+      ],
+      "system_set": "navigation",
+      "type": "engine_navigation::agents::NavigationBrick",
+      "version": "94523849ad60801b50dde3c5633a1e1a8585db84c221cf8e0bbbf61cf96bae9d"
+    },
+    {
+      "components": [],
+      "crate": "engine_time_of_day",
+      "dependencies": [
+        "engine_core",
+        "engine_settings"
+      ],
+      "inspectors": [],
+      "lists": [],
+      "name": "time_of_day",
+      "operations": [],
+      "reads": [
+        "sky"
+      ],
+      "resources": [
+        "engine_time_of_day::TimeOfDay"
+      ],
+      "settings": [
+        {
+          "key": "time_of_day",
+          "name": "TimeOfDay",
+          "opt_in": true
+        }
+      ],
+      "slot": null,
+      "stats": [],
+      "system_set": "time_of_day",
+      "type": "engine_time_of_day::TimeOfDayBrick",
+      "version": "6ab0f1310c51cba99d2ed6a1c63149e11915c988e1147697daf76b4d1ec0a001"
+    },
+    {
+      "components": [],
+      "crate": "engine_collision",
+      "dependencies": [
+        "engine_core",
+        "engine_profile",
+        "engine_settings",
+        "engine_terrain"
+      ],
+      "inspectors": [
+        "CollisionWorld"
+      ],
+      "lists": [],
+      "name": "collision",
+      "operations": [
+        {
+          "control": false,
+          "name": "raycast"
+        },
+        {
+          "control": false,
+          "name": "overlap"
+        },
+        {
+          "control": false,
+          "name": "shape_cast"
+        },
+        {
+          "control": false,
+          "name": "collision_events"
+        },
+        {
+          "control": false,
+          "name": "terrain_sweep"
+        }
+      ],
+      "reads": [
+        "terrain"
+      ],
+      "resources": [
+        "engine_collision::types::CollisionConfig",
+        "engine_collision::world::CollisionWorld",
+        "engine_collision::world::SensorEvents"
+      ],
+      "settings": [],
+      "slot": null,
+      "stats": [],
+      "system_set": "collision",
+      "type": "engine_collision::Collision",
+      "version": "aa247b8ab6fb26ad7950a5df6645face90c63ad659d427367d5d08148fcbffc6"
+    },
+    {
+      "components": [],
+      "crate": "engine_physics",
+      "dependencies": [
+        "engine_collision",
+        "engine_core",
+        "engine_profile",
+        "engine_settings",
+        "engine_terrain"
+      ],
+      "inspectors": [
+        "PhysicsWorld"
+      ],
+      "lists": [],
+      "name": "physics",
+      "operations": [],
+      "reads": [
+        "collision",
+        "terrain"
+      ],
+      "resources": [
+        "engine_physics::settings::Physics",
+        "engine_physics::settings::PhysicsStats",
+        "engine_physics::world::PhysicsWorld"
+      ],
+      "settings": [
+        {
+          "key": "physics",
+          "name": "Physics",
+          "opt_in": false
+        }
+      ],
+      "slot": null,
+      "stats": [
+        "physics"
+      ],
+      "system_set": "physics",
+      "type": "engine_physics::PhysicsBrick",
+      "version": "ff97b32b9589e99182b581a1c75c5df568be5e85882536af2cf282831644bb32"
+    },
+    {
+      "components": [],
+      "crate": "engine_core",
+      "dependencies": [
+        "engine_assets",
+        "engine_math",
+        "engine_profile",
+        "engine_settings",
+        "engine_sources",
+        "engine_tables",
+        "engine_textures"
+      ],
+      "inspectors": [],
+      "lists": [],
+      "name": "lights",
+      "operations": [],
+      "reads": [],
+      "resources": [
+        "engine_core::lights::LocalLightSettings",
+        "engine_core::lights::LightExtractor"
+      ],
+      "settings": [
+        {
+          "key": "local_lights",
+          "name": "LocalLightSettings",
+          "opt_in": false
+        }
+      ],
+      "slot": null,
+      "stats": [],
+      "system_set": "lights",
+      "type": "engine_core::lights::Lights",
+      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+    },
+    {
+      "components": [],
+      "crate": "engine_core",
+      "dependencies": [
+        "engine_assets",
+        "engine_math",
+        "engine_profile",
+        "engine_settings",
+        "engine_sources",
+        "engine_tables",
+        "engine_textures"
+      ],
+      "inspectors": [],
+      "lists": [],
+      "name": "particles",
+      "operations": [],
+      "reads": [],
+      "resources": [
+        "engine_core::particles::ParticleSettings",
+        "engine_core::particles::ParticleExtractor"
+      ],
+      "settings": [
+        {
+          "key": "particles",
+          "name": "ParticleSettings",
+          "opt_in": false
+        }
+      ],
+      "slot": null,
+      "stats": [],
+      "system_set": "particles",
+      "type": "engine_core::particles::Particles",
+      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+    },
+    {
+      "components": [],
+      "crate": "engine_core",
+      "dependencies": [
+        "engine_assets",
+        "engine_math",
+        "engine_profile",
+        "engine_settings",
+        "engine_sources",
+        "engine_tables",
+        "engine_textures"
+      ],
+      "inspectors": [],
+      "lists": [],
+      "name": "reflection_probes",
+      "operations": [],
+      "reads": [],
+      "resources": [
+        "engine_core::probes::ReflectionProbeSettings",
+        "engine_core::probes::ProbeExtractor"
+      ],
+      "settings": [
+        {
+          "key": "reflection_probes",
+          "name": "ReflectionProbeSettings",
+          "opt_in": false
+        }
+      ],
+      "slot": null,
+      "stats": [],
+      "system_set": "reflection_probes",
+      "type": "engine_core::probes::ReflectionProbes",
+      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+    },
+    {
+      "components": [],
+      "crate": "engine_core",
+      "dependencies": [
+        "engine_assets",
+        "engine_math",
+        "engine_profile",
+        "engine_settings",
+        "engine_sources",
+        "engine_tables",
+        "engine_textures"
+      ],
+      "inspectors": [],
+      "lists": [],
+      "name": "sky",
+      "operations": [],
+      "reads": [],
+      "resources": [
+        "engine_core::clouds::Clouds",
+        "engine_core::sky::Sky",
+        "engine_core::sky::Haze",
+        "engine_core::sky::NightSky",
+        "engine_core::atmosphere::Atmosphere"
+      ],
+      "settings": [
+        {
+          "key": "clouds",
+          "name": "Clouds",
+          "opt_in": true
+        },
+        {
+          "key": "sky",
+          "name": "Sky",
+          "opt_in": true
+        },
+        {
+          "key": "haze",
+          "name": "Haze",
+          "opt_in": false
+        },
+        {
+          "key": "night_sky",
+          "name": "NightSky",
+          "opt_in": false
+        }
+      ],
+      "slot": null,
+      "stats": [],
+      "system_set": "sky",
+      "type": "engine_core::sky::Sky",
+      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+    },
+    {
+      "components": [],
+      "crate": "engine_core",
+      "dependencies": [
+        "engine_assets",
+        "engine_math",
+        "engine_profile",
+        "engine_settings",
+        "engine_sources",
+        "engine_tables",
+        "engine_textures"
+      ],
+      "inspectors": [],
+      "lists": [],
+      "name": "shadows",
+      "operations": [],
+      "reads": [],
+      "resources": [
+        "engine_core::effects::Shadows",
+        "engine_core::sky_occlusion::SkyOcclusion"
+      ],
+      "settings": [
+        {
+          "key": "shadows",
+          "name": "Shadows",
+          "opt_in": false
+        },
+        {
+          "key": "sky_occlusion",
+          "name": "SkyOcclusion",
+          "opt_in": false
+        }
+      ],
+      "slot": null,
+      "stats": [],
+      "system_set": "shadows",
+      "type": "engine_core::effects::Shadows",
+      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+    },
+    {
+      "components": [],
+      "crate": "engine_core",
+      "dependencies": [
+        "engine_assets",
+        "engine_math",
+        "engine_profile",
+        "engine_settings",
+        "engine_sources",
+        "engine_tables",
+        "engine_textures"
+      ],
+      "inspectors": [],
+      "lists": [],
+      "name": "post_effects",
+      "operations": [],
+      "reads": [],
+      "resources": [
+        "engine_core::effects::AmbientOcclusion",
+        "engine_core::effects::Bloom",
+        "engine_core::effects::Dither",
+        "engine_core::effects::AutoExposure",
+        "engine_core::effects::Reflections",
+        "engine_core::antialiasing::TemporalAntialiasing"
+      ],
+      "settings": [
+        {
+          "key": "ambient_occlusion",
+          "name": "AmbientOcclusion",
+          "opt_in": false
+        },
+        {
+          "key": "bloom",
+          "name": "Bloom",
+          "opt_in": false
+        },
+        {
+          "key": "dither",
+          "name": "Dither",
+          "opt_in": false
+        },
+        {
+          "key": "auto_exposure",
+          "name": "AutoExposure",
+          "opt_in": true
+        },
+        {
+          "key": "reflections",
+          "name": "Reflections",
+          "opt_in": true
+        },
+        {
+          "key": "temporal_antialiasing",
+          "name": "TemporalAntialiasing",
+          "opt_in": false
+        }
+      ],
+      "slot": null,
+      "stats": [],
+      "system_set": "post_effects",
+      "type": "engine_core::effects::PostEffects",
+      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+    },
+    {
+      "components": [],
+      "crate": "engine_core",
+      "dependencies": [
+        "engine_assets",
+        "engine_math",
+        "engine_profile",
+        "engine_settings",
+        "engine_sources",
+        "engine_tables",
+        "engine_textures"
+      ],
+      "inspectors": [],
+      "lists": [],
+      "name": "level_of_detail",
+      "operations": [],
+      "reads": [],
+      "resources": [
+        "engine_core::level_of_detail::LevelOfDetail"
+      ],
+      "settings": [
+        {
+          "key": "level_of_detail",
+          "name": "LevelOfDetail",
+          "opt_in": false
+        }
+      ],
+      "slot": null,
+      "stats": [],
+      "system_set": "level_of_detail",
+      "type": "engine_core::level_of_detail::LevelOfDetail",
+      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+    },
+    {
+      "components": [],
+      "crate": "engine_core",
+      "dependencies": [
+        "engine_assets",
+        "engine_math",
+        "engine_profile",
+        "engine_settings",
+        "engine_sources",
+        "engine_tables",
+        "engine_textures"
+      ],
+      "inspectors": [],
+      "lists": [],
+      "name": "culling",
+      "operations": [],
+      "reads": [],
+      "resources": [
+        "engine_core::gpu_culling::OcclusionCulling",
+        "engine_core::gpu_culling::SubpixelCulling"
+      ],
+      "settings": [
+        {
+          "key": "occlusion_culling",
+          "name": "OcclusionCulling",
+          "opt_in": false
+        },
+        {
+          "key": "subpixel_culling",
+          "name": "SubpixelCulling",
+          "opt_in": false
+        }
+      ],
+      "slot": null,
+      "stats": [],
+      "system_set": "culling",
+      "type": "engine_core::gpu_culling::Culling",
+      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+    },
+    {
+      "components": [],
+      "crate": "engine_core",
+      "dependencies": [
+        "engine_assets",
+        "engine_math",
+        "engine_profile",
+        "engine_settings",
+        "engine_sources",
+        "engine_tables",
+        "engine_textures"
+      ],
+      "inspectors": [],
+      "lists": [],
+      "name": "resolution",
+      "operations": [],
+      "reads": [],
+      "resources": [
+        "engine_core::resolution::Resolution",
+        "engine_core::resolution::DynamicResolution"
+      ],
+      "settings": [
+        {
+          "key": "resolution",
+          "name": "Resolution",
+          "opt_in": false
+        },
+        {
+          "key": "dynamic_resolution",
+          "name": "DynamicResolution",
+          "opt_in": true
+        }
+      ],
+      "slot": null,
+      "stats": [],
+      "system_set": "resolution",
+      "type": "engine_core::resolution::Resolution",
+      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+    },
+    {
+      "components": [],
+      "crate": "engine_core",
+      "dependencies": [
+        "engine_assets",
+        "engine_math",
+        "engine_profile",
+        "engine_settings",
+        "engine_sources",
+        "engine_tables",
+        "engine_textures"
+      ],
+      "inspectors": [],
+      "lists": [],
+      "name": "debug_view",
+      "operations": [],
+      "reads": [],
+      "resources": [
+        "engine_core::debug_view::DebugView"
+      ],
+      "settings": [
+        {
+          "key": "debug_view",
+          "name": "DebugView",
+          "opt_in": true
+        }
+      ],
+      "slot": null,
+      "stats": [],
+      "system_set": "debug_view",
+      "type": "engine_core::debug_view::DebugView",
+      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+    },
+    {
+      "components": [],
+      "crate": "engine_core",
+      "dependencies": [
+        "engine_assets",
+        "engine_math",
+        "engine_profile",
+        "engine_settings",
+        "engine_sources",
+        "engine_tables",
+        "engine_textures"
+      ],
+      "inspectors": [],
+      "lists": [],
+      "name": "lighting_model",
+      "operations": [],
+      "reads": [],
+      "resources": [
+        "engine_core::highlights::Highlights",
+        "engine_core::foliage::Foliage"
+      ],
+      "settings": [
+        {
+          "key": "highlights",
+          "name": "Highlights",
+          "opt_in": false
+        },
+        {
+          "key": "foliage",
+          "name": "Foliage",
+          "opt_in": false
+        }
+      ],
+      "slot": null,
+      "stats": [],
+      "system_set": "lighting_model",
+      "type": "engine_core::foliage::LightingModel",
+      "version": "9b12134272d828a0847c9bd8ee62e6f48b1b004499eb5cf440022c50df1da52e"
+    }
+  ]
+}

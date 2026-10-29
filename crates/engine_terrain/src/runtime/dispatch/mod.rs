@@ -146,11 +146,8 @@ fn prefetch(
     for (key, id, made) in idle {
         if let Some(output) = slots.jobs.take(id) {
             state.prefetched.remove(&key);
-            if let Ok(tile) = job_output(
-                TileJob::KIND.name(),
-                output,
-                crate::jobs::tile_output,
-            ) && made == generation
+            if let Ok(tile) = job_output(TileJob::KIND.name(), output, crate::jobs::tile_output)
+                && made == generation
                 && tile.key() == key
                 && !state.store.contains(&key)
             {

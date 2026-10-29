@@ -165,7 +165,7 @@
     },
     "refusal missing_plugin at $.op": {
       "code": "missing_plugin",
-      "message": "TerrainPlugin is not added: add it, or EnginePlugins, to the engine",
+      "message": "the terrain brick is not added: add it, or the standard bricks, to the engine",
       "path": "$.op"
     },
     "refusal missing_resource at $.assets": {
@@ -255,7 +255,7 @@
     },
     "refusal unknown_variant at $.op": {
       "code": "unknown_variant",
-      "message": "unknown variant `weather`, expected one of `status`, `inspect`, `assets`, `digest`, `distribution`, `describe`, `raycast`, `overlap`, `shape_cast`, `terrain_height`, `nav_path`, `terrain_sweep`, `terrain_route`, `collision_events`",
+      "message": "unknown variant `weather`, expected one of `status`, `inspect`, `assets`, `digest`, `distribution`, `describe`",
       "path": "$.op"
     },
     "refusal unsupported_version at $.version": {
@@ -270,9 +270,9 @@
     }
   },
   "scenes": {
-    "document components": "5bba60ba97ef9cc5",
+    "document components": "a4f67ea820c30360",
     "document components counts": {
-      "bytes": 10072,
+      "bytes": 9360,
       "entities": 9,
       "materials": 3,
       "meshes": 3,
@@ -477,7 +477,7 @@
     },
     "refusal missing_plugin at $.entities[0].prefetch": {
       "code": "missing_plugin",
-      "message": "TerrainPlugin is not added: add it, or EnginePlugins, to the engine",
+      "message": "the terrain brick is not added: add it, or the standard bricks, to the engine",
       "path": "$.entities[0].prefetch"
     },
     "refusal nested_prefab at $.prefabs[1].entities[0].prefab": {

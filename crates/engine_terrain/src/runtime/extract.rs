@@ -244,8 +244,14 @@ impl From<Reach> for WaterReach {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "longer than the line ceiling; it may only shrink"
+)]
 pub(crate) fn extract_terrains(world: &World, snapshot: &mut RenderSnapshot) {
-    snapshot.extracted.insert(TerrainEnvironment::current(world));
+    snapshot
+        .extracted
+        .insert(TerrainEnvironment::current(world));
     if snapshot.extracted.get::<RenderTerrains>().is_none() {
         snapshot.extracted.insert(RenderTerrains::default());
     }

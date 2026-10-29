@@ -5,8 +5,8 @@
 
 mod antialiasing;
 mod atmosphere;
-mod bricks;
 pub mod bounds;
+mod bricks;
 mod clock;
 mod clouds;
 mod commands;
@@ -16,10 +16,10 @@ mod effects;
 mod entity_indices;
 mod environment;
 mod extraction;
-mod ground;
 mod foliage;
 mod frame_stats;
 mod gpu_culling;
+mod ground;
 mod grounded;
 mod hierarchy;
 mod highlights;
@@ -68,11 +68,11 @@ pub use engine_assets::{
 pub use engine_settings::ErrorCode;
 pub use engine_tables as table_data;
 pub use environment::*;
-pub use ground::*;
 pub use foliage::*;
 pub use frame_stats::*;
 pub use glam;
 pub use gpu_culling::*;
+pub use ground::*;
 pub use grounded::*;
 pub use hierarchy::*;
 pub use highlights::*;

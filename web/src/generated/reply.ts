@@ -52,53 +52,6 @@ export interface CaptureResult {
   temporary?: boolean | null;
 }
 
-export interface CastHit {
-  distance: number;
-  entity: HitEntity;
-  fraction: number;
-  normal: number[];
-  placed?: PlacedHit | null;
-  point: number[];
-  started_overlapping: boolean;
-}
-
-export interface CollisionEventsResult {
-  active_pairs: number;
-  candidate_pairs: number;
-  committed_tick?: string | null;
-  complete: boolean;
-  error?: DevError | null;
-  events: SensorEventRow[];
-  next_offset?: number | null;
-  sensor_only: boolean;
-  sequence: string;
-  tick?: string | null;
-  total: number;
-}
-
-export interface CollisionLimitsView {
-  max_candidate_pairs: number;
-  max_colliders: number;
-  max_query_candidates: number;
-  max_query_hits: number;
-  max_sensor_pairs: number;
-}
-
-export interface CollisionWorldView {
-  active_colliders: number;
-  bvh_nodes: number;
-  cache_bytes: number;
-  colliders: number;
-  complete: boolean;
-  frame: string;
-  invalid_colliders: number;
-  limits: CollisionLimitsView;
-  overflow_colliders: number;
-  placed_colliders: number;
-  revision: string;
-  tick: string;
-}
-
 export interface CullingResult {
   culling_enabled: boolean;
   temporary: boolean;
@@ -201,14 +154,6 @@ export interface HeightSample {
   water?: HydrologySample | null;
 }
 
-export interface HitEntity {
-  alive: boolean;
-  id?: string | null;
-  in_active_scene: boolean;
-  name?: string | null;
-  scene?: string | null;
-}
-
 export interface HostContext {
   device_pixel_ratio: number;
   height: number;
@@ -264,25 +209,6 @@ export interface MissingAsset {
   position?: number[] | null;
 }
 
-export interface NavGoResult {
-  destination?: number[] | null;
-  temporary: boolean;
-}
-
-export interface NavOptions {
-  level?: number;
-  max_slope?: number;
-  max_water?: number;
-  radius?: number;
-}
-
-export interface NavPathResult {
-  options: NavOptions;
-  searching: boolean;
-  terrain: TerrainKey;
-  walk?: WalkResult | null;
-}
-
 export interface Observation {
   frame?: string | null;
   presentation: PresentationStateView;
@@ -294,7 +220,6 @@ export interface OpResults {
   assets: AssetsResult;
   camera: CameraResult;
   capture: CaptureResult;
-  collision_events: CollisionEventsResult;
   culling: CullingResult;
   debug_fault: DebugFaultResult;
   debug_missing_asset: DebugMissingAssetResult;
@@ -306,16 +231,11 @@ export interface OpResults {
   game: GameResult;
   input: InputResult;
   inspect: InspectResult;
-  nav_go: NavGoResult;
-  nav_path: NavPathResult;
-  overlap: OverlapResult;
   pause: StatusResult;
   present: PresentResult;
   probe: ProbeResult;
-  raycast: RaycastResult;
   render: RenderResult;
   resume: StatusResult;
-  shape_cast: ShapeCastResult;
   status: StatusResult;
   step: StepResult;
   terrain: TerrainControlResult;
@@ -326,7 +246,6 @@ export interface OpResults {
   terrain_route: TerrainRouteResult;
   terrain_sweep: TerrainSweepResult;
   terrain_undo: TerrainEdited;
-  world_changes: WorldChangesResult;
 }
 
 export interface Outcome {
@@ -336,18 +255,6 @@ export interface Outcome {
   missing?: string[] | null;
   now?: number | null;
   result?: unknown;
-}
-
-export interface OverlapResult {
-  complete: boolean;
-  hits: HitEntity[];
-  snapshot: CollisionWorldView;
-  total: number;
-}
-
-export interface PlacedHit {
-  asset: number;
-  layer: number;
 }
 
 export interface PresentResult {
@@ -393,21 +300,6 @@ export interface ProbeResult {
   world?: number[] | null;
 }
 
-export interface RayHit {
-  distance: number;
-  entity: HitEntity;
-  normal: number[];
-  placed?: PlacedHit | null;
-  point: number[];
-  started_inside: boolean;
-}
-
-export interface RaycastResult {
-  complete: boolean;
-  hit?: RayHit | null;
-  snapshot: CollisionWorldView;
-}
-
 export interface Reach {
   max: number[];
   min: number[];
@@ -437,20 +329,6 @@ export interface SceneObservation {
   revision: string;
 }
 
-export type SensorEventKindView = "enter" | "exit";
-
-export interface SensorEventRow {
-  first: HitEntity;
-  kind: SensorEventKindView;
-  second: HitEntity;
-}
-
-export interface ShapeCastResult {
-  complete: boolean;
-  hit?: CastHit | null;
-  snapshot: CollisionWorldView;
-}
-
 export interface StandingWater {
   depth: number;
   surface: number;
@@ -465,7 +343,7 @@ export interface StatusLimits {
 
 export interface StatusResult {
   authored_entities?: number | null;
-  collision?: CollisionWorldView | null;
+  collision?: Record<string, unknown> | null;
   culling_enabled: boolean;
   features?: string[] | null;
   fixed_delta_seconds?: number | null;
@@ -589,13 +467,6 @@ export type TextureState = "cpu_ready" | "missing";
 
 export type TypeKind = "component" | "resource" | "authoring" | "protocol" | "observation" | "catalog";
 
-export interface WalkResult {
-  length: number;
-  level: number;
-  points: number[][];
-  searched: number;
-}
-
 export interface WaterProbe {
   depth: number;
   eddies: number;
@@ -609,13 +480,6 @@ export interface WaterProbe {
 }
 
 export type WaterReach = "pool" | "plane" | "steps" | "cascade" | "falls";
-
-export interface WorldChangesResult {
-  newly_removed: number;
-  removed: number;
-  restored: number;
-  temporary: boolean;
-}
 
 export interface Worst {
   at?: number[] | null;

@@ -142,8 +142,8 @@ impl Operation for TerrainRouteQuery {
 #[cfg(feature = "schema")]
 fn route_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
     let state = stated(RouteOptions::rule_of(field).expect("route options declare the field"));
-    let default = serde_json::to_value(RouteOptions::default())
-        .expect("route options serialize")[field]
+    let default = serde_json::to_value(RouteOptions::default()).expect("route options serialize")
+        [field]
         .clone();
     move |schema| {
         state(schema);

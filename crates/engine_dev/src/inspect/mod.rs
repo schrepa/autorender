@@ -381,9 +381,8 @@ impl DevTools {
                 format!("request must fit {MAX_REQUEST_BYTES} UTF-8 bytes"),
             ));
         }
-        let wrong_world = |engine: &Engine| {
-            scene.is_some_and(|scene| !scene.belongs_to(engine.app.world()))
-        };
+        let wrong_world =
+            |engine: &Engine| scene.is_some_and(|scene| !scene.belongs_to(engine.app.world()));
         let refused = || {
             DevError::new(
                 ErrorCode::WrongWorld,
@@ -395,7 +394,7 @@ impl DevTools {
             if wrong_world(engine) {
                 return Err(refused());
             }
-            return crate::bricks::run(engine.app.world_mut(), scene, name, request);
+            return crate::bricks::run(engine.app.world_mut(), name, request);
         }
         let request: DevRequest = crate::parse_request(source)?;
         if wrong_world(engine) {
@@ -700,7 +699,13 @@ impl DevTools {
                 ));
             }
             return Ok(InspectResult::Entity {
-                entity: self.entity_row(world, (context, &bricks), scene, (id, entity), inspector)?,
+                entity: self.entity_row(
+                    world,
+                    (context, &bricks),
+                    scene,
+                    (id, entity),
+                    inspector,
+                )?,
             });
         }
         let parent = parent

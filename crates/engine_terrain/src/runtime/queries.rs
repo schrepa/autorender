@@ -141,9 +141,8 @@ impl Terrains {
             }
             let pyramid = &state.terrain.pyramid;
             let [x, z] = pyramid.tiles(0);
-            let size = Vec2::new(x as f32, z as f32)
-                * crate::TILE_QUADS as f32
-                * pyramid.spacing(0);
+            let size =
+                Vec2::new(x as f32, z as f32) * crate::TILE_QUADS as f32 * pyramid.spacing(0);
             let corner = Vec2::new(state.terrain.origin.x, state.terrain.origin.z);
             [from, to].iter().all(|&point| {
                 let local = point - corner;

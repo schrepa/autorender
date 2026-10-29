@@ -154,13 +154,8 @@ pub fn validated_camera(
 }
 
 pub enum OperationCall {
-    Brick {
-        name: &'static str,
-        request: Value,
-    },
-    MissingAsset {
-        entity: String,
-    },
+    Brick { name: &'static str, request: Value },
+    MissingAsset { entity: String },
 }
 
 impl OperationCall {
@@ -178,7 +173,7 @@ impl OperationCall {
     ) -> Result<Value, DevError> {
         match self {
             Self::Brick { name, request } => {
-                crate::bricks::run(engine.app.world_mut(), scene, name, request.clone())
+                crate::bricks::run(engine.app.world_mut(), name, request.clone())
             }
             Self::MissingAsset { entity } => missing_asset(engine, scene, entity),
         }

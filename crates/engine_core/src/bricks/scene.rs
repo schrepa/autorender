@@ -24,10 +24,13 @@ impl OperationScene {
             if !self.streamed {
                 return None;
             }
-            world.iter_entities().map(|entity| entity.id()).find(|&entity| {
-                (self.authored)(world, entity)
-                    .is_some_and(|authored| authored.id == id && authored.scene == self.id)
-            })
+            world
+                .iter_entities()
+                .map(|entity| entity.id())
+                .find(|&entity| {
+                    (self.authored)(world, entity)
+                        .is_some_and(|authored| authored.id == id && authored.scene == self.id)
+                })
         })
     }
 

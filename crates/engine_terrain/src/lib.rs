@@ -64,12 +64,6 @@ pub use pyramid::{Pyramid, PyramidError, TileKey};
 pub use relief::{HummocksLayer, StepsLayer};
 pub use rivers::{RIVER_STEP, Rivers};
 pub use runtime::{
-    HeightSample, RouteFound, StandingWater, TerrainEditControl, TerrainEdited,
-    TerrainHeightQuery, TerrainHeightResult, TerrainRedoControl, TerrainRiverControl,
-    TerrainRouteQuery, TerrainRouteResult, TerrainUndoControl,
-};
-pub use runtime::{
-    TerrainKey, terrain_key,
     Cover, DECK_DEPTH, DECK_MARGIN, DECK_RISE, FALLS_SHOWN, FallView, GUST_QUICK_ACROSS,
     GUST_QUICK_RATE, GUST_QUICK_SHARE, GUST_QUICK_TRAVEL, GUST_SLOW_RATE, GUST_SLOW_SHARE,
     GUST_SLOW_TRAVEL, GroundCover, LIVE_PIXELS, LONGEST_FRAME, LakeView, MAX_BOUNCE_LEVELS,
@@ -80,9 +74,15 @@ pub use runtime::{
     RiverFlowView, RiverSightView, SETTLED_KIND, SETTLED_PARITY, SIM_TOUCHES, SurfaceMaterial,
     SurfaceProjection, Surroundings, SurroundingsStatus, Terrain, TerrainBakes, TerrainBrick,
     TerrainControl, TerrainControlResult, TerrainDebugView, TerrainEdit, TerrainEnvironment,
-    TerrainPrefetch, TerrainRiver, TerrainSample, TerrainSettings, TerrainStats, TerrainSurface,
-    TerrainWaterView, Terrains, TerrainsView, Walked, WalkedTerrain, Water, WaterRead,
-    WaterSourceCell, WaterWindow, Wind, live_steps, settled_alike, stream_now, work_between_frames,
+    TerrainKey, TerrainPrefetch, TerrainRiver, TerrainSample, TerrainSettings, TerrainStats,
+    TerrainSurface, TerrainWaterView, Terrains, TerrainsView, Walked, WalkedTerrain, Water,
+    WaterRead, WaterSourceCell, WaterWindow, Wind, live_steps, settled_alike, stream_now,
+    terrain_key, work_between_frames,
+};
+pub use runtime::{
+    HeightSample, RouteFound, StandingWater, TerrainEditControl, TerrainEdited, TerrainHeightQuery,
+    TerrainHeightResult, TerrainRedoControl, TerrainRiverControl, TerrainRouteQuery,
+    TerrainRouteResult, TerrainUndoControl,
 };
 pub use select::{LodRanges, WantedTile, WantedView, wanted_tiles};
 pub use shading::TileShading;

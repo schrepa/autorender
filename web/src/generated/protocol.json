@@ -1,15 +1,27 @@
 {
+  "bricks": [
+    "terrain",
+    "world_streaming",
+    "navigation",
+    "time_of_day",
+    "collision",
+    "physics",
+    "lights",
+    "particles",
+    "reflection_probes",
+    "sky",
+    "shadows",
+    "post_effects",
+    "level_of_detail",
+    "culling",
+    "resolution",
+    "debug_view",
+    "lighting_model"
+  ],
   "controls": [
     "present",
     "culling",
     "environment",
-    "terrain",
-    "terrain_edit",
-    "terrain_undo",
-    "terrain_redo",
-    "terrain_river",
-    "nav_go",
-    "world_changes",
     "camera",
     "benchmark",
     "step",
@@ -25,7 +37,14 @@
     "debug_fault",
     "debug_device_loss",
     "debug_missing_asset",
-    "probe"
+    "probe",
+    "terrain",
+    "terrain_edit",
+    "terrain_undo",
+    "terrain_redo",
+    "terrain_river",
+    "world_changes",
+    "nav_go"
   ],
   "errors": [
     "invalid_json",
@@ -108,6 +127,7 @@
     "invalid_rigid_body",
     "invalid_environment",
     "missing_plugin",
+    "duplicate_brick",
     "collision_invalid_shape",
     "collision_invalid_transform",
     "collision_invalid_ray",
@@ -177,42 +197,6 @@
     "source_symlink",
     "source_type"
   ],
-  "features": [
-    {
-      "name": "terrain",
-      "needs": [],
-      "plugin": "TerrainPlugin"
-    },
-    {
-      "name": "world_streaming",
-      "needs": [],
-      "plugin": "WorldStreamingPlugin"
-    },
-    {
-      "name": "navigation",
-      "needs": [
-        "terrain"
-      ],
-      "plugin": "NavigationPlugin"
-    },
-    {
-      "name": "time_of_day",
-      "needs": [],
-      "plugin": "TimeOfDayPlugin"
-    },
-    {
-      "name": "collision",
-      "needs": [],
-      "plugin": "CollisionPlugin"
-    },
-    {
-      "name": "physics",
-      "needs": [
-        "collision"
-      ],
-      "plugin": "PhysicsPlugin"
-    }
-  ],
   "max_request_bytes": 16384,
   "profile_max_events": 65536,
   "queries": [
@@ -222,14 +206,14 @@
     "digest",
     "distribution",
     "describe",
+    "terrain_height",
+    "terrain_route",
+    "nav_path",
     "raycast",
     "overlap",
     "shape_cast",
-    "terrain_height",
-    "nav_path",
-    "terrain_sweep",
-    "terrain_route",
-    "collision_events"
+    "collision_events",
+    "terrain_sweep"
   ],
   "version": 1
 }

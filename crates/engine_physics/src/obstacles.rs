@@ -17,9 +17,12 @@ pub(crate) fn obstruct(
     physics: Res<PhysicsWorld>,
     collision: Option<Res<CollisionWorld>>,
     terrains: Option<Res<Terrains>>,
-    mut obstacles: ResMut<WaterObstacles>,
+    obstacles: Option<ResMut<WaterObstacles>>,
     mut standing: Local<Standing>,
 ) {
+    let Some(mut obstacles) = obstacles else {
+        return;
+    };
     let rivers = terrains
         .iter()
         .flat_map(|terrains| terrains.waters())

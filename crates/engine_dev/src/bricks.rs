@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use engine_core::bevy_ecs::prelude::World;
-use engine_core::{BrickRegistry, InspectedKind, OperationScene, missing_brick};
-use engine_scene::{SceneEnvironment, SceneInstance};
+use engine_core::{BrickRegistry, InspectedKind, missing_brick};
+use engine_scene::SceneEnvironment;
 use engine_settings::ErrorCode;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -69,12 +69,7 @@ fn added(world: &World, brick: &str) -> bool {
         .is_some_and(|registry| registry.has(brick))
 }
 
-pub(crate) fn run(
-    world: &mut World,
-    scene: Option<&SceneInstance>,
-    name: &str,
-    request: Value,
-) -> Result<Value, DevError> {
+pub(crate) fn run(world: &mut World, name: &str, request: Value) -> Result<Value, DevError> {
     let operation = world
         .get_resource::<BrickRegistry>()
         .and_then(|registry| registry.operation(name))
@@ -86,12 +81,7 @@ pub(crate) fn run(
                 format!("no added brick answers {name}"),
             )
         })?;
-    if let Some(scene) = scene {
-        world.insert_resource(scene.operation_scene());
-    }
-    let result = operation.run(world, request);
-    world.remove_resource::<OperationScene>();
-    result.map_err(DevError::from)
+    operation.run(world, request).map_err(DevError::from)
 }
 
 impl DevTools {
@@ -245,7 +235,11 @@ fn op_of(source: &str) -> Option<String> {
 
 pub(crate) fn sections_schema(registry: &BrickRegistry) -> Value {
     let properties: serde_json::Map<String, Value> = std::iter::once(("atmosphere", "Atmosphere"))
-        .chain(registry.sections().map(|section| (section.key, section.name)))
+        .chain(
+            registry
+                .sections()
+                .map(|section| (section.key, section.name)),
+        )
         .map(|(field, inspector)| {
             (
                 field.to_owned(),

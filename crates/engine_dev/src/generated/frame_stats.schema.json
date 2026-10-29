@@ -1250,8 +1250,6 @@
     "resolution",
     "dynamic_resolution",
     "jobs",
-    "navigation",
-    "physics",
     "disabled_features",
     "draw_calls",
     "upload_bytes",
@@ -1279,11 +1277,13 @@
     "occupancy",
     "water",
     "clouds",
-    "world_streaming",
     "sky",
     "occlusion_culling",
     "subpixel_culling",
-    "temporal_antialiasing"
+    "temporal_antialiasing",
+    "world_streaming",
+    "navigation",
+    "physics"
   ],
   "title": "FrameStats",
   "type": "object"

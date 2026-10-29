@@ -129,9 +129,8 @@ impl TerrainState {
                 .as_ref()
                 .is_some_and(|(held, _)| Arc::ptr_eq(held, &layers));
             if !current {
-                let data =
-                    crate::gpu::SurfaceData::new(&self.terrain.surface.rules, &layers)
-                        .map(Arc::new);
+                let data = crate::gpu::SurfaceData::new(&self.terrain.surface.rules, &layers)
+                    .map(Arc::new);
                 self.surface = Some((layers, data));
             }
             self.surface.as_ref().is_none_or(|(_, data)| data.is_none())

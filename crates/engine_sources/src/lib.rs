@@ -133,7 +133,10 @@ fn digest(root: &Path, manifest: &Path, files: Vec<PathBuf>) -> [u8; 32] {
         "cargo:rerun-if-changed={}",
         root.join("rust-toolchain.toml").display()
     );
-    println!("cargo:rerun-if-changed={}", root.join("Cargo.lock").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("Cargo.lock").display()
+    );
     hash_files(root, manifest, files)
 }
 

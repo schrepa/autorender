@@ -451,7 +451,9 @@ impl InspectorEntry {
             brick,
             type_id: TypeId::of::<R>(),
             read: Arc::new(move |world: &World, _: Option<Entity>| {
-                world.get_resource::<R>().map(|value| to_json(view(world, value)))
+                world
+                    .get_resource::<R>()
+                    .map(|value| to_json(view(world, value)))
             }),
             has: |world, _| world.contains_resource::<R>(),
             #[cfg(feature = "schema")]

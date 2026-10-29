@@ -32,7 +32,10 @@ impl ExtraRules for Cover {
     fn sanitize_extra(self) -> Self {
         let [low, high] = self.height;
         Self {
-            height: [engine_core::math::min(low, high), engine_core::math::max(low, high)],
+            height: [
+                engine_core::math::min(low, high),
+                engine_core::math::max(low, high),
+            ],
             ..self
         }
     }

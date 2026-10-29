@@ -1,6 +1,10 @@
 use super::*;
 
 impl DevTools {
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
     pub(super) fn register_components(&mut self, schemas: &Value) {
         self.register_resource::<Camera>(
             InspectorDescriptor::generated(schemas, "Camera")
@@ -133,9 +137,8 @@ impl DevTools {
             descriptor: InspectorDescriptor::generated(schemas, "Collider"),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| {
-                entity.is_some_and(|entity| {
-                    world.get::<engine_collision::Collider>(entity).is_some()
-                })
+                entity
+                    .is_some_and(|entity| world.get::<engine_collision::Collider>(entity).is_some())
             }),
             read: Box::new(|world, entity, _context| {
                 engine_collision::collider_view(world, entity?).map(|view| json!(view))
@@ -148,9 +151,8 @@ impl DevTools {
                 .with_default(json!(engine_physics::RigidBody::default())),
             kind: InspectorKind::Component,
             has: Box::new(|world, entity| {
-                entity.is_some_and(|entity| {
-                    world.get::<engine_physics::RigidBody>(entity).is_some()
-                })
+                entity
+                    .is_some_and(|entity| world.get::<engine_physics::RigidBody>(entity).is_some())
             }),
             read: Box::new(|world, entity, _context| {
                 engine_physics::rigid_body_view(world, entity?).map(|view| json!(view))

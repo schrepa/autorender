@@ -35,7 +35,6 @@ impl Brick for PhysicsBrick {
             .settings::<Physics>()
             .stats::<PhysicsStats>()
             .resource::<PhysicsWorld>()
-            .resource::<engine_core::WaterObstacles>()
             .configure_sets(
                 FixedSimulation,
                 (PhysicsSystems::Step, PhysicsSystems::Obstruct)

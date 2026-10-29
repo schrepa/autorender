@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 
 use engine_core::{
-    Atmosphere, BrickRegistry, InvalidSetting, SettingsEntry, bevy_ecs::prelude::World,
-    glam::Vec3,
+    Atmosphere, BrickRegistry, InvalidSetting, SettingsEntry, bevy_ecs::prelude::World, glam::Vec3,
 };
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};

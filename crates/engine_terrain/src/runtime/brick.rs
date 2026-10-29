@@ -28,7 +28,10 @@ impl Brick for TerrainBrick {
                 },
             })
             .systems(ViewSync, stream_terrains.in_set(ViewSyncSystems::Stream))
-            .systems(FixedSimulation, flow::step.in_set(FixedSimulationSystems::Ride))
+            .systems(
+                FixedSimulation,
+                flow::step.in_set(FixedSimulationSystems::Ride),
+            )
             .systems(
                 WorldSync,
                 (
@@ -40,6 +43,7 @@ impl Brick for TerrainBrick {
                     .chain()
                     .in_set(WorldSyncSystems::Spawn),
             )
+            .resource::<engine_core::WaterObstacles>()
             .extract(extract_terrains)
             .operation::<TerrainControl>()
             .operation::<TerrainEditControl>()

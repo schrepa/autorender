@@ -4,8 +4,8 @@ use std::path::Path;
 
 use engine::{Engine, ErrorCode};
 use engine_dev::{
-    Context, Control, DevError, DevTools, InspectorDescriptor, MAX_INSPECTORS,
-    MAX_REQUEST_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
+    Context, Control, DevError, DevTools, InspectorDescriptor, MAX_INSPECTORS, MAX_REQUEST_BYTES,
+    MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
 };
 use engine_scene::{SceneDocument, SceneInstance};
 use serde_json::{Value, json};

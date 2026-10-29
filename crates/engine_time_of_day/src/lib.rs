@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use engine_core::math::{max, sin_cos};
 use engine_core::{
     Atmosphere, Brick, Bricks, EnvironmentSection, FrameTime, Presentation, RenderSnapshot,
-    ViewSync,
+    ViewSync, ViewSyncSystems,
 };
 use engine_settings::{InvalidSetting, settings};
 
@@ -205,7 +205,7 @@ impl Brick for TimeOfDayBrick {
         bricks
             .settings::<TimeOfDay>()
             .systems(Presentation, advance_time_of_day)
-            .systems(ViewSync, place_sun)
+            .systems(ViewSync, place_sun.before(ViewSyncSystems::Stream))
             .extract(extract_time_of_day);
     }
 }

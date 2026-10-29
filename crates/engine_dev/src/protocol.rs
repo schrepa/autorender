@@ -151,9 +151,7 @@ pub(crate) fn operation_request(source: &str) -> Result<serde_json::Value, DevEr
     Ok(request)
 }
 
-fn split_version(
-    source: &str,
-) -> Result<(serde_json::Value, Option<serde_json::Value>), DevError> {
+fn split_version(source: &str) -> Result<(serde_json::Value, Option<serde_json::Value>), DevError> {
     let mut request: serde_json::Value = engine_scene::parse_json(source)?;
     let version = request
         .as_object_mut()
@@ -495,8 +493,7 @@ impl schemars::JsonSchema for EnvironmentControl {
     }
 
     fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let mut atmosphere =
-            generator.subschema_for::<Option<engine_scene::SceneAtmosphere>>();
+        let mut atmosphere = generator.subschema_for::<Option<engine_scene::SceneAtmosphere>>();
         atmosphere.insert("default".to_owned(), serde_json::Value::Null);
         schemars::json_schema!({
             "type": "object",

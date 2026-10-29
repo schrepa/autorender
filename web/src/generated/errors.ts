@@ -82,6 +82,7 @@ export type ErrorCode =
   | "invalid_rigid_body"
   | "invalid_environment"
   | "missing_plugin"
+  | "duplicate_brick"
   | "collision_invalid_shape"
   | "collision_invalid_transform"
   | "collision_invalid_ray"

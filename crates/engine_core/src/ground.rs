@@ -1,5 +1,3 @@
-
-
 use bevy_ecs::prelude::{Component, Resource, World};
 
 #[derive(Clone, Copy, Debug, PartialEq)]

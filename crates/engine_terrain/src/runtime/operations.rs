@@ -108,8 +108,10 @@ pub enum TerrainKey {
 }
 
 pub fn terrain_key(world: &World, entity: Entity) -> TerrainKey {
-    engine_core::authored_id(world, entity)
-        .map_or_else(|| TerrainKey::Entity(entity.to_bits()), TerrainKey::Authored)
+    engine_core::authored_id(world, entity).map_or_else(
+        || TerrainKey::Entity(entity.to_bits()),
+        TerrainKey::Authored,
+    )
 }
 
 pub(super) fn coordinate(value: f64, path: &str) -> Result<f32, Error> {

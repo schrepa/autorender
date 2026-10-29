@@ -180,8 +180,8 @@ impl Bricks<'_> {
         &mut self,
         view: fn(&World, &R) -> V,
     ) -> &mut Self {
-        let entry = InspectorEntry::resource(self.record.name, view)
-            .with_schema(registry::schema_of::<V>);
+        let entry =
+            InspectorEntry::resource(self.record.name, view).with_schema(registry::schema_of::<V>);
         self.record.inspectors.push(entry);
         self
     }
@@ -204,8 +204,8 @@ impl Bricks<'_> {
         &mut self,
         view: fn(&World, Entity, &C) -> V,
     ) -> &mut Self {
-        let entry = InspectorEntry::component(self.record.name, view)
-            .with_schema(registry::schema_of::<V>);
+        let entry =
+            InspectorEntry::component(self.record.name, view).with_schema(registry::schema_of::<V>);
         self.record.inspectors.push(entry);
         self
     }
@@ -247,11 +247,7 @@ impl AddBrick for App {
         };
         B::register(&mut bricks);
         let record = bricks.record;
-        if let Err(error) = self
-            .world_mut()
-            .resource_mut::<BrickRegistry>()
-            .add(record)
-        {
+        if let Err(error) = self.world_mut().resource_mut::<BrickRegistry>().add(record) {
             panic!("{error}");
         }
         self
@@ -303,18 +299,16 @@ impl BrickList {
             .into_iter()
             .filter(|name| !name.is_empty())
             .map(|name| {
-                self.names()
-                    .find(|&listed| listed == name)
-                    .ok_or_else(|| {
-                        Error::new(
-                            ErrorCode::InvalidArguments,
-                            path,
-                            format!(
-                                "{name}, allowed: {}",
-                                self.names().collect::<Vec<_>>().join(", ")
-                            ),
-                        )
-                    })
+                self.names().find(|&listed| listed == name).ok_or_else(|| {
+                    Error::new(
+                        ErrorCode::InvalidArguments,
+                        path,
+                        format!(
+                            "{name}, allowed: {}",
+                            self.names().collect::<Vec<_>>().join(", ")
+                        ),
+                    )
+                })
             })
             .collect()
     }

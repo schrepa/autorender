@@ -235,11 +235,7 @@ enum TerrainEditing {
 #[derive(Resource, Default)]
 struct TerrainRedo(Vec<(Entity, TerrainEdit)>);
 
-fn editing(
-    world: &mut World,
-    name: Option<&str>,
-    editing: TerrainEditing,
-) -> Result<Value, Error> {
+fn editing(world: &mut World, name: Option<&str>, editing: TerrainEditing) -> Result<Value, Error> {
     let mut redo = world.remove_resource::<TerrainRedo>().unwrap_or_default();
     let result = edit_terrain(world, name, &mut redo.0, editing);
     world.insert_resource(redo);

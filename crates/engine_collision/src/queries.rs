@@ -523,15 +523,13 @@ fn resolve_entity(
             "expected a bounded authored entity ID",
         ));
     }
-    let scene = world
-        .get_resource::<OperationScene>()
-        .ok_or_else(|| {
-            Error::new(
-                ErrorCode::NoScene,
-                path,
-                "entity selectors require an active scene",
-            )
-        })?;
+    let scene = world.get_resource::<OperationScene>().ok_or_else(|| {
+        Error::new(
+            ErrorCode::NoScene,
+            path,
+            "entity selectors require an active scene",
+        )
+    })?;
     let entity = scene.entity(world, id).ok_or_else(|| {
         Error::new(
             ErrorCode::UnknownEntity,

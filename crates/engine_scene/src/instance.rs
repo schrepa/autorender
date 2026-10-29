@@ -202,13 +202,18 @@ impl SceneInstance {
         self.streamed
     }
 
-
     pub fn belongs_to(&self, world: &World) -> bool {
         self.world_id == world.id()
     }
 
     pub fn despawn(self, world: &mut World) {
         assert_eq!(self.world_id, world.id(), "scene belongs to another world");
+        if world
+            .get_resource::<engine_core::OperationScene>()
+            .is_some_and(|scene| Arc::ptr_eq(&scene.entities, &self.entities))
+        {
+            world.remove_resource::<engine_core::OperationScene>();
+        }
         if let Some(set) = self.streamed {
             remove_streamed(world, set);
         }
@@ -298,7 +303,7 @@ impl SceneDocument {
                 .get_resource_or_insert_with(WorldCells::default)
                 .add(items)
         });
-        Ok(SceneInstance {
+        let instance = SceneInstance {
             id: self.id.clone(),
             revision: self.revision,
             world_id: world.id(),
@@ -328,7 +333,9 @@ impl SceneDocument {
                     .collect(),
             },
             streamed,
-        })
+        };
+        world.insert_resource(instance.operation_scene());
+        Ok(instance)
     }
 
     fn insert_assets(

@@ -17,7 +17,6 @@ const INTERNAL: &[&str] = &[
     "StaticTables",
     "atmosphere_fields",
     "job_output",
-    "live_steps",
     "lod_input",
     "state_atmosphere_rules",
     "table_data",

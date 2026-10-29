@@ -31,36 +31,38 @@ mod games {
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, App, AssetBudget,
         AssetError, AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, Clouds, Cube, DebugView,
         DebugViewMode, Dither, DynamicResolution, DynamicResolutionStats, Engine, EngineConfig,
-        EngineEntityCommands, Environment, Filter, FixedPostSimulation,
-        FixedPreSimulation, FixedSimulation, FixedSimulationSystems, FixedTime, Foliage,
-        FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Ground, GroundSample, Grounded,
-        Grounding, Haze, HeightHeld, HierarchyError, Highlights, InputState, Interior,
-        InterpolateTransform, InterpolationError, LevelOfDetail, LightRegion, LocalLight,
-        LocalLightSettings, MakeSources, MakeTextures, Material, MaterialHandle, Mesh, Mesh3d,
-        MeshHandle, MeshVertex, NightSky, OcclusionCulling, Parent, ParticleBlend,
-        ParticleEmitter, ParticleSettings, Plugin, PluginGroup, Presentation,
-        PresentationState, PresentedTime, PresentedTransform, PresentedTransforms, Records,
-        ReflectionProbe, ReflectionProbeSettings, Reflections, Resolution, ResolutionStats,
-        Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamingFocus, SubpixelCulling, Surface, TemporalAntialiasing, Texture,
-        TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage, Tint, TopLayer, Transform, TransformEditError, UvTransform, ViewSync,
-        ViewSyncSystems, WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource,
-        WaterSources, WorldSync,
-        WorldSyncSystems, Wrap, edit_transform, math, reset_all_interpolation,
-        reset_interpolation, set_parent, set_parents, trim_cards,
+        EngineEntityCommands, Environment, Filter, FixedPostSimulation, FixedPreSimulation,
+        FixedSimulation, FixedSimulationSystems, FixedTime, Foliage, FrameReport, FrameTime,
+        GlobalTransform, GlobalTransforms, Ground, GroundSample, Grounded, Grounding, Haze,
+        HeightHeld, HierarchyError, Highlights, InputState, Interior, InterpolateTransform,
+        InterpolationError, LevelOfDetail, LightRegion, LocalLight, LocalLightSettings,
+        MakeSources, MakeTextures, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex,
+        NightSky, OcclusionCulling, Parent, ParticleBlend, ParticleEmitter, ParticleSettings,
+        Plugin, PluginGroup, Presentation, PresentationState, PresentedTime, PresentedTransform,
+        PresentedTransforms, Records, ReflectionProbe, ReflectionProbeSettings, Reflections,
+        Resolution, ResolutionStats, Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot,
+        StreamingFocus, SubpixelCulling, Surface, TemporalAntialiasing, Texture, TextureHandle,
+        TextureRef, TextureSet, TextureSource, TextureUsage, Tint, TopLayer, Transform,
+        TransformEditError, UvTransform, ViewSync, ViewSyncSystems, WaterKind, WaterObstacle,
+        WaterObstacles, WaterSample, WaterSource, WaterSources, WorldSync, WorldSyncSystems, Wrap,
+        edit_transform, math, reset_all_interpolation, reset_interpolation, set_parent,
+        set_parents, trim_cards,
     };
+    pub use engine_core::{
+        Culling, LightingModel, Lights, Particles, PostEffects, ReflectionProbes,
+    };
+    pub use engine_navigation::{
+        NavAgent, NavAgents, NavQuery, NavStatus, NavSystems, NavWalk, Navigation, NavigationBrick,
+    };
+    pub use engine_physics::Physics;
     pub use engine_terrain::{
         Cover, GroundCover, Occupancy, Terrain, TerrainBrick, TerrainSample, TerrainSettings,
         Terrains, Water, Wind,
     };
-    pub use engine_core::{Culling, LightingModel, Lights, Particles, PostEffects, ReflectionProbes};
     pub use engine_time_of_day::{TimeOfDay, TimeOfDayBrick};
     pub use engine_world_streaming::{
         StreamSet, Streamed, StreamedId, StreamedItem, WorldCells, WorldChanges, WorldStreaming,
         WorldStreamingBrick, remove_streamed,
-    };
-    pub use engine_physics::Physics;
-    pub use engine_navigation::{
-        NavAgent, NavAgents, NavQuery, NavStatus, NavSystems, NavWalk, Navigation, NavigationBrick,
     };
 }
 pub use games::*;
@@ -78,11 +80,9 @@ pub use engine_terrain::{MAX_BOUNCE_LEVELS, MAX_OCCUPANCY_LEVELS};
 pub mod bricks {
     pub use engine_core::{
         AddBrick, AuthoredId, Brick, BrickList, BrickRecord, BrickRegistry, BrickSet, BrickStats,
-        Bricks, Culling, DebugView, Error, Extracted, InspectedKind, InspectorEntry,
-        LevelOfDetail, LightingModel, Lights, List, Operation, OperationEntry,
-        OperationScene, Owned, Particles, PostEffects, ReflectionProbes, Resolution,
-        SettingsEntry, Shadows, Sky, Slot, StatsEntry, brick_name, missing_brick,
-        parse_json, parse_value, parse_value_at,
+        Bricks, Error, Extracted, InspectedKind, InspectorEntry, List, Operation, OperationEntry,
+        OperationScene, Owned, SettingsEntry, Slot, StatsEntry, authored_entity, authored_id,
+        bounds, brick_name, missing_brick, parse_json, parse_value, parse_value_at,
     };
 
     pub fn standard() -> BrickList {
@@ -93,17 +93,17 @@ pub mod bricks {
             .with::<engine_time_of_day::TimeOfDayBrick>()
             .with::<engine_collision::Collision>()
             .with::<engine_physics::PhysicsBrick>()
-            .with::<Lights>()
-            .with::<Particles>()
-            .with::<ReflectionProbes>()
-            .with::<Sky>()
-            .with::<Shadows>()
-            .with::<PostEffects>()
-            .with::<LevelOfDetail>()
-            .with::<Culling>()
-            .with::<Resolution>()
-            .with::<DebugView>()
-            .with::<LightingModel>()
+            .with::<engine_core::Lights>()
+            .with::<engine_core::Particles>()
+            .with::<engine_core::ReflectionProbes>()
+            .with::<engine_core::Sky>()
+            .with::<engine_core::Shadows>()
+            .with::<engine_core::PostEffects>()
+            .with::<engine_core::LevelOfDetail>()
+            .with::<engine_core::Culling>()
+            .with::<engine_core::Resolution>()
+            .with::<engine_core::DebugView>()
+            .with::<engine_core::LightingModel>()
     }
 
     pub fn standard_names(names: &str, path: &str) -> crate::Result<Vec<&'static str>> {
@@ -135,8 +135,8 @@ pub mod render {
         NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NodeInfo, NodePose, PoseRows,
         PresentationMode, RenderEmitter, RenderFrame, RenderInstance, RenderLight, RenderLights,
         RenderMaterial, RenderMesh, RenderParticles, RenderReflectionProbe, RenderReflectionProbes,
-        RenderSnapshot, RenderTexture, TransformIndex,
-        TransformPropagation, presentation_bounds, propagate_transforms, valid_global_matrix,
+        RenderSnapshot, RenderTexture, TransformIndex, TransformPropagation, presentation_bounds,
+        propagate_transforms, valid_global_matrix,
     };
     pub use engine_terrain::bounce::TerrainBounce;
     pub use engine_terrain::lighting::TerrainLighting;
@@ -154,10 +154,10 @@ pub mod stats {
         GroundCoverStats, JobStats, LightStats, Names, OccupancyStats, ProbeStats, RenderStats,
         ShadowStats, SkyStats, TerrainBounceStats, TerrainRenderStats, WaterStats,
     };
-    pub use engine_world_streaming::CellStats;
-    pub use engine_physics::PhysicsStats;
     pub use engine_navigation::NavStats;
+    pub use engine_physics::PhysicsStats;
     pub use engine_terrain::{ErosionStats, HydrologyStats, PathStats, TerrainStats};
+    pub use engine_world_streaming::CellStats;
 }
 
 pub mod host;
@@ -217,9 +217,9 @@ macro_rules! __if_profiling {
 }
 
 pub mod prelude {
+    pub use crate::bricks::AddBrick;
     pub use crate::camera::{CameraSystems, FlyCameraController, FlyCameraPlugin};
     pub use crate::games::*;
-    pub use crate::bricks::AddBrick;
     pub use crate::{Game, Inspectors};
     pub use engine_collision::{
         Collider, ColliderShape, Collision, CollisionLayers, CollisionRay, CollisionSystems,

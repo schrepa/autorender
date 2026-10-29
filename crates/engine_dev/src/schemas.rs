@@ -294,9 +294,7 @@ fn operation_variant(operation: &OperationEntry, definitions: &mut Map<String, V
     };
     fields.remove("title");
     fields.insert("type".to_owned(), json!("object"));
-    let properties = fields
-        .entry("properties")
-        .or_insert_with(|| json!({}));
+    let properties = fields.entry("properties").or_insert_with(|| json!({}));
     if let Some(properties) = properties.as_object_mut() {
         properties.insert(
             "op".to_owned(),
@@ -429,7 +427,10 @@ fn references(value: &Value, names: &mut Vec<String>) {
 fn frame_stats(registry: &BrickRegistry, problems: &mut Vec<String>) -> Value {
     let mut schema = serialized(schemars::schema_for!(engine_core::FrameStats));
     let mut definitions = schema["$defs"].as_object().cloned().unwrap_or_default();
-    let mut properties = schema["properties"].as_object().cloned().unwrap_or_default();
+    let mut properties = schema["properties"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
     let mut required = schema["required"].as_array().cloned().unwrap_or_default();
     for stats in registry.stats() {
         let (name, definition) = definition_of(serialized(stats.schema()), &mut definitions);
@@ -438,7 +439,10 @@ fn frame_stats(registry: &BrickRegistry, problems: &mut Vec<String>) -> Value {
             fields.remove("title");
         }
         if name.is_empty() {
-            problems.push(format!("the {} brick's stats schema names no type", stats.brick));
+            problems.push(format!(
+                "the {} brick's stats schema names no type",
+                stats.brick
+            ));
             continue;
         }
         definitions.insert(name.clone(), definition);

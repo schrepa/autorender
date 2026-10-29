@@ -60,7 +60,9 @@ impl Brick for Collision {
                     world::detect.in_set(CollisionSystems::Detect),
                 ),
             )
-            .inspector::<CollisionWorld, CollisionWorldView>(|_, world| CollisionWorldView::of(world))
+            .inspector::<CollisionWorld, CollisionWorldView>(|_, world| {
+                CollisionWorldView::of(world)
+            })
             .operation::<RaycastQuery>()
             .operation::<OverlapQuery>()
             .operation::<ShapeCastQuery>()

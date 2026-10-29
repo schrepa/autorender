@@ -46,7 +46,11 @@ pub struct Extracted {
 impl Extracted {
     pub fn insert<T: Clone + Send + Sync + 'static>(&mut self, value: T) {
         let type_id = TypeId::of::<T>();
-        match self.entries.iter_mut().find(|entry| entry.type_id == type_id) {
+        match self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.type_id == type_id)
+        {
             Some(entry) => entry.value = Box::new(value),
             None => self.entries.push(Entry {
                 type_id,
@@ -98,8 +102,12 @@ impl Clone for Extracted {
     }
 
     fn clone_from(&mut self, source: &Self) {
-        self.entries
-            .retain(|entry| source.entries.iter().any(|kept| kept.type_id == entry.type_id));
+        self.entries.retain(|entry| {
+            source
+                .entries
+                .iter()
+                .any(|kept| kept.type_id == entry.type_id)
+        });
         for kept in &source.entries {
             match self
                 .entries

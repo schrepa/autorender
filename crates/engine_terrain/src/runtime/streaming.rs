@@ -573,7 +573,8 @@ impl TerrainStreaming {
                     && reach > 0.0
                     && let Some(point) = globals.get(entity).and_then(|global| global.translation())
                 {
-                    self.places.push((point, engine_core::math::min(reach, 8.0)));
+                    self.places
+                        .push((point, engine_core::math::min(reach, 8.0)));
                 }
             }
         }
