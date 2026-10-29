@@ -1,3 +1,6 @@
+import package::frame::view::camera;
+import package::shadows::sample::{level_point, light_space, shadow, shadow_level};
+
 @group(0) @binding(24) var shadow_depth: texture_depth_2d;
 @group(0) @binding(25) var<storage, read_write> shadow_marks: array<atomic<u32>>;
 

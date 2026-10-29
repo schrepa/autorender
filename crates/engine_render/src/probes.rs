@@ -1,19 +1,61 @@
 use engine_core::{
-    RenderReflectionProbe,
+    RenderReflectionProbe, RenderSnapshot, RenderStats,
     glam::{Mat4, Vec3, Vec4},
     math,
 };
 
+use crate::bindings::{Contribution, Stages, read};
 use crate::cached::{Bound, Cached};
-use crate::gpu_data::STILL_FRAMES;
+use crate::gpu_data::{CameraUniform, STILL_FRAMES};
 use crate::gpu_layouts::constants::PROBE_ENTRY_WORDS;
-use crate::render_features::{Encode, RenderFeature};
-use crate::render_graph::{FrameShape, Node, RenderGraph};
+use crate::graph::{
+    FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
+};
+use crate::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View};
 
 pub(crate) const FACES: usize = 6;
 const CAPTURE_NEAR: f32 = 0.05;
 const CAPTURE_FAR: f32 = 4_000.0;
 const GRID_CELLS: f32 = 64.0;
+
+pub(crate) const FRAME_PROBES: Contribution = Contribution {
+    group: "frame",
+    set: "probes",
+    bindings: &[read("probe_words", Stages::FRAGMENT)],
+};
+
+pub(crate) static PART: PartEntry = PartEntry {
+    decl: PartDecl {
+        name: "probes",
+        brick: "reflection_probes",
+        passes: &[PassDecl {
+            name: "probe_captures",
+            stage: Stage::AfterFrame,
+        }],
+        resources: &[ResourceDecl {
+            name: "probes",
+            lifetime: Lifetime::Kept,
+        }],
+        hooks: &[],
+        contributes: &[FRAME_PROBES],
+        effects: &[],
+        labels: &[],
+        lazy: false,
+    },
+    create,
+};
+
+fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
+    Box::new(ProbePass::new(&cx.core.device, size_of::<CameraUniform>() as u64))
+}
+
+pub(crate) fn probe_list(snapshot: &RenderSnapshot) -> &[RenderReflectionProbe] {
+    if snapshot.environment.reflection_probes.enabled {
+        &snapshot.reflection_probes.list
+    } else {
+        &[]
+    }
+}
 
 struct Slot {
     probe: RenderReflectionProbe,
@@ -189,6 +231,15 @@ impl ProbeSlots {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+struct GraphIds {
+    pass: Option<PassId>,
+    poses: Option<ResourceId>,
+    visible: Option<ResourceId>,
+    leaves: Option<ResourceId>,
+    probes: Option<ResourceId>,
+}
+
 pub(crate) struct ProbePass {
     pub(crate) slots: ProbeSlots,
     cameras: [wgpu::Buffer; FACES],
@@ -196,12 +247,14 @@ pub(crate) struct ProbePass {
     words: crate::buffers::Growable,
     staging: Vec<[u32; 4]>,
     pub(crate) faces: u32,
-    pub(crate) dropped: u32,
+    dropped: u32,
+    captures: bool,
+    ids: GraphIds,
 }
 
 impl ProbePass {
     pub(crate) fn new(device: &wgpu::Device, camera_bytes: u64) -> Self {
-        let _owner = crate::memory::owned(crate::render_graph::Pass::ProbeCaptures);
+        let _owner = crate::memory::owned("reflection_probes");
         let cameras = std::array::from_fn(|_| {
             crate::buffers::uniform(device, "engine/probe-camera", camera_bytes)
         });
@@ -221,7 +274,13 @@ impl ProbePass {
             staging: Vec::new(),
             faces: 0,
             dropped: 0,
+            captures: false,
+            ids: GraphIds::default(),
         }
+    }
+
+    pub(crate) fn waiting(&self) -> bool {
+        self.slots.waiting()
     }
 
     pub(crate) fn camera(&self, face: usize) -> &wgpu::Buffer {
@@ -252,7 +311,7 @@ impl ProbePass {
         })
     }
 
-    pub(crate) fn upload(&mut self, device: &wgpu::Device, queue: &crate::gpu_calls::Queue) {
+    fn upload(&mut self, device: &wgpu::Device, queue: &crate::gpu_calls::Queue) {
         let Some(ready) = self.slots.changed_ready() else {
             return;
         };
@@ -260,14 +319,6 @@ impl ProbePass {
         let bytes = (self.staging.len() * 16) as u64;
         self.words.grow(device, bytes);
         queue.write_buffer(&self.words, 0, bytemuck::cast_slice(&self.staging));
-    }
-
-    pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.words.size()
-            + self
-                .depth
-                .key()
-                .map_or(0, |size| u64::from(*size) * u64::from(*size) * 4)
     }
 }
 
@@ -363,37 +414,77 @@ fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>
     }
 }
 
-impl RenderFeature for ProbePass {
-    type Frame = ();
-    type Stats = engine_core::ProbeStats;
+impl GpuPart for ProbePass {
+    fn install(&mut self, table: &GraphTable) {
+        self.ids = GraphIds {
+            pass: table.pass_named("probe_captures"),
+            poses: table.resource("poses"),
+            visible: table.resource("visible"),
+            leaves: table.resource("leaves"),
+            probes: table.resource("probes"),
+        };
+    }
 
-    fn declare(_frame: &(), _shape: &FrameShape, _graph: &mut RenderGraph) {}
+    fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
+        let snapshot = cx.frame.snapshot;
+        let probe_list = probe_list(snapshot);
+        let sky = cx.parts.get::<crate::sky::SkyPass>();
+        let cubes = sky.map_or(1, |sky| sky.environment().cubes());
+        let (lost, sky_changed) =
+            sky.map_or((false, false), crate::sky::SkyPass::environment_changes);
+        let most_cubes = (cx.core.display.max_layers / FACES as u32).max(1);
+        self.slots
+            .plan(probe_list, (cubes - 1) as usize, lost, sky_changed);
+        self.upload(&cx.core.device, &cx.core.queue);
+        self.faces = 0;
+        self.dropped = (snapshot.reflection_probes.dropped as u64
+            + (probe_list.len() as u64).saturating_sub(u64::from(most_cubes - 1)))
+        .min(u64::from(u32::MAX)) as u32;
+        self.captures =
+            cx.frame.kind.gpu_mode && !cx.frame.kind.debug && !probe_list.is_empty();
+    }
+
+    fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
+        let ids = self.ids;
+        if let (true, Some(pass)) = (self.captures, ids.pass) {
+            let _ = graph
+                .add(cx.table, pass)
+                .read(ids.poses)
+                .read(ids.visible)
+                .read_written(ids.leaves)
+                .write(ids.probes);
+        }
+    }
 
     fn encode(
-        &self,
-        _frame: &(),
-        _node: &Node,
-        _encode: &Encode<'_>,
-        _encoder: &mut wgpu::CommandEncoder,
+        &mut self,
+        _pass: usize,
+        cx: &mut Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
+        self.capture(cx, encoder);
         0
     }
 
-    fn capacity_bytes(&self) -> u64 {
-        ProbePass::capacity_bytes(self)
+    fn contribute<'s>(&'s self, group: &str, out: &mut Vec<(&'static str, Bound<'s>)>) {
+        if group == "frame" {
+            out.push(("probe_words", self.words()));
+        }
     }
 
-    fn stats(
-        this: Option<&Self>,
-        _frame: Option<&()>,
-        _snapshot: &engine_core::RenderSnapshot,
-    ) -> engine_core::ProbeStats {
-        this.map_or_else(engine_core::ProbeStats::default, |probes| {
-            engine_core::ProbeStats {
-                ready: probes.slots.ready(),
-                faces: probes.faces,
-                dropped: probes.dropped,
-            }
-        })
+    fn capacity_bytes(&self) -> u64 {
+        self.words.size()
+            + self
+                .depth
+                .key()
+                .map_or(0, |size| u64::from(*size) * u64::from(*size) * 4)
+    }
+
+    fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
+        stats.reflection_probes = engine_core::ProbeStats {
+            ready: self.slots.ready(),
+            faces: self.faces,
+            dropped: self.dropped,
+        };
     }
 }

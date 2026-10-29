@@ -1,13 +1,11 @@
-#![expect(
-    clippy::expect_used,
-    reason = "shading reads the group this frame prepared"
-)]
-
+use crate::bindings::{BindingDecl, Contribution, Stages, Table, read, uniform};
 use crate::gpu_layouts::constants::GROUP_LIGHTS as LIGHTS;
 pub(crate) use crate::gpu_layouts::constants::LIGHT_BYTES;
 use crate::gpu_layouts::constants::{
     KEPT_REGIONS, LIGHT_EXTERIOR, LIGHT_INTERIOR, NO_SLOT, SHAPED_LIGHTS,
 };
+use crate::graph::{Lifetime, PassDecl, ResourceDecl, Stage};
+use crate::parts::{PartDecl, PartEntry};
 use crate::shaders::entry::lights;
 use engine_core::{LightRegion, RenderLight, glam::Mat4};
 
@@ -17,6 +15,47 @@ pub(crate) const SLICES: u32 = 24;
 const CLUSTERS: u64 = (TILES_X * TILES_Y * SLICES) as u64;
 const TOTALS_BYTES: u64 = 16;
 pub(crate) const NO_BUDGET: u32 = u32::MAX;
+
+const SHADING: &[BindingDecl] = &[
+    uniform("clusters", Stages::FRAGMENT),
+    read("lights", Stages::FRAGMENT),
+    read("cluster_ranges", Stages::FRAGMENT),
+    read("cluster_lights", Stages::FRAGMENT),
+];
+
+pub(crate) const LIGHTS_LIGHTS: Contribution = Contribution {
+    group: "lights",
+    set: "lights",
+    bindings: SHADING,
+};
+
+const PROBE_SHADING: Table = Table {
+    label: "engine/light-shading-layout",
+    bindings: SHADING,
+};
+
+const LABELS: &[&str] = &["engine/light-", "engine/lights"];
+
+pub(crate) static PART: PartEntry = PartEntry {
+    decl: PartDecl {
+        name: "lights",
+        brick: "lights",
+        passes: &[PassDecl {
+            name: "lights",
+            stage: Stage::Prepare,
+        }],
+        resources: &[ResourceDecl {
+            name: "lights",
+            lifetime: Lifetime::Frame,
+        }],
+        hooks: &[],
+        contributes: &[LIGHTS_LIGHTS],
+        effects: &[],
+        labels: LABELS,
+        lazy: true,
+    },
+    create: gpu::create,
+};
 
 pub(crate) use crate::gpu_layouts::lights::ClusterUniform;
 
@@ -101,21 +140,24 @@ impl From<&RenderLight> for LightInput {
 }
 
 mod gpu {
-    use std::{cell::Cell, rc::Rc};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
 
-    use engine_core::{LightStats, RenderSnapshot};
+    use engine_core::{LightStats, RenderSnapshot, RenderStats};
 
     use super::*;
-    use crate::bindings::{LIGHT_BINNING, LIGHT_SHADING};
+    use crate::bindings::LIGHT_BINNING;
     use crate::buffers::{Growable, ReadbackRing, entry, storage};
-    use crate::cached::Cached;
-    use crate::gpu_data::LIGHT_SHADER;
+    use crate::cached::Bound;
+    use crate::graph::{FrameGraph, GraphTable, PassId, ResourceId};
+    use crate::lazy::Lazy;
+    use crate::parts::{Create, Encode, GpuPart, Prelude, Step, View};
     use crate::profiling::Span;
-    use crate::render_features::{Encode, FeaturePass, RenderFeature};
-    use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
     use crate::renderer::FramePoses;
 
-    pub(crate) struct LightFrame {
+    struct LightFrame {
         count: u32,
         group: usize,
         flags: u32,
@@ -126,12 +168,19 @@ mod gpu {
         Vec<(wgpu::BindGroup, wgpu::BindGroup)>,
     );
 
-    pub(crate) struct LightPass {
+    #[derive(Default)]
+    struct ProbeLights {
+        uniforms: Vec<wgpu::Buffer>,
+        groups: Vec<ProbeLightGroups>,
+        current: usize,
+    }
+
+    struct LightBins {
         count: wgpu::ComputePipeline,
         scan: wgpu::ComputePipeline,
         fill: wgpu::ComputePipeline,
         compute_layout: crate::pipelines::GroupLayout,
-        fragment_layout: crate::pipelines::GroupLayout,
+        shading_layout: crate::pipelines::GroupLayout,
         uniform: wgpu::Buffer,
         written: Option<ClusterUniform>,
         inputs: wgpu::Buffer,
@@ -145,31 +194,23 @@ mod gpu {
         uploaded_revision: Option<(u64, u64)>,
         regions: bool,
         compute_groups: Vec<((u64, usize, u64), wgpu::BindGroup)>,
-        fragment_group: Cached<u64, wgpu::BindGroup>,
-        probe_uniforms: Vec<wgpu::Buffer>,
-        probe_groups: Vec<ProbeLightGroups>,
-        probe_current: usize,
+        probes: RefCell<ProbeLights>,
         no_still: wgpu::Buffer,
         buffers_generation: u64,
         readbacks: ReadbackRing<()>,
         totals_read: Rc<Cell<Option<[u32; 3]>>>,
     }
 
-    impl LightPass {
-        pub(crate) fn new(device: &wgpu::Device) -> Self {
+    impl LightBins {
+        fn new(device: &wgpu::Device) -> Self {
             let compute_layout = crate::pipelines::layout(device, &LIGHT_BINNING);
-            let fragment_layout = crate::pipelines::layout(device, &LIGHT_SHADING);
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("engine/lights.wgsl"),
-                source: wgpu::ShaderSource::Wgsl(LIGHT_SHADER.into()),
-            });
-            let layout = crate::pipelines::pipeline_layout(
+            let shading_layout = crate::pipelines::layout(device, &PROBE_SHADING);
+            let layout = crate::pipelines::layout_of(
                 device,
                 &crate::pipeline_layouts::LIGHT_BINNING_PIPELINES,
-                &[&compute_layout],
             );
             let pipeline = |entry: crate::shaders::Entry| {
-                crate::pipelines::compute_entry(device, &layout, &module, entry)
+                crate::pipelines::compute_entry(device, &layout, entry)
             };
             let none = wgpu::BufferUsages::empty();
             Self {
@@ -177,7 +218,7 @@ mod gpu {
                 scan: pipeline(lights::scan_clusters),
                 fill: pipeline(lights::bin_lights),
                 compute_layout,
-                fragment_layout,
+                shading_layout,
                 uniform: crate::buffers::uniform(
                     device,
                     "engine/light-clusters-uniform",
@@ -200,10 +241,7 @@ mod gpu {
                 uploaded_revision: None,
                 regions: false,
                 compute_groups: Vec::new(),
-                fragment_group: Cached::default(),
-                probe_uniforms: Vec::new(),
-                probe_groups: Vec::new(),
-                probe_current: 0,
+                probes: RefCell::default(),
                 no_still: storage(device, "engine/light-no-still", 16, none),
                 buffers_generation: 0,
                 readbacks: ReadbackRing::new("engine/light-totals-readback"),
@@ -211,17 +249,13 @@ mod gpu {
             }
         }
 
-        pub(crate) fn fragment_layout(&self) -> &crate::pipelines::GroupLayout {
-            &self.fragment_layout
-        }
-
-        pub(crate) fn totals(&self) -> Option<[u32; 2]> {
+        fn totals(&self) -> Option<[u32; 2]> {
             self.totals_read
                 .get()
                 .map(|[reached, lost, _]| [reached, lost])
         }
 
-        pub(crate) fn capacity_bytes(&self) -> u64 {
+        fn capacity_bytes(&self) -> u64 {
             [
                 &self.inputs,
                 &self.lights,
@@ -234,12 +268,12 @@ mod gpu {
             .sum()
         }
 
-        pub(crate) fn prepare(
+        fn prepare(
             &mut self,
             device: &wgpu::Device,
             queue: &crate::gpu_calls::Queue,
             snapshot: &RenderSnapshot,
-            size: crate::targets::FrameSize,
+            (width, height): (u32, u32),
             poses: FramePoses<'_>,
             revision: (u64, u64),
         ) -> Option<LightFrame> {
@@ -284,8 +318,8 @@ mod gpu {
             }
             let mut uniform = ClusterUniform::new(
                 snapshot.view_projection,
-                size.width,
-                size.height,
+                width,
+                height,
                 snapshot.environment.local_lights.distance,
                 count as u32,
                 snapshot.environment.local_lights.lights_per_cluster,
@@ -328,21 +362,6 @@ mod gpu {
                     self.compute_groups.len() - 1
                 }
             };
-            if self.fragment_group.stale(&self.buffers_generation) {
-                let group = crate::pipelines::group(
-                    device,
-                    "engine/light-shading-group",
-                    &LIGHT_SHADING,
-                    &self.fragment_layout,
-                    &[
-                        entry("clusters", &self.uniform),
-                        entry("lights", &self.lights),
-                        entry("cluster_ranges", &self.ranges),
-                        entry("cluster_lights", &self.indices),
-                    ],
-                );
-                self.fragment_group.set(self.buffers_generation, group);
-            }
             Some(LightFrame {
                 count: count as u32,
                 group,
@@ -354,8 +373,19 @@ mod gpu {
             (self.indices.size() / 4).min(u64::from(u32::MAX)) as u32
         }
 
-        pub(crate) fn fragment_group(&self) -> &wgpu::BindGroup {
-            self.fragment_group.get().expect("prepared_this_frame")
+        fn shading(&self) -> [(&'static str, Bound<'_>); 4] {
+            [
+                ("clusters", Bound::fixed(self.uniform.as_entire_binding())),
+                (
+                    "lights",
+                    Bound::counted(self.buffers_generation, self.lights.as_entire_binding()),
+                ),
+                (
+                    "cluster_ranges",
+                    Bound::fixed(self.ranges.as_entire_binding()),
+                ),
+                ("cluster_lights", self.indices.bound()),
+            ]
         }
 
         fn encode_binning(
@@ -387,8 +417,8 @@ mod gpu {
         }
 
         #[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
-        pub(crate) fn encode_probe_face(
-            &mut self,
+        fn encode_probe_face(
+            &self,
             device: &wgpu::Device,
             queue: &crate::gpu_calls::Queue,
             encoder: &mut wgpu::CommandEncoder,
@@ -400,8 +430,10 @@ mod gpu {
             poses: FramePoses<'_>,
             still: (&wgpu::Buffer, u64),
         ) {
-            if self.probe_uniforms.is_empty() {
-                self.probe_uniforms = (0..6)
+            let mut probes = self.probes.borrow_mut();
+            let probes = &mut *probes;
+            if probes.uniforms.is_empty() {
+                probes.uniforms = (0..6)
                     .map(|_| {
                         crate::buffers::uniform(
                             device,
@@ -422,26 +454,23 @@ mod gpu {
             );
             uniform.lights[1] = frame.flags;
             uniform.lights[3] = 1;
-            queue.write_buffer(&self.probe_uniforms[face], 0, bytemuck::bytes_of(&uniform));
+            queue.write_buffer(&probes.uniforms[face], 0, bytemuck::bytes_of(&uniform));
             let key = (
                 poses.generation(),
                 poses.parity,
                 self.buffers_generation,
                 still.1,
             );
-            if let Some(index) = self
-                .probe_groups
-                .iter()
-                .position(|(built, _)| *built == key)
-            {
-                self.probe_current = index;
+            if let Some(index) = probes.groups.iter().position(|(built, _)| *built == key) {
+                probes.current = index;
             } else {
-                self.probe_groups
+                probes
+                    .groups
                     .retain(|((generation, _, buffers, still), _)| {
                         (*generation, *buffers, *still) == (key.0, key.2, key.3)
                     });
-                let groups = self
-                    .probe_uniforms
+                let groups = probes
+                    .uniforms
                     .iter()
                     .map(|uniform| {
                         let compute = crate::pipelines::group(
@@ -464,8 +493,8 @@ mod gpu {
                         let fragment = crate::pipelines::group(
                             device,
                             "engine/light-shading-probe-group",
-                            &LIGHT_SHADING,
-                            &self.fragment_layout,
+                            &PROBE_SHADING,
+                            &self.shading_layout,
                             &[
                                 entry("clusters", uniform),
                                 entry("lights", &self.lights),
@@ -476,10 +505,10 @@ mod gpu {
                         (compute, fragment)
                     })
                     .collect();
-                self.probe_groups.push((key, groups));
-                self.probe_current = self.probe_groups.len() - 1;
+                probes.groups.push((key, groups));
+                probes.current = probes.groups.len() - 1;
             }
-            let group = &self.probe_groups[self.probe_current].1[face].0;
+            let group = &probes.groups[probes.current].1[face].0;
             encoder.clear_buffer(&self.counts, 0, None);
             encoder.clear_buffer(&self.totals, 0, None);
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -497,59 +526,154 @@ mod gpu {
             pass.dispatch_workgroups(columns, rows, 1);
         }
 
-        pub(crate) fn probe_fragment_group(&self, face: usize) -> &wgpu::BindGroup {
-            &self.probe_groups[self.probe_current].1[face].1
+        fn probe_group(&self, face: usize) -> wgpu::BindGroup {
+            let probes = self.probes.borrow();
+            probes.groups[probes.current].1[face].1.clone()
         }
     }
 
-    impl RenderFeature for LightPass {
-        type Frame = LightFrame;
-        type Stats = LightStats;
+    pub(super) fn create(_cx: &Create<'_>) -> Box<dyn GpuPart> {
+        Box::new(LightPass::default())
+    }
 
-        const LABELS: &'static [&'static str] = &["engine/light-", "engine/lights"];
+    #[derive(Default)]
+    pub(crate) struct LightPass {
+        bins: Lazy<LightBins>,
+        frame: Option<LightFrame>,
+        pass: Option<PassId>,
+        poses: Option<ResourceId>,
+        lights: Option<ResourceId>,
+    }
 
-        fn declare(_frame: &LightFrame, _shape: &FrameShape, graph: &mut RenderGraph) {
-            graph
-                .add(Pass::Feature(FeaturePass::Lights))
-                .read(Resource::Poses)
-                .write(Resource::Lights);
+    impl LightPass {
+        pub(crate) fn created(&self) -> bool {
+            self.bins.get().is_some()
+        }
+
+        pub(crate) fn lit(&self) -> bool {
+            self.frame.is_some() && self.created()
+        }
+
+        pub(crate) fn encode_probe_face(
+            &self,
+            (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
+            encoder: &mut wgpu::CommandEncoder,
+            (face, view_projection, size): (usize, Mat4, u32),
+            settings: &engine_core::LocalLightSettings,
+            poses: FramePoses<'_>,
+            still: (&wgpu::Buffer, u64),
+        ) {
+            if let (Some(bins), Some(frame)) = (self.bins.get(), &self.frame) {
+                bins.encode_probe_face(
+                    device,
+                    queue,
+                    encoder,
+                    face,
+                    view_projection,
+                    size,
+                    settings,
+                    frame,
+                    poses,
+                    still,
+                );
+            }
+        }
+
+        pub(crate) fn probe_group(&self, face: usize) -> Option<wgpu::BindGroup> {
+            self.bins.get().map(|bins| bins.probe_group(face))
+        }
+    }
+
+    impl GpuPart for LightPass {
+        fn install(&mut self, table: &GraphTable) {
+            self.pass = table.pass_named("lights");
+            self.poses = table.resource("poses");
+            self.lights = table.resource("lights");
+        }
+
+        fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
+            self.frame = None;
+            if cx.frame.kind.debug {
+                return;
+            }
+            let frame = cx.frame.frame;
+            let snapshot = cx.frame.snapshot;
+            let needs =
+                snapshot.environment.local_lights.active() && !snapshot.lights.list.is_empty();
+            if !needs {
+                return;
+            }
+            let core = &*cx.core;
+            let device = &core.device;
+            self.bins.create(device, LABELS[0], || LightBins::new(device));
+            let Some(bins) = self.bins.get_mut() else {
+                return;
+            };
+            let parity = cx.frame.temporal.as_ref().map_or(0, |frame| frame.parity);
+            self.frame = bins.prepare(
+                device,
+                &core.queue,
+                snapshot,
+                core.render_pixels(),
+                core.frame_poses(parity),
+                (frame.identity(), frame.lights_revision()),
+            );
+        }
+
+        fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
+            if let (Some(pass), Some(_)) = (self.pass, &self.frame) {
+                let _ = graph
+                    .add(cx.table, pass)
+                    .read(self.poses)
+                    .write(self.lights);
+            }
         }
 
         fn encode(
-            &self,
-            frame: &LightFrame,
-            _node: &Node,
-            encode: &Encode<'_>,
+            &mut self,
+            _pass: usize,
+            cx: &mut Encode<'_>,
             encoder: &mut wgpu::CommandEncoder,
         ) -> u32 {
-            self.encode_binning(
-                encode.device,
-                encoder,
-                frame,
-                encode.profiler.span("light_bins"),
-            );
+            if let (Some(bins), Some(frame)) = (self.bins.get(), &self.frame) {
+                bins.encode_binning(
+                    &cx.core.device,
+                    encoder,
+                    frame,
+                    cx.core.profiler.span("light_bins"),
+                );
+            }
             0
         }
 
-        fn after_submit(&mut self, _frame: Option<&LightFrame>) {
-            let totals = Rc::clone(&self.totals_read);
-            self.readbacks.after_submit(move |words, ()| {
-                totals.set(Some([words.get(0), words.get(1), words.get(2)]));
-            });
+        fn contribute<'s>(&'s self, group: &str, out: &mut Vec<(&'static str, Bound<'s>)>) {
+            if group != "lights" {
+                return;
+            }
+            if let Some(bins) = self.bins.get() {
+                out.extend(bins.shading());
+            }
+        }
+
+        fn after_submit(&mut self) {
+            if let Some(bins) = self.bins.get_mut() {
+                let totals = Rc::clone(&bins.totals_read);
+                bins.readbacks.after_submit(move |words, ()| {
+                    totals.set(Some([words.get(0), words.get(1), words.get(2)]));
+                });
+            }
         }
 
         fn capacity_bytes(&self) -> u64 {
-            LightPass::capacity_bytes(self)
+            self.bins.get().map_or(0, LightBins::capacity_bytes)
         }
 
-        fn stats(
-            this: Option<&Self>,
-            frame: Option<&LightFrame>,
-            snapshot: &RenderSnapshot,
-        ) -> LightStats {
-            let lit = frame.is_some();
-            let totals = frame.and(this.and_then(LightPass::totals));
-            LightStats {
+        fn stats(&self, cx: &View<'_>, stats: &mut RenderStats) {
+            let snapshot = cx.frame.snapshot;
+            let lit = self.frame.is_some();
+            let bins = self.bins.get();
+            let totals = self.frame.as_ref().and(bins.and_then(LightBins::totals));
+            stats.local_lights = LightStats {
                 shaded: if lit {
                     snapshot.lights.list.len() as u32
                 } else {
@@ -563,9 +687,31 @@ mod gpu {
                 invalid: snapshot.lights.invalid.min(u32::MAX as usize) as u32,
                 visible: totals.map(|totals| totals[0]),
                 cluster_overflow: totals.map(|totals| totals[1]),
-            }
+            };
+        }
+
+        fn poll(&mut self) -> bool {
+            self.bins.poll()
+        }
+
+        fn disable(&mut self) -> bool {
+            self.bins.disable()
+        }
+
+        fn disabled(&self) -> bool {
+            self.bins.disabled()
+        }
+
+        #[cfg(feature = "dev")]
+        fn inject(&mut self) -> bool {
+            self.bins.inject()
+        }
+
+        #[cfg(feature = "dev")]
+        fn encode_fault(&self, encoder: &mut wgpu::CommandEncoder) {
+            self.bins.encode_fault(encoder);
         }
     }
 }
 
-pub(crate) use gpu::{LightFrame, LightPass};
+pub(crate) use gpu::LightPass;

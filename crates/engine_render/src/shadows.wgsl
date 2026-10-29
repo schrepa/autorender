@@ -1,3 +1,9 @@
+import package::engine::wind::{slot_sway, wind_sway};
+import package::meshes::impostor_frames::{
+    IMPOSTOR_HEMISPHERE, ImpostorRecord, impostor_basis, impostor_frame_direction, impostor_frames,
+    impostor_grid, impostor_index,
+};
+
 struct Cull {
     light: array<vec4<f32>, 3>,
     regions: array<vec4<f32>, REGIONS>,

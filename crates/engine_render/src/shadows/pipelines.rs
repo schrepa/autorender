@@ -1,9 +1,7 @@
 use super::{SHADOW_FORMAT, VIEWS_BYTES};
 use crate::bindings::{SHADOW_MARKS, SHADOW_POSES, SHADOW_SELECT, SHADOW_VIEW};
 use crate::gpu_data::Vertex;
-use crate::gpu_data::{
-    ComposeData, RouteData, SHADOW_MARKS_SHADER, SHADOW_SHADER, ShadowCullUniform,
-};
+use crate::gpu_data::{ComposeData, RouteData, ShadowCullUniform};
 use crate::pipeline_layouts::{
     CASTER_PIPELINES, IMPOSTOR_CASTER_PIPELINES, MASKED_CASTER_PIPELINES, PipelineLayout,
 };
@@ -20,8 +18,6 @@ pub(super) struct ShadowPipelines {
     pub(super) casters: [wgpu::RenderPipeline; 2],
     pub(super) moving: [wgpu::RenderPipeline; 2],
     pub(super) impostor_casters: Option<wgpu::RenderPipeline>,
-    module: wgpu::ShaderModule,
-    view_layout: crate::pipelines::GroupLayout,
     pub(super) clear_moving: wgpu::RenderPipeline,
     pub(super) compose: wgpu::RenderPipeline,
     pub(super) view_buffer: wgpu::Buffer,
@@ -31,24 +27,21 @@ pub(super) struct ShadowPipelines {
     pub(super) cull: wgpu::Buffer,
 }
 
-#[expect(clippy::too_many_arguments, reason = "a pass's disjoint borrows")]
 fn caster_pipeline(
     device: &wgpu::Device,
-    module: &wgpu::ShaderModule,
     label: &str,
-    (declared, layouts): (&PipelineLayout, &[&crate::pipelines::GroupLayout]),
+    declared: &'static PipelineLayout,
     entry_point: Entry,
     buffers: &[Option<wgpu::VertexBufferLayout<'_>>],
     overwrite: bool,
     fragment: Option<Entry>,
 ) -> wgpu::RenderPipeline {
-    let layout = crate::pipelines::pipeline_layout(device, declared, layouts);
+    let layout = crate::pipelines::layout_of(device, declared);
     crate::pipelines::geometry(
         device,
         &crate::pipelines::Geometry {
             label,
             layout: &layout,
-            module,
             vertex_constants: &[],
             vertex: entry_point,
             buffers,
@@ -86,39 +79,25 @@ impl ShadowPipelines {
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    pub(super) fn new(
-        device: &wgpu::Device,
-        material_layout: &crate::pipelines::GroupLayout,
-    ) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/shadows.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(SHADOW_SHADER.into()),
-        });
+    pub(super) fn new(device: &wgpu::Device) -> Self {
         let select_layout = layout(device, &SHADOW_SELECT);
-        let compute_layout = crate::pipelines::pipeline_layout(
+        let compute_layout = crate::pipelines::layout_of(
             device,
             &crate::pipeline_layouts::SHADOW_SELECT_PIPELINES,
-            &[&select_layout],
         );
         let compute = |entry: crate::shaders::Entry| {
-            crate::pipelines::compute_entry(device, &compute_layout, &module, entry)
+            crate::pipelines::compute_entry(device, &compute_layout, entry)
         };
         let select = compute(shadow::select_casters);
         let count = compute(shadow::count_casters);
-        let marks_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/shadow_marks.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(SHADOW_MARKS_SHADER.into()),
-        });
         let marks_layout = layout(device, &SHADOW_MARKS);
-        let marks_pipeline_layout = crate::pipelines::pipeline_layout(
+        let marks_pipeline_layout = crate::pipelines::layout_of(
             device,
             &crate::pipeline_layouts::SHADOW_MARKS_PIPELINES,
-            &[&marks_layout],
         );
         let marks = crate::pipelines::compute_entry(
             device,
             &marks_pipeline_layout,
-            &marks_module,
             shadow_marks::mark_shadow_tiles,
         );
         let view_layout = layout(device, &SHADOW_VIEW);
@@ -144,12 +123,8 @@ impl ShadowPipelines {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &slot_attributes,
         };
-        let plain_layouts: (&PipelineLayout, &[&crate::pipelines::GroupLayout]) =
-            (&CASTER_PIPELINES, &[&view_layout, &pose_layout]);
-        let masked_layouts: (&PipelineLayout, &[&crate::pipelines::GroupLayout]) = (
-            &MASKED_CASTER_PIPELINES,
-            &[&view_layout, &pose_layout, material_layout],
-        );
+        let plain_layouts: &'static PipelineLayout = &CASTER_PIPELINES;
+        let masked_layouts: &'static PipelineLayout = &MASKED_CASTER_PIPELINES;
         let kinds: [(&str, _, Vec<Option<wgpu::VertexBufferLayout<'_>>>, _, _); 2] = [
             (
                 "engine/shadow-affine",
@@ -169,16 +144,13 @@ impl ShadowPipelines {
         let casters = kinds
             .each_ref()
             .map(|(label, layouts, buffers, (vertex, fragment), _)| {
-                caster_pipeline(
-                    device, &module, label, *layouts, *vertex, buffers, false, *fragment,
-                )
+                caster_pipeline(device, label, *layouts, *vertex, buffers, false, *fragment)
             });
         let moving = kinds
             .each_ref()
             .map(|(label, layouts, buffers, _, (vertex, fragment))| {
                 caster_pipeline(
                     device,
-                    &module,
                     &format!("{label}-moving"),
                     *layouts,
                     *vertex,
@@ -189,7 +161,6 @@ impl ShadowPipelines {
             });
         let clear_moving = caster_pipeline(
             device,
-            &module,
             "engine/shadow-clear-moving",
             plain_layouts,
             shadow::vs_clear_moving,
@@ -200,7 +171,6 @@ impl ShadowPipelines {
         let compose_attributes = wgpu::vertex_attr_array![3 => Float32x4, 4 => Sint32x4];
         let compose = caster_pipeline(
             device,
-            &module,
             "engine/shadow-compose",
             plain_layouts,
             shadow::vs_compose,
@@ -250,8 +220,6 @@ impl ShadowPipelines {
             casters,
             moving,
             impostor_casters: None,
-            module,
-            view_layout,
             clear_moving,
             compose,
             view_buffer,
@@ -262,19 +230,11 @@ impl ShadowPipelines {
         }
     }
 
-    pub(super) fn impostor_caster(
-        &self,
-        device: &wgpu::Device,
-        impostor_layout: &crate::pipelines::GroupLayout,
-    ) -> wgpu::RenderPipeline {
+    pub(super) fn impostor_caster(&self, device: &wgpu::Device) -> wgpu::RenderPipeline {
         caster_pipeline(
             device,
-            &self.module,
             "engine/shadow-impostor-cards",
-            (
-                &IMPOSTOR_CASTER_PIPELINES,
-                &[&self.view_layout, &self.pose_layout, impostor_layout],
-            ),
+            &IMPOSTOR_CASTER_PIPELINES,
             shadow::vs_impostor_card,
             &[Some(wgpu::VertexBufferLayout {
                 array_stride: 8,
