@@ -664,19 +664,13 @@ impl TileAtlas {
     fn control_pass(&mut self, device: &wgpu::Device) {
         self.control_pass.get_or_insert_with(|| {
             let layout = crate::pipelines::layout(device, &TERRAIN_CONTROL);
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("engine/terrain-control.wgsl"),
-                source: wgpu::ShaderSource::Wgsl(crate::gpu_data::TERRAIN_CONTROL_SHADER.into()),
-            });
-            let pipeline_layout = crate::pipelines::pipeline_layout(
+            let pipeline_layout = crate::pipelines::layout_of(
                 device,
                 &crate::pipeline_layouts::TERRAIN_CONTROL_PIPELINES,
-                &[&layout],
             );
             let pipeline = crate::pipelines::compute_entry(
                 device,
                 &pipeline_layout,
-                &module,
                 terrain_control::tile_control,
             );
             (layout, pipeline)
@@ -790,19 +784,13 @@ impl TileAtlas {
     fn normal_pass(&mut self, device: &wgpu::Device) {
         self.normal_pass.get_or_insert_with(|| {
             let layout = crate::pipelines::layout(device, &TERRAIN_NORMALS);
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("engine/terrain-normals.wgsl"),
-                source: wgpu::ShaderSource::Wgsl(crate::gpu_data::TERRAIN_NORMALS_SHADER.into()),
-            });
-            let pipeline_layout = crate::pipelines::pipeline_layout(
+            let pipeline_layout = crate::pipelines::layout_of(
                 device,
                 &crate::pipeline_layouts::TERRAIN_NORMAL_PIPELINES,
-                &[&layout],
             );
             let pipeline = crate::pipelines::compute_entry(
                 device,
                 &pipeline_layout,
-                &module,
                 terrain_normals::tile_normals,
             );
             (layout, pipeline)

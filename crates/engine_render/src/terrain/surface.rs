@@ -387,15 +387,14 @@ impl SurfaceTrees {
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        shader: &wgpu::ShaderModule,
         camera: &wgpu::Buffer,
-        (terrain_layout, terrain_group): (&crate::pipelines::GroupLayout, &wgpu::BindGroup),
+        terrain_group: &wgpu::BindGroup,
         profiler: &crate::profiling::GpuProfiler,
     ) {
         if !self.any() {
             return;
         }
-        self.bind(device, shader, camera, terrain_layout);
+        self.bind(device, camera);
         let (Some(pipelines), Some(camera_group)) = (&self.pipelines, &self.camera_group) else {
             return;
         };
@@ -450,26 +449,19 @@ impl SurfaceTrees {
             .record(device, encoder, &self.counters, bytes, tag);
     }
 
-    fn bind(
-        &mut self,
-        device: &wgpu::Device,
-        shader: &wgpu::ShaderModule,
-        camera: &wgpu::Buffer,
-        terrain_layout: &crate::pipelines::GroupLayout,
-    ) {
+    fn bind(&mut self, device: &wgpu::Device, camera: &wgpu::Buffer) {
         let (camera_layout, tree_layout) = (&self.camera_layout, &self.tree_layout);
         self.pipelines.get_or_insert_with(|| {
-            let layout = crate::pipelines::pipeline_layout(
+            let layout = crate::pipelines::layout_of(
                 device,
                 &crate::pipeline_layouts::TERRAIN_SUBDIVISION_PIPELINES,
-                &[camera_layout, terrain_layout, tree_layout],
             );
             [
                 meshes::subdivide_begin,
                 meshes::subdivide_decide,
                 meshes::subdivide_apply,
             ]
-            .map(|entry| crate::pipelines::compute_entry(device, &layout, shader, entry))
+            .map(|entry| crate::pipelines::compute_entry(device, &layout, entry))
         });
         self.camera_group.get_or_insert_with(|| {
             crate::pipelines::group(

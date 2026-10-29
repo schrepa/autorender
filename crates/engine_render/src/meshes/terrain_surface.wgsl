@@ -1,3 +1,5 @@
+import package::terrain::vertex::{terrain, terrain_load};
+
 @group(1) @binding(23) var<storage, read> terrain_directory: array<u32>;
 
 struct SurfaceTriangle {

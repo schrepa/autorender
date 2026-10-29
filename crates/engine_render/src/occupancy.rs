@@ -1,17 +1,66 @@
 use crate::shaders::entry::occupancy;
+use engine_core::RenderStats;
 use engine_core::glam::Vec3;
 use engine_terrain::Occupancy;
 
-use crate::bindings::OCCUPANCY;
+use crate::bindings::{Contribution, OCCUPANCY, Sample, Stages, texture};
 use crate::buffers::Growable;
 use crate::cached::{Bound, GroupCache, Versioned};
+use crate::gpu_data::LightingUniform;
 use crate::gpu_layouts::constants::{OCCUPANCY_CELLS as CELLS, OCCUPANCY_GROUP, OCCUPANCY_QUAD};
 use crate::gpu_layouts::occupancy::{ListedDraw, SplatUniform};
 use crate::gpu_layouts::scene::MAX_OCCUPANCY_LEVELS;
+use crate::graph::{
+    FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
+};
+use crate::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Step, UniformsOut, View};
 use crate::pipelines::{Fillers, GroupLayout};
-use crate::render_features::{Encode, FeaturePass, RenderFeature};
-use crate::render_graph::{FrameShape, Node, Pass, RenderGraph, Resource};
+use crate::scatter::ScatterPass;
 use crate::shaders::Entry;
+
+pub(crate) static FRAME_OCCUPANCY: Contribution = Contribution {
+    group: "frame",
+    set: "occupancy",
+    bindings: &[
+        texture(
+            "occupancy_coverage",
+            Sample::Float,
+            crate::bindings::View::D2Array,
+            Stages::FRAGMENT,
+        ),
+        texture(
+            "occupancy_heights",
+            Sample::Unfilterable,
+            crate::bindings::View::D2Array,
+            Stages::FRAGMENT,
+        ),
+    ],
+};
+
+pub(crate) static PART: PartEntry = PartEntry {
+    decl: PartDecl {
+        name: "occupancy",
+        brick: "terrain",
+        passes: &[PassDecl {
+            name: "occupancy",
+            stage: Stage::Prepare,
+        }],
+        resources: &[ResourceDecl {
+            name: "occupancy",
+            lifetime: Lifetime::Kept,
+        }],
+        hooks: &[],
+        contributes: std::slice::from_ref(&FRAME_OCCUPANCY),
+        effects: &[],
+        labels: &[],
+        lazy: false,
+    },
+    create,
+};
+
+fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
+    Box::new(OccupancyPass::new(&cx.core.device))
+}
 
 const COVERAGE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 const HEIGHTS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
@@ -157,16 +206,9 @@ struct Pipelines {
 }
 
 impl Pipelines {
-    fn new(device: &wgpu::Device, layout: &GroupLayout) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/occupancy.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(crate::gpu_data::OCCUPANCY_SHADER.into()),
-        });
-        let pipeline_layout = crate::pipelines::pipeline_layout(
-            device,
-            &crate::pipeline_layouts::OCCUPANCY_PIPELINES,
-            &[layout],
-        );
+    fn new(device: &wgpu::Device) -> Self {
+        let pipeline_layout =
+            crate::pipelines::layout_of(device, &crate::pipeline_layouts::OCCUPANCY_PIPELINES);
         let blend = |dst_factor, operation| {
             let component = wgpu::BlendComponent {
                 src_factor: wgpu::BlendFactor::One,
@@ -186,7 +228,6 @@ impl Pipelines {
                 &crate::pipelines::Geometry {
                     label,
                     layout: &pipeline_layout,
-                    module: &module,
                     vertex,
                     vertex_constants: &[],
                     buffers: &[],
@@ -232,7 +273,6 @@ impl Pipelines {
             select: crate::pipelines::compute_entry(
                 device,
                 &pipeline_layout,
-                &module,
                 occupancy::select_covers,
             ),
         }
@@ -262,11 +302,20 @@ pub(crate) struct OccupancyPass {
     workgroups: u32,
     pub(crate) redraws: u32,
     pub(crate) averages: u32,
+    frame: Option<OccupancyFrame>,
+    slots: Slots,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Slots {
+    pass: Option<PassId>,
+    occupancy: Option<ResourceId>,
+    placed: Option<ResourceId>,
 }
 
 impl OccupancyPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let _owner = crate::memory::feature(crate::render_graph::FeaturePass::Occupancy);
+        let _owner = crate::memory::owned(PART.decl.brick);
         let (targets, views, layers) = targets(device, 1, 1);
         let unfiner = |label, format| {
             crate::targets::texture_2d(
@@ -316,32 +365,20 @@ impl OccupancyPass {
             workgroups: 0,
             redraws: 0,
             averages: 0,
+            frame: None,
+            slots: Slots::default(),
         }
     }
 
-    pub(crate) fn views(&self) -> (Bound<'_>, Bound<'_>) {
+    fn views(&self) -> (Bound<'_>, Bound<'_>) {
         (self.views[0].bound(), self.views[1].bound())
-    }
-
-    pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.targets
-            .iter()
-            .map(|target| {
-                u64::from(target.width())
-                    * u64::from(target.height())
-                    * u64::from(target.depth_or_array_layers())
-            })
-            .sum::<u64>()
-            * 6
-            / 2
-            + self.listed.size()
     }
 
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    pub(crate) fn prepare(
+    fn prepare_windows(
         &mut self,
         device: &wgpu::Device,
         queue: &crate::gpu_calls::Queue,
@@ -504,7 +541,7 @@ impl OccupancyPass {
         self.averaging.resize(maps, false);
     }
 
-    pub(crate) fn dirty_box(&mut self, min: Vec3, max: Vec3) {
+    fn dirty_box(&mut self, min: Vec3, max: Vec3) {
         let resolution = self.targets[0].width() as f32;
         for map in 0..self.windows.len() {
             let Some(window) = self.windows[map] else {
@@ -532,13 +569,13 @@ impl OccupancyPass {
         }
     }
 
-    pub(crate) fn warm(&mut self, device: &wgpu::Device) {
+    fn warm(&mut self, device: &wgpu::Device) {
         if self.pipelines.is_none() {
-            self.pipelines = Some(Pipelines::new(device, &self.layout));
+            self.pipelines = Some(Pipelines::new(device));
         }
     }
 
-    pub(crate) fn prepare_draws(
+    fn prepare_maps(
         &mut self,
         device: &wgpu::Device,
         (records, poses, generation): (&wgpu::Buffer, &wgpu::Buffer, u64),
@@ -680,47 +717,121 @@ fn cells(window: Window) -> impl Iterator<Item = [i32; 2]> {
     })
 }
 
-pub(crate) struct OccupancyFrame {
+struct OccupancyFrame {
     draws: Vec<bool>,
     means: Vec<bool>,
     workgroups: u32,
 }
 
-impl RenderFeature for OccupancyPass {
-    type Frame = OccupancyFrame;
-    type Stats = engine_core::OccupancyStats;
+impl GpuPart for OccupancyPass {
+    fn install(&mut self, table: &GraphTable) {
+        self.slots = Slots {
+            pass: table.pass_named("occupancy"),
+            occupancy: table.resource("occupancy"),
+            placed: table.resource("placed"),
+        };
+    }
 
-    fn declare(_frame: &OccupancyFrame, shape: &FrameShape, graph: &mut RenderGraph) {
-        graph
-            .add(Pass::Feature(FeaturePass::Occupancy))
-            .read_if(shape.scatter, Resource::Placed)
-            .write(Resource::Occupancy);
+    fn uniforms(
+        &mut self,
+        cx: &mut Step<'_>,
+        lighting: &mut LightingUniform,
+        _out: &mut UniformsOut,
+    ) {
+        let snapshot = cx.frame.snapshot;
+        let settings = engine_terrain::TerrainEnvironment::of(snapshot).occupancy;
+        let scatter = cx.parts.get::<ScatterPass>();
+        let placed = (
+            scatter.map_or(&[][..], ScatterPass::covers),
+            scatter.map_or(0, ScatterPass::objects),
+        );
+        let core = &*cx.core;
+        if let Some(maps) = self.prepare_windows(
+            &core.device,
+            &core.queue,
+            &settings,
+            snapshot.detail_eye,
+            placed,
+        ) {
+            lighting.occupancy = maps.occupancy;
+            lighting.occupancy_maps = maps.maps;
+            lighting.occupancy_centers = maps.centers;
+        }
+    }
+
+    fn prepare_draws(&mut self, cx: &mut Step<'_>, _encoder: &mut wgpu::CommandEncoder) {
+        let snapshot = cx.frame.snapshot;
+        let device = &cx.core.device;
+        let terrains = &engine_terrain::RenderTerrains::of(snapshot).terrains;
+        if terrains.iter().any(|terrain| !terrain.assets.is_empty())
+            && engine_terrain::TerrainEnvironment::of(snapshot).occupancy.enabled
+        {
+            self.warm(device);
+        }
+        let Some(scatter) = cx.parts.get::<ScatterPass>() else {
+            self.frame = None;
+            return;
+        };
+        for &(min, max) in scatter.moved() {
+            self.dirty_box(min, max);
+        }
+        self.frame = self.prepare_maps(device, scatter.slot_buffers());
+    }
+
+    fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
+        if self.frame.is_some() && let Some(pass) = self.slots.pass {
+            let _ = graph
+                .add(cx.table, pass)
+                .read_written(self.slots.placed)
+                .write(self.slots.occupancy);
+        }
     }
 
     fn encode(
-        &self,
-        frame: &OccupancyFrame,
-        _node: &Node,
-        encode: &Encode<'_>,
+        &mut self,
+        _pass: usize,
+        cx: &mut Encode<'_>,
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
-        self.encode_maps(encoder, frame, encode.profiler);
+        if let Some(frame) = &self.frame {
+            self.encode_maps(encoder, frame, &cx.core.profiler);
+        }
         0
     }
 
-    fn capacity_bytes(&self) -> u64 {
-        OccupancyPass::capacity_bytes(self)
+    fn contribute<'s>(&'s self, group: &str, out: &mut Vec<(&'static str, Bound<'s>)>) {
+        if group == FRAME_OCCUPANCY.group {
+            let (coverage, heights) = self.views();
+            out.extend([
+                ("occupancy_coverage", coverage),
+                ("occupancy_heights", heights),
+            ]);
+        }
     }
 
-    fn stats(
-        this: Option<&Self>,
-        _frame: Option<&OccupancyFrame>,
-        _snapshot: &engine_core::RenderSnapshot,
-    ) -> engine_core::OccupancyStats {
-        engine_core::OccupancyStats {
-            redraws: this.map_or(0, |occupancy| occupancy.redraws),
-            averages: this.map_or(0, |occupancy| occupancy.averages),
-        }
+    fn after_submit(&mut self) {
+        self.frame = None;
+    }
+
+    fn capacity_bytes(&self) -> u64 {
+        self.targets
+            .iter()
+            .map(|target| {
+                u64::from(target.width())
+                    * u64::from(target.height())
+                    * u64::from(target.depth_or_array_layers())
+            })
+            .sum::<u64>()
+            * 6
+            / 2
+            + self.listed.size()
+    }
+
+    fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
+        stats.occupancy = engine_core::OccupancyStats {
+            redraws: self.redraws,
+            averages: self.averages,
+        };
     }
 }
 

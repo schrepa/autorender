@@ -1,3 +1,11 @@
+import package::frame::view::eye_world;
+import package::meshes::debug::{DEBUG_KIND_TERRAIN, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL,
+    DEBUG_PATCH_EDGE, DEBUG_PATCH_SHIFT, DEBUG_TILE_EDGE, DebugTargets, debug_point, debug_targets};
+import package::terrain::draw::{TerrainOutput, terrain_forward_look, terrain_holes_test,
+    terrain_seen, terrain_shared_ground, terrain_shares};
+import package::terrain::sky::terrain_sky_map;
+import package::terrain::vertex::terrain;
+
 @fragment
 fn fs_debug_terrain(input: TerrainOutput) -> DebugTargets {
     terrain_holes_test(input.cell);

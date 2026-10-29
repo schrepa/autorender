@@ -1,3 +1,9 @@
+import package::frame::view::detail_across;
+import package::terrain::draw::terrain_displacement;
+import package::terrain::surface::{SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SurfaceTriangle,
+    SurfaceWater, surface_ground_error, surface_half, surface_water, terrain_level_height};
+import package::terrain::vertex::terrain;
+
 struct TerrainSubdivision {
     square: vec4<f32>,
     tree: vec4<u32>,

@@ -1,5 +1,8 @@
 const NOT_RESIDENT: u32 = 0xffffffffu;
 
+@group(0) @binding(0) var heights: texture_2d_array<f32>;
+@group(0) @binding(1) var<storage, read> directory: array<u32>;
+
 struct GroundTerrain {
     directory: u32,
     levels: u32,
