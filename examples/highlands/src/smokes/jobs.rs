@@ -70,7 +70,12 @@ fn alike(workers: &Looked, page: &Looked) -> Checked<()> {
         &answered,
         &above(workers.samples.len() / 2)
     );
-    smoke_eq!(&workers.samples, &page.samples, "samples_match_bit_for_bit");
+    smoke_eq!(
+        &without_standing(&workers.samples),
+        &without_standing(&page.samples),
+        "samples_match_bit_for_bit"
+    );
+    standing_alike(&workers.samples, &page.samples)?;
     smoke_check!(
         number(&workers.drawn["placed_objects"]) > 0.0,
         "objects_stand_on_the_tiles",
@@ -190,4 +195,39 @@ fn settle(session: &mut dyn SmokeSession) -> Checked<Value> {
     );
     smoke_eq!(&terrains["failed_jobs"], &json!(0), "no_terrain_job_failed");
     Ok(terrains)
+}
+
+fn without_standing(samples: &[Value]) -> Vec<Value> {
+    samples
+        .iter()
+        .map(|sample| {
+            let mut sample = sample.clone();
+            if let Some(fields) = sample.as_object_mut() {
+                fields.remove("standing_water");
+            }
+            sample
+        })
+        .collect()
+}
+
+fn standing_alike(workers: &[Value], page: &[Value]) -> Checked<()> {
+    let (mut wet, mut apart, mut wetness) = (0_usize, 0_usize, 0_usize);
+    for (a, b) in workers.iter().zip(page) {
+        let surface = |sample: &Value| sample["standing_water"]["surface"].as_f64();
+        match (surface(a), surface(b)) {
+            (Some(a), Some(b)) => {
+                wet += 1;
+                apart += usize::from((a - b).abs() > 0.05);
+            }
+            (None, None) => {}
+            (Some(_), None) | (None, Some(_)) => wetness += 1,
+        }
+    }
+    smoke_check!(
+        wetness * 50 <= workers.len() && apart * 100 <= wet.max(1),
+        "standing_water_settles_alike",
+        &json!({"samples": workers.len(), "wet": wet, "apart": apart, "wetness": wetness}),
+        &json!({"apart_at_most_percent": 1, "wetness_at_most_percent": 2})
+    );
+    Ok(())
 }

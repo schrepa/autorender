@@ -128,6 +128,13 @@ impl SceneViews {
             })
     }
 
+    pub fn look_keys(&self) -> BTreeSet<String> {
+        self.looks
+            .iter()
+            .flat_map(|look| look.environment.sections.keys().cloned())
+            .collect()
+    }
+
     pub fn environment(&self, name: &str, path: &str) -> Result<(SceneEnvironment, String), Error> {
         let mut environment = self.environment.clone().unwrap_or_default();
         if name == SCENE_LOOK {
@@ -168,8 +175,12 @@ pub fn show_look(world: &mut World, name: &str, path: &str) -> Result<(), Error>
         None if name == SCENE_LOOK => return Ok(()),
         None => SceneViews::default().environment(name, path)?,
     };
+    let looked: BTreeSet<String> = world
+        .get_resource::<SceneViews>()
+        .map(SceneViews::look_keys)
+        .unwrap_or_default();
     environment.check(world, &at)?;
-    environment.apply_all(world, &at)
+    environment.apply_where(world, &at, |key| looked.contains(key))
 }
 
 impl SceneDocument {

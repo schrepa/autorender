@@ -425,11 +425,6 @@ export interface SweepExample {
   height: number;
 }
 
-export interface SweepLayers {
-  compared: number;
-  worst: Worst;
-}
-
 export interface SweepRays {
   compared: number;
   missed: number;
@@ -506,7 +501,6 @@ export interface TerrainSweepResult {
   collision?: SweepRays | null;
   examples: SweepExample[];
   holes: number;
-  layers: SweepLayers;
   level_zero: number;
   points: number;
   resident: number;

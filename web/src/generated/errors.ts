@@ -153,6 +153,8 @@ export type ErrorCode =
   | "invalid_pack"
   | "invalid_record"
   | "missing_layer"
+  | "unknown_map"
+  | "unreadable_map"
   | "invalid_gltf"
   | "unsupported_feature"
   | "comment"

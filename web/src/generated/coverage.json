@@ -437,7 +437,6 @@
     {
       "op": "terrain_sweep",
       "smokes": [
-        "terrain_draws",
         "terrain_shapes"
       ]
     },
@@ -736,6 +735,14 @@
       "smokes": [
         "navigation_walks"
       ]
+    },
+    {
+      "op": "scene_view",
+      "smokes": []
+    },
+    {
+      "op": "scene_look",
+      "smokes": []
     }
   ],
   "sections": [

@@ -469,6 +469,7 @@ fn culling_holds(tile: &Tile) -> bool {
     let quads = PATCH_QUADS as i32;
     let half = quads / 2;
     let inverse = 1.0 / tile.spacing();
+    let rounding = std::f32::consts::SQRT_2 * codec::HEIGHT_STEP * inverse;
     (0..PATCHES_PER_TILE * PATCHES_PER_TILE).all(|index| {
         let (px, pz) = (index % PATCHES_PER_TILE, index / PATCHES_PER_TILE);
         let (first_x, first_z) = (px as i32 * quads, pz as i32 * quads);
@@ -484,7 +485,7 @@ fn culling_holds(tile: &Tile) -> bool {
                 .iter()
                 .all(|&[sx, sz]| {
                     let (dx, dz) = (sx - center_x, sz - center_z);
-                    (dx * dx + dz * dz).sqrt() <= radius
+                    (dx * dx + dz * dz).sqrt() <= radius + rounding
                 })
             })
         });
@@ -495,7 +496,9 @@ fn culling_holds(tile: &Tile) -> bool {
             .all(|(quarter, &floor)| {
                 let x0 = first_x + (quarter as i32 % 2) * half;
                 let z0 = first_z + (quarter as i32 / 2) * half;
-                (z0..=z0 + half).all(|z| (x0..=x0 + half).all(|x| tile.height(x, z) >= floor))
+                (z0..=z0 + half).all(|z| {
+                    (x0..=x0 + half).all(|x| tile.height(x, z) >= floor - codec::HEIGHT_STEP)
+                })
             });
         slopes && floors
     })

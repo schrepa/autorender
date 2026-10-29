@@ -682,6 +682,10 @@ impl SceneTerrain {
         let pyramid = Pyramid::new(tiles, spacing)
             .map_err(|error| error.coded(ErrorCode::InvalidTerrain).within(path))?;
         let source = self.layers(path, files, &pyramid)?;
+        surface
+            .rules
+            .check_maps(&source)
+            .map_err(|error| error.within(&format!("{path}.surface")))?;
         Ok(Terrain {
             origin,
             pyramid,

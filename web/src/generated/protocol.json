@@ -16,7 +16,15 @@
     "culling",
     "resolution",
     "debug_view",
-    "lighting_model"
+    "lighting_model",
+    "layer_noise",
+    "layer_stamps",
+    "layer_heightmap",
+    "layer_paths",
+    "layer_erosion",
+    "layer_hydrology",
+    "layer_relief",
+    "scene_views"
   ],
   "controls": [
     "present",
@@ -43,7 +51,9 @@
     "terrain_redo",
     "terrain_river",
     "world_changes",
-    "nav_go"
+    "nav_go",
+    "scene_view",
+    "scene_look"
   ],
   "errors": [
     "invalid_json",
@@ -198,6 +208,8 @@
     "invalid_pack",
     "invalid_record",
     "missing_layer",
+    "unknown_map",
+    "unreadable_map",
     "invalid_gltf",
     "unsupported_feature",
     "comment",

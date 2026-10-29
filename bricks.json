@@ -16,7 +16,9 @@
         "TerrainDebug",
         "TerrainPrefetch"
       ],
-      "lists": [],
+      "lists": [
+        "terrain_layers"
+      ],
       "name": "terrain",
       "operations": [
         {
@@ -79,6 +81,7 @@
         "engine_terrain::runtime::water::Water",
         "engine_terrain::runtime::residency::Terrains",
         "engine_core::ground::Ground",
+        "engine_terrain::layer::TerrainLayerKinds",
         "engine_core::water::WaterObstacles"
       ],
       "settings": [
@@ -108,7 +111,7 @@
           "opt_in": false
         }
       ],
-      "slot": null,
+      "slot": "ground",
       "smokes": [
         {
           "gpu": true,
@@ -130,7 +133,7 @@
       "stats": [],
       "system_set": "terrain",
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "2653c47faca3e9a45bb12e18146c86e8c9eeed3ca5e0efd3b47f98297497f4b9"
+      "version": "d440721246f837743fb244f91a1235da42bd0cce574b4c7cfc11ac3b25ff7b22"
     },
     {
       "components": [],
@@ -183,7 +186,7 @@
       ],
       "system_set": "world_streaming",
       "type": "engine_world_streaming::WorldStreamingBrick",
-      "version": "a9167b045ddc17591f92acbe0e815c36006426e2aecd43f5a6731c2646e730df"
+      "version": "9c0c3b2ef16972399a9802f9ec798ed21635a8eabb5c72fadaab077c6e8ee7f8"
     },
     {
       "components": [],
@@ -214,9 +217,7 @@
       "paths": [
         "crates/engine_navigation/**"
       ],
-      "reads": [
-        "terrain"
-      ],
+      "reads": [],
       "records": [
         "terrain_portals"
       ],
@@ -244,7 +245,7 @@
       ],
       "system_set": "navigation",
       "type": "engine_navigation::agents::NavigationBrick",
-      "version": "a5d958577624d9329e08090e2972a8b2756980459a8398ca92e6b4693c85a79c"
+      "version": "a7506a2b9ed16ac652fb27c29b32edb9a08fabbd489d9a641b599283b961cc0a"
     },
     {
       "components": [],
@@ -280,7 +281,7 @@
       "stats": [],
       "system_set": "time_of_day",
       "type": "engine_time_of_day::TimeOfDayBrick",
-      "version": "5d2edab264f50f36211cd66949e588c044d300b6b890bea10a94d570da42a322"
+      "version": "805b4ec973b9d2938b5408b82d2b1919b189277e098dc10eccb68643c7e4861b"
     },
     {
       "components": [],
@@ -288,8 +289,7 @@
       "dependencies": [
         "engine_core",
         "engine_profile",
-        "engine_settings",
-        "engine_terrain"
+        "engine_settings"
       ],
       "inspectors": [
         "CollisionWorld"
@@ -322,9 +322,7 @@
       "paths": [
         "crates/engine_collision/**"
       ],
-      "reads": [
-        "terrain"
-      ],
+      "reads": [],
       "records": [],
       "resources": [
         "engine_collision::types::CollisionConfig",
@@ -342,7 +340,7 @@
       "stats": [],
       "system_set": "collision",
       "type": "engine_collision::Collision",
-      "version": "e5560d0941673f954d0fadf558fc22ea092cb50579d4e183ec8e3e8a60b7a753"
+      "version": "42168888d1f7d7e2df5dbd6f8c4b8fafe9b69ab241ab80fd09245a5e36c442e0"
     },
     {
       "components": [],
@@ -393,7 +391,7 @@
       ],
       "system_set": "physics",
       "type": "engine_physics::PhysicsBrick",
-      "version": "2e51f112d5a243d827ea92ebce2f83743aaac5885f563efbc323d869bdeb9401"
+      "version": "2b2d2da50cc101dc922b375d19cebb64f0f76244f4ba959170f99a636cfe387c"
     },
     {
       "components": [],
@@ -436,7 +434,7 @@
       "stats": [],
       "system_set": "lights",
       "type": "engine_core::lights::Lights",
-      "version": "afc222cb0713eb11de60fe9f2a3dc381f0fa82414e6f5be9555b6ba0c1acde74"
+      "version": "5afffde134c045a36e102773cba87a458ccc6e6f056851f7068910b5a01d454f"
     },
     {
       "components": [],
@@ -477,7 +475,7 @@
       "stats": [],
       "system_set": "particles",
       "type": "engine_core::particles::Particles",
-      "version": "afc222cb0713eb11de60fe9f2a3dc381f0fa82414e6f5be9555b6ba0c1acde74"
+      "version": "5afffde134c045a36e102773cba87a458ccc6e6f056851f7068910b5a01d454f"
     },
     {
       "components": [],
@@ -520,7 +518,7 @@
       "stats": [],
       "system_set": "reflection_probes",
       "type": "engine_core::probes::ReflectionProbes",
-      "version": "afc222cb0713eb11de60fe9f2a3dc381f0fa82414e6f5be9555b6ba0c1acde74"
+      "version": "5afffde134c045a36e102773cba87a458ccc6e6f056851f7068910b5a01d454f"
     },
     {
       "components": [],
@@ -583,7 +581,7 @@
       "stats": [],
       "system_set": "sky",
       "type": "engine_core::sky::Sky",
-      "version": "afc222cb0713eb11de60fe9f2a3dc381f0fa82414e6f5be9555b6ba0c1acde74"
+      "version": "5afffde134c045a36e102773cba87a458ccc6e6f056851f7068910b5a01d454f"
     },
     {
       "components": [],
@@ -633,7 +631,7 @@
       "stats": [],
       "system_set": "shadows",
       "type": "engine_core::effects::Shadows",
-      "version": "afc222cb0713eb11de60fe9f2a3dc381f0fa82414e6f5be9555b6ba0c1acde74"
+      "version": "5afffde134c045a36e102773cba87a458ccc6e6f056851f7068910b5a01d454f"
     },
     {
       "components": [],
@@ -713,7 +711,7 @@
       "stats": [],
       "system_set": "post_effects",
       "type": "engine_core::effects::PostEffects",
-      "version": "afc222cb0713eb11de60fe9f2a3dc381f0fa82414e6f5be9555b6ba0c1acde74"
+      "version": "5afffde134c045a36e102773cba87a458ccc6e6f056851f7068910b5a01d454f"
     },
     {
       "components": [],
@@ -753,7 +751,7 @@
       "stats": [],
       "system_set": "level_of_detail",
       "type": "engine_core::level_of_detail::LevelOfDetail",
-      "version": "afc222cb0713eb11de60fe9f2a3dc381f0fa82414e6f5be9555b6ba0c1acde74"
+      "version": "5afffde134c045a36e102773cba87a458ccc6e6f056851f7068910b5a01d454f"
     },
     {
       "components": [],
@@ -807,7 +805,7 @@
       "stats": [],
       "system_set": "culling",
       "type": "engine_core::gpu_culling::Culling",
-      "version": "afc222cb0713eb11de60fe9f2a3dc381f0fa82414e6f5be9555b6ba0c1acde74"
+      "version": "5afffde134c045a36e102773cba87a458ccc6e6f056851f7068910b5a01d454f"
     },
     {
       "components": [],
@@ -853,7 +851,7 @@
       "stats": [],
       "system_set": "resolution",
       "type": "engine_core::resolution::Resolution",
-      "version": "afc222cb0713eb11de60fe9f2a3dc381f0fa82414e6f5be9555b6ba0c1acde74"
+      "version": "5afffde134c045a36e102773cba87a458ccc6e6f056851f7068910b5a01d454f"
     },
     {
       "components": [],
@@ -900,7 +898,7 @@
       "stats": [],
       "system_set": "debug_view",
       "type": "engine_core::debug_view::DebugView",
-      "version": "afc222cb0713eb11de60fe9f2a3dc381f0fa82414e6f5be9555b6ba0c1acde74"
+      "version": "5afffde134c045a36e102773cba87a458ccc6e6f056851f7068910b5a01d454f"
     },
     {
       "components": [],
@@ -951,7 +949,272 @@
       "stats": [],
       "system_set": "lighting_model",
       "type": "engine_core::foliage::LightingModel",
-      "version": "afc222cb0713eb11de60fe9f2a3dc381f0fa82414e6f5be9555b6ba0c1acde74"
+      "version": "5afffde134c045a36e102773cba87a458ccc6e6f056851f7068910b5a01d454f"
+    },
+    {
+      "components": [],
+      "crate": "engine_layer_noise",
+      "dependencies": [
+        "engine_core",
+        "engine_math",
+        "engine_settings",
+        "engine_terrain"
+      ],
+      "inspectors": [],
+      "lists": [
+        "terrain_layers"
+      ],
+      "name": "layer_noise",
+      "operations": [],
+      "passes": [],
+      "paths": [
+        "crates/engine_layer_noise/**"
+      ],
+      "reads": [],
+      "records": [],
+      "resources": [],
+      "settings": [],
+      "slot": null,
+      "smokes": [],
+      "stats": [],
+      "system_set": "layer_noise",
+      "type": "engine_layer_noise::LayerNoiseBrick",
+      "version": "c3ed8fe1b5ecdf9f3d37376d241479db2e685dc6dc8276b44692d05723005d80"
+    },
+    {
+      "components": [],
+      "crate": "engine_layer_stamps",
+      "dependencies": [
+        "engine_core",
+        "engine_math",
+        "engine_settings",
+        "engine_terrain"
+      ],
+      "inspectors": [],
+      "lists": [
+        "terrain_layers"
+      ],
+      "name": "layer_stamps",
+      "operations": [],
+      "passes": [],
+      "paths": [
+        "crates/engine_layer_stamps/**"
+      ],
+      "reads": [],
+      "records": [],
+      "resources": [],
+      "settings": [],
+      "slot": null,
+      "smokes": [],
+      "stats": [],
+      "system_set": "layer_stamps",
+      "type": "engine_layer_stamps::LayerStampsBrick",
+      "version": "eb4072891d765432f8d75bd403fe35972e915dc8427aa201c6a3e6ebe24ed56a"
+    },
+    {
+      "components": [],
+      "crate": "engine_layer_heightmap",
+      "dependencies": [
+        "engine_core",
+        "engine_math",
+        "engine_settings",
+        "engine_terrain"
+      ],
+      "inspectors": [],
+      "lists": [
+        "terrain_layers"
+      ],
+      "name": "layer_heightmap",
+      "operations": [],
+      "passes": [],
+      "paths": [
+        "crates/engine_layer_heightmap/**"
+      ],
+      "reads": [],
+      "records": [],
+      "resources": [],
+      "settings": [],
+      "slot": null,
+      "smokes": [],
+      "stats": [],
+      "system_set": "layer_heightmap",
+      "type": "engine_layer_heightmap::LayerHeightmapBrick",
+      "version": "d0b2bc6c17d4f0b8f34378afaeb0eea034eceb98e919bc48feb66faa48cc72e7"
+    },
+    {
+      "components": [],
+      "crate": "engine_layer_paths",
+      "dependencies": [
+        "engine_core",
+        "engine_math",
+        "engine_settings",
+        "engine_terrain"
+      ],
+      "inspectors": [],
+      "lists": [
+        "terrain_layers"
+      ],
+      "name": "layer_paths",
+      "operations": [],
+      "passes": [],
+      "paths": [
+        "crates/engine_layer_paths/**"
+      ],
+      "reads": [],
+      "records": [],
+      "resources": [],
+      "settings": [],
+      "slot": null,
+      "smokes": [],
+      "stats": [],
+      "system_set": "layer_paths",
+      "type": "engine_layer_paths::LayerPathsBrick",
+      "version": "115bc54d54e7419acf422abe1c6326d77b506a56b2b281b58198f4e5e12db66e"
+    },
+    {
+      "components": [],
+      "crate": "engine_layer_erosion",
+      "dependencies": [
+        "engine_core",
+        "engine_math",
+        "engine_settings",
+        "engine_terrain"
+      ],
+      "inspectors": [],
+      "lists": [
+        "terrain_layers"
+      ],
+      "name": "layer_erosion",
+      "operations": [],
+      "passes": [],
+      "paths": [
+        "crates/engine_layer_erosion/**"
+      ],
+      "reads": [],
+      "records": [],
+      "resources": [],
+      "settings": [],
+      "slot": null,
+      "smokes": [],
+      "stats": [],
+      "system_set": "layer_erosion",
+      "type": "engine_layer_erosion::LayerErosionBrick",
+      "version": "74a8132d3fda41214be4f0fccdd1df05a9e7e7c5e75faedd405aa803d313849b"
+    },
+    {
+      "components": [],
+      "crate": "engine_layer_hydrology",
+      "dependencies": [
+        "engine_core",
+        "engine_math",
+        "engine_settings",
+        "engine_terrain"
+      ],
+      "inspectors": [],
+      "lists": [
+        "terrain_layers"
+      ],
+      "name": "layer_hydrology",
+      "operations": [],
+      "passes": [],
+      "paths": [
+        "crates/engine_layer_hydrology/**"
+      ],
+      "reads": [],
+      "records": [],
+      "resources": [],
+      "settings": [],
+      "slot": null,
+      "smokes": [],
+      "stats": [],
+      "system_set": "layer_hydrology",
+      "type": "engine_layer_hydrology::LayerHydrologyBrick",
+      "version": "cc9e1d35f912c021a0f61218fad71d1768d5e5a479af9b98e0ec8a13538267e3"
+    },
+    {
+      "components": [],
+      "crate": "engine_layer_relief",
+      "dependencies": [
+        "engine_core",
+        "engine_math",
+        "engine_settings",
+        "engine_terrain"
+      ],
+      "inspectors": [],
+      "lists": [
+        "terrain_layers"
+      ],
+      "name": "layer_relief",
+      "operations": [],
+      "passes": [],
+      "paths": [
+        "crates/engine_layer_relief/**"
+      ],
+      "reads": [],
+      "records": [],
+      "resources": [],
+      "settings": [],
+      "slot": null,
+      "smokes": [],
+      "stats": [],
+      "system_set": "layer_relief",
+      "type": "engine_layer_relief::LayerReliefBrick",
+      "version": "04d4536bf2305e3897894e8f67eeea203131ef0779ba4cb0dc3eae1bc7347c19"
+    },
+    {
+      "components": [],
+      "crate": "engine",
+      "dependencies": [
+        "engine_collision",
+        "engine_core",
+        "engine_dev",
+        "engine_layer_erosion",
+        "engine_layer_heightmap",
+        "engine_layer_hydrology",
+        "engine_layer_noise",
+        "engine_layer_paths",
+        "engine_layer_relief",
+        "engine_layer_stamps",
+        "engine_navigation",
+        "engine_panic",
+        "engine_physics",
+        "engine_profile",
+        "engine_render",
+        "engine_scene",
+        "engine_settings",
+        "engine_terrain",
+        "engine_time_of_day",
+        "engine_worker",
+        "engine_world_streaming"
+      ],
+      "inspectors": [],
+      "lists": [],
+      "name": "scene_views",
+      "operations": [
+        {
+          "control": true,
+          "name": "scene_view"
+        },
+        {
+          "control": true,
+          "name": "scene_look"
+        }
+      ],
+      "passes": [],
+      "paths": [
+        "crates/engine/src/host/views.rs",
+        "crates/engine/src/host/views/**"
+      ],
+      "reads": [],
+      "records": [],
+      "resources": [],
+      "settings": [],
+      "slot": null,
+      "smokes": [],
+      "stats": [],
+      "system_set": "scene_views",
+      "type": "engine::host::views::SceneViewsBrick",
+      "version": "258dd39845eee06db8ad8e9f5b5cd3104c0342792876a19c44c0ad2abaf2bce2"
     }
   ]
 }

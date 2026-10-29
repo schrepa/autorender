@@ -214,11 +214,25 @@ impl SceneEnvironment {
     }
 
     pub(crate) fn apply_all(&self, world: &mut World, path: &str) -> Result<(), Error> {
-        world.insert_resource(
-            self.atmosphere()
-                .map_or_else(Atmosphere::default, |atmosphere| atmosphere.atmosphere()),
-        );
-        let sections: Vec<SettingsEntry> = registered(world).copied().collect();
+        self.apply_where(world, path, |_| true)
+    }
+
+    pub(crate) fn apply_where(
+        &self,
+        world: &mut World,
+        path: &str,
+        applies: impl Fn(&str) -> bool,
+    ) -> Result<(), Error> {
+        if applies(ATMOSPHERE) {
+            world.insert_resource(
+                self.atmosphere()
+                    .map_or_else(Atmosphere::default, |atmosphere| atmosphere.atmosphere()),
+            );
+        }
+        let sections: Vec<SettingsEntry> = registered(world)
+            .filter(|section| applies(section.key))
+            .copied()
+            .collect();
         for section in sections {
             match self.value(section.key) {
                 Some(value) => {

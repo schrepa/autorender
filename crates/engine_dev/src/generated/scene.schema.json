@@ -61,7 +61,7 @@
       "additionalProperties": false,
       "properties": {
         "fitness": {
-          "$ref": "#/$defs/Mask"
+          "$ref": "#/$defs/Expr"
         },
         "id": {
           "type": "string"
@@ -75,7 +75,7 @@
         "wetness": {
           "anyOf": [
             {
-              "$ref": "#/$defs/Mask"
+              "$ref": "#/$defs/Expr"
             },
             {
               "type": "null"
@@ -93,7 +93,7 @@
       "additionalProperties": false,
       "properties": {
         "mask": {
-          "$ref": "#/$defs/Mask"
+          "$ref": "#/$defs/Expr"
         },
         "material": {
           "type": "string"
@@ -211,7 +211,6 @@
       "type": "string"
     },
     "ErosionLayer": {
-      "additionalProperties": false,
       "properties": {
         "creep": {
           "default": 20.0,
@@ -247,6 +246,187 @@
           "maximum": 400,
           "minimum": 1,
           "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Expr": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "constant": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "constant"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "map": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "map"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ramp": {
+              "$ref": "#/$defs/Ramp"
+            }
+          },
+          "required": [
+            "ramp"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "remap": {
+              "$ref": "#/$defs/Remap"
+            }
+          },
+          "required": [
+            "remap"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "facing": {
+              "$ref": "#/$defs/Facing"
+            }
+          },
+          "required": [
+            "facing"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "noise": {
+              "$ref": "#/$defs/NoiseMask"
+            }
+          },
+          "required": [
+            "noise"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "mul": {
+              "items": {
+                "$ref": "#/$defs/Expr"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "mul"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "add": {
+              "items": {
+                "$ref": "#/$defs/Expr"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "add"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "min": {
+              "items": {
+                "$ref": "#/$defs/Expr"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "min"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "max": {
+              "items": {
+                "$ref": "#/$defs/Expr"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "max"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "invert": {
+              "$ref": "#/$defs/Expr"
+            }
+          },
+          "required": [
+            "invert"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ExpressionSettings": {
+      "properties": {
+        "blend": {
+          "$ref": "#/$defs/Blend"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Expr"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "level": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maps": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Expr"
+          },
+          "type": "object"
         }
       },
       "type": "object"
@@ -363,8 +543,95 @@
       },
       "type": "object"
     },
+    "HeightmapSettings": {
+      "properties": {
+        "attribution": {
+          "maxLength": 1024,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "blend": {
+          "$ref": "#/$defs/Blend",
+          "default": "add"
+        },
+        "falloff": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10000000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "height": {
+          "format": "uint32",
+          "maximum": 16384,
+          "minimum": 2,
+          "type": "integer"
+        },
+        "high": {
+          "format": "float",
+          "maximum": 20000.0,
+          "minimum": -20000.0,
+          "type": "number"
+        },
+        "low": {
+          "format": "float",
+          "maximum": 20000.0,
+          "minimum": -20000.0,
+          "type": "number"
+        },
+        "min": {
+          "items": {
+            "format": "float",
+            "maximum": 10000000.0,
+            "minimum": -10000000.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "size": {
+          "items": {
+            "format": "float",
+            "maximum": 10000000.0,
+            "minimum": 0.001,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "source": {
+          "maxLength": 1024,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "type": "string"
+        },
+        "width": {
+          "format": "uint32",
+          "maximum": 16384,
+          "minimum": 2,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "uri",
+        "width",
+        "height",
+        "min",
+        "size",
+        "low",
+        "high"
+      ],
+      "type": "object"
+    },
     "HummocksLayer": {
-      "additionalProperties": false,
       "properties": {
         "across": {
           "default": 1.5,
@@ -434,7 +701,6 @@
       "type": "object"
     },
     "HydrologyLayer": {
-      "additionalProperties": false,
       "properties": {
         "discharge": {
           "default": 1.0,
@@ -558,367 +824,6 @@
       },
       "type": "object"
     },
-    "Mask": {
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "constant": {
-              "format": "float",
-              "type": "number"
-            }
-          },
-          "required": [
-            "constant"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "height": {
-              "items": {
-                "format": "float",
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            }
-          },
-          "required": [
-            "height"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "slope": {
-              "items": {
-                "format": "float",
-                "maximum": 90.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            }
-          },
-          "required": [
-            "slope"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "curvature": {
-              "items": {
-                "format": "float",
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            }
-          },
-          "required": [
-            "curvature"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "facing": {
-              "$ref": "#/$defs/Facing"
-            }
-          },
-          "required": [
-            "facing"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "worn": {
-              "items": {
-                "format": "float",
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            }
-          },
-          "required": [
-            "worn"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "deposit": {
-              "items": {
-                "format": "float",
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            }
-          },
-          "required": [
-            "deposit"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "flow": {
-              "items": {
-                "format": "float",
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            }
-          },
-          "required": [
-            "flow"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "wetness": {
-              "items": {
-                "format": "float",
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            }
-          },
-          "required": [
-            "wetness"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "lake": {
-              "items": {
-                "format": "float",
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            }
-          },
-          "required": [
-            "lake"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "river": {
-              "items": {
-                "format": "float",
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            }
-          },
-          "required": [
-            "river"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "grain": {
-              "items": {
-                "format": "float",
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            }
-          },
-          "required": [
-            "grain"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "power": {
-              "items": {
-                "format": "float",
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            }
-          },
-          "required": [
-            "power"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "flood": {
-              "items": {
-                "format": "float",
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            }
-          },
-          "required": [
-            "flood"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "path": {
-              "items": {
-                "format": "float",
-                "type": "number"
-              },
-              "maxItems": 2,
-              "minItems": 2,
-              "type": "array"
-            }
-          },
-          "required": [
-            "path"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "noise": {
-              "$ref": "#/$defs/NoiseMask"
-            }
-          },
-          "required": [
-            "noise"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "multiply": {
-              "items": {
-                "$ref": "#/$defs/Mask"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "multiply"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "add": {
-              "items": {
-                "$ref": "#/$defs/Mask"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "add"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "min": {
-              "items": {
-                "$ref": "#/$defs/Mask"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "min"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "max": {
-              "items": {
-                "$ref": "#/$defs/Mask"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "max"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "invert": {
-              "$ref": "#/$defs/Mask"
-            }
-          },
-          "required": [
-            "invert"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "remap": {
-              "$ref": "#/$defs/Remap"
-            }
-          },
-          "required": [
-            "remap"
-          ],
-          "type": "object"
-        }
-      ]
-    },
     "MeshSource": {
       "oneOf": [
         {
@@ -1010,6 +915,26 @@
             "uri"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "provided",
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
         }
       ]
     },
@@ -1081,7 +1006,6 @@
       "type": "object"
     },
     "NoiseLayer": {
-      "additionalProperties": false,
       "properties": {
         "blend": {
           "$ref": "#/$defs/Blend",
@@ -1188,7 +1112,6 @@
       "type": "object"
     },
     "PathLayer": {
-      "additionalProperties": false,
       "properties": {
         "bridge_fill": {
           "default": 4.0,
@@ -1323,7 +1246,7 @@
           "type": "integer"
         },
         "mask": {
-          "$ref": "#/$defs/Mask",
+          "$ref": "#/$defs/Expr",
           "default": {
             "constant": 1.0
           }
@@ -1363,15 +1286,15 @@
       ],
       "type": "object"
     },
-    "Remap": {
+    "Ramp": {
       "additionalProperties": false,
       "properties": {
         "from": {
           "format": "float",
           "type": "number"
         },
-        "mask": {
-          "$ref": "#/$defs/Mask"
+        "map": {
+          "type": "string"
         },
         "to": {
           "format": "float",
@@ -1379,14 +1302,35 @@
         }
       },
       "required": [
-        "mask",
+        "map",
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "Remap": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "format": "float",
+          "type": "number"
+        },
+        "of": {
+          "$ref": "#/$defs/Expr"
+        },
+        "to": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "of",
         "from",
         "to"
       ],
       "type": "object"
     },
     "RiversLayer": {
-      "additionalProperties": false,
       "properties": {
         "attribution": {
           "maxLength": 1024,
@@ -1420,6 +1364,101 @@
       },
       "required": [
         "lines"
+      ],
+      "type": "object"
+    },
+    "SceneAlong": {
+      "additionalProperties": false,
+      "properties": {
+        "every": {
+          "format": "float",
+          "maximum": 10000000.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "first": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10000000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "grounded": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grounded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": {
+            "offset": 0.0
+          }
+        },
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "layer": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "offset": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": -10000.0,
+          "type": "number"
+        },
+        "prefab": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "streamed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAlongStreamed"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terrain": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "prefab",
+        "terrain",
+        "layer",
+        "every"
+      ],
+      "type": "object"
+    },
+    "SceneAlongStreamed": {
+      "additionalProperties": false,
+      "properties": {
+        "reach": {
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "reach"
       ],
       "type": "object"
     },
@@ -2712,95 +2751,6 @@
       },
       "type": "object"
     },
-    "SceneHeightmap": {
-      "additionalProperties": false,
-      "properties": {
-        "attribution": {
-          "maxLength": 1024,
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "blend": {
-          "$ref": "#/$defs/Blend",
-          "default": "add"
-        },
-        "falloff": {
-          "default": 0.0,
-          "format": "float",
-          "maximum": 10000000.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "height": {
-          "format": "uint32",
-          "maximum": 16384,
-          "minimum": 2,
-          "type": "integer"
-        },
-        "high": {
-          "format": "float",
-          "maximum": 20000.0,
-          "minimum": -20000.0,
-          "type": "number"
-        },
-        "low": {
-          "format": "float",
-          "maximum": 20000.0,
-          "minimum": -20000.0,
-          "type": "number"
-        },
-        "min": {
-          "items": {
-            "format": "float",
-            "maximum": 10000000.0,
-            "minimum": -10000000.0,
-            "type": "number"
-          },
-          "maxItems": 2,
-          "minItems": 2,
-          "type": "array"
-        },
-        "size": {
-          "items": {
-            "format": "float",
-            "maximum": 10000000.0,
-            "minimum": 0.001,
-            "type": "number"
-          },
-          "maxItems": 2,
-          "minItems": 2,
-          "type": "array"
-        },
-        "source": {
-          "maxLength": 1024,
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "uri": {
-          "type": "string"
-        },
-        "width": {
-          "format": "uint32",
-          "maximum": 16384,
-          "minimum": 2,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "uri",
-        "width",
-        "height",
-        "min",
-        "size",
-        "low",
-        "high"
-      ],
-      "type": "object"
-    },
     "SceneHighlights": {
       "additionalProperties": false,
       "properties": {
@@ -3001,6 +2951,25 @@
       },
       "type": "object"
     },
+    "SceneLook": {
+      "additionalProperties": false,
+      "properties": {
+        "environment": {
+          "$ref": "#/$defs/SceneEnvironment"
+        },
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "environment"
+      ],
+      "type": "object"
+    },
     "SceneMap": {
       "anyOf": [
         {
@@ -3041,7 +3010,10 @@
           },
           "maxItems": 4,
           "minItems": 4,
-          "type": "array"
+          "type": [
+            "array",
+            "null"
+          ]
         },
         "double_sided": {
           "type": [
@@ -3149,6 +3121,15 @@
             "null"
           ]
         },
+        "provided": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "surface": {
           "anyOf": [
             {
@@ -3190,8 +3171,7 @@
         }
       },
       "required": [
-        "id",
-        "color"
+        "id"
       ],
       "type": "object"
     },
@@ -4404,112 +4384,194 @@
     "SceneTerrainLayer": {
       "oneOf": [
         {
-          "additionalProperties": false,
-          "properties": {
-            "noise": {
-              "$ref": "#/$defs/NoiseLayer"
-            }
-          },
-          "required": [
-            "noise"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "stamp": {
-              "$ref": "#/$defs/Stamp"
-            }
-          },
-          "required": [
-            "stamp"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "heightmap": {
-              "$ref": "#/$defs/SceneHeightmap"
-            }
-          },
-          "required": [
-            "heightmap"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "rivers": {
-              "$ref": "#/$defs/RiversLayer"
-            }
-          },
-          "required": [
-            "rivers"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "hydrology": {
-              "$ref": "#/$defs/HydrologyLayer"
-            }
-          },
-          "required": [
-            "hydrology"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "erosion": {
+          "allOf": [
+            {
               "$ref": "#/$defs/ErosionLayer"
             }
-          },
-          "required": [
-            "erosion"
           ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
           "properties": {
-            "path": {
-              "$ref": "#/$defs/PathLayer"
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "erosion"
             }
           },
           "required": [
-            "path"
+            "type"
           ],
-          "type": "object"
+          "unevaluatedProperties": false
         },
         {
-          "additionalProperties": false,
+          "allOf": [
+            {
+              "$ref": "#/$defs/ExpressionSettings"
+            }
+          ],
           "properties": {
-            "steps": {
-              "$ref": "#/$defs/StepsLayer"
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "expression"
             }
           },
           "required": [
-            "steps"
+            "type"
           ],
-          "type": "object"
+          "unevaluatedProperties": false
         },
         {
-          "additionalProperties": false,
+          "allOf": [
+            {
+              "$ref": "#/$defs/HeightmapSettings"
+            }
+          ],
           "properties": {
-            "hummocks": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "heightmap"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
               "$ref": "#/$defs/HummocksLayer"
             }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "hummocks"
+            }
           },
           "required": [
-            "hummocks"
+            "type"
           ],
-          "type": "object"
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/HydrologyLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "hydrology"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/NoiseLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "noise"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/PathLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "path"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/RiversLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "rivers"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Stamp"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "stamp"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/StepsLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "steps"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
         }
       ]
     },
@@ -4914,6 +4976,15 @@
           "pattern": "^[A-Za-z0-9_.-]+$",
           "type": "string"
         },
+        "provided": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "rgba8": {
           "type": [
             "string",
@@ -5251,6 +5322,74 @@
       ],
       "type": "object"
     },
+    "SceneView": {
+      "additionalProperties": false,
+      "properties": {
+        "far": {
+          "default": 500.0,
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "fov_degrees": {
+          "default": 55.0,
+          "format": "float",
+          "maximum": 179.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "near": {
+          "default": 0.10000000149011612,
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "position": {
+          "default": [
+            24.0,
+            19.0,
+            28.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "target": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
     "SceneWater": {
       "additionalProperties": false,
       "properties": {
@@ -5420,7 +5559,6 @@
       "type": "string"
     },
     "Stamp": {
-      "additionalProperties": false,
       "properties": {
         "center": {
           "items": {
@@ -5537,7 +5675,6 @@
       "type": "object"
     },
     "StepsLayer": {
-      "additionalProperties": false,
       "properties": {
         "cover": {
           "default": 0.6000000238418579,
@@ -5630,6 +5767,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
+    "along": {
+      "items": {
+        "$ref": "#/$defs/SceneAlong"
+      },
+      "type": "array"
+    },
     "camera": {
       "$ref": "#/$defs/SceneCamera",
       "default": {
@@ -5670,6 +5813,12 @@
       "pattern": "^[A-Za-z0-9_.-]+$",
       "type": "string"
     },
+    "looks": {
+      "items": {
+        "$ref": "#/$defs/SceneLook"
+      },
+      "type": "array"
+    },
     "materials": {
       "items": {
         "$ref": "#/$defs/SceneMaterial"
@@ -5702,6 +5851,12 @@
     "textures": {
       "items": {
         "$ref": "#/$defs/SceneTexture"
+      },
+      "type": "array"
+    },
+    "views": {
+      "items": {
+        "$ref": "#/$defs/SceneView"
       },
       "type": "array"
     }
