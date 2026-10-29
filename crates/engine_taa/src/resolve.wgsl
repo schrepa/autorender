@@ -1,4 +1,5 @@
 import package::engine::color::{decode_srgb, dithered, encode_srgb};
+import package::face::dither::dithering;
 import package::post::frame::{
     depth_texture, effect_shade, occlusion, occlusion_at, post, reflected, reflections, scene,
 };
@@ -160,7 +161,7 @@ fn resolve(position: vec4<f32>) -> Resolved {
 fn output(resolved: Resolved, encoded: vec3<f32>) -> Outputs {
     var outputs: Outputs;
     outputs.history = vec4<f32>(resolved.color, 1.0);
-    if post.sun_direction.w != 0.0 {
+    if dithering() {
         outputs.history = vec4<f32>(decode_srgb(dithered(encode_srgb(resolved.color),
             resolved.at.position, resolved.at.turn, 1u)), 1.0);
     }

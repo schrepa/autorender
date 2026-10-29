@@ -44,7 +44,6 @@ pub mod uploads;
 
 pub mod buffers;
 mod environment;
-mod exposure;
 pub mod gpu_presentation;
 mod ground_cover;
 pub mod materials;
@@ -62,7 +61,6 @@ pub mod screen_effects;
 mod shadows;
 pub mod staging;
 pub mod targets;
-mod temporal;
 mod terrain;
 mod terrain_bounce;
 mod terrain_horizons;

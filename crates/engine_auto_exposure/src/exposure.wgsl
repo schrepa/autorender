@@ -1,5 +1,7 @@
 import package::engine::color::{luminance, unfilmic};
-import package::sky::common::SKY_PI;
+import package::face::sky::{horizon, zenith};
+import package::face::sun::{sun_color, sun_direction};
+import package::frame::view::PI;
 
 struct ExposureUniform {
     frame: vec4<f32>,
@@ -18,19 +20,11 @@ struct ExposureState {
     day: f32,
 }
 
-struct Lighting {
-    sun: vec4<f32>,
-    sun_color: vec4<f32>,
-    zenith: vec4<f32>,
-    horizon: vec4<f32>,
-}
-
 @group(0) @binding(0) var<uniform> settings: ExposureUniform;
 @group(0) @binding(1) var scene_color: texture_2d<f32>;
 @group(0) @binding(2) var scene_depth: texture_depth_2d;
 @group(0) @binding(3) var<storage, read_write> bins: array<atomic<u32>, EXPOSURE_BINS>;
 @group(0) @binding(4) var<storage, read_write> state: ExposureState;
-@group(0) @binding(5) var<uniform> lighting: Lighting;
 
 const EXPOSURE_BINS: u32 = 128u;
 const EXPOSURE_GRID: u32 = 128u;
@@ -107,8 +101,8 @@ fn adapt_exposure() {
     } else if !held {
         return;
     }
-    let falling = luminance(lighting.sun_color.rgb) * max(lighting.sun.y, 0.0)
-        + SKY_PI * luminance(0.5 * (lighting.zenith.rgb + lighting.horizon.rgb));
+    let falling = luminance(sun_color()) * max(sun_direction().y, 0.0)
+        + PI * luminance(0.5 * (zenith() + horizon()));
     let view = metered - log2(max(falling, 1.0e-12)) - VIEW_LIGHT;
     var day = 0.0;
     if settings.day.x > 0.0 {
