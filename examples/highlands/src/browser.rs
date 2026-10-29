@@ -64,6 +64,35 @@ impl HighlandsGame {
     }
 }
 
+engine::__if_dev! {
+    #[wasm_bindgen]
+    impl HighlandsGame {
+        pub async fn smokes(
+            canvas: web_sys::HtmlCanvasElement,
+            names: String,
+            report: JsValue,
+            query: String,
+        ) -> Result<bool, JsValue> {
+            let options = page_options(&query)?;
+            let build = move |without: &[&str]| {
+                if without.is_empty() {
+                    Highlands::build(options.clone(), &RockMaps::default())
+                } else {
+                    Err(Error::new(ErrorCode::UnsupportedCommand, "$.without").got(without))
+                }
+            };
+            engine::smokes::page::run::<Highlands>(
+                canvas,
+                &names,
+                &crate::smokes(),
+                &build,
+                &report,
+            )
+            .await
+        }
+    }
+}
+
 fn page_options(query: &str) -> Result<Options, JsValue> {
     let search = web_sys::UrlSearchParams::new_with_str(query)?;
     let mut options = Options::default();

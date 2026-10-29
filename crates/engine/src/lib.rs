@@ -27,7 +27,7 @@ pub mod tooling;
 
 pub use engine_core::collections;
 pub use engine_core::command_line;
-pub use engine_core::{bevy_ecs, glam};
+pub use engine_core::{bevy_ecs, glam, smoke, smoke_check, smoke_eq};
 
 mod games {
     pub use engine_core::{
@@ -164,6 +164,7 @@ pub mod stats {
 }
 
 pub mod host;
+pub mod smokes;
 
 #[cfg(feature = "dev")]
 pub use engine_dev as dev;

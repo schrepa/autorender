@@ -13,6 +13,8 @@ mod jobs;
 mod measure;
 mod offscreen;
 mod options;
+#[cfg(feature = "dev")]
+pub mod smoke;
 mod window;
 
 use std::process::ExitCode;

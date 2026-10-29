@@ -63,6 +63,7 @@ pub fn options() -> Vec<CommandOption> {
         CommandOption::flag("--shader-hash"),
         CommandOption::taking("--settings", "FILE"),
         CommandOption::flag("--dev"),
+        CommandOption::taking("--smoke", "NAME,...|all|list"),
         CommandOption::taking("--dev-artifacts", "DIR")
             .defaults_to(default_artifacts().display()),
         CommandOption::flag("--help"),
@@ -258,6 +259,7 @@ pub struct HostOptions {
     pub vendor_counters: Vec<String>,
     pub dev: bool,
     pub dev_artifacts: Option<PathBuf>,
+    pub smoke: Option<String>,
     pub measure: Option<Method>,
     pub shader_hash: bool,
     pub cook: Option<PathBuf>,
@@ -284,6 +286,7 @@ impl Default for HostOptions {
             vendor_counters: Vec::new(),
             dev: false,
             dev_artifacts: None,
+            smoke: None,
             measure: None,
             shader_hash: false,
             cook: None,
@@ -402,6 +405,7 @@ impl HostOptions {
                 self.dev = true;
             }
             "--dev-artifacts" => self.dev_artifacts = Some(arguments.value(argument)?.into()),
+            "--smoke" => self.smoke = Some(arguments.value(argument)?),
             "--measure" => {
                 let path = arguments.value(argument)?;
                 let text = std::fs::read_to_string(&path)
@@ -446,6 +450,11 @@ impl HostOptions {
                 Error::new(ErrorCode::InvalidArguments, "--dev").expected(Expected::Supported)
             );
         }
+        if self.smoke.is_some() && !cfg!(feature = "dev") {
+            return Err(
+                Error::new(ErrorCode::InvalidArguments, "--smoke").expected(Expected::Supported)
+            );
+        }
         let others = [
             ("--frames", self.frames.is_some()),
             ("--offscreen", self.offscreen.is_some()),
@@ -454,6 +463,13 @@ impl HostOptions {
             ("--counters", self.counters.is_some()),
         ];
         let other = others.iter().find(|(_, given)| *given).map(|(option, _)| *option);
+        if self.smoke.is_some()
+            && let Some(other) = other
+                .or(self.cook.is_some().then_some("--cook"))
+                .or(self.measure.is_some().then_some("--measure"))
+        {
+            return Err(excludes(other));
+        }
         if self.cook.is_some()
             && let Some(other) = other.or(self.measure.is_some().then_some("--measure"))
         {
@@ -485,6 +501,12 @@ impl HostOptions {
         if self.shader_hash {
             println!("{}", json!({ "shader_hash": shader_hash() }));
             return Ok(());
+        }
+        if let Some(names) = &self.smoke {
+            if names == engine::smokes::LIST {
+                return Ok(());
+            }
+            return engine::smokes::select(&[], names).map(drop);
         }
         self.start_tools()?;
         #[cfg(feature = "profiling")]

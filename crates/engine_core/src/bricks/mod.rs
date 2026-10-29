@@ -35,6 +35,7 @@ use engine_settings::{ErrorCode, InvalidSetting};
 use serde_json::Value;
 
 use crate::RenderSnapshot;
+use crate::smoke::{SmokeEntry, SmokeResult, SmokeSession};
 
 pub trait Brick: Send + Sync + 'static {
     fn register(bricks: &mut Bricks<'_>);
@@ -278,6 +279,21 @@ impl Bricks<'_> {
         if !self.record.lists.contains(&L::NAME) {
             self.record.lists.push(L::NAME);
         }
+        self
+    }
+
+    pub fn smoke(
+        &mut self,
+        name: &'static str,
+        gpu: bool,
+        run: fn(&mut dyn SmokeSession) -> SmokeResult,
+    ) -> &mut Self {
+        self.record.smokes.push(SmokeEntry {
+            name,
+            brick: self.record.name,
+            gpu,
+            run,
+        });
         self
     }
 

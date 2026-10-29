@@ -9,6 +9,7 @@ use engine::bevy_ecs::system::System;
 use engine::bricks::{BrickRecord, BrickRegistry, BrickSet};
 use serde_json::{Value, json};
 
+use crate::workspace::joined;
 use crate::{Package, Repository};
 
 pub const FILE: &str = "bricks.json";
@@ -17,6 +18,8 @@ pub struct Recorded {
     pub name: String,
     pub krate: String,
     pub reads: Vec<String>,
+    pub paths: Vec<String>,
+    pub smokes: Vec<(String, bool)>,
 }
 
 pub fn recorded(repository: &Repository) -> Result<Vec<Recorded>, String> {
@@ -45,6 +48,16 @@ pub fn recorded(repository: &Repository) -> Result<Vec<Recorded>, String> {
             name: brick["name"].as_str().unwrap_or_default().to_owned(),
             krate: brick["crate"].as_str().unwrap_or_default().to_owned(),
             reads: strings(&brick["reads"]),
+            paths: strings(&brick["paths"]),
+            smokes: brick["smokes"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|smoke| {
+                    let name = smoke["name"].as_str()?.to_owned();
+                    Some((name, smoke["gpu"] == true))
+                })
+                .collect(),
         })
         .collect())
 }
@@ -142,6 +155,27 @@ fn accessed(world: &mut World, names: &[&'static str]) -> BTreeMap<&'static str,
     accessed
 }
 
+fn paths(brick: &BrickRecord, package: &Package) -> Vec<String> {
+    let Some(folder) = package.path.as_deref() else {
+        return Vec::new();
+    };
+    if !package.core() {
+        return vec![joined(folder, "**")];
+    }
+    let path = brick.type_path.split('<').next().unwrap_or(brick.type_path);
+    let segments: Vec<&str> = path.split("::").collect();
+    match segments.get(1..segments.len().saturating_sub(1)) {
+        Some(modules) if !modules.is_empty() => {
+            let module = modules.join("/");
+            vec![
+                joined(folder, &format!("src/{module}.rs")),
+                joined(folder, &format!("src/{module}/**")),
+            ]
+        }
+        Some(_) | None => vec![joined(folder, "src/lib.rs")],
+    }
+}
+
 fn record(
     brick: &BrickRecord,
     registry: &BrickRegistry,
@@ -193,6 +227,12 @@ fn record(
             .collect::<Vec<_>>(),
         "inspectors": brick.inspectors.iter().map(|inspector| inspector.name).collect::<Vec<_>>(),
         "passes": brick.passes,
+        "smokes": brick
+            .smokes
+            .iter()
+            .map(|smoke| json!({ "name": smoke.name, "gpu": smoke.gpu }))
+            .collect::<Vec<_>>(),
+        "paths": paths(brick, package),
         "system_set": brick.name,
         "resources": brick.resources.iter().map(|owned| owned.name).collect::<Vec<_>>(),
         "components": brick.components.iter().map(|owned| owned.name).collect::<Vec<_>>(),

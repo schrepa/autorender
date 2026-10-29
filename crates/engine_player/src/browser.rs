@@ -27,3 +27,23 @@ impl PlayerGame {
         host.game().progress(host.engine()).to_string()
     }
 }
+
+engine::__if_dev! {
+    #[wasm_bindgen]
+    impl PlayerGame {
+        pub async fn smokes(
+            canvas: web_sys::HtmlCanvasElement,
+            names: String,
+            report: JsValue,
+        ) -> Result<bool, JsValue> {
+            engine::smokes::page::run::<engine::smokes::SmokeGame>(
+                canvas,
+                &names,
+                &engine::smokes::standard(),
+                &engine::smokes::standard_game,
+                &report,
+            )
+            .await
+        }
+    }
+}

@@ -25,7 +25,7 @@ pub struct GameControl<G: Game> {
 }
 
 pub struct DevSession<G: Game> {
-    game: Offscreen<G>,
+    pub(crate) game: Offscreen<G>,
     controls: BTreeMap<String, GameControl<G>>,
     parameters: BTreeMap<String, String>,
     source: Option<PathBuf>,
@@ -157,7 +157,7 @@ impl<G: Game> DevSession<G> {
         let _ = out.flush();
     }
 
-    fn request(&mut self, line: &str) -> Value {
+    pub(crate) fn request(&mut self, line: &str) -> Value {
         if line.len() <= engine::dev::MAX_REQUEST_BYTES
             && let Ok(Value::Object(command)) = serde_json::from_str::<Value>(line)
             && command.get("verb") == Some(&json!("profile"))
