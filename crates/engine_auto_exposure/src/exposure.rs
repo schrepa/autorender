@@ -3,24 +3,23 @@ use std::mem::offset_of;
 use std::rc::Rc;
 
 use engine_core::{AutoExposure, RenderSnapshot, RenderStats};
-
-use crate::bindings::EXPOSURE;
-use crate::buffers::{ReadbackRing, storage, uniform};
-use crate::cached::{Bound, GroupCache, Versioned};
-use crate::gpu_layouts::constants::{
-    ADAPTATION_MOST, ADAPTATION_POWER, EXPOSURE_BINS, EXPOSURE_GRID, EXPOSURE_GROUP, NOON_LIGHT,
-};
-use crate::gpu_layouts::exposure::{ExposureState, ExposureUniform};
-use crate::gpu_layouts::scene::LightingUniform;
-use crate::graph::{
+use engine_faces::display::MeteredExposure;
+use engine_render::buffers::{ReadbackRing, storage, uniform};
+use engine_render::cached::{Bound, GroupCache, Versioned};
+use engine_render::graph::{
     FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
 };
-use crate::lazy::Lazy;
-use crate::parts::{
-    Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, PreludeStage, Step, UniformsOut, View,
+use engine_render::lazy::Lazy;
+use engine_render::parts::{
+    Begin, BeginOut, Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View,
 };
-use crate::post::PostPass;
-use crate::profiling::{GpuProfiler, Span};
+use engine_render::post::PostPass;
+use engine_render::profiling::{GpuProfiler, Span};
+
+use crate::bindings::EXPOSURE;
+use crate::gpu_layouts::{
+    EXPOSURE_BINS, EXPOSURE_GRID, EXPOSURE_GROUP, ExposureState, ExposureUniform,
+};
 use crate::shaders::entry::exposure;
 
 const STATE_BYTES: u64 = size_of::<ExposureState>() as u64;
@@ -29,11 +28,14 @@ const BIN_BYTES: u64 = EXPOSURE_BINS as u64 * 4;
 
 const DUSK: f32 = 0.069_756;
 const NIGHT: f32 = 0.241_922;
+const NOON_LIGHT: f32 = 1.1;
+const ADAPTATION_POWER: f32 = 0.75;
+const ADAPTATION_MOST: f32 = 16.0;
 
 pub(crate) static PART: PartEntry = PartEntry {
     decl: PartDecl {
         name: "exposure",
-        brick: "post_effects",
+        brick: "auto_exposure",
         passes: &[PassDecl {
             name: "exposure",
             stage: Stage::Exposure,
@@ -47,7 +49,7 @@ pub(crate) static PART: PartEntry = PartEntry {
         effects: &[],
         labels: &["engine/exposure"],
         lazy: true,
-        faces: &[],
+        faces: &[engine_render::offer_face!(ExposurePass => dyn MeteredExposure)],
         needs: &[],
         piece: None,
     },
@@ -70,13 +72,14 @@ struct Ids {
 pub(crate) struct ExposurePass {
     meter: Lazy<Meter>,
     frame: Option<ExposureFrame>,
+    shows: bool,
     ids: Ids,
 }
 
 struct Meter {
     meter: wgpu::ComputePipeline,
     adapt: wgpu::ComputePipeline,
-    layout: crate::pipelines::GroupLayout,
+    layout: engine_render::pipelines::GroupLayout,
     uniform: wgpu::Buffer,
     bins: wgpu::Buffer,
     state: wgpu::Buffer,
@@ -85,7 +88,6 @@ struct Meter {
     fresh: bool,
     last_seconds: Option<f64>,
     last_camera: [u32; 16],
-    showing: bool,
     readbacks: ReadbackRing<()>,
     read: Rc<Cell<Option<[f32; 3]>>>,
 }
@@ -95,10 +97,13 @@ struct ExposureFrame;
 
 impl Meter {
     fn new(device: &wgpu::Device) -> Self {
-        let layout = crate::pipelines::layout(device, &EXPOSURE);
-        let pipeline_layout =
-            crate::pipelines::layout_of(device, &crate::pipeline_layouts::EXPOSURE_PIPELINES);
-        let pipeline = |entry| crate::pipelines::compute_entry(device, &pipeline_layout, entry);
+        let layout = engine_render::pipelines::layout(device, &EXPOSURE);
+        let pipeline_layout = engine_render::pipelines::layout_of(
+            device,
+            &crate::pipeline_layouts::EXPOSURE_PIPELINES,
+        );
+        let pipeline =
+            |entry| engine_render::pipelines::compute_entry(device, &pipeline_layout, entry);
         let copied = wgpu::BufferUsages::COPY_SRC;
         Self {
             meter: pipeline(exposure::meter_exposure),
@@ -117,21 +122,12 @@ impl Meter {
             fresh: true,
             last_seconds: None,
             last_camera: [0; 16],
-            showing: false,
             readbacks: ReadbackRing::new("engine/exposure-readback"),
             read: Rc::default(),
         }
     }
 
-    fn prepare(
-        &mut self,
-        (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
-        snapshot: &RenderSnapshot,
-        (scene, depth, drawn): (Bound<'_>, &Versioned<wgpu::TextureView>, (u32, u32)),
-        lighting: &wgpu::Buffer,
-    ) -> ExposureFrame {
-        let settings: &AutoExposure = &snapshot.environment.auto_exposure;
-        let authored = snapshot.environment.atmosphere.exposure;
+    fn start(&mut self, queue: &engine_render::gpu_calls::Queue, authored: f32) {
         if self.fresh {
             let state = ExposureState {
                 exposure: authored,
@@ -144,6 +140,17 @@ impl Meter {
             queue.write_buffer(&self.state, 0, bytemuck::bytes_of(&state));
             self.fresh = false;
         }
+    }
+
+    fn prepare(
+        &mut self,
+        (device, queue): (&wgpu::Device, &engine_render::gpu_calls::Queue),
+        snapshot: &RenderSnapshot,
+        (scene, depth, drawn): (Bound<'_>, &Versioned<wgpu::TextureView>, (u32, u32)),
+        pieces: &wgpu::Buffer,
+    ) -> ExposureFrame {
+        let settings: &AutoExposure = &snapshot.environment.auto_exposure;
+        let authored = snapshot.environment.atmosphere.exposure;
         let seconds = snapshot.presented_seconds;
         let camera = snapshot.view_projection.to_cols_array().map(f32::to_bits);
         let moved = std::mem::replace(&mut self.last_camera, camera) != camera;
@@ -202,26 +209,10 @@ impl Meter {
                 ("scene_depth", depth.bound()),
                 ("bins", Bound::fixed(self.bins.as_entire_binding())),
                 ("state", Bound::fixed(self.state.as_entire_binding())),
-                ("lighting", Bound::fixed(lighting.as_entire_binding())),
+                ("pieces", Bound::fixed(pieces.as_entire_binding())),
             ],
         );
         ExposureFrame
-    }
-
-    fn show(&mut self, encoder: &mut wgpu::CommandEncoder, lighting: &wgpu::Buffer) {
-        self.showing = true;
-        let exposure = offset_of!(LightingUniform, horizon) + 12;
-        encoder.copy_buffer_to_buffer(
-            &self.state,
-            offset_of!(ExposureState, exposure) as u64,
-            lighting,
-            exposure as u64,
-            4,
-        );
-    }
-
-    fn stop_showing(&mut self) -> bool {
-        std::mem::take(&mut self.showing)
     }
 
     fn capacity_bytes(&self) -> u64 {
@@ -270,24 +261,29 @@ impl GpuPart for ExposurePass {
             depth: table.resource("depth"),
             exposure: table.resource("exposure"),
         };
-    }
-
-    fn uniforms(
-        &mut self,
-        cx: &mut Step<'_>,
-        _lighting: &mut LightingUniform,
-        out: &mut UniformsOut,
-    ) {
-        if !cx.frame.snapshot.environment.auto_exposure.enabled
-            && self.meter.get_mut().is_some_and(Meter::stop_showing)
-        {
-            out.forget_lighting = true;
+        if let Some(meter) = self.meter.get_mut() {
+            meter.group.clear();
         }
     }
 
-    fn prepare(&mut self, cx: &mut Step<'_>, prelude: &mut Prelude) {
+    fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
+        let environment = &cx.snapshot.environment;
+        let enabled = environment.auto_exposure.enabled;
+        if enabled {
+            let device = &cx.core.device;
+            self.meter
+                .create(device, "engine/exposure", || Meter::new(device));
+        }
+        let post = cx.parts.post().is_some_and(|post| !post.disabled());
+        self.shows = enabled && post && self.meter.get().is_some();
+        if self.shows && let Some(meter) = self.meter.get_mut() {
+            meter.start(&cx.core.queue, environment.atmosphere.exposure);
+        }
+    }
+
+    fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         let snapshot = cx.frame.snapshot;
-        let post = cx.parts.get::<PostPass>();
+        let post = cx.parts.post();
         let needs =
             post.is_some_and(PostPass::active) && snapshot.environment.auto_exposure.enabled;
         if !needs {
@@ -296,21 +292,11 @@ impl GpuPart for ExposurePass {
         }
         let core = &*cx.core;
         let (device, queue) = (&core.device, &core.queue);
-        let lighting = core.camera.lighting_buffer();
+        let pieces = core.pieces_buffer();
         let drawn = core.display.region.render.pixels();
-        self.meter
-            .create(device, "engine/exposure", || Meter::new(device));
         self.frame = self.meter.get_mut().and_then(|meter| {
             let targets = (post?.scene()?, &core.depth.view, drawn);
-            let frame = meter.prepare((device, queue), snapshot, targets, lighting);
-            let encoder = prelude.encoder(
-                device,
-                PreludeStage::Inputs,
-                "pre_inputs",
-                "engine/exposure-copy",
-            );
-            meter.show(encoder, lighting);
-            Some(frame)
+            Some(meter.prepare((device, queue), snapshot, targets, pieces))
         });
     }
 
@@ -386,5 +372,12 @@ impl GpuPart for ExposurePass {
     #[cfg(feature = "dev")]
     fn encode_fault(&self, encoder: &mut wgpu::CommandEncoder) {
         self.meter.encode_fault(encoder);
+    }
+}
+
+impl MeteredExposure for ExposurePass {
+    fn metered(&self) -> Option<(&wgpu::Buffer, u64)> {
+        let meter = self.meter.get().filter(|_| self.shows)?;
+        Some((&meter.state, offset_of!(ExposureState, exposure) as u64))
     }
 }

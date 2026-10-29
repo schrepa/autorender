@@ -149,7 +149,6 @@ layout_modules! {
     bounce,
     clouds,
     debug_view,
-    exposure,
     ground_cover,
     impostors,
     lights,

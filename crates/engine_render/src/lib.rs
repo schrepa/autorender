@@ -43,7 +43,6 @@ mod uploads;
 
 mod buffers;
 mod environment;
-mod exposure;
 mod gpu_presentation;
 mod ground_cover;
 mod materials;
@@ -61,7 +60,6 @@ mod screen_effects;
 mod shadows;
 mod staging;
 mod targets;
-mod temporal;
 mod terrain;
 mod terrain_bounce;
 mod terrain_horizons;

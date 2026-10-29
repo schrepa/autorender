@@ -4,51 +4,50 @@
 )]
 
 use crate::shaders::entry::temporal;
-use engine_core::{Applied, RenderFrame, RenderStats, glam::Mat4};
-
-use crate::bindings::{TAA_RESOLVE, TEMPORAL_POSES};
-use crate::cached::{Bound, GroupCache, Versioned};
-use crate::composite::{TAA_RESOLVE as TAA_MODULE, composite_entry};
-use crate::gpu_data::{CameraUniform, ResolveUniform, jitter_clip, jitter_offset, jittered};
-use crate::graph::{
+use engine_core::{Applied, Environment, RenderStats};
+use engine_render::cached::{Bound, GroupCache, Versioned};
+use engine_render::composite::{PixelEffect, PostStage, composite_entry};
+use engine_render::graph::{
     Access, BLACK, Clear, FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl,
     ResourceId, Stage,
 };
-use crate::lazy::Lazy;
-use crate::parts::{
-    Begin, BeginOut, Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View,
+use engine_render::lazy::Lazy;
+use engine_render::parts::{
+    Begin, BeginOut, Create, Encode, GpuPart, Jitter, PartDecl, PartEntry, Prelude, Step, View,
 };
-use crate::pipeline_layouts::TAA_RESOLVE_PIPELINES;
-use crate::post::PostPass;
-use crate::profiling::Span;
-use crate::targets::{FrameRegion, FrameSize, ScreenTarget};
-use crate::transparent::Transparency;
+use engine_render::post::PostPass;
+use engine_render::profiling::Span;
+use engine_render::targets::{FrameRegion, FrameSize, ScreenTarget};
+use engine_render::transparent::Transparency;
 
-pub(crate) const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+use crate::bindings::TAA_RESOLVE;
+use crate::gpu_layouts::ResolveUniform;
+use crate::pipeline_layouts::TAA_RESOLVE_PIPELINES;
+
+pub(crate) const RESOLVE: &str = "taa::resolve";
+const COMPOSITE_GROUP: &str = "composite";
 const HISTORY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const CURRENT_WEIGHT: f32 = 0.1;
+const JITTER_SAMPLES: u32 = 8;
 
 pub(crate) static PART: PartEntry = PartEntry {
     decl: PartDecl {
         name: "temporal",
-        brick: "post_effects",
+        brick: "taa",
         passes: &[PassDecl {
             name: "temporal_resolve",
             stage: Stage::Composite,
         }],
-        resources: &[
-            ResourceDecl {
-                name: "motion",
-                lifetime: Lifetime::Frame,
-            },
-            ResourceDecl {
-                name: "history",
-                lifetime: Lifetime::Kept,
-            },
-        ],
+        resources: &[ResourceDecl {
+            name: "history",
+            lifetime: Lifetime::Kept,
+        }],
         hooks: &[],
         contributes: &[],
-        effects: &[],
+        effects: &[PixelEffect {
+            stage: PostStage::Resolve,
+            module: RESOLVE,
+        }],
         labels: &["engine/taa-", "engine/temporal"],
         lazy: true,
         faces: &[],
@@ -62,9 +61,23 @@ fn create(_: &Create<'_>) -> Box<dyn GpuPart> {
     Box::new(TemporalPass::default())
 }
 
+fn halton(mut index: u32, base: u32) -> f32 {
+    let (mut scale, mut value) = (1.0, 0.0);
+    while index > 0 {
+        scale /= base as f32;
+        value += scale * (index % base) as f32;
+        index /= base;
+    }
+    value
+}
+
+fn jitter_offset(frame: u32) -> [f32; 2] {
+    let index = frame % JITTER_SAMPLES + 1;
+    [halton(index, 2) - 0.5, halton(index, 3) - 0.5]
+}
+
 struct Targets {
-    textures: [wgpu::Texture; 3],
-    motion: wgpu::TextureView,
+    textures: [wgpu::Texture; 2],
     history: [wgpu::TextureView; 2],
 }
 
@@ -76,35 +89,20 @@ impl Drop for Targets {
     }
 }
 
-#[derive(Clone, Copy)]
-struct History {
-    view_projection: Mat4,
-    size: FrameSize,
-    identity: u64,
-    structure: u64,
-    pose_generation: u64,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct TemporalFrame {
-    pub parity: usize,
-    pub camera: CameraUniform,
-    pub rasterized: Mat4,
-    pub history_valid: bool,
-    pub motion_valid: bool,
-    history: History,
-}
-
 #[derive(Clone, Copy, Default)]
 struct Ids {
     pass: Option<PassId>,
     canvas: Option<ResourceId>,
     scene: Option<ResourceId>,
     motion: Option<ResourceId>,
+    previous_poses: Option<ResourceId>,
     depth: Option<ResourceId>,
     history: Option<ResourceId>,
     revealed: Option<ResourceId>,
-    effects: Option<ResourceId>,
+    occlusion: Option<ResourceId>,
+    reflections: Option<ResourceId>,
+    haze: Option<ResourceId>,
+    bloom: Option<ResourceId>,
 }
 
 #[derive(Default)]
@@ -114,53 +112,34 @@ pub(crate) struct TemporalPass {
     ids: Ids,
 }
 
-impl TemporalPass {
-    pub(crate) fn active(&self) -> bool {
-        self.taa.get().is_some()
-    }
-
-    pub(crate) fn reset(&mut self) {
-        if let Some(taa) = self.taa.get_mut() {
-            taa.reset();
-        }
-    }
-
-    pub(crate) fn pose_group(&self, frame: &TemporalFrame) -> Option<&wgpu::BindGroup> {
-        self.taa.get()?.pose_group(frame)
-    }
-}
-
 struct Taa {
-    pose_layout: crate::pipelines::GroupLayout,
     resolve_pipeline: wgpu::RenderPipeline,
-    resolve_layout: crate::pipelines::GroupLayout,
+    resolve_layout: engine_render::pipelines::GroupLayout,
     sampler: wgpu::Sampler,
     uniform: wgpu::Buffer,
     written: Option<ResolveUniform>,
     targets: ScreenTarget<Targets>,
     no_particles: wgpu::TextureView,
-    resolve_groups: [GroupCache<13>; 2],
-    pose_groups: [GroupCache<4>; 4],
-    history: Option<History>,
+    resolve_groups: [GroupCache<11>; 2],
     frame: u32,
 }
 
 impl Taa {
     fn new(
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         surface_format: wgpu::TextureFormat,
     ) -> Self {
-        let pose_layout = crate::pipelines::layout(device, &TEMPORAL_POSES);
-        let resolve_layout = crate::pipelines::layout(device, &TAA_RESOLVE);
-        let resolve_pipeline_layout = crate::pipelines::layout_of(device, &TAA_RESOLVE_PIPELINES);
-        let resolve_pipeline = crate::pipelines::fullscreen(
+        let resolve_layout = engine_render::pipelines::layout(device, &TAA_RESOLVE);
+        let resolve_pipeline_layout =
+            engine_render::pipelines::layout_of(device, &TAA_RESOLVE_PIPELINES);
+        let resolve_pipeline = engine_render::pipelines::fullscreen(
             device,
-            &crate::pipelines::Fullscreen {
+            &engine_render::pipelines::Fullscreen {
                 label: "engine/taa-resolve",
                 layout: &resolve_pipeline_layout,
                 vertex: temporal::vs_fullscreen,
-                fragment: composite_entry(TAA_MODULE),
+                fragment: composite_entry(RESOLVE),
                 constants: &[],
                 targets: &[Some(surface_format.into()), Some(HISTORY_FORMAT.into())],
                 depth: None,
@@ -174,18 +153,18 @@ impl Taa {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        let uniform = crate::buffers::uniform(
+        let uniform = engine_render::buffers::uniform(
             device,
             "engine/taa-resolve-uniform",
             size_of::<ResolveUniform>() as u64,
         );
-        let no_particles = crate::targets::texture_2d(
+        let no_particles = engine_render::targets::texture_2d(
             device,
             "engine/taa-no-particles",
             (1, 1),
             1,
             1,
-            crate::transparent::REVEALED_FORMAT,
+            engine_render::transparent::REVEALED_FORMAT,
             wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         );
         queue.write_texture(
@@ -203,7 +182,6 @@ impl Taa {
             },
         );
         Self {
-            pose_layout,
             resolve_pipeline,
             resolve_layout,
             sampler,
@@ -212,64 +190,37 @@ impl Taa {
             targets: ScreenTarget::default(),
             no_particles: no_particles.create_view(&Default::default()),
             resolve_groups: Default::default(),
-            pose_groups: Default::default(),
-            history: None,
             frame: 0,
         }
     }
 
     fn capacity_bytes(&self) -> u64 {
         self.targets.size().map_or(0, |size| {
-            u64::from(size.width) * u64::from(size.height) * 12
+            u64::from(size.width) * u64::from(size.height) * 8
         })
     }
 
     fn begin(
         &mut self,
-        device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
-        frame: &RenderFrame<'_>,
+        (device, queue): (&wgpu::Device, &engine_render::gpu_calls::Queue),
         region: FrameRegion,
-        pose_generation: u64,
-    ) -> TemporalFrame {
+        history_valid: bool,
+        (environment, turn): (&Environment, f32),
+    ) {
         let (size, render) = (region.display, region.render);
         if self.targets.resizes(size) {
             let targets = self.create_targets(device, size);
             self.targets.set(size, targets);
-            self.history = None;
         }
-        let view_projection = frame.snapshot().view_projection;
-        let history = History {
-            view_projection,
-            size,
-            identity: frame.identity(),
-            structure: frame.structure_revision(),
-            pose_generation,
-        };
-        let last = self
-            .history
-            .filter(|last| last.size == size && last.identity == history.identity);
         let offset = jitter_offset(self.frame);
-        let jitter = jitter_clip(offset, render.width, render.height);
-        let previous = last.map_or(view_projection, |last| last.view_projection);
-        let camera = CameraUniform::temporal(
-            view_projection,
-            frame.snapshot().camera_position,
-            frame.snapshot().elapsed_seconds,
-            previous,
-            jitter,
-            render.pixels(),
-            u64::from(self.frame),
-        );
-        let environment = &frame.snapshot().environment;
         let settings = environment.temporal_antialiasing.sanitized();
         let uniform = ResolveUniform {
             texel: [1.0 / size.width as f32, 1.0 / size.height as f32],
             current_weight: CURRENT_WEIGHT,
-            history_valid: u32::from(last.is_some()),
+            history_valid: u32::from(history_valid),
             options: [
                 if environment.dither.enabled {
-                    camera.options[2]
+                    turn
                 } else {
                     0.0
                 },
@@ -291,78 +242,31 @@ impl Taa {
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
             self.written = Some(uniform);
         }
-        TemporalFrame {
-            parity: (self.frame & 1) as usize,
-            camera,
-            rasterized: jittered(view_projection, jitter),
-            history_valid: last.is_some(),
-            motion_valid: last.is_some_and(|last| {
-                last.structure == history.structure && last.pose_generation == pose_generation
-            }),
-            history,
-        }
-    }
-
-    fn prepare_pose_groups(
-        &mut self,
-        device: &wgpu::Device,
-        poses: [Bound<'_>; 2],
-        colors: &Bound<'_>,
-        grounds: &Bound<'_>,
-    ) {
-        for (index, group) in self.pose_groups.iter_mut().enumerate() {
-            let (current, previous) = (index / 2, index % 2);
-            group.bind(
-                device,
-                "engine/temporal-pose-group",
-                (&TEMPORAL_POSES, &self.pose_layout),
-                [
-                    ("poses", poses[current].clone()),
-                    ("colors", colors.clone()),
-                    ("previous_poses", poses[previous].clone()),
-                    ("grounds", grounds.clone()),
-                ],
-            );
-        }
-    }
-
-    fn pose_group(&self, frame: &TemporalFrame) -> Option<&wgpu::BindGroup> {
-        let previous = if frame.motion_valid {
-            1 - frame.parity
-        } else {
-            frame.parity
-        };
-        self.pose_groups[2 * frame.parity + previous].get()
     }
 
     fn history_target(&self, frame: &ResolveFrame) -> Option<&wgpu::TextureView> {
         Some(&self.targets.get()?.history[frame.parity])
     }
 
-    fn motion(&self) -> Option<&wgpu::TextureView> {
-        Some(&self.targets.get()?.motion)
-    }
-
     fn prepare_resolve(
         &mut self,
         device: &wgpu::Device,
-        ([scene, occlusion, bloom, reflections, haze], settings): ([Bound<'_>; 5], Bound<'_>),
-        frame: &TemporalFrame,
-        depth: &Versioned<wgpu::TextureView>,
+        ([scene, occlusion, reflections, motion], settings): ([Bound<'_>; 4], Bound<'_>),
+        parity: usize,
+        (depth, pieces): (&Versioned<wgpu::TextureView>, &wgpu::Buffer),
         revealed: Option<Bound<'_>>,
     ) -> ResolveFrame {
         let resolve = ResolveFrame {
-            parity: frame.parity,
-            history: frame.history,
+            parity,
             revealed: revealed.is_some(),
         };
         let Some(targets) = self.targets.get() else {
             return resolve;
         };
-        let target = |view| Bound::of(targets, crate::pipelines::view(view));
-        let revealed =
-            revealed.unwrap_or_else(|| Bound::fixed(crate::pipelines::view(&self.no_particles)));
-        let sampler = || Bound::fixed(crate::pipelines::sampler(&self.sampler));
+        let target = |view| Bound::of(targets, engine_render::pipelines::view(view));
+        let revealed = revealed
+            .unwrap_or_else(|| Bound::fixed(engine_render::pipelines::view(&self.no_particles)));
+        let sampler = || Bound::fixed(engine_render::pipelines::sampler(&self.sampler));
         for (parity, group) in self.resolve_groups.iter_mut().enumerate() {
             group.bind(
                 device,
@@ -371,64 +275,67 @@ impl Taa {
                 [
                     ("taa", Bound::fixed(self.uniform.as_entire_binding())),
                     ("scene", scene.clone()),
-                    ("motion", target(&targets.motion)),
+                    ("motion", motion.clone()),
                     ("history", target(&targets.history[1 - parity])),
                     ("history_sampler", sampler()),
                     ("occlusion", occlusion.clone()),
-                    ("bloom", bloom.clone()),
                     ("post", settings.clone()),
                     ("reflections", reflections.clone()),
                     ("depth_texture", depth.bound()),
                     ("revealed", revealed.clone()),
-                    ("haze", haze.clone()),
-                    ("bloom_sampler", sampler()),
+                    ("pieces", Bound::fixed(pieces.as_entire_binding())),
                 ],
             );
         }
         resolve
     }
 
-    fn draw_resolve(&self, mut pass: wgpu::RenderPass<'_>, frame: &ResolveFrame) {
+    fn draw_resolve(
+        &self,
+        mut pass: wgpu::RenderPass<'_>,
+        frame: &ResolveFrame,
+        composite: &wgpu::BindGroup,
+    ) {
         let group = self.resolve_groups[frame.parity]
             .get()
             .expect("bound_in_prepare_resolve");
         pass.set_pipeline(&self.resolve_pipeline);
         pass.set_bind_group(0, group, &[]);
+        pass.set_bind_group(1, composite, &[]);
         pass.draw(0..3, 0..1);
     }
 
-    fn reset(&mut self) {
-        self.history = None;
+    fn forget_groups(&mut self) {
+        for group in &mut self.resolve_groups {
+            group.clear();
+        }
     }
 
-    fn after_submit(&mut self, frame: &ResolveFrame) {
-        self.history = Some(frame.history);
+    fn after_submit(&mut self) {
         self.frame = self.frame.wrapping_add(1);
     }
 
     fn create_targets(&self, device: &wgpu::Device, size: FrameSize) -> Targets {
         let texture = |label, format| {
-            crate::targets::texture_2d(
+            engine_render::targets::texture_2d(
                 device,
                 label,
                 size.pixels(),
                 1,
                 1,
                 format,
-                crate::targets::RENDER_TARGET,
+                engine_render::targets::RENDER_TARGET,
             )
         };
         let textures = [
-            texture("engine/taa-motion", MOTION_FORMAT),
             texture("engine/taa-history", HISTORY_FORMAT),
             texture("engine/taa-history", HISTORY_FORMAT),
         ];
-        let [motion, first, second] = textures
+        let [first, second] = textures
             .each_ref()
             .map(|texture| texture.create_view(&Default::default()));
         Targets {
             textures,
-            motion,
             history: [first, second],
         }
     }
@@ -437,7 +344,6 @@ impl Taa {
 #[derive(Clone, Copy)]
 struct ResolveFrame {
     parity: usize,
-    history: History,
     revealed: bool,
 }
 
@@ -448,14 +354,21 @@ impl GpuPart for TemporalPass {
             canvas: table.resource("canvas"),
             scene: table.resource("scene"),
             motion: table.resource("motion"),
+            previous_poses: table.resource("previous_poses"),
             depth: table.resource("depth"),
             history: table.resource("history"),
             revealed: table.resource("revealed"),
-            effects: table.resource("effects"),
+            occlusion: table.resource("occlusion"),
+            reflections: table.resource("reflections"),
+            haze: table.resource("haze"),
+            bloom: table.resource("bloom"),
         };
+        if let Some(taa) = self.taa.get_mut() {
+            taa.forget_groups();
+        }
     }
 
-    fn begin(&mut self, cx: &mut Begin<'_>, out: &mut BeginOut) {
+    fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
         let enabled = cx.snapshot.environment.temporal_antialiasing.enabled;
         if enabled == self.taa.get().is_some() {
             return;
@@ -467,23 +380,20 @@ impl GpuPart for TemporalPass {
                 .create(device, "engine/taa-", || Taa::new(device, queue, format));
         } else {
             self.taa.release();
-            out.forget_temporal = true;
         }
     }
 
-    fn temporal_frame(&mut self, cx: &mut Step<'_>) -> Option<TemporalFrame> {
-        let taa = self.taa.get_mut()?;
-        if !cx.frame.kind.temporal {
-            taa.reset();
-            return None;
-        }
-        Some(taa.begin(
-            &cx.core.device,
-            &cx.core.queue,
-            &cx.frame.frame,
-            cx.core.display.region,
-            cx.core.instances.generation(),
-        ))
+    fn wants(&self, resource: ResourceId) -> bool {
+        self.taa.get().is_some()
+            && (Some(resource) == self.ids.motion || Some(resource) == self.ids.previous_poses)
+    }
+
+    fn jitter(&mut self, _cx: &mut Step<'_>) -> Option<Jitter> {
+        let taa = self.taa.get()?;
+        Some(Jitter {
+            offset: jitter_offset(taa.frame),
+            sequence: u64::from(taa.frame),
+        })
     }
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
@@ -493,46 +403,36 @@ impl GpuPart for TemporalPass {
         }
         let (Some(frame), Some(inputs)) = (
             cx.frame.temporal.as_ref(),
-            cx.parts
-                .get::<PostPass>()
-                .and_then(PostPass::resolve_inputs),
+            cx.parts.post().and_then(PostPass::resolve_inputs),
         ) else {
             self.resolve = None;
             return;
         };
-        let revealed = cx
-            .parts
-            .get::<Transparency>()
-            .and_then(Transparency::revealed);
+        let revealed = cx.parts.transparency().and_then(Transparency::revealed);
         let core = &*cx.core;
+        let environment = &cx.frame.snapshot.environment;
         self.resolve = self.taa.get_mut().map(|taa| {
-            taa.prepare_resolve(&core.device, inputs, frame, &core.depth.view, revealed)
+            taa.begin(
+                (&core.device, &core.queue),
+                core.display.region,
+                frame.history_valid,
+                (environment, frame.camera.options[2]),
+            );
+            taa.prepare_resolve(
+                &core.device,
+                inputs,
+                frame.parity,
+                (&core.depth.view, core.pieces_buffer()),
+                revealed,
+            )
         });
-    }
-
-    fn finish(&mut self, cx: &mut Step<'_>) {
-        if cx.frame.temporal.is_none() {
-            return;
-        }
-        let Some(taa) = self.taa.get_mut() else {
-            return;
-        };
-        let core = &*cx.core;
-        let poses = core.frame_poses(0);
-        let both = [0, 1].map(|parity| poses.bound(parity).expect("temporal_frames_create"));
-        taa.prepare_pose_groups(
-            &core.device,
-            both,
-            &poses.colors.bound(),
-            &Bound::fixed(core.instances.grounds().as_entire_binding()),
-        );
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
         let (Some(frame), Some(shape)) = (self.resolve, cx.frame.shape) else {
             return;
         };
-        if shape.targets != crate::graph::Targets::Temporal {
+        if shape.targets != engine_render::graph::Targets::Temporal {
             return;
         }
         let ids = self.ids;
@@ -546,7 +446,10 @@ impl GpuPart for TemporalPass {
             .read(ids.depth)
             .read(history)
             .read_if(frame.revealed, ids.revealed)
-            .read_written(ids.effects)
+            .read_written(ids.occlusion)
+            .read_written(ids.reflections)
+            .read_written(ids.haze)
+            .read_written(ids.bloom)
             .color(canvas, Access::Clear(Clear::Color(BLACK)))
             .color(history, Access::Clear(Clear::Color(BLACK)));
     }
@@ -565,22 +468,21 @@ impl GpuPart for TemporalPass {
             "engine/taa-resolve",
             cx.core.profiler.span("taa_resolve").map(Span::render),
         );
-        taa.draw_resolve(pass, frame);
+        taa.draw_resolve(pass, frame, cx.core.shared_group(COMPOSITE_GROUP, &[]));
         0
     }
 
     fn attachment(&self, resource: &str) -> Option<wgpu::TextureView> {
         let taa = self.taa.get()?;
         match resource {
-            "motion" => taa.motion().cloned(),
             "history" => taa.history_target(self.resolve.as_ref()?).cloned(),
             _ => None,
         }
     }
 
     fn after_submit(&mut self) {
-        if let (Some(taa), Some(frame)) = (self.taa.get_mut(), self.resolve.as_ref()) {
-            taa.after_submit(frame);
+        if let (Some(taa), Some(_)) = (self.taa.get_mut(), self.resolve.as_ref()) {
+            taa.after_submit();
         }
     }
 
