@@ -32,14 +32,14 @@ pub struct SurroundingsView {
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainEditView {
     pub id: String,
-    pub stamp: engine_core::terrain_data::Stamp,
+    pub stamp: engine_terrain::Stamp,
 }
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainRiverView {
     pub id: String,
-    pub river: engine_core::GivenRiver,
+    pub river: engine_terrain::GivenRiver,
 }
 
 #[derive(Serialize)]
@@ -79,12 +79,11 @@ pub struct HydrologyView {
     pub falls: Option<usize>,
     pub given: Option<usize>,
     pub uncut: Option<usize>,
-    pub flow: Option<RiverFlowView>,
-    pub fall_list: Vec<FallView>,
+    pub flow: Option<engine_terrain::RiverFlowView>,
+    pub fall_list: Vec<engine_terrain::FallView>,
     pub rivers: Vec<RiverView>,
 }
 
-pub const FALLS_SHOWN: usize = 16;
 pub const RIVERS_SHOWN: usize = 16;
 
 #[derive(Serialize)]
@@ -103,70 +102,6 @@ pub struct RiverView {
     pub given_depth: bool,
     pub given_flood: bool,
     pub uncut: f32,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct TerrainWaterView {
-    pub flow: RiverFlowView,
-    pub falls: Vec<FallView>,
-    pub lakes: Vec<LakeView>,
-    pub sights: Vec<RiverSight>,
-    pub blocks: usize,
-    pub pools: Vec<PoolView>,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct PoolView {
-    pub at: [f32; 3],
-    pub rise: f32,
-    pub inflow: f32,
-    pub outflow: f32,
-    pub blocked: f32,
-    pub crest: Option<f32>,
-    pub area: f32,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct LakeView {
-    pub level: f32,
-    pub area: f32,
-    pub middle: [f32; 3],
-    pub shore: [f32; 3],
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct RiverSight {
-    pub kind: &'static str,
-    pub point: [f32; 3],
-    pub direction: [f32; 2],
-    pub half: f32,
-    pub speed: f32,
-    pub discharge: f32,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct RiverFlowView {
-    pub rivers: usize,
-    pub lakes: usize,
-    pub points: usize,
-    pub max_discharge: f32,
-    pub fastest: f32,
-    pub rapid_share: f32,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct FallView {
-    pub top: [f32; 3],
-    pub bottom: [f32; 3],
-    pub width: f32,
-    pub speed: f32,
-    pub discharge: f32,
 }
 
 #[derive(Serialize)]
@@ -221,29 +156,6 @@ pub struct GroundedView {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct TerrainsView {
-    pub terrains: u32,
-    pub resident_tiles: u32,
-    pub loading_tiles: u32,
-    pub waiting_tiles: u32,
-    pub cached_tiles: u32,
-    pub cached_bytes: u64,
-    pub restored_tiles: u64,
-    pub prefetching_tiles: u32,
-    pub dropped_tiles: u32,
-    pub fallback_tiles: u32,
-    pub baking: u32,
-    pub bridges: u32,
-    pub tunnels: u32,
-    pub falls: u32,
-    pub surroundings_tiles: u32,
-    pub water: Option<TerrainWaterView>,
-    pub failed_jobs: u64,
-    pub latest_job_failure: Option<String>,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct SplineMeshView {
     pub points: Vec<[f32; 3]>,
     pub mesh: Option<String>,
@@ -253,12 +165,6 @@ pub struct SplineMeshView {
     pub chunks: Option<usize>,
     pub vertices: Option<u32>,
     pub error: Option<String>,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct TerrainDebugView {
-    pub freeze: Option<[f32; 3]>,
 }
 
 #[derive(Serialize)]

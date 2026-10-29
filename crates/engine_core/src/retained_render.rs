@@ -169,7 +169,6 @@ impl<'a> RenderFrame<'a> {
             lights,
             particles,
             reflection_probes,
-            terrain,
             tables,
             instances,
             instance_slots: _,
@@ -212,7 +211,6 @@ impl<'a> RenderFrame<'a> {
         }
         snapshot.particles.clone_from(particles);
         snapshot.reflection_probes.clone_from(reflection_probes);
-        snapshot.terrain.clone_from(terrain);
         snapshot.tables.clone_from(tables);
         snapshot.instances.clear();
         snapshot
@@ -775,10 +773,6 @@ impl RetainedRender {
         extract: fn(&World, &mut RenderSnapshot),
     ) {
         extract(world, &mut self.snapshot);
-    }
-
-    pub(crate) fn extract_terrain(&mut self, world: &World, aspect: f32) {
-        crate::extract_terrains(world, aspect, &mut self.snapshot);
     }
 
     pub(crate) fn ensure_source_scan(&mut self, world: &mut World) {

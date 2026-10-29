@@ -347,7 +347,9 @@ impl PostPass {
                 haze_turn: turn,
                 haze_history: history
                     .map_or([0.0; 2], |last| [last.drawn.0 as f32, last.drawn.1 as f32]),
-                world_terrains: crate::world_trace::WorldTrace::walked(&snapshot.terrain),
+                world_terrains: crate::world_trace::WorldTrace::walked(
+                    engine_terrain::RenderTerrains::of(snapshot),
+                ),
             },
         );
         let uniform = PostUniform {

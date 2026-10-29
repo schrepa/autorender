@@ -3,9 +3,8 @@ use engine_core::collections::HashMap;
 use std::cell::Cell;
 use std::rc::Rc;
 
-use engine_core::Cover;
-use engine_core::GroundCover;
 use engine_core::glam::{Mat4, Vec3, Vec4};
+use engine_terrain::{Cover, GroundCover};
 
 use crate::bindings::{COVER_DRAW, COVER_GROW};
 use crate::buffers::ReadbackRing;
@@ -122,7 +121,7 @@ impl GroundCoverPass {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         terrain: &TerrainPass,
-        terrains: &engine_core::RenderTerrains,
+        terrains: &engine_terrain::RenderTerrains,
         (settings, wind, culling, eye, time): (&GroundCover, [f32; 2], Mat4, Vec3, f32),
         (height, grounded): (f32, bool),
     ) -> bool {
@@ -153,7 +152,7 @@ impl GroundCoverPass {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         terrain: &TerrainPass,
-        terrains: &engine_core::RenderTerrains,
+        terrains: &engine_terrain::RenderTerrains,
         (settings, wind, grounded): (&GroundCover, [f32; 2], bool),
         (culling, eye, time, previous, height): (Mat4, Vec3, f32, f32, f32),
     ) -> bool {

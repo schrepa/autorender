@@ -62,7 +62,7 @@ fn wire(
     clock: TerrainClock,
 ) {
     let world = engine.app.world_mut();
-    if let Some(mut terrains) = world.get_resource_mut::<engine_core::Terrains>() {
+    if let Some(mut terrains) = world.get_resource_mut::<engine_terrain::Terrains>() {
         terrains.set_device_tiles(Some(renderer.terrain_tile_capacity()));
         terrains.set_clock(clock.reading());
         terrains.set_water_settling(engine_render::sources::WATER, true);
@@ -257,7 +257,7 @@ impl AppHost {
             .engine
             .app
             .world_mut()
-            .get_resource_mut::<engine_core::Terrains>()
+            .get_resource_mut::<engine_terrain::Terrains>()
         {
             terrains.set_clock(clock.reading());
         }
@@ -460,14 +460,14 @@ impl AppHost {
         if world.get_resource::<engine_core::Viewport>() != Some(&viewport) {
             world.insert_resource(viewport);
         }
-        self.engine.stream_terrain();
+        engine_terrain::stream_now(world);
     }
 
     pub fn work_between_frames(&mut self, milliseconds: f64) -> bool {
         if !milliseconds.is_finite() || milliseconds <= 0.0 {
             return false;
         }
-        self.engine.work_terrain(milliseconds)
+        engine_terrain::work_between_frames(self.engine.app.world_mut(), milliseconds)
     }
 
     pub fn set_job_workers(&mut self, workers: u32) {
@@ -857,7 +857,7 @@ impl AppHost {
         let world = self.engine.app.world_mut();
         let cooking = world.get_resource::<engine_core::Cooking>().is_some();
         self.renderer.set_water_cooking(cooking);
-        if let Some(mut terrains) = world.get_resource_mut::<engine_core::Terrains>() {
+        if let Some(mut terrains) = world.get_resource_mut::<engine_terrain::Terrains>() {
             let starts = terrains.take_water_settles();
             if !starts.is_empty() {
                 self.renderer.settle_water(starts);
@@ -870,11 +870,11 @@ impl AppHost {
         if let Some(mut jobs) = world.get_resource_mut::<engine_core::Jobs>() {
             for (record, made) in &settled {
                 if let Ok(bytes) = made {
-                    jobs.keep_with(*record, bytes.clone(), engine_core::SETTLED_PARITY);
+                    jobs.keep_with(*record, bytes.clone(), engine_terrain::SETTLED_PARITY);
                 }
             }
         }
-        if let Some(mut terrains) = world.get_resource_mut::<engine_core::Terrains>() {
+        if let Some(mut terrains) = world.get_resource_mut::<engine_terrain::Terrains>() {
             for (record, made) in settled {
                 terrains.water_settled(record, made);
             }
@@ -891,8 +891,8 @@ impl AppHost {
                 .engine
                 .app
                 .world()
-                .get_resource::<engine_core::Terrains>()
-                .is_some_and(engine_core::Terrains::loading)
+                .get_resource::<engine_terrain::Terrains>()
+                .is_some_and(engine_terrain::Terrains::loading)
                 || self
                     .engine
                     .app

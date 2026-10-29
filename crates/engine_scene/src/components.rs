@@ -2,9 +2,11 @@ use std::collections::BTreeMap;
 
 use engine_core::bevy_ecs::world::EntityWorldMut;
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{Grounded, InterpolateTransform, Mesh, TerrainPrefetch, Tint};
+use engine_core::{Grounded, InterpolateTransform, Mesh, Tint};
 use engine_navigation::NavAgent;
+use engine_terrain::TerrainPrefetch;
 use engine_settings::ErrorCode;
+use engine_terrain::TerrainPrefetch;
 
 use crate::instance::Lookups;
 use crate::{SceneDocument, SceneError, SceneFiles};
@@ -26,7 +28,7 @@ macro_rules! entity_components {
                 mirror
             },
             tint: [f32; 4] { brick: None, shows: "Tint", rule: range(0.0, 1.0), mirror },
-            prefetch: engine_core::TerrainPrefetch {
+            prefetch: engine_terrain::TerrainPrefetch {
                 brick: Some("terrain"),
                 shows: "TerrainPrefetch",
                 rule: any,

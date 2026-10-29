@@ -2,10 +2,8 @@ use std::sync::Arc;
 
 use bytemuck::Zeroable;
 use engine_core::glam::{Vec2, Vec3};
-use engine_core::terrain_data::bounce::{PROBE_BYTES, bin_moments};
-use engine_core::{
-    MAX_BOUNCE_LEVELS, RenderTerrain, RenderTerrains, TerrainBounce, TerrainSettings,
-};
+use engine_terrain::bounce::{PROBE_BYTES, TerrainBounce, bin_moments};
+use engine_terrain::{MAX_BOUNCE_LEVELS, RenderTerrain, RenderTerrains, TerrainSettings};
 
 use crate::bindings::BOUNCE;
 use crate::buffers::Growable;
@@ -17,7 +15,7 @@ use crate::terrain_horizons::Horizons;
 use crate::terrain_macro::MacroMaps;
 use crate::terrain_sky::SkyMaps;
 
-pub(crate) const BOUNCE_LAYERS: usize = 4 * engine_core::terrain_data::bounce::LAYERS;
+pub(crate) const BOUNCE_LAYERS: usize = 4 * engine_terrain::bounce::LAYERS;
 
 pub(crate) const MOST_LEVELS: usize = MAX_BOUNCE_LEVELS as usize;
 

@@ -17,7 +17,7 @@ mod effects;
 mod entity_indices;
 mod environment;
 mod extraction;
-mod features;
+mod ground;
 mod foliage;
 mod frame_stats;
 mod gpu_culling;
@@ -69,18 +69,8 @@ pub use engine_assets::{
 };
 pub use engine_settings::ErrorCode;
 pub use engine_tables as table_data;
-pub use engine_terrain as terrain_data;
-pub use engine_terrain::{
-    AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes, Blend,
-    Control, Erosion, ErosionLayer, ErosionStage, ErosionStats, Facing, FarPlacement, GivenRiver,
-    HeightImage, HeightmapLayer, HummocksLayer, Hydrology, HydrologyLayer, HydrologySample,
-    HydrologyStage, HydrologyStats, Layer, LayerError, Layers, Mask, NoiseLayer, NoiseMask,
-    PathLayer, PathProfile, PathStage, PathStats, Placed, PlacementChoice, PlacementLayer, Pyramid,
-    PyramidError, Remap, RiversLayer, Route, RouteOptions, Stamp, StampOp, StepsLayer, Tile,
-    TileKey,
-};
 pub use environment::*;
-pub use features::*;
+pub use ground::*;
 pub use foliage::*;
 pub use frame_stats::*;
 pub use glam;
@@ -535,17 +525,6 @@ impl Engine {
             .delta_seconds = 0.0;
     }
 
-    pub fn stream_terrain(&mut self) {
-        self.app
-            .world_mut()
-            .run_system_cached(stream_terrains)
-            .expect("terrain streaming takes no input");
-    }
-
-    pub fn work_terrain(&mut self, milliseconds: f64) -> bool {
-        work_between_frames(self.app.world_mut(), milliseconds)
-    }
-
     pub fn refresh_transforms(&mut self) {
         self.app.world_mut().run_schedule(TransformPropagation);
     }
@@ -637,7 +616,7 @@ impl Engine {
         let world = self.app.world();
         self.retained
             .prepare(world, &mut self.render_query, aspect, gpu);
-        extraction::extract(&mut self.retained, world, aspect);
+        extraction::extract(&mut self.retained, world);
         if gpu {
             self.app.world_mut().increment_change_tick();
         }

@@ -102,6 +102,7 @@ impl Renderer {
             .map(crate::shadows::ShadowFrame::tiles)
             .unwrap_or_default();
         let surface = self.terrain.surface.stats();
+        let terrain_stats = engine_terrain::RenderTerrains::of(snapshot).stats;
         let residency = self.residency();
         let stats = RenderStats {
             draw_calls: report.draws,
@@ -207,10 +208,10 @@ impl Renderer {
                 shallow_subdivisions: surface.shallow,
                 shadow_patches: self.terrain.patches.frame.shadow_patches,
                 tiles: self.terrain.resident(),
-                loading_tiles: snapshot.terrain.stats.loading_tiles,
+                loading_tiles: terrain_stats.loading_tiles,
                 gpu_controls: self.terrain.atlas.controls,
-                dropped_tiles: snapshot.terrain.stats.dropped_tiles + self.terrain.atlas.dropped,
-                fallback_tiles: snapshot.terrain.stats.fallback_tiles,
+                dropped_tiles: terrain_stats.dropped_tiles + self.terrain.atlas.dropped,
+                fallback_tiles: terrain_stats.fallback_tiles,
                 horizons: self.terrain.horizons.count(),
                 sky_maps: self.terrain.sky.count(),
                 lighting_uploads: self.terrain.horizons.uploaded + self.terrain.sky.uploaded,
@@ -226,7 +227,7 @@ impl Renderer {
                 placed_far_objects: self.scatter_draws.far_objects(),
                 placed_impostors: self.impostors.placed.live(),
                 dropped_placed_objects: self.features.scatter.get().left_out(),
-                white_water: snapshot.terrain.stats.white_water,
+                white_water: terrain_stats.white_water,
             },
             ground_cover: GroundCoverPass::stats(
                 Some(self.features.ground_cover.get()),

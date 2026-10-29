@@ -42,7 +42,7 @@ impl Renderer {
         starts: Vec<(
             u64,
             Vec<RecordKey>,
-            std::sync::Arc<engine_core::terrain_data::SettleStart>,
+            std::sync::Arc<engine_terrain::SettleStart>,
         )>,
     ) {
         self.water_settle.settle(starts);

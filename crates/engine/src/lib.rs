@@ -29,25 +29,28 @@ pub use engine_core::{bevy_ecs, glam};
 mod games {
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, App, AssetBudget,
-        AssetError, AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, Clouds, Cover, Cube,
-        DebugView, DebugViewMode, Dither, DynamicResolution, DynamicResolutionStats, Engine,
-        EngineConfig, EngineEntityCommands, Environment, Filter, FixedPostSimulation,
+        AssetError, AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, Clouds, Cube, DebugView,
+        DebugViewMode, Dither, DynamicResolution, DynamicResolutionStats, Engine, EngineConfig,
+        EngineEntityCommands, Environment, Filter, FixedPostSimulation,
         FixedPreSimulation, FixedSimulation, FixedSimulationSystems, FixedTime, Foliage,
-        FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Ground, GroundCover,
-        GroundSample, Grounded, Grounding, Haze, HeightHeld, HierarchyError, Highlights,
-        InputState, Interior, InterpolateTransform, InterpolationError, LevelOfDetail, LightRegion,
-        LocalLight, LocalLightSettings, MakeSources, MakeTextures, Material, MaterialHandle, Mesh,
-        Mesh3d, MeshHandle, MeshVertex, NightSky, OcclusionCulling, Occupancy, Parent,
-        ParticleBlend, ParticleEmitter, ParticleSettings, Plugin, PluginGroup,
-        Presentation, PresentationState, PresentedTime, PresentedTransform, PresentedTransforms,
-        Records, ReflectionProbe, ReflectionProbeSettings, Reflections, Resolution,
-        ResolutionStats, Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamingFocus,
-        SubpixelCulling, Surface, TemporalAntialiasing, Terrain, TerrainPlugin, TerrainSample,
-        TerrainSettings, Terrains, Texture, TextureHandle, TextureRef, TextureSet, TextureSource,
-        TextureUsage, Tint, TopLayer, Transform, TransformEditError, UvTransform, ViewSync,
-        ViewSyncSystems, Water, WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource,
-        WaterSources, Wind, WorldSync, WorldSyncSystems, Wrap, edit_transform, math,
-        reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
+        FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Ground, GroundSample, Grounded,
+        Grounding, Haze, HeightHeld, HierarchyError, Highlights, InputState, Interior,
+        InterpolateTransform, InterpolationError, LevelOfDetail, LightRegion, LocalLight,
+        LocalLightSettings, MakeSources, MakeTextures, Material, MaterialHandle, Mesh, Mesh3d,
+        MeshHandle, MeshVertex, NightSky, OcclusionCulling, Parent, ParticleBlend,
+        ParticleEmitter, ParticleSettings, Plugin, PluginGroup, Presentation,
+        PresentationState, PresentedTime, PresentedTransform, PresentedTransforms, Records,
+        ReflectionProbe, ReflectionProbeSettings, Reflections, Resolution, ResolutionStats,
+        Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamingFocus, SubpixelCulling, Surface, TemporalAntialiasing, Texture,
+        TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage, Tint, TopLayer, Transform, TransformEditError, UvTransform, ViewSync,
+        ViewSyncSystems, WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSource,
+        WaterSources, WorldSync,
+        WorldSyncSystems, Wrap, edit_transform, math, reset_all_interpolation,
+        reset_interpolation, set_parent, set_parents, trim_cards,
+    };
+    pub use engine_terrain::{
+        Cover, GroundCover, Occupancy, Terrain, TerrainBrick, TerrainSample, TerrainSettings,
+        Terrains, Water, Wind,
     };
     pub use engine_core::{Culling, LightingModel, Lights, Particles, PostEffects, ReflectionProbes};
     pub use engine_time_of_day::{TimeOfDay, TimeOfDayBrick};
@@ -64,12 +67,13 @@ pub use games::*;
 
 pub use engine_core::{
     DetailShares, DrawnKind, EnvironmentSection, ErrorCode, HierarchyReport, InvalidSetting,
-    LodLevel, MAX_BOUNCE_LEVELS, MAX_EMITTER_PARTICLES, MAX_HIERARCHY_DEPTH, MAX_LIGHT_RANGE,
-    MAX_MOVING_TILES, MAX_OCCUPANCY_LEVELS, MAX_SHADOW_LEVELS, MAX_SPLINE_POINTS, MAX_SPOT_DEGREES,
-    MAX_SPREAD_DEGREES, MAX_TEXTURE_DIMENSION, MAX_TRANSFORM_NODES, MIN_SPOT_DEGREES, MaterialShare,
-    MeshLods, PixelProbe, PluginGroupBuilder, SplineChunks, SunLookup, TerrainProbe, TextureFamily,
+    LodLevel, MAX_EMITTER_PARTICLES, MAX_HIERARCHY_DEPTH, MAX_LIGHT_RANGE, MAX_MOVING_TILES,
+    MAX_SHADOW_LEVELS, MAX_SPLINE_POINTS, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES,
+    MAX_TEXTURE_DIMENSION, MAX_TRANSFORM_NODES, MIN_SPOT_DEGREES, MaterialShare, MeshLods,
+    PixelProbe, PluginGroupBuilder, SplineChunks, SunLookup, TerrainProbe, TextureFamily,
     TextureFormat, TextureSampling, TransformNodeLimit, Viewport, WaterProbe, WaterReach,
 };
+pub use engine_terrain::{MAX_BOUNCE_LEVELS, MAX_OCCUPANCY_LEVELS};
 
 pub mod bricks {
     pub use engine_core::{
@@ -110,8 +114,8 @@ pub mod bricks {
 }
 
 pub mod terrain {
-    pub use engine_core::terrain_data as data;
-    pub use engine_core::{
+    pub use engine_terrain as data;
+    pub use engine_terrain::{
         AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes,
         Blend, Control, DECK_DEPTH, DECK_MARGIN, DECK_RISE, Erosion, ErosionLayer, ErosionStage,
         Facing, FarPlacement, GivenRiver, HeightImage, HeightmapLayer, HummocksLayer, Hydrology,
@@ -127,29 +131,33 @@ pub mod terrain {
 
 pub mod render {
     pub use engine_core::{
+        GpuCurrent, GpuPresentation, MAX_NORMAL_INVERSE_NORM, MaterialBinding, NO_PARENT,
+        NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NodeInfo, NodePose, PoseRows,
+        PresentationMode, RenderEmitter, RenderFrame, RenderInstance, RenderLight, RenderLights,
+        RenderMaterial, RenderMesh, RenderParticles, RenderReflectionProbe, RenderReflectionProbes,
+        RenderSnapshot, RenderTexture, TransformIndex,
+        TransformPropagation, presentation_bounds, propagate_transforms, valid_global_matrix,
+    };
+    pub use engine_terrain::bounce::TerrainBounce;
+    pub use engine_terrain::lighting::TerrainLighting;
+    pub use engine_terrain::{
         GUST_QUICK_ACROSS, GUST_QUICK_RATE, GUST_QUICK_SHARE, GUST_QUICK_TRAVEL, GUST_SLOW_RATE,
-        GUST_SLOW_SHARE, GUST_SLOW_TRAVEL, GpuCurrent, GpuPresentation, MAX_NORMAL_INVERSE_NORM,
-        MacroMap, MaterialBinding, NO_PARENT, NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE,
-        NODE_VALID, NodeInfo, NodePose, PoseRows, PresentationMode, RenderEmitter, RenderFrame,
-        RenderInstance, RenderLight, RenderLights, RenderMaterial, RenderMesh, RenderParticles,
-        RenderPlacementAsset, RenderPlacementLayer, RenderPlacementPart, RenderReflectionProbe,
-        RenderReflectionProbes, RenderSnapshot, RenderSurfaceMaps, RenderTerrain, RenderTerrains,
-        RenderTexture, TerrainBounce, TerrainLighting, TransformIndex, TransformPropagation,
-        presentation_bounds, propagate_transforms, valid_global_matrix,
+        GUST_SLOW_SHARE, GUST_SLOW_TRAVEL, MacroMap, RenderPlacementAsset, RenderPlacementLayer,
+        RenderPlacementPart, RenderSurfaceMaps, RenderTerrain, RenderTerrains, TerrainEnvironment,
     };
     pub use engine_world_streaming::{CellView, STREAMING_GRIDS, StreamingGrid};
 }
 
 pub mod stats {
     pub use engine_core::{
-        Applied, CloudStats, CullingStats, DetailStats, Drawn, ErosionStats, ExposureStats,
-        FrameStats, GroundCoverStats, HydrologyStats, JobStats, LightStats, Names, OccupancyStats,
-        PathStats, ProbeStats, RenderStats, ShadowStats, SkyStats, TerrainBounceStats,
-        TerrainRenderStats, TerrainStats, WaterStats,
+        Applied, CloudStats, CullingStats, DetailStats, Drawn, ExposureStats, FrameStats,
+        GroundCoverStats, JobStats, LightStats, Names, OccupancyStats, ProbeStats, RenderStats,
+        ShadowStats, SkyStats, TerrainBounceStats, TerrainRenderStats, WaterStats,
     };
     pub use engine_world_streaming::CellStats;
     pub use engine_physics::PhysicsStats;
     pub use engine_navigation::NavStats;
+    pub use engine_terrain::{ErosionStats, HydrologyStats, PathStats, TerrainStats};
 }
 
 pub mod host;

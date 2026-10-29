@@ -2,7 +2,7 @@ use super::atlas::TileAtlas;
 use super::tables::TerrainTables;
 use super::*;
 use engine_core::glam::Vec2;
-use engine_core::terrain_data::{PATCH_QUADS, PATCHES_PER_TILE, Pyramid};
+use engine_terrain::{PATCH_QUADS, PATCHES_PER_TILE, Pyramid};
 
 pub(crate) struct PatchDraws {
     indices: wgpu::Buffer,
@@ -17,7 +17,7 @@ pub(crate) struct PatchDraws {
     pub(super) views: wgpu::Buffer,
     written_views: Option<ViewUniform>,
     kept_stack: Vec<(u32, u32, u32)>,
-    kept_ground: HashMap<(u64, TileKey), (Arc<engine_core::Tile>, GroundChange)>,
+    kept_ground: HashMap<(u64, TileKey), (Arc<engine_terrain::Tile>, GroundChange)>,
     ground_changes: Vec<GroundChange>,
     eye: Vec3,
     pub(crate) frame: TerrainFrame,
@@ -616,7 +616,7 @@ fn terrain_uniform(
                     steep.gradient[1],
                 ]
             });
-            let averaged = engine_core::terrain_data::TileShading::shades(1, terrain.surroundings);
+            let averaged = engine_terrain::TileShading::shades(1, terrain.surroundings);
             [material, low, high, if averaged { 1.0 } else { 0.0 }]
         },
         water: [tables.water_base, 0, 0, 0],

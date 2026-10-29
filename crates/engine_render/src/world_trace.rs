@@ -1,5 +1,5 @@
-use engine_core::terrain_data::{ERROR_CELLS, ERROR_TEXELS, TILE_STRIDE};
-use engine_core::{RenderTerrains, TileKey};
+use engine_terrain::{ERROR_CELLS, ERROR_TEXELS, TILE_STRIDE};
+use engine_terrain::{RenderTerrains, TileKey};
 use std::collections::BTreeMap;
 use std::ops::Range;
 
@@ -533,7 +533,7 @@ fn same_boxes(a: &[ImpostorRecord], b: &[ImpostorRecord]) -> bool {
 }
 
 fn reaches(
-    terrain: &engine_core::RenderTerrain,
+    terrain: &engine_terrain::RenderTerrain,
     key: TileKey,
     slots: Range<u32>,
     placed: &Placements<'_>,
@@ -586,7 +586,7 @@ fn reaches(
 
 fn grid(
     reaches: &[Reach],
-    terrain: &engine_core::RenderTerrain,
+    terrain: &engine_terrain::RenderTerrain,
     key: TileKey,
 ) -> Option<(Vec<u32>, f32)> {
     if reaches.is_empty() {
@@ -688,7 +688,7 @@ fn top_pyramid(tops: Vec<f32>, cells: u32) -> Vec<f32> {
 pub(crate) fn terrain_info(
     pass: &crate::terrain::TerrainPass,
     index: usize,
-    terrain: &engine_core::RenderTerrain,
+    terrain: &engine_terrain::RenderTerrain,
 ) -> TerrainInfo {
     let (directory, palette, _, colors) = pass.cover_terrain(index);
     TerrainInfo {

@@ -233,6 +233,21 @@ impl Camera {
     }
 }
 
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Viewport {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Default for Viewport {
+    fn default() -> Self {
+        Self {
+            width: 1920,
+            height: 1080,
+        }
+    }
+}
+
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub struct InputState {
     pub move_forward: f32,
@@ -321,7 +336,6 @@ pub struct RenderSnapshot {
     pub lights: crate::RenderLights,
     pub particles: crate::RenderParticles,
     pub reflection_probes: crate::RenderReflectionProbes,
-    pub terrain: crate::RenderTerrains,
     pub tables: crate::RenderTables,
     pub instances: Vec<RenderInstance>,
     pub(crate) instance_slots: crate::retained_render::InstanceSlots,

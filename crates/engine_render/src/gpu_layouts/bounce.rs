@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 
-pub(crate) const BINS: usize = engine_core::terrain_data::bounce::BINS;
+pub(crate) const BINS: usize = engine_terrain::bounce::BINS;
 
 gpu_structs! {
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]

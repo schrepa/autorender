@@ -7,7 +7,7 @@ use super::*;
 use crate::gpu_layouts::constants::ERROR_MIPS;
 use crate::shaders::entry::{terrain_control, terrain_normals};
 use engine_core::collections::HashSet;
-use engine_core::terrain_data::{ERROR_CELLS, ERROR_TEXELS, ErrorPyramid, Pyramid, TileShading};
+use engine_terrain::{ERROR_CELLS, ERROR_TEXELS, ErrorPyramid, Pyramid, TileShading};
 use std::collections::{BTreeMap, BTreeSet};
 
 const ERROR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
@@ -37,7 +37,7 @@ const _: () = assert!(
 
 struct Listed {
     revision: u64,
-    tiles: Arc<[Arc<engine_core::Tile>]>,
+    tiles: Arc<[Arc<engine_terrain::Tile>]>,
     surface: bool,
 }
 
@@ -52,8 +52,8 @@ impl Changes {
     fn compare(
         &mut self,
         id: u64,
-        before: &[Arc<engine_core::Tile>],
-        now: &[Arc<engine_core::Tile>],
+        before: &[Arc<engine_terrain::Tile>],
+        now: &[Arc<engine_terrain::Tile>],
     ) {
         let (mut old, mut new) = (0, 0);
         loop {
@@ -91,7 +91,7 @@ impl Changes {
 #[derive(Default)]
 struct Replaced {
     layers: HashMap<(u64, TileKey), u32>,
-    tiles: HashMap<(u64, TileKey), Arc<engine_core::Tile>>,
+    tiles: HashMap<(u64, TileKey), Arc<engine_terrain::Tile>>,
 }
 
 pub(crate) struct TileAtlas {
@@ -102,7 +102,7 @@ pub(crate) struct TileAtlas {
     pub(super) surfaced: HashMap<(u64, TileKey), f32>,
     pub(super) now: f32,
     pub(super) shaded: HashSet<(u64, TileKey)>,
-    pub(super) held: HashMap<(u64, TileKey), Arc<engine_core::Tile>>,
+    pub(super) held: HashMap<(u64, TileKey), Arc<engine_terrain::Tile>>,
     pub(super) tops: HashMap<(u64, TileKey), f32>,
     pub(super) free: Vec<u32>,
     pub(super) next_layer: u32,
@@ -279,7 +279,7 @@ impl TileAtlas {
             if synced.is_some_and(|synced| synced.revision == terrain.tiles_revision) {
                 continue;
             }
-            let before: &[Arc<engine_core::Tile>] = match synced {
+            let before: &[Arc<engine_terrain::Tile>] = match synced {
                 Some(synced) => &synced.tiles[..],
                 None => &[],
             };
@@ -331,7 +331,7 @@ impl TileAtlas {
             if !stopped {
                 continue;
             }
-            let unsurfaced = |tile: &&Arc<engine_core::Tile>| {
+            let unsurfaced = |tile: &&Arc<engine_terrain::Tile>| {
                 tile.control().is_none()
                     && !TileShading::shades(tile.key().level, terrain.surroundings)
             };
@@ -412,7 +412,7 @@ impl TileAtlas {
     fn upload(
         &mut self,
         queue: &Queue,
-        (key, tile): ((u64, TileKey), &Arc<engine_core::Tile>),
+        (key, tile): ((u64, TileKey), &Arc<engine_terrain::Tile>),
         terrain: &RenderTerrain,
         replaced: &mut Replaced,
         (surfaces, capacity): (&BTreeMap<u64, &Arc<SurfaceData>>, u32),
@@ -1149,7 +1149,10 @@ fn same_errors(a: &ErrorPyramid, b: &ErrorPyramid) -> bool {
     std::ptr::eq(a, b) || a == b
 }
 
-fn listed_tile(tiles: &[Arc<engine_core::Tile>], key: TileKey) -> Option<&Arc<engine_core::Tile>> {
+fn listed_tile(
+    tiles: &[Arc<engine_terrain::Tile>],
+    key: TileKey,
+) -> Option<&Arc<engine_terrain::Tile>> {
     let at = tiles.binary_search_by_key(&key, |tile| tile.key()).ok()?;
     tiles.get(at)
 }
@@ -1157,15 +1160,15 @@ fn listed_tile(tiles: &[Arc<engine_core::Tile>], key: TileKey) -> Option<&Arc<en
 fn listed_in(
     terrains: &RenderTerrains,
     (id, key): (u64, TileKey),
-) -> Option<&Arc<engine_core::Tile>> {
+) -> Option<&Arc<engine_terrain::Tile>> {
     let terrain = terrains.terrains.iter().find(|terrain| terrain.id == id)?;
     listed_tile(&terrain.tiles, key)
 }
 
 type Uploading<'a> = (
     ((u64, TileKey), u32),
-    &'a engine_core::Tile,
-    Option<&'a Arc<engine_core::Tile>>,
+    &'a engine_terrain::Tile,
+    Option<&'a Arc<engine_terrain::Tile>>,
 );
 
 fn same_shading(a: Option<&Arc<TileShading>>, b: Option<&Arc<TileShading>>) -> bool {
@@ -1176,18 +1179,18 @@ fn same_shading(a: Option<&Arc<TileShading>>, b: Option<&Arc<TileShading>>) -> b
     }
 }
 
-fn held_control(tile: &engine_core::Tile) -> Option<Box<[u32]>> {
+fn held_control(tile: &engine_terrain::Tile) -> Option<Box<[u32]>> {
     (tile.control().map(Box::from)).or_else(|| tile.shading().map(|held| held.control_texels()))
 }
 
-fn held_gradients(tile: &engine_core::Tile) -> Option<Box<[u32]>> {
+fn held_gradients(tile: &engine_terrain::Tile) -> Option<Box<[u32]>> {
     tile.shading().map(|held| held.gradient_texels())
 }
 
 fn ancestor_texels(
-    (tiles, pyramid): (&[Arc<engine_core::Tile>], Pyramid),
+    (tiles, pyramid): (&[Arc<engine_terrain::Tile>], Pyramid),
     key: TileKey,
-    held: fn(&engine_core::Tile) -> Option<Box<[u32]>>,
+    held: fn(&engine_terrain::Tile) -> Option<Box<[u32]>>,
 ) -> Box<[u32]> {
     let size = LAYER_SIZE as usize;
     let mut out = vec![0_u32; size * size].into_boxed_slice();
@@ -1201,7 +1204,7 @@ fn ancestor_texels(
             break values;
         }
     };
-    let quads = i64::from(engine_core::terrain_data::TILE_QUADS);
+    let quads = i64::from(engine_terrain::TILE_QUADS);
     let half = 1_i64 << (shift - 1);
     let nearest = |texel: usize, tile: u16, ancestor: u16| {
         let sample = i64::from(tile) * quads + texel as i64 - 1;

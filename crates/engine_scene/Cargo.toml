@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-schema = ["dep:schemars", "engine_core/schema", "engine_settings/schema", "engine_collision/schema", "engine_physics/schema", "engine_world_streaming/schema", "engine_navigation/schema"]
+schema = ["dep:schemars", "engine_core/schema", "engine_settings/schema", "engine_collision/schema", "engine_physics/schema", "engine_world_streaming/schema", "engine_navigation/schema", "engine_terrain/schema"]
 
 [dependencies]
 base64.workspace = true
@@ -17,6 +17,7 @@ engine_collision.workspace = true
 engine_physics.workspace = true
 engine_world_streaming.workspace = true
 engine_navigation.workspace = true
+engine_terrain.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars = { workspace = true, optional = true }

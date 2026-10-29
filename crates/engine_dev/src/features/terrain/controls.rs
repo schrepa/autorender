@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use engine_core::{
-    Engine, Feature, GivenRiver, Terrain, TerrainEdit, TerrainRiver, Terrains,
+    Engine, Feature,
     bevy_ecs::prelude::{Entity, World},
     glam::Vec2,
-    terrain_data::{Stamp, StampOp},
 };
 use engine_scene::SceneInstance;
 use engine_settings::ErrorCode;
+use engine_terrain::{GivenRiver, Stamp, StampOp, Terrain, TerrainEdit, TerrainRiver, Terrains};
 
 use super::TerrainRiverControl;
 use super::results::{Reach, TerrainEdited};
@@ -299,7 +299,7 @@ pub(super) fn draw_river(
         if standing.is_some_and(|at| rivers[at].river == river) {
             return Ok(unchanged(&rivers, reach(&[&river])));
         }
-        let most = engine_core::terrain_data::MAX_GIVEN_RIVERS;
+        let most = engine_terrain::MAX_GIVEN_RIVERS;
         if standing.is_none() && rivers.len() >= most {
             return Err(DevError::new(
                 ErrorCode::OutOfRange,

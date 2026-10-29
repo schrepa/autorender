@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
-use engine_core::terrain_data::lighting::SKY_LAYERS;
-use engine_core::{RenderTerrains, TerrainLighting, TerrainSettings};
+use engine_terrain::lighting::SKY_LAYERS;
+use engine_terrain::lighting::TerrainLighting;
+use engine_terrain::{RenderTerrains, TerrainSettings};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 

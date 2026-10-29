@@ -1,0 +1,210 @@
+use engine_core::collections::HashMap;
+use std::sync::Arc;
+
+use bevy_ecs::prelude::*;
+use glam::Vec3;
+
+use super::{Terrains, Water};
+use crate::Fall;
+use crate::hydraulics::GRAVITY;
+use crate::shallow_water::DENSITY;
+use engine_core::math::{clamp, max};
+use engine_core::{ParticleBlend, ParticleEmitter, Transform};
+
+#[derive(Resource, Default)]
+pub(crate) struct TerrainFalls {
+    spawned: HashMap<Entity, Spawned>,
+}
+
+struct Spawned {
+    set: Arc<[Fall]>,
+    entities: Vec<Entity>,
+}
+
+const SPLASH_WATTS: f32 = 2.0e3;
+const SPLASH_RATE: [f32; 2] = [20.0, 600.0];
+const MIST_WATTS: f32 = 1.5e5;
+const MIST_RATE: [f32; 2] = [1.0, 12.0];
+const BURST_WATTS: f32 = 6.0e4;
+const BURST_RATE: [f32; 2] = [2.0, 24.0];
+
+fn jets(fall: &Fall) -> Vec<(usize, usize, f32)> {
+    let mut found = Vec::new();
+    let mut leaving = None;
+    for index in 0..fall.path.len() {
+        let aloft = fall.aloft.get(index).copied().unwrap_or(false);
+        match (leaving, aloft) {
+            (None, true) => leaving = Some(index),
+            (Some(lip), false) => {
+                let (a, b) = (
+                    Vec3::from_array(fall.path[index - 1]),
+                    Vec3::from_array(fall.path[index]),
+                );
+                let seconds = fall.times.get(index).zip(fall.times.get(index - 1));
+                let speed = seconds.map_or(fall.speed, |(after, before)| {
+                    a.distance(b) / max(after - before, 1.0e-3)
+                });
+                found.push((lip, index, speed));
+                leaving = None;
+            }
+            _ => {}
+        }
+    }
+    found
+}
+
+fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmitter)> {
+    let width = fall.width;
+    let at = |point: Vec3| Transform {
+        translation: origin + point,
+        ..Transform::default()
+    };
+    let point = |index: usize| Vec3::from_array(fall.path[index]);
+    let sky = |index: usize| fall.sky.get(index).copied().unwrap_or(1.0);
+    let mut landings = Vec::new();
+    let mut spawned = Vec::new();
+    for (number, &(lip, landing, landing_speed)) in jets(fall).iter().enumerate() {
+        let (top, bottom) = (point(lip), point(landing));
+        let flight = Vec3::new(bottom.x - top.x, 0.0, bottom.z - top.z);
+        let (reach, drop) = (flight.length(), max(top.y - bottom.y, 0.1));
+        let speed = max(reach * (GRAVITY / (2.0 * drop)).sqrt(), 0.5);
+        let seconds = (2.0 * drop / GRAVITY).sqrt();
+        spawned.push((
+            at(top),
+            ParticleEmitter {
+                rate: 30.0 + 10.0 * width,
+                lifetime: seconds,
+                speed,
+                direction: flight.normalize_or(Vec3::X),
+                spread: 0.2,
+                acceleration: Vec3::new(0.0, -GRAVITY, 0.0),
+                size: [0.05, 0.12],
+                color: [[0.9, 0.93, 0.97, 0.6], [0.94, 0.96, 1.0, 0.15]],
+                emission: 1.0,
+                blend: ParticleBlend::Alpha,
+                stretch: 0.04,
+                offset: Vec3::ZERO,
+                radius: 0.45 * width,
+                seed: seed.wrapping_mul(97).wrapping_add(number as u32),
+            },
+        ));
+        landings.push((bottom, drop, landing_speed, sky(landing)));
+    }
+    let last = fall.path.len() - 1;
+    let clinging = jets(fall)
+        .last()
+        .is_none_or(|&(_, landing, _)| landing + 1 < last);
+    if last >= 1 && clinging && !fall.aloft.get(last - 1).copied().unwrap_or(false) {
+        let from = landings.last().map_or(point(0).y, |&(landed, ..)| landed.y);
+        landings.push((
+            point(last),
+            max(from - point(last).y, 0.1),
+            fall.speed,
+            sky(last),
+        ));
+    }
+    let puffs = clamp(width / 10.0, 0.6, 2.5);
+    for (number, &(landed, drop, landing_speed, open)) in landings.iter().enumerate() {
+        let power = DENSITY * GRAVITY * fall.discharge * drop;
+        let lit =
+            |[red, green, blue, alpha]: [f32; 4]| [red * open, green * open, blue * open, alpha];
+        let key = seed.wrapping_mul(131).wrapping_add(number as u32);
+        spawned.push((
+            at(landed),
+            ParticleEmitter {
+                rate: clamp(power / SPLASH_WATTS, SPLASH_RATE[0], SPLASH_RATE[1]),
+                lifetime: 1.4,
+                speed: clamp(landing_speed * 0.4, 2.0, 9.0),
+                direction: Vec3::Y,
+                spread: 0.9,
+                acceleration: Vec3::new(0.0, -GRAVITY, 0.0),
+                size: [0.06, 0.16],
+                color: [lit([0.92, 0.95, 0.98, 0.65]), lit([0.95, 0.97, 1.0, 0.0])],
+                emission: 1.0,
+                blend: ParticleBlend::Alpha,
+                stretch: 0.05,
+                offset: Vec3::ZERO,
+                radius: 0.35 * width,
+                seed: key.wrapping_mul(31) ^ 0x5bd1_e995,
+            },
+        ));
+        spawned.push((
+            at(landed + Vec3::Y * 0.5),
+            ParticleEmitter {
+                rate: clamp(power / BURST_WATTS, BURST_RATE[0], BURST_RATE[1]),
+                lifetime: 1.6,
+                speed: clamp(landing_speed * 0.3, 2.0, 6.0),
+                direction: Vec3::Y,
+                spread: 1.45,
+                acceleration: Vec3::new(0.0, 0.6, 0.0),
+                size: [1.5 * puffs, 5.0 * puffs],
+                color: [lit([0.94, 0.96, 1.0, 0.25]), lit([1.0, 1.0, 1.0, 0.0])],
+                emission: 1.0,
+                blend: ParticleBlend::Mist,
+                stretch: 0.0,
+                offset: Vec3::ZERO,
+                radius: 0.3 * width,
+                seed: key.wrapping_mul(7) ^ 0x2c1b_3c6d,
+            },
+        ));
+        spawned.push((
+            at(landed + Vec3::Y * 1.5),
+            ParticleEmitter {
+                rate: clamp(power / MIST_WATTS, MIST_RATE[0], MIST_RATE[1]),
+                lifetime: 6.0,
+                speed: clamp(landing_speed * 0.12, 0.5, 2.5),
+                direction: Vec3::Y,
+                spread: 1.3,
+                acceleration: Vec3::new(0.0, 0.3, 0.0),
+                size: [4.0 * puffs, 11.0 * puffs],
+                color: [lit([0.94, 0.96, 1.0, 0.3]), lit([1.0, 1.0, 1.0, 0.0])],
+                emission: 1.0,
+                blend: ParticleBlend::Mist,
+                stretch: 0.0,
+                offset: Vec3::ZERO,
+                radius: 0.5 * width,
+                seed: key ^ 0x9e37_79b9,
+            },
+        ));
+    }
+    spawned
+}
+
+pub(crate) fn sync(world: &mut World) {
+    let drawn = world
+        .get_resource::<Water>()
+        .is_some_and(|water| water.enabled);
+    let wanted: Vec<(Entity, Arc<[Fall]>, Vec3)> = match world.get_resource::<Terrains>() {
+        Some(terrains) if drawn => terrains.fall_sets().collect(),
+        _ => Vec::new(),
+    };
+    let mut falls = world.remove_resource::<TerrainFalls>().unwrap_or_default();
+    let mut stale = Vec::new();
+    falls.spawned.retain(|terrain, spawned| {
+        let keep = wanted
+            .iter()
+            .any(|(entity, wanted, _)| entity == terrain && Arc::ptr_eq(wanted, &spawned.set));
+        if !keep {
+            stale.append(&mut spawned.entities);
+        }
+        keep
+    });
+    for entity in stale {
+        if let Ok(entity) = world.get_entity_mut(entity) {
+            entity.despawn();
+        }
+    }
+    for (terrain, set, origin) in wanted {
+        if set.is_empty() || falls.spawned.contains_key(&terrain) {
+            continue;
+        }
+        let mut entities = Vec::with_capacity(3 * set.len());
+        for (index, fall) in set.iter().enumerate() {
+            for (transform, emitter) in emitters(fall, origin, index as u32) {
+                entities.push(world.spawn((transform, emitter)).id());
+            }
+        }
+        falls.spawned.insert(terrain, Spawned { set, entities });
+    }
+    world.insert_resource(falls);
+}

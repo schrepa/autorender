@@ -16,7 +16,8 @@ use engine_terrain::lighting::{self, Ground};
 use engine_terrain::macro_colors;
 use engine_terrain::{
     BiomeRules, Generator, Layer, Layers, Obstacle, PATCH_QUADS, PATCHES_PER_TILE, Pyramid,
-    SettleRegion, SettleStart, Stamp, StampOp, TILE_QUADS, Tile, TileKey, WaterPart, codec,
+    SettleRegion, SettleStart, Stamp, StampOp, TILE_QUADS, Terrain, Tile, TileKey, WaterPart,
+    codec,
 };
 use glam::Vec2;
 use serde_json::json;

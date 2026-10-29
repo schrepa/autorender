@@ -2,11 +2,14 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use bytemuck::Zeroable;
+use engine_core::WaterObstacle;
 use engine_core::collections::HashMap;
 use engine_core::glam::{Mat3, Vec2, Vec3};
-use engine_core::terrain_data::shallow_water::step_seconds;
-use engine_core::terrain_data::{BLOCK_SIDE, Footprint, NO_BLOCK, StoredBlocks};
-use engine_core::{SIM_TOUCHES, Tile, TileKey, WaterObstacle, WaterRead, WaterWindow, live_steps};
+use engine_terrain::shallow_water::step_seconds;
+use engine_terrain::{
+    BLOCK_SIDE, Footprint, NO_BLOCK, SIM_TOUCHES, StoredBlocks, Tile, TileKey, WaterRead,
+    WaterWindow, live_steps,
+};
 
 use crate::bindings::{EMPTY, WATER_SETUP};
 use crate::gpu_layouts::constants::{
@@ -21,7 +24,7 @@ use crate::water_kernels::{
     Capacity, Kernels, SlotBuffers, encode_drawn, encode_steps, grid, live_largest_bytes,
 };
 
-pub(crate) use engine_core::LONGEST_FRAME;
+pub(crate) use engine_terrain::LONGEST_FRAME;
 
 const RISEN: usize = 256;
 

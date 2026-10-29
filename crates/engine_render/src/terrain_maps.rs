@@ -1,4 +1,5 @@
-use engine_core::{RenderSurfaceMaps, RenderTerrains, Texture, TextureFormat, TextureHandle};
+use engine_core::{Texture, TextureFormat, TextureHandle};
+use engine_terrain::{RenderSurfaceMaps, RenderTerrains};
 
 use crate::gpu_calls::Queue;
 use crate::gpu_data::mip_levels;

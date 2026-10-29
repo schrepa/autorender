@@ -25,6 +25,7 @@ mod placement;
 mod pyramid;
 mod relief;
 mod rivers;
+mod runtime;
 mod select;
 mod shading;
 pub mod shallow_water;
@@ -62,6 +63,21 @@ pub use placement::{
 pub use pyramid::{Pyramid, PyramidError, TileKey};
 pub use relief::{HummocksLayer, StepsLayer};
 pub use rivers::{RIVER_STEP, Rivers};
+pub use runtime::{
+    Cover, DECK_DEPTH, DECK_MARGIN, DECK_RISE, FALLS_SHOWN, FallView, GUST_QUICK_ACROSS,
+    GUST_QUICK_RATE, GUST_QUICK_SHARE, GUST_QUICK_TRAVEL, GUST_SLOW_RATE, GUST_SLOW_SHARE,
+    GUST_SLOW_TRAVEL, GroundCover, LIVE_PIXELS, LONGEST_FRAME, LakeView, MAX_BOUNCE_LEVELS,
+    MAX_COLLIDER_EXTENT, MAX_OCCUPANCY_LEVELS, MAX_PLACEMENT_LODS, MAX_PLACEMENT_PARTS,
+    MIN_COLLIDER_EXTENT, MacroMap, MotionDetail, Occupancy, PlacedCollider, PlacedShape,
+    PlacementAsset, PlacementLod, PlacementPart, PoolView, RenderPlacementAsset,
+    RenderPlacementLayer, RenderPlacementPart, RenderSurfaceMaps, RenderTerrain, RenderTerrains,
+    RiverFlowView, RiverSightView, SETTLED_KIND, SETTLED_PARITY, SIM_TOUCHES, SurfaceMaterial,
+    SurfaceProjection, Surroundings, SurroundingsStatus, Terrain, TerrainBakes, TerrainBrick,
+    TerrainControl, TerrainControlResult, TerrainDebugView, TerrainEdit, TerrainEnvironment,
+    TerrainPrefetch, TerrainRiver, TerrainSample, TerrainSettings, TerrainStats, TerrainSurface,
+    TerrainWaterView, Terrains, TerrainsView, Walked, WalkedTerrain, Water, WaterRead,
+    WaterSourceCell, WaterWindow, Wind, live_steps, settled_alike, stream_now, work_between_frames,
+};
 pub use select::{LodRanges, WantedTile, WantedView, wanted_tiles};
 pub use shading::TileShading;
 pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverListing, RiverSight};

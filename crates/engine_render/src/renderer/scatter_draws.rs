@@ -15,7 +15,7 @@ use crate::scatter::{
     STATE_FRESH, ScatterFrame, SnapSources, TERRAIN_INDEX, TerrainInfo,
 };
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{Tile, TileKey};
+use engine_terrain::{Tile, TileKey};
 
 type PartLevels = (Vec<(u32, u32, i32)>, Vec<MeshHandle>);
 
@@ -101,7 +101,7 @@ impl Renderer {
         kind: PassKind,
         impostors: bool,
     ) -> Option<Ready<ScatterFrame>> {
-        let terrains = &snapshot.terrain.terrains;
+        let terrains = &engine_terrain::RenderTerrains::of(snapshot).terrains;
         let key = self.scatter_key(terrains);
         if self.scatter_draws.key.as_ref() != Some(&key) || self.scatter_draws.pool.fragmented() {
             self.build_scatter_groups(terrains);
@@ -256,8 +256,7 @@ impl Renderer {
         for (index, group) in groups.iter().enumerate() {
             let mut record = ImpostorRecord::default();
             let mesh = self.meshes.get(&group.meshes[0]);
-            let asset = snapshot
-                .terrain
+            let asset = engine_terrain::RenderTerrains::of(snapshot)
                 .terrains
                 .iter()
                 .flat_map(|terrain| terrain.assets.iter().flatten())
@@ -335,7 +334,7 @@ impl Renderer {
         draws.impostors = records;
     }
 
-    fn scatter_key(&self, terrains: &[engine_core::RenderTerrain]) -> ScatterKey {
+    fn scatter_key(&self, terrains: &[engine_terrain::RenderTerrain]) -> ScatterKey {
         let terrains = terrains
             .iter()
             .map(|terrain| {
@@ -380,7 +379,7 @@ impl Renderer {
         (terrains, self.mesh_layout)
     }
 
-    fn build_scatter_groups(&mut self, terrains: &[engine_core::RenderTerrain]) {
+    fn build_scatter_groups(&mut self, terrains: &[engine_terrain::RenderTerrain]) {
         let mut groups = Vec::new();
         let mut layouts = Vec::new();
         let mut covers = Vec::new();
@@ -502,7 +501,7 @@ impl Renderer {
             .collect();
     }
 
-    fn scatter_levels(&self, asset: &engine_core::RenderPlacementAsset) -> Option<Levels> {
+    fn scatter_levels(&self, asset: &engine_terrain::RenderPlacementAsset) -> Option<Levels> {
         let mesh = self.meshes.get(&asset.mesh.handle)?;
         let draw = mesh.draw(&self.mesh_arena);
         let level = |mesh: &GpuMesh, draw: &MeshDraw<'_>, level: usize, own: (u32, u32)| {
@@ -551,7 +550,7 @@ impl Renderer {
 
     fn part_levels(
         &self,
-        part: &engine_core::RenderPlacementPart,
+        part: &engine_terrain::RenderPlacementPart,
         levels: usize,
     ) -> Option<PartLevels> {
         let first = self.meshes.get(&part.meshes.first()?.handle)?;
@@ -658,12 +657,11 @@ impl Renderer {
         snapshot: &RenderSnapshot,
         handle: MaterialHandle,
     ) -> Option<engine_core::Material> {
-        snapshot
-            .terrain
+        engine_terrain::RenderTerrains::of(snapshot)
             .terrains
             .iter()
             .flat_map(|terrain| terrain.assets.iter().flatten())
-            .flat_map(engine_core::RenderPlacementAsset::materials)
+            .flat_map(engine_terrain::RenderPlacementAsset::materials)
             .find(|material| material.handle == handle)
             .map(|material| material.material)
     }
@@ -775,7 +773,7 @@ impl Renderer {
 }
 
 fn bake_parts<'a>(
-    (groups, index, asset): (&[ScatterDraw], usize, &engine_core::RenderPlacementAsset),
+    (groups, index, asset): (&[ScatterDraw], usize, &engine_terrain::RenderPlacementAsset),
     (meshes, arena, materials): (
         &'a BTreeMap<MeshHandle, GpuMesh>,
         &'a MeshArena,
@@ -836,8 +834,8 @@ fn combined(first: u128, second: u128) -> u128 {
 
 fn tile_objects(
     draws: &ScatterDraws,
-    terrain: &engine_core::RenderTerrain,
-    tile: &engine_core::Tile,
+    terrain: &engine_terrain::RenderTerrain,
+    tile: &engine_terrain::Tile,
 ) -> TileObjects {
     let placed = tile.placed();
     let mut objects = (

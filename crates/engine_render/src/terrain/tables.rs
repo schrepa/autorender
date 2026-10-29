@@ -1,7 +1,7 @@
 use super::atlas::TileAtlas;
 use super::*;
 use crate::gpu_layouts::constants::WATER_TILE_WORDS;
-use engine_core::terrain_data::Pyramid;
+use engine_terrain::Pyramid;
 
 pub(crate) struct TerrainTables {
     pub(super) uniforms: wgpu::Buffer,
@@ -420,14 +420,14 @@ fn set_word(words: &mut [u32], at: usize, value: u32, dirty: &mut Range<usize>) 
 }
 
 fn palette_entry(
-    look: &engine_core::SurfaceMaterial,
-    terrain_maps: &Option<engine_core::RenderSurfaceMaps>,
+    look: &engine_terrain::SurfaceMaterial,
+    terrain_maps: &Option<engine_terrain::RenderSurfaceMaps>,
     maps: &TerrainMaps,
     (placed, placed_size): ([f32; 4], [f32; 4]),
 ) -> PaletteEntry {
     let projection = match look.projection {
-        engine_core::SurfaceProjection::Top => 0.0,
-        engine_core::SurfaceProjection::Biplanar => 1.0,
+        engine_terrain::SurfaceProjection::Top => 0.0,
+        engine_terrain::SurfaceProjection::Biplanar => 1.0,
     };
     let (color, roughness, layer, scale, occlusion, metalness) = match terrain_maps {
         Some(terrain_maps) => {
@@ -517,7 +517,10 @@ fn octaves(meters: f32) -> f32 {
     engine_core::math::ln(engine_core::math::max(meters, 1.0e-6)) * std::f32::consts::LOG2_E
 }
 
-fn placed_sums(terrain: &RenderTerrain, layer: &engine_core::RenderPlacementLayer) -> PlacedSums {
+fn placed_sums(
+    terrain: &RenderTerrain,
+    layer: &engine_terrain::RenderPlacementLayer,
+) -> PlacedSums {
     let [smallest, largest] = layer.scale;
     let squared = (smallest * smallest + smallest * largest + largest * largest) / 3.0;
     let mut sums = PlacedSums::default();
@@ -543,7 +546,7 @@ fn placed_sums(terrain: &RenderTerrain, layer: &engine_core::RenderPlacementLaye
     sums
 }
 
-fn placed_asset(asset: &engine_core::RenderPlacementAsset) -> (f32, f32, [f32; 3]) {
+fn placed_asset(asset: &engine_terrain::RenderPlacementAsset) -> (f32, f32, [f32; 3]) {
     let bounds = asset.mesh.mesh.bounds();
     let extent = bounds.max() - bounds.min();
     let area = std::f32::consts::FRAC_PI_4 * extent.x * extent.z;
@@ -559,7 +562,7 @@ fn placed_asset(asset: &engine_core::RenderPlacementAsset) -> (f32, f32, [f32; 3
     (area, (high - low).length(), placed_color(asset))
 }
 
-fn placed_color(asset: &engine_core::RenderPlacementAsset) -> [f32; 3] {
+fn placed_color(asset: &engine_terrain::RenderPlacementAsset) -> [f32; 3] {
     let material = &asset.material.material;
     let factor = material.color();
     let mean = material

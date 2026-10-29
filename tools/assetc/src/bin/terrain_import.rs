@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
-use engine_core::{GivenRiver, RiversLayer};
+use engine_terrain::{GivenRiver, RiversLayer};
 use serde_json::{Value, json};
 use tiff::decoder::{Decoder, DecodingResult, Limits};
 use tiff::tags::Tag;
@@ -117,7 +117,7 @@ fn options() -> Result<Options, String> {
                 let precision: f64 = text
                     .parse()
                     .map_err(|error| format!("--river-precision {text}: {error}"))?;
-                let most = f64::from(engine_core::terrain_data::MAX_PRECISION);
+                let most = f64::from(engine_terrain::MAX_PRECISION);
                 if !(precision.is_finite() && (0.0..=most).contains(&precision)) {
                     return Err(format!("--river-precision must be 0 to {most} meters"));
                 }
@@ -499,9 +499,7 @@ fn read_rivers(
     place: &dyn Fn(f64, f64) -> [f64; 2],
     size: f64,
 ) -> Result<Vec<GivenRiver>, String> {
-    use engine_core::terrain_data::{
-        MAX_CREDIT, MAX_DEPTH, MAX_DISCHARGE, MAX_RIVER_POINTS, MAX_WIDTH,
-    };
+    use engine_terrain::{MAX_CREDIT, MAX_DEPTH, MAX_DISCHARGE, MAX_RIVER_POINTS, MAX_WIDTH};
     let name = path.display().to_string();
     let text = std::fs::read_to_string(path).map_err(|error| format!("{name}: {error}"))?;
     let document: Value =
@@ -758,7 +756,7 @@ fn run() -> Result<(), String> {
                 [east + 0.5 * size, 0.5 * size - north]
             };
             let mut lines = read_rivers(path, &place, size)?;
-            let most = engine_core::terrain_data::MAX_GIVEN_RIVERS;
+            let most = engine_terrain::MAX_GIVEN_RIVERS;
             if lines.len() > most {
                 eprintln!(
                     "terrain_import: warning: {} rivers on the terrain; keeping the {most} longest",
@@ -800,17 +798,12 @@ fn run() -> Result<(), String> {
                     }
                 );
                 let layer = RiversLayer {
-                    source: Some(
-                        described
-                            .chars()
-                            .take(engine_core::terrain_data::MAX_CREDIT)
-                            .collect(),
-                    ),
+                    source: Some(described.chars().take(engine_terrain::MAX_CREDIT).collect()),
                     lines,
                     precision: options
                         .river_precision
                         .unwrap_or(spacing)
-                        .min(f64::from(engine_core::terrain_data::MAX_PRECISION))
+                        .min(f64::from(engine_terrain::MAX_PRECISION))
                         as f32,
                     attribution: options.river_attribution.clone(),
                 };

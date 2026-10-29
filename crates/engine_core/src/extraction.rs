@@ -6,8 +6,7 @@ use crate::{
     GlobalTransforms, PresentationMode, PresentationState, PresentedTransforms, TransformIndex,
 };
 
-pub(crate) fn extract(retained: &mut RetainedRender, world: &World, aspect: f32) {
-    retained.extract_terrain(world, aspect);
+pub(crate) fn extract(retained: &mut RetainedRender, world: &World) {
     retained.set_tables(
         world
             .get_resource::<crate::StaticTables>()

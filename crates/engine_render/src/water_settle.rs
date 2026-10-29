@@ -5,10 +5,8 @@ use std::sync::Arc;
 
 use bytemuck::Zeroable;
 use engine_core::RecordKey;
-use engine_core::terrain_data::shallow_water::{CELL_MEANS, DRY, step_seconds};
-use engine_core::terrain_data::{
-    BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, SettleStart, SteadyWater, codec,
-};
+use engine_terrain::shallow_water::{CELL_MEANS, DRY, step_seconds};
+use engine_terrain::{BLOCK_CELLS, BLOCK_GROUND, BLOCK_SIDE, SettleStart, SteadyWater, codec};
 
 use crate::gpu_layouts::constants::{
     SIM_BLOCK_LOOKS, SIM_BURSTING, SIM_CELL_SUMS, SIM_KEEPING, SIM_LOCAL, SIM_LOOKING, SIM_OPEN,

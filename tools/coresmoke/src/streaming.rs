@@ -2,8 +2,9 @@ use std::path::Path;
 
 use engine::bricks::AddBrick;
 use engine_core::glam::Vec3;
-use engine_core::{Camera, Engine, EngineConfig, RenderSnapshot, TerrainSettings};
+use engine_core::{Camera, Engine, EngineConfig, RenderSnapshot};
 use engine_scene::SceneDocument;
+use engine_terrain::{RenderTerrains, TerrainSettings};
 
 use crate::{Report, hash};
 
@@ -20,7 +21,7 @@ pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
         *engine.app.world_mut().resource_mut::<Camera>() = camera(frame);
         engine.advance(1.0 / 60.0);
         engine.extract(ASPECT, &mut snapshot);
-        let terrains = &snapshot.terrain;
+        let terrains = RenderTerrains::of(&snapshot);
         let mut line = format!("{frame}: {:?}", terrains.stats);
         for terrain in &terrains.terrains {
             let mut keys: Vec<_> = terrain.tiles.iter().map(|tile| tile.key()).collect();

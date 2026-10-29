@@ -1,8 +1,8 @@
 use engine_core::{
     glam::{Mat4, Vec3, Vec4},
     math,
-    terrain_data::Pyramid,
 };
+use engine_terrain::Pyramid;
 
 use crate::gpu_layouts::constants::{GROUND_TEXELS, SHADOW_APRON, SHADOW_REGIONS};
 

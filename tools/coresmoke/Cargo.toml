@@ -12,6 +12,7 @@ engine = { workspace = true, features = ["dev"] }
 engine_core = { workspace = true, features = ["dev"] }
 engine_native.workspace = true
 engine_scene.workspace = true
+engine_terrain.workspace = true
 serde_json.workspace = true
 
 [lints]

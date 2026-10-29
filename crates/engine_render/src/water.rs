@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use engine_core::glam::Vec3;
 use engine_core::math::max;
-use engine_core::terrain_data::Fall;
-use engine_core::{RenderSnapshot, RenderTerrain, Water, WaterStats, Wind};
+use engine_core::{RenderSnapshot, WaterStats};
+use engine_terrain::{Fall, RenderTerrain, Water, Wind};
 
 use crate::bindings::{WATER, WATER_BEHIND};
 use crate::gpu_layouts::terrain::{SubdivisionUniform, TerrainUniform, ViewUniform};

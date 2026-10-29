@@ -15,10 +15,11 @@ impl SceneShading {
 
     pub(crate) fn of(snapshot: &RenderSnapshot) -> Self {
         let environment = &snapshot.environment;
+        let terrain_environment = engine_terrain::TerrainEnvironment::of(snapshot);
         let shadows = environment.shadows.sanitized();
-        let terrain = environment.terrain.sanitized();
+        let terrain = terrain_environment.terrain.sanitized();
         let clouds = environment.clouds.sanitized();
-        let occupancy = environment.occupancy;
+        let occupancy = terrain_environment.occupancy;
         let horizons = environment.shadows.enabled && terrain.enabled && terrain.sun_shadows;
         let features = [
             (Self::SHADOW_MAPS, shadows.enabled),

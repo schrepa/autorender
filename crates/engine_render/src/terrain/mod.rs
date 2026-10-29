@@ -3,8 +3,8 @@ use std::ops::Range;
 
 use bytemuck::Zeroable;
 use engine_core::glam::{DVec3, Mat4, Vec3, Vec4};
-use engine_core::terrain_data::gpu::SurfaceData;
-use engine_core::{RenderTerrain, RenderTerrains, TileKey};
+use engine_terrain::gpu::SurfaceData;
+use engine_terrain::{RenderTerrain, RenderTerrains, TileKey};
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
@@ -44,7 +44,7 @@ pub(crate) use water_blocks::TerrainWaterDraws;
 
 pub(crate) use crate::gpu_layouts::terrain::PatchRecord;
 
-const LAYER_SIZE: u32 = engine_core::terrain_data::TILE_STRIDE;
+const LAYER_SIZE: u32 = engine_terrain::TILE_STRIDE;
 const SLOT: u64 = 256;
 const VIEWS: u64 = 7;
 pub(crate) const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
@@ -137,12 +137,12 @@ pub(crate) struct TerrainViews<'a> {
     pub eye: Vec3,
     pub detail_eye: Vec3,
     pub regions: &'a [(usize, crate::shadows::KeptRefresh)],
-    pub settings: engine_core::TerrainSettings,
+    pub settings: engine_terrain::TerrainSettings,
     pub shadows: bool,
-    pub water: engine_core::Water,
+    pub water: engine_terrain::Water,
     pub fades: bool,
     pub now: f32,
-    pub cover: Option<(engine_core::GroundCover, f32)>,
+    pub cover: Option<(engine_terrain::GroundCover, f32)>,
 }
 
 pub(crate) struct TerrainPass {

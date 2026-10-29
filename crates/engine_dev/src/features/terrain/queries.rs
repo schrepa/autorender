@@ -1,6 +1,6 @@
 use engine_collision::{CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
 use engine_core::{
-    Engine, Feature, RouteOptions, Terrain, Terrains, WaterKind,
+    Engine, Feature, WaterKind,
     bevy_ecs::prelude::World,
     glam::{Vec2, Vec3},
 };
@@ -8,6 +8,7 @@ use engine_scene::{SceneEntity, SceneInstance};
 use engine_settings::ErrorCode;
 #[cfg(not(target_arch = "wasm32"))]
 use engine_settings::stated;
+use engine_terrain::{RouteOptions, Terrain, Terrains};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -192,9 +193,8 @@ impl EngineQuery for TerrainRouteQuery {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn route_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
-    let state =
-        stated(engine_core::RouteOptions::rule_of(field).expect("route options declare the field"));
-    let default = serde_json::to_value(engine_core::RouteOptions::default())
+    let state = stated(RouteOptions::rule_of(field).expect("route options declare the field"));
+    let default = serde_json::to_value(RouteOptions::default())
         .expect("route options serialize")[field]
         .clone();
     move |schema| {
@@ -236,7 +236,7 @@ fn heights(engine: &mut Engine, points: &[[f64; 2]]) -> Result<Value, DevError> 
                 let path = terrains.layers(sample.terrain).and_then(|layers| {
                     let terrain = terrains.terrain(sample.terrain)?;
                     let road = layers.path_at(x - terrain.origin.x, z - terrain.origin.z);
-                    (road.distance < engine_core::terrain_data::PATH_FAR).then_some(road.edge())
+                    (road.distance < engine_terrain::PATH_FAR).then_some(road.edge())
                 });
                 HeightSample {
                     terrain: terrain_key(world, sample.terrain),

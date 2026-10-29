@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use engine_core::SIM_TOUCHES;
+use engine_terrain::SIM_TOUCHES;
 
 use super::constants::SIM_SLOTS;
 

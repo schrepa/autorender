@@ -50,8 +50,7 @@ impl Renderer {
             }
         }
         self.shadows.plan_groups(&self.plan, frame, gpu_mode);
-        let placed: BTreeSet<MeshHandle> = snapshot
-            .terrain
+        let placed: BTreeSet<MeshHandle> = engine_terrain::RenderTerrains::of(snapshot)
             .terrains
             .iter()
             .flat_map(|terrain| terrain.assets.iter().flatten())
@@ -178,12 +177,11 @@ impl Renderer {
                     .map(|group| (group.mesh, &snapshot.meshes[group.source_index])),
             )
             .chain(
-                snapshot
-                    .terrain
+                engine_terrain::RenderTerrains::of(snapshot)
                     .terrains
                     .iter()
                     .flat_map(|terrain| terrain.assets.iter().flatten())
-                    .flat_map(engine_core::RenderPlacementAsset::meshes)
+                    .flat_map(engine_terrain::RenderPlacementAsset::meshes)
                     .map(|mesh| (mesh.handle, mesh)),
             )
             .filter(|_| mesh_uploads);
@@ -360,7 +358,8 @@ impl Renderer {
         camera.set_detail(snapshot.detail_eye);
         let seconds = snapshot.elapsed_seconds;
         let previous = self.last_seconds.replace(seconds).unwrap_or(seconds);
-        let wind = snapshot.environment.wind;
+        let terrain_environment = engine_terrain::TerrainEnvironment::of(snapshot);
+        let wind = terrain_environment.wind;
         camera.wind = [
             wind.velocity[0],
             wind.velocity[1],
@@ -401,7 +400,7 @@ impl Renderer {
         if let Some(maps) = self.features.occupancy.get_mut().prepare(
             &self.device,
             &self.queue,
-            &snapshot.environment.occupancy,
+            &terrain_environment.occupancy,
             snapshot.detail_eye,
             (
                 self.scatter_draws.covers(),
@@ -721,8 +720,7 @@ impl Renderer {
                 slot_capacity: self.instances.capacity,
                 mesh_layout: self.mesh_layout,
                 placement: &placement,
-                terrain: snapshot
-                    .terrain
+                terrain: engine_terrain::RenderTerrains::of(snapshot)
                     .terrains
                     .iter()
                     .any(|terrain| terrain.drawn),
@@ -1107,7 +1105,7 @@ impl Renderer {
         let Some(post) = self.features.post.get_mut() else {
             return;
         };
-        let terrains = &state.snapshot.terrain;
+        let terrains = engine_terrain::RenderTerrains::of(state.snapshot);
         let infos: Vec<crate::scatter::TerrainInfo> = terrains
             .terrains
             .iter()
@@ -1115,7 +1113,9 @@ impl Renderer {
             .filter(|_| frame.reflections)
             .map(|(index, terrain)| crate::world_trace::terrain_info(&self.terrain, index, terrain))
             .collect();
-        let cover = state.snapshot.environment.ground_cover.sanitized();
+        let cover = engine_terrain::TerrainEnvironment::of(state.snapshot)
+            .ground_cover
+            .sanitized();
         let trace = frame.reflections.then(|| crate::world_trace::TraceFrame {
             terrains,
             infos: &infos,

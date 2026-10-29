@@ -3,8 +3,8 @@ use std::rc::Rc;
 
 use engine_core::glam::{Vec2, Vec3};
 use engine_core::math::{clamp, max};
-use engine_core::terrain_data::shallow_water::step_seconds;
-use engine_core::{RenderTerrain, Water};
+use engine_terrain::shallow_water::step_seconds;
+use engine_terrain::{RenderTerrain, Water};
 
 use crate::bindings::WATER_PARTICLES;
 use crate::buffers::ReadbackRing;
