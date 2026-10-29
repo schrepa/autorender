@@ -1,3 +1,13 @@
+import package::engine::color::{dither_hash, luminance};
+import package::frame::encode::{dithering, encoded, glow_weight, grade, stored};
+import package::frame::view::{camera, lighting, stable_normalize};
+import package::meshes::declarations::{SceneTargets, TemporalTargets};
+import package::sky::air::sun_disc;
+import package::sky::common::{air_disc, air_radius, air_transmittance, sunlight_over};
+import package::sky::light::{
+    clouded, physical_sky, sky_air, sky_air_light, sky_along, sky_domes, sky_table_sampler
+};
+
 struct SkyOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) ndc: vec2<f32>,

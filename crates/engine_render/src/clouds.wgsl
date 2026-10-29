@@ -1,3 +1,5 @@
+import package::sky::common::{SkyUniform, sunlight_over};
+
 struct CloudUniform {
     eye: vec4<f32>,
     mirror: vec4<f32>,
