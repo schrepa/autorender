@@ -1,11 +1,13 @@
 import package::engine::color::encode_srgb;
 import package::engine::math::{pcg, unit};
-import package::frame::encode::{glow_weight, grade};
-import package::frame::view::{camera, lighting};
-import package::lighting::sun::sun_visibility;
-import package::shadows::sample::{SHADOW_MAPS, map_visibility, shadow};
-import package::sky::air::{atmospheric, atmospheric_cover, cloud_passing, sky_average};
-import package::terrain::horizons::terrain_visibility;
+import package::face::bloom::glow_weight;
+import package::face::horizons::terrain_visibility;
+import package::face::lighting::sun_visibility;
+import package::face::shadows::{sun_shadow, sun_shadowed};
+import package::face::sky::{ambient, atmospheric, atmospheric_cover, cloud_passing, sky_average};
+import package::face::sun::{sun_color, sun_direction};
+import package::face::tonemap::tonemap;
+import package::frame::view::camera;
 import package::transparent::weighted::{TransparentTargets, weighted_particle};
 
 struct Particles {
@@ -127,9 +129,9 @@ fn vs_particle(@builtin(vertex_index) vertex: u32,
     output.center = vec4<f32>(position, size * MIST_SPREAD);
     output.key = unit(pcg(seed + 5u)) * 256.0;
     output.sunlit = 1.0;
-    if SHADOW_MAPS && shadow.state.x != 0.0 {
-        output.sunlit = map_visibility(position, lighting.sun.xyz, vec3<f32>(0.0),
-            vec3<f32>(0.0));
+    if sun_shadowed() {
+        output.sunlit = sun_shadow(position, sun_direction(), vec3<f32>(0.0), vec3<f32>(0.0),
+            0.0);
     }
     return output;
 }
@@ -193,17 +195,17 @@ fn fs_particle(input: ParticleOutput) -> TransparentTargets {
     let eye = camera.position.xyz;
     let distance = length(input.world - eye);
     var sunlit = input.sunlit;
-    if lighting.sun.y > 0.0 {
-        if SHADOW_MAPS && shadow.state.x != 0.0 {
+    if sun_direction().y > 0.0 {
+        if sun_shadowed() {
             sunlit = min(sunlit, terrain_visibility(input.world, false));
         }
         sunlit *= cloud_passing(input.world);
     }
-    let light = input.color.rgb * (sky_average(vec3<f32>(0.0, 1.0, 0.0)) * lighting.zenith.w
-        + lighting.sun_color.rgb * (0.5 * sunlit));
+    let light = input.color.rgb * (sky_average(vec3<f32>(0.0, 1.0, 0.0)) * ambient()
+        + sun_color() * (0.5 * sunlit));
     let view = normalize(input.world - eye);
     let fogged = atmospheric(light, eye, input.world, view).rgb;
-    return weighted_particle(grade(fogged), alpha, distance);
+    return weighted_particle(tonemap(fogged), alpha, distance);
 }
 
 @fragment
@@ -235,21 +237,21 @@ fn fs_particle_mist(input: ParticleOutput) -> TransparentTargets {
     if alpha <= 1.0e-3 {
         discard;
     }
-    let sun = lighting.sun.xyz;
+    let sun = sun_direction();
     var sunlight = vec3<f32>(0.0);
     if sun.y > 0.0 {
         let g = MIST_PHASE_G;
         let denominator = 1.0 + g * g - 2.0 * g * dot(sun, direction);
         let phase = (1.0 - g * g) / (denominator * sqrt(denominator));
-        sunlight = lighting.sun_color.rgb * (MIST_SUN * phase)
+        sunlight = sun_color() * (MIST_SUN * phase)
             * sun_visibility(middle, sun, vec3<f32>(0.0), vec3<f32>(0.0), length(to_middle),
-                false);
+                false, 0.0);
     }
-    let sky = sky_average(vec3<f32>(0.0, 1.0, 0.0)) * lighting.zenith.w;
-    let around = lighting.sun_color.rgb * (0.35 * saturate(sun.y)) + sky * 0.5;
+    let sky = sky_average(vec3<f32>(0.0, 1.0, 0.0)) * ambient();
+    let around = sun_color() * (0.35 * saturate(sun.y)) + sky * 0.5;
     let light = input.color.rgb * (mix(around, sky, 0.5) + sunlight);
     let fogged = atmospheric(light, eye, closest, direction).rgb;
-    return weighted_particle(grade(fogged), alpha, length(closest - eye));
+    return weighted_particle(tonemap(fogged), alpha, length(closest - eye));
 }
 
 fn added(input: ParticleOutput) -> vec3<f32> {
@@ -263,7 +265,7 @@ fn fs_particle_add(input: ParticleOutput) -> @location(0) vec4<f32> {
     if outside(input) {
         discard;
     }
-    return vec4<f32>(encode_srgb(grade(added(input))), 0.0);
+    return vec4<f32>(encode_srgb(tonemap(added(input))), 0.0);
 }
 
 struct AddedTargets {
@@ -278,7 +280,7 @@ fn fs_particle_add_post(input: ParticleOutput) -> AddedTargets {
     }
     let light = added(input);
     var targets: AddedTargets;
-    targets.color = vec4<f32>(grade(light), 0.0);
+    targets.color = vec4<f32>(tonemap(light), 0.0);
     targets.glow = vec2<f32>(glow_weight(light), 0.0);
     return targets;
 }

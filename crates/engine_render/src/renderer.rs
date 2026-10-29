@@ -56,10 +56,10 @@ mod opaque;
 mod previous;
 #[cfg(feature = "dev")]
 mod probe;
-pub(crate) mod probe_captures;
 mod queries;
 mod records;
 mod startup;
+mod view_draws;
 
 pub use attribution::GpuPassTimes;
 pub use camera::CameraBindings;

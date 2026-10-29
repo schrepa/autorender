@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 
-gpu_structs! {
+engine_render::gpu_structs! {
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct EmitterData as ["Emitter"] {
         pub origin: [f32; 3],
