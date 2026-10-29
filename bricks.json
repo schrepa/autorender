@@ -1214,7 +1214,7 @@
       "stats": [],
       "system_set": "scene_views",
       "type": "engine::host::views::SceneViewsBrick",
-      "version": "6db00cd459d8bbd0e866ad8e05911784104a48c61b6dd08a4575cc1431d22979"
+      "version": "d825afc14cd615c9ebab05d5d5d0fb4c6f9dc3adfb977cceb79334be74ffbef4"
     }
   ]
 }

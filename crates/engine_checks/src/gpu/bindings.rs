@@ -416,7 +416,11 @@ fn tables() -> Vec<String> {
     errors
 }
 
-type Resource = (&'static str, fn(&StageCounts) -> u32, fn(&StageLimits) -> u32);
+type Resource = (
+    &'static str,
+    fn(&StageCounts) -> u32,
+    fn(&StageLimits) -> u32,
+);
 
 const RESOURCES: [Resource; 5] = [
     (
