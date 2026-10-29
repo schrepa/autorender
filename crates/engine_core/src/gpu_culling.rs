@@ -13,7 +13,8 @@ impl Brick for Culling {
             .settings::<OcclusionCulling>()
             .settings::<SubpixelCulling>()
             .passes(&["occlusion_test", "opaque_phase_two"])
-            .explain(explain_culled);
+            .explain(explain_culled)
+            .smoke("culling_settings", true, crate::brick_smokes::culling_settings);
     }
 }
 

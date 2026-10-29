@@ -26,7 +26,12 @@ impl Brick for PostEffects {
             .settings::<AutoExposure>()
             .settings::<Reflections>()
             .settings::<TemporalAntialiasing>()
-            .passes(&["exposure", "effects", "composite", "temporal_resolve"]);
+            .passes(&["exposure", "effects", "composite", "temporal_resolve"])
+            .smoke(
+                "temporal_antialiasing",
+                true,
+                crate::brick_smokes::temporal_antialiasing,
+            );
     }
 }
 

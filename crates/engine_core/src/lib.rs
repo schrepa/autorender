@@ -6,6 +6,7 @@
 mod antialiasing;
 mod atmosphere;
 pub mod bounds;
+mod brick_smokes;
 mod bricks;
 mod clock;
 mod clouds;
