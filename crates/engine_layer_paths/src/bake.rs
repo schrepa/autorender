@@ -1,16 +1,14 @@
 use std::sync::Arc;
 
+use engine_core::Pyramid;
+use engine_terrain::Layers;
+use engine_terrain::layer::{LayerBake, TerrainLayer};
 use glam::Vec2;
 
-use super::Bake;
-use crate::Pyramid;
-use crate::layers::Layers;
-use crate::path::{PathLayer, PathProfile, RIVER_DEPTH};
+use crate::TerrainPath;
+use crate::profile::{PathLayer, PathProfile, RIVER_DEPTH};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PathBake;
-
-pub struct PathWork {
+pub(crate) struct PathWork {
     layer: Arc<PathLayer>,
     profile: Vec<Vec2>,
     step: f32,
@@ -18,14 +16,10 @@ pub struct PathWork {
     water: Vec<Option<f32>>,
 }
 
-impl Bake for PathBake {
-    type Layer = Arc<PathLayer>;
-    type Found = PathProfile;
-    type Work = PathWork;
-
-    fn start(layer: &Arc<PathLayer>, _pyramid: &Pyramid) -> PathWork {
+impl PathWork {
+    pub(crate) fn start(layer: &Arc<PathLayer>) -> Self {
         let (profile, step) = layer.profile_points();
-        PathWork {
+        Self {
             layer: layer.clone(),
             ground: Vec::with_capacity(profile.len()),
             water: Vec::with_capacity(profile.len()),
@@ -33,16 +27,18 @@ impl Bake for PathBake {
             step,
         }
     }
+}
 
+impl LayerBake for PathWork {
     fn advance(
-        work: &mut PathWork,
+        &mut self,
         below: &Arc<Layers>,
         pyramid: &Pyramid,
         budget: &mut u64,
-    ) -> Option<PathProfile> {
+    ) -> Option<Arc<dyn TerrainLayer>> {
         let spacing = pyramid.spacing(0);
         let cost = below.height_cost();
-        while let Some(&point) = work.profile.get(work.ground.len()) {
+        while let Some(&point) = self.profile.get(self.ground.len()) {
             if *budget == 0 {
                 return None;
             }
@@ -57,15 +53,18 @@ impl Bake for PathBake {
                     .filter(|&(_, depth)| depth > RIVER_DEPTH)
                     .map(|(surface, _)| surface)
             });
-            work.ground.push(ground);
-            work.water.push(water);
+            self.ground.push(ground);
+            self.water.push(water);
             *budget = budget.saturating_sub(cost);
         }
-        Some(PathProfile::new(
-            &work.layer,
-            work.step,
-            &work.ground,
-            &work.water,
-        ))
+        Some(Arc::new(TerrainPath {
+            settings: self.layer.clone(),
+            profile: Some(Arc::new(PathProfile::new(
+                &self.layer,
+                self.step,
+                &self.ground,
+                &self.water,
+            ))),
+        }))
     }
 }
