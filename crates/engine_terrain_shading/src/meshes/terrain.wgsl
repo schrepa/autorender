@@ -1,21 +1,19 @@
-import package::frame::encode::encoded;
+import package::face::dither::{encoded, stored};
+import package::face::heightfield::{COVER_FAR_SIDE, COVER_ROUGHNESS, CoverLaw, SURFACE_MESHLET_LEVEL,
+    WATER_HELD, WaterCell, cover_clump_layer, cover_clump_spacing, cover_clumped, cover_growth,
+    cover_seen, cover_share, cover_shown, macro_tint, spread_slopes, surface_vertex, terrain,
+    terrain_directory, terrain_level_height, terrain_view, water_cell, water_level};
+import package::face::horizons::bounce_light;
+import package::face::lighting::{BODY_GROUND, SurfacePoint, finish_ground, local_light, widened};
+import package::face::shadows::{KeptLift, keep_lift, kept_texels};
+import package::face::sun::sun_direction;
 import package::frame::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail_distance, detail_level,
-    detail_resolved, detail_span, eye_world, lighting, material_detail, stable_normalize};
-import package::lighting::surface::{BODY_GROUND, Shaded, SurfacePoint, finish_ground};
-import package::lights::shade::local_light;
+    detail_resolved, detail_span, eye_world, fade_noise, material_detail, stable_normalize};
 import package::meshes::declarations::{SceneTargets, TemporalTargets};
-import package::meshes::surface::{scene_targets, temporal_targets, widened, world_plane};
-import package::shadows::sample::{KeptLift, fade_noise, kept_lift, shadow, shadow_level};
-import package::terrain::bounce::bounce_light;
+import package::meshes::surface::{Shaded, scene_targets, temporal_targets, world_plane};
 import package::terrain::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
 import package::terrain::sky::terrain_sky_map;
-import package::terrain::surface::{SURFACE_MESHLET_LEVEL, surface_leaf, surface_relative,
-    surface_vertex, terrain_directory, terrain_level_height, terrain_true_height};
-import package::terrain::variety::{COVER_FAR_SIDE, COVER_ROUGHNESS, CoverLaw, cover_clump_layer,
-    cover_clump_spacing, cover_clumped, cover_growth, cover_seen, cover_share, cover_shown,
-    macro_tint, spread_slopes};
-import package::terrain::vertex::{terrain, terrain_view};
-import package::water::surface::{WATER_HELD, WaterCell, water_cell, water_level};
+import package::terrain::surface::{surface_leaf, surface_relative, terrain_true_height};
 
 @group(1) @binding(20) var<storage, read> terrain_holes: array<u32>;
 
@@ -240,12 +238,13 @@ fn terrain_pixel_shading(world: vec3<f32>) -> TerrainShadingLevel {
 const KEPT_GROUND_TEXELS: f32 = 2.0;
 
 fn terrain_kept_lift(world: vec3<f32>, local: vec2<f32>) -> KeptLift {
+    let kept = kept_texels(world);
     var lift: KeptLift;
-    lift.first = shadow_level(world).level;
-    let count = u32(shadow.level_state.x);
+    lift.first = kept.first;
+    let count = kept.count;
     let levels = terrain.directory.y;
     for (var index = 0u; index < 4u && lift.first + index < count; index++) {
-        let texel = shadow.windows[lift.first + index].w;
+        let texel = kept.texels[index];
         var level = 0u;
         while level + 1u < levels
             && terrain.anchor.w * f32(1u << level) < KEPT_GROUND_TEXELS * texel {
@@ -754,7 +753,8 @@ fn terrain_across(world: vec3<f32>) -> f32 {
 }
 
 fn terrain_blade_normal(ground: vec3<f32>) -> vec3<f32> {
-    let across = vec3<f32>(lighting.sun.x, 0.0, lighting.sun.z);
+    let sun = sun_direction();
+    let across = vec3<f32>(sun.x, 0.0, sun.z);
     let side = across * (0.6366 / max(length(across), 1.0e-4));
     return stable_normalize(mix(side, ground, 0.6));
 }
@@ -772,10 +772,11 @@ fn terrain_canopy(leaves: f32, site: TerrainSite) -> f32 {
 }
 
 fn terrain_canopy_through(site: TerrainSite) -> f32 {
-    let lengths = length(site.toward.xz) * length(lighting.sun.xz);
+    let sun = sun_direction();
+    let lengths = length(site.toward.xz) * length(sun.xz);
     var through = 0.5;
     if lengths > 1.0e-4 {
-        through = acos(clamp(dot(site.toward.xz, lighting.sun.xz) / lengths, -1.0, 1.0)) / PI;
+        through = acos(clamp(dot(site.toward.xz, sun.xz) / lengths, -1.0, 1.0)) / PI;
     }
     return mix(1.0, COVER_FAR_SIDE, through);
 }
@@ -1099,62 +1100,6 @@ fn terrain_band_rise(blend: TerrainBlend, world: vec3<f32>, normal: vec3<f32>,
     return rise;
 }
 
-struct TerrainGroundSamples {
-    controls: vec4<u32>,
-    gradients: vec4<u32>,
-    within: vec2<f32>,
-}
-
-fn terrain_ground_samples(local: vec2<f32>) -> TerrainGroundSamples {
-    var samples = TerrainGroundSamples(vec4<u32>(0u), vec4<u32>(0u), vec2<f32>(0.0));
-    let base = terrain.directory.x;
-    let levels = terrain.directory.y;
-    for (var index = 0u; index < levels; index++) {
-        let header = base + index * 4u;
-        let at = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
-        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
-        let tile = min(vec2<u32>(at / 256.0), tiles - vec2<u32>(1u));
-        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
-        if layer == 0xffffffffu || terrain_layer_fades(layer).y >= 1.0 {
-            continue;
-        }
-        let within = clamp(at - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
-        let corner = min(vec2<u32>(within), vec2<u32>(255u));
-        let uv = (vec2<f32>(corner) + vec2<f32>(2.0)) / 259.0;
-        samples.controls = textureGather(0, terrain_control, terrain_control_sampler, uv, layer);
-        samples.gradients = textureGather(0, terrain_normals, terrain_control_sampler, uv, layer);
-        samples.within = within - vec2<f32>(corner);
-        return samples;
-    }
-    return samples;
-}
-
-struct TerrainGroundRise {
-    rise: f32,
-    relief: bool,
-}
-
-fn terrain_ground_rise(samples: TerrainGroundSamples, local: vec2<f32>, height: f32,
-        meters: f32) -> TerrainGroundRise {
-    let gradient = terrain_gradient_between(samples.gradients, samples.within);
-    let normal = normalize(vec3<f32>(-gradient.x, 1.0, -gradient.y));
-    var blend: TerrainBlend;
-    blend.ids = vec4<u32>(0xffffffffu);
-    blend.weights = vec4<f32>(0.0);
-    terrain_controls_blend(&blend, samples.controls, samples.within, 1.0);
-    terrain_steep_blend(&blend, normal);
-    terrain_border_blend(&blend, local, TerrainShadingLevel(0u, 0.0));
-    let world = terrain.origin.xyz + vec3<f32>(local.x, height, local.y);
-    var raised = TerrainGroundRise(0.0, false);
-    raised.rise = terrain_band_rise(blend, world, normal, vec2<f32>(meters)).x * normal.y;
-    for (var slot = 0u; slot < 4u; slot++) {
-        if blend.weights[slot] > 0.0 && terrain_material_rises(terrain_material(blend.ids[slot])) {
-            raised.relief = true;
-        }
-    }
-    return raised;
-}
-
 fn terrain_displacement(world: vec3<f32>, local: vec2<f32>, pieces: f32) -> TerrainLift {
     var lift = TerrainLift(vec3<f32>(0.0), vec3<f32>(0.0));
     let across = max(detail_across(world), 1.0e-6);
@@ -1377,7 +1322,7 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     let world = eye_world(relative);
     let local = world.xz - terrain.origin.xz;
     let geometric = site.geometric;
-    kept_lift = terrain_kept_lift(world, local);
+    keep_lift(terrain_kept_lift(world, local));
     var surface = site;
     let held = terrain_level_height(site.world.xz - terrain.origin.xz, 0u);
     if held.found {
@@ -1511,26 +1456,20 @@ struct TerrainTemporalTargets {
 
 fn terrain_scene_targets(shaded: Shaded, resolved: TerrainResolved, position: vec4<f32>)
         -> TerrainSceneTargets {
-    let targets = scene_targets(shaded, position.xy);
+    let targets = scene_targets(shaded, stored(shaded.color, position.xy));
     return TerrainSceneTargets(targets.color, targets.glow, targets.surface, resolved.depth);
 }
 
 fn terrain_temporal_targets(shaded: Shaded, resolved: TerrainResolved, position: vec4<f32>)
         -> TerrainTemporalTargets {
-    let targets = temporal_targets(shaded, position, resolved.previous);
+    let targets = temporal_targets(shaded, stored(shaded.color, position.xy), position,
+        resolved.previous);
     return TerrainTemporalTargets(targets.color, targets.motion, targets.glow, targets.surface,
         resolved.depth);
 }
 
 @fragment
 fn fs_terrain_resolve_post(@builtin(position) position: vec4<f32>) -> TerrainSceneTargets {
-    let resolved = terrain_resolved(position, 0.5);
-    return terrain_scene_targets(finish_ground(resolved.point, vec3<f32>(0.0)), resolved,
-        position);
-}
-
-@fragment
-fn fs_terrain_resolve_post_lit(@builtin(position) position: vec4<f32>) -> TerrainSceneTargets {
     let resolved = terrain_resolved(position, 0.5);
     let point = resolved.point;
     return terrain_scene_targets(finish_ground(point, local_light(point, position.xy)), resolved,
@@ -1541,26 +1480,12 @@ fn fs_terrain_resolve_post_lit(@builtin(position) position: vec4<f32>) -> Terrai
 fn fs_terrain_resolve_temporal(@builtin(position) position: vec4<f32>)
         -> TerrainTemporalTargets {
     let resolved = terrain_resolved(position, fade_noise(position.xy));
-    return terrain_temporal_targets(finish_ground(resolved.point, vec3<f32>(0.0)), resolved,
-        position);
-}
-
-@fragment
-fn fs_terrain_resolve_temporal_lit(@builtin(position) position: vec4<f32>)
-        -> TerrainTemporalTargets {
-    let resolved = terrain_resolved(position, fade_noise(position.xy));
     let point = resolved.point;
     return terrain_temporal_targets(finish_ground(point, local_light(point, position.xy)),
         resolved, position);
 }
 
 fn shade_terrain(input: TerrainOutput) -> Shaded {
-    let point = terrain_point(input.relative.xyz);
-    terrain_holes_test(input.cell);
-    return finish_ground(point, vec3<f32>(0.0));
-}
-
-fn shade_terrain_lit(input: TerrainOutput) -> Shaded {
     let point = terrain_point(input.relative.xyz);
     terrain_holes_test(input.cell);
     return finish_ground(point, local_light(point, input.clip_position.xy));
@@ -1580,38 +1505,19 @@ fn fs_terrain(input: TerrainOutput) -> @location(0) vec4<f32> {
 }
 
 @fragment
-fn fs_terrain_lit(input: TerrainOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_terrain_lit(input).color, input.clip_position.xy), 1.0);
-}
-
-@fragment
 fn fs_terrain_post(input: TerrainOutput) -> SceneTargets {
-    return scene_targets(shade_terrain(input), input.clip_position.xy);
-}
-
-@fragment
-fn fs_terrain_post_lit(input: TerrainOutput) -> SceneTargets {
-    return scene_targets(shade_terrain_lit(input), input.clip_position.xy);
+    let shaded = shade_terrain(input);
+    return scene_targets(shaded, stored(shaded.color, input.clip_position.xy));
 }
 
 @fragment
 fn fs_terrain_temporal(input: TerrainTemporalOutput) -> TemporalTargets {
-    return temporal_targets(shade_terrain(terrain_temporal_output(input)), input.clip_position,
-        input.previous);
-}
-
-@fragment
-fn fs_terrain_temporal_lit(input: TerrainTemporalOutput) -> TemporalTargets {
-    return temporal_targets(shade_terrain_lit(terrain_temporal_output(input)),
+    let shaded = shade_terrain(terrain_temporal_output(input));
+    return temporal_targets(shaded, stored(shaded.color, input.clip_position.xy),
         input.clip_position, input.previous);
 }
 
 @fragment
 fn fs_terrain_probe(input: TerrainOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(shade_terrain(input).linear, 1.0);
-}
-
-@fragment
-fn fs_terrain_probe_lit(input: TerrainOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(shade_terrain_lit(input).linear, 1.0);
 }

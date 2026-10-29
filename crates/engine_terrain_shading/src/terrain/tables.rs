@@ -1,19 +1,44 @@
 use super::atlas::TileAtlas;
 use super::*;
 use crate::gpu_layouts::constants::WATER_TILE_WORDS;
-use engine_terrain::Pyramid;
+use engine_terrain::{Cover, Pyramid};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct CoverTerms {
+    densest: f32,
+    width: f32,
+}
+
+impl CoverTerms {
+    fn of<'a>(covers: impl IntoIterator<Item = &'a Cover>) -> Self {
+        covers.into_iter().fold(Self::default(), |terms, cover| {
+            if cover.density > terms.densest {
+                Self {
+                    densest: cover.density,
+                    width: cover.width,
+                }
+            } else {
+                terms
+            }
+        })
+    }
+
+    pub(super) fn span(self, pixels_per_meter: f32) -> f32 {
+        self.width * pixels_per_meter
+    }
+}
 
 pub(crate) struct TerrainTables {
     pub(super) uniforms: wgpu::Buffer,
     pub(super) uniform_generation: u64,
     pub(super) uniform_ids: Vec<u64>,
-    pub(super) holes: crate::buffers::Growable,
+    pub(super) holes: engine_render::buffers::Growable,
     pub(super) hole_offsets: HashMap<(u64, TileKey), u32>,
     hole_layers: HashMap<(u64, TileKey), u32>,
     pub(super) holes_generation: u64,
     fades_stale: bool,
     pub(super) fade_words: u32,
-    pub(super) directory: crate::buffers::Growable,
+    pub(super) directory: engine_render::buffers::Growable,
     pub(super) directory_written: Vec<u32>,
     directory_layout: Vec<(u64, Pyramid)>,
     directory_spare: Vec<u32>,
@@ -30,17 +55,17 @@ pub(crate) struct TerrainTables {
     pub(super) covers: wgpu::Buffer,
     covers_written: Vec<CoverEntry>,
     covers_spare: Vec<CoverEntry>,
-    pub(super) cover_terms: Vec<crate::ground_cover::CoverTerms>,
+    pub(super) cover_terms: Vec<CoverTerms>,
     pub(super) cover_tallest: f32,
 }
 
 impl TerrainTables {
     pub(super) fn new(device: &wgpu::Device) -> Self {
         Self {
-            uniforms: crate::buffers::uniform(device, "engine/terrain-uniforms", SLOT),
+            uniforms: engine_render::buffers::uniform(device, "engine/terrain-uniforms", SLOT),
             uniform_generation: 0,
             uniform_ids: Vec::new(),
-            holes: crate::buffers::Growable::new(
+            holes: engine_render::buffers::Growable::new(
                 device,
                 "engine/terrain-holes",
                 16,
@@ -51,7 +76,7 @@ impl TerrainTables {
             holes_generation: 0,
             fades_stale: true,
             fade_words: 0,
-            directory: crate::buffers::Growable::new(
+            directory: engine_render::buffers::Growable::new(
                 device,
                 "engine/terrain-directory",
                 16,
@@ -64,7 +89,7 @@ impl TerrainTables {
             directory_revision: 0,
             directory_bases: Vec::new(),
             water_base: 0,
-            palette: crate::buffers::uniform(
+            palette: engine_render::buffers::uniform(
                 device,
                 "engine/terrain-palette",
                 PALETTE_BYTES as u64,
@@ -74,7 +99,7 @@ impl TerrainTables {
             palette_spare: Vec::new(),
             placed_layers: Vec::new(),
             dropped_materials: 0,
-            covers: crate::buffers::storage(
+            covers: engine_render::buffers::storage(
                 device,
                 "engine/terrain-covers",
                 (PALETTE_ENTRIES * size_of::<CoverEntry>()) as u64,
@@ -90,7 +115,7 @@ impl TerrainTables {
     pub(super) fn write_holes(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         (atlas, edited): (&TileAtlas, bool),
         max_layers: u32,
     ) {
@@ -140,7 +165,7 @@ impl TerrainTables {
 
     pub(super) fn write_fades(
         &mut self,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         (words, dirty): (&[u32], Range<usize>),
     ) {
         if words.is_empty() {
@@ -160,7 +185,7 @@ impl TerrainTables {
 
     pub(super) fn write_palette(
         &mut self,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         terrains: &RenderTerrains,
         maps: &TerrainMaps,
     ) {
@@ -206,7 +231,7 @@ impl TerrainTables {
         self.palette_spare = std::mem::replace(&mut self.palette_written, entries);
     }
 
-    fn write_covers(&mut self, queue: &crate::gpu_calls::Queue, terrains: &RenderTerrains) {
+    fn write_covers(&mut self, queue: &engine_render::gpu_calls::Queue, terrains: &RenderTerrains) {
         let mut entries = std::mem::take(&mut self.covers_spare);
         entries.clear();
         self.cover_terms.clear();
@@ -214,11 +239,11 @@ impl TerrainTables {
             let room = PALETTE_ENTRIES - entries.len();
             let kept = &terrain.surface[..terrain.surface.len().min(room)];
             let terms = if kept.len() == terrain.surface.len() {
-                crate::ground_cover::CoverTerms::of(
+                CoverTerms::of(
                     kept.iter().filter_map(|look| look.cover.as_ref()),
                 )
             } else {
-                crate::ground_cover::CoverTerms::default()
+                CoverTerms::default()
             };
             self.cover_terms.push(terms);
             entries.extend(kept.iter().map(|look| {
@@ -243,7 +268,7 @@ impl TerrainTables {
     pub(super) fn write_directory(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         terrains: &RenderTerrains,
         atlas: &TileAtlas,
     ) {
@@ -311,7 +336,7 @@ impl TerrainTables {
     fn lay_out_directory(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         terrains: &RenderTerrains,
         atlas: &TileAtlas,
     ) {
@@ -375,8 +400,8 @@ impl TerrainTables {
     pub(super) fn size_uniforms(&mut self, device: &wgpu::Device, terrains: &RenderTerrains) {
         let uniform_bytes = terrains.terrains.len() as u64 * SLOT;
         if uniform_bytes > self.uniforms.size() {
-            crate::memory::release_buffer(&self.uniforms);
-            self.uniforms = crate::buffers::uniform(
+            engine_render::memory::release_buffer(&self.uniforms);
+            self.uniforms = engine_render::buffers::uniform(
                 device,
                 "engine/terrain-uniforms",
                 uniform_bytes.next_power_of_two(),

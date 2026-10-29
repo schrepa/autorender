@@ -4,7 +4,7 @@ use engine_terrain::lighting::HORIZON_LAYERS;
 use engine_terrain::lighting::TerrainLighting;
 use engine_terrain::{RenderTerrain, RenderTerrains, TerrainSettings};
 
-use crate::cached::{Bound, Versioned};
+use engine_render::cached::{Bound, Versioned};
 use crate::gpu_layouts::constants::{HORIZON_RECORD_VECTORS, HORIZON_RECORDS};
 use crate::terrain_bounce::{BOUNCE_LAYERS, BounceLevels, MOST_LEVELS};
 
@@ -38,13 +38,14 @@ pub(crate) struct Horizons {
     sampler: wgpu::Sampler,
     records: wgpu::Buffer,
     records_written: Vec<[f32; 4]>,
+    count_written: Option<f32>,
     held: Vec<Option<Arc<TerrainLighting>>>,
     pub(crate) uploaded: u32,
 }
 
 impl Horizons {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let empty = crate::targets::texture_2d(
+        let empty = engine_render::targets::texture_2d(
             device,
             "engine/terrain-horizons-empty",
             (1, 1),
@@ -67,12 +68,13 @@ impl Horizons {
             maps: None,
             empty,
             sampler,
-            records: crate::buffers::uniform(
+            records: engine_render::buffers::uniform(
                 device,
                 "engine/terrain-horizon-records",
                 crate::bindings::HORIZON_RECORDS_BYTES as u64,
             ),
             records_written: Vec::new(),
+            count_written: None,
             held: Vec::new(),
             uploaded: 0,
         }
@@ -80,7 +82,7 @@ impl Horizons {
 
     pub(crate) fn entries(&self) -> [(&'static str, Bound<'_>); 3] {
         let maps = self.maps.as_ref().map_or_else(
-            || Bound::fixed(crate::pipelines::view(&self.empty)),
+            || Bound::fixed(engine_render::pipelines::view(&self.empty)),
             |maps| maps.view.bound(),
         );
         [
@@ -91,7 +93,7 @@ impl Horizons {
             ),
             (
                 "terrain_horizon_sampler",
-                Bound::fixed(crate::pipelines::sampler(&self.sampler)),
+                Bound::fixed(engine_render::pipelines::sampler(&self.sampler)),
             ),
         ]
     }
@@ -108,7 +110,7 @@ impl Horizons {
                 ),
                 (
                     "terrain_horizon_sampler",
-                    Bound::fixed(crate::pipelines::sampler(&self.sampler)),
+                    Bound::fixed(engine_render::pipelines::sampler(&self.sampler)),
                 ),
             ],
             written,
@@ -145,7 +147,7 @@ impl Horizons {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         terrains: &RenderTerrains,
         (settings, shadows): (&TerrainSettings, bool),
         (windows, slots): (&[Option<BounceLevels>], u32),
@@ -153,6 +155,7 @@ impl Horizons {
         self.uploaded = 0;
         if !(shadows && settings.enabled && settings.sun_shadows) || terrains.terrains.is_empty() {
             self.release();
+            self.write_count(queue);
             return;
         }
         let size = settings.shadow_resolution;
@@ -211,6 +214,16 @@ impl Horizons {
         if records != self.records_written {
             queue.write_buffer(&self.records, 0, bytemuck::cast_slice(&records));
             self.records_written = records;
+        }
+        self.write_count(queue);
+    }
+
+    fn write_count(&mut self, queue: &engine_render::gpu_calls::Queue) {
+        let count = self.record_count() as f32;
+        if self.count_written != Some(count) {
+            let offset = (HORIZON_RECORDS * size_of::<[f32; 4]>()) as u64;
+            queue.write_buffer(&self.records, offset, bytemuck::bytes_of(&[count, 0.0, 0.0, 0.0]));
+            self.count_written = Some(count);
         }
     }
 
@@ -284,7 +297,7 @@ fn record(
 }
 
 fn write_layers(
-    queue: &crate::gpu_calls::Queue,
+    queue: &engine_render::gpu_calls::Queue,
     texture: &wgpu::Texture,
     index: usize,
     size: u32,
@@ -323,7 +336,7 @@ fn maps(device: &wgpu::Device, size: u32, terrains: usize, slots: u32) -> Maps {
     if bounce {
         usage |= wgpu::TextureUsages::STORAGE_BINDING;
     }
-    let texture = crate::targets::texture_2d(
+    let texture = engine_render::targets::texture_2d(
         device,
         "engine/terrain-horizons",
         (size, size),

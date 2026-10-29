@@ -1,4 +1,4 @@
-import package::terrain::vertex::{PatchInput, terrain, terrain_vertex};
+import package::face::heightfield::{PatchInput, terrain, terrain_vertex};
 
 struct View {
     clip: mat4x4<f32>,

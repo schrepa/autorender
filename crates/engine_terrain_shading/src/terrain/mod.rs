@@ -7,23 +7,27 @@ use engine_terrain::gpu::SurfaceData;
 use engine_terrain::{RenderTerrain, RenderTerrains, TileKey};
 use std::sync::Arc;
 
-use crate::bindings::{
-    Contribution, Sample, Sampling, Stages, TERRAIN, TERRAIN_CONTROL, TERRAIN_NORMALS, View,
-    sampler, texture, uniform_of,
+use engine_faces::heightfield::{
+    CoverEntry, CoverSources, GroundChange, HEIGHT_FORMAT, HeightfieldFace, LiveGround,
+    PALETTE_BYTES, PaletteEntry, TERRAIN, TerrainUniform, TraceSources, ViewUniform, WaterDraws,
 };
-use crate::cached::{Bound, Cached};
-use crate::gpu_calls::Queue;
+use engine_faces::shadows::KeptRefresh;
+use engine_render::bindings::{
+    Contribution, Sample, Sampling, Stages, View, sampler, texture, uniform_of,
+};
+use engine_render::cached::{Bound, Cached};
+use engine_render::gpu_calls::Queue;
+use engine_render::graph::{Lifetime, PassDecl, ResourceDecl, Stage, Targets};
+use engine_render::mipmaps::MipGenerator;
+use engine_render::parts::{Hook, OpaqueSlot, PartDecl, PartEntry};
+use engine_render::targets::ScreenTarget;
+
+use crate::bindings::{TERRAIN_CONTROL, TERRAIN_NORMALS};
 use crate::gpu_layouts::constants::NOT_RESIDENT;
+use crate::gpu_layouts::constants::PALETTE_ENTRIES;
 use crate::gpu_layouts::constants::TERRAIN_GRID as GRID;
 use crate::gpu_layouts::constants::TERRAIN_GRID_VERTICES as GRID_VERTICES;
 use crate::gpu_layouts::constants::{CONTROL_GROUP, NORMALS_GROUP};
-use crate::gpu_layouts::terrain::{
-    CoverEntry, PALETTE_BYTES, PALETTE_ENTRIES, PaletteEntry, TerrainUniform, ViewUniform,
-};
-use crate::graph::{Lifetime, PassDecl, ResourceDecl, Stage, Targets};
-use crate::mipmaps::MipGenerator;
-use crate::parts::{Hook, OpaqueSlot, PartDecl, PartEntry};
-use crate::targets::ScreenTarget;
 use crate::terrain_bounce::{Bounce, SceneSources, TerrainSources};
 use crate::terrain_horizons::Horizons;
 use crate::terrain_macro::MacroMaps;
@@ -44,9 +48,8 @@ use atlas::TileAtlas;
 use part::{Slots, TerrainIds};
 pub(crate) use patches::{PatchDraws, planes};
 use pipelines::{GroupSources, TerrainPipelines};
-pub(crate) use surface::{SurfaceDraw, SurfaceTrees};
+use surface::SurfaceTrees;
 use tables::TerrainTables;
-pub(crate) use water_blocks::TerrainWaterDraws;
 
 pub(crate) use crate::gpu_layouts::terrain::PatchRecord;
 
@@ -76,7 +79,7 @@ pub(crate) static FRAME_HORIZONS: Contribution = Contribution {
 pub(crate) static PART: PartEntry = PartEntry {
     decl: PartDecl {
         name: "terrain",
-        brick: "terrain",
+        brick: "terrain_shading",
         passes: &[
             PassDecl {
                 name: "subdivision",
@@ -112,13 +115,13 @@ pub(crate) static PART: PartEntry = PartEntry {
         hooks: &[
             Hook::Opaque(OpaqueSlot::Ground),
             Hook::ShadowCasters,
-            Hook::ProbeFace,
+            Hook::View,
         ],
         contributes: std::slice::from_ref(&FRAME_HORIZONS),
         effects: &[],
         labels: &[],
         lazy: false,
-        faces: &[],
+        faces: &[engine_render::offer_face!(TerrainPass => dyn HeightfieldFace)],
         needs: &[],
         piece: None,
     },
@@ -128,7 +131,6 @@ pub(crate) static PART: PartEntry = PartEntry {
 const LAYER_SIZE: u32 = engine_terrain::TILE_STRIDE;
 const SLOT: u64 = 256;
 const VIEWS: u64 = 7;
-pub(crate) const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 const CONTROL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 const RIVER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Uint;
@@ -161,26 +163,6 @@ fn changed_run<T: bytemuck::Pod>(was: &[T], now: &[T]) -> Range<usize> {
             .map_or(first + 1, |at| at + 1)
     };
     first..end
-}
-
-pub(crate) struct CoverSources<'a> {
-    pub heights: &'a wgpu::TextureView,
-    pub control: &'a wgpu::TextureView,
-    pub normals: &'a wgpu::TextureView,
-    pub directory: &'a wgpu::Buffer,
-    pub palette: &'a wgpu::Buffer,
-    pub covers: &'a wgpu::Buffer,
-    pub macro_maps: &'a wgpu::TextureView,
-    pub generation: (u64, u64, u64),
-    pub revision: u64,
-}
-
-pub(crate) struct TraceSources<'a> {
-    pub arrays: Option<[Bound<'a>; 2]>,
-    pub directory: Bound<'a>,
-    pub palette: Bound<'a>,
-    pub macro_maps: Bound<'a>,
-    pub sky: Bound<'a>,
 }
 
 pub(crate) struct FrameTerrain {
@@ -217,7 +199,7 @@ pub(crate) struct TerrainViews<'a> {
     pub culling: Mat4,
     pub eye: Vec3,
     pub detail_eye: Vec3,
-    pub regions: &'a [(usize, crate::shadows::KeptRefresh)],
+    pub regions: &'a [(usize, KeptRefresh)],
     pub settings: engine_terrain::TerrainSettings,
     pub shadows: bool,
     pub water: engine_terrain::Water,
@@ -246,8 +228,8 @@ pub(crate) struct TerrainPass {
 }
 
 impl TerrainPass {
-    pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
-        let _owner = crate::memory::owned(PART.decl.brick);
+    pub(crate) fn new(device: &wgpu::Device, queue: &Queue) -> Self {
+        let _owner = engine_render::memory::owned(PART.decl.brick);
         Self {
             atlas: TileAtlas::new(device),
             tables: TerrainTables::new(device),
@@ -280,21 +262,23 @@ impl TerrainPass {
         self.drawn
     }
 
-    pub(crate) fn horizon_records(&self) -> u32 {
-        self.horizons.record_count()
-    }
-
-    pub(crate) fn water_draws(&self, terrains: &RenderTerrains) -> Option<TerrainWaterDraws<'_>> {
+    pub(crate) fn water_draws(&self, terrains: &RenderTerrains) -> Option<WaterDraws<'_>> {
         self.water.draws(self, terrains)
     }
 
-    pub(crate) fn ground(&self, id: u64) -> Option<crate::water_sim::LiveGround<'_>> {
-        Some(crate::water_sim::LiveGround {
+    pub(crate) fn ground(&self, id: u64) -> Option<LiveGround<'_>> {
+        Some(LiveGround {
             group: self.pipelines.surface_group()?,
             uniform: self.tables.uniform_of(id)?,
             terrain: id,
-            held: &self.atlas.held,
         })
+    }
+
+    pub(crate) fn holds(&self, id: u64, key: TileKey, tile: *const ()) -> bool {
+        self.atlas
+            .held
+            .get(&(id, key))
+            .is_some_and(|held| std::ptr::eq(Arc::as_ptr(held).cast::<()>(), tile))
     }
 
     fn prepare_terrains(
@@ -384,7 +368,7 @@ impl TerrainPass {
 
     pub(crate) fn write_probe_view(
         &self,
-        queue: &crate::gpu_calls::Queue,
+        queue: &Queue,
         face: usize,
         relative: Mat4,
         eye: Vec3,
@@ -421,7 +405,8 @@ impl TerrainPass {
     pub(crate) fn trace_sources(&self) -> TraceSources<'_> {
         let generation = self.atlas.generation;
         let arrays = self.atlas.views().map(|(heights, _, control)| {
-            [heights, control].map(|view| Bound::counted(generation, crate::pipelines::view(view)))
+            [heights, control]
+                .map(|view| Bound::counted(generation, engine_render::pipelines::view(view)))
         });
         TraceSources {
             arrays,
@@ -429,11 +414,11 @@ impl TerrainPass {
             palette: Bound::fixed(self.tables.palette.as_entire_binding()),
             macro_maps: Bound::counted(
                 self.macro_maps.generation(),
-                crate::pipelines::view(self.macro_maps.view()),
+                engine_render::pipelines::view(self.macro_maps.view()),
             ),
             sky: Bound::counted(
                 self.sky.generation(),
-                crate::pipelines::view(self.sky.view()),
+                engine_render::pipelines::view(self.sky.view()),
             ),
         }
     }
@@ -459,15 +444,11 @@ impl TerrainPass {
         self.tables.cover_tallest
     }
 
-    pub(crate) fn cover_terrain(
-        &self,
-        index: usize,
-    ) -> (u32, u32, crate::ground_cover::CoverTerms, u32) {
+    pub(crate) fn cover_terrain(&self, index: usize) -> (u32, u32, u32) {
         let tables = &self.tables;
         (
             tables.directory_bases.get(index).copied().unwrap_or(0),
             tables.palette_bases.get(index).copied().unwrap_or(0),
-            tables.cover_terms.get(index).copied().unwrap_or_default(),
             self.macro_maps.layer(index),
         )
     }
@@ -523,7 +504,7 @@ impl TerrainPass {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         camera: &wgpu::Buffer,
-        profiler: &crate::profiling::GpuProfiler,
+        profiler: &engine_render::profiling::GpuProfiler,
     ) {
         let Some(group) = self.pipelines.surface_group() else {
             return;
@@ -536,7 +517,7 @@ impl TerrainPass {
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        profiler: &crate::profiling::GpuProfiler,
+        profiler: &engine_render::profiling::GpuProfiler,
         scene: SceneSources<'_>,
     ) {
         let terrain = TerrainSources {
@@ -565,7 +546,57 @@ impl TerrainPass {
             .any(|terrain| terrain.holes)
     }
 
-    pub(crate) fn ground_changes(&self) -> &[patches::GroundChange] {
+    pub(crate) fn ground_changes(&self) -> &[GroundChange] {
         self.patches.ground_changes()
+    }
+}
+
+impl HeightfieldFace for TerrainPass {
+    fn drawn(&self) -> bool {
+        self.drawn()
+    }
+
+    fn ground_changes(&self) -> &[GroundChange] {
+        self.ground_changes()
+    }
+
+    fn cover_sources(&self) -> Option<CoverSources<'_>> {
+        self.cover_sources()
+    }
+
+    fn cover_terrain(&self, index: usize) -> (u32, u32, u32) {
+        self.cover_terrain(index)
+    }
+
+    fn cover_tallest(&self) -> f32 {
+        self.cover_tallest()
+    }
+
+    fn trace_sources(&self) -> TraceSources<'_> {
+        self.trace_sources()
+    }
+
+    fn ground(&self, terrain: u64) -> Option<LiveGround<'_>> {
+        self.ground(terrain)
+    }
+
+    fn holds(&self, terrain: u64, key: TileKey, tile: *const ()) -> bool {
+        self.holds(terrain, key, tile)
+    }
+
+    fn water_draws(&self, snapshot: &engine_core::RenderSnapshot) -> Option<WaterDraws<'_>> {
+        self.water_draws(RenderTerrains::of(snapshot))
+    }
+
+    fn layer_of(&self, terrain: u64, key: TileKey) -> Option<u32> {
+        self.layer_of(terrain, key)
+    }
+
+    fn layers(&self) -> (u32, u64) {
+        self.layers()
+    }
+
+    fn highest(&self, terrain: u64) -> Option<f32> {
+        self.highest(terrain)
     }
 }

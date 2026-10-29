@@ -1,17 +1,9 @@
+import package::face::heightfield::{SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL,
+    SurfaceTriangle, TerrainSubdivision, terrain, terrain_level_height};
 import package::frame::view::detail_across;
 import package::terrain::draw::terrain_displacement;
-import package::terrain::surface::{SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SurfaceTriangle,
-    SurfaceWater, surface_ground_error, surface_half, surface_water, terrain_level_height};
-import package::terrain::vertex::terrain;
+import package::terrain::surface::{SurfaceWater, surface_ground_error, surface_half, surface_water};
 
-struct TerrainSubdivision {
-    square: vec4<f32>,
-    tree: vec4<u32>,
-    frame: vec4<u32>,
-    extent: vec4<f32>,
-    cutout: vec4<f32>,
-    planes: array<vec4<f32>, 6>,
-}
 @group(2) @binding(27) var<uniform> subdivision: TerrainSubdivision;
 @group(2) @binding(28) var<storage, read_write> subdivision_tree: array<atomic<u32>>;
 @group(2) @binding(29) var<storage, read_write> subdivision_nodes: array<u32>;

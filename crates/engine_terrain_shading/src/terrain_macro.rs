@@ -35,8 +35,8 @@ pub(crate) struct MacroMaps {
 }
 
 impl MacroMaps {
-    pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
-        let empty = crate::targets::texture_2d(
+    pub(crate) fn new(device: &wgpu::Device, queue: &engine_render::gpu_calls::Queue) -> Self {
+        let empty = engine_render::targets::texture_2d(
             device,
             "engine/terrain-macro-empty",
             (1, 1),
@@ -102,7 +102,7 @@ impl MacroMaps {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         terrains: &RenderTerrains,
     ) {
         let first = terrains
@@ -143,7 +143,7 @@ impl MacroMaps {
                 (Some(map), Some(current)) if Arc::ptr_eq(map, current) => {}
                 (Some(map), _) => {
                     for (level, bytes) in map.levels().iter().enumerate() {
-                        crate::materials::write_level(
+                        engine_render::materials::write_level(
                             queue,
                             &maps.texture,
                             (level as u32, index as u32),
@@ -164,13 +164,13 @@ impl MacroMaps {
 }
 
 fn maps(device: &wgpu::Device, shape: Shape, terrains: usize) -> Maps {
-    let texture = crate::targets::texture_2d(
+    let texture = engine_render::targets::texture_2d(
         device,
         "engine/terrain-macro",
         (shape.size, shape.size),
         terrains as u32,
         shape.levels as u32,
-        crate::materials::gpu_format(shape.format, false).0,
+        engine_render::materials::gpu_format(shape.format, false).0,
         wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
     );
     Maps {

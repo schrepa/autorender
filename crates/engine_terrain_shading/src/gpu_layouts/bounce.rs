@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 
 pub(crate) const BINS: usize = engine_terrain::bounce::BINS;
 
-gpu_structs! {
+engine_render::gpu_structs! {
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
     pub(crate) struct BounceFrame as ["BounceFrame"] {
         pub bins: [[f32; 4]; BINS],

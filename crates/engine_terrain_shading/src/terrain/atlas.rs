@@ -113,9 +113,9 @@ pub(crate) struct TileAtlas {
     pub(crate) dropped: u32,
     pub(crate) controls: u32,
     normal_jobs: Vec<(u32, f32)>,
-    normal_pass: Option<(crate::pipelines::GroupLayout, wgpu::ComputePipeline)>,
+    normal_pass: Option<(engine_render::pipelines::GroupLayout, wgpu::ComputePipeline)>,
     control_jobs: Vec<ControlJob>,
-    control_pass: Option<(crate::pipelines::GroupLayout, wgpu::ComputePipeline)>,
+    control_pass: Option<(engine_render::pipelines::GroupLayout, wgpu::ComputePipeline)>,
     surfaces: HashMap<u64, (Arc<SurfaceData>, wgpu::Buffer)>,
     pub(super) sky_sampler: wgpu::Sampler,
     pub(super) control_sampler: wgpu::Sampler,
@@ -449,9 +449,9 @@ impl TileAtlas {
             let texels = bytemuck::cast_slice(tile.heights());
             write_layer(queue, &arrays.texture, layer, (texels, 4));
             write_errors(queue, &arrays.ground_errors, layer, tile.ground_errors());
-            let peaks = crate::world_trace::peaks(tile.heights());
+            let peaks = peaks(tile.heights());
             write_peaks(queue, &arrays.texture, layer, &peaks);
-            self.tops.insert(key, crate::world_trace::peaks_top(&peaks));
+            self.tops.insert(key, peaks_top(&peaks));
             if !shades {
                 self.normal_jobs.push((layer, tile.spacing()));
             }
@@ -663,12 +663,12 @@ impl TileAtlas {
 
     fn control_pass(&mut self, device: &wgpu::Device) {
         self.control_pass.get_or_insert_with(|| {
-            let layout = crate::pipelines::layout(device, &TERRAIN_CONTROL);
-            let pipeline_layout = crate::pipelines::layout_of(
+            let layout = engine_render::pipelines::layout(device, &TERRAIN_CONTROL);
+            let pipeline_layout = engine_render::pipelines::layout_of(
                 device,
                 &crate::pipeline_layouts::TERRAIN_CONTROL_PIPELINES,
             );
-            let pipeline = crate::pipelines::compute_entry(
+            let pipeline = engine_render::pipelines::compute_entry(
                 device,
                 &pipeline_layout,
                 terrain_control::tile_control,
@@ -680,7 +680,7 @@ impl TileAtlas {
     fn sync_surfaces(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         surfaces: &BTreeMap<u64, &Arc<SurfaceData>>,
     ) {
         self.surfaces.retain(|id, _| surfaces.contains_key(id));
@@ -693,7 +693,7 @@ impl TileAtlas {
                 continue;
             }
             let bytes = (surface.words.len().max(1) * 4) as u64;
-            let buffer = crate::buffers::storage(
+            let buffer = engine_render::buffers::storage(
                 device,
                 "engine/terrain-surface",
                 bytes.next_power_of_two(),
@@ -723,7 +723,7 @@ impl TileAtlas {
             words[at + 4] = job.spacing.to_bits();
             words[at + 5] = u32::from(job.rivers);
         }
-        let jobs = crate::buffers::uniform(
+        let jobs = engine_render::buffers::uniform(
             device,
             "engine/terrain-control-jobs",
             (words.len() * 4) as u64,
@@ -748,13 +748,13 @@ impl TileAtlas {
                     array_layer_count: Some(1),
                     ..Default::default()
                 });
-                let group = crate::pipelines::group(
+                let group = engine_render::pipelines::group(
                     device,
                     "engine/terrain-control-group",
                     &TERRAIN_CONTROL,
                     layout,
                     &[
-                        ("heights", crate::pipelines::view(&arrays.view)),
+                        ("heights", engine_render::pipelines::view(&arrays.view)),
                         (
                             "job",
                             wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -764,8 +764,8 @@ impl TileAtlas {
                             }),
                         ),
                         ("data", data.as_entire_binding()),
-                        ("control", crate::pipelines::view(&target)),
-                        ("rivers", crate::pipelines::view(&arrays.rivers_view)),
+                        ("control", engine_render::pipelines::view(&target)),
+                        ("rivers", engine_render::pipelines::view(&arrays.rivers_view)),
                     ],
                 );
                 pass.set_bind_group(0, &group, &[]);
@@ -783,12 +783,12 @@ impl TileAtlas {
 
     fn normal_pass(&mut self, device: &wgpu::Device) {
         self.normal_pass.get_or_insert_with(|| {
-            let layout = crate::pipelines::layout(device, &TERRAIN_NORMALS);
-            let pipeline_layout = crate::pipelines::layout_of(
+            let layout = engine_render::pipelines::layout(device, &TERRAIN_NORMALS);
+            let pipeline_layout = engine_render::pipelines::layout_of(
                 device,
                 &crate::pipeline_layouts::TERRAIN_NORMAL_PIPELINES,
             );
-            let pipeline = crate::pipelines::compute_entry(
+            let pipeline = engine_render::pipelines::compute_entry(
                 device,
                 &pipeline_layout,
                 terrain_normals::tile_normals,
@@ -815,7 +815,7 @@ impl TileAtlas {
             words[at] = layer;
             words[at + 1] = spacing.to_bits();
         }
-        let jobs = crate::buffers::uniform(
+        let jobs = engine_render::buffers::uniform(
             device,
             "engine/terrain-normal-jobs",
             (words.len() * 4) as u64,
@@ -837,13 +837,13 @@ impl TileAtlas {
                     array_layer_count: Some(1),
                     ..Default::default()
                 });
-                let group = crate::pipelines::group(
+                let group = engine_render::pipelines::group(
                     device,
                     "engine/terrain-normals-group",
                     &TERRAIN_NORMALS,
                     layout,
                     &[
-                        ("heights", crate::pipelines::view(&arrays.view)),
+                        ("heights", engine_render::pipelines::view(&arrays.view)),
                         (
                             "job",
                             wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -852,7 +852,7 @@ impl TileAtlas {
                                 size: wgpu::BufferSize::new(16),
                             }),
                         ),
-                        ("normals", crate::pipelines::view(&target)),
+                        ("normals", engine_render::pipelines::view(&target)),
                     ],
                 );
                 pass.set_bind_group(0, &group, &[]);
@@ -884,7 +884,7 @@ impl TileAtlas {
         }
         let layers = needed.next_power_of_two().max(16).min(max_layers.max(1));
         let array = |label: &'static str, format, usage, mips| {
-            crate::memory::texture(
+            engine_render::memory::texture(
                 device,
                 &wgpu::TextureDescriptor {
                     label: Some(label),
@@ -930,7 +930,7 @@ impl TileAtlas {
             1,
         );
         let pyramid = |label: &'static str| {
-            crate::memory::texture(
+            engine_render::memory::texture(
                 device,
                 &wgpu::TextureDescriptor {
                     label: Some(label),
@@ -1115,7 +1115,7 @@ fn write_peaks(queue: &Queue, texture: &wgpu::Texture, layer: u32, peaks: &[f32]
                 },
                 aspect: wgpu::TextureAspect::All,
             },
-            bytemuck::cast_slice(crate::world_trace::peaks_mip(peaks, mip)),
+            bytemuck::cast_slice(peaks_mip(peaks, mip)),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(side * 4),
@@ -1222,4 +1222,51 @@ struct ControlJob {
     spacing: f32,
     level: u32,
     rivers: bool,
+}
+
+fn peaks(heights: &[f32]) -> Box<[f32]> {
+    let stride = engine_terrain::TILE_STRIDE as usize;
+    let height = |x: usize, z: usize| heights.get((z + 1) * stride + x + 1).copied();
+    let mut side = ERROR_CELLS as usize;
+    let mut level: Vec<f32> = Vec::with_capacity(side * side);
+    for cell_z in 0..side {
+        for cell_x in 0..side {
+            let mut peak = -f32::MAX;
+            for z in 2 * cell_z..=2 * cell_z + 2 {
+                for x in 2 * cell_x..=2 * cell_x + 2 {
+                    peak = engine_core::math::max(peak, height(x, z).unwrap_or(peak));
+                }
+            }
+            level.push(peak);
+        }
+    }
+    let mut all = Vec::with_capacity(ERROR_TEXELS);
+    all.extend_from_slice(&level);
+    while side > 1 {
+        let half = side / 2;
+        let peak = |x: usize, z: usize| level[z * side + x];
+        let coarser: Vec<f32> = (0..half * half)
+            .map(|at| {
+                let (x, z) = (2 * (at % half), 2 * (at / half));
+                engine_core::math::max(
+                    engine_core::math::max(peak(x, z), peak(x + 1, z)),
+                    engine_core::math::max(peak(x, z + 1), peak(x + 1, z + 1)),
+                )
+            })
+            .collect();
+        all.extend_from_slice(&coarser);
+        level = coarser;
+        side = half;
+    }
+    all.into_boxed_slice()
+}
+
+fn peaks_top(peaks: &[f32]) -> f32 {
+    peaks.last().copied().unwrap_or(-f32::MAX)
+}
+
+fn peaks_mip(peaks: &[f32], mip: u32) -> &[f32] {
+    let side = |level: u32| (ERROR_CELLS >> level) as usize;
+    let start: usize = (0..mip).map(|finer| side(finer) * side(finer)).sum();
+    &peaks[start..start + side(mip) * side(mip)]
 }

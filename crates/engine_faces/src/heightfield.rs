@@ -1,6 +1,103 @@
+use bytemuck::{Pod, Zeroable};
 use engine_core::{Pyramid, RenderSnapshot, TileKey};
+use engine_render::bindings::Sample::{Float, Uint, Unfilterable};
+use engine_render::bindings::Sampling::{Filtering, NonFiltering};
+use engine_render::bindings::View::D2Array;
+use engine_render::bindings::{Stages, Table, dynamic_uniform, read, sampler, texture, uniform_of};
 use engine_render::cached::Bound;
 use glam::Vec3;
+
+const C: Stages = Stages::COMPUTE;
+const F: Stages = Stages::FRAGMENT;
+const V: Stages = Stages::VERTEX;
+const VF: Stages = Stages::VERTEX_FRAGMENT;
+const FC: Stages = Stages::FRAGMENT_COMPUTE;
+const VFC: Stages = Stages::VERTEX_FRAGMENT_COMPUTE;
+
+pub const HEIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+
+pub const PALETTE_ENTRIES: usize = 16_384 / size_of::<PaletteEntry>();
+
+pub const PALETTE_BYTES: usize = PALETTE_ENTRIES * size_of::<PaletteEntry>();
+
+engine_render::gpu_structs! {
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub struct PaletteEntry as ["TerrainPaletteEntry", "PaletteEntry" in "cover::grow", "PaletteEntry" in "terrain::bounce_maps", "PaletteEntry" in "scatter::snap", "PaletteEntry" in "post::reflections"] {
+        pub color: [f32; 4],
+        pub params: [f32; 4],
+        pub maps: [f32; 4],
+        pub far: [f32; 4],
+        pub relief: [f32; 4],
+        pub canopy: [f32; 4],
+        pub placed: [f32; 4],
+        pub placed_size: [f32; 4],
+        pub heights: [f32; 4],
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub struct CoverEntry as ["CoverSpec"] {
+        pub shape: [f32; 4],
+        pub color: [f32; 4],
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub struct ViewUniform as ["TerrainView"] {
+        pub relative_view_projection: [[f32; 4]; 4],
+        pub eye_offset: [f32; 4],
+        pub inverse_relative_view_projection: [[f32; 4]; 4],
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub struct TerrainUniform as ["TerrainUniform"] {
+        pub anchor: [f32; 4],
+        pub eye: [f32; 4],
+        pub surface: [u32; 4],
+        pub origin: [f32; 4],
+        pub directory: [u32; 4],
+        pub relief: [f32; 4],
+        pub cover: [f32; 4],
+        pub macro_map: [u32; 4],
+        pub steep: [f32; 4],
+        pub pixel_error: [f32; 4],
+        pub water: [u32; 4],
+    }
+
+    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
+    pub struct SubdivisionUniform as ["TerrainSubdivision"] {
+        pub square: [f32; 4],
+        pub tree: [u32; 4],
+        pub frame: [u32; 4],
+        pub extent: [f32; 4],
+        pub cutout: [f32; 4],
+        pub planes: [[f32; 4]; 6],
+    }
+}
+
+pub const TERRAIN: Table = Table {
+    label: "engine/terrain-layout",
+    bindings: &[
+        texture("terrain_heights", Unfilterable, D2Array, VFC),
+        dynamic_uniform("terrain_view", size_of::<ViewUniform>(), VF),
+        dynamic_uniform("terrain", size_of::<TerrainUniform>(), VFC),
+        read("terrain_holes", VFC),
+        texture("terrain_normals", Uint, D2Array, VFC),
+        sampler("terrain_sky_sampler", Filtering, F),
+        read("terrain_directory", VFC),
+        texture("terrain_control", Uint, D2Array, VFC),
+        uniform_of("terrain_palette", PALETTE_BYTES, VFC),
+        texture("terrain_albedo", Float, D2Array, F),
+        texture("terrain_material_data", Float, D2Array, VFC),
+        sampler("terrain_material_sampler", Filtering, VFC),
+        texture("terrain_sky", Float, D2Array, F),
+        sampler("terrain_control_sampler", NonFiltering, VFC),
+        texture("terrain_macro", Float, D2Array, F),
+        read("terrain_surface_leaves", V),
+        texture("water_surface", Unfilterable, D2Array, FC),
+        texture("water_info", Uint, D2Array, C),
+        texture("terrain_errors", Unfilterable, D2Array, C),
+        texture("water_errors", Unfilterable, D2Array, C),
+    ],
+};
 
 #[derive(Clone, Copy, Debug)]
 pub struct GroundChange {
@@ -55,6 +152,7 @@ pub struct WaterDraws<'a> {
     pub terrains: Vec<(u64, u32, u32, SurfaceDraw<'a>)>,
     pub targets: [f32; 2],
     pub blocks: [u32; 2],
+    pub subdivided: [u32; 2],
 }
 
 pub trait HeightfieldFace {
