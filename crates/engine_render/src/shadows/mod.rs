@@ -11,7 +11,7 @@ mod regions;
 mod selection;
 mod sky;
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 
 use engine_core::{MeshHandle, RenderFrame, RenderSnapshot, RenderStats, ShadowStats, glam::Vec3};
 use engine_terrain::Pyramid;
@@ -21,9 +21,7 @@ use crate::bindings::{
     Contribution, SHADOW_POSES, Sample, Sampling, Stages, sampler, texture, uniform_of,
 };
 use crate::cached::{Bound, GroupCache};
-use crate::gpu_data::{
-    ComposeData, DRAW_ARGS_BYTES, RouteData, ShadowCullUniform, ShadowUniform,
-};
+use crate::gpu_data::{ComposeData, DRAW_ARGS_BYTES, RouteData, ShadowCullUniform, ShadowUniform};
 use crate::graph::{
     FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
 };
@@ -62,7 +60,11 @@ pub(crate) const FRAME_SHADOWS: Contribution = Contribution {
     group: "frame",
     set: "shadows",
     bindings: &[
-        uniform_of("shadow", size_of::<ShadowUniform>(), Stages::VERTEX_FRAGMENT),
+        uniform_of(
+            "shadow",
+            size_of::<ShadowUniform>(),
+            Stages::VERTEX_FRAGMENT,
+        ),
         texture(
             "shadow_atlas",
             Sample::Depth,
@@ -76,7 +78,11 @@ pub(crate) const FRAME_SHADOWS: Contribution = Contribution {
             Stages::VERTEX_FRAGMENT,
         ),
         sampler("shadow_sampler", Sampling::Comparison, Stages::FRAGMENT),
-        sampler("shadow_texels", Sampling::NonFiltering, Stages::VERTEX_FRAGMENT),
+        sampler(
+            "shadow_texels",
+            Sampling::NonFiltering,
+            Stages::VERTEX_FRAGMENT,
+        ),
     ],
 };
 
@@ -210,12 +216,6 @@ impl ShadowFrame {
     }
 }
 
-#[derive(Default)]
-struct Dirty {
-    all: bool,
-    boxes: Vec<(Option<usize>, Vec3, Vec3)>,
-}
-
 #[derive(Clone, Copy, Default)]
 struct GraphIds {
     select: Option<PassId>,
@@ -257,7 +257,6 @@ pub(crate) struct ShadowPass {
     written_sky_view: Option<engine_core::glam::Mat4>,
     frame: Option<ShadowFrame>,
     draws: u32,
-    dirty: RefCell<Dirty>,
     ids: GraphIds,
 }
 
@@ -295,7 +294,6 @@ impl ShadowPass {
             written_sky_view: None,
             frame: None,
             draws: 0,
-            dirty: RefCell::default(),
             ids: GraphIds::default(),
         }
     }
@@ -312,10 +310,6 @@ impl ShadowPass {
         self.groups_generation
     }
 
-    pub(crate) fn entries(&self) -> [(&'static str, crate::cached::Bound<'_>); 5] {
-        self.maps.entries()
-    }
-
     pub(crate) fn groups(&self) -> &[ShadowGroup] {
         self.casters.groups()
     }
@@ -328,36 +322,10 @@ impl ShadowPass {
         &self.region_views
     }
 
-    pub(crate) fn dirty_kept(&self, min: Vec3, max: Vec3) {
-        self.dirty.borrow_mut().boxes.push((None, min, max));
-    }
-
-    pub(crate) fn dirty_kept_all(&self) {
-        self.dirty.borrow_mut().all = true;
-    }
-
-    pub(crate) fn dirty_ground(
-        &self,
-        (min, max): (Vec3, Vec3),
-        (pyramid, level): (&Pyramid, u32),
-    ) {
-        let mut dirty = self.dirty.borrow_mut();
+    fn dirty_ground(&mut self, (min, max): (Vec3, Vec3), (pyramid, level): (&Pyramid, u32)) {
         for index in 0..self.clipmap.len() {
             if level >= ground_level(pyramid, self.clipmap.texel(index)) {
-                dirty.boxes.push((Some(index), min, max));
-            }
-        }
-    }
-
-    fn apply_dirty(&mut self) {
-        let dirty = std::mem::take(self.dirty.get_mut());
-        if dirty.all {
-            self.clipmap.dirty_all();
-        }
-        for (level, min, max) in dirty.boxes {
-            match level {
-                Some(index) => self.clipmap.dirty_level_box(index, min, max),
-                None => self.clipmap.dirty_box(min, max),
+                self.clipmap.dirty_level_box(index, min, max);
             }
         }
     }
@@ -409,7 +377,8 @@ impl ShadowPass {
         }
         let source = self.casters.source();
         let classify = source == Source::Presented;
-        self.pipelines.get_or_insert_with(|| ShadowPipelines::new(device));
+        self.pipelines
+            .get_or_insert_with(|| ShadowPipelines::new(device));
         let limit = device.limits().max_texture_dimension_2d;
         let (layout, made) = self.maps.ensure(device, &settings, limit);
         let basis = LightBasis::new(snapshot.environment.atmosphere.sanitized().sun_direction);
@@ -875,7 +844,13 @@ impl GpuPart for ShadowPass {
     }
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
-        self.apply_dirty();
+        if cx
+            .parts
+            .get::<crate::scatter::ScatterPass>()
+            .is_some_and(crate::scatter::ScatterPass::restyled)
+        {
+            self.clipmap.dirty_all();
+        }
         self.draws = 0;
         let snapshot = cx.frame.snapshot;
         let gpu_mode = cx.frame.kind.gpu_mode;
@@ -906,16 +881,32 @@ impl GpuPart for ShadowPass {
     }
 
     fn prepare_draws(&mut self, cx: &mut Step<'_>, _encoder: &mut wgpu::CommandEncoder) {
-        let impostor_pass = cx.frame.passes.is_some_and(|passes| passes.impostor_pass.is_some());
+        let impostor_pass = cx
+            .frame
+            .passes
+            .is_some_and(|passes| passes.impostor_pass.is_some());
         let scatter = cx.parts.get::<crate::scatter::ScatterPass>();
         if impostor_pass
             && scatter.is_some_and(|scatter| {
-                scatter.impostors().iter().any(|record| record.sphere[3] > 0.0)
+                scatter
+                    .impostors()
+                    .iter()
+                    .any(|record| record.sphere[3] > 0.0)
             })
         {
             self.prepare_impostor_casters(&cx.core.device);
         }
+        if let Some(scatter) = scatter {
+            for &(min, max) in scatter.moved() {
+                self.clipmap.dirty_box(min, max);
+            }
+        }
         let terrain = cx.parts.get::<crate::terrain::TerrainPass>();
+        if let Some(terrain) = terrain {
+            for change in terrain.ground_changes() {
+                self.dirty_ground((change.min, change.max), (&change.pyramid, change.level));
+            }
+        }
         let horizon_records = terrain.map_or(0, crate::terrain::TerrainPass::horizon_records);
         self.set_horizon_records(&cx.core.queue, horizon_records);
     }

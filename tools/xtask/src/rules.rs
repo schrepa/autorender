@@ -19,7 +19,7 @@ pub const RULES: Rules = Rules {
                 35,
             ),
             ("crates/engine_render/src/clouds.rs", "CloudPass", 48),
-            ("crates/engine_render/src/post.rs", "PostPass", 32),
+            ("crates/engine_render/src/post.rs", "Post", 32),
             ("crates/engine_render/src/scatter.rs", "ScatterPass", 40),
             ("crates/engine_render/src/terrain/atlas.rs", "TileAtlas", 32),
             (

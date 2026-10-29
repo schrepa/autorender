@@ -13,9 +13,7 @@ impl Renderer {
             let _owner = crate::memory::owned(decl.brick);
             part.declare(&view, graph);
         }
-        graph
-            .compile(&self.table)
-            .map_err(|invalid| invalid.error(&self.table))
+        graph.compile(&self.table)
     }
 
     pub(super) fn encode_passes(

@@ -184,10 +184,16 @@ fn mismatch(
         },
         _ => "a kind of binding tables cannot declare",
     };
-    Err(format!("the shader declares {expected}, the layout {kind:?}"))
+    Err(format!(
+        "the shader declares {expected}, the layout {kind:?}"
+    ))
 }
 
-type Judged<'r> = (&'r Resolved, Vec<String>, Vec<((&'static str, &'static str), Fit)>);
+type Judged<'r> = (
+    &'r Resolved,
+    Vec<String>,
+    Vec<((&'static str, &'static str), Fit)>,
+);
 
 fn judge<'r>(
     checked: &Checked,
@@ -294,8 +300,10 @@ pub(super) fn check(
                 .into_iter()
                 .map(|candidate| judge(checked, &used, candidate))
                 .collect();
-            let matching: Vec<&Judged<'_>> =
-                judged.iter().filter(|(_, wrong, _)| wrong.is_empty()).collect();
+            let matching: Vec<&Judged<'_>> = judged
+                .iter()
+                .filter(|(_, wrong, _)| wrong.is_empty())
+                .collect();
             if matching.is_empty() {
                 let (candidate, wrong, _) = &judged[0];
                 errors.push(format!(
@@ -352,7 +360,9 @@ fn views(shared: &SharedGroups) -> Vec<String> {
                 continue;
             };
             let Some(bindings) = shared.group(group) else {
-                errors.push(format!("{name}: no part contributes the shared group {group}"));
+                errors.push(format!(
+                    "{name}: no part contributes the shared group {group}"
+                ));
                 continue;
             };
             for set in without {
@@ -406,7 +416,9 @@ fn tables() -> Vec<String> {
     errors
 }
 
-const RESOURCES: [(&str, fn(&StageCounts) -> u32, fn(&StageLimits) -> u32); 5] = [
+type Resource = (&'static str, fn(&StageCounts) -> u32, fn(&StageLimits) -> u32);
+
+const RESOURCES: [Resource; 5] = [
     (
         "uniform buffers",
         |counts| counts.uniform_buffers,
@@ -422,7 +434,11 @@ const RESOURCES: [(&str, fn(&StageCounts) -> u32, fn(&StageLimits) -> u32); 5] =
         |counts| counts.sampled_textures,
         |limits| limits.sampled_textures,
     ),
-    ("samplers", |counts| counts.samplers, |limits| limits.samplers),
+    (
+        "samplers",
+        |counts| counts.samplers,
+        |limits| limits.samplers,
+    ),
     (
         "storage textures",
         |counts| counts.storage_textures,

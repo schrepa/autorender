@@ -73,7 +73,8 @@ impl GpuPart for CullingPart {
                 .write(self.reads.visible);
         }
         if let Some(second) = self.second {
-            self.reads.declare_phase(cx.table, &shape, graph.add(cx.table, second), 1);
+            self.reads
+                .declare_phase(cx.table, &shape, graph.add(cx.table, second), 1);
         }
     }
 
@@ -151,11 +152,12 @@ impl DepthPyramid {
     pub(crate) fn new(device: &wgpu::Device, reduction: Reduction) -> Self {
         let first_layout = crate::pipelines::layout(device, &PYRAMID_FIRST);
         let down_layout = crate::pipelines::layout(device, &PYRAMID_DOWN);
-        let pipeline = |entry: crate::shaders::Entry,
-                        declared: &'static crate::pipeline_layouts::PipelineLayout| {
-            let layout = crate::pipelines::layout_of(device, declared);
-            crate::pipelines::compute_entry(device, &layout, entry)
-        };
+        let pipeline =
+            |entry: crate::shaders::Entry,
+             declared: &'static crate::pipeline_layouts::PipelineLayout| {
+                let layout = crate::pipelines::layout_of(device, declared);
+                crate::pipelines::compute_entry(device, &layout, entry)
+            };
         let (first, down) = match reduction {
             Reduction::Farthest => (depth_pyramid::pyramid_first, depth_pyramid::pyramid_down),
             Reduction::Nearest => (

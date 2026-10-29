@@ -38,7 +38,6 @@ impl Renderer {
                         snapshot,
                         frame,
                         gpu_mode,
-                        display,
                     },
                     &mut out,
                 );
@@ -470,10 +469,7 @@ impl Renderer {
     pub(super) fn prepare_pipelines(&mut self, info: &FrameInfo<'_>) -> Passes {
         let kind = info.kind;
         let gpu_mode = kind.gpu_mode;
-        let lit_frame = self
-            .parts
-            .get::<LightPass>()
-            .is_some_and(LightPass::lit);
+        let lit_frame = self.parts.get::<LightPass>().is_some_and(LightPass::lit);
         let relights = self.relights();
         let targets = self.frame_targets(info);
         let opaque_kind = PassKind::opaque(targets, lit_frame);
@@ -506,10 +502,7 @@ impl Renderer {
     }
 
     fn frame_targets(&self, info: &FrameInfo<'_>) -> Targets {
-        let post = self
-            .parts
-            .get::<PostPass>()
-            .is_some_and(PostPass::active);
+        let post = self.parts.get::<PostPass>().is_some_and(PostPass::active);
         match (&info.temporal, post) {
             _ if info.kind.debug => Targets::Debug,
             (Some(_), true)
@@ -548,7 +541,8 @@ impl Renderer {
             .flatten()
             .map(|probes| std::array::from_fn(|face| probes.camera(face)));
         let core = &mut self.core;
-        core.camera.refresh(&core.device, &core.shared, &self.parts, cameras);
+        core.camera
+            .refresh(&core.device, &core.shared, &self.parts, cameras);
     }
 }
 

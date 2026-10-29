@@ -18,9 +18,7 @@ use crate::lazy::Lazy;
 use crate::parts::{
     Begin, BeginOut, Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View,
 };
-use crate::pipeline_layouts::{
-    LIT_TEMPORAL_MESH_PIPELINES, TAA_RESOLVE_PIPELINES, TEMPORAL_MESH_PIPELINES,
-};
+use crate::pipeline_layouts::TAA_RESOLVE_PIPELINES;
 use crate::post::PostPass;
 use crate::profiling::Span;
 use crate::targets::{FrameRegion, FrameSize, ScreenTarget};
@@ -118,12 +116,10 @@ impl TemporalPass {
         self.taa.get().is_some()
     }
 
-    pub(crate) fn mesh_layout(&self, lit: bool) -> Option<&wgpu::PipelineLayout> {
-        self.taa.get().map(|taa| taa.mesh_layout(lit))
-    }
-
-    pub(crate) fn pose_layout(&self) -> Option<&crate::pipelines::GroupLayout> {
-        self.taa.get().map(|taa| &taa.pose_layout)
+    pub(crate) fn reset(&mut self) {
+        if let Some(taa) = self.taa.get_mut() {
+            taa.reset();
+        }
     }
 
     pub(crate) fn pose_group(&self, frame: &TemporalFrame) -> Option<&wgpu::BindGroup> {
@@ -132,8 +128,6 @@ impl TemporalPass {
 }
 
 struct Taa {
-    mesh_layout: wgpu::PipelineLayout,
-    lit_layout: wgpu::PipelineLayout,
     pose_layout: crate::pipelines::GroupLayout,
     resolve_pipeline: wgpu::RenderPipeline,
     resolve_layout: crate::pipelines::GroupLayout,
@@ -155,8 +149,6 @@ impl Taa {
         surface_format: wgpu::TextureFormat,
     ) -> Self {
         let pose_layout = crate::pipelines::layout(device, &TEMPORAL_POSES);
-        let mesh_layout = crate::pipelines::layout_of(device, &TEMPORAL_MESH_PIPELINES);
-        let lit_layout = crate::pipelines::layout_of(device, &LIT_TEMPORAL_MESH_PIPELINES);
         let resolve_layout = crate::pipelines::layout(device, &TAA_RESOLVE);
         let resolve_pipeline_layout = crate::pipelines::layout_of(device, &TAA_RESOLVE_PIPELINES);
         let resolve_pipeline = crate::pipelines::fullscreen(
@@ -208,8 +200,6 @@ impl Taa {
             },
         );
         Self {
-            mesh_layout,
-            lit_layout,
             pose_layout,
             resolve_pipeline,
             resolve_layout,
@@ -340,14 +330,6 @@ impl Taa {
             frame.parity
         };
         self.pose_groups[2 * frame.parity + previous].get()
-    }
-
-    fn mesh_layout(&self, lit: bool) -> &wgpu::PipelineLayout {
-        if lit {
-            &self.lit_layout
-        } else {
-            &self.mesh_layout
-        }
     }
 
     fn history_target(&self, frame: &ResolveFrame) -> Option<&wgpu::TextureView> {
@@ -520,10 +502,9 @@ impl GpuPart for TemporalPass {
             .get::<Transparency>()
             .and_then(Transparency::revealed);
         let core = &*cx.core;
-        self.resolve = self
-            .taa
-            .get_mut()
-            .map(|taa| taa.prepare_resolve(&core.device, inputs, frame, &core.depth.view, revealed));
+        self.resolve = self.taa.get_mut().map(|taa| {
+            taa.prepare_resolve(&core.device, inputs, frame, &core.depth.view, revealed)
+        });
     }
 
     fn finish(&mut self, cx: &mut Step<'_>) {

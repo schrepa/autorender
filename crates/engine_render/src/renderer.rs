@@ -73,7 +73,7 @@ pub(crate) use meshes::{BatchBinds, DrawOrder, MeshPipelines};
 pub(crate) use meshes::{extra_layout, vertex_layout};
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::GpuMark;
-pub(crate) use opaque::{OPAQUE_PART, OpaqueReads, debug_records, encode_phase};
+pub(crate) use opaque::{OPAQUE_PART, OpaqueReads, encode_phase};
 pub use startup::StartingRenderer;
 
 const INITIAL_CAPACITY: usize = 1_024;
@@ -197,7 +197,8 @@ impl Renderer {
         let scope = crate::gpu_calls::validation_scope(&device);
         let installed = self.parts.install(&entries, &self.core);
         let core = &mut self.core;
-        core.camera.refresh(&core.device, &core.shared, &self.parts, None);
+        core.camera
+            .refresh(&core.device, &core.shared, &self.parts, None);
         self.installing = Some(Box::pin(scope.pop()));
         self.table = installed?;
         self.graph.clear();

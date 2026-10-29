@@ -20,8 +20,8 @@ use crate::graph::{
     Targets,
 };
 use crate::parts::{
-    Create, DrawAt, Encode, GpuPart, Hook, OpaqueSlot, PartDecl, PartEntry, Prelude,
-    PreludeStage, Step, UniformsOut, View,
+    Create, DrawAt, Encode, GpuPart, Hook, OpaqueSlot, PartDecl, PartEntry, Prelude, PreludeStage,
+    Step, UniformsOut, View,
 };
 use crate::probes::FACES;
 use crate::renderer::Core;
@@ -670,10 +670,6 @@ impl SkyPass {
         self.plan
     }
 
-    pub(crate) fn cloud_shadows(&self) -> &wgpu::Buffer {
-        self.clouds.shadows()
-    }
-
     fn prepare_clouds(
         &mut self,
         core: &Core,
@@ -792,10 +788,7 @@ impl SkyPass {
         } else {
             self.environment.cubes()
         };
-        let keys = (
-            self.clouds.environment_key(),
-            self.tables.environment_key(),
-        );
+        let keys = (self.clouds.environment_key(), self.tables.environment_key());
         let mut environment_encoder = self
             .environment
             .needs_encoding(probe_settings.resolution, cubes, lighting, keys)
@@ -807,12 +800,8 @@ impl SkyPass {
             });
         let (lost, sky_changed) = match environment_encoder.as_mut() {
             Some(encoder) => (
-                self.environment.ensure(
-                    &core.device,
-                    encoder,
-                    probe_settings.resolution,
-                    cubes,
-                ),
+                self.environment
+                    .ensure(&core.device, encoder, probe_settings.resolution, cubes),
                 self.environment.encode_sky(encoder, lighting, keys).1,
             ),
             None => (false, false),

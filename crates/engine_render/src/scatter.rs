@@ -761,18 +761,14 @@ impl ScatterPass {
 }
 
 fn snap_pipeline(device: &wgpu::Device) -> wgpu::ComputePipeline {
-    let pipeline_layout = crate::pipelines::layout_of(
-        device,
-        &crate::pipeline_layouts::SCATTER_SNAP_PIPELINES,
-    );
+    let pipeline_layout =
+        crate::pipelines::layout_of(device, &crate::pipeline_layouts::SCATTER_SNAP_PIPELINES);
     crate::pipelines::compute_entry(device, &pipeline_layout, scatter_snap::snap_scatter)
 }
 
 fn pipeline(device: &wgpu::Device) -> wgpu::ComputePipeline {
-    let pipeline_layout = crate::pipelines::layout_of(
-        device,
-        &crate::pipeline_layouts::SCATTER_CULL_PIPELINES,
-    );
+    let pipeline_layout =
+        crate::pipelines::layout_of(device, &crate::pipeline_layouts::SCATTER_CULL_PIPELINES);
     crate::pipelines::compute_entry(device, &pipeline_layout, scatter_cull::cull_scatter)
 }
 

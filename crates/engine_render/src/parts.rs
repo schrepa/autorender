@@ -8,8 +8,8 @@ use crate::entries::PassKind;
 use crate::gpu_calls::Recorded;
 use crate::gpu_data::LightingUniform;
 use crate::graph::{
-    Clear, FrameGraph, FrameShape, GraphTable, Load, MAX_COLORS, Node, Ops, PassDecl,
-    ResourceDecl, ResourceId, Targets,
+    Clear, FrameGraph, FrameShape, GraphTable, Load, MAX_COLORS, Node, Ops, PassDecl, ResourceDecl,
+    ResourceId, Targets,
 };
 use crate::renderer::Core;
 use crate::temporal::TemporalFrame;
@@ -90,7 +90,6 @@ pub(crate) struct Begin<'f> {
     pub snapshot: &'f RenderSnapshot,
     pub frame: RenderFrame<'f>,
     pub gpu_mode: bool,
-    pub display: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -110,16 +109,7 @@ pub(crate) struct Step<'f> {
     pub frame: &'f FrameInfo<'f>,
 }
 
-impl Step<'_> {
-    pub(crate) fn view(&self) -> View<'_> {
-        View {
-            core: &*self.core,
-            parts: self.parts,
-            table: self.table,
-            frame: self.frame,
-        }
-    }
-}
+impl Step<'_> {}
 
 #[derive(Clone, Copy)]
 pub(crate) struct View<'f> {
@@ -188,13 +178,14 @@ pub(crate) fn render_pass<'e>(
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
         color_attachments: &colors[..count],
-        depth_stencil_attachment: node.depth().zip(views.depth.as_ref()).map(
-            |((_, ops), view)| wgpu::RenderPassDepthStencilAttachment {
+        depth_stencil_attachment: node
+            .depth()
+            .zip(views.depth.as_ref())
+            .map(|((_, ops), view)| wgpu::RenderPassDepthStencilAttachment {
                 view,
                 depth_ops: ops.map(depth_operations),
                 stencil_ops: None,
-            },
-        ),
+            }),
         timestamp_writes,
         occlusion_query_set: None,
         multiview_mask: None,
@@ -311,8 +302,8 @@ impl Prelude {
             .iter()
             .position(|&(known, name, _)| known == stage && name == span);
         let index = found.unwrap_or_else(|| {
-            let encoder =
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+            let encoder = device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
             self.encoders.push((stage, span, encoder));
             self.order.push((stage, span, true));
             self.encoders.len() - 1
@@ -403,7 +394,6 @@ pub(crate) struct PartDecl {
 
 pub(crate) struct Create<'f> {
     pub core: &'f Core,
-    pub parts: &'f Parts,
 }
 
 pub(crate) struct PartEntry {
@@ -536,7 +526,7 @@ impl Parts {
                     let _owner = crate::memory::owned(entry.decl.brick);
                     Slot {
                         entry,
-                        part: Some((entry.create)(&Create { core, parts: self })),
+                        part: Some((entry.create)(&Create { core })),
                     }
                 }
             };
@@ -604,12 +594,6 @@ impl Parts {
         Some(result)
     }
 
-    pub(crate) fn each(&mut self, mut act: impl FnMut(&mut dyn GpuPart, &Parts)) {
-        for index in 0..self.slots.len() {
-            self.with_part(index, &mut act);
-        }
-    }
-
     pub(crate) fn draw_hook(
         &self,
         at: DrawAt<'_>,
@@ -651,7 +635,7 @@ impl Parts {
                 continue;
             };
             let bit = 1 << index;
-            if part.poll() || (named & bit != 0 && part.disable()) {
+            if part.poll() || (named & bit != 0 && slot.entry.decl.lazy && part.disable()) {
                 disabled |= bit;
             }
         }

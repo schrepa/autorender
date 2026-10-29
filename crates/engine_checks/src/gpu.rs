@@ -686,9 +686,8 @@ fn check_unused(modules: &[Checked]) -> Result<(), String> {
         .map(|checked| word_counts(&checked.source))
         .collect();
     for (index, checked) in modules.iter().enumerate() {
-        let home = |name: &str| {
-            unmangle(name).unwrap_or_else(|| (checked.name.clone(), name.to_owned()))
-        };
+        let home =
+            |name: &str| unmangle(name).unwrap_or_else(|| (checked.name.clone(), name.to_owned()));
         for (kind, name) in items(&checked.module) {
             if own(name) {
                 held.insert((checked.name.clone(), kind, name.to_owned()));
@@ -723,7 +722,9 @@ fn check_unused(modules: &[Checked]) -> Result<(), String> {
     }
     let unused: Vec<String> = held
         .difference(&used)
-        .map(|(module, kind, name)| format!("{kind} `{name}` of {module} is used nowhere; remove it"))
+        .map(|(module, kind, name)| {
+            format!("{kind} `{name}` of {module} is used nowhere; remove it")
+        })
         .collect();
     if unused.is_empty() {
         Ok(())

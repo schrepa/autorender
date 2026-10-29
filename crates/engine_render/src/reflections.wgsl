@@ -95,7 +95,6 @@ const REFLECTION_THIN: f32 = 0.05;
 const MIRRORED_BITS: u32 = 14u;
 const BODY_SOLID: u32 = 0u;
 const BODY_THIN: u32 = 1u;
-const BODY_GROUND: u32 = 2u;
 const BODY_WATER: u32 = 3u;
 const REFLECTION_CONE: f32 = 1.19;
 const REFLECTION_LOBE_EDGE: f32 = 0.244;

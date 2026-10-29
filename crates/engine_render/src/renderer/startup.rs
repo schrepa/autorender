@@ -125,8 +125,7 @@ impl Renderer {
         let camera = CameraBindings::new(&device, lighting_buffer);
         let instances = Instances::new(&device);
         let mesh_pipelines = MeshPipelines::new(&device);
-        let impostor_pipelines =
-            ImpostorPipelines::new(&device, materials.layout(), &mesh_pipelines.empty_layout);
+        let impostor_pipelines = ImpostorPipelines::new(&device);
         let impostor_atlases = (
             ImpostorAtlas::new(&device, AtlasShape::SPHERE),
             ImpostorAtlas::new(

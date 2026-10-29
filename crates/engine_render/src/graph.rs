@@ -19,50 +19,11 @@ pub enum Stage {
     Transparent,
     Exposure,
     PostScene,
-    PostLight,
     Composite,
     AfterFrame,
 }
 
 impl Stage {
-    pub const ALL: [Self; 15] = [
-        Self::Prepare,
-        Self::Opaque,
-        Self::Deferred,
-        Self::OpaqueLate,
-        Self::Occlusion,
-        Self::OpaqueSecond,
-        Self::AfterOpaque,
-        Self::Surfaces,
-        Self::Sky,
-        Self::Transparent,
-        Self::Exposure,
-        Self::PostScene,
-        Self::PostLight,
-        Self::Composite,
-        Self::AfterFrame,
-    ];
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Prepare => "prepare",
-            Self::Opaque => "opaque",
-            Self::Deferred => "deferred",
-            Self::OpaqueLate => "opaque_late",
-            Self::Occlusion => "occlusion",
-            Self::OpaqueSecond => "opaque_second",
-            Self::AfterOpaque => "after_opaque",
-            Self::Surfaces => "surfaces",
-            Self::Sky => "sky",
-            Self::Transparent => "transparent",
-            Self::Exposure => "exposure",
-            Self::PostScene => "post_scene",
-            Self::PostLight => "post_light",
-            Self::Composite => "composite",
-            Self::AfterFrame => "after_frame",
-        }
-    }
-
     pub const fn batch(self) -> u8 {
         match self {
             Self::Prepare => 0,
@@ -77,7 +38,6 @@ impl Stage {
             | Self::Transparent
             | Self::Exposure
             | Self::PostScene
-            | Self::PostLight
             | Self::Composite
             | Self::AfterFrame => 2,
         }
@@ -298,11 +258,12 @@ impl GraphTable {
                 .got(pass.name));
             }
             if self.passes.len() >= MAX_PASSES {
-                return Err(
-                    Error::new(ErrorCode::RenderFailed, format!("$.bricks.{brick}.passes"))
-                        .at_most(MAX_PASSES as u64)
-                        .got(self.passes.len() + 1),
-                );
+                return Err(Error::new(
+                    ErrorCode::RenderFailed,
+                    format!("$.bricks.{brick}.passes"),
+                )
+                .at_most(MAX_PASSES as u64)
+                .got(self.passes.len() + 1));
             }
             self.passes.push(PassEntry {
                 name: pass.name,
@@ -336,13 +297,6 @@ impl GraphTable {
         self.resources[resource.index()].owner
     }
 
-    pub fn pass(&self, part: usize, index: usize) -> Option<PassId> {
-        self.passes
-            .iter()
-            .position(|pass| pass.part == part && pass.index == index)
-            .map(|position| PassId(position as u16))
-    }
-
     pub fn pass_named(&self, name: &str) -> Option<PassId> {
         self.passes
             .iter()
@@ -356,13 +310,6 @@ impl GraphTable {
 
     pub fn names(&self) -> &'static [&'static str] {
         self.names
-    }
-
-    pub fn passes(&self) -> impl Iterator<Item = (PassId, PassEntry)> + '_ {
-        self.passes
-            .iter()
-            .enumerate()
-            .map(|(index, &pass)| (PassId(index as u16), pass))
     }
 
     pub fn names_of(&self, kept: u64) -> engine_core::Names {
@@ -401,10 +348,6 @@ pub struct Node {
 impl Node {
     pub fn pass(&self) -> PassId {
         self.pass
-    }
-
-    pub fn stage(&self) -> Stage {
-        self.stage
     }
 
     pub fn colors(&self) -> impl Iterator<Item = (ResourceId, Ops)> + '_ {
@@ -484,11 +427,7 @@ impl PassBuilder<'_> {
     }
 
     #[must_use]
-    pub fn read_written_if(
-        self,
-        condition: bool,
-        resource: impl Into<Option<ResourceId>>,
-    ) -> Self {
+    pub fn read_written_if(self, condition: bool, resource: impl Into<Option<ResourceId>>) -> Self {
         if condition {
             self.read_written(resource)
         } else {
@@ -506,7 +445,11 @@ impl PassBuilder<'_> {
 
     #[must_use]
     pub fn write_if(self, condition: bool, resource: impl Into<Option<ResourceId>>) -> Self {
-        if condition { self.write(resource) } else { self }
+        if condition {
+            self.write(resource)
+        } else {
+            self
+        }
     }
 
     #[must_use]
@@ -521,62 +464,6 @@ impl PassBuilder<'_> {
     pub fn depth(self, resource: ResourceId, access: Access) -> Self {
         self.node.depth = Some((resource, access));
         self
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GraphError {
-    Twice(PassId),
-    Unwritten {
-        pass: PassId,
-        resource: ResourceId,
-    },
-    Ambiguous {
-        first: PassId,
-        second: PassId,
-        resource: ResourceId,
-    },
-    Cycle(PassId),
-}
-
-impl GraphError {
-    pub fn error(self, table: &GraphTable) -> Error {
-        let pass = |pass: PassId| table.entry(pass).name;
-        match self {
-            Self::Twice(twice) => Error::new(
-                ErrorCode::RenderFailed,
-                format!("$.passes.{}", pass(twice)),
-            )
-            .expected(Expected::Unique),
-            Self::Unwritten {
-                pass: reader,
-                resource,
-            } => Error::new(
-                ErrorCode::RenderFailed,
-                format!("$.passes.{}", pass(reader)),
-            )
-            .expected(Expected::Present)
-            .got(table.resource_name(resource)),
-            Self::Ambiguous {
-                first,
-                second,
-                resource,
-            } => Error::new(
-                ErrorCode::AmbiguousPasses,
-                format!(
-                    "$.passes.{}.writes.{}",
-                    pass(second),
-                    table.resource_name(resource)
-                ),
-            )
-            .expected(Expected::Sorted)
-            .got(pass(first)),
-            Self::Cycle(cycled) => Error::new(
-                ErrorCode::AmbiguousPasses,
-                format!("$.passes.{}", pass(cycled)),
-            )
-            .expected(Expected::Acyclic),
-        }
     }
 }
 
@@ -609,7 +496,7 @@ impl FrameGraph {
         }
     }
 
-    pub fn compile(&mut self, table: &GraphTable) -> Result<(), GraphError> {
+    pub fn compile(&mut self, table: &GraphTable) -> Result<(), Error> {
         let mut written = Set::default();
         for node in &self.nodes {
             written = written.union(node.outputs());
@@ -624,7 +511,11 @@ impl FrameGraph {
             .windows(2)
             .find(|pair| pair[0].pass == pair[1].pass)
         {
-            return Err(GraphError::Twice(twice[0].pass));
+            return Err(Error::new(
+                ErrorCode::RenderFailed,
+                format!("$.passes.{}", table.entry(twice[0].pass).name),
+            )
+            .expected(Expected::Unique));
         }
         let mut ordered = Vec::with_capacity(self.nodes.len());
         let mut start = 0;
@@ -635,7 +526,11 @@ impl FrameGraph {
                     .iter()
                     .take_while(|node| node.stage == stage)
                     .count();
-            ordered.extend(order_stage(&self.nodes[start..end])?.into_iter().map(|at| start + at));
+            ordered.extend(
+                order_stage(table, &self.nodes[start..end])?
+                    .into_iter()
+                    .map(|at| start + at),
+            );
             start = end;
         }
         let nodes = std::mem::take(&mut self.nodes);
@@ -647,7 +542,7 @@ impl FrameGraph {
         self.plan_operations(table)
     }
 
-    fn plan_operations(&mut self, table: &GraphTable) -> Result<(), GraphError> {
+    fn plan_operations(&mut self, table: &GraphTable) -> Result<(), Error> {
         let mut needed = Set::default();
         for (resource, entry) in table.resources() {
             if entry.lifetime != Lifetime::Frame {
@@ -682,10 +577,12 @@ impl FrameGraph {
         }
         for node in self.nodes.iter_mut().filter(|node| node.kept) {
             if let Some(resource) = node.required().without(written).first() {
-                return Err(GraphError::Unwritten {
-                    pass: node.pass,
-                    resource,
-                });
+                return Err(Error::new(
+                    ErrorCode::RenderFailed,
+                    format!("$.passes.{}", table.entry(node.pass).name),
+                )
+                .expected(Expected::Present)
+                .got(table.resource_name(resource)));
             }
             let colors = node.colors;
             for (slot, ops) in colors.iter().zip(&mut node.color_ops) {
@@ -711,7 +608,7 @@ impl FrameGraph {
     }
 }
 
-fn order_stage(nodes: &[Node]) -> Result<Vec<usize>, GraphError> {
+fn order_stage(table: &GraphTable, nodes: &[Node]) -> Result<Vec<usize>, Error> {
     let count = nodes.len();
     let mut before = vec![0_u64; count];
     for (late, reader) in nodes.iter().enumerate() {
@@ -733,7 +630,11 @@ fn order_stage(nodes: &[Node]) -> Result<Vec<usize>, GraphError> {
                 .filter(|&index| placed & (1 << index) == 0)
                 .min_by_key(|&index| nodes[index].pass)
                 .map_or(nodes[0].pass, |index| nodes[index].pass);
-            return Err(GraphError::Cycle(stuck));
+            return Err(Error::new(
+                ErrorCode::AmbiguousPasses,
+                format!("$.passes.{}", table.entry(stuck).name),
+            )
+            .expected(Expected::Acyclic));
         };
         placed |= 1 << next;
         order.push(next);
@@ -741,9 +642,9 @@ fn order_stage(nodes: &[Node]) -> Result<Vec<usize>, GraphError> {
     let mut reach = before.clone();
     for &index in &order {
         let mut through = reach[index];
-        for earlier in 0..count {
+        for (earlier, &reached) in reach.iter().enumerate() {
             if through & (1 << earlier) != 0 {
-                through |= reach[earlier];
+                through |= reached;
             }
         }
         reach[index] = through;
@@ -754,19 +655,23 @@ fn order_stage(nodes: &[Node]) -> Result<Vec<usize>, GraphError> {
             let Some(resource) = shared.first() else {
                 continue;
             };
-            let ordered =
-                reach[second] & (1 << first) != 0 || reach[first] & (1 << second) != 0;
+            let ordered = reach[second] & (1 << first) != 0 || reach[first] & (1 << second) != 0;
             if !ordered {
                 let (early, late) = if nodes[first].pass < nodes[second].pass {
                     (first, second)
                 } else {
                     (second, first)
                 };
-                return Err(GraphError::Ambiguous {
-                    first: nodes[early].pass,
-                    second: nodes[late].pass,
-                    resource,
-                });
+                return Err(Error::new(
+                    ErrorCode::AmbiguousPasses,
+                    format!(
+                        "$.passes.{}.writes.{}",
+                        table.entry(nodes[late].pass).name,
+                        table.resource_name(resource)
+                    ),
+                )
+                .expected(Expected::Sorted)
+                .got(table.entry(nodes[early].pass).name));
             }
         }
     }

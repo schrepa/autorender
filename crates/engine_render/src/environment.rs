@@ -63,22 +63,23 @@ impl Environment {
         };
         let targets: [Option<wgpu::ColorTargetState>; FACES_PER_PASS] =
             std::array::from_fn(|_| Some(ENVIRONMENT_FORMAT.into()));
-        let pipeline = |entry: crate::shaders::Entry,
-                        declared: &'static crate::pipeline_layouts::PipelineLayout| {
-            let layout = crate::pipelines::layout_of(device, declared);
-            crate::pipelines::fullscreen(
-                device,
-                &crate::pipelines::Fullscreen {
-                    label: entry.name,
-                    layout: &layout,
-                    vertex: environment::vs_environment,
-                    fragment: entry,
-                    constants: &[],
-                    targets: &targets,
-                    depth: None,
-                },
-            )
-        };
+        let pipeline =
+            |entry: crate::shaders::Entry,
+             declared: &'static crate::pipeline_layouts::PipelineLayout| {
+                let layout = crate::pipelines::layout_of(device, declared);
+                crate::pipelines::fullscreen(
+                    device,
+                    &crate::pipelines::Fullscreen {
+                        label: entry.name,
+                        layout: &layout,
+                        vertex: environment::vs_environment,
+                        fragment: entry,
+                        constants: &[],
+                        targets: &targets,
+                        depth: None,
+                    },
+                )
+            };
         let sky = pipeline(
             environment::fs_environment_sky,
             &crate::pipeline_layouts::ENVIRONMENT_SKY_PIPELINES,

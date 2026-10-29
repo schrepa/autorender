@@ -71,10 +71,6 @@ impl Core {
         self.display.format()
     }
 
-    pub(crate) fn lighting_buffer(&self) -> &wgpu::Buffer {
-        self.camera.lighting_buffer()
-    }
-
     pub(crate) fn forget_temporal(&mut self) {
         let current = |&(kind, _): &(PassKind, Variant)| kind.targets() != Some(Targets::Temporal);
         self.mesh_pipelines.variants.retain(|key, _| current(key));

@@ -605,7 +605,8 @@ mod gpu {
             }
             let core = &*cx.core;
             let device = &core.device;
-            self.bins.create(device, LABELS[0], || LightBins::new(device));
+            self.bins
+                .create(device, LABELS[0], || LightBins::new(device));
             let Some(bins) = self.bins.get_mut() else {
                 return;
             };

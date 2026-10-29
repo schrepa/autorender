@@ -1,7 +1,7 @@
 use engine_core::MeshHandle;
 
+use super::meshes::BatchBinds;
 use super::*;
-use super::meshes::{BatchBinds, relit};
 use crate::entries::PassKind;
 use crate::gpu_data::{CameraUniform, FAR_DEPTH};
 use crate::lights::LightPass;
@@ -46,9 +46,6 @@ impl ProbePass {
         };
         let lights = parts.get::<LightPass>().filter(|lights| lights.lit());
         let kind = PassKind::probe(lights.is_some());
-        let relights = cx.core.mesh_pipelines.cooking
-            && parts.get::<LightPass>().is_some_and(LightPass::created);
-        cx.core.ensure_probe_pipelines(kind, relights);
         if odd {
             cx.core.instances.prepare_pose_group(&cx.core.device, 1);
         }
@@ -139,7 +136,8 @@ impl ProbePass {
                     let index = index as usize;
                     let batch = &core.plan.batches[index];
                     core.bind_batch(&mut pass, &mut binds, (kind, true), batch);
-                    let (ids, draws, offset) = core.gpu_presentation.probe_draw_source(batch, index);
+                    let (ids, draws, offset) =
+                        core.gpu_presentation.probe_draw_source(batch, index);
                     binds.bindings.ids(&mut pass, 1, ids);
                     pass.draw_indexed_indirect(draws, offset);
                 }
@@ -165,40 +163,6 @@ impl ProbePass {
 }
 
 impl Core {
-    pub(crate) fn ensure_probe_pipelines(&mut self, kind: PassKind, relights: bool) {
-        if relights {
-            self.create_probe_variants(relit(kind));
-        }
-        self.create_probe_variants(kind);
-    }
-
-    fn create_probe_variants(&mut self, kind: PassKind) {
-        let key = (self.structure_key(), kind);
-        if self.structure_keys.probes == Some(key) {
-            return;
-        }
-        self.structure_keys.probes = Some(key);
-        let mut missing = Vec::new();
-        for batch in &self.plan.batches {
-            let Some(mesh) = self.meshes.get(&batch.mesh) else {
-                continue;
-            };
-            let variant = self.batch_binding(batch, Some(mesh)).1.uber();
-            if !self.mesh_pipelines.variants.contains_key(&(kind, variant))
-                && !missing.contains(&variant)
-            {
-                missing.push(variant);
-            }
-        }
-        for variant in missing {
-            self.ensure_mesh_layout(kind);
-            let pipeline = self.create_variant(kind, variant);
-            self.mesh_pipelines
-                .variants
-                .insert((kind, variant), pipeline);
-        }
-    }
-
     pub(crate) fn caster_draw(&self, mesh: MeshHandle, levels: bool) -> CasterDraw {
         self.meshes.get(&mesh).map_or(
             CasterDraw {

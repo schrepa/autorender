@@ -93,16 +93,23 @@ impl GpuPart for TerrainPass {
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
         let slots = self.slots;
-        if self.drawn && self.subdivides() && let Some(pass) = slots.subdivision {
+        if self.drawn
+            && self.subdivides()
+            && let Some(pass) = slots.subdivision
+        {
             let _ = graph.add(cx.table, pass).write(slots.leaves);
         }
-        if self.bounce.relights() && let Some(pass) = slots.relight {
+        if self.bounce.relights()
+            && let Some(pass) = slots.relight
+        {
             let _ = graph
                 .add(cx.table, pass)
                 .read(slots.cloud_dome)
                 .write(slots.bounce);
         }
-        if self.deferred && let Some(shape) = &cx.frame.shape {
+        if self.deferred
+            && let Some(shape) = &cx.frame.shape
+        {
             self.declare_deferred(cx.table, shape, graph);
         }
     }
@@ -234,8 +241,12 @@ impl TerrainPass {
         let cover = terrain_environment.ground_cover.sanitized();
         let core = &*cx.core;
         let height = core.display.size().height as f32;
-        let canopy = (cover.enabled && cover.density > 0.0)
-            .then(|| (cover, crate::ground_cover::pixels_per_meter(culling, height)));
+        let canopy = (cover.enabled && cover.density > 0.0).then(|| {
+            (
+                cover,
+                crate::ground_cover::pixels_per_meter(culling, height),
+            )
+        });
         let regions = cx
             .parts
             .get::<ShadowPass>()
@@ -347,9 +358,9 @@ impl TerrainPass {
     fn defers_frame(&self, kind: PassKind) -> bool {
         self.drawn
             && self.ids.get().is_some()
-            && kind.targets().is_some_and(|targets| {
-                self.pipelines.resolves.contains_key(&(targets, kind.lit))
-            })
+            && kind
+                .targets()
+                .is_some_and(|targets| self.pipelines.resolves.contains_key(&(targets, kind.lit)))
             && !self.patches.frame.terrains.is_empty()
     }
 
@@ -411,9 +422,10 @@ impl TerrainPass {
             pass.set_bind_group(3, cx.core.shared_group("lights", &[]), &[]);
         }
         let mut draws = 0;
-        for (holes, pipeline) in [false, true].into_iter().filter_map(|holes| {
-            Some((holes, self.pipelines.pipeline(targets, kind.lit, holes)?))
-        }) {
+        for (holes, pipeline) in [false, true]
+            .into_iter()
+            .filter_map(|holes| Some((holes, self.pipelines.pipeline(targets, kind.lit, holes)?)))
+        {
             pass.set_pipeline(pipeline);
             for terrain in &self.patches.frame.terrains {
                 if terrain.holes == holes {

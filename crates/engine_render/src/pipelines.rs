@@ -168,11 +168,8 @@ impl Key {
                     count: render.samples,
                     ..Default::default()
                 },
-                fragment: render
-                    .fragment
-                    .as_ref()
-                    .zip(modules.fragment.as_ref())
-                    .map(|(fragment, linked)| wgpu::FragmentState {
+                fragment: render.fragment.as_ref().zip(modules.fragment.as_ref()).map(
+                    |(fragment, linked)| wgpu::FragmentState {
                         module: &linked.module,
                         entry_point: Some(fragment.entry.as_str()),
                         compilation_options: wgpu::PipelineCompilationOptions {
@@ -180,7 +177,8 @@ impl Key {
                             ..Default::default()
                         },
                         targets: &fragment.targets,
-                    }),
+                    },
+                ),
                 multiview_mask: None,
                 cache: None,
             },
@@ -328,9 +326,7 @@ impl Registry {
             return resolved.clone();
         }
         let Some(declared) = self.declared(label) else {
-            return Err(failed("$.layouts")
-                .expected(Expected::Present)
-                .got(label));
+            return Err(failed("$.layouts").expected(Expected::Present).got(label));
         };
         let resolved = ResolvedLayout::resolve(declared.label, declared.groups, &self.shared)
             .and_then(|resolved| resolved.check(&declared.limits).map(|()| resolved))
@@ -362,7 +358,12 @@ impl Registry {
                         owner: binding.brick,
                     })
                     .collect();
-                group_layout(&self.device, key, &format!("engine/{group}-group"), bindings)
+                group_layout(
+                    &self.device,
+                    key,
+                    &format!("engine/{group}-group"),
+                    bindings,
+                )
             }
         };
         self.groups.insert(key, made.clone());
@@ -751,10 +752,7 @@ impl PipelineCounts {
                 .collect();
             let mut record = LIST.to_vec();
             record.extend((keys.len() as u32).to_le_bytes());
-            for text in std::iter::once(&canvas)
-                .chain(keys)
-                .chain(composed.iter())
-            {
+            for text in std::iter::once(&canvas).chain(keys).chain(composed.iter()) {
                 record.extend((text.len() as u32).to_le_bytes());
                 record.extend(text.as_bytes());
             }
@@ -818,7 +816,9 @@ impl PipelineCounts {
     }
 
     pub(crate) fn take_errors(&self) -> Vec<Error> {
-        with_registry(&self.device, |registry| std::mem::take(&mut registry.errors))
+        with_registry(&self.device, |registry| {
+            std::mem::take(&mut registry.errors)
+        })
     }
 
     pub(crate) fn frame_submitted(&mut self, queue: &crate::gpu_calls::Queue) -> u32 {
@@ -1204,16 +1204,6 @@ pub(crate) fn filled_group(
         GroupKey::Own(table.label),
         "layout_matches {label}"
     );
-    fill(device, label, layout, resources, fillers)
-}
-
-pub(crate) fn shared_group(
-    device: &wgpu::Device,
-    label: &str,
-    layout: &GroupLayout,
-    resources: &[(&str, wgpu::BindingResource<'_>)],
-    fillers: &Fillers,
-) -> wgpu::BindGroup {
     fill(device, label, layout, resources, fillers)
 }
 

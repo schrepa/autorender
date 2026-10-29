@@ -21,6 +21,7 @@ const WATCH: &str = "the watch tools answer it (web/scripts/iteration*.mjs and t
 const PAGE: &str = "the page answers it (web/src/engine/dev.ts and the benchmark it runs)";
 const NATIVE_PROFILE: &str = "native profile captures answer it (crates/engine_native)";
 const CHECKS: &str = "the checks report it (crates/engine_checks)";
+const LINKER: &str = "the shader linker answers it when a GPU device links shaders, and the checks report it (crates/engine_render/src/linker.rs)";
 const IMPORT: &str = "the glTF importer answers it (tools/assetc)";
 const RECORDS: &str = "records that do not decode answer it (crates/engine_terrain/src/codec.rs)";
 const LAYERS: &str = "terrain layer stacks answer it (crates/engine_terrain/src/layers.rs)";
@@ -33,9 +34,11 @@ const UNREACHED: &[(&str, &str)] = &[
     ("activation_expired", WATCH),
     ("activation_failed", WATCH),
     ("activation_not_committed", WATCH),
+    ("ambiguous_passes", "rendering needs a GPU"),
     ("benchmark_failed", PAGE),
     ("benchmark_interrupted", PAGE),
     ("benchmark_timeout", PAGE),
+    ("binding_limit", LINKER),
     ("brick_cycle", CHECKS),
     ("brick_internal_path", CHECKS),
     ("bridge_error", BRIDGE),
@@ -138,6 +141,7 @@ const UNREACHED: &[(&str, &str)] = &[
     ("session_replacing", BRIDGE),
     ("session_request_limit", BRIDGE),
     ("session_unavailable", BRIDGE),
+    ("shader_link", LINKER),
     ("source_budget", WATCH),
     (
         "source_changed",
@@ -146,6 +150,8 @@ const UNREACHED: &[(&str, &str)] = &[
     ("source_symlink", WATCH),
     ("source_type", WATCH),
     ("struct_too_wide", CHECKS),
+    ("unknown_binding", LINKER),
+    ("unknown_module", LINKER),
     ("unsafe_output_path", WATCH),
     ("unsafe_unlisted", CHECKS),
     (

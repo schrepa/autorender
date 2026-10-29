@@ -46,7 +46,10 @@ pub(crate) static PART: PartEntry = PartEntry {
 };
 
 fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
-    Box::new(ProbePass::new(&cx.core.device, size_of::<CameraUniform>() as u64))
+    Box::new(ProbePass::new(
+        &cx.core.device,
+        size_of::<CameraUniform>() as u64,
+    ))
 }
 
 pub(crate) fn probe_list(snapshot: &RenderSnapshot) -> &[RenderReflectionProbe] {
@@ -428,11 +431,17 @@ impl GpuPart for ProbePass {
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         let snapshot = cx.frame.snapshot;
         let probe_list = probe_list(snapshot);
-        let sky = cx.parts.get::<crate::sky::SkyPass>();
-        let cubes = sky.map_or(1, |sky| sky.environment().cubes());
-        let (lost, sky_changed) =
-            sky.map_or((false, false), crate::sky::SkyPass::environment_changes);
-        let most_cubes = (cx.core.display.max_layers / FACES as u32).max(1);
+        let plan = cx
+            .parts
+            .get::<crate::sky::SkyPass>()
+            .map(crate::sky::SkyPass::environment_plan)
+            .unwrap_or_default();
+        let (cubes, most_cubes, lost, sky_changed) = (
+            plan.cubes.max(1),
+            plan.most_cubes.max(1),
+            plan.lost,
+            plan.sky_changed,
+        );
         self.slots
             .plan(probe_list, (cubes - 1) as usize, lost, sky_changed);
         self.upload(&cx.core.device, &cx.core.queue);
@@ -440,8 +449,7 @@ impl GpuPart for ProbePass {
         self.dropped = (snapshot.reflection_probes.dropped as u64
             + (probe_list.len() as u64).saturating_sub(u64::from(most_cubes - 1)))
         .min(u64::from(u32::MAX)) as u32;
-        self.captures =
-            cx.frame.kind.gpu_mode && !cx.frame.kind.debug && !probe_list.is_empty();
+        self.captures = cx.frame.kind.gpu_mode && !cx.frame.kind.debug && !probe_list.is_empty();
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {

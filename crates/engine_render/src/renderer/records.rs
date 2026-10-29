@@ -38,7 +38,7 @@ impl Renderer {
                 "water looks",
                 self.parts
                     .get::<WaterPass>()
-                    .map_or(0, |water| water.settle().looks_left()),
+                    .map_or(0, |water| water.looks_left()),
             ),
         ]
     }
@@ -53,20 +53,20 @@ impl Renderer {
     ) {
         let _owner = crate::memory::owned(crate::water::PART.decl.brick);
         if let Some(water) = self.parts.get_mut::<WaterPass>() {
-            water.settle_mut().settle(starts);
+            water.settle(starts);
         }
     }
 
     pub fn take_settled_water(&mut self) -> Vec<(RecordKey, Result<Vec<u8>, String>)> {
         self.parts
             .get_mut::<WaterPass>()
-            .map(|water| water.settle_mut().take_made())
+            .map(WaterPass::take_made)
             .unwrap_or_default()
     }
 
     pub fn set_water_cooking(&mut self, cooking: bool) {
         if let Some(water) = self.parts.get_mut::<WaterPass>() {
-            water.settle_mut().set_cooking(cooking);
+            water.set_cooking(cooking);
         }
     }
 }

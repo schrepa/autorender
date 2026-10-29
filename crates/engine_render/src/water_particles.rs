@@ -229,10 +229,8 @@ impl WaterParticles {
         if self.grid.is_none() || self.pipelines.is_some() {
             return;
         }
-        let layout = crate::pipelines::layout_of(
-            device,
-            &crate::pipeline_layouts::WATER_PARTICLE_PIPELINES,
-        );
+        let layout =
+            crate::pipelines::layout_of(device, &crate::pipeline_layouts::WATER_PARTICLE_PIPELINES);
         let entry = |entry| crate::pipelines::compute_entry(device, &layout, entry);
         self.pipelines = Some(ParticlePipelines {
             begin: entry(meshes::particles_begin),

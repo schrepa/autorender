@@ -642,8 +642,7 @@ impl GpuPart for GroundCoverPass {
     fn prepare_draws(&mut self, cx: &mut Step<'_>, _encoder: &mut wgpu::CommandEncoder) {
         self.drawn = false;
         self.framed = false;
-        let (Some(terrain), Some(passes)) = (cx.parts.get::<TerrainPass>(), cx.frame.passes)
-        else {
+        let (Some(terrain), Some(passes)) = (cx.parts.get::<TerrainPass>(), cx.frame.passes) else {
             return;
         };
         let core = &*cx.core;

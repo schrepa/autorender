@@ -154,12 +154,14 @@ impl GpuPart for OpaquePart {
             return;
         };
         if let Some(opaque) = self.opaque {
-            self.reads.declare_phase(cx.table, &shape, graph.add(cx.table, opaque), 0);
+            self.reads
+                .declare_phase(cx.table, &shape, graph.add(cx.table, opaque), 0);
         }
         if shape.deferred
             && let Some(late) = self.late
         {
-            self.reads.declare_late(cx.table, &shape, graph.add(cx.table, late));
+            self.reads
+                .declare_late(cx.table, &shape, graph.add(cx.table, late));
         }
     }
 
@@ -323,10 +325,9 @@ impl Core {
         }
         pass.set_bind_group(
             2,
-            temporal_pass.map_or_else(
-                || self.instances.pose_group(0),
-                |(frame, temporal)| temporal.pose_group(frame),
-            ),
+            temporal_pass
+                .and_then(|(frame, temporal)| temporal.pose_group(frame))
+                .unwrap_or_else(|| self.instances.pose_group(0)),
             &[],
         );
         if !gpu_mode {

@@ -488,9 +488,9 @@ impl ScatterDraws {
                     continue;
                 }
                 let (group, variant) = scatter_binding(cx.core, draw);
-                let Some(pipeline) = cx
-                    .core
-                    .opaque_pipeline(kind, variant.with_fading(fades), prepass)
+                let Some(pipeline) =
+                    cx.core
+                        .opaque_pipeline(kind, variant.with_fading(fades), prepass)
                 else {
                     continue;
                 };
@@ -590,9 +590,7 @@ impl ScatterDraws {
 }
 
 fn casts_shadows(cx: &View<'_>) -> bool {
-    cx.parts
-        .get::<ShadowPass>()
-        .is_some_and(|shadows| shadows.frame().is_some())
+    cx.frame.runs(cx.table, "shadow_maps")
 }
 
 fn placed_material(

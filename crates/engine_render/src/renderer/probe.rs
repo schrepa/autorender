@@ -133,9 +133,11 @@ impl Renderer {
         match armed.stage {
             Stage::Debug => {
                 if info.kind.debug
-                    && let Some(debug) = self.parts.get::<DebugViewPass>()
+                    && let Some([ids, count, terrain]) = self
+                        .parts
+                        .get::<DebugViewPass>()
+                        .and_then(DebugViewPass::textures)
                 {
-                    let [ids, count, terrain] = debug.textures();
                     copy_texel(encoder, (ids, all), pixel, (&armed.buffer, IDS));
                     copy_texel(encoder, (count, all), pixel, (&armed.buffer, COUNT));
                     copy_texel(encoder, (terrain, all), pixel, (&armed.buffer, TERRAIN));
@@ -148,9 +150,12 @@ impl Renderer {
                 armed.stage = Stage::Shaded;
             }
             Stage::Shaded => {
-                if scene && let Some(post) = self.parts.get::<PostPass>()
+                if scene
+                    && let Some(scene) = self
+                        .parts
+                        .get::<PostPass>()
+                        .and_then(PostPass::scene_texture)
                 {
-                    let scene = post.scene_texture();
                     copy_texel(encoder, (scene, all), pixel, (&armed.buffer, SCENE));
                     armed.scene = true;
                 }

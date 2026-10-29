@@ -107,7 +107,11 @@ pub fn composites() -> Vec<(String, &'static str, String)> {
         .iter()
         .filter_map(|&resolve| {
             let source = crate::composite::composite_source(resolve, &effects, None).ok()?;
-            Some((crate::composite::composite_path(resolve), "post_effects", source))
+            Some((
+                crate::composite::composite_path(resolve),
+                "post_effects",
+                source,
+            ))
         })
         .collect()
 }

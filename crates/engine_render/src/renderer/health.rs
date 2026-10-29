@@ -42,7 +42,11 @@ impl Renderer {
             Some(Poll::Pending) | None => {}
         }
         let mut named = 0;
+        let linked = self.core.pipeline_counts.take_errors();
         if let Ok(mut reports) = self.core.health.lock() {
+            if let Some(error) = linked.into_iter().next() {
+                reports.fatal.get_or_insert(error);
+            }
             for message in std::mem::take(&mut reports.messages) {
                 match self.parts.named_by(&message) {
                     0 => {

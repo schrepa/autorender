@@ -8,7 +8,6 @@ use crate::pipelines::vertex_attributes;
 
 pub(crate) struct MeshPipelines {
     pub(crate) variants: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
-    pub(crate) empty_layout: crate::pipelines::GroupLayout,
     pub(crate) empty_group: wgpu::BindGroup,
     pub(crate) shading: SceneShading,
     pub(crate) cooking: bool,
@@ -21,7 +20,6 @@ impl MeshPipelines {
             crate::pipelines::group(device, "engine/empty-group", &EMPTY, &empty_layout, &[]);
         Self {
             variants: HashMap::default(),
-            empty_layout,
             empty_group,
             shading: SceneShading::ALL,
             cooking: false,

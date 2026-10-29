@@ -108,7 +108,10 @@ impl CameraBindings {
             }
             let mut sources: Sources<'_> = vec![
                 ("camera", Bound::fixed(buffer.as_entire_binding())),
-                ("lighting", Bound::fixed(lighting_buffer.as_entire_binding())),
+                (
+                    "lighting",
+                    Bound::fixed(lighting_buffer.as_entire_binding()),
+                ),
             ];
             for (_, part) in parts.iter() {
                 part.contribute(view.group, &mut sources);
@@ -170,10 +173,7 @@ fn bind_view<'s>(
 ) {
     let mut entries: Vec<(u32, Bound<'_>)> = Vec::new();
     for binding in bindings {
-        let Some((_, bound)) = sources
-            .iter()
-            .find(|(name, _)| *name == binding.decl.name)
-        else {
+        let Some((_, bound)) = sources.iter().find(|(name, _)| *name == binding.decl.name) else {
             cache.clear();
             return;
         };

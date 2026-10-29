@@ -764,7 +764,9 @@ impl GpuPart for OccupancyPass {
         let device = &cx.core.device;
         let terrains = &engine_terrain::RenderTerrains::of(snapshot).terrains;
         if terrains.iter().any(|terrain| !terrain.assets.is_empty())
-            && engine_terrain::TerrainEnvironment::of(snapshot).occupancy.enabled
+            && engine_terrain::TerrainEnvironment::of(snapshot)
+                .occupancy
+                .enabled
         {
             self.warm(device);
         }
@@ -779,7 +781,9 @@ impl GpuPart for OccupancyPass {
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
-        if self.frame.is_some() && let Some(pass) = self.slots.pass {
+        if self.frame.is_some()
+            && let Some(pass) = self.slots.pass
+        {
             let _ = graph
                 .add(cx.table, pass)
                 .read_written(self.slots.placed)

@@ -1,7 +1,7 @@
 use crate::cached::Versioned;
 use crate::debug_view::{COUNT_FORMAT as DEBUG_COUNT_FORMAT, IDS_FORMAT as DEBUG_IDS_FORMAT};
-use crate::post::{GLOW_FORMAT, SCENE_FORMAT, SURFACE_FORMAT};
 pub(crate) use crate::graph::Targets;
+use crate::post::{GLOW_FORMAT, SCENE_FORMAT, SURFACE_FORMAT};
 use crate::temporal::MOTION_FORMAT;
 
 impl Targets {

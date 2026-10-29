@@ -81,20 +81,16 @@ impl ShadowPipelines {
     )]
     pub(super) fn new(device: &wgpu::Device) -> Self {
         let select_layout = layout(device, &SHADOW_SELECT);
-        let compute_layout = crate::pipelines::layout_of(
-            device,
-            &crate::pipeline_layouts::SHADOW_SELECT_PIPELINES,
-        );
+        let compute_layout =
+            crate::pipelines::layout_of(device, &crate::pipeline_layouts::SHADOW_SELECT_PIPELINES);
         let compute = |entry: crate::shaders::Entry| {
             crate::pipelines::compute_entry(device, &compute_layout, entry)
         };
         let select = compute(shadow::select_casters);
         let count = compute(shadow::count_casters);
         let marks_layout = layout(device, &SHADOW_MARKS);
-        let marks_pipeline_layout = crate::pipelines::layout_of(
-            device,
-            &crate::pipeline_layouts::SHADOW_MARKS_PIPELINES,
-        );
+        let marks_pipeline_layout =
+            crate::pipelines::layout_of(device, &crate::pipeline_layouts::SHADOW_MARKS_PIPELINES);
         let marks = crate::pipelines::compute_entry(
             device,
             &marks_pipeline_layout,
@@ -144,7 +140,7 @@ impl ShadowPipelines {
         let casters = kinds
             .each_ref()
             .map(|(label, layouts, buffers, (vertex, fragment), _)| {
-                caster_pipeline(device, label, *layouts, *vertex, buffers, false, *fragment)
+                caster_pipeline(device, label, layouts, *vertex, buffers, false, *fragment)
             });
         let moving = kinds
             .each_ref()
@@ -152,7 +148,7 @@ impl ShadowPipelines {
                 caster_pipeline(
                     device,
                     &format!("{label}-moving"),
-                    *layouts,
+                    layouts,
                     *vertex,
                     buffers,
                     false,

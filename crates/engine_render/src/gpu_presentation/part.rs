@@ -18,8 +18,16 @@ const FRAME_VIEW: Contribution = Contribution {
     group: "frame",
     set: "view",
     bindings: &[
-        uniform_of("camera", size_of::<CameraUniform>(), Stages::VERTEX_FRAGMENT_COMPUTE),
-        uniform_of("lighting", size_of::<LightingUniform>(), Stages::VERTEX_FRAGMENT),
+        uniform_of(
+            "camera",
+            size_of::<CameraUniform>(),
+            Stages::VERTEX_FRAGMENT_COMPUTE,
+        ),
+        uniform_of(
+            "lighting",
+            size_of::<LightingUniform>(),
+            Stages::VERTEX_FRAGMENT,
+        ),
     ],
 };
 
@@ -102,7 +110,8 @@ impl GpuPart for PresentationPart {
         encoder: &mut wgpu::CommandEncoder,
     ) -> u32 {
         let core = &mut *cx.core;
-        core.gpu_presentation.encode(&core.device, encoder, &core.profiler);
+        core.gpu_presentation
+            .encode(&core.device, encoder, &core.profiler);
         0
     }
 

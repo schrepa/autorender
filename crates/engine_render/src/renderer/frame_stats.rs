@@ -78,14 +78,10 @@ impl Renderer {
             ..
         } = info.kind;
         let (snapshot, frame) = (info.snapshot, info.frame);
-        let (mesh_upload_bytes, texture_upload_bytes) = (
-            uploaded.assets.mesh_bytes,
-            uploaded.assets.texture_bytes,
-        );
-        let (camera_upload_bytes, instance_upload_bytes) = (
-            uploaded.writes.camera_bytes,
-            uploaded.writes.instance_bytes,
-        );
+        let (mesh_upload_bytes, texture_upload_bytes) =
+            (uploaded.assets.mesh_bytes, uploaded.assets.texture_bytes);
+        let (camera_upload_bytes, instance_upload_bytes) =
+            (uploaded.writes.camera_bytes, uploaded.writes.instance_bytes);
         let pipelines_created = self.core.pipeline_counts.frame_submitted(&self.core.queue);
         let render_passes = self.ran_passes();
         let core = &self.core;

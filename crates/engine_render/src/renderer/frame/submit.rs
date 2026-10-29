@@ -58,33 +58,29 @@ impl Renderer {
         if end.is_none() && begin.is_none() {
             return;
         }
-        let mut encoder = self
-            .core
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("engine/profile-mark"),
-            });
+        let mut encoder =
+            self.core
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("engine/profile-mark"),
+                });
         mark_between(&mut encoder, end, begin);
         handover.push(Recorded::Encoder(encoder));
     }
 
     pub(super) fn frame_encoder(&self, batch: u8) -> wgpu::CommandEncoder {
-        let mut encoder = self
-            .core
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("engine/frame-encoder"),
-            });
+        let mut encoder =
+            self.core
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("engine/frame-encoder"),
+                });
         self.mark_batch(&mut encoder, None, Some(batch));
         encoder
     }
 
     fn mark_batch(&self, encoder: &mut wgpu::CommandEncoder, end: Option<u8>, begin: Option<u8>) {
-        let span = |batch: Option<u8>| {
-            self.core
-                .profiler
-                .busy(BATCHES.get(usize::from(batch?))?)
-        };
+        let span = |batch: Option<u8>| self.core.profiler.busy(BATCHES.get(usize::from(batch?))?);
         mark_between(encoder, span(end), span(begin));
     }
 

@@ -43,10 +43,8 @@ impl Kernels {
 
     pub(crate) fn pipelines(&mut self, device: &wgpu::Device) -> &Pipelines {
         self.pipelines.get_or_insert_with(|| {
-            let pipeline_layout = crate::pipelines::layout_of(
-                device,
-                &crate::pipeline_layouts::WATER_SIM_PIPELINES,
-            );
+            let pipeline_layout =
+                crate::pipelines::layout_of(device, &crate::pipeline_layouts::WATER_SIM_PIPELINES);
             let entry = |entry| crate::pipelines::compute_entry(device, &pipeline_layout, entry);
             Pipelines {
                 exchange: entry(water_sim::sim_exchange),

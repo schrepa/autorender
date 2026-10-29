@@ -53,10 +53,7 @@ impl SharedGroups {
         };
         let bindings = &mut self.groups[index].1;
         for decl in contribution.bindings {
-            if let Some(known) = bindings
-                .iter()
-                .find(|known| known.decl.name == decl.name)
-            {
+            if let Some(known) = bindings.iter().find(|known| known.decl.name == decl.name) {
                 return Err(Error::new(
                     ErrorCode::DuplicateBrick,
                     format!(
@@ -157,7 +154,10 @@ impl ResolvedLayout {
                         owner: table.label,
                     })
                     .collect(),
-                GroupRef::Shared { group: name, without } => shared
+                GroupRef::Shared {
+                    group: name,
+                    without,
+                } => shared
                     .view(name, without)
                     .map(|binding| ResolvedBinding {
                         group,
@@ -240,11 +240,27 @@ impl ResolvedLayout {
         for (stage_name, stage) in STAGES {
             let counts = self.counts(stage);
             let checks = [
-                ("uniform_buffers", counts.uniform_buffers, limits.uniform_buffers),
-                ("storage_buffers", counts.storage_buffers, limits.storage_buffers),
-                ("sampled_textures", counts.sampled_textures, limits.sampled_textures),
+                (
+                    "uniform_buffers",
+                    counts.uniform_buffers,
+                    limits.uniform_buffers,
+                ),
+                (
+                    "storage_buffers",
+                    counts.storage_buffers,
+                    limits.storage_buffers,
+                ),
+                (
+                    "sampled_textures",
+                    counts.sampled_textures,
+                    limits.sampled_textures,
+                ),
                 ("samplers", counts.samplers, limits.samplers),
-                ("storage_textures", counts.storage_textures, limits.storage_textures),
+                (
+                    "storage_textures",
+                    counts.storage_textures,
+                    limits.storage_textures,
+                ),
             ];
             for (what, count, limit) in checks {
                 if count <= limit {

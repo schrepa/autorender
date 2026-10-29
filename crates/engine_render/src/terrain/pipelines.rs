@@ -217,7 +217,7 @@ impl TerrainPipelines {
         (targets, lit, holes): (Targets, bool, bool),
         depth: wgpu::TextureFormat,
     ) {
-        if !self.deferred_ids.contains_key(&holes) {
+        if let std::collections::hash_map::Entry::Vacant(slot) = self.deferred_ids.entry(holes) {
             let layout =
                 crate::pipelines::layout_of(device, &crate::pipeline_layouts::TERRAIN_PIPELINES);
             let ids = [Some(wgpu::ColorTargetState::from(
@@ -231,7 +231,7 @@ impl TerrainPipelines {
                 depth,
                 wgpu::FrontFace::Ccw,
             );
-            self.deferred_ids.insert(holes, pipeline);
+            slot.insert(pipeline);
         }
         let fragment = match (targets, lit) {
             (Targets::Post, false) => meshes::fs_terrain_resolve_post,

@@ -287,7 +287,6 @@ impl TerrainPass {
 
     pub(crate) fn ground(&self, id: u64) -> Option<crate::water_sim::LiveGround<'_>> {
         Some(crate::water_sim::LiveGround {
-            layout: &self.pipelines.layout,
             group: self.pipelines.surface_group()?,
             uniform: self.tables.uniform_of(id)?,
             terrain: id,
@@ -526,7 +525,8 @@ impl TerrainPass {
         let Some(group) = self.pipelines.surface_group() else {
             return;
         };
-        self.surface.encode(device, encoder, camera, group, profiler);
+        self.surface
+            .encode(device, encoder, camera, group, profiler);
     }
 
     fn encode_bounce(

@@ -18,7 +18,9 @@ pub struct ShaderModule {
     pub source: &'static str,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct ComposeKey {
     pub module: String,
     pub entry: String,
@@ -68,7 +70,11 @@ impl Linker {
     pub fn new(modules: &[ShaderModule]) -> Self {
         let mut linker = Self::default();
         for module in modules {
-            linker.add(module.path.to_owned(), module.brick, Cow::Borrowed(module.source));
+            linker.add(
+                module.path.to_owned(),
+                module.brick,
+                Cow::Borrowed(module.source),
+            );
         }
         linker
     }
@@ -198,10 +204,16 @@ impl Linker {
                 .got(&module)
                 .variants(self.paths().map(str::to_owned).collect::<Vec<_>>()));
         }
-        if let Some(source) = self.sources.iter().find(|source| !source.hex_floats.is_empty()) {
-            return Err(Error::new(ErrorCode::ShaderLink, format!("$.shaders.{}", source.path))
-                .expected(Expected::Supported)
-                .got(&source.hex_floats));
+        if let Some(source) = self
+            .sources
+            .iter()
+            .find(|source| !source.hex_floats.is_empty())
+        {
+            return Err(
+                Error::new(ErrorCode::ShaderLink, format!("$.shaders.{}", source.path))
+                    .expected(Expected::Supported)
+                    .got(&source.hex_floats),
+            );
         }
         let failed = |error: &dyn std::fmt::Display| {
             Error::new(ErrorCode::ShaderLink, path.clone()).got(error.to_string())
@@ -211,7 +223,10 @@ impl Linker {
         for source in &self.sources {
             let (text, missing) = place_bindings(&source.text, layout);
             unplaced.extend(missing);
-            resolver.add_module(module_path(&source.path).map_err(|error| failed(&error))?, Cow::Owned(text));
+            resolver.add_module(
+                module_path(&source.path).map_err(|error| failed(&error))?,
+                Cow::Owned(text),
+            );
         }
         let mut features = wesl::Features::new();
         features.default = wesl::Feature::Error;

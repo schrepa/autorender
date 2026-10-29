@@ -25,7 +25,7 @@ pub use table::{
 use Format::{R32Float, R32Uint, Rgba16Float};
 use Sample::{Depth, Float, Uint, Unfilterable};
 use Sampling::{Comparison, Filtering, NonFiltering};
-use View::{Cube, CubeArray, D2, D2Array, D3};
+use View::{Cube, D2, D2Array, D3};
 
 const C: Stages = Stages::COMPUTE;
 const F: Stages = Stages::FRAGMENT;

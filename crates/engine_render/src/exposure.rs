@@ -295,7 +295,8 @@ impl GpuPart for ExposurePass {
         let (device, queue) = (&core.device, &core.queue);
         let lighting = core.camera.lighting_buffer();
         let drawn = core.display.region.render.pixels();
-        self.meter.create(device, "engine/exposure", || Meter::new(device));
+        self.meter
+            .create(device, "engine/exposure", || Meter::new(device));
         self.frame = self.meter.get_mut().and_then(|meter| {
             let targets = (post?.scene()?, &core.depth.view, drawn);
             let frame = meter.prepare((device, queue), snapshot, targets, lighting);

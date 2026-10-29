@@ -70,12 +70,12 @@ impl Renderer {
                 mapped_at_creation: false,
             },
         );
-        let mut encoder = self
-            .core
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("engine/offscreen-readback"),
-            });
+        let mut encoder =
+            self.core
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("engine/offscreen-readback"),
+                });
         encoder.copy_texture_to_buffer(
             texture.as_image_copy(),
             wgpu::TexelCopyBufferInfo {

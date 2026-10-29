@@ -11,8 +11,8 @@ use crate::graph::{
     Access, Clear, FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId,
     Stage, TRANSPARENT, WHITE,
 };
-use crate::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View};
 use crate::particles::{ParticleFrame, ParticlePass};
+use crate::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View};
 use crate::pipeline_layouts::{PARTICLE_PIPELINES, TRANSPARENT_COMPOSITE_PIPELINES};
 use crate::post::PostPass;
 use crate::profiling::Span;
@@ -295,7 +295,10 @@ impl Transparency {
     fn prepare_frame(&mut self, cx: &Step<'_>, post: bool) -> Option<TransparencyFrame> {
         let (device, queue) = (&cx.core.device, &cx.core.queue);
         let snapshot = cx.frame.snapshot;
-        let emitters = (cx.frame.frame.identity(), cx.frame.frame.emitters_revision());
+        let emitters = (
+            cx.frame.frame.identity(),
+            cx.frame.frame.emitters_revision(),
+        );
         let (region, depth) = (cx.core.display.region, &cx.core.depth.view);
         let (surface_format, depth_format) =
             (cx.core.canvas_format(), cx.core.depth.texture.format());
@@ -340,9 +343,7 @@ impl Transparency {
     }
 
     pub(crate) fn revealed(&self) -> Option<Bound<'_>> {
-        if self.frame.is_none() {
-            return None;
-        }
+        self.frame.as_ref()?;
         let targets = self.surfaces.as_ref()?.targets.get()?;
         Some(Bound::of(
             targets,

@@ -64,15 +64,6 @@ pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
     let written = written(modules);
     for checked in modules {
         let module = &checked.module;
-        let own: Vec<&Written<'_>> = written
-            .iter()
-            .filter(|(owner, _, _)| *owner == checked.name)
-            .collect();
-        let candidates: Vec<&Written<'_>> = if own.is_empty() {
-            written.iter().collect()
-        } else {
-            own
-        };
         for point in module
             .entry_points
             .iter()
@@ -94,13 +85,13 @@ pub(super) fn check(modules: &[Checked]) -> Result<usize, String> {
                     .map(|(location, _)| *location)
                     .collect()
             };
-            if candidates
+            if written
                 .iter()
                 .any(|(_, _, values)| missing(values).is_empty())
             {
                 continue;
             }
-            let closest = candidates
+            let closest = written
                 .iter()
                 .map(|(owner, name, values)| (owner, name, missing(values)))
                 .min_by_key(|(_, _, missing)| missing.len());

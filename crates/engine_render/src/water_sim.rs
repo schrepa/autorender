@@ -91,10 +91,8 @@ impl Setup {
         if self.pipelines.is_some() || !self.grounded {
             return;
         }
-        let layout = crate::pipelines::layout_of(
-            device,
-            &crate::pipeline_layouts::WATER_SETUP_PIPELINES,
-        );
+        let layout =
+            crate::pipelines::layout_of(device, &crate::pipeline_layouts::WATER_SETUP_PIPELINES);
         let entry = |entry| crate::pipelines::compute_entry(device, &layout, entry);
         self.pipelines = Some([
             entry(meshes::setup_blocks),

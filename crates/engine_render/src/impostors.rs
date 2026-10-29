@@ -369,10 +369,8 @@ pub(crate) struct ImpostorPipelines {
 impl ImpostorPipelines {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let bake_layout = crate::pipelines::layout(device, &IMPOSTOR_BAKE);
-        let bake_pipeline_layout = crate::pipelines::layout_of(
-            device,
-            &crate::pipeline_layouts::IMPOSTOR_BAKE_PIPELINES,
-        );
+        let bake_pipeline_layout =
+            crate::pipelines::layout_of(device, &crate::pipeline_layouts::IMPOSTOR_BAKE_PIPELINES);
         let draw_layout = crate::pipelines::layout(device, &IMPOSTOR_DRAW);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/impostor-sampler"),
@@ -393,10 +391,6 @@ impl ImpostorPipelines {
             sampler,
             no_shade: None,
         }
-    }
-
-    pub(crate) fn draw_layout(&self) -> &crate::pipelines::GroupLayout {
-        &self.draw_layout
     }
 
     pub(crate) fn pipeline(&self, targets: Targets, lit: bool) -> Option<&wgpu::RenderPipeline> {
@@ -715,12 +709,7 @@ impl ImpostorAtlas {
         self.targets = None;
     }
 
-    fn ensure_layers(
-        &mut self,
-        device: &wgpu::Device,
-        encoder: &mut dyn MipEncoder,
-        layers: u32,
-    ) {
+    fn ensure_layers(&mut self, device: &wgpu::Device, encoder: &mut dyn MipEncoder, layers: u32) {
         if self
             .arrays
             .as_ref()

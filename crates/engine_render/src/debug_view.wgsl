@@ -49,7 +49,6 @@ const DEBUG_SUN_BEYOND: u32 = 22u;
 const DEBUG_SHADOWED: u32 = 0x80u;
 const DEBUG_TILE_EDGE: u32 = 0x800u;
 const DEBUG_PATCH_EDGE: u32 = 0x1000u;
-const DEBUG_PATCH_SHIFT: u32 = 24u;
 const DEBUG_NO_MATERIAL: u32 = 0xffu;
 
 const DEBUG_OTHER = vec3<f32>(0.4, 0.4, 0.42);

@@ -15,7 +15,6 @@ pub(crate) struct PixelEffect {
     pub module: &'static str,
 }
 
-pub(crate) const PIXEL_MODULE: &str = "post::pixel";
 pub(crate) const COLOR_MODULE: &str = "engine::color";
 pub(crate) const COMPOSITE_ENTRY: &str = "fs_composite";
 pub(crate) const PLAIN_RESOLVE: &str = "post::resolve_plain";

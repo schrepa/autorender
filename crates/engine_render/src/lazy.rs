@@ -53,16 +53,6 @@ impl<F> Lazy<F> {
         }
     }
 
-    pub(crate) fn ensure(
-        &mut self,
-        device: &wgpu::Device,
-        label: &'static str,
-        create: impl FnOnce() -> F,
-    ) -> Option<&mut F> {
-        self.create(device, label, create);
-        self.get_mut()
-    }
-
     pub(crate) fn create(
         &mut self,
         device: &wgpu::Device,

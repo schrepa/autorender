@@ -110,10 +110,6 @@ impl MaterialStore {
         }
     }
 
-    pub(crate) fn layout(&self) -> &crate::pipelines::GroupLayout {
-        &self.layout
-    }
-
     pub(crate) fn retain(&mut self, plan: &BatchPlan, snapshot: &RenderSnapshot) {
         let extra_material = |handle: &MaterialHandle| {
             placed_materials(snapshot).any(|source| source.handle == *handle)
