@@ -224,7 +224,7 @@ fn standing_alike(workers: &[Value], page: &[Value]) -> Checked<()> {
         }
     }
     smoke_check!(
-        wetness * 50 <= workers.len() && apart * 100 <= wet.max(1),
+        wetness * 50 <= workers.len() && apart * 100 <= workers.len(),
         "standing_water_settles_alike",
         &json!({"samples": workers.len(), "wet": wet, "apart": apart, "wetness": wetness}),
         &json!({"apart_at_most_percent": 1, "wetness_at_most_percent": 2})

@@ -29,6 +29,14 @@ pub use engine_core::collections;
 pub use engine_core::command_line;
 pub use engine_core::{bevy_ecs, glam, smoke, smoke_check, smoke_eq};
 
+pub mod ground {
+    pub use engine_core::{
+        BRIDGE_SOLIDS, GroundBridge, GroundGrid, GroundObstacle, GroundPatch, GroundRead,
+        GroundRecord, GroundRegions, GroundSamples, GroundShape, GroundSlot, GroundSolid,
+        GroundSource, GroundWorker, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey,
+    };
+}
+
 mod games {
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, App, AssetBudget,

@@ -121,11 +121,16 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_dev/src/inspect/terrain*",
             "crates/engine_collision/src/**/terrain*",
             "crates/engine_terrain/**",
+            "crates/engine_layer_*/**",
         ],
         checks: &[Pure("terrain")],
     },
     Rule {
-        paths: &["crates/engine_terrain/**", "crates/engine_navigation/**"],
+        paths: &[
+            "crates/engine_terrain/**",
+            "crates/engine_layer_*/**",
+            "crates/engine_navigation/**",
+        ],
         checks: &[PureWasm, Equivalence],
     },
     Rule {

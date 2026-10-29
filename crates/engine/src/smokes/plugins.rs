@@ -27,6 +27,17 @@ fn reads() -> Reads {
         .collect()
 }
 
+fn grounds() -> BTreeSet<String> {
+    let listed: Value = serde_json::from_str(BRICKS).unwrap_or_default();
+    listed["bricks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|brick| brick["slot"] == "ground")
+        .filter_map(|brick| Some(brick["name"].as_str()?.to_owned()))
+        .collect()
+}
+
 fn needs(reads: &Reads, name: &str) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     let mut pending: Vec<String> = reads.get(name).cloned().unwrap_or_default();
@@ -210,10 +221,11 @@ fn alone(
     standard: &[&'static str],
 ) -> SmokeResult {
     let needed = needs(reads, name);
+    let grounds = grounds();
     let others: Vec<&str> = features
         .iter()
         .copied()
-        .filter(|&other| other != name && !needed.contains(other))
+        .filter(|&other| other != name && !needed.contains(other) && !grounds.contains(other))
         .collect();
     restarted(session, &others, standard)?;
     spawn(session, &authored(&[name]))?;

@@ -13,6 +13,7 @@
       "smokes": [
         "input_camera",
         "input_keys",
+        "scene_views",
         "surfaces"
       ]
     },
@@ -477,6 +478,7 @@
         "navigation_walks",
         "physics",
         "plugins",
+        "scene_views",
         "streamed_scene",
         "surfaces",
         "temporal_antialiasing",
@@ -738,11 +740,15 @@
     },
     {
       "op": "scene_view",
-      "smokes": []
+      "smokes": [
+        "scene_views"
+      ]
     },
     {
       "op": "scene_look",
-      "smokes": []
+      "smokes": [
+        "scene_views"
+      ]
     }
   ],
   "sections": [
@@ -857,7 +863,6 @@
       "section": "reflection_probes",
       "smokes": [
         "debug_view",
-        "highlands_lod",
         "terrain_water_sky"
       ],
       "stats": true
@@ -889,6 +894,7 @@
         "agent",
         "culling_settings",
         "foliage_settings",
+        "scene_views",
         "temporal_antialiasing",
         "terrain_water_sky"
       ],
@@ -942,7 +948,8 @@
         "agent_lifecycle",
         "host_faults",
         "host_images",
-        "host_parity"
+        "host_parity",
+        "scene_views"
       ],
       "stats": true
     },
@@ -999,7 +1006,6 @@
       "smokes": [
         "culling_settings",
         "foliage_settings",
-        "highlands_lod",
         "temporal_antialiasing"
       ],
       "stats": true

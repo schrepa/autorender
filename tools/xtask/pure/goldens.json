@@ -326,15 +326,17 @@
           "Cover",
           "DebugViewMode",
           "ErosionLayer",
+          "Expr",
+          "ExpressionSettings",
           "Facing",
           "FarPlacement",
           "GivenRiver",
           "Grounded",
+          "HeightmapSettings",
           "HummocksLayer",
           "HydrologyLayer",
           "Interior",
           "MacroCauses",
-          "Mask",
           "MeshSource",
           "NavAgent",
           "NoiseLayer",
@@ -342,8 +344,11 @@
           "PathLayer",
           "PlacementChoice",
           "PlacementLayer",
+          "Ramp",
           "Remap",
           "RiversLayer",
+          "SceneAlong",
+          "SceneAlongStreamed",
           "SceneAlphaMode",
           "SceneAmbientOcclusion",
           "SceneAtmosphere",
@@ -363,12 +368,12 @@
           "SceneGroundCover",
           "SceneGrounding",
           "SceneHaze",
-          "SceneHeightmap",
           "SceneHighlights",
           "SceneLevelOfDetail",
           "SceneLight",
           "SceneLightRegion",
           "SceneLocalLights",
+          "SceneLook",
           "SceneMap",
           "SceneMaterial",
           "SceneMesh",
@@ -412,6 +417,7 @@
           "SceneTopLayer",
           "SceneTransform",
           "SceneVertex",
+          "SceneView",
           "SceneWater",
           "SceneWind",
           "SceneWorldStreaming",
@@ -609,9 +615,9 @@
       "streamed": 0,
       "textures": 0
     },
-    "document terrain": "ca88da4f02e2b4ad",
+    "document terrain": "eb9c89e1a8fdef0e",
     "document terrain counts": {
-      "bytes": 25184,
+      "bytes": 24606,
       "entities": 5,
       "materials": 2,
       "meshes": 2,
@@ -896,6 +902,15 @@
       "got": "inner",
       "path": "$.prefabs[1].entities[0].prefab"
     },
+    "refusal out_of_range at $.along[0].every": {
+      "allowed": {
+        "kind": "at_most",
+        "max": 10000
+      },
+      "code": "out_of_range",
+      "got": 0.009999999776482582,
+      "path": "$.along[0].every"
+    },
     "refusal source_too_large at $": {
       "allowed": {
         "kind": "at_most",
@@ -918,7 +933,10 @@
           "meshes",
           "prefabs",
           "entities",
-          "streamed"
+          "streamed",
+          "along",
+          "views",
+          "looks"
         ]
       },
       "code": "unknown_field",
@@ -926,6 +944,29 @@
       "got": "version",
       "nearest": "revision",
       "path": "$.version"
+    },
+    "refusal unknown_map at $.entities[0].terrain.surface.placements[0].mask.map": {
+      "allowed": {
+        "kind": "variants",
+        "values": [
+          "height",
+          "slope",
+          "curvature",
+          "flow",
+          "wetness",
+          "lake",
+          "river",
+          "grain",
+          "power",
+          "flood",
+          "worn",
+          "deposit",
+          "path"
+        ]
+      },
+      "code": "unknown_map",
+      "got": "custom",
+      "path": "$.entities[0].terrain.surface.placements[0].mask.map"
     },
     "refusal unknown_parent at $.entities[0].parent": {
       "code": "unknown_parent",
@@ -945,12 +986,36 @@
           "plane",
           "octahedron",
           "inline",
-          "buffer"
+          "buffer",
+          "provided"
         ]
       },
       "code": "unknown_variant",
       "got": "teapot",
       "path": "$.meshes[0].source.kind"
+    },
+    "refusal unreadable_map at $.entities[0].terrain.surface.biomes[0].layers[0].mask.map": {
+      "allowed": {
+        "kind": "variants",
+        "values": [
+          "height",
+          "slope",
+          "curvature",
+          "flow",
+          "wetness",
+          "lake",
+          "river",
+          "grain",
+          "power",
+          "flood",
+          "worn",
+          "deposit",
+          "path"
+        ]
+      },
+      "code": "unreadable_map",
+      "got": "custom",
+      "path": "$.entities[0].terrain.surface.biomes[0].layers[0].mask.map"
     }
   },
   "simplify": {
@@ -1088,87 +1153,139 @@
   },
   "terrain": {
     "bake 1": {
-      "deepest": 1.4122734069824219,
-      "highest": 20.89196014404297,
+      "deepest": 1.4146766662597656,
+      "highest": 20.89194107055664,
       "rounds": 6,
       "samples": 263169
     },
     "bake 2": {
-      "channel samples": 1552,
+      "channel samples": 467,
       "falls": 0,
       "lake samples": 0,
-      "max area": 500536.0,
-      "rivers": 23,
+      "max area": 505564.0,
+      "rivers": 1,
       "samples": 263169
     },
     "bake 4": {
-      "bridges": 2,
-      "deepest cut": 6.177009582519531,
-      "highest fill": 0.9034919738769531,
+      "bridges": 1,
+      "deepest cut": 6.179828643798828,
+      "highest fill": 2.5475807189941406,
       "length": 444.20880126953125,
       "samples": 113,
-      "steepest": 0.16754312813282013,
+      "steepest": 0.16729210317134857,
       "tunnels": 0
     },
     "bake 6": {
       "bridges": 2,
-      "deepest cut": 2.4009933471679688,
+      "deepest cut": 2.2841110229492188,
       "highest fill": 0.0,
       "length": 300.0,
       "samples": 76,
-      "steepest": 0.016530990600585938,
+      "steepest": 0.016481399536132812,
       "tunnels": 1
     },
-    "bakes": "8a4cfefdfed5ef88",
-    "edited portals 0/2/2": "6857918d6590a9a7",
-    "edited tile 0/2/2": "caef32170cc877e4",
-    "lighting": "4a0f740b44d7d914",
+    "bakes": "34a2c705a49048ce",
+    "bounce": {
+      "blocks": 1024,
+      "detailed blocks": 474,
+      "probes": 2446
+    },
+    "edited portals 0/2/2": "c07f81b9c59a370c",
+    "edited tile 0/2/2": "37d9648a020212ef",
+    "lighting": "66f50135a675500e",
     "lighting maps": {
       "horizon texels": 16384,
-      "lowest": 20.8828125,
-      "mean sky seen": 0.9641052844477634,
+      "lowest": 22.67578125,
+      "mean sky seen": 0.9656322404450062,
       "sky texels": 65536
     },
-    "pack": "21d8d9039fae23a1",
-    "pack records": 29,
-    "surroundings 2/0/0": "5200cdc4daacaa64",
-    "surroundings 2/0/1": "1adbaf7ad9b2b914",
-    "surroundings 2/1/0": "27d70e4e66951502",
-    "surroundings 2/1/1": "c27fb14efee9b533",
-    "surroundings 3/0/0": "e2d11072730d7ee3",
+    "macro colors": {
+      "mean lushness": 0.568752872242647,
+      "mean tint": [
+        0.959749698638916,
+        0.9566205739974976,
+        0.9288389682769775
+      ],
+      "texels": 65536
+    },
+    "pack": "d415733d17dee360",
+    "pack records": 46,
+    "portals 0/0/0": "fb26e1b9f5bd9fd8",
+    "portals 0/0/1": "29e88506dde27d87",
+    "portals 0/0/2": "543dc989c874858b",
+    "portals 0/0/3": "21a53ebeda513d15",
+    "portals 0/1/0": "861743bd18fe57f1",
+    "portals 0/1/1": "3c50dd6dd9ec5333",
+    "portals 0/1/2": "116758b891a215be",
+    "portals 0/1/3": "5f74bbbc45880596",
+    "portals 0/2/0": "f72e068f8544d806",
+    "portals 0/2/1": "7dfe28db76674976",
+    "portals 0/2/2": "283a4b9a3a3d5f5f",
+    "portals 0/2/3": "82fac43b5459da4e",
+    "portals 0/3/0": "f370c5f82d73ab03",
+    "portals 0/3/1": "02239452371bf55b",
+    "portals 0/3/2": "9189204bb014ea90",
+    "portals 0/3/3": "4ec31d64964f96cf",
+    "surroundings 2/0/0": "0abb9b01ce03b767",
+    "surroundings 2/0/1": "9726c5c796675cde",
+    "surroundings 2/1/0": "ec2fa8d9805b16b9",
+    "surroundings 2/1/1": "79827132f8ca9ed8",
+    "surroundings 3/0/0": "3b0f85654bdcdb3c",
     "surroundings tiles": 8,
-    "tile 0/0/0": "8620f053d4a0ef1f",
-    "tile 0/0/1": "6824d8b367eebac2",
-    "tile 0/0/2": "7e3f1c6e8392ae67",
-    "tile 0/0/3": "e7599cc783f70aa3",
-    "tile 0/1/0": "9ea44037fc80c885",
-    "tile 0/1/1": "135c99f67df7a752",
-    "tile 0/1/2": "c91be06a2ad367a5",
-    "tile 0/1/3": "46309b4f2ffb7d30",
-    "tile 0/2/0": "20e77605feaff4f7",
-    "tile 0/2/1": "e5da480ee532e24c",
-    "tile 0/2/2": "ba9e66d360693809",
-    "tile 0/2/3": "ca53e98d2d9f5afe",
-    "tile 0/3/0": "06ac473c6b4e966f",
-    "tile 0/3/1": "d0097c575ada310d",
-    "tile 0/3/2": "5be8413548744233",
-    "tile 0/3/3": "42d6c3daad4a87c1",
-    "tile 1/0/0": "2ad527fc8895d844",
-    "tile 1/0/1": "44974451906a9137",
-    "tile 1/1/0": "4f460f7eea8483df",
-    "tile 1/1/1": "518d24cac3ab3d8e",
-    "tile 2/0/0": "b7acfa9e4cd3caa7",
-    "tile objects": 12711,
+    "tile 0/0/0": "296750e0917f4ac7",
+    "tile 0/0/1": "f9e78d43899ec11d",
+    "tile 0/0/2": "163bce08af7ce514",
+    "tile 0/0/3": "c1b13a43b73c9f6e",
+    "tile 0/1/0": "07bee40fee1951f5",
+    "tile 0/1/1": "0d98e95577697c90",
+    "tile 0/1/2": "76a650c590119bad",
+    "tile 0/1/3": "e1da0c8eca2c13e8",
+    "tile 0/2/0": "85a8845fab8632e5",
+    "tile 0/2/1": "84f288a2bf0981b0",
+    "tile 0/2/2": "b1ead6210b0c51d1",
+    "tile 0/2/3": "a81f13390d3ddddc",
+    "tile 0/3/0": "b87df60eabcbc7f6",
+    "tile 0/3/1": "1dae74b61b33050d",
+    "tile 0/3/2": "1c56f2b682502016",
+    "tile 0/3/3": "2ba858dde57db7b7",
+    "tile 1/0/0": "450a3ca5045fb1f7",
+    "tile 1/0/1": "e00bcb70ac4c4a73",
+    "tile 1/1/0": "a39ad515ceed3f4e",
+    "tile 1/1/1": "934f92d7eaae846c",
+    "tile 2/0/0": "d20c6aeb1e859fa6",
+    "tile objects": 20333,
     "tiles": 21,
     "walk": {
-      "length": 229.18960571289062,
+      "length": 203.1502685546875,
       "level": 0,
-      "points": 61
+      "points": 53
     },
     "walk graph": {
-      "bytes": 26676,
-      "portals": 428,
+      "bytes": 27120,
+      "portals": 432,
       "tiles": 16
+    },
+    "water part 0/0/0": "c7a37e4483613153",
+    "water part 0/0/1": "b558248c4b757352",
+    "water part 0/0/2": "7ec4040ed9e95a9b",
+    "water part 0/1/0": "5f487e86301595a1",
+    "water part 0/1/1": "0123619b4cf4a262",
+    "water part 0/1/2": "07d2bb09630b9f69",
+    "water part 0/2/0": "29ffd4d74ca036c2",
+    "water part 0/2/1": "9b4dc6b8fece8018",
+    "water part 0/2/2": "d26fcd29f6e80772",
+    "water start": {
+      "cells": [
+        384,
+        384
+      ],
+      "cook regions": 1,
+      "datum": 24.0,
+      "parts": 9,
+      "sources": 2,
+      "stored blocks": 102,
+      "tile": "0/1/1",
+      "watered tiles": 5
     }
   },
   "textures": {

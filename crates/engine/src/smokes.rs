@@ -10,6 +10,7 @@ mod native;
 mod plugins;
 mod requests;
 mod scene_kit;
+mod scene_views;
 mod spline;
 mod streamed_scene;
 mod surfaces;
@@ -63,6 +64,7 @@ pub fn core() -> Vec<SmokeEntry> {
         core_smoke("surfaces", true, surfaces::run),
         core_smoke("texture", true, texture::run),
         core_smoke("streamed_scene", true, streamed_scene::run),
+        core_smoke("scene_views", false, scene_views::run),
         core_smoke("debug_view_terrain", true, terrain_views::run),
     ]
 }

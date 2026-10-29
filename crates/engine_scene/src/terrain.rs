@@ -596,9 +596,12 @@ impl SceneTerrain {
             macro_colors: surface.macro_colors,
         };
         let surface = TerrainSurface::new(&biomes, looks).map_err(|error| {
-            error
-                .coded(ErrorCode::InvalidTerrain)
-                .within(&format!("{path}.surface"))
+            let error = if matches!(error.code, ErrorCode::UnknownMap | ErrorCode::UnreadableMap) {
+                error
+            } else {
+                error.coded(ErrorCode::InvalidTerrain)
+            };
+            error.within(&format!("{path}.surface"))
         })?;
         Ok((surface, indices, assets))
     }
