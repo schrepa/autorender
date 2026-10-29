@@ -32,7 +32,7 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     ask(session, "control", json!({"name": "resume"}))?;
     query(session, "raycast", ray.clone())?;
     ask(session, "control", json!({"name": "pause"}))?;
-    session.restart(&["collision", "physics"]);
+    session.restart(session.bricks().without(["collision", "physics"]));
     let missing = refuse(session, "query", json!({"name": "raycast", "args": ray}))?;
     smoke_eq!(
         json!(missing["code"]),

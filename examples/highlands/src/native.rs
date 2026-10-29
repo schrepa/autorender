@@ -96,9 +96,9 @@ impl Native {
     fn start(&self) -> ExitCode {
         #[cfg(feature = "dev")]
         if let Some(names) = &self.host.smoke {
-            let build = |source: Option<&str>, without: &[&str]| match source {
+            let build = |source: Option<&str>, bricks| match source {
                 None => Ok((
-                    engine::smokes::standard_engine(without)?,
+                    engine::smokes::engine_of(bricks)?,
                     Highlands::new(self.options.clone()),
                 )),
                 Some(_) => Err(engine::Error::new(
@@ -107,10 +107,14 @@ impl Native {
                 )
                 .expected(engine::Expected::Absent)),
             };
+            let bricks = engine::bricks::standard();
+            let mut smokes = engine::smokes::registered(&bricks);
+            smokes.extend(crate::smokes());
             return engine_native::smoke::run::<Highlands>(
                 &self.host,
                 names,
-                &crate::smokes(),
+                &smokes,
+                &bricks,
                 &build,
                 &controlled,
             );

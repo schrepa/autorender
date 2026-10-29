@@ -1,22 +1,8 @@
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::bricks::{Brick, Bricks};
 use crate::sections::environment_section;
-use crate::{Atmosphere, Clouds};
 use engine_settings::settings;
-
-impl Brick for Sky {
-    fn register(bricks: &mut Bricks<'_>) {
-        bricks
-            .settings::<Clouds>()
-            .settings::<Sky>()
-            .settings::<Haze>()
-            .settings::<NightSky>()
-            .resource::<Atmosphere>()
-            .passes(&["cloud_dome", "cloud_march", "cloud_composite"]);
-    }
-}
 
 settings! {
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

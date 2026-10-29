@@ -18,7 +18,8 @@ pub(crate) fn agent_lifecycle(session: &mut dyn SmokeSession) -> SmokeResult {
         changed.clone(),
         json!({ "differs_from": bloom })
     );
-    session.restart(&[]);
+    let bricks = session.bricks();
+    session.restart(bricks.clone());
     control(session, "pause", json!({}), "pauses_replaced_runtime")?;
     let replaced = status(session, "replaced_runtime_answers")?;
     engine_core::smoke_eq!(
@@ -31,13 +32,13 @@ pub(crate) fn agent_lifecycle(session: &mut dyn SmokeSession) -> SmokeResult {
         bloom,
         "replacement_drops_temporary_changes"
     );
-    let standard: Vec<&str> = crate::bricks::standard().names().collect();
+    let standard: Vec<&str> = bricks.names().collect();
     engine_core::smoke_eq!(
         json!(names(&replaced["result"]["features"])),
         json!(standard),
         "replacement_adds_standard_bricks"
     );
-    session.restart(&["physics"]);
+    session.restart(bricks.clone().without(["physics"]));
     control(
         session,
         "pause",

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use engine_core::BrickList;
 use engine_core::smoke::{SmokeResult, SmokeSession};
 use serde_json::{Value, json};
 
@@ -164,13 +165,12 @@ fn refusal(name: &str) -> (&'static str, Value) {
 fn restarted(
     session: &mut dyn SmokeSession,
     without: &[&str],
-    standard: &[&'static str],
+    standard: &BrickList,
 ) -> SmokeResult {
-    session.restart(without);
+    session.restart(standard.clone().without(without.iter().copied()));
     control(session, "pause", json!({}), "pauses")?;
     let added: Vec<&str> = standard
-        .iter()
-        .copied()
+        .names()
         .filter(|name| !without.contains(name))
         .collect();
     let features = status(session, "status_answers")?["result"]["features"].clone();
@@ -186,11 +186,10 @@ fn left_out(
     session: &mut dyn SmokeSession,
     name: &str,
     reads: &Reads,
-    standard: &[&'static str],
+    standard: &BrickList,
 ) -> SmokeResult {
     let without: Vec<&str> = standard
-        .iter()
-        .copied()
+        .names()
         .filter(|&other| other == name || needs(reads, other).contains(name))
         .collect();
     restarted(session, &without, standard)?;
@@ -218,7 +217,7 @@ fn alone(
     name: &str,
     reads: &Reads,
     features: &[&str],
-    standard: &[&'static str],
+    standard: &BrickList,
 ) -> SmokeResult {
     let needed = needs(reads, name);
     let grounds = grounds();
@@ -237,10 +236,9 @@ fn alone(
 
 pub(crate) fn plugins(session: &mut dyn SmokeSession) -> SmokeResult {
     let reads = reads();
-    let standard: Vec<&'static str> = crate::bricks::standard().names().collect();
+    let standard = session.bricks();
     let features: Vec<&str> = standard
-        .iter()
-        .copied()
+        .names()
         .filter(|name| FEATURES.contains(name))
         .collect();
     engine_core::smoke_eq!(

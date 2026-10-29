@@ -1,6 +1,8 @@
 use bevy_app::App;
 use serde_json::Value;
 
+use crate::bricks::BrickList;
+
 pub type SmokeResult = Result<(), SmokeFailure>;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -41,7 +43,8 @@ pub trait SmokeSession {
     fn step(&mut self, ticks: u32);
     fn frame(&mut self) -> bool;
     fn gpu(&self) -> bool;
-    fn restart(&mut self, without: &[&str]);
+    fn bricks(&self) -> BrickList;
+    fn restart(&mut self, bricks: BrickList);
     fn source(&mut self, document: &str);
 }
 

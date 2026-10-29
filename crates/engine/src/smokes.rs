@@ -1,5 +1,6 @@
 mod agent;
 mod agent_lifecycle;
+mod engine_frames;
 mod frame_loop;
 mod gpu_presentation;
 mod hierarchy;
@@ -18,13 +19,13 @@ mod terrain_views;
 mod texture;
 
 use engine_core::smoke::{SmokeEntry, SmokeFailure, SmokeResult, SmokeSession};
-use engine_core::{AddBrick, BrickRegistry, Engine, ErrorCode, MAX_DEV_TICKS};
+use engine_core::{AddBrick, BrickList, BrickRegistry, Engine, ErrorCode, MAX_DEV_TICKS};
 use engine_scene::{SceneFiles, SceneInstance};
 use serde_json::{Map, Value, json};
 
 use crate::{Error, Game, Inspectors, Result};
 
-pub type Build<'b, G> = &'b dyn Fn(Option<&str>, &[&str]) -> Result<(Engine, G)>;
+pub type Build<'b, G> = &'b dyn Fn(Option<&str>, BrickList) -> Result<(Engine, G)>;
 
 pub const ALL: &str = "all";
 
@@ -66,30 +67,34 @@ pub fn core() -> Vec<SmokeEntry> {
         core_smoke("streamed_scene", true, streamed_scene::run),
         core_smoke("scene_views", false, scene_views::run),
         core_smoke("debug_view_terrain", true, terrain_views::run),
+        core_smoke("core_only_frames", true, engine_frames::core_only_frames),
+        core_smoke("lit_meshes_frames", true, engine_frames::lit_meshes_frames),
     ]
+}
+
+pub fn registered(bricks: &BrickList) -> Vec<SmokeEntry> {
+    let mut engine = Engine::default();
+    engine.app.add_bricks(bricks.clone());
+    engine
+        .app
+        .world()
+        .get_resource::<BrickRegistry>()
+        .into_iter()
+        .flat_map(BrickRegistry::smokes)
+        .copied()
+        .collect()
 }
 
 pub fn standard() -> Vec<SmokeEntry> {
     let mut smokes = core();
-    let mut engine = Engine::default();
-    engine.app.add_bricks(crate::bricks::standard());
-    smokes.extend(
-        engine
-            .app
-            .world()
-            .get_resource::<BrickRegistry>()
-            .into_iter()
-            .flat_map(BrickRegistry::smokes)
-            .copied(),
-    );
+    smokes.extend(registered(&crate::bricks::standard()));
     smokes
 }
 
-pub fn standard_engine(without: &[&str]) -> Result<Engine> {
-    let bricks = crate::bricks::standard();
-    let left_out = bricks.check_names(without.iter().copied(), "$.without")?;
+pub fn engine_of(bricks: BrickList) -> Result<Engine> {
+    bricks.check()?;
     let mut engine = Engine::default();
-    engine.app.add_bricks(bricks.without(left_out));
+    engine.app.add_bricks(bricks);
     Ok(engine)
 }
 
@@ -104,14 +109,14 @@ pub enum Played<G> {
 
 pub fn played<G>(
     source: Option<&str>,
-    without: &[&str],
-    scene: impl FnOnce(&str, &SceneFiles, &[&'static str]) -> Result<(Engine, G)>,
+    bricks: BrickList,
+    scene: impl FnOnce(&str, &SceneFiles, BrickList) -> Result<(Engine, G)>,
 ) -> Result<(Engine, Played<G>)> {
     let Some(document) = source else {
-        return Ok((standard_engine(without)?, Played::Plain(SmokeGame)));
+        return Ok((engine_of(bricks)?, Played::Plain(SmokeGame)));
     };
-    let left_out = crate::bricks::standard().check_names(without.iter().copied(), "$.without")?;
-    let (engine, game) = scene(document, &SceneFiles::default(), &left_out)?;
+    bricks.check()?;
+    let (engine, game) = scene(document, &SceneFiles::default(), bricks)?;
     Ok((engine, Played::Scene(game)))
 }
 
@@ -420,8 +425,8 @@ impl<G: Game> Headless<G> {
 
 #[cfg(target_arch = "wasm32")]
 pub mod page {
-    use engine_core::App;
     use engine_core::smoke::{SmokeEntry, SmokeFailure, SmokeSession};
+    use engine_core::{App, BrickList};
     use engine_dev::{Effect, HostContext, Outcome, Step};
     use serde_json::Value;
     use wasm_bindgen::JsValue;
@@ -440,6 +445,7 @@ pub mod page {
     struct Page<'b, G: Game> {
         build: Build<'b, G>,
         backend: Backend<G>,
+        bricks: BrickList,
         source: Option<String>,
         size: (u32, u32),
         paused: bool,
@@ -451,6 +457,7 @@ pub mod page {
         canvas: HtmlCanvasElement,
         names: &str,
         entries: &[SmokeEntry],
+        bricks: &BrickList,
         build: Build<'_, G>,
         report: &JsValue,
     ) -> std::result::Result<bool, JsValue> {
@@ -459,7 +466,7 @@ pub mod page {
         let mut gpu = None;
         let mut passed = true;
         for entry in select(entries, names)? {
-            let record = record(entry, &canvas, size, build, &mut gpu).await;
+            let record = record(entry, &canvas, size, bricks, build, &mut gpu).await;
             passed &= record.ok;
             report.call1(&JsValue::NULL, &JsValue::from_str(&record.line()))?;
         }
@@ -470,6 +477,7 @@ pub mod page {
         entry: &SmokeEntry,
         canvas: &HtmlCanvasElement,
         size: (u32, u32),
+        bricks: &BrickList,
         build: Build<'_, G>,
         gpu: &mut Option<bool>,
     ) -> SmokeRecord {
@@ -477,7 +485,7 @@ pub mod page {
             return SmokeRecord::skipped(entry);
         }
         let started = crate::host::now_ms();
-        let backend = match open(canvas, build, gpu).await {
+        let backend = match open(canvas, bricks, build, gpu).await {
             Ok(backend) => backend,
             Err(error) => {
                 let ms = crate::host::now_ms() - started;
@@ -490,6 +498,7 @@ pub mod page {
         let mut page = Page {
             build,
             backend,
+            bricks: bricks.clone(),
             source: None,
             size,
             paused: true,
@@ -503,12 +512,13 @@ pub mod page {
 
     async fn open<G: Game>(
         canvas: &HtmlCanvasElement,
+        bricks: &BrickList,
         build: Build<'_, G>,
         gpu: &mut Option<bool>,
     ) -> Result<Backend<G>> {
         if *gpu != Some(false) {
             let target = RenderTarget::Canvas(canvas.clone());
-            match GameHost::launch(target, || build(None, &[])).await {
+            match GameHost::launch(target, || build(None, bricks.clone())).await {
                 Ok(mut host) => {
                     prepared(&mut host);
                     *gpu = Some(true);
@@ -518,7 +528,7 @@ pub mod page {
                 Err(_) => {}
             }
         }
-        let (engine, game) = build(None, &[])?;
+        let (engine, game) = build(None, bricks.clone())?;
         *gpu = Some(false);
         Ok(Backend::Headless(Box::new(Headless::new(engine, game))))
     }
@@ -656,8 +666,13 @@ pub mod page {
             matches!(self.backend, Backend::Gpu(_))
         }
 
-        fn restart(&mut self, without: &[&str]) {
-            let (engine, game) = match (self.build)(self.source.as_deref(), without) {
+        fn bricks(&self) -> BrickList {
+            self.bricks.clone()
+        }
+
+        fn restart(&mut self, bricks: BrickList) {
+            self.bricks = bricks.clone();
+            let (engine, game) = match (self.build)(self.source.as_deref(), bricks) {
                 Ok(built) => built,
                 Err(error) => {
                     self.faults.push(fault("restart", &error));

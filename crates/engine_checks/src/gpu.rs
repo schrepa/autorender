@@ -1,19 +1,21 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use engine_render::bindings::{Kind, ResolvedBinding, ResolvedLayout, Stages, TABLES};
-use engine_render::gpu_layouts::{Layout, constants, layouts};
-use engine_render::linker::{Linker, declared_bindings, unmangle};
-use engine_render::shaders::{ENTRIES, MODULES, Stage, composites};
-use naga::valid::{Capabilities, ValidationFlags, Validator};
+use engine_render::bindings::{Kind, ResolvedBinding, ResolvedLayout, Stages};
+use engine_render::faces::face_of;
+use engine_render::gpu_layouts::{Constant, Layout};
+use engine_render::linker::{Linker, ShaderModule, declared_bindings, unmangle};
+use engine_render::shaders::{ENTRIES, MODULES, Stage};
+use naga::valid::{Capabilities, ModuleInfo, ValidationFlags, Validator};
 
 mod bindings;
 mod eye_reads;
 mod fades;
 mod handovers;
+mod installed;
 mod inter_stage;
 
-const GENERATED: &str = "generated::";
+use installed::{Installed, core, generated_path, installed};
 
 pub struct Checked {
     pub name: String,
@@ -31,9 +33,9 @@ fn own(name: &str) -> bool {
     unmangle(name).is_none()
 }
 
-fn placement() -> ResolvedLayout {
+fn placement(sources: &[ShaderModule]) -> ResolvedLayout {
     let mut names: Vec<&'static str> = Vec::new();
-    for module in MODULES {
+    for module in sources {
         for name in declared_bindings(module.source) {
             if !names.contains(&name) {
                 names.push(name);
@@ -58,51 +60,118 @@ fn placement() -> ResolvedLayout {
     }
 }
 
+fn validated(text: &str) -> Result<(naga::Module, ModuleInfo), String> {
+    let module =
+        naga::front::wgsl::parse_str(text).map_err(|error| error.emit_to_string(text))?;
+    let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+    let info = validator
+        .validate(&module)
+        .map_err(|error| error.emit_to_string(text))?;
+    Ok((module, info))
+}
+
 pub fn modules() -> Result<Vec<Checked>, String> {
-    let mut linker = Linker::new(MODULES);
-    let mut sources: Vec<(String, String)> = MODULES
-        .iter()
-        .map(|module| (module.path.to_owned(), module.source.to_owned()))
-        .collect();
-    for (path, brick, source) in composites() {
-        linker.add_generated(path.clone(), brick, source.clone());
-        sources.push((path, source));
-    }
-    linker.set_features(engine_render::standard_features());
-    let layout = placement();
+    checked(&mut installed()?)
+}
+
+fn checked(installed: &mut Installed) -> Result<Vec<Checked>, String> {
+    let layout = placement(&installed.sources);
     let mut checked = Vec::new();
     let mut failures = Vec::new();
-    for (name, source) in sources {
-        let text = match linker.compose_module(&name, &layout) {
+    for source in installed.sources.clone() {
+        let name = source.path.to_owned();
+        let text = match installed.linker.compose_module(&name, &layout) {
             Ok(composed) => composed.text.clone(),
             Err(error) => {
                 failures.push(format!("{name}: {error}"));
                 continue;
             }
         };
-        let module = match naga::front::wgsl::parse_str(&text) {
-            Ok(module) => module,
-            Err(error) => {
-                failures.push(format!("{name}: {}", error.emit_to_string(&text)));
-                continue;
-            }
-        };
-        let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
-        match validator.validate(&module) {
-            Ok(info) => checked.push(Checked {
+        match validated(&text) {
+            Ok((module, info)) => checked.push(Checked {
                 name,
-                source,
+                source: source.source.to_owned(),
                 text,
                 module,
                 info,
             }),
-            Err(error) => failures.push(format!("{name}: {}", error.emit_to_string(&text))),
+            Err(error) => failures.push(format!("{name}: {error}")),
         }
     }
     if failures.is_empty() {
         Ok(checked)
     } else {
         Err(failures.join("\n"))
+    }
+}
+
+fn check_defaults(installed: &Installed) -> Result<usize, String> {
+    let mut linker = Linker::new(MODULES);
+    linker
+        .add_modules(&installed.defaults)
+        .map_err(|error| error.to_string())?;
+    let mut sources = MODULES.to_vec();
+    sources.extend(installed.defaults.iter().copied());
+    let layout = placement(&sources);
+    let mut failures = Vec::new();
+    for default in &installed.defaults {
+        let linked = linker
+            .compose_module(default.path, &layout)
+            .map_err(|error| error.to_string())
+            .and_then(|composed| validated(&composed.text));
+        if let Err(error) = linked {
+            failures.push(format!("the default {}: {error}", default.path));
+        }
+    }
+    if failures.is_empty() {
+        Ok(installed.defaults.len())
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
+fn struct_size(module: &naga::Module, name: &str) -> Option<u64> {
+    module.types.iter().find_map(|(_, ty)| {
+        let named = ty.name.as_deref() == Some(name);
+        (named && matches!(ty.inner, naga::TypeInner::Struct { .. }))
+            .then(|| u64::from(ty.inner.size(module.to_ctx())))
+    })
+}
+
+fn check_pieces(installed: &Installed, modules: &[Checked]) -> Result<usize, String> {
+    let mut errors = Vec::new();
+    for &(brick, piece) in &installed.pieces {
+        let size = modules
+            .iter()
+            .filter(|checked| checked.name == piece.module)
+            .find_map(|checked| struct_size(&checked.module, piece.ty));
+        match size {
+            None => errors.push(format!(
+                "{brick}'s piece {}: {} declares no struct {}",
+                piece.name, piece.module, piece.ty
+            )),
+            Some(size) if size != piece.size => errors.push(format!(
+                "{brick}'s piece {}: the struct {} spans {size} bytes where its PieceDecl says {}",
+                piece.name, piece.ty, piece.size
+            )),
+            Some(_) => {}
+        }
+        let twinned = installed.mirrors.iter().any(|layout| {
+            layout.mirrors.iter().any(|mirror| {
+                mirror.name == piece.ty && mirror.module.is_none_or(|module| module == piece.module)
+            })
+        });
+        if !twinned {
+            errors.push(format!(
+                "{brick}'s piece {}: no Rust twin mirrors the struct {} (gpu_structs!)",
+                piece.name, piece.ty
+            ));
+        }
+    }
+    if errors.is_empty() {
+        Ok(installed.pieces.len())
+    } else {
+        Err(errors.join("\n"))
     }
 }
 
@@ -152,10 +221,10 @@ fn compare(
     errors
 }
 
-fn check_layouts(modules: &[Checked]) -> Result<usize, String> {
+fn check_layouts(modules: &[Checked], layouts: &[&'static Layout]) -> Result<usize, String> {
     let mut errors = Vec::new();
     let mut mirrors = 0;
-    for layout in layouts() {
+    for layout in layouts {
         for mirror in layout.mirrors {
             let mut found = false;
             for checked in modules {
@@ -244,10 +313,7 @@ fn check_entries(modules: &[Checked]) -> Result<usize, String> {
             Some(_) => {}
         }
     }
-    for checked in modules
-        .iter()
-        .filter(|checked| !checked.name.starts_with(GENERATED))
-    {
+    for checked in modules.iter().filter(|checked| core(&checked.name)) {
         for point in &checked.module.entry_points {
             if !ENTRIES
                 .iter()
@@ -446,10 +512,16 @@ fn wgsl_functions(tokens: &[String]) -> Vec<(String, Vec<String>)> {
     functions
 }
 
-fn check_duplicate_bodies() -> Result<usize, String> {
+fn check_duplicate_bodies(installed: &Installed) -> Result<usize, String> {
     let mut functions: Vec<(&str, String, Vec<String>)> = Vec::new();
     let mut errors = Vec::new();
-    for module in MODULES {
+    for module in installed.sources.iter().filter(|module| {
+        !generated_path(module.path)
+            && !installed
+                .defaults
+                .iter()
+                .any(|default| default.path == module.path && default.brick == module.brick)
+    }) {
         for (name, code) in wgsl_functions(&wgsl_tokens(module.source)) {
             if let Some((other_module, other, _)) = functions
                 .iter()
@@ -519,10 +591,13 @@ fn mirrored(checked: &Checked, mirror: &str) -> Option<f64> {
         .find_map(|(name, value)| (name == mirror).then_some(value))
 }
 
-fn check_mirrored_constants(modules: &[Checked]) -> (usize, Vec<String>) {
+fn check_mirrored_constants(
+    modules: &[Checked],
+    constants: &[&'static Constant],
+) -> (usize, Vec<String>) {
     let mut errors = Vec::new();
     let mut mirrors = 0;
-    for constant in constants() {
+    for constant in constants {
         for mirror in constant.mirrors {
             let mut found = false;
             for checked in modules {
@@ -554,7 +629,7 @@ fn check_mirrored_constants(modules: &[Checked]) -> (usize, Vec<String>) {
     (mirrors, errors)
 }
 
-fn rust_constants(root: &Path) -> Vec<(std::path::PathBuf, usize, String)> {
+fn rust_constants(folders: &[PathBuf]) -> Vec<(PathBuf, usize, String)> {
     fn walk(directory: &Path, files: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
             let path = entry.path();
@@ -568,7 +643,9 @@ fn rust_constants(root: &Path) -> Vec<(std::path::PathBuf, usize, String)> {
         }
     }
     let mut files = Vec::new();
-    walk(&root.join("crates/engine_render/src"), &mut files);
+    for folder in folders {
+        walk(folder, &mut files);
+    }
     let mut found = Vec::new();
     for file in files {
         let Ok(text) = std::fs::read_to_string(&file) else {
@@ -597,8 +674,13 @@ fn rust_constants(root: &Path) -> Vec<(std::path::PathBuf, usize, String)> {
     found
 }
 
-fn check_constants(root: &Path, modules: &[Checked]) -> Result<usize, String> {
-    let (mirrors, mut errors) = check_mirrored_constants(modules);
+fn check_constants(
+    root: &Path,
+    folders: &[PathBuf],
+    modules: &[Checked],
+    constants: &[&'static Constant],
+) -> Result<usize, String> {
+    let (mirrors, mut errors) = check_mirrored_constants(modules, constants);
     let mut by_name: BTreeMap<&str, Vec<(&str, f64)>> = BTreeMap::new();
     for checked in modules {
         for (name, value) in wgsl_constants(&checked.module) {
@@ -622,7 +704,7 @@ fn check_constants(root: &Path, modules: &[Checked]) -> Result<usize, String> {
             ));
         }
     }
-    for (file, line, name) in rust_constants(root) {
+    for (file, line, name) in rust_constants(folders) {
         if by_name.contains_key(name.as_str()) {
             errors.push(format!(
                 "{}:{line}: `{name}` shares its name with a WGSL constant; declare it once in \
@@ -688,8 +770,9 @@ fn check_unused(modules: &[Checked]) -> Result<(), String> {
     for (index, checked) in modules.iter().enumerate() {
         let home =
             |name: &str| unmangle(name).unwrap_or_else(|| (checked.name.clone(), name.to_owned()));
+        let published = face_of(&checked.name).is_some();
         for (kind, name) in items(&checked.module) {
-            if own(name) {
+            if own(name) && !published {
                 held.insert((checked.name.clone(), kind, name.to_owned()));
             }
         }
@@ -717,7 +800,9 @@ fn check_unused(modules: &[Checked]) -> Result<(), String> {
             if here || elsewhere {
                 used.insert(item.clone());
             }
-            held.insert(item);
+            if !published {
+                held.insert(item);
+            }
         }
     }
     let unused: Vec<String> = held
@@ -733,7 +818,7 @@ fn check_unused(modules: &[Checked]) -> Result<(), String> {
     }
 }
 
-fn check_upload_structs(root: &Path) -> Result<(), String> {
+fn check_upload_structs(folders: &[PathBuf]) -> Result<(), String> {
     fn walk(directory: &Path, found: &mut Vec<String>) {
         for entry in std::fs::read_dir(directory).into_iter().flatten().flatten() {
             let path = entry.path();
@@ -742,6 +827,7 @@ fn check_upload_structs(root: &Path) -> Result<(), String> {
                     walk(&path, found);
                 }
             } else if path.extension().is_some_and(|extension| extension == "rs")
+                && path.file_stem().is_some_and(|stem| stem != "gpu_layouts")
                 && std::fs::read_to_string(&path).is_ok_and(|text| {
                     text.contains("Pod") && text.contains("derive(") && derives_pod(&text)
                 })
@@ -758,35 +844,63 @@ fn check_upload_structs(root: &Path) -> Result<(), String> {
         })
     }
     let mut found = Vec::new();
-    walk(&root.join("crates/engine_render/src"), &mut found);
+    for folder in folders {
+        walk(folder, &mut found);
+    }
     if found.is_empty() {
         Ok(())
     } else {
         Err(format!(
-            "upload structs belong in engine_render::gpu_layouts, where the GPU check sees them: {}",
+            "upload structs belong in a gpu_layouts module whose layouts the crate registers, \
+             where the GPU check sees them: {}",
             found.join(", ")
         ))
     }
 }
 
+fn folders(repository: &crate::Repository, installed: &Installed) -> Vec<PathBuf> {
+    let mut folders = vec![repository.root.join("crates/engine_render/src")];
+    for name in &installed.crates {
+        if let Some(package) = repository.of_crate(name).filter(|package| package.own()) {
+            let folder = package.folder.join("src");
+            if !folders.contains(&folder) {
+                folders.push(folder);
+            }
+        }
+    }
+    folders
+}
+
 pub fn check(repository: &crate::Repository) -> Result<(), String> {
     let root = repository.root.as_path();
-    let modules = modules()?;
-    let shared = engine_render::standard_shared();
-    let (resolved, unresolved) = bindings::resolve(&shared);
-    let mirrors = check_layouts(&modules);
-    let entry_points = bindings::check(&modules, &resolved, &shared);
+    let mut installed = installed()?;
+    let modules = checked(&mut installed)?;
+    let folders = folders(repository, &installed);
+    let imports = installed.import_rules();
+    let imports = if imports.is_empty() {
+        Ok(())
+    } else {
+        Err(imports.join("\n"))
+    };
+    let (resolved, unresolved) = bindings::resolve(&installed);
+    let mirrors = check_layouts(&modules, &installed.mirrors);
+    let pieces = check_pieces(&installed, &modules);
+    let defaults = check_defaults(&installed);
+    let entry_points = bindings::check(&modules, &resolved, &installed);
     let entries = check_entries(&modules);
     let inter_stage = inter_stage::check(&modules);
-    let pipeline_layouts = bindings::check_layouts(&resolved, unresolved, &shared);
-    let functions = check_duplicate_bodies();
-    let wgsl_constants = check_constants(root, &modules);
+    let pipeline_layouts = bindings::check_layouts(&resolved, unresolved, &installed);
+    let functions = check_duplicate_bodies(&installed);
+    let wgsl_constants = check_constants(root, &folders, &modules, &installed.constants);
     let unused = check_unused(&modules);
-    let structs = check_upload_structs(root);
+    let structs = check_upload_structs(&folders);
     let handovers = handovers::check(&modules);
     let fades = fades::check(&modules);
     let eye_reads = eye_reads::check(repository);
     let errors: Vec<String> = [
+        imports.as_ref().err(),
+        pieces.as_ref().err(),
+        defaults.as_ref().err(),
         mirrors.as_ref().err(),
         entry_points.as_ref().err(),
         entries.as_ref().err(),
@@ -810,17 +924,25 @@ pub fn check(repository: &crate::Repository) -> Result<(), String> {
     let record = serde_json::json!({
         "event": "shaders_checked",
         "modules": modules.len(),
+        "defaulted": installed.defaulted,
+        "defaults": defaults?,
+        "pieces": pieces?,
         "mirrors": mirrors?,
-        "upload_structs": layouts().len(),
-        "binding_tables": TABLES.len(),
+        "upload_structs": installed.mirrors.len(),
+        "binding_tables": installed.tables.len(),
         "entry_points": entry_points?,
         "staged_entries": entries?,
         "fragment_stages": inter_stage?,
-        "shared_bindings": shared.groups().map(|(_, bindings)| bindings.len()).sum::<usize>(),
+        "shared_bindings": installed
+            .shared
+            .groups()
+            .map(|(_, bindings)| bindings.len())
+            .sum::<usize>(),
         "pipeline_layouts": pipeline_layouts?,
+        "stage_sums": bindings::sums(&resolved),
         "functions": functions?,
         "wgsl_constants": wgsl_constants?,
-        "rust_constants": constants().count(),
+        "rust_constants": installed.constants.len(),
         "shader_decisions": handovers?,
         "handovers": fades?,
         "eye_reads": eye_reads?,

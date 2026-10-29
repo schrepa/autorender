@@ -6,14 +6,14 @@
 mod antialiasing;
 mod atmosphere;
 pub mod bounds;
-mod brick_smokes;
+pub mod brick_smokes;
 mod bricks;
 mod clock;
 mod clouds;
 pub mod command_line;
 mod commands;
 mod debug_view;
-mod debug_view_smoke;
+pub mod debug_view_smoke;
 mod detail_eye;
 mod effects;
 mod entity_indices;

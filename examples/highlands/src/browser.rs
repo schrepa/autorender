@@ -75,9 +75,9 @@ engine::__if_dev! {
             query: String,
         ) -> Result<bool, JsValue> {
             let options = page_options(&query)?;
-            let build = move |source: Option<&str>, without: &[&str]| match source {
+            let build = move |source: Option<&str>, bricks| match source {
                 None => Ok((
-                    engine::smokes::standard_engine(without)?,
+                    engine::smokes::engine_of(bricks)?,
                     Highlands::new(options.clone()),
                 )),
                 Some(_) => Err(
@@ -85,10 +85,14 @@ engine::__if_dev! {
                         .expected(engine::Expected::Absent),
                 ),
             };
+            let bricks = engine::bricks::standard();
+            let mut smokes = engine::smokes::registered(&bricks);
+            smokes.extend(crate::smokes());
             engine::smokes::page::run::<Highlands>(
                 canvas,
                 &names,
-                &crate::smokes(),
+                &smokes,
+                &bricks,
                 &build,
                 &report,
             )

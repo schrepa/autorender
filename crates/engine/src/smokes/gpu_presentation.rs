@@ -205,7 +205,7 @@ fn cases(session: &mut dyn SmokeSession, moving: bool) -> Result<Vec<Case>, Smok
 }
 
 fn presented(session: &mut dyn SmokeSession, moving: bool) -> SmokeResult {
-    session.restart(&[]);
+    session.restart(session.bricks());
     spawn(session, &grid(24, moving))?;
     control(session, "pause", json!({}), "pauses")?;
     if !moving {

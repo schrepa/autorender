@@ -26,7 +26,7 @@ const KINDS: [&str; 9] = [
 const SLOTTED: [&str; 2] = ["mesh", "card"];
 const QUIET_FRAMES: u32 = 13;
 
-pub(crate) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
+pub fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     let built = build(session.app().world_mut());
     smoke_check!(
         built.is_ok(),

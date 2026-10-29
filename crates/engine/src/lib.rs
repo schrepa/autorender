@@ -38,6 +38,10 @@ pub mod ground {
 }
 
 mod games {
+    pub use engine_ambient_occlusion::AmbientOcclusionBrick;
+    pub use engine_auto_exposure::AutoExposureBrick;
+    pub use engine_bloom::BloomBrick;
+    pub use engine_core::Culling;
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, App, AssetBudget,
         AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, Clouds, Cube, DebugView,
@@ -58,18 +62,32 @@ mod games {
         WorldSyncSystems, Wrap, edit_transform, math, reset_all_interpolation, reset_interpolation,
         set_parent, set_parents, trim_cards,
     };
-    pub use engine_core::{
-        Culling, LightingModel, Lights, Particles, PostEffects, ReflectionProbes,
-    };
+    pub use engine_debug_view::DebugViewBrick;
+    pub use engine_dither::DitherBrick;
+    pub use engine_ground_cover::GroundCoverBrick;
+    pub use engine_lighting::LightingModelBrick;
+    pub use engine_lights::LightsBrick;
+    pub use engine_meshes::MeshesBrick;
     pub use engine_navigation::{
         NavAgent, NavAgents, NavQuery, NavStatus, NavSystems, NavWalk, Navigation, NavigationBrick,
     };
+    pub use engine_particles::ParticlesBrick;
     pub use engine_physics::Physics;
+    pub use engine_probes::ReflectionProbesBrick;
+    pub use engine_reflections::ReflectionsBrick;
+    pub use engine_scatter::ScatterBrick;
+    pub use engine_shadows::ShadowsBrick;
+    pub use engine_sky::SkyBrick;
+    pub use engine_sun::SunBrick;
+    pub use engine_taa::TaaBrick;
     pub use engine_terrain::{
         Cover, GroundCover, Occupancy, Terrain, TerrainBrick, TerrainSample, TerrainSettings,
         Terrains, Water, Wind,
     };
+    pub use engine_terrain_shading::TerrainShadingBrick;
     pub use engine_time_of_day::{TimeOfDay, TimeOfDayBrick};
+    pub use engine_tonemap::TonemapBrick;
+    pub use engine_water::WaterBrick;
     pub use engine_world_streaming::{
         StreamSet, Streamed, StreamedId, StreamedItem, WorldCells, WorldChanges, WorldStreaming,
         WorldStreamingBrick, remove_streamed,
@@ -106,17 +124,29 @@ pub mod bricks {
             .with::<engine_time_of_day::TimeOfDayBrick>()
             .with::<engine_collision::Collision>()
             .with::<engine_physics::PhysicsBrick>()
-            .with::<engine_core::Lights>()
-            .with::<engine_core::Particles>()
-            .with::<engine_core::ReflectionProbes>()
-            .with::<engine_core::Sky>()
-            .with::<engine_core::Shadows>()
-            .with::<engine_core::PostEffects>()
+            .with::<engine_sun::SunBrick>()
+            .with::<engine_lighting::LightingModelBrick>()
+            .with::<engine_meshes::MeshesBrick>()
+            .with::<engine_terrain_shading::TerrainShadingBrick>()
+            .with::<engine_scatter::ScatterBrick>()
+            .with::<engine_shadows::ShadowsBrick>()
+            .with::<engine_lights::LightsBrick>()
+            .with::<engine_sky::SkyBrick>()
+            .with::<engine_probes::ReflectionProbesBrick>()
+            .with::<engine_ground_cover::GroundCoverBrick>()
+            .with::<engine_water::WaterBrick>()
+            .with::<engine_ambient_occlusion::AmbientOcclusionBrick>()
+            .with::<engine_reflections::ReflectionsBrick>()
+            .with::<engine_bloom::BloomBrick>()
+            .with::<engine_dither::DitherBrick>()
+            .with::<engine_particles::ParticlesBrick>()
+            .with::<engine_taa::TaaBrick>()
+            .with::<engine_auto_exposure::AutoExposureBrick>()
+            .with::<engine_tonemap::TonemapBrick>()
+            .with::<engine_debug_view::DebugViewBrick>()
             .with::<engine_core::LevelOfDetail>()
             .with::<engine_core::Culling>()
             .with::<engine_core::Resolution>()
-            .with::<engine_core::DebugView>()
-            .with::<engine_core::LightingModel>()
             .with::<engine_layer_noise::LayerNoiseBrick>()
             .with::<engine_layer_stamps::LayerStampsBrick>()
             .with::<engine_layer_heightmap::LayerHeightmapBrick>()
@@ -198,11 +228,28 @@ mod app_host;
 #[cfg(feature = "dev")]
 mod dev_host;
 mod game_host;
-pub use engine_render::shaders::MODULES as SHADER_MODULES;
 pub use engine_render::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine_render::{GpuMark, GpuPreference, NativeWindow, start_native_instances_with};
 pub use game_host::GameHost;
+
+pub fn shader_modules() -> Vec<engine_render::linker::ShaderModule> {
+    use bricks::AddBrick;
+    let mut engine = Engine::default();
+    engine.app.add_bricks(bricks::standard());
+    let mut modules = engine_render::shaders::MODULES.to_vec();
+    let Some(registry) = engine.app.world().get_resource::<bricks::BrickRegistry>() else {
+        return modules;
+    };
+    for (_, render) in engine_render::render_bricks::render_bricks(registry) {
+        for module in render.modules().chain(render.defaults()) {
+            if !modules.iter().any(|known| known.path == module.path) {
+                modules.push(*module);
+            }
+        }
+    }
+    modules
+}
 
 #[cfg(target_arch = "wasm32")]
 pub mod browser;

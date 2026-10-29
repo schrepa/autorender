@@ -52,7 +52,7 @@ pub fn smokes() -> Vec<SmokeEntry> {
 }
 
 fn open(session: &mut dyn SmokeSession, in_place: bool) -> Checked<()> {
-    session.restart(&LEFT_OUT);
+    session.restart(session.bricks().without(LEFT_OUT));
     if in_place {
         session.app().insert_resource(Jobs::default());
     }

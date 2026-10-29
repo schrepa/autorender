@@ -1,3 +1,4 @@
+use engine::bricks::BrickList;
 use engine::collision::CollisionConfig;
 use engine::prelude::*;
 use engine::scene::SceneFiles;
@@ -7,25 +8,24 @@ pub struct ScenePlayer {
     instance: Option<SceneInstance>,
     player: Option<Entity>,
     view: Camera,
-    without: Vec<&'static str>,
+    bricks: Vec<&'static str>,
 }
 
 impl ScenePlayer {
     pub fn new(
         source: &str,
         files: &SceneFiles,
-        without: &[&'static str],
+        bricks: BrickList,
     ) -> Result<(Engine, Self), Error> {
+        bricks.check()?;
+        let names = bricks.names().collect();
         let mut engine = Engine::default();
-        engine
-            .app
-            .add_bricks(engine::bricks::standard().without(without.iter().copied()))
-            .add_plugins(PlayerPlugin);
+        engine.app.add_bricks(bricks).add_plugins(PlayerPlugin);
         let mut player = Self {
             instance: None,
             player: None,
             view: Camera::default(),
-            without: without.to_vec(),
+            bricks: names,
         };
         player.load(&mut engine, source, files)?;
         Ok((engine, player))
@@ -114,7 +114,7 @@ impl Game for ScenePlayer {
             content.extend(scene.id().as_bytes());
             content.extend(scene.revision().to_le_bytes());
         }
-        for brick in &self.without {
+        for brick in &self.bricks {
             content.extend(brick.as_bytes());
             content.push(0);
         }
@@ -139,8 +139,9 @@ impl Game for ScenePlayer {
     }
 }
 
-pub fn bricks(names: &str, path: &str) -> engine::Result<Vec<&'static str>> {
-    engine::bricks::standard_names(names, path)
+pub fn bricks(without: &str, path: &str) -> engine::Result<BrickList> {
+    let left_out = engine::bricks::standard_names(without, path)?;
+    Ok(engine::bricks::standard().without(left_out))
 }
 
 #[derive(Resource, Default, Clone, Copy, Debug, serde::Serialize)]

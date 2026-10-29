@@ -14,10 +14,23 @@ pub const FILE: &str = "faces.json";
 
 const DEPTH: usize = 16;
 
+const FACES: &str = "faces";
+
+const DEFAULTS: &str = "defaults";
+
+const BRICK_TRAIT: &str = "Brick";
+
+const ITEM_WORDS: [&str; 17] = [
+    "pub", "const", "unsafe", "async", "extern", "fn", "struct", "enum", "union", "trait", "type",
+    "static", "mut", "field", "variant", "mod", "use",
+];
+
 #[derive(Default)]
 pub struct Face {
     pub items: BTreeSet<String>,
     pub wgsl: BTreeSet<String>,
+    pub faces: BTreeMap<String, Vec<String>>,
+    pub defaults: BTreeMap<String, Vec<String>>,
     modules: BTreeSet<String>,
     names: BTreeSet<String>,
 }
@@ -91,7 +104,119 @@ pub fn face(folder: &Path) -> Result<Face, String> {
         }
     }
     face.wgsl = wgsl(folder)?;
+    face.faces = signatures_in(&folder.join("src").join(FACES))?;
+    face.defaults = signatures_in(&folder.join("src").join(DEFAULTS))?;
     Ok(face)
+}
+
+fn signatures_in(folder: &Path) -> Result<BTreeMap<String, Vec<String>>, String> {
+    let mut found = BTreeMap::new();
+    let mut files: Vec<PathBuf> = fs::read_dir(folder)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "wgsl"))
+        .collect();
+    files.sort();
+    for file in files {
+        let Some(name) = file.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        found.insert(name.to_owned(), signatures(&read(&file)?));
+    }
+    Ok(found)
+}
+
+pub fn signatures(source: &str) -> Vec<String> {
+    let code: Vec<char> = uncommented(source).chars().collect();
+    let mut found = Vec::new();
+    let mut depth = 0_usize;
+    let mut at = 0;
+    while at < code.len() {
+        match code[at] {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && (at == 0 || !parse::identifier(code[at - 1])) => {
+                if let Some((signature, stop)) = declaration(&code, at) {
+                    found.push(signature);
+                    at = stop;
+                    continue;
+                }
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    found
+}
+
+fn declaration(code: &[char], at: usize) -> Option<(String, usize)> {
+    let word: String = code[at..]
+        .iter()
+        .take_while(|&&character| parse::identifier(character))
+        .collect();
+    let after = at + word.chars().count();
+    if !code.get(after).is_some_and(|character| character.is_whitespace()) {
+        return None;
+    }
+    match word.as_str() {
+        "fn" => {
+            let stop = (after..code.len())
+                .find(|&index| code[index] == '{' || code[index] == ';')
+                .unwrap_or(code.len());
+            Some((format!("fn {}", parse::normalize(&code[after..stop])), stop))
+        }
+        "struct" => {
+            let open = (after..code.len()).find(|&index| code[index] == '{')?;
+            let close = parse::closing(code, open).min(code.len());
+            Some((
+                format!("struct {}", parse::normalize(&code[after..close])),
+                close,
+            ))
+        }
+        "const" | "override" | "alias" => {
+            let stop = (after..code.len())
+                .find(|&index| code[index] == ';')
+                .unwrap_or(code.len());
+            let text = parse::normalize(&code[after..stop]);
+            let kept = match word.as_str() {
+                "alias" => text.as_str(),
+                _ => text.split_once(" =").map_or(text.as_str(), |(head, _)| head),
+            };
+            Some((format!("{word} {kept}"), stop))
+        }
+        _ => None,
+    }
+}
+
+fn brick_types(items: &BTreeSet<String>) -> Vec<&str> {
+    items
+        .iter()
+        .filter_map(|line| line.strip_prefix("impl ")?.rsplit_once(" for "))
+        .filter(|(trait_name, _)| trait_name.rsplit("::").next() == Some(BRICK_TRAIT))
+        .map(|(_, target)| target)
+        .collect()
+}
+
+fn about(line: &str, brick: &str) -> bool {
+    if let Some(rest) = line.strip_prefix("impl ") {
+        return rest
+            .rsplit_once(" for ")
+            .is_some_and(|(_, target)| target == brick);
+    }
+    line.split_whitespace()
+        .find(|word| !ITEM_WORDS.contains(word))
+        .and_then(|subject| subject.strip_prefix(brick))
+        .is_some_and(|rest| !rest.starts_with(parse::identifier))
+}
+
+fn without_bricks(items: &BTreeSet<String>) -> BTreeSet<&String> {
+    let bricks = brick_types(items);
+    items
+        .iter()
+        .filter(|line| !bricks.iter().any(|brick| about(line, brick)))
+        .collect()
 }
 
 fn read(path: &Path) -> Result<String, String> {
@@ -415,11 +540,23 @@ pub fn faces(
     Ok(faces)
 }
 
+fn default_crates(repository: &Repository, crates: &BTreeSet<String>) -> BTreeSet<String> {
+    crates
+        .iter()
+        .filter_map(|name| repository.of_crate(name))
+        .flat_map(|package| &package.dependencies)
+        .filter(|dependency| dependency.kind == crate::DependencyKind::Normal)
+        .filter_map(|dependency| repository.package(&dependency.package))
+        .filter(|package| package.own() && package.folder.join("src").join(DEFAULTS).is_dir())
+        .map(crate::Package::crate_name)
+        .collect()
+}
+
 pub fn files(
     repository: &Repository,
     registered: &[&str],
 ) -> Result<Vec<(String, String)>, String> {
-    let crates: BTreeSet<String> =
+    let mut crates: BTreeSet<String> =
         crate::bricks::brick_crates(repository, registered.iter().copied())
             .into_iter()
             .filter(|name| {
@@ -428,14 +565,20 @@ pub fn files(
                     .is_some_and(|package| package.own())
             })
             .collect();
+    crates.extend(default_crates(repository, &crates));
     let listed: Vec<serde_json::Value> = faces(repository, &crates)?
         .into_iter()
         .map(|(name, face)| {
-            json!({
+            let mut listed = json!({
                 "crate": name,
                 "items": face.items,
                 "wgsl": face.wgsl,
-            })
+                "faces": face.faces,
+            });
+            if !face.defaults.is_empty() {
+                listed["defaults"] = json!(face.defaults);
+            }
+            listed
         })
         .collect();
     let text = serde_json::to_string_pretty(&json!({ "faces": listed }))
@@ -443,31 +586,46 @@ pub fn files(
     Ok(vec![(FILE.to_owned(), text + "\n")])
 }
 
-pub fn check(repository: &Repository) -> Result<(), String> {
-    let mut problems = Vec::new();
+fn missing_signatures(
+    wanted: &BTreeMap<String, Vec<String>>,
+    offered: &BTreeMap<String, Vec<String>>,
+) -> Vec<String> {
+    wanted
+        .iter()
+        .flat_map(|(name, signatures)| {
+            let offered = offered.get(name);
+            signatures
+                .iter()
+                .filter(move |signature| offered.is_none_or(|found| !found.contains(*signature)))
+                .map(move |signature| format!("wgsl face::{name} {signature}"))
+        })
+        .collect()
+}
+
+fn replacements(repository: &Repository, problems: &mut Vec<Error>) -> Result<usize, String> {
     let mut compared = 0;
     for package in repository.own() {
         let Some(replaced) = package.replaces() else {
             continue;
         };
+        let file = repository.relative(&package.manifest).unwrap_or_default();
         let Some(original) = repository
             .of_crate(replaced)
             .or_else(|| repository.package(replaced))
         else {
-            let file = repository.relative(&package.manifest).unwrap_or_default();
             problems.push(Error::new(ErrorCode::ReplacesUnknown, file).got(replaced));
             continue;
         };
         let offered = face(&package.folder)?;
         let wanted = face(&original.folder)?;
-        let missing: Vec<&String> = wanted
-            .items
-            .difference(&offered.items)
-            .chain(wanted.wgsl.difference(&offered.wgsl))
+        let mut missing: Vec<String> = without_bricks(&wanted.items)
+            .into_iter()
+            .filter(|line| !offered.items.contains(*line))
+            .cloned()
             .collect();
+        missing.extend(missing_signatures(&wanted.faces, &offered.faces));
         compared += 1;
         if !missing.is_empty() {
-            let file = repository.relative(&package.manifest).unwrap_or_default();
             problems.push(
                 Error::new(ErrorCode::FaceMissing, file)
                     .got(missing)
@@ -475,10 +633,52 @@ pub fn check(repository: &Repository) -> Result<(), String> {
             );
         }
     }
+    Ok(compared)
+}
+
+fn defaults_offered(repository: &Repository, problems: &mut Vec<Error>) -> Result<usize, String> {
+    let mut defaults: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
+    let mut providers = Vec::new();
+    for package in repository.own() {
+        let found = face(&package.folder)?;
+        for (name, signatures) in found.defaults {
+            let file = package.file(&format!("src/{DEFAULTS}/{name}.wgsl"));
+            defaults.insert(name, (file.unwrap_or_default(), signatures));
+        }
+        for (name, signatures) in found.faces {
+            let file = package.file(&format!("src/{FACES}/{name}.wgsl"));
+            providers.push((file.unwrap_or_default(), name, signatures));
+        }
+    }
+    let mut compared = 0;
+    for (file, name, signatures) in providers {
+        let Some((default, wanted)) = defaults.get(&name) else {
+            continue;
+        };
+        compared += 1;
+        let missing: Vec<&String> = wanted
+            .iter()
+            .filter(|signature| !signatures.contains(*signature))
+            .collect();
+        if !missing.is_empty() {
+            problems.push(
+                Error::new(ErrorCode::FaceMissing, file)
+                    .got(missing)
+                    .nearest(default.as_str()),
+            );
+        }
+    }
+    Ok(compared)
+}
+
+pub fn check(repository: &Repository) -> Result<(), String> {
+    let mut problems = Vec::new();
+    let compared = replacements(repository, &mut problems)?;
+    let defaulted = defaults_offered(repository, &mut problems)?;
     if problems.is_empty() {
         println!(
             "{}",
-            json!({"event": "faces_offered", "replacements": compared})
+            json!({"event": "faces_offered", "replacements": compared, "defaulted": defaulted})
         );
         return Ok(());
     }

@@ -194,10 +194,21 @@ pub fn smokes(root: &Path) -> Result<Vec<(String, String)>, String> {
             let Some((function, module)) = run.split_last() else {
                 continue;
             };
-            let defining: Vec<&Source> = files
+            let home = module
+                .first()
+                .filter(|_| module.len() > 1)
+                .map_or(file.krate.as_str(), String::as_str);
+            let mut defining: Vec<&Source> = files
                 .iter()
                 .filter(|other| other.krate == file.krate && defines(&other.tokens, function))
                 .collect();
+            if defining.is_empty() {
+                defining = files
+                    .iter()
+                    .filter(|other| other.krate.rsplit('/').next() == Some(home))
+                    .filter(|other| defines(&other.tokens, function))
+                    .collect();
+            }
             let in_module: Vec<&Source> = defining
                 .iter()
                 .copied()

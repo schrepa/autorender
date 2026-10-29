@@ -73,7 +73,13 @@ pub(crate) const LINT: &[Stage<Path>] = &[
     Stage {
         name: "dependencies",
         needs: &[],
-        run: |root| engine_checks::dependencies::check(repository(root)?, &RULES.exceptions),
+        run: |root| {
+            engine_checks::dependencies::check(
+                repository(root)?,
+                &RULES.exceptions,
+                &crate::bricks::standard_engine(),
+            )
+        },
     },
     Stage {
         name: "faces",

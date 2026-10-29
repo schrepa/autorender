@@ -8,22 +8,10 @@ use bevy_ecs::{
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::bricks::{Brick, Bricks};
 use crate::extraction::{Nearest, Poses};
 use crate::sections::environment_section;
 use crate::{RenderSnapshot, TransformIndex};
 use engine_settings::{Allowed, Expected, ExtraRules, InvalidSetting, Rule, Setting, settings};
-
-pub struct Particles;
-
-impl Brick for Particles {
-    fn register(bricks: &mut Bricks<'_>) {
-        bricks
-            .settings::<ParticleSettings>()
-            .resource::<ParticleExtractor>()
-            .extract(extract_particles);
-    }
-}
 
 pub const MAX_EMITTER_PARTICLES: u32 = 1 << 24;
 
@@ -137,7 +125,7 @@ pub struct RenderParticles {
 #[derive(Resource, Default)]
 pub(crate) struct ParticleExtractor(Mutex<ParticleExtraction>);
 
-fn extract_particles(world: &World, snapshot: &mut RenderSnapshot) {
+pub fn extract_particles(world: &World, snapshot: &mut RenderSnapshot) {
     world
         .resource::<ParticleExtractor>()
         .0

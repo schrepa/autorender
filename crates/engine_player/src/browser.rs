@@ -15,11 +15,8 @@ impl PlayerGame {
         files: SceneFileSet,
         without: &str,
     ) -> Result<PlayerGame, JsValue> {
-        let without = bricks(without, "?without")?;
-        Self::launch(canvas, move || {
-            ScenePlayer::new(source, files.files(), &without)
-        })
-        .await
+        let bricks = bricks(without, "?without")?;
+        Self::launch(canvas, move || ScenePlayer::new(source, files.files(), bricks)).await
     }
 
     pub fn scene_progress(&self) -> String {
@@ -40,7 +37,8 @@ engine::__if_dev! {
                 canvas,
                 &names,
                 &engine::smokes::standard(),
-                &|source, without| engine::smokes::played(source, without, ScenePlayer::new),
+                &engine::bricks::standard(),
+                &|source, bricks| engine::smokes::played(source, bricks, ScenePlayer::new),
                 &report,
             )
             .await

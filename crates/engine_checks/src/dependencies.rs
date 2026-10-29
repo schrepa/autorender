@@ -2,21 +2,39 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use engine::Engine;
+use engine::bricks::BrickRegistry;
 use engine_core::{Error, ErrorCode};
+use engine_render::render_bricks::RenderBrick;
 use serde_json::json;
 
 use crate::bricks::Recorded;
 use crate::faces::{Face, parse};
 use crate::{DependencyKind, Exceptions, Repository};
 
-pub fn check(repository: &Repository, exceptions: &Exceptions) -> Result<(), String> {
+const GPU_PART: &str = "GpuPart for ";
+
+pub fn check(
+    repository: &Repository,
+    exceptions: &Exceptions,
+    engine: &Engine,
+) -> Result<(), String> {
     let recorded = crate::bricks::recorded(repository)?;
     let bricks = crate::bricks::brick_crates(
         repository,
         recorded.iter().map(|brick| brick.krate.as_str()),
     );
+    let registry = engine.app.world().get_resource::<BrickRegistry>();
+    let faces: BTreeSet<String> = registry
+        .map(face_crates)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|name| !bricks.contains(name))
+        .collect();
+    let gpu = gpu_crates(repository, &recorded);
     let mut problems = Vec::new();
-    let used = core_uses(repository, &bricks, exceptions, &mut problems)?;
+    let reached: BTreeSet<String> = bricks.union(&faces).cloned().collect();
+    let used = core_uses(repository, &reached, exceptions, &mut problems)?;
     for &(from, to) in exceptions.core_uses_brick {
         let Some(package) = repository.package(from).filter(|package| package.own()) else {
             continue;
@@ -30,6 +48,8 @@ pub fn check(repository: &Repository, exceptions: &Exceptions) -> Result<(), Str
         }
     }
     internal_paths(repository, &bricks, &mut problems)?;
+    gpu_dependencies(repository, &gpu, &mut problems)?;
+    face_crates_hold_no_bricks(repository, &faces, registry, &mut problems)?;
     brick_cycles(&recorded, &mut problems);
     crate_cycles(repository, &mut problems);
     if problems.is_empty() {
@@ -38,12 +58,125 @@ pub fn check(repository: &Repository, exceptions: &Exceptions) -> Result<(), Str
             json!({
                 "event": "dependencies_hold",
                 "bricks": bricks,
+                "gpu_bricks": gpu,
+                "faces": faces,
                 "exceptions": exceptions.core_uses_brick.len(),
             })
         );
         return Ok(());
     }
     crate::report(&problems)
+}
+
+fn face_crates(registry: &BrickRegistry) -> BTreeSet<String> {
+    let mut crates = BTreeSet::new();
+    for brick in registry.bricks() {
+        let Some(render) = brick.extension::<RenderBrick>() else {
+            continue;
+        };
+        for offer in render.parts.iter().flat_map(|part| part.decl.faces) {
+            let name = (offer.type_name)();
+            let plain = name.strip_prefix("dyn ").unwrap_or(name);
+            if let Some((krate, _)) = plain.split_once("::")
+                && krate != brick.crate_name
+            {
+                crates.insert(krate.to_owned());
+            }
+        }
+    }
+    crates
+}
+
+fn gpu_crates(repository: &Repository, recorded: &[Recorded]) -> BTreeSet<String> {
+    let mut crates: BTreeSet<String> = recorded
+        .iter()
+        .filter(|brick| !brick.parts.is_empty())
+        .map(|brick| brick.krate.clone())
+        .collect();
+    let replacing: Vec<String> = repository
+        .own()
+        .filter(|package| package.replaces().is_some_and(|name| crates.contains(name)))
+        .map(crate::Package::crate_name)
+        .collect();
+    crates.extend(replacing);
+    crates
+}
+
+fn gpu_dependencies(
+    repository: &Repository,
+    gpu: &BTreeSet<String>,
+    problems: &mut Vec<Error>,
+) -> Result<(), String> {
+    for package in repository
+        .own()
+        .filter(|package| gpu.contains(&package.crate_name()))
+    {
+        let manifest = fs::read_to_string(&package.manifest)
+            .map_err(|error| format!("cannot read {}: {error}", package.manifest.display()))?;
+        let file = repository.relative(&package.manifest).unwrap_or_default();
+        for dependency in &package.dependencies {
+            if dependency.kind == DependencyKind::Development {
+                continue;
+            }
+            let Some(other) = repository.package(&dependency.package) else {
+                continue;
+            };
+            if other.name == package.name || !gpu.contains(&other.crate_name()) {
+                continue;
+            }
+            let line = line_of(&manifest, &dependency.package);
+            problems.push(
+                Error::new(ErrorCode::BrickInternalPath, crate::at(&file, line)).got(json!({
+                    "from": package.name,
+                    "to": other.name,
+                })),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn face_crates_hold_no_bricks(
+    repository: &Repository,
+    faces: &BTreeSet<String>,
+    registry: Option<&BrickRegistry>,
+    problems: &mut Vec<Error>,
+) -> Result<(), String> {
+    for name in faces {
+        let Some(package) = repository.of_crate(name).filter(|package| package.own()) else {
+            continue;
+        };
+        let file = repository.relative(&package.manifest).unwrap_or_default();
+        if let Some(brick) = registry
+            .into_iter()
+            .flat_map(BrickRegistry::bricks)
+            .find(|brick| brick.crate_name == name.as_str())
+        {
+            problems.push(
+                Error::new(ErrorCode::BrickInternalPath, file.as_str())
+                    .got(json!({ "faces": name, "brick": brick.name })),
+            );
+        }
+        let mut files = Vec::new();
+        rust_files(&package.folder.join("src"), &mut files);
+        files.sort();
+        for path in files {
+            let source = fs::read_to_string(&path)
+                .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+            let code: String = parse::code(&source).into_iter().collect();
+            if let Some(at) = code.find(GPU_PART) {
+                let line = code[..at].matches('\n').count() + 1;
+                let shown = repository
+                    .relative(&path)
+                    .unwrap_or_else(|| path.display().to_string());
+                problems.push(
+                    Error::new(ErrorCode::BrickInternalPath, crate::at(&shown, line))
+                        .got(json!({ "faces": name, "holds": "GpuPart" })),
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn core_uses(

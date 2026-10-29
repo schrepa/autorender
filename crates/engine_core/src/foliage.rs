@@ -1,22 +1,8 @@
 use bevy_ecs::prelude::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::Highlights;
-use crate::bricks::{Brick, Bricks};
 use crate::sections::environment_section;
 use engine_settings::settings;
-
-pub struct LightingModel;
-
-impl Brick for LightingModel {
-    fn register(bricks: &mut Bricks<'_>) {
-        bricks.settings::<Highlights>().settings::<Foliage>().smoke(
-            "foliage_settings",
-            true,
-            crate::brick_smokes::foliage_settings,
-        );
-    }
-}
 
 settings! {
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

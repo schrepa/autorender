@@ -82,7 +82,8 @@ impl Options {
                 &self.host,
                 names,
                 &engine::smokes::standard(),
-                &|source, without| engine::smokes::played(source, without, ScenePlayer::new),
+                &engine::bricks::standard(),
+                &|source, bricks| engine::smokes::played(source, bricks, ScenePlayer::new),
                 &|session| session,
             );
         }
@@ -111,7 +112,7 @@ impl Options {
         let source =
             std::fs::read_to_string(path).map_err(|error| file_error("--source", path, &error))?;
         let files = files::scene_files(path, &source)?;
-        let without = bricks(&self.without, "--without")?;
-        ScenePlayer::new(&source, &files, &without)
+        let bricks = bricks(&self.without, "--without")?;
+        ScenePlayer::new(&source, &files, bricks)
     }
 }

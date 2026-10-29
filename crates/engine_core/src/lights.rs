@@ -8,24 +8,11 @@ use bevy_ecs::{
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
-use crate::bricks::{Brick, Bricks};
 use crate::extraction::{Nearest, Poses};
 use crate::sections::environment_section;
 use crate::ticks::ScanClock;
 use crate::{GlobalTransforms, RenderSnapshot};
 use engine_settings::{Expected, ExtraRules, InvalidSetting, Setting, settings};
-
-pub struct Lights;
-
-impl Brick for Lights {
-    fn register(bricks: &mut Bricks<'_>) {
-        bricks
-            .settings::<LocalLightSettings>()
-            .resource::<LightExtractor>()
-            .extract(extract_lights)
-            .passes(&["lights"]);
-    }
-}
 
 pub const MAX_SPOT_DEGREES: f32 = 89.0;
 pub const MIN_SPOT_DEGREES: f32 = 0.1;
@@ -247,7 +234,7 @@ pub struct RenderLights {
 #[derive(Resource, Default)]
 pub(crate) struct LightExtractor(Mutex<LightExtraction>);
 
-fn extract_lights(world: &World, snapshot: &mut RenderSnapshot) {
+pub fn extract_lights(world: &World, snapshot: &mut RenderSnapshot) {
     world
         .resource::<LightExtractor>()
         .0
