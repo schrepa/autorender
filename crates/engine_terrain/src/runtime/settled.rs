@@ -350,7 +350,7 @@ impl TerrainState {
         };
         let record = |settled: &SettledKey| {
             let identity = [settling.as_slice(), &settled.identity()].concat();
-            RecordKey::new(&crate::sources::WATER, SETTLED_KIND, &identity)
+            RecordKey::new(&crate::SOURCE, SETTLED_KIND, &identity)
         };
         let region = record(&settled);
         settled.tiles = [u32::from(key.x), u32::from(key.z), 1, 1];
@@ -429,7 +429,7 @@ pub(super) fn follow(
     settled.shared.retain(|key, record| {
         let keep = whole.binary_search(key).is_ok();
         if !keep {
-            gone.push(settled_key(&record.0));
+            gone.push(settled_key(&record.hash));
         }
         keep
     });
@@ -927,18 +927,18 @@ fn arrive(
     if let Some(before) = settled.summaries.insert(key, record)
         && before != record
     {
-        settled.release(summary_key(&before.0), released);
+        settled.release(summary_key(&before.hash), released);
     }
-    settled.share(jobs, summary_key(&record.0), || {
+    settled.share(jobs, summary_key(&record.hash), || {
         share_summary(&bytes[..length])
     });
     if whole.binary_search(&key).is_ok() {
         if let Some(before) = settled.shared.insert(key, record)
             && before != record
         {
-            settled.release(settled_key(&before.0), released);
+            settled.release(settled_key(&before.hash), released);
         }
-        settled.share(jobs, settled_key(&record.0), || share_settled(&bytes));
+        settled.share(jobs, settled_key(&record.hash), || share_settled(&bytes));
     }
     if let Some(water) = held {
         settled.held.insert(key, (water, record));
@@ -1204,15 +1204,15 @@ fn wants(
 
 fn water_record(reads: &Reads, cell: f32) -> RecordKey {
     let mut identity = Vec::with_capacity(36 + reads.settled.len() * 37);
-    identity.extend_from_slice(&reads.tile.0);
+    identity.extend_from_slice(&reads.tile.hash);
     identity.extend_from_slice(&cell.to_le_bytes());
     for (key, record) in &reads.settled {
         identity.push(key.level);
         identity.extend_from_slice(&key.x.to_le_bytes());
         identity.extend_from_slice(&key.z.to_le_bytes());
-        identity.extend_from_slice(&record.0);
+        identity.extend_from_slice(&record.hash);
     }
-    RecordKey::new(&crate::sources::WATER, SteadiedJob::KIND.name(), &identity)
+    RecordKey::new(&crate::SOURCE, SteadiedJob::KIND.name(), &identity)
 }
 
 fn ask_waters(
@@ -1287,7 +1287,7 @@ fn ask_waters(
             settled: reads
                 .settled
                 .iter()
-                .map(|&(at, record)| (at, record.0))
+                .map(|&(at, record)| (at, record.hash))
                 .collect(),
         }
         .input();

@@ -106,7 +106,7 @@ pub(super) fn bounce(
         };
         let mut identity = keys;
         identity.extend_from_slice(&probes.to_le_bytes());
-        let record = RecordKey::new(&crate::sources::BOUNCE, BounceJob::KIND.name(), &identity);
+        let record = RecordKey::new(&crate::SOURCE, BounceJob::KIND.name(), &identity);
         state.whole.bounce.found = Some((basis, job.clone(), record));
         (job, record)
     });

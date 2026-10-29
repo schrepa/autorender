@@ -830,7 +830,7 @@ fn open_cave(world: &mut World) {
     )
     .collect();
     let inward = Vec3::new(uphill.x, 0.0, uphill.y);
-    let mut identity = bake.0.to_vec();
+    let mut identity = bake.hash.to_vec();
     identity.extend_from_slice(&mouth.x.to_bits().to_le_bytes());
     identity.extend_from_slice(&mouth.y.to_bits().to_le_bytes());
     world.insert_resource(CaveOpened);

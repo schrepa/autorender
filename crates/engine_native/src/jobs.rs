@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -68,6 +69,7 @@ enum Order {
     Read {
         id: JobId,
         key: String,
+        kind: &'static str,
         sources: Vec<Source>,
     },
     Stop,
@@ -79,6 +81,7 @@ enum Reported {
         worker: u32,
         id: JobId,
         key: String,
+        kind: &'static str,
         sources: Vec<Source>,
         read: Option<(usize, Vec<u8>)>,
     },
@@ -91,12 +94,19 @@ struct Slot {
     thread: Option<JoinHandle<()>>,
 }
 
+pub struct Written {
+    pub records: usize,
+    pub bytes: u64,
+    pub kinds: BTreeMap<&'static str, usize>,
+}
+
 pub struct JobPool {
     slots: Vec<Slot>,
     reports: Receiver<Reported>,
     store: Option<JobStore>,
     reported: Option<(u64, u64, u64, u64)>,
     cook: Option<PackWriter>,
+    mismatched: Vec<(&'static str, String)>,
 }
 
 impl JobPool {
@@ -132,6 +142,7 @@ impl JobPool {
             store,
             reported: None,
             cook: None,
+            mismatched: Vec::new(),
         }
     }
 
@@ -162,11 +173,12 @@ impl JobPool {
                     worker,
                     id,
                     key,
+                    kind,
                     sources,
                     read,
                 } => {
                     host.job_task_done(worker);
-                    self.answer(host, (id, key), &sources, read);
+                    self.answer(host, (id, key, kind), &sources, read);
                 }
             }
         }
@@ -207,7 +219,7 @@ impl JobPool {
             JobOrder::Cancel { worker, id } => {
                 let _ = self.slots[worker as usize].orders.send(Order::Cancel(id.0));
             }
-            JobOrder::Lookup { id, key } => {
+            JobOrder::Lookup { id, key, kind } => {
                 let sources = self
                     .store
                     .as_mut()
@@ -222,27 +234,29 @@ impl JobPool {
                         let _ = self.slots[worker as usize].orders.send(Order::Read {
                             id,
                             key,
+                            kind,
                             sources,
                         });
                     }
                     None => {
                         let read = job_cache::read(&sources);
-                        self.answer(host, (id, key), &sources, read);
+                        self.answer(host, (id, key, kind), &sources, read);
                     }
                 }
             }
-            JobOrder::Keep { key, output } => {
+            JobOrder::Keep { key, kind, output } => {
                 if let Some(cook) = &mut self.cook {
-                    cook.take(&key, &output);
+                    cook.take(&key, kind, &output);
                 }
                 if let Some(store) = &mut self.store {
                     store.keep(&key, &output);
                 }
             }
-            JobOrder::Mismatch { key } => {
+            JobOrder::Mismatch { key, kind } => {
                 if let Some(store) = &mut self.store {
                     store.mismatch(&key);
                 }
+                self.mismatched.push((kind, key));
             }
         }
     }
@@ -250,7 +264,7 @@ impl JobPool {
     fn answer<G: Game>(
         &mut self,
         host: &mut GameHost<G>,
-        (id, key): (JobId, String),
+        (id, key, kind): (JobId, String, &'static str),
         sources: &[Source],
         read: Option<(usize, Vec<u8>)>,
     ) {
@@ -259,7 +273,7 @@ impl JobPool {
             .as_mut()
             .and_then(|store| store.answered(&key, sources, read));
         if let (Some(cook), Some(record)) = (&mut self.cook, &kept) {
-            cook.take(&key, record);
+            cook.take(&key, kind, record);
         }
         host.job_kept(id, key, kept);
     }
@@ -268,13 +282,21 @@ impl JobPool {
         self.store.as_ref().map_or(0, JobStore::packed)
     }
 
-    pub fn write_pack(&mut self, path: &Path) -> Result<(usize, u64), String> {
+    pub fn mismatched(&self) -> &[(&'static str, String)] {
+        &self.mismatched
+    }
+
+    pub fn write_pack(&mut self, path: &Path) -> Result<Written, String> {
         let cook = self.cook.take().ok_or("the pool is not cooking")?;
         if let Some(store) = &mut self.store {
             store.close_packs();
         }
         let bytes = cook.write(path)?;
-        Ok((cook.len(), bytes))
+        Ok(Written {
+            records: cook.len(),
+            bytes,
+            kinds: cook.kinds(),
+        })
     }
 
     fn broadcast(&mut self, order: impl Fn() -> Order) {
@@ -327,12 +349,18 @@ fn work(index: u32, inbox: &Receiver<Order>, report: &Sender<Reported>) {
                     priority,
                 } => worker.hold(id, kind, input, priority),
                 Order::Cancel(id) => worker.cancel(id),
-                Order::Read { id, key, sources } => {
+                Order::Read {
+                    id,
+                    key,
+                    kind,
+                    sources,
+                } => {
                     let read = job_cache::read(&sources);
                     let _ = report.send(Reported::Read {
                         worker: index,
                         id,
                         key,
+                        kind,
                         sources,
                         read,
                     });

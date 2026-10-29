@@ -11,15 +11,21 @@ static SUBMITTED: AtomicU64 = AtomicU64::new(0);
 pub struct JobId(pub u64);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct RecordKey(pub [u8; 32]);
+pub struct RecordKey {
+    pub hash: [u8; 32],
+    pub kind: &'static str,
+}
 
 impl RecordKey {
-    pub fn new(source: &[u8; 32], kind: &str, identity: &[u8]) -> Self {
-        Self(engine_sources::record_key(source, kind, identity))
+    pub fn new(source: &[u8; 32], kind: &'static str, identity: &[u8]) -> Self {
+        Self {
+            hash: engine_sources::record_key(source, kind, identity),
+            kind,
+        }
     }
 
     pub fn hex(&self) -> String {
-        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
+        self.hash.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 }
 

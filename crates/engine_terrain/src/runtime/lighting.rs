@@ -115,11 +115,7 @@ pub(super) fn light(
         let mut identity = keys;
         identity.extend_from_slice(&sizes.0.to_le_bytes());
         identity.extend_from_slice(&sizes.1.to_le_bytes());
-        let record = RecordKey::new(
-            &crate::sources::LIGHTING,
-            LightingJob::KIND.name(),
-            &identity,
-        );
+        let record = RecordKey::new(&crate::SOURCE, LightingJob::KIND.name(), &identity);
         state.whole.lighting.found = Some((basis, job.clone(), record));
         (job, record)
     });
@@ -171,7 +167,7 @@ pub(super) fn ground_tiles(
             held = parent;
         }
         let (job, record) = state.tile_record(recipe, held);
-        keys.extend_from_slice(&record.0);
+        keys.extend_from_slice(&record.hash);
         tiles.push((held, job.stamps));
     }
     (tiles, keys)

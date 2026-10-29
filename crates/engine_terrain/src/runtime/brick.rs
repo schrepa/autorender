@@ -1,5 +1,5 @@
 use super::*;
-use crate::jobs::TerrainWorker;
+use crate::jobs::{ShadingJob, SteadiedJob, TerrainWorker};
 use engine_core::{
     Brick, Bricks, EnvironmentSection, FixedSimulation, FixedSimulationSystems, Ground,
     GroundSample, JobWorker, TerrainDebug, ViewSync, ViewSyncSystems, WaterSources, WorldSync,
@@ -18,6 +18,15 @@ impl Brick for TerrainBrick {
             .settings::<Wind>()
             .settings::<Occupancy>()
             .settings::<Water>()
+            .records(&[
+                TileJob::KIND.name(),
+                BakeJob::KIND.name(),
+                LightingJob::KIND.name(),
+                BounceJob::KIND.name(),
+                ShadingJob::KIND.name(),
+                SteadiedJob::KIND.name(),
+                SETTLED_KIND,
+            ])
             .resource::<Terrains>()
             .insert_resource(Ground {
                 sample: ground_sample,

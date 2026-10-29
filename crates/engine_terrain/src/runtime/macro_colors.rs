@@ -76,7 +76,7 @@ pub(super) fn want_colors(state: &mut TerrainState, settings: &TerrainSettings) 
 fn colors_set(job: &MacroJob) -> TextureSet {
     let identity = job.identity();
     TextureSet {
-        source: crate::sources::MACRO,
+        source: crate::SOURCE,
         name: format!("terrain/macro/{:032x}", content_hash(&identity)),
         textures: vec![("colors".to_owned(), TextureUsage::Data)],
         make: MakeSources::Job {

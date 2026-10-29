@@ -115,7 +115,7 @@ impl TerrainState {
         } else {
             ShadingReads::Shadings(
                 read.into_iter()
-                    .map(|at| (at, self.shading_record(recipe, at).0))
+                    .map(|at| (at, self.shading_record(recipe, at).hash))
                     .collect(),
             )
         };
@@ -124,11 +124,7 @@ impl TerrainState {
             key,
             reads,
         };
-        let record = RecordKey::new(
-            &crate::sources::SHADING,
-            ShadingJob::KIND.name(),
-            &job.identity(),
-        );
+        let record = RecordKey::new(&crate::SOURCE, ShadingJob::KIND.name(), &job.identity());
         self.shading.found.insert(key, (job, record));
         record
     }
@@ -334,7 +330,15 @@ fn ask(state: &mut TerrainState, slots: &mut JobBudget<'_>, wants: &[Want], fram
         let reads: Vec<(TileKey, RecordKey)> = match &job.reads {
             ShadingReads::Shadings(reads) => reads
                 .iter()
-                .map(|&(at, read)| (at, RecordKey(read)))
+                .map(|&(at, hash)| {
+                    (
+                        at,
+                        RecordKey {
+                            hash,
+                            kind: ShadingJob::KIND.name(),
+                        },
+                    )
+                })
                 .collect(),
             ShadingReads::Tiles(_) => Vec::new(),
         };
@@ -354,7 +358,7 @@ fn ask(state: &mut TerrainState, slots: &mut JobBudget<'_>, wants: &[Want], fram
                     continue;
                 };
                 let held = Arc::clone(held);
-                state.shading.share(slots.jobs, shading_key(&read.0), || {
+                state.shading.share(slots.jobs, shading_key(&read.hash), || {
                     share_shading(&crate::codec::encode(held.as_ref()))
                 });
             }

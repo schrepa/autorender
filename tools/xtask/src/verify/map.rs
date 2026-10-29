@@ -534,7 +534,7 @@ pub(crate) const MAP: &[Rule] = &[
         checks: &[Smokes("agent"), Smokes("parity"), Smokes("native")],
     },
     Rule {
-        paths: &["web/scripts/pure-wasm.mjs"],
+        paths: &["web/scripts/pure-wasm.mjs", "web/scripts/pack-wasm.mjs"],
         checks: &[PureWasm],
     },
     Rule {

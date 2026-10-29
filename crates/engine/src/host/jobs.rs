@@ -8,9 +8,20 @@ pub enum JobOrder {
     Share(JobShare),
     Run { worker: u32, request: JobRequest },
     Cancel { worker: u32, id: JobId },
-    Lookup { id: JobId, key: String },
-    Keep { key: String, output: Vec<u8> },
-    Mismatch { key: String },
+    Lookup {
+        id: JobId,
+        key: String,
+        kind: &'static str,
+    },
+    Keep {
+        key: String,
+        kind: &'static str,
+        output: Vec<u8>,
+    },
+    Mismatch {
+        key: String,
+        kind: &'static str,
+    },
 }
 
 pub(crate) type Finished = (JobId, Result<Vec<u8>, String>);
@@ -34,7 +45,7 @@ pub struct JobScheduler {
     caching: bool,
     verify: bool,
     running: HashMap<u64, u32>,
-    keys: HashMap<u64, String>,
+    keys: HashMap<u64, RecordKey>,
     verifying: HashMap<u64, Vec<u8>>,
     fetched: HashMap<String, Vec<u8>>,
     looking: HashMap<u64, Looking>,
@@ -102,10 +113,17 @@ impl JobScheduler {
                     let key = record.hex();
                     if let Some(handed) = self.fetched.remove(&key) {
                         if !parity.holds(&handed, &output) {
-                            self.orders.push(JobOrder::Mismatch { key });
+                            self.orders.push(JobOrder::Mismatch {
+                                key,
+                                kind: record.kind,
+                            });
                         }
                     } else if self.caching {
-                        self.orders.push(JobOrder::Keep { key, output });
+                        self.orders.push(JobOrder::Keep {
+                            key,
+                            kind: record.kind,
+                            output,
+                        });
                     }
                 }
             }
@@ -117,6 +135,7 @@ impl JobScheduler {
         self.orders.push(JobOrder::Lookup {
             id,
             key: record.hex(),
+            kind: record.kind,
         });
         self.looking.insert(id.0, looking);
     }
@@ -152,7 +171,9 @@ impl JobScheduler {
             }
             None => {}
         }
-        self.keys.insert(id.0, key);
+        if let Some(record) = request.record {
+            self.keys.insert(id.0, record);
+        }
         self.dispatch(request);
     }
 
@@ -210,13 +231,17 @@ impl JobScheduler {
             if let (Some(key), Ok(output)) = (key, &output)
                 && kept != *output
             {
-                self.orders.push(JobOrder::Mismatch { key });
+                self.orders.push(JobOrder::Mismatch {
+                    key: key.hex(),
+                    kind: key.kind,
+                });
             }
             return;
         }
         if let (Some(key), Ok(output)) = (key, &output) {
             self.orders.push(JobOrder::Keep {
-                key,
+                key: key.hex(),
+                kind: key.kind,
                 output: output.clone(),
             });
         }
