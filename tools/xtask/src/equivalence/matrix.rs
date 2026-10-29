@@ -281,7 +281,7 @@ fn views(entry: &Value, problems: &mut Vec<String>) -> Vec<View> {
                     camera: Some(fields["camera"].clone()),
                 });
             }
-            _ => problems.push("a view is scene, the game's view name, or {name, camera}".into()),
+            _ => problems.push("a view is scene, a scene view's name, or {name, camera}".into()),
         }
     }
     let names: BTreeSet<&str> = views.iter().map(|view| view.name.as_str()).collect();

@@ -2,7 +2,6 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use std::sync::OnceLock;
 
 use engine::prelude::*;
-use engine::terrain::{PlacementAsset, PlacementLod};
 
 use crate::random::{golden_hash, unit};
 use crate::records;
@@ -10,26 +9,12 @@ use crate::records;
 pub(crate) fn spruce(
     world: &mut World,
     seed: u32,
-    material: MaterialHandle,
-) -> engine::Result<PlacementAsset> {
-    let mut levels = (0..DETAILS.len())
+) -> engine::Result<(Vec<MeshHandle>, MeshHandle)> {
+    let levels = (0..DETAILS.len())
         .map(|detail| conifer_record(world, seed, detail))
         .collect::<engine::Result<Vec<_>>>()?;
     let shadow = shadow_record(world, seed)?;
-    let mesh = levels.remove(0);
-    Ok(PlacementAsset {
-        mesh,
-        material,
-        lods: levels
-            .into_iter()
-            .zip(CONIFER_ERRORS)
-            .map(|(mesh, error)| PlacementLod { mesh, error })
-            .collect(),
-        parts: Vec::new(),
-        sway: 0.0,
-        collider: None,
-        shadow: Some(shadow),
-    })
+    Ok((levels, shadow))
 }
 
 fn conifer_record(world: &mut World, seed: u32, detail: usize) -> engine::Result<MeshHandle> {
@@ -67,17 +52,6 @@ pub(crate) fn atlas_record(world: &mut World) -> engine::Result<TextureHandle> {
         )
     })?;
     Ok(handles[0])
-}
-
-pub(crate) fn material(atlas: TextureHandle) -> engine::Result<Material> {
-    Material::new([1.0; 4])?
-        .with_surface(Surface {
-            roughness: 0.9,
-            ..Surface::MATTE
-        })?
-        .with_base_color_texture(TextureRef::new(atlas))?
-        .with_alpha_mode(AlphaMode::Mask { cutoff: CUTOFF })
-        .map(|material| material.with_foliage(true))
 }
 
 fn texels() -> &'static [u8] {
@@ -140,8 +114,6 @@ const DETAILS: [Detail; 4] = [
         keep: [0.3, 0.5],
     },
 ];
-
-const CONIFER_ERRORS: [f32; 3] = [0.04, 0.09, 0.16];
 
 fn conifer(seed: u32, detail: usize) -> engine::Result<Mesh> {
     let build = &DETAILS[detail];

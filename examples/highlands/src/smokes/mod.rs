@@ -8,7 +8,6 @@ use engine::smoke_check;
 use engine::terrain::data::smokes::{Checked, control};
 use serde_json::{Value, json};
 
-use crate::views::set_view;
 use crate::{Highlands, Options, RockMaps};
 
 const GAME: &str = "highlands";
@@ -47,7 +46,7 @@ fn open(session: &mut dyn SmokeSession, in_place: bool) -> Checked<()> {
         rocks: false,
         ..Options::default()
     };
-    let built = Highlands::furnish(session.app(), &options, &RockMaps::default());
+    let built = Highlands::furnish(session.app(), &options, &RockMaps::default()).map(drop);
     smoke_check!(
         built.is_ok(),
         "highlands_builds",
@@ -59,11 +58,14 @@ fn open(session: &mut dyn SmokeSession, in_place: bool) -> Checked<()> {
 }
 
 fn aim(session: &mut dyn SmokeSession, view: &str) -> Checked<()> {
-    let aimed = set_view(session.app().world_mut(), view);
+    let aimed = session.request(
+        "control",
+        json!({"name": "scene_view", "args": {"name": view}}),
+    );
     smoke_check!(
         aimed.is_ok(),
         "the_view_is_known",
-        &aimed.as_ref().err(),
+        &aimed.as_ref().err().map(|refused| &refused["error"]),
         &view
     );
     Ok(())

@@ -1,106 +1,56 @@
 use engine::prelude::*;
 use engine::{Error, ErrorCode, Expected};
 
-use crate::field::hamlet_radius;
-use crate::land::Plateau;
-
-const VIEWS: [&str; 4] = ["overview", "close", "away", "bodies"];
-
-const STAND: &str = "stand:";
-
 const EYE_HEIGHT: f32 = 1.7;
 
 const SPEED: f32 = 160.0;
 
-fn view_names() -> impl Iterator<Item = &'static str> {
-    VIEWS
-        .into_iter()
-        .chain(WATER_VIEWS.iter().map(|(name, ..)| *name))
-}
-
-pub(crate) fn names() -> String {
-    let names: Vec<&str> = view_names().collect();
-    format!("{}|{STAND}x,z,yaw,pitch", names.join("|"))
-}
+#[derive(Resource, Clone, Copy)]
+struct StartView(Camera);
 
 pub(crate) fn add_systems(app: &mut App) {
     app.add_systems(Presentation, aim_when_bodies_come);
     app.add_systems(Presentation, hold_standing_eye.after(CameraSystems));
 }
 
-pub(crate) fn set_view(world: &mut World, view: &str) -> engine::Result<()> {
-    aim(world, view)
+pub(crate) fn start(world: &mut World) {
+    let camera = *world.resource::<Camera>();
+    world.insert_resource(StartView(camera));
+    look_from(world, camera);
 }
 
-fn aim(world: &mut World, view: &str) -> engine::Result<()> {
-    let bodies = (view == "bodies").then(|| bodies_view(world)).flatten();
-    let awaiting = view == "bodies" && bodies.is_none();
-    if awaiting {
-        world.insert_resource(AwaitingBodies);
-    } else {
-        world.remove_resource::<AwaitingBodies>();
+pub(crate) fn reset(world: &mut World) {
+    world.remove_resource::<StandingEye>();
+    world.remove_resource::<AwaitingBodies>();
+    if let Some(StartView(camera)) = world.get_resource::<StartView>().copied() {
+        look_from(world, camera);
     }
-    let view = if awaiting { "overview" } else { view };
-    let standing = view
-        .strip_prefix(STAND)
-        .map(|place| StandingEye::new(world, place))
-        .transpose()?;
-    let camera = standing
-        .as_ref()
-        .map(StandingEye::camera)
-        .or_else(|| camera(world, view))
-        .or(bodies)
-        .ok_or_else(|| {
-            Error::new(ErrorCode::InvalidValue, "$.view")
-                .got(view)
-                .variants(view_names())
-        })?;
-    if let Some(standing) = standing {
-        world.insert_resource(standing);
-    } else {
-        world.remove_resource::<StandingEye>();
-    }
+}
+
+fn look_from(world: &mut World, camera: Camera) {
     world.insert_resource(camera);
     world.insert_resource(FlyCameraController::from_camera(&camera).with_speed(SPEED));
+}
+
+pub(crate) fn stand(world: &mut World, place: &str) -> engine::Result<()> {
+    let standing = StandingEye::new(world, place)?;
+    world.insert_resource(standing);
+    look_from(world, standing.camera());
     Ok(())
 }
 
-fn camera(world: &World, view: &str) -> Option<Camera> {
-    match view {
-        "overview" => {
-            let (position, target) = overview(world);
-            Some(Camera {
-                position,
-                target,
-                near: 0.5,
-                far: 20_000.0,
-                vertical_fov_radians: 55.0_f32.to_radians(),
-            })
+pub(crate) fn watch_bodies(world: &mut World, on: bool) {
+    if !on {
+        world.remove_resource::<AwaitingBodies>();
+        return;
+    }
+    match bodies_view(world) {
+        Some(camera) => {
+            world.remove_resource::<AwaitingBodies>();
+            world.remove_resource::<StandingEye>();
+            look_from(world, camera);
         }
-        "close" => {
-            let (position, target) = close_view(world);
-            Some(Camera {
-                position,
-                target,
-                near: 0.2,
-                far: 20_000.0,
-                ..Camera::default()
-            })
-        }
-        "away" => {
-            let (position, target) = away_view(world);
-            Some(Camera {
-                position,
-                target,
-                near: 0.5,
-                far: 20_000.0,
-                ..Camera::default()
-            })
-        }
-        _ => WATER_VIEWS
-            .iter()
-            .find(|(name, ..)| *name == view)
-            .map(|&(_, position, yaw, pitch)| water_view(position, yaw, pitch)),
+        None => world.insert_resource(AwaitingBodies),
     }
 }
 
@@ -115,7 +65,7 @@ struct StandingEye {
 impl StandingEye {
     fn new(world: &World, place: &str) -> engine::Result<Self> {
         let malformed = |expected| {
-            Error::new(ErrorCode::InvalidValue, "$.view")
+            Error::new(ErrorCode::InvalidValue, "$.stand")
                 .expected(expected)
                 .got(place)
         };
@@ -131,7 +81,7 @@ impl StandingEye {
             return Err(malformed(Expected::Finite));
         }
         if pitch.abs() >= 90.0 {
-            return Err(Error::new(ErrorCode::OutOfRange, "$.view")
+            return Err(Error::new(ErrorCode::OutOfRange, "$.stand")
                 .range(-90.0, 90.0)
                 .got(pitch));
         }
@@ -194,7 +144,7 @@ struct AwaitingBodies;
 
 fn aim_when_bodies_come(world: &mut World) {
     if world.contains_resource::<AwaitingBodies>() && bodies_view(world).is_some() {
-        aim(world, "bodies").expect("view_known");
+        watch_bodies(world, true);
     }
 }
 
@@ -218,94 +168,4 @@ fn bodies_view(world: &mut World) -> Option<Camera> {
         far: 20_000.0,
         ..Camera::default()
     })
-}
-
-fn ground(world: &World, x: f32, z: f32) -> f32 {
-    let mut terrains = world.try_query::<&Terrain>().expect("terrain_registered");
-    terrains
-        .iter(world)
-        .next()
-        .map(|terrain| {
-            terrain.origin.y
-                + terrain.layers.height_at(
-                    &terrain.pyramid,
-                    Vec2::new(x - terrain.origin.x, z - terrain.origin.z),
-                )
-        })
-        .unwrap_or_else(|| world.resource::<Plateau>().0)
-}
-
-fn directions() -> impl Iterator<Item = Vec2> {
-    (0..8).map(|step| {
-        let (sin, cos) = math::sin_cos(step as f32 * std::f32::consts::FRAC_PI_4);
-        Vec2::new(cos, sin)
-    })
-}
-
-fn lowest(world: &World, reach: f32) -> Vec2 {
-    directions()
-        .map(|direction| {
-            let point = direction * reach;
-            (ground(world, point.x, point.y), direction)
-        })
-        .min_by(|a, b| a.0.total_cmp(&b.0))
-        .map_or(Vec2::Y, |(_, direction)| direction)
-}
-
-fn clear_view(world: &World, target: Vec3, direction: Vec2, distance: f32, rise: f32) -> Vec3 {
-    let mut height = distance * rise;
-    for step in 1..=24 {
-        let along = step as f32 / 24.0;
-        let point = Vec2::new(target.x, target.z) + direction * distance * along;
-        let needed = (ground(world, point.x, point.y) + 30.0 - target.y) / along;
-        height = math::max(height, needed);
-    }
-    let point = Vec2::new(target.x, target.z) + direction * distance;
-    Vec3::new(point.x, target.y + height, point.y)
-}
-
-fn overview(world: &World) -> (Vec3, Vec3) {
-    let target = Vec3::new(0.0, world.resource::<Plateau>().0, 0.0);
-    let direction = lowest(world, 1200.0);
-    let distance = hamlet_radius() + 700.0;
-    (clear_view(world, target, direction, distance, 0.45), target)
-}
-
-fn close_view(world: &World) -> (Vec3, Vec3) {
-    let direction = lowest(world, 1500.0);
-    let edge = direction * hamlet_radius() * 0.85;
-    let far = direction * 1500.0;
-    (
-        Vec3::new(edge.x, ground(world, edge.x, edge.y) + 10.0, edge.y),
-        Vec3::new(far.x, ground(world, far.x, far.y) + 60.0, far.y),
-    )
-}
-
-const WATER_VIEWS: [(&str, [f32; 3], f32, f32); 5] = [
-    ("torrent", [-1584.0, 675.0, -2973.0], 0.0, -34.0),
-    ("rapids", [-3008.0, 228.0, -168.0], 0.0, -30.0),
-    ("meadow_river", [-266.0, 671.0, -2986.0], 0.0, -32.0),
-    ("band", [-300.0, 730.0, -3180.0], -10.0, -38.0),
-    ("close_stream", [1474.5, 605.9, 743.3], 112.0, -18.0),
-];
-
-fn water_view(position: [f32; 3], yaw: f32, pitch: f32) -> Camera {
-    let (yaw_sin, yaw_cos) = math::sin_cos(yaw.to_radians());
-    let (pitch_sin, pitch_cos) = math::sin_cos(pitch.to_radians());
-    let position = Vec3::from(position);
-    Camera {
-        position,
-        target: position + Vec3::new(yaw_sin * pitch_cos, pitch_sin, -yaw_cos * pitch_cos),
-        near: 0.2,
-        far: 20_000.0,
-        vertical_fov_radians: 60.0_f32.to_radians(),
-    }
-}
-
-fn away_view(world: &World) -> (Vec3, Vec3) {
-    let height = ground(world, 0.0, 0.0) + 700.0;
-    (
-        Vec3::new(0.0, height, 600.0),
-        Vec3::new(0.0, height - 500.0, -3000.0),
-    )
 }

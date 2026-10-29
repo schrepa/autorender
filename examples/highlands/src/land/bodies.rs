@@ -100,16 +100,19 @@ pub(super) fn place(world: &mut World) {
         return;
     };
     let eye = world.resource::<Camera>().position;
-    let Some((site, water)) = world.get_resource::<Terrains>().and_then(|terrains| {
-        let site = site(terrains, eye)?;
-        let [x, z] = site.points[site.point];
-        let bed = site.bed[site.point];
-        let at = site.origin + Vec3::new(x, bed + 0.05, z);
-        let water = terrains.water_at(at)?.surface - site.origin.y;
-        Some((site, water))
-    }) else {
+    let Some(site) = world
+        .get_resource::<Terrains>()
+        .and_then(|terrains| site(terrains, eye))
+    else {
         return;
     };
+    let [x, z] = site.points[site.point];
+    let bed = site.bed[site.point];
+    let at = site.origin + Vec3::new(x, bed + 0.05, z);
+    let Some(sample) = Ground::water_in(world, at) else {
+        return;
+    };
+    let water = sample.surface - site.origin.y;
     world.insert_resource(Dammed);
     if let Err(error) = build(world, &site, water, (count, SEED), boulder) {
         super::report_failure("highlands_bodies_failed", &error);

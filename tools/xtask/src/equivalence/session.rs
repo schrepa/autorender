@@ -253,14 +253,7 @@ fn drive(session: &mut Session, cell: &Cell, log: &Path, run: &mut Run) -> Resul
             }
             (None, "scene") => {}
             (None, name) => {
-                session.ok(
-                    &named(
-                        "control",
-                        "game",
-                        json!({"name": "view", "args": {"name": name}}),
-                    ),
-                    log,
-                )?;
+                session.ok(&named("control", "scene_view", json!({"name": name})), log)?;
             }
         }
         for capture in &cell.captures {

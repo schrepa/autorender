@@ -1,18 +1,22 @@
 use engine::{Error, ErrorCode};
 
-use crate::{scene, views};
+use crate::scene;
 
 const MAX_BODIES: u32 = 64;
 
 const SWITCH: &str = "on|off";
 
-pub(crate) const CONTROLS: [&str; 5] = ["look", "effects", "view", "lod", "impostors"];
+const STAND: &str = "x,z,yaw,pitch";
+
+pub(crate) const WATCH_BODIES: &str = "watch-bodies";
+
+pub(crate) const CONTROLS: [&str; 5] = ["effects", "stand", WATCH_BODIES, "lod", "impostors"];
 
 #[derive(Clone, Debug)]
 pub struct Options {
-    pub look: String,
     pub effects: String,
-    pub view: Option<String>,
+    pub stand: Option<String>,
+    pub watch_bodies: bool,
     pub lod: bool,
     pub impostors: bool,
     pub rocks: bool,
@@ -22,9 +26,9 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            look: "scene".into(),
             effects: "all".into(),
-            view: None,
+            stand: None,
+            watch_bodies: false,
             lod: true,
             impostors: true,
             rocks: true,
@@ -37,9 +41,9 @@ impl Options {
     pub fn value(&self, name: &str) -> Option<String> {
         let switch = |on: bool| String::from(if on { "on" } else { "off" });
         match name {
-            "look" => Some(self.look.clone()),
             "effects" => Some(self.effects.clone()),
-            "view" => self.view.clone(),
+            "stand" => self.stand.clone(),
+            WATCH_BODIES => Some(switch(self.watch_bodies)),
             "lod" => Some(switch(self.lod)),
             "impostors" => Some(switch(self.impostors)),
             "rocks" => Some(switch(self.rocks)),
@@ -50,9 +54,9 @@ impl Options {
 
     pub fn set(&mut self, name: &str, value: &str) -> engine::Result<()> {
         match name {
-            "look" => self.look = value.to_owned(),
             "effects" => self.effects = value.to_owned(),
-            "view" => self.view = Some(value.to_owned()),
+            "stand" => self.stand = Some(value.to_owned()),
+            WATCH_BODIES => self.watch_bodies = switch(name, value)?,
             "lod" => self.lod = switch(name, value)?,
             "impostors" => self.impostors = switch(name, value)?,
             "rocks" => self.rocks = switch(name, value)?,
@@ -90,9 +94,9 @@ fn switch(name: &str, value: &str) -> engine::Result<bool> {
 
 pub fn parameters() -> Vec<(&'static str, String)> {
     vec![
-        ("look", scene::looks()),
         ("effects", scene::effects()),
-        ("view", views::names()),
+        ("stand", STAND.to_owned()),
+        (WATCH_BODIES, SWITCH.to_owned()),
         ("lod", SWITCH.to_owned()),
         ("impostors", SWITCH.to_owned()),
         ("rocks", SWITCH.to_owned()),

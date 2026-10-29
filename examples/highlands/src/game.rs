@@ -2,32 +2,39 @@ use engine::host::TerrainDebug;
 use engine::prelude::*;
 use engine::{Error, ErrorCode};
 
-use crate::options::CONTROLS;
-use crate::views::set_view;
-use crate::{Options, RockMaps, scene};
+use crate::options::{CONTROLS, WATCH_BODIES};
+use crate::{Options, RockMaps, scene, views};
 
 const FREEZE_DETAIL: ActionId = ActionId::new(2).expect("action_index_valid");
 
-const APPLIED: [&str; 4] = ["lod", "look", "effects", "view"];
+const APPLIED: [&str; 4] = ["lod", "effects", "stand", WATCH_BODIES];
 
 pub struct Highlands {
     options: Options,
     freeze_held: bool,
+    scene: Option<SceneInstance>,
 }
 
 impl Highlands {
     pub fn build(options: Options, rocks: &RockMaps) -> engine::Result<(Engine, Self)> {
-        let mut engine = scene::create(options.bodies, rocks)?;
+        let (mut engine, instance) = scene::create(options.bodies, rocks)?;
         for name in APPLIED {
             apply(engine.app.world_mut(), &options, name)?;
         }
-        Ok((engine, Self::new(options)))
+        Ok((
+            engine,
+            Self {
+                scene: Some(instance),
+                ..Self::new(options)
+            },
+        ))
     }
 
     pub(crate) fn new(options: Options) -> Self {
         Self {
             options,
             freeze_held: false,
+            scene: None,
         }
     }
 
@@ -35,12 +42,12 @@ impl Highlands {
         app: &mut App,
         options: &Options,
         rocks: &RockMaps,
-    ) -> engine::Result<()> {
-        scene::furnish(app, options.bodies, rocks, false)?;
+    ) -> engine::Result<SceneInstance> {
+        let instance = scene::furnish(app, options.bodies, rocks, false)?;
         for name in APPLIED {
             apply(app.world_mut(), options, name)?;
         }
-        Ok(())
+        Ok(instance)
     }
 
     pub fn control(&mut self, engine: &mut Engine, name: &str, value: &str) -> engine::Result<()> {
@@ -66,12 +73,15 @@ fn apply(world: &mut World, options: &Options, name: &str) -> engine::Result<()>
             }
             Ok(())
         }
-        "look" => scene::set_look(world, &options.look),
-        "effects" => scene::set_effects(world, &options.effects, &options.look),
-        "view" => options
-            .view
+        "effects" => scene::set_effects(world, &options.effects),
+        "stand" => options
+            .stand
             .as_deref()
-            .map_or(Ok(()), |view| set_view(world, view)),
+            .map_or(Ok(()), |place| views::stand(world, place)),
+        WATCH_BODIES => {
+            views::watch_bodies(world, options.watch_bodies);
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -98,17 +108,19 @@ impl Game for Highlands {
     }
 
     fn reset_camera(&mut self, engine: &mut Engine) {
-        set_view(engine.app.world_mut(), "overview").expect("view_known");
+        views::reset(engine.app.world_mut());
+    }
+
+    fn scene(&self) -> Option<&SceneInstance> {
+        self.scene.as_ref()
     }
 
     fn content(&self, _engine: &Engine) -> Option<Vec<u8>> {
         let options = &self.options;
         let mut content = crate::SOURCE.to_vec();
         content.extend(options.bodies.to_le_bytes());
-        for choice in [&options.look, &options.effects] {
-            content.extend(choice.as_bytes());
-            content.push(0);
-        }
+        content.extend(options.effects.as_bytes());
+        content.push(0);
         content.extend([u8::from(options.lod), u8::from(options.impostors)]);
         Some(content)
     }
