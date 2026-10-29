@@ -1,8 +1,6 @@
-use crate::render_graph::Pass;
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GpuMemory {
-    pub pass: Option<&'static str>,
+    pub brick: Option<&'static str>,
     pub bytes: u64,
     pub created_after_warmup: u64,
     pub duplicate_upload_bytes: u64,
@@ -145,22 +143,22 @@ fn texture_bytes(descriptor: &wgpu::TextureDescriptor<'_>) -> u64 {
 }
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
-pub(crate) use ledger::{end_warmup, set_owners, take};
+pub(crate) use ledger::{end_warmup, take};
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
 pub(crate) struct Owned {
-    previous: Option<Pass>,
+    previous: Option<&'static str>,
     _brick: engine_profile::BrickScope,
     _span: engine_profile::Span,
 }
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
-pub(crate) fn owned(pass: Pass) -> Owned {
-    let (previous, brick) = ledger::own(pass);
+pub(crate) fn owned(brick: &'static str) -> Owned {
+    let (previous, index) = ledger::own(brick);
     Owned {
         previous,
-        _span: engine_profile::span("brick", engine_profile::brick_name(brick)),
-        _brick: engine_profile::enter(brick),
+        _span: engine_profile::span("brick", engine_profile::brick_name(index)),
+        _brick: engine_profile::enter(index),
     }
 }
 
@@ -171,16 +169,12 @@ impl Drop for Owned {
     }
 }
 
-pub(crate) fn feature(pass: crate::render_graph::FeaturePass) -> Owned {
-    owned(Pass::Feature(pass))
-}
-
 #[cfg(not(any(feature = "dev", feature = "profiling")))]
 pub(crate) struct Owned;
 
 #[cfg(not(any(feature = "dev", feature = "profiling")))]
 #[inline(always)]
-pub(crate) fn owned(_pass: Pass) -> Owned {
+pub(crate) fn owned(_brick: &'static str) -> Owned {
     Owned
 }
 
@@ -193,7 +187,6 @@ mod ledger {
     use engine_core::collections::{FixedState, HashMap};
 
     use super::GpuMemory;
-    use crate::render_graph::Pass;
 
     type Owner = Option<&'static str>;
 
@@ -224,8 +217,8 @@ mod ledger {
 
     thread_local! {
         static LEDGER: RefCell<Ledger> = RefCell::new(Ledger::default());
-        static OWNER: Cell<Option<Pass>> = const { Cell::new(None) };
-        static BRICKS: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
+        static OWNER: Cell<Owner> = const { Cell::new(None) };
+        static BRICKS: RefCell<Vec<(&'static str, u16)>> = const { RefCell::new(Vec::new()) };
     }
 
     pub(super) fn id_of(value: &impl Hash) -> u64 {
@@ -233,26 +226,24 @@ mod ledger {
     }
 
     fn owner() -> Owner {
-        OWNER.with(Cell::get).map(Pass::name)
+        OWNER.with(Cell::get)
     }
 
-    pub(super) fn own(pass: Pass) -> (Option<Pass>, u16) {
-        let previous = OWNER.replace(Some(pass));
-        let brick = BRICKS.with_borrow(|bricks| {
-            bricks
-                .get(pass.index())
-                .copied()
-                .unwrap_or(engine_profile::CORE)
+    pub(super) fn own(brick: &'static str) -> (Owner, u16) {
+        let previous = OWNER.replace(Some(brick));
+        let index = BRICKS.with_borrow_mut(|bricks| {
+            if let Some(&(_, index)) = bricks.iter().find(|&&(known, _)| known == brick) {
+                return index;
+            }
+            let index = engine_profile::brick_index(brick);
+            bricks.push((brick, index));
+            index
         });
-        (previous, brick)
+        (previous, index)
     }
 
-    pub(super) fn restore(previous: Option<Pass>) {
+    pub(super) fn restore(previous: Owner) {
         OWNER.set(previous);
-    }
-
-    pub(crate) fn set_owners(bricks: Vec<u16>) {
-        BRICKS.set(bricks);
     }
 
     pub(super) fn created(id: u64, bytes: u64) {
@@ -340,7 +331,7 @@ mod ledger {
 
     fn row(owners: &mut BTreeMap<Owner, GpuMemory>, owner: Owner) -> &mut GpuMemory {
         owners.entry(owner).or_insert(GpuMemory {
-            pass: owner,
+            brick: owner,
             ..GpuMemory::default()
         })
     }

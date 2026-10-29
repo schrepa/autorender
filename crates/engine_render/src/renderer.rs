@@ -14,33 +14,30 @@ use engine_core::{Error, Expected};
 use crate::RenderStats;
 use crate::batches::{BatchPlan, DrawBatch};
 use crate::cached::{Bound, Versioned};
-use crate::depth_pyramid::{DepthPyramid, Reduction};
+use crate::depth_pyramid::DepthPyramid;
 use crate::entries::{MeshPass, PassKind, Streams};
-use crate::environment::{ENVIRONMENT_FORMAT, Environment};
+use crate::environment::ENVIRONMENT_FORMAT;
 use crate::gpu_data::{
-    CameraUniform, ColorData, ExtraVertex, FAR_DEPTH, GroundData, LOD_LEVELS, LOD_STATE,
-    LightingUniform, PoseData, SHADER, Variant, Vertex, clamped_extent,
+    CameraUniform, ColorData, ExtraVertex, GroundData, LOD_LEVELS, LOD_STATE, LightingUniform,
+    PoseData, Variant, Vertex, clamped_extent,
 };
-use crate::gpu_presentation::{BatchMeta, GpuPresentationPass};
+use crate::gpu_presentation::GpuPresentationPass;
 use crate::gpu_uploads;
+use crate::graph::{FrameGraph, GraphTable};
 use crate::impostors::{
     AtlasShape, BakeGpu, BakeSource, Contents, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas,
     ImpostorPipelines, ImpostorRecord, Supplied,
 };
-use crate::lights::{LightFrame, LightPass};
 use crate::materials::MaterialStore;
 use crate::mesh_arena::{Bindings, MeshArena, MeshDraw, Placement};
+use crate::parts::{FrameInfo, FrameKind, GpuPart, Parts, Passes};
 use crate::pipelines::PipelineCounts;
-use crate::post::PostPass;
-use crate::probes::{FACES, ProbePass, face_view_projection};
+use crate::probes::FACES;
 use crate::profiling::GpuProfiler;
-use crate::render_features::{Eager, FeatureFrames, Lazy, Ready, RenderFeature, RenderFeatures};
 use crate::retained_uploads::RetainedUploads;
 use crate::scene_shading::SceneShading;
-use crate::shadows::{CasterDraw, ShadowPass};
 use crate::staging::{self, StagingRing};
-use crate::targets::{FrameSize, ScreenTarget, Targets};
-use crate::temporal::{TemporalFrame, TemporalPass};
+use crate::targets::{FrameSize, Targets};
 use crate::uploads::UploadCache;
 
 mod attribution;
@@ -55,56 +52,58 @@ mod instances;
 mod meshes;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
+mod opaque;
 #[cfg(feature = "dev")]
 mod probe;
-mod probe_captures;
+pub(crate) mod probe_captures;
 mod queries;
 mod records;
-mod scatter_draws;
-mod scatter_pool;
+pub(crate) mod scatter_draws;
+pub(crate) mod scatter_pool;
 mod startup;
-mod terrain_draws;
+pub(crate) mod terrain_draws;
 
 pub use attribution::GpuPassTimes;
-use camera::CameraBindings;
+pub(crate) use camera::CameraBindings;
 pub(crate) use core_state::Core;
-use display::{DepthTarget, Display, DisplayFrame};
-use impostor_draws::ImpostorDraws;
+pub(crate) use display::{DepthTarget, Display, DisplayFrame};
+pub(crate) use impostor_draws::ImpostorDraws;
 pub(crate) use instances::FramePoses;
-use instances::Instances;
-use meshes::{BatchBinds, DrawOrder, MeshPipelines, SkyTargets};
+pub(crate) use instances::Instances;
+pub(crate) use meshes::{BatchBinds, DrawOrder, MeshPipelines};
 pub(crate) use meshes::{extra_layout, vertex_layout};
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::GpuMark;
+pub(crate) use opaque::{OPAQUE_PART, OpaqueReads, debug_records, encode_phase};
 pub use startup::StartingRenderer;
 
 const INITIAL_CAPACITY: usize = 1_024;
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-struct GpuMesh {
-    placement: Result<Placement, OwnMesh>,
-    extended: bool,
-    index_count: u32,
-    byte_len: u64,
-    lods: Vec<(u32, u32, f32)>,
-    plan: Vec<(u32, u32, f32)>,
-    casters: Vec<(u32, u32)>,
-    without_levels: bool,
+pub(crate) struct GpuMesh {
+    pub(crate) placement: Result<Placement, OwnMesh>,
+    pub(crate) extended: bool,
+    pub(crate) index_count: u32,
+    pub(crate) byte_len: u64,
+    pub(crate) lods: Vec<(u32, u32, f32)>,
+    pub(crate) plan: Vec<(u32, u32, f32)>,
+    pub(crate) casters: Vec<(u32, u32)>,
+    pub(crate) without_levels: bool,
 }
 
 #[derive(Default)]
-struct MeshUploads {
+pub(crate) struct MeshUploads {
     staging: Vec<Vertex>,
 }
 
-struct OwnMesh {
+pub(crate) struct OwnMesh {
     vertices: wgpu::Buffer,
     extras: Option<wgpu::Buffer>,
     indices: wgpu::Buffer,
 }
 
 impl GpuMesh {
-    fn draw<'a>(&'a self, arena: &'a MeshArena) -> MeshDraw<'a> {
+    pub(crate) fn draw<'a>(&'a self, arena: &'a MeshArena) -> MeshDraw<'a> {
         match &self.placement {
             Ok(placement) => MeshDraw {
                 index_count: self.index_count,
@@ -121,12 +120,12 @@ impl GpuMesh {
         }
     }
 
-    fn caster_range(&self, level: usize, own: (u32, u32)) -> (u32, u32) {
+    pub(crate) fn caster_range(&self, level: usize, own: (u32, u32)) -> (u32, u32) {
         self.casters.get(level).copied().unwrap_or(own)
     }
 }
 
-fn lod_levels(mesh: &GpuMesh) -> usize {
+pub(crate) fn lod_levels(mesh: &GpuMesh) -> usize {
     1 + mesh.plan.len().min(LOD_LEVELS - 1)
 }
 
@@ -154,83 +153,115 @@ fn with_levels(mesh: &engine_core::Mesh, lods: Option<&engine_core::MeshLods>) -
     (indices, levels, lods.casters.clone())
 }
 
-struct Culling {
-    pyramid: Option<DepthPyramid>,
+pub(crate) struct Culling {
+    pub(crate) pyramid: Option<DepthPyramid>,
 }
 
-type StructureKey = (u64, u64, u64);
+pub(crate) type StructureKey = (u64, u64, u64);
 
 #[derive(Default)]
-struct StructureKeys {
-    order: Option<StructureKey>,
-    variants: Option<(StructureKey, PassKind)>,
-    probes: Option<(StructureKey, PassKind)>,
-    impostors: Option<(StructureKey, engine_core::LevelOfDetail, bool, u64)>,
-    residency: Option<(u64, u64, u64)>,
-    uploads: Option<(u64, u64, u64, u64)>,
+pub(crate) struct StructureKeys {
+    pub(crate) order: Option<StructureKey>,
+    pub(crate) variants: Option<(StructureKey, PassKind)>,
+    pub(crate) probes: Option<(StructureKey, PassKind)>,
+    pub(crate) impostors: Option<(StructureKey, engine_core::LevelOfDetail, bool, u64)>,
+    pub(crate) residency: Option<(u64, u64, u64)>,
+    pub(crate) uploads: Option<(u64, u64, u64, u64)>,
 }
 
+type Validation = std::pin::Pin<Box<dyn std::future::Future<Output = Option<wgpu::Error>>>>;
+
 pub struct Renderer {
-    device: wgpu::Device,
-    queue: crate::gpu_calls::Queue,
-    adapter: crate::AdapterInfo,
-    #[cfg(not(target_arch = "wasm32"))]
-    debugger_capture: bool,
-    display: Display,
-    depth: DepthTarget,
-    terrain_ids: ScreenTarget<terrain_draws::TerrainIds>,
-    meshes: BTreeMap<MeshHandle, GpuMesh>,
-    mesh_arena: MeshArena,
-    mesh_layout: u64,
-    mesh_uploads: MeshUploads,
-    materials: MaterialStore,
-    plan: BatchPlan,
-    draw_order: DrawOrder,
-    structure_keys: StructureKeys,
-    instances: Instances,
-    uploads: UploadCache,
-    mesh_shader: wgpu::ShaderModule,
-    camera: CameraBindings,
-    mesh_pipelines: MeshPipelines,
-    pipeline_counts: PipelineCounts,
-    gpu_presentation: GpuPresentationPass,
-    culling: Culling,
-    shadows: ShadowPass,
-    impostors: ImpostorDraws,
-    water_settle: crate::water_settle::WaterSettle,
-    terrain: crate::terrain::TerrainPass,
-    scatter_meshes: (BTreeSet<MeshHandle>, u64),
-    scatter_draws: scatter_draws::ScatterDraws,
-    switch_fades: frame::SwitchFades,
-    last_seconds: Option<f32>,
-    features: RenderFeatures,
-    graph: crate::render_graph::RenderGraph,
-    gpu_frame: bool,
-    health: Arc<Mutex<health::Reports>>,
-    profiler: GpuProfiler,
+    core: Core,
+    parts: Parts,
+    table: GraphTable,
+    graph: FrameGraph,
+    installing: Option<Validation>,
+    ran: Vec<&'static [&'static str]>,
+    #[cfg(feature = "profiling")]
+    prelude_owners: Vec<(&'static str, &'static str)>,
 }
 
 impl Renderer {
-    fn structure_key(&self) -> StructureKey {
-        (
-            self.plan.generation(),
-            self.mesh_layout,
-            self.materials.generation(),
-        )
+    pub fn install(&mut self, bricks: &engine_core::BrickRegistry) -> Result<(), Error> {
+        let entries = crate::parts::installed(bricks);
+        let shared = crate::parts::shared_of(&entries)?;
+        let features: Vec<(&'static str, bool)> = bricks
+            .names()
+            .map(|brick| (brick, true))
+            .chain(bricks.left_out().iter().map(|&brick| (brick, false)))
+            .collect();
+        let device = self.core.device.clone();
+        crate::pipelines::install(&device, &shared, features);
+        self.core.camera.install(&device);
+        self.core.shared = shared;
+        let scope = crate::gpu_calls::validation_scope(&device);
+        let installed = self.parts.install(&entries, &self.core);
+        let core = &mut self.core;
+        core.camera.refresh(&core.device, &core.shared, &self.parts, None);
+        self.installing = Some(Box::pin(scope.pop()));
+        self.table = installed?;
+        self.graph.clear();
+        Ok(())
+    }
+
+    pub fn installed_passes(&self) -> &'static [&'static str] {
+        self.table.names()
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.display.resize(width, height);
+        self.core.display.resize(width, height);
     }
 
     pub fn set_render_size(&mut self, width: u32, height: u32) {
-        self.display.ask_render_size(width, height);
+        self.core.display.ask_render_size(width, height);
     }
 
     pub fn set_cooking(&mut self, cooking: bool) {
-        self.mesh_pipelines.cooking = cooking;
-        self.terrain.cooking = cooking;
-        self.impostors.atlas.set_cooking(cooking);
-        self.impostors.placed.set_cooking(cooking);
+        self.core.mesh_pipelines.cooking = cooking;
+        if let Some(terrain) = self.parts.get_mut::<crate::terrain::TerrainPass>() {
+            terrain.cooking = cooking;
+        }
+        self.core.impostors.atlas.set_cooking(cooking);
+        self.core.impostors.placed.set_cooking(cooking);
+    }
+
+    fn view<'f>(&'f self, info: &'f FrameInfo<'f>) -> crate::parts::View<'f> {
+        crate::parts::View {
+            core: &self.core,
+            parts: &self.parts,
+            table: &self.table,
+            frame: info,
+        }
+    }
+
+    fn steps(
+        &mut self,
+        info: &FrameInfo<'_>,
+        mut act: impl FnMut(&mut dyn GpuPart, &mut crate::parts::Step<'_>),
+    ) {
+        let (parts, core, table) = (&mut self.parts, &mut self.core, &self.table);
+        for index in 0..parts.len() {
+            let _owner = crate::memory::owned(parts.decl(index).brick);
+            parts.with_part(index, |part, parts| {
+                act(
+                    part,
+                    &mut crate::parts::Step {
+                        core,
+                        parts,
+                        table,
+                        frame: info,
+                    },
+                );
+            });
+        }
+    }
+
+    fn relights(&self) -> bool {
+        self.core.mesh_pipelines.cooking
+            && self
+                .parts
+                .get::<crate::lights::LightPass>()
+                .is_some_and(crate::lights::LightPass::created)
     }
 }

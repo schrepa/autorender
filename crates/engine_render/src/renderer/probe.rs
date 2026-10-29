@@ -1,5 +1,5 @@
-use super::frame::FrameState;
 use super::*;
+use crate::debug_view::DebugViewPass;
 use crate::gpu_layouts::constants::{
     DEBUG_CASTS, DEBUG_FADING, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS,
     DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN,
@@ -7,6 +7,7 @@ use crate::gpu_layouts::constants::{
     DEBUG_SOURCE_SHIFT, DEBUG_SPAN_STEPS, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL,
     WATER_SPAN_LEAST, WATER_SPAN_MOST,
 };
+use crate::post::PostPass;
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::max;
 use engine_core::{
@@ -48,7 +49,7 @@ struct Armed {
 }
 
 #[derive(Default)]
-pub(super) struct Probe {
+pub(crate) struct Probe {
     armed: Option<Armed>,
 }
 
@@ -64,10 +65,10 @@ impl Probe {
 
 impl Renderer {
     pub fn arm_probe(&mut self, pixel: (u32, u32)) {
-        let armed_size = self.display.size().pixels();
+        let armed_size = self.core.display.size().pixels();
         let depth_row = (armed_size.0 * 4).next_multiple_of(ROW_ALIGNMENT);
         let buffer = crate::memory::buffer(
-            &self.device,
+            &self.core.device,
             &wgpu::BufferDescriptor {
                 label: Some("engine/debug-view-probe"),
                 size: DEPTH + u64::from(depth_row) * u64::from(armed_size.1),
@@ -75,7 +76,7 @@ impl Renderer {
                 mapped_at_creation: false,
             },
         );
-        self.display.probe.armed = Some(Armed {
+        self.core.display.probe.armed = Some(Armed {
             pixel,
             stage: Stage::Debug,
             buffer,
@@ -90,15 +91,16 @@ impl Renderer {
     }
 
     pub fn probe_result(&mut self) -> Option<Result<PixelProbe, Error>> {
-        if self.display.probe.armed.as_ref()?.stage != Stage::Mapping {
+        if self.core.display.probe.armed.as_ref()?.stage != Stage::Mapping {
             return None;
         }
         #[cfg(not(target_arch = "wasm32"))]
         if let Err(error) = self.wait_for_gpu() {
-            self.display.probe.armed = None;
+            self.core.display.probe.armed = None;
             return Some(Err(error));
         }
         let mapped = self
+            .core
             .display
             .probe
             .armed
@@ -106,18 +108,21 @@ impl Renderer {
             .mapped
             .borrow_mut()
             .take()?;
-        let armed = self.display.probe.armed.take()?;
+        let armed = self.core.display.probe.armed.take()?;
         Some(mapped.map(|bytes| armed.result(&bytes)))
     }
 
     pub(super) fn encode_probe(
         &mut self,
-        state: &FrameState<'_>,
+        info: &FrameInfo<'_>,
         encoder: &mut wgpu::CommandEncoder,
         canvas: &wgpu::Texture,
     ) {
-        let size = self.display.size();
-        let Some(armed) = self.display.probe.armed.as_mut() else {
+        let size = self.core.display.size();
+        let scene = info
+            .shape
+            .is_some_and(|shape| matches!(shape.targets, Targets::Post | Targets::Temporal));
+        let Some(armed) = self.core.display.probe.armed.as_mut() else {
             return;
         };
         let pixel = (
@@ -127,8 +132,8 @@ impl Renderer {
         let all = wgpu::TextureAspect::All;
         match armed.stage {
             Stage::Debug => {
-                if state.kind.debug
-                    && let Some(debug) = self.features.debug_view.get()
+                if info.kind.debug
+                    && let Some(debug) = self.parts.get::<DebugViewPass>()
                 {
                     let [ids, count, terrain] = debug.textures();
                     copy_texel(encoder, (ids, all), pixel, (&armed.buffer, IDS));
@@ -136,15 +141,14 @@ impl Renderer {
                     copy_texel(encoder, (terrain, all), pixel, (&armed.buffer, TERRAIN));
                 }
                 if size.pixels() == armed.armed_size {
-                    copy_depth(encoder, &self.depth.texture, size.pixels(), armed);
+                    copy_depth(encoder, &self.core.depth.texture, size.pixels(), armed);
                 }
                 armed.size = size.pixels();
-                armed.view_projection = state.snapshot.view_projection;
+                armed.view_projection = info.snapshot.view_projection;
                 armed.stage = Stage::Shaded;
             }
             Stage::Shaded => {
-                if matches!(state.shape.targets, Targets::Post | Targets::Temporal)
-                    && let Some(post) = self.features.post.get()
+                if scene && let Some(post) = self.parts.get::<PostPass>()
                 {
                     let scene = post.scene_texture();
                     copy_texel(encoder, (scene, all), pixel, (&armed.buffer, SCENE));
@@ -164,7 +168,7 @@ impl Renderer {
     }
 
     pub(super) fn map_probe(&mut self) {
-        let Some(armed) = self.display.probe.armed.as_mut() else {
+        let Some(armed) = self.core.display.probe.armed.as_mut() else {
             return;
         };
         if armed.stage != Stage::Submitted {

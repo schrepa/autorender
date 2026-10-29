@@ -7,26 +7,26 @@ use super::*;
 use crate::bindings::RETAINED_POSES;
 use crate::cached::GroupCache;
 
-pub(super) struct Instances {
-    pub(super) limit: usize,
-    pub(super) capacity: usize,
-    pub(super) buffer: Versioned<wgpu::Buffer>,
+pub(crate) struct Instances {
+    pub(crate) limit: usize,
+    pub(crate) capacity: usize,
+    pub(crate) buffer: Versioned<wgpu::Buffer>,
     colors: Versioned<wgpu::Buffer>,
-    pub(super) color_staging: Vec<ColorData>,
-    pub(super) pose_layout: crate::pipelines::GroupLayout,
+    pub(crate) color_staging: Vec<ColorData>,
+    pub(crate) pose_layout: crate::pipelines::GroupLayout,
     pose_groups: [GroupCache<3>; 2],
     grounds: wgpu::Buffer,
     alternate: Versioned<Option<wgpu::Buffer>>,
     slots: Option<wgpu::Buffer>,
-    pub(super) slot_capacity: usize,
-    pub(super) slot_staging: Vec<u32>,
-    pub(super) slot_revision: Option<(u64, u64)>,
-    pub(super) retained_uploads: RetainedUploads,
-    pub(super) pose_uploads: StagingRing,
+    pub(crate) slot_capacity: usize,
+    pub(crate) slot_staging: Vec<u32>,
+    pub(crate) slot_revision: Option<(u64, u64)>,
+    pub(crate) retained_uploads: RetainedUploads,
+    pub(crate) pose_uploads: StagingRing,
 }
 
 impl Instances {
-    pub(super) fn new(device: &wgpu::Device) -> Self {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
         let binding = device
             .limits()
             .max_storage_buffer_binding_size
@@ -57,7 +57,7 @@ impl Instances {
         instances
     }
 
-    pub(super) fn reserve(&mut self, device: &wgpu::Device, payload_count: usize, temporal: bool) {
+    pub(crate) fn reserve(&mut self, device: &wgpu::Device, payload_count: usize, temporal: bool) {
         let grew = payload_count > self.capacity;
         if grew {
             self.capacity = payload_count.next_power_of_two().min(self.limit);
@@ -85,11 +85,11 @@ impl Instances {
         self.prepare_pose_group(device, 0);
     }
 
-    pub(super) fn generation(&self) -> u64 {
+    pub(crate) fn generation(&self) -> u64 {
         self.frame_poses(0).generation()
     }
 
-    pub(super) fn stage_slots(
+    pub(crate) fn stage_slots(
         &mut self,
         device: &wgpu::Device,
         ordered: &[usize],
@@ -124,7 +124,7 @@ impl Instances {
         !self.slot_staging.is_empty()
     }
 
-    pub(super) fn poses(&self, parity: usize) -> &wgpu::Buffer {
+    pub(crate) fn poses(&self, parity: usize) -> &wgpu::Buffer {
         if parity == 1 {
             Option::as_ref(&self.alternate).expect("temporal_frames_create")
         } else {
@@ -132,7 +132,7 @@ impl Instances {
         }
     }
 
-    pub(super) fn frame_poses(&self, parity: usize) -> FramePoses<'_> {
+    pub(crate) fn frame_poses(&self, parity: usize) -> FramePoses<'_> {
         FramePoses {
             first: &self.buffer,
             alternate: &self.alternate,
@@ -141,7 +141,7 @@ impl Instances {
         }
     }
 
-    pub(super) fn presentation_inputs(
+    pub(crate) fn presentation_inputs(
         &mut self,
         parity: usize,
     ) -> (&mut StagingRing, FramePoses<'_>) {
@@ -154,37 +154,37 @@ impl Instances {
         (&mut self.pose_uploads, poses)
     }
 
-    pub(super) fn alternate(&self) -> Option<&wgpu::Buffer> {
+    pub(crate) fn alternate(&self) -> Option<&wgpu::Buffer> {
         Option::as_ref(&self.alternate)
     }
 
-    pub(super) fn alternate_bytes(&self) -> u64 {
+    pub(crate) fn alternate_bytes(&self) -> u64 {
         self.alternate().map_or(0, wgpu::Buffer::size)
     }
 
-    pub(super) fn release_alternate(&mut self) {
+    pub(crate) fn release_alternate(&mut self) {
         if self.alternate.is_some() {
             self.alternate.replace(None);
         }
     }
 
-    pub(super) fn colors(&self) -> &Versioned<wgpu::Buffer> {
+    pub(crate) fn colors(&self) -> &Versioned<wgpu::Buffer> {
         &self.colors
     }
 
-    pub(super) fn grounds(&self) -> &wgpu::Buffer {
+    pub(crate) fn grounds(&self) -> &wgpu::Buffer {
         &self.grounds
     }
 
-    pub(super) fn slots(&self) -> &wgpu::Buffer {
+    pub(crate) fn slots(&self) -> &wgpu::Buffer {
         self.slots.as_ref().expect("slot_buffer_retained")
     }
 
-    pub(super) fn pose_group(&self, parity: usize) -> &wgpu::BindGroup {
+    pub(crate) fn pose_group(&self, parity: usize) -> &wgpu::BindGroup {
         self.pose_groups[parity].get().expect("prepared_this_frame")
     }
 
-    pub(super) fn prepare_pose_group(&mut self, device: &wgpu::Device, parity: usize) {
+    pub(crate) fn prepare_pose_group(&mut self, device: &wgpu::Device, parity: usize) {
         let poses = FramePoses {
             first: &self.buffer,
             alternate: &self.alternate,

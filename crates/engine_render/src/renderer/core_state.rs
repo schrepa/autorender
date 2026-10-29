@@ -31,3 +31,54 @@ pub(crate) struct Core {
     pub(crate) profiler: GpuProfiler,
     pub(crate) shared: crate::bindings::SharedGroups,
 }
+
+impl Core {
+    pub(crate) fn structure_key(&self) -> StructureKey {
+        (
+            self.plan.generation(),
+            self.mesh_layout,
+            self.materials.generation(),
+        )
+    }
+
+    pub(crate) fn mesh_draw(&self, mesh: MeshHandle) -> Option<MeshDraw<'_>> {
+        self.meshes
+            .get(&mesh)
+            .map(|mesh| mesh.draw(&self.mesh_arena))
+    }
+
+    pub(crate) fn material_group(&self, material: MaterialHandle) -> Option<&wgpu::BindGroup> {
+        self.materials.group(material)
+    }
+
+    pub(crate) fn shared_group(&self, group: &str, without: &[&str]) -> &wgpu::BindGroup {
+        self.camera.group(group, without)
+    }
+
+    pub(crate) fn probe_group(&self, face: usize, without: &[&str]) -> &wgpu::BindGroup {
+        self.camera.probe_group(face, without)
+    }
+
+    pub(crate) fn frame_poses(&self, parity: usize) -> FramePoses<'_> {
+        self.instances.frame_poses(parity)
+    }
+
+    pub(crate) fn render_pixels(&self) -> (u32, u32) {
+        self.display.region.render.pixels()
+    }
+
+    pub(crate) fn canvas_format(&self) -> wgpu::TextureFormat {
+        self.display.format()
+    }
+
+    pub(crate) fn lighting_buffer(&self) -> &wgpu::Buffer {
+        self.camera.lighting_buffer()
+    }
+
+    pub(crate) fn forget_temporal(&mut self) {
+        let current = |&(kind, _): &(PassKind, Variant)| kind.targets() != Some(Targets::Temporal);
+        self.mesh_pipelines.variants.retain(|key, _| current(key));
+        self.impostors.pipelines.forget_pipelines(Targets::Temporal);
+        self.instances.release_alternate();
+    }
+}

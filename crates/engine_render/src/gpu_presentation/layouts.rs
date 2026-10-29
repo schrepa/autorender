@@ -2,7 +2,6 @@ use crate::shaders::entry::presentation;
 use std::cell::OnceCell;
 
 use crate::bindings::PRESENTATION_LEVEL;
-use crate::gpu_data::PRESENTATION_SHADER;
 use crate::pipeline_layouts::{
     PRESENTATION_COMPACT_PIPELINES, PRESENTATION_COMPOSE_PIPELINES, PRESENTATION_CULL_PIPELINES,
     PRESENTATION_FADE_PIPELINES, PRESENTATION_TEST_PIPELINES,
@@ -36,15 +35,10 @@ pub(super) struct Shaders {
     pub(super) families: Families,
     pub(super) level_layout: crate::pipelines::GroupLayout,
     fillers: Fillers,
-    module: wgpu::ShaderModule,
 }
 
 impl Shaders {
     pub(super) fn new(device: &wgpu::Device) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/presentation.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(PRESENTATION_SHADER.into()),
-        });
         let level_layout = layout(device, &PRESENTATION_LEVEL);
         let families = Families {
             compose: Family::new(device, &PRESENTATION_COMPOSE_PIPELINES, &[&level_layout]),
@@ -54,7 +48,7 @@ impl Shaders {
             fades: Family::new(device, &PRESENTATION_FADE_PIPELINES, &[]),
         };
         let pipeline = |entry: crate::shaders::Entry, family: &Family| {
-            crate::pipelines::compute_entry(device, &family.pipeline, &module, entry)
+            crate::pipelines::compute_entry(device, &family.pipeline, entry)
         };
         let pipelines = Pipelines {
             shift_previous: pipeline(presentation::shift_previous, &families.tests),
@@ -74,7 +68,6 @@ impl Shaders {
             families,
             level_layout,
             fillers: Fillers::new(device),
-            module,
         }
     }
 
@@ -85,9 +78,7 @@ impl Shaders {
         family: &Family,
         entry: crate::shaders::Entry,
     ) -> &'a wgpu::ComputePipeline {
-        cell.get_or_init(|| {
-            crate::pipelines::compute_entry(device, &family.pipeline, &self.module, entry)
-        })
+        cell.get_or_init(|| crate::pipelines::compute_entry(device, &family.pipeline, entry))
     }
 
     pub(super) fn count_still(&self, device: &wgpu::Device) -> &wgpu::ComputePipeline {

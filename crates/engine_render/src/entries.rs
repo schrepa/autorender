@@ -1,4 +1,4 @@
-use crate::render_graph::Targets;
+use crate::graph::Targets;
 use crate::shaders::Entry;
 use crate::shaders::entry::{meshes, terrain_shadow};
 

@@ -1,26 +1,26 @@
 use super::*;
 
-pub(super) struct ImpostorDraws {
-    pub(super) atlas: ImpostorAtlas,
-    pub(super) placed: ImpostorAtlas,
-    pub(super) pipelines: ImpostorPipelines,
-    pub(super) contents: Contents,
-    pub(super) records: Vec<ImpostorRecord>,
-    pub(super) dropped: u32,
+pub(crate) struct ImpostorDraws {
+    pub(crate) atlas: ImpostorAtlas,
+    pub(crate) placed: ImpostorAtlas,
+    pub(crate) pipelines: ImpostorPipelines,
+    pub(crate) contents: Contents,
+    pub(crate) records: Vec<ImpostorRecord>,
+    pub(crate) dropped: u32,
 }
 
 impl ImpostorDraws {
-    pub(super) fn live(&self) -> u32 {
+    pub(crate) fn live(&self) -> u32 {
         self.atlas.live() + self.placed.live()
     }
 
-    pub(super) fn capacity_bytes(&self) -> u64 {
+    pub(crate) fn capacity_bytes(&self) -> u64 {
         self.atlas.capacity_bytes() + self.placed.capacity_bytes()
     }
 }
 
-impl Renderer {
-    pub(super) fn prepare_impostors(
+impl Core {
+    pub(crate) fn prepare_impostors(
         &mut self,
         snapshot: &RenderSnapshot,
         gpu_mode: bool,
@@ -112,7 +112,6 @@ impl Renderer {
                             queue: &self.queue,
                             encoder: &mut *encoder,
                             mips: self.materials.mips(),
-                            shader: &self.mesh_shader,
                             pipelines: &mut self.impostors.pipelines,
                         };
                         let supplied = self.impostors.atlas.supply(
@@ -131,7 +130,11 @@ impl Renderer {
         }
     }
 
-    pub(super) fn prepare_impostor_draws(&mut self, kind: PassKind) -> Option<(Targets, bool)> {
+    pub(crate) fn prepare_impostor_draws(
+        &mut self,
+        kind: PassKind,
+        placed_records: &[ImpostorRecord],
+    ) -> Option<(Targets, bool)> {
         let targets = kind.targets()?;
         let lit = kind.lit;
         let impostors = &mut self.impostors;
@@ -145,7 +148,7 @@ impl Renderer {
             &self.device,
             &self.queue,
             &impostors.pipelines,
-            self.scatter_draws.impostors(),
+            placed_records,
         );
         if !(batches || placed) {
             return None;
@@ -155,40 +158,15 @@ impl Renderer {
                 IMPOSTOR_PIPELINES, LIT_IMPOSTOR_PIPELINES, LIT_TEMPORAL_IMPOSTOR_PIPELINES,
                 TEMPORAL_IMPOSTOR_PIPELINES,
             };
-            let temporal = targets == Targets::Temporal;
-            let pose_layout = if temporal {
-                self.features.temporal.get()?.pose_layout()
-            } else {
-                &self.instances.pose_layout
+            let declared = match (targets == Targets::Temporal, lit) {
+                (true, true) => &LIT_TEMPORAL_IMPOSTOR_PIPELINES,
+                (true, false) => &TEMPORAL_IMPOSTOR_PIPELINES,
+                (false, true) => &LIT_IMPOSTOR_PIPELINES,
+                (false, false) => &IMPOSTOR_PIPELINES,
             };
-            let (camera, draw) = (&self.camera.layout, self.impostors.pipelines.draw_layout());
-            let layout = if lit {
-                let lights = self.features.lights.get()?.fragment_layout();
-                let declared = if temporal {
-                    &LIT_TEMPORAL_IMPOSTOR_PIPELINES
-                } else {
-                    &LIT_IMPOSTOR_PIPELINES
-                };
-                crate::pipelines::pipeline_layout(
-                    &self.device,
-                    declared,
-                    &[camera, draw, pose_layout, lights],
-                )
-            } else {
-                let declared = if temporal {
-                    &TEMPORAL_IMPOSTOR_PIPELINES
-                } else {
-                    &IMPOSTOR_PIPELINES
-                };
-                crate::pipelines::pipeline_layout(
-                    &self.device,
-                    declared,
-                    &[camera, draw, pose_layout],
-                )
-            };
+            let layout = crate::pipelines::layout_of(&self.device, declared);
             let pipeline = crate::impostors::draw_pipeline(
                 &self.device,
-                &self.mesh_shader,
                 &layout,
                 (targets, lit),
                 self.mesh_pipelines.shading,

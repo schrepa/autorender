@@ -254,7 +254,7 @@ pub fn bricks_json(repository: &Repository, engine: &mut Engine) -> Result<Strin
             + "\n");
     };
     registry
-        .check_passes(engine::RENDER_PASSES)
+        .check_passes(&engine_render::standard_passes())
         .map_err(|error| error.to_string())?;
     let bricks = registry
         .bricks()

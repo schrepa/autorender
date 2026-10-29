@@ -1,3 +1,6 @@
+import package::engine::math::maximum_abs;
+import package::presentation::screen_cull::{F32_MAX, covers_no_pixel, hidden};
+
 struct Frame {
     alpha: f32,
     candidates: u32,
@@ -125,7 +128,6 @@ const GROUP: u32 = 64u;
 const ROUNDING_MARGIN: f32 = 0.000003814697265625f;
 const MAX_COEFFICIENT: f32 = 1.0e15;
 const MAX_PRODUCT_BOUND: f32 = 4.2535293e37f;
-const F32_MAX: f32 = 3.4028235e38f;
 const MIN_LINEAR_SCALE: f32 = 0.0009765625f;
 const COEFFICIENT_LIMIT: f32 = 1048576.0f;
 const COMMON_DETERMINANT_MARGIN: f32 = 0.001953125f;

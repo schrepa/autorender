@@ -1,69 +1,35 @@
-#![expect(
-    clippy::expect_used,
-    reason = "pipelines exist in the frames that draw with them"
-)]
-
 use super::*;
 use crate::bindings::EMPTY;
-use crate::entries::{self, Slots};
+use crate::entries::Slots;
+use crate::pipeline_layouts::{
+    LIT_MESH_PIPELINES, LIT_TEMPORAL_MESH_PIPELINES, MESH_PIPELINES, TEMPORAL_MESH_PIPELINES,
+};
 use crate::pipelines::vertex_attributes;
 
-pub(super) struct MeshPipelines {
-    pub(super) layouts: [Option<wgpu::PipelineLayout>; 2],
-    pub(super) variants: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
-    sky: [Option<wgpu::RenderPipeline>; 5],
-    pub(super) empty_layout: crate::pipelines::GroupLayout,
-    pub(super) empty_group: wgpu::BindGroup,
-    pub(super) shading: SceneShading,
-    pub(super) cooking: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SkyTargets {
-    Frame(Targets),
-    Probe,
-}
-
-impl SkyTargets {
-    fn index(self) -> usize {
-        match self {
-            Self::Frame(Targets::Canvas) => 0,
-            Self::Frame(Targets::Post) => 1,
-            Self::Frame(Targets::Temporal) => 2,
-            Self::Frame(Targets::Debug) => 3,
-            Self::Probe => 4,
-        }
-    }
+pub(crate) struct MeshPipelines {
+    pub(crate) variants: HashMap<(PassKind, Variant), wgpu::RenderPipeline>,
+    pub(crate) empty_layout: crate::pipelines::GroupLayout,
+    pub(crate) empty_group: wgpu::BindGroup,
+    pub(crate) shading: SceneShading,
+    pub(crate) cooking: bool,
 }
 
 impl MeshPipelines {
-    pub(super) fn new(device: &wgpu::Device) -> Self {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
         let empty_layout = crate::pipelines::layout(device, &EMPTY);
         let empty_group =
             crate::pipelines::group(device, "engine/empty-group", &EMPTY, &empty_layout, &[]);
         Self {
-            layouts: Default::default(),
             variants: HashMap::default(),
-            sky: Default::default(),
             empty_layout,
             empty_group,
             shading: SceneShading::ALL,
             cooking: false,
         }
     }
-
-    pub(super) fn sky(&self, targets: SkyTargets) -> &wgpu::RenderPipeline {
-        self.sky[targets.index()]
-            .as_ref()
-            .expect("prepared_with_frame_pipelines")
-    }
-
-    pub(super) fn forget_sky(&mut self, targets: SkyTargets) {
-        self.sky[targets.index()] = None;
-    }
 }
 
-pub(super) fn relit(kind: PassKind) -> PassKind {
+pub(crate) fn relit(kind: PassKind) -> PassKind {
     PassKind {
         lit: !kind.lit,
         ..kind
@@ -71,10 +37,10 @@ pub(super) fn relit(kind: PassKind) -> PassKind {
 }
 
 #[derive(Default)]
-pub(super) struct DrawOrder {
-    pub(super) order: Vec<u32>,
-    pub(super) masked: Vec<u32>,
-    pub(super) keys: Vec<(u8, Variant, Option<MaterialHandle>, u8, u32)>,
+pub(crate) struct DrawOrder {
+    pub(crate) order: Vec<u32>,
+    pub(crate) masked: Vec<u32>,
+    pub(crate) keys: Vec<(u8, Variant, Option<MaterialHandle>, u8, u32)>,
 }
 
 const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = vertex_attributes!(Vertex {
@@ -103,7 +69,7 @@ pub(crate) fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
     })
 }
 
-pub(super) fn slot_layouts() -> [Option<wgpu::VertexBufferLayout<'static>>; 2] {
+pub(crate) fn slot_layouts() -> [Option<wgpu::VertexBufferLayout<'static>>; 2] {
     [
         vertex_layout(),
         Some(wgpu::VertexBufferLayout {
@@ -115,13 +81,13 @@ pub(super) fn slot_layouts() -> [Option<wgpu::VertexBufferLayout<'static>>; 2] {
 }
 
 #[derive(Default)]
-pub(super) struct BatchBinds {
-    pub(super) bindings: Bindings,
+pub(crate) struct BatchBinds {
+    pub(crate) bindings: Bindings,
     variant: Option<Variant>,
 }
 
-impl Renderer {
-    pub(super) fn batch_binding(
+impl Core {
+    pub(crate) fn batch_binding(
         &self,
         batch: &DrawBatch,
         mesh: Option<&GpuMesh>,
@@ -131,7 +97,7 @@ impl Renderer {
         (group, variant)
     }
 
-    pub(super) fn bind_batch(
+    pub(crate) fn bind_batch(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         binds: &mut BatchBinds,
@@ -153,7 +119,7 @@ impl Renderer {
         )
     }
 
-    pub(super) fn bind_prepass(
+    pub(crate) fn bind_prepass(
         &self,
         pass: &mut wgpu::RenderPass<'_>,
         binds: &mut BatchBinds,
@@ -188,7 +154,7 @@ impl Renderer {
         draw
     }
 
-    pub(super) fn opaque_pipeline(
+    pub(crate) fn opaque_pipeline(
         &self,
         kind: PassKind,
         variant: Variant,
@@ -202,7 +168,7 @@ impl Renderer {
         self.mesh_pipelines.variants.get(&key)
     }
 
-    pub(super) fn ensure_opaque_variant(&mut self, kind: PassKind, variant: Variant) {
+    pub(crate) fn ensure_opaque_variant(&mut self, kind: PassKind, variant: Variant) {
         for key in opaque_keys(kind, variant).into_iter().flatten() {
             self.ensure_variant(key);
         }
@@ -212,25 +178,17 @@ impl Renderer {
         if self.mesh_pipelines.variants.contains_key(&(kind, variant)) {
             return;
         }
-        self.ensure_mesh_layout(kind);
         let pipeline = self.create_variant(kind, variant);
         self.mesh_pipelines
             .variants
             .insert((kind, variant), pipeline);
     }
 
-    pub(super) fn ensure_variants(&mut self, opaque: PassKind) {
-        if self.relights() && opaque.targets() != Some(Targets::Debug) {
+    pub(crate) fn ensure_variants(&mut self, opaque: PassKind, relights: bool) {
+        if relights && opaque.targets() != Some(Targets::Debug) {
             self.create_variants(relit(opaque));
         }
         self.create_variants(opaque);
-        if let Some(targets) = opaque.targets() {
-            self.ensure_sky(SkyTargets::Frame(targets));
-        }
-    }
-
-    pub(super) fn relights(&self) -> bool {
-        self.mesh_pipelines.cooking && self.features.lights.get().is_some()
     }
 
     fn create_variants(&mut self, opaque: PassKind) {
@@ -254,80 +212,52 @@ impl Renderer {
         }
     }
 
-    pub(super) fn ensure_sky(&mut self, targets: SkyTargets) {
-        let index = targets.index();
-        if self.mesh_pipelines.sky[index].is_some() {
-            return;
+    pub(crate) fn ensure_probe_variants(&mut self, kind: PassKind, relights: bool) {
+        if relights {
+            self.create_probe_variants(relit(kind));
         }
-        let canvas = self.display.format();
-        let (fragment, color_targets) = match targets {
-            SkyTargets::Frame(targets) => (
-                entries::sky_fragment(Some(targets)),
-                targets.color_targets(canvas),
-            ),
-            SkyTargets::Probe => (
-                entries::sky_fragment(None),
-                vec![Some(ENVIRONMENT_FORMAT.into())],
-            ),
-        };
-        self.mesh_pipelines.sky[index] = Some(sky_pipeline(
-            &self.device,
-            &self.mesh_shader,
-            (&self.camera.layout, self.features.sky.get().pass_layout()),
-            fragment,
-            &color_targets,
-        ));
+        self.create_probe_variants(kind);
     }
 
-    pub(super) fn ensure_mesh_layout(&mut self, kind: PassKind) {
-        if kind.targets() == Some(Targets::Temporal) {
+    fn create_probe_variants(&mut self, kind: PassKind) {
+        let key = (self.structure_key(), kind);
+        if self.structure_keys.probes == Some(key) {
             return;
         }
-        let lit = kind.lit;
-        let index = usize::from(lit);
-        if self.mesh_pipelines.layouts[index].is_some() {
-            return;
+        self.structure_keys.probes = Some(key);
+        let mut missing = Vec::new();
+        for batch in &self.plan.batches {
+            let Some(mesh) = self.meshes.get(&batch.mesh) else {
+                continue;
+            };
+            let variant = self.batch_binding(batch, Some(mesh)).1.uber();
+            if !self.mesh_pipelines.variants.contains_key(&(kind, variant))
+                && !missing.contains(&variant)
+            {
+                missing.push(variant);
+            }
         }
-        let lights = lit.then(|| {
-            self.features
-                .lights
-                .get()
-                .expect("light_pass_created")
-                .fragment_layout()
-        });
-        let groups = (
-            &self.camera.layout,
-            self.materials.layout(),
-            &self.instances.pose_layout,
-        );
-        self.mesh_pipelines.layouts[index] = Some(match lights {
-            Some(lights) => crate::pipelines::pipeline_layout(
-                &self.device,
-                &crate::pipeline_layouts::LIT_MESH_PIPELINES,
-                &[groups.0, groups.1, groups.2, lights],
-            ),
-            None => crate::pipelines::pipeline_layout(
-                &self.device,
-                &crate::pipeline_layouts::MESH_PIPELINES,
-                &[groups.0, groups.1, groups.2],
-            ),
-        });
+        for variant in missing {
+            let pipeline = self.create_variant(kind, variant);
+            self.mesh_pipelines
+                .variants
+                .insert((kind, variant), pipeline);
+        }
     }
 
-    pub(super) fn create_variant(&self, kind: PassKind, variant: Variant) -> wgpu::RenderPipeline {
-        let canvas = self.display.format();
-        let layout = if kind.slots() == Slots::Temporal {
-            let temporal = self
-                .features
-                .temporal
-                .get()
-                .expect("temporal_frames_create");
-            temporal.mesh_layout(kind.lit)
-        } else {
-            self.mesh_pipelines.layouts[usize::from(kind.lit)]
-                .as_ref()
-                .expect("created_with_variant")
+    fn mesh_layout(&self, kind: PassKind) -> wgpu::PipelineLayout {
+        let declared = match (kind.slots(), kind.lit) {
+            (Slots::Temporal, true) => &LIT_TEMPORAL_MESH_PIPELINES,
+            (Slots::Temporal, false) => &TEMPORAL_MESH_PIPELINES,
+            (Slots::Retained, true) => &LIT_MESH_PIPELINES,
+            (Slots::Retained, false) => &MESH_PIPELINES,
         };
+        crate::pipelines::layout_of(&self.device, declared)
+    }
+
+    pub(crate) fn create_variant(&self, kind: PassKind, variant: Variant) -> wgpu::RenderPipeline {
+        let canvas = self.display.format();
+        let layout = self.mesh_layout(kind);
         let fragment = match kind.pass {
             MeshPass::Opaque(targets) => MeshFragment {
                 targets: if variant.depth_only() {
@@ -352,15 +282,14 @@ impl Renderer {
         };
         mesh_pipeline(
             &self.device,
-            &self.mesh_shader,
-            layout,
+            &layout,
             kind,
             &fragment,
             (variant, self.mesh_pipelines.shading),
         )
     }
 
-    pub(super) fn order_draws(&mut self, snapshot: &engine_core::RenderSnapshot) {
+    pub(crate) fn order_draws(&mut self, snapshot: &engine_core::RenderSnapshot) {
         let key = self.structure_key();
         if self.structure_keys.order == Some(key) {
             return;
@@ -424,42 +353,6 @@ fn flat_batch(
     extent(1) < 0.1 * engine_core::math::max(extent(0), extent(2))
 }
 
-fn sky_pipeline(
-    device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
-    (camera_layout, transmittance_layout): (
-        &crate::pipelines::GroupLayout,
-        &crate::pipelines::GroupLayout,
-    ),
-    fragment: crate::shaders::Entry,
-    targets: &[Option<wgpu::ColorTargetState>],
-) -> wgpu::RenderPipeline {
-    let layout = crate::pipelines::pipeline_layout(
-        device,
-        &crate::pipeline_layouts::SKY_PIPELINES,
-        &[camera_layout, transmittance_layout],
-    );
-    crate::pipelines::fullscreen(
-        device,
-        &crate::pipelines::Fullscreen {
-            label: "engine/sky",
-            layout: &layout,
-            module: shader,
-            vertex: entries::SKY_VERTEX,
-            fragment,
-            constants: &[],
-            targets,
-            depth: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-        },
-    )
-}
-
 struct MeshFragment {
     targets: Vec<Option<wgpu::ColorTargetState>>,
     depth_compare: wgpu::CompareFunction,
@@ -492,7 +385,6 @@ fn prepass_key(kind: PassKind, variant: Variant) -> Option<(PassKind, Variant)> 
 
 fn mesh_pipeline(
     device: &wgpu::Device,
-    shader: &wgpu::ShaderModule,
     layout: &wgpu::PipelineLayout,
     kind: PassKind,
     fragment: &MeshFragment,
@@ -533,7 +425,6 @@ fn mesh_pipeline(
         &crate::pipelines::Geometry {
             label: &label,
             layout,
-            module: shader,
             vertex_constants: &constants,
             vertex: vertex_entry,
             buffers: &buffers,

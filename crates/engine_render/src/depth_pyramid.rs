@@ -1,12 +1,121 @@
 use crate::bindings::{PYRAMID_DOWN, PYRAMID_EXTENT_BYTES, PYRAMID_FIRST};
 use crate::cached::Versioned;
-use crate::gpu_data::{DEPTH_PYRAMID_SHADER, mip_levels};
+use crate::gpu_data::mip_levels;
 use crate::gpu_layouts::constants::PYRAMID_GROUP as GROUP;
+use crate::graph::{
+    FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
+};
+use crate::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, View};
 use crate::profiling::Span;
+use crate::renderer::OpaqueReads;
 use crate::shaders::entry::depth_pyramid;
 use crate::targets::{FrameRegion, FrameSize};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
+
+pub(crate) static PART: PartEntry = PartEntry {
+    decl: PartDecl {
+        name: "culling",
+        brick: "culling",
+        passes: &[
+            PassDecl {
+                name: "occlusion_test",
+                stage: Stage::Occlusion,
+            },
+            PassDecl {
+                name: "opaque_phase_two",
+                stage: Stage::OpaqueSecond,
+            },
+        ],
+        resources: &[ResourceDecl {
+            name: "pyramid",
+            lifetime: Lifetime::Kept,
+        }],
+        hooks: &[],
+        contributes: &[],
+        effects: &[],
+        labels: &[],
+        lazy: false,
+    },
+    create: create_culling,
+};
+
+fn create_culling(_: &Create<'_>) -> Box<dyn GpuPart> {
+    Box::new(CullingPart::default())
+}
+
+#[derive(Default)]
+pub(crate) struct CullingPart {
+    test: Option<PassId>,
+    second: Option<PassId>,
+    pyramid: Option<ResourceId>,
+    reads: OpaqueReads,
+}
+
+impl GpuPart for CullingPart {
+    fn install(&mut self, table: &GraphTable) {
+        self.test = table.pass_named("occlusion_test");
+        self.second = table.pass_named("opaque_phase_two");
+        self.pyramid = table.resource("pyramid");
+        self.reads = OpaqueReads::of(table);
+    }
+
+    fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
+        let Some(shape) = cx.frame.shape.filter(|shape| shape.phases == 2) else {
+            return;
+        };
+        if let Some(test) = self.test {
+            let _test = graph
+                .add(cx.table, test)
+                .read(self.reads.depth)
+                .read(self.reads.poses)
+                .write(self.pyramid)
+                .write(self.reads.visible);
+        }
+        if let Some(second) = self.second {
+            self.reads.declare_phase(cx.table, &shape, graph.add(cx.table, second), 1);
+        }
+    }
+
+    fn encode(
+        &mut self,
+        pass: usize,
+        cx: &mut Encode<'_>,
+        encoder: &mut wgpu::CommandEncoder,
+    ) -> u32 {
+        if pass == 0 {
+            encode_occlusion_test(cx, encoder);
+        } else {
+            crate::renderer::encode_phase(cx, encoder, 1);
+        }
+        0
+    }
+}
+
+fn encode_occlusion_test(cx: &mut Encode<'_>, encoder: &mut wgpu::CommandEncoder) {
+    let odd = cx
+        .frame
+        .temporal
+        .as_ref()
+        .is_some_and(|frame| frame.parity == 1);
+    let core = &mut *cx.core;
+    let span = core.profiler.span("occlusion");
+    let Some(pyramid) = core.culling.pyramid.as_ref() else {
+        return;
+    };
+    let Some(view) = pyramid.view() else {
+        return;
+    };
+    let poses = core.instances.poses(usize::from(odd));
+    pyramid.encode(encoder, span);
+    core.gpu_presentation.encode_occlusion(
+        &core.device,
+        encoder,
+        (view, view.generation()),
+        poses,
+        span,
+    );
+}
 
 struct Levels {
     texture: wgpu::Texture,
@@ -40,19 +149,12 @@ pub(crate) struct DepthPyramid {
 
 impl DepthPyramid {
     pub(crate) fn new(device: &wgpu::Device, reduction: Reduction) -> Self {
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("engine/depth-pyramid.wgsl"),
-            source: wgpu::ShaderSource::Wgsl(DEPTH_PYRAMID_SHADER.into()),
-        });
         let first_layout = crate::pipelines::layout(device, &PYRAMID_FIRST);
         let down_layout = crate::pipelines::layout(device, &PYRAMID_DOWN);
         let pipeline = |entry: crate::shaders::Entry,
-                        (declared, group): (
-            &crate::pipeline_layouts::PipelineLayout,
-            &crate::pipelines::GroupLayout,
-        )| {
-            let layout = crate::pipelines::pipeline_layout(device, declared, &[group]);
-            crate::pipelines::compute_entry(device, &layout, &module, entry)
+                        declared: &'static crate::pipeline_layouts::PipelineLayout| {
+            let layout = crate::pipelines::layout_of(device, declared);
+            crate::pipelines::compute_entry(device, &layout, entry)
         };
         let (first, down) = match reduction {
             Reduction::Farthest => (depth_pyramid::pyramid_first, depth_pyramid::pyramid_down),
@@ -62,20 +164,8 @@ impl DepthPyramid {
             ),
         };
         Self {
-            first: pipeline(
-                first,
-                (
-                    &crate::pipeline_layouts::PYRAMID_FIRST_PIPELINES,
-                    &first_layout,
-                ),
-            ),
-            down: pipeline(
-                down,
-                (
-                    &crate::pipeline_layouts::PYRAMID_DOWN_PIPELINES,
-                    &down_layout,
-                ),
-            ),
+            first: pipeline(first, &crate::pipeline_layouts::PYRAMID_FIRST_PIPELINES),
+            down: pipeline(down, &crate::pipeline_layouts::PYRAMID_DOWN_PIPELINES),
             first_layout,
             down_layout,
             levels: None,
