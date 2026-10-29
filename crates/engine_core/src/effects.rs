@@ -1,39 +1,9 @@
 use bevy_ecs::prelude::{Resource, World};
 use serde::{Deserialize, Serialize};
 
-use crate::bricks::{Brick, Bricks};
 use crate::sections::environment_section;
-use crate::{Camera, Environment, FrameTime, RenderSnapshot, SkyOcclusion, TemporalAntialiasing};
+use crate::{Camera, Environment, FrameTime, RenderSnapshot};
 use engine_settings::settings;
-
-impl Brick for Shadows {
-    fn register(bricks: &mut Bricks<'_>) {
-        bricks
-            .settings::<Shadows>()
-            .settings::<SkyOcclusion>()
-            .passes(&["shadow_select", "shadow_maps", "shadow_marks"]);
-    }
-}
-
-pub struct PostEffects;
-
-impl Brick for PostEffects {
-    fn register(bricks: &mut Bricks<'_>) {
-        bricks
-            .settings::<AmbientOcclusion>()
-            .settings::<Bloom>()
-            .settings::<Dither>()
-            .settings::<AutoExposure>()
-            .settings::<Reflections>()
-            .settings::<TemporalAntialiasing>()
-            .passes(&["exposure", "effects", "composite", "temporal_resolve"])
-            .smoke(
-                "temporal_antialiasing",
-                true,
-                crate::brick_smokes::temporal_antialiasing,
-            );
-    }
-}
 
 pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
     let eye = world.resource::<Camera>().eye();

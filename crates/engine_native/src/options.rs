@@ -822,7 +822,7 @@ const COOK_STALL: Duration = Duration::from_secs(600);
 fn shader_hash() -> String {
     use sha2::Digest;
     let mut hash = sha2::Sha256::new();
-    for module in engine::SHADER_MODULES {
+    for module in engine::shader_modules() {
         for part in [module.path, module.source] {
             hash.update(part.as_bytes());
             hash.update([0]);

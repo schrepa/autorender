@@ -9,6 +9,7 @@ pub const CORE_PASSES: &[&str] = &[
     "opaque_late",
     "transparent",
     "transparent_composite",
+    "composite",
 ];
 pub const WARMUP_FRAMES: u64 = 120;
 

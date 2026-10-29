@@ -43,7 +43,7 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     rests(session)?;
     toggles(session)?;
     parented(session)?;
-    session.restart(&["collision", "physics"]);
+    session.restart(session.bricks().without(["collision", "physics"]));
     let missing = refuse(session, "inspect", json!({"component": "PhysicsWorld"}))?;
     smoke_eq!(
         json!(missing["code"]),

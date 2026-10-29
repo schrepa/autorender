@@ -7,23 +7,10 @@ use bevy_ecs::{
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use crate::bricks::{Brick, Bricks};
 use crate::extraction::Nearest;
 use crate::sections::environment_section;
 use crate::{GlobalTransforms, RenderSnapshot, TransformIndex};
 use engine_settings::{InvalidSetting, Rule, settings};
-
-pub struct ReflectionProbes;
-
-impl Brick for ReflectionProbes {
-    fn register(bricks: &mut Bricks<'_>) {
-        bricks
-            .settings::<ReflectionProbeSettings>()
-            .resource::<ProbeExtractor>()
-            .extract(extract_probes)
-            .passes(&["probe_captures"]);
-    }
-}
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ReflectionProbe {
@@ -127,7 +114,7 @@ pub struct RenderReflectionProbes {
 #[derive(Resource, Default)]
 pub(crate) struct ProbeExtractor(Mutex<ProbeExtraction>);
 
-fn extract_probes(world: &World, snapshot: &mut RenderSnapshot) {
+pub fn extract_probes(world: &World, snapshot: &mut RenderSnapshot) {
     world
         .resource::<ProbeExtractor>()
         .0

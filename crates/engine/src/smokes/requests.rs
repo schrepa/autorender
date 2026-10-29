@@ -183,7 +183,7 @@ pub(crate) fn serve(
     without: &[&str],
 ) -> SmokeResult {
     session.source(&document.to_string());
-    session.restart(without);
+    session.restart(session.bricks().without(without.iter().copied()));
     control(session, "pause", json!({}), "pauses")?;
     Ok(())
 }

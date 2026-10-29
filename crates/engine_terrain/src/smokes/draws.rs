@@ -484,7 +484,7 @@ fn freeze(session: &mut dyn SmokeSession) -> Checked<()> {
 
 fn prefetch(session: &mut dyn SmokeSession) -> Checked<()> {
     let spawn = [380.0, 90.0, 380.0];
-    session.restart(&[]);
+    session.restart(session.bricks());
     open(session)?;
     {
         let world = session.app().world_mut();

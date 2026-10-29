@@ -177,7 +177,7 @@ fn exact(session: &mut dyn SmokeSession, check: &'static str) -> Asked {
     Ok(sha(&reply))
 }
 
-pub(crate) fn temporal_antialiasing(session: &mut dyn SmokeSession) -> SmokeResult {
+pub fn temporal_antialiasing(session: &mut dyn SmokeSession) -> SmokeResult {
     grid(session)?;
     let still = json!({ "haze": { "spread": 0.0 } });
     control(session, "environment", still, "haze_holds_still")?;
@@ -320,7 +320,7 @@ fn sturdier(session: &mut dyn SmokeSession) -> SmokeResult {
     Ok(())
 }
 
-pub(crate) fn foliage_settings(session: &mut dyn SmokeSession) -> SmokeResult {
+pub fn foliage_settings(session: &mut dyn SmokeSession) -> SmokeResult {
     grid(session)?;
     let defaults = json!({
         "transmission": 1.0,
