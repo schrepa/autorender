@@ -80,7 +80,6 @@ impl Cell {
 const FIELDS: &[&str] = &[
     "name",
     "tier",
-    "note",
     "scene",
     "options",
     "environment",
@@ -95,16 +94,13 @@ pub(super) fn read_matrix(root: &Path) -> Result<(Vec<Cell>, Vec<String>), Strin
     let matrix = read_json(&root.join(MATRIX))?;
     let environment = environment_sections()?;
     let mut problems = Vec::new();
-    if matrix["note"].as_str().is_none_or(str::is_empty) {
-        problems.push(format!("{MATRIX}: a note says what it is"));
-    }
     for field in matrix
         .as_object()
         .into_iter()
         .flat_map(|fields| fields.keys())
     {
-        if !["note", "cells"].contains(&field.as_str()) {
-            problems.push(format!("{MATRIX}: {field} is not a field (note, cells)"));
+        if field != "cells" {
+            problems.push(format!("{MATRIX}: {field} is not a field (cells)"));
         }
     }
     let mut names = BTreeSet::new();
@@ -167,9 +163,6 @@ fn cell(
     let tier = entry["tier"].as_str().unwrap_or_default().to_owned();
     if !["smoke", "full"].contains(&tier.as_str()) {
         problems.push("tier is smoke or full".into());
-    }
-    if entry["note"].as_str().is_none_or(str::is_empty) {
-        problems.push("a note says what the cell covers".into());
     }
     let (scene, project) = scene(entry, root, problems);
     let environment = match &entry["environment"] {

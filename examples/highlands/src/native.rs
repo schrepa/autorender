@@ -22,7 +22,8 @@ pub fn main(arguments: impl Iterator<Item = String>) -> ExitCode {
     match Native::parse(arguments) {
         Ok(native) => engine_native::exit(native.run()),
         Err(message) => {
-            eprintln!("{message}\n\n{}\n{}", usage(), engine_native::usage());
+            let record = serde_json::json!({"event": "arguments_rejected", "error": message});
+            eprintln!("{record}");
             ExitCode::from(2)
         }
     }

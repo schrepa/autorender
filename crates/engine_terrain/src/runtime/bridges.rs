@@ -146,7 +146,7 @@ fn deck_section(width: f32) -> Mesh {
             &mut indices,
         );
     }
-    Mesh::new(vertices, indices).expect("deck sections are valid meshes")
+    Mesh::new(vertices, indices).expect("deck_mesh_valid")
 }
 
 pub(crate) type BridgeSet = (Entity, Arc<[Bridge]>, Vec3, Option<MaterialHandle>);
@@ -225,7 +225,7 @@ fn tube_section(width: f32) -> Mesh {
             );
         }
     }
-    Mesh::new(vertices, indices).expect("tunnel sections are valid meshes")
+    Mesh::new(vertices, indices).expect("tunnel_mesh_valid")
 }
 
 #[expect(
@@ -274,7 +274,7 @@ pub(crate) fn sync(world: &mut World) {
                             ..Surface::MATTE
                         })
                     })
-                    .expect("the stone material is valid");
+                    .expect("stone_material_valid");
                 let Ok(stone) = assets.insert_material(stone) else {
                     continue;
                 };

@@ -167,7 +167,7 @@ fn read(world: &World, assets: &Assets, entity: Entity) -> Authored {
     Authored {
         transform: *world
             .get::<Transform>(entity)
-            .expect("entities read hold a transform"),
+            .expect("entity_has_transform"),
         mesh,
         cube: world.get::<Cube>(entity).map(|cube| cube.color),
         tint: world.get::<Tint>(entity).map(|tint| tint.0),
@@ -181,7 +181,7 @@ fn index<T: PartialEq>(handles: &[T], handle: T) -> usize {
     handles
         .iter()
         .position(|held| *held == handle)
-        .expect("entities draw the smoke's own meshes and materials")
+        .expect("handle_owned_by_smoke")
 }
 
 fn spawn(world: &mut World, assets: &Assets, authored: &Authored) -> Entity {

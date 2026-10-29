@@ -172,13 +172,8 @@ impl Arguments {
         let fields = file
             .as_object()
             .ok_or_else(|| failed("an option file is a JSON object".into()))?;
-        if let Some(field) = fields
-            .keys()
-            .find(|field| !["note", "options"].contains(&field.as_str()))
-        {
-            return Err(failed(format!(
-                "{field} is not a field; option files hold `options` and a `note`"
-            )));
+        if let Some(field) = fields.keys().find(|field| *field != "options") {
+            return Err(failed(format!("{field} is not a field; option files hold `options`")));
         }
         let options = fields
             .get("options")

@@ -255,7 +255,7 @@ pub mod rule {
     }
 
     pub fn same(rule: Option<Rule>) -> Rule {
-        rule.expect("the mirrored type declares the field")
+        rule.expect("mirrored_rule_declared")
     }
 
     pub fn id() -> Rule {
@@ -283,12 +283,12 @@ pub fn state(schema: &mut schemars::Schema, field: &str, rule: Rule) {
             let items = schema
                 .get_mut("items")
                 .and_then(Value::as_object_mut)
-                .unwrap_or_else(|| panic!("{field}: array schemas describe their items"));
+                .unwrap_or_else(|| panic!("array_schema_has_items {field}"));
             return numbers(items, field);
         }
         assert!(
             has_type(schema, "number") || has_type(schema, "integer"),
-            "{field}: rules with bounds apply to numbers"
+            "rule_needs_number {field}"
         );
         schema
     }
@@ -300,21 +300,15 @@ pub fn state(schema: &mut schemars::Schema, field: &str, rule: Rule) {
         .and_then(|properties| properties.get_mut(field))
         .and_then(Value::as_object_mut)
     else {
-        panic!("settings field {field} has no schema property");
+        panic!("field_in_schema {field}");
     };
     let target = match rule {
         Rule::Id => {
-            assert!(
-                has_type(property, "string"),
-                "{field}: ID rules apply to strings"
-            );
+            assert!(has_type(property, "string"), "rule_needs_string {field}");
             property
         }
         Rule::Count(..) => {
-            assert!(
-                has_type(property, "array"),
-                "{field}: count rules apply to lists"
-            );
+            assert!(has_type(property, "array"), "rule_needs_list {field}");
             property
         }
         Rule::Any
@@ -345,7 +339,7 @@ pub fn stated(rule: Rule) -> impl Fn(&mut schemars::Schema) {
             .and_then(|properties| properties.get("value"))
             .cloned()
             .and_then(|value| schemars::Schema::try_from(value).ok())
-            .expect("the stated schema stays a schema");
+            .expect("stated_schema_valid");
     }
 }
 
@@ -362,7 +356,7 @@ pub trait ExtraRules: Sized {
 
 pub trait Setting: Clone {
     fn check(&self, field: &'static str, rule: Rule) -> Result<(), InvalidSetting> {
-        assert_eq!(rule, Rule::Any, "{field}: this type takes no rule but any");
+        assert_eq!(rule, Rule::Any, "type_takes_any_only {field}");
         Ok(())
     }
 
@@ -392,11 +386,9 @@ impl Setting for f32 {
             Rule::Above(min) => value.is_finite() && value > min as f32,
             Rule::AtLeast(min) => value.is_finite() && value >= min as f32,
             Rule::Budget | Rule::PowerOfTwo(..) | Rule::Multiple(..) => {
-                panic!("{field}: whole-number rules apply to whole numbers")
+                panic!("rule_needs_whole_number {field}")
             }
-            Rule::Id | Rule::Count(..) => {
-                panic!("{field}: ID and count rules apply to IDs and lists")
-            }
+            Rule::Id | Rule::Count(..) => panic!("rule_needs_id_or_list {field}"),
         };
         if keeps {
             Ok(())
@@ -442,7 +434,7 @@ fn whole_keeps(value: u64, rule: Rule) -> bool {
         Rule::Budget => value >= 1,
         Rule::PowerOfTwo(min, max) => within(min, max) && value.is_power_of_two(),
         Rule::Multiple(step, min, max) => within(min, max) && value.is_multiple_of(step as u64),
-        Rule::Id | Rule::Count(..) => panic!("ID and count rules apply to IDs and lists"),
+        Rule::Id | Rule::Count(..) => panic!("rule_needs_id_or_list"),
     }
 }
 
@@ -505,11 +497,9 @@ impl Setting for f64 {
             Rule::Above(min) => value.is_finite() && value > min,
             Rule::AtLeast(min) => value.is_finite() && value >= min,
             Rule::Budget | Rule::PowerOfTwo(..) | Rule::Multiple(..) => {
-                panic!("{field}: whole-number rules apply to whole numbers")
+                panic!("rule_needs_whole_number {field}")
             }
-            Rule::Id | Rule::Count(..) => {
-                panic!("{field}: ID and count rules apply to IDs and lists")
-            }
+            Rule::Id | Rule::Count(..) => panic!("rule_needs_id_or_list {field}"),
         };
         if keeps {
             Ok(())
@@ -539,7 +529,7 @@ impl Setting for String {
             | Rule::Budget
             | Rule::PowerOfTwo(..)
             | Rule::Multiple(..)
-            | Rule::Count(..) => panic!("{field}: text takes any or id"),
+            | Rule::Count(..) => panic!("rule_needs_any_or_id {field}"),
         }
     }
 }
@@ -580,7 +570,7 @@ impl<T: Setting, const N: usize> Setting for [T; N] {
     fn kept(self, rule: Rule, default: Self) -> Self {
         let mut defaults = default.into_iter();
         self.map(|value| {
-            let default = defaults.next().expect("arrays of one length");
+            let default = defaults.next().expect("arrays_same_length");
             value.kept(rule, default)
         })
     }

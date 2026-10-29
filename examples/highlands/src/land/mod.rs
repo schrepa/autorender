@@ -846,8 +846,18 @@ fn open_cave(world: &mut World) {
         spawn,
     );
     if let Err(error) = made {
-        eprintln!("The highlands' cave stays closed: {}", error.message);
+        report_failure("highlands_cave_failed", &error);
     }
+}
+
+fn report_failure(event: &str, error: &engine::Error) {
+    let record = serde_json::json!({
+        "event": event,
+        "code": error.code,
+        "path": error.path,
+        "message": error.message,
+    });
+    eprintln!("{record}");
 }
 
 fn spawn_cave(

@@ -517,7 +517,7 @@ pub(crate) fn stream_terrains(world: &mut World, mut streaming: Local<TerrainStr
 pub fn stream_now(world: &mut World) {
     world
         .run_system_cached(stream_terrains)
-        .expect("terrain streaming takes no input");
+        .expect("streaming_takes_no_input");
 }
 
 pub fn work_between_frames(world: &mut World, milliseconds: f64) -> bool {

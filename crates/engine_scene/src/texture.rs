@@ -70,7 +70,7 @@ impl SceneTexture {
                 let uri_path = format!("{path}.uri");
                 valid_uri(uri, &uri_path)?;
                 match files {
-                    None => Ok(Texture::new(1, 1, vec![255; 4]).expect("one opaque texel")),
+                    None => Ok(Texture::new(1, 1, vec![255; 4]).expect("opaque_texel_valid")),
                     Some(files) => files.texture(uri, &uri_path),
                 }
             }

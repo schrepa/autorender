@@ -47,7 +47,6 @@ impl schemars::JsonSchema for ErrorCode {
     fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
         let codes: Vec<&str> = Self::ALL.iter().map(|&(_, code)| code).collect();
         schemars::json_schema!({
-            "description": "An error's code, as replies name it.",
             "type": "string",
             "enum": codes,
         })

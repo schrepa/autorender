@@ -63,7 +63,7 @@ impl SceneFiles {
 
 fn count(length: usize) -> [u8; 4] {
     u32::try_from(length)
-        .expect("a buffer counts fewer than 2^32 items")
+        .expect("buffer_count_fits_u32")
         .to_le_bytes()
 }
 
@@ -195,7 +195,7 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
     let word = |offset: usize| {
         bytes
             .get(offset..offset + 4)
-            .map(|word| u32::from_le_bytes(word.try_into().expect("four bytes")))
+            .map(|word| u32::from_le_bytes(word.try_into().expect("four_bytes")))
     };
     let extras = match bytes.get(..4) {
         Some(magic) if magic == MESH_BUFFER_MAGIC => false,
@@ -233,7 +233,7 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
         ));
     }
     let float = |offset: usize| {
-        f32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("four bytes"))
+        f32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("four_bytes"))
     };
     let mut vertices = Vec::with_capacity(vertex_count);
     for vertex in 0..vertex_count {
@@ -273,7 +273,7 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
             u32::from_le_bytes(
                 bytes[offset + index * 4..offset + index * 4 + 4]
                     .try_into()
-                    .expect("four bytes"),
+                    .expect("four_bytes"),
             )
         })
         .collect();

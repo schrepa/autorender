@@ -249,7 +249,7 @@ impl AssetLibrary {
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
             })
-            .expect("asset library identities exhausted");
+            .expect("library_ids_left");
         Self {
             id,
             revision: 0,

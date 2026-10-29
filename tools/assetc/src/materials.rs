@@ -66,7 +66,7 @@ pub(crate) fn import(
         files.push(file);
     }
     for material in document.materials() {
-        let index = material.index().expect("enumerated materials have indices");
+        let index = material.index().expect("material_has_index");
         let path = format!("$.materials[{index}]");
         let source = &json["materials"][index];
         let pbr = material.pbr_metallic_roughness();

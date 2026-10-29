@@ -440,7 +440,7 @@ pub(crate) fn bake(
     }
     let image = |samples: Vec<u16>| {
         HeightImage::new(across as u32, rows as u32, samples)
-            .expect("grids hold two samples each way")
+            .expect("grid_two_samples_each_way")
     };
     let Drainage {
         order,

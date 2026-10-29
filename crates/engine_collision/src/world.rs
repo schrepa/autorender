@@ -654,10 +654,7 @@ pub fn refresh_collision_world(world: &mut World) -> Result<CollisionReport, Col
     propagate_transforms(world);
     world.init_resource::<DirectSyncState>();
     let report = world.resource_scope(|world, mut state: Mut<DirectSyncState>| {
-        let mut sync = state
-            .0
-            .get_mut(world)
-            .expect("the collision brick's resources must remain added");
+        let mut sync = state.0.get_mut(world).expect("collision_resources_added");
         sync.refresh()
     });
     Ok(report)

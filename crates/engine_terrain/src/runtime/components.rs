@@ -343,7 +343,7 @@ impl TerrainSurface {
 impl Default for TerrainSurface {
     fn default() -> Self {
         Self::new(&Self::default_rules(650.0), Self::default_materials())
-            .expect("the default surface is valid")
+            .expect("default_surface_valid")
     }
 }
 

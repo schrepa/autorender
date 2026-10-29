@@ -246,7 +246,7 @@ impl TileStore {
         for (key, resident) in self.tiles.iter() {
             assert!(
                 resident.tile.key() == key && u32::from(key.level) < levels,
-                "R1: resident tile {key:?} holds tile {:?} ({levels} levels)",
+                "resident_tile_key {key:?} {:?} {levels}",
                 resident.tile.key()
             );
         }
@@ -254,14 +254,14 @@ impl TileStore {
         for (key, cached) in self.cache.iter() {
             assert!(
                 cached.tile.key() == key,
-                "R1: tile {key:?} kept in memory holds tile {:?}",
+                "cached_tile_key {key:?} {:?}",
                 cached.tile.key()
             );
             bytes += cached.bytes;
         }
         assert!(
             bytes == self.cached_bytes,
-            "R5: tiles kept in memory hold {bytes} bytes, the store counts {}",
+            "cached_bytes_counted {bytes} {}",
             self.cached_bytes
         );
     }
