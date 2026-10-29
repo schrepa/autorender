@@ -116,6 +116,7 @@ pub mod bricks {
             .with::<engine_layer_erosion::LayerErosionBrick>()
             .with::<engine_layer_hydrology::LayerHydrologyBrick>()
             .with::<engine_layer_relief::LayerReliefBrick>()
+            .with::<crate::host::SceneViewsBrick>()
     }
 
     pub fn standard_names(names: &str, path: &str) -> crate::Result<Vec<&'static str>> {

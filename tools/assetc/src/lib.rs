@@ -69,6 +69,9 @@ pub fn import_glb(bytes: &[u8], id: &str) -> Result<Imported, Error> {
         prefabs: Vec::new(),
         entities: Vec::new(),
         streamed: Vec::new(),
+        along: Vec::new(),
+        views: Vec::new(),
+        looks: Vec::new(),
     };
     let mut files = Vec::new();
     materials::import(&gltf.document, &json, binary, id, &mut scene, &mut files)?;

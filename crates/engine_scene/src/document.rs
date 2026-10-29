@@ -29,6 +29,12 @@ pub struct SceneDocument {
     pub entities: Vec<SceneObject>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub streamed: Vec<SceneObject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub along: Vec<crate::SceneAlong>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub views: Vec<crate::SceneView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub looks: Vec<crate::SceneLook>,
 }
 
 impl SceneDocument {

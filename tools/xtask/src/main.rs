@@ -225,6 +225,10 @@ fn authoring_commands() -> Vec<Command> {
             [CommandOption::taking("--file", "PATH").required()],
         ),
         Command::new(
+            "scene format",
+            [CommandOption::taking("--file", "PATH").required()],
+        ),
+        Command::new(
             "scene save",
             [
                 CommandOption::taking("--file", "PATH").required(),

@@ -240,6 +240,7 @@ fn scene_command(arguments: &[String]) -> Result<Value, Error> {
             let source = authoring::read_scene_source(Path::new(path))?;
             Ok(json!(authoring::validate_scene(&source)?))
         }
+        [command, file, path] if command == "format" && file == "--file" => format_scene(path),
         [
             command,
             file,
@@ -275,6 +276,32 @@ fn scene_command(arguments: &[String]) -> Result<Value, Error> {
         }
         _ => Err(Error::new(ErrorCode::InvalidArguments, "$")
             .got(arguments)
-            .variants(["validate", "save", "schema"])),
+            .variants(["validate", "format", "save", "schema"])),
     }
+}
+
+fn format_scene(path: &str) -> Result<Value, Error> {
+    let engine = crate::bricks::standard_engine();
+    let registry = engine
+        .app
+        .world()
+        .resource::<engine::bricks::BrickRegistry>();
+    let schema: Value = serde_json::from_str(&engine_scene::SceneDocument::schema_json(registry))
+        .map_err(|_| Error::new(ErrorCode::InvalidJson, "$.schema"))?;
+    let source = authoring::read_scene_source(Path::new(path))?;
+    let document = engine_scene::SceneDocument::from_json(&source)?;
+    let canonical = document.to_canonical_json(&schema)?;
+    let changed = canonical != source;
+    if changed {
+        std::fs::write(path, &canonical).map_err(|_| {
+            Error::new(ErrorCode::SourceIo, path)
+                .expected(Expected::Writable)
+                .got(path)
+        })?;
+    }
+    Ok(json!({
+        "scene": document.id,
+        "changed": changed,
+        "bytes": canonical.len(),
+    }))
 }

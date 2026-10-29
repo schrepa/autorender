@@ -39,6 +39,8 @@ pub fn options() -> Vec<CommandOption> {
         .defaults_to(jobcache)
         .in_unit("MiB"),
         CommandOption::taking("--vsync", "on|off").defaults_to(switch(defaults.vsync)),
+        CommandOption::taking("--view", "NAME"),
+        CommandOption::taking("--look", "NAME"),
     ];
     options.extend(SETTINGS.iter().map(|setting| {
         CommandOption::taking(&format!("--{}", setting.name), setting.accepted())
@@ -248,6 +250,8 @@ pub struct HostOptions {
     pub jobs: JobOptions,
     pub vsync: bool,
     pub settings: HostSettings,
+    pub view: Option<String>,
+    pub look: Option<String>,
     pub frames: Option<u32>,
     pub settle_ms: u64,
     pub offscreen: Option<u32>,
@@ -275,6 +279,8 @@ impl Default for HostOptions {
             jobs: JobOptions::default(),
             vsync: true,
             settings: HostSettings::default(),
+            view: None,
+            look: None,
             frames: None,
             settle_ms: 20_000,
             offscreen: None,
@@ -366,6 +372,8 @@ impl HostOptions {
                 };
             }
             "--vsync" => self.vsync = arguments.switch(argument)?,
+            "--view" => self.view = Some(arguments.value(argument)?),
+            "--look" => self.look = Some(arguments.value(argument)?),
             switch if switch.strip_prefix("--").is_some_and(HostSettings::takes) => {
                 let value = arguments.value(argument)?;
                 self.settings
@@ -507,6 +515,7 @@ impl HostOptions {
             println!("{}", json!({ "shader_hash": shader_hash() }));
             return Ok(());
         }
+        let build = move || self.shown(build);
         #[cfg(feature = "dev")]
         if let Some(names) = &self.smoke {
             if names == engine::smokes::LIST {
@@ -569,7 +578,22 @@ impl HostOptions {
         build: impl FnOnce() -> Result<(Engine, G), E>,
     ) -> engine::Result<crate::dev::DevSession<G>> {
         self.start_tools()?;
-        self.session(build)
+        self.session(move || self.shown(build))
+    }
+
+    fn shown<G: Game, E: Into<engine::Error>>(
+        &self,
+        build: impl FnOnce() -> Result<(Engine, G), E>,
+    ) -> engine::Result<(Engine, G)> {
+        let (mut engine, game) = build().map_err(Into::<engine::Error>::into)?;
+        let world = engine.app.world_mut();
+        if let Some(look) = &self.look {
+            engine::host::show_look(world, look, "--look")?;
+        }
+        if let Some(view) = &self.view {
+            engine::host::show_view(world, view, "--view")?;
+        }
+        Ok((engine, game))
     }
 
     #[cfg(feature = "dev")]

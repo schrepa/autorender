@@ -101,6 +101,7 @@ impl SceneDocument {
     pub(crate) fn prepare(&self, files: Option<&SceneFiles>) -> Result<PreparedScene, Error> {
         identifier(&self.id, "$.id")?;
         self.validate_camera()?;
+        self.validate_views()?;
         let mesh_ids = unique_ids(self.meshes.iter().map(|mesh| mesh.id.as_str()), "$.meshes")?;
         let material_ids = unique_ids(
             self.materials.iter().map(|material| material.id.as_str()),
@@ -258,6 +259,13 @@ impl SceneDocument {
         for item in &mut items {
             item.entities
                 .sort_by_key(|&index| (parents[index].is_some(), index));
+            if let Some(reach) = item
+                .entities
+                .iter()
+                .find_map(|&index| streamed.entities[index].reach)
+            {
+                item.reach = reach;
+            }
         }
         PreparedStreamed {
             entities: streamed.entities,

@@ -1,12 +1,16 @@
 use engine_settings::ErrorCode;
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine_core::{
-    Error, Expected, MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform, glam::Mat4, valid_global_matrix,
+    Error, Expected, MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform,
+    glam::{Mat4, Vec3},
+    valid_global_matrix,
 };
 
+use crate::rules::PATH_LAYER;
 use crate::validation::{display_name, identifier, reference, unique_ids, unknown};
-use crate::{SceneDocument, SceneObject, ScenePrefab};
+use crate::{SceneAlong, SceneDocument, SceneObject, ScenePrefab, SceneTerrain, SceneTransform};
 
 pub(crate) struct ExpandedObject {
     pub source: SceneObject,
@@ -14,6 +18,30 @@ pub(crate) struct ExpandedObject {
     pub prefab_id: Option<String>,
     pub prefab_instance: Option<String>,
     pub prefab_local_id: Option<String>,
+    pub reach: Option<f32>,
+}
+
+struct Listed<'a> {
+    object: &'a SceneObject,
+    path: String,
+    reach: Option<f32>,
+}
+
+struct Placed {
+    object: SceneObject,
+    path: String,
+    reach: Option<f32>,
+}
+
+fn listed<'a>(list: &'a [SceneObject], list_path: &str) -> Vec<Listed<'a>> {
+    list.iter()
+        .enumerate()
+        .map(|(index, object)| Listed {
+            object,
+            path: format!("{list_path}[{index}]"),
+            reach: None,
+        })
+        .collect()
 }
 
 pub(crate) struct ExpandedScene {
@@ -40,8 +68,23 @@ impl SceneDocument {
     ) -> Result<[ExpandedScene; 2], Error> {
         let (prefab_ids, prefabs) = self.validate_prefabs(mesh_ids, material_ids)?;
         let ids = (mesh_ids, material_ids, &prefab_ids);
-        let entities = expand_list(&self.entities, "$.entities", ids, &prefabs)?;
-        let streamed = expand_list(&self.streamed, "$.streamed", ids, &prefabs)?;
+        let placed = self.placed_along()?;
+        let mut kept = listed(&self.entities, "$.entities");
+        let mut streamed = listed(&self.streamed, "$.streamed");
+        for spot in &placed {
+            let entry = Listed {
+                object: &spot.object,
+                path: spot.path.clone(),
+                reach: spot.reach,
+            };
+            if spot.reach.is_some() {
+                streamed.push(entry);
+            } else {
+                kept.push(entry);
+            }
+        }
+        let entities = expand_list(&kept, ids, &prefabs)?;
+        let streamed = expand_list(&streamed, ids, &prefabs)?;
         let known: BTreeSet<&str> = entities
             .entities
             .iter()
@@ -113,34 +156,124 @@ impl SceneDocument {
             .collect();
         Ok((prefab_ids, prefab_lookup))
     }
+
+    fn placed_along(&self) -> Result<Vec<Placed>, Error> {
+        unique_ids(self.along.iter().map(|along| along.id.as_str()), "$.along")?;
+        let mut placed = Vec::new();
+        for (index, along) in self.along.iter().enumerate() {
+            let path = format!("$.along[{index}]");
+            along
+                .validate()
+                .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, &path))?;
+            let (terrain, points) = self.along_path(along, &path)?;
+            let origin = Vec3::from_array(terrain.origin);
+            for (number, (point, yaw)) in along.spots(&points, &path)?.into_iter().enumerate() {
+                placed.push(Placed {
+                    object: SceneObject {
+                        id: format!("{}{number}", along.id),
+                        prefab: Some(along.prefab.clone()),
+                        grounded: along.grounded,
+                        transform: SceneTransform {
+                            translation: (origin + Vec3::new(point.x, 0.0, point.y)).to_array(),
+                            rotation_degrees: [0.0, yaw.to_degrees(), 0.0],
+                            ..SceneTransform::default()
+                        },
+                        ..SceneObject::default()
+                    },
+                    path: path.clone(),
+                    reach: along.streamed.map(|streamed| streamed.reach),
+                });
+            }
+        }
+        Ok(placed)
+    }
+
+    fn along_path(
+        &self,
+        along: &SceneAlong,
+        path: &str,
+    ) -> Result<(&SceneTerrain, Vec<[f32; 2]>), Error> {
+        let Some((at, terrain)) = self.entities.iter().enumerate().find_map(|(index, entity)| {
+            entity
+                .terrain
+                .as_ref()
+                .filter(|_| entity.id == along.terrain)
+                .map(|terrain| (index, terrain))
+        }) else {
+            return Err(
+                Error::new(ErrorCode::UnknownReference, format!("{path}.terrain"))
+                    .got(&along.terrain)
+                    .variants(
+                        self.entities
+                            .iter()
+                            .filter(|entity| entity.terrain.is_some())
+                            .map(|entity| entity.id.clone()),
+                    ),
+            );
+        };
+        let paths = || {
+            terrain
+                .layers
+                .iter()
+                .enumerate()
+                .filter(|(_, layer)| layer.get("type").and_then(Value::as_str) == Some(PATH_LAYER))
+                .filter_map(|(index, layer)| {
+                    layer
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(|id| (index, id, layer))
+                })
+        };
+        let Some((index, _, layer)) = paths().find(|&(_, id, _)| id == along.layer) else {
+            return Err(
+                Error::new(ErrorCode::UnknownReference, format!("{path}.layer"))
+                    .got(&along.layer)
+                    .variants(paths().map(|(_, id, _)| id.to_owned())),
+            );
+        };
+        let points = engine_core::parse_value_at(
+            layer.get("points").cloned().unwrap_or(Value::Null),
+            &format!("$.entities[{at}].terrain.layers[{index}].points"),
+        )?;
+        Ok((terrain, points))
+    }
 }
 
 fn expand_list(
-    list: &[SceneObject],
-    list_path: &str,
+    list: &[Listed<'_>],
     (mesh_ids, material_ids, prefab_ids): (&BTreeSet<&str>, &BTreeSet<&str>, &BTreeSet<&str>),
     prefab_lookup: &Prefabs<'_>,
 ) -> Result<ExpandedScene, Error> {
-    unique_ids(list.iter().map(|entity| entity.id.as_str()), list_path)?;
+    let mut known = BTreeSet::new();
+    for entry in list {
+        let path = format!("{}.id", entry.path);
+        identifier(&entry.object.id, &path)?;
+        if !known.insert(entry.object.id.as_str()) {
+            return Err(Error::new(ErrorCode::DuplicateId, path)
+                .expected(Expected::Unique)
+                .got(&entry.object.id));
+        }
+    }
     let mut expanded_count = list.len();
-    for (index, entity) in list.iter().enumerate() {
-        let path = format!("{list_path}[{index}]");
-        validate_object(entity, &path, mesh_ids, material_ids, prefab_ids)?;
-        if let Some(id) = &entity.prefab {
+    for entry in list {
+        validate_object(entry.object, &entry.path, mesh_ids, material_ids, prefab_ids)?;
+        if let Some(id) = &entry.object.prefab {
             expanded_count += prefab_lookup[id.as_str()].1.entities.len();
         }
     }
     let mut entities = Vec::with_capacity(expanded_count);
     let mut transforms = Vec::with_capacity(expanded_count);
-    for (index, entity) in list.iter().enumerate() {
+    for entry in list {
+        let entity = entry.object;
         let mut source = entity.clone();
         source.prefab = None;
         entities.push(ExpandedObject {
             source,
-            path: format!("{list_path}[{index}]"),
+            path: entry.path.clone(),
             prefab_id: entity.prefab.clone(),
             prefab_instance: entity.prefab.as_ref().map(|_| entity.id.clone()),
             prefab_local_id: None,
+            reach: entry.reach,
         });
         transforms.push(entity.transform.transform());
         if let Some(id) = &entity.prefab {
@@ -160,6 +293,7 @@ fn expand_list(
                     prefab_id: Some(id.clone()),
                     prefab_instance: Some(entity.id.clone()),
                     prefab_local_id: Some(local.id.clone()),
+                    reach: None,
                 });
                 transforms.push(local.transform.transform());
             }
