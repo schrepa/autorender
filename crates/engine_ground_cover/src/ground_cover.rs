@@ -5,28 +5,25 @@ use std::rc::Rc;
 
 use engine_core::glam::{Mat4, Vec3, Vec4};
 use engine_core::{RenderSnapshot, RenderStats};
-use engine_terrain::{Cover, GroundCover};
+use engine_terrain::{Cover, GroundCover, RenderTerrain};
 
 use crate::bindings::{COVER_DRAW, COVER_GROW};
-use crate::buffers::ReadbackRing;
-use crate::cached::Cached;
-use crate::entries::PassKind;
-use crate::gpu_layouts::constants::{BLADE_BYTES, COVER_LEAVES, COVER_LUSH_RATIO};
-use crate::graph::{
+use crate::gpu_layouts::{BLADE_BYTES, COVER_LEAVES, COVER_LUSH_RATIO, PALETTE_ENTRIES};
+use engine_faces::heightfield::HeightfieldFace;
+use engine_render::buffers::ReadbackRing;
+use engine_render::cached::Cached;
+use engine_render::graph::{
     FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage, Targets,
 };
-use crate::parts::{
-    Begin, BeginOut, Create, DrawAt, Encode, GpuPart, Hook, OpaqueSlot, PartDecl, PartEntry, Step,
-    View,
+use engine_render::parts::{
+    Create, DrawAt, Encode, GpuPart, Hook, OpaqueSlot, PartDecl, PartEntry, Step, View,
 };
-use crate::renderer::Core;
-use crate::scene_shading::SceneShading;
-use crate::terrain::TerrainPass;
+use engine_render::renderer::Core;
 
 pub(crate) static PART: PartEntry = PartEntry {
     decl: PartDecl {
         name: "ground_cover",
-        brick: "terrain",
+        brick: "ground_cover",
         passes: &[PassDecl {
             name: "ground_cover",
             stage: Stage::Prepare,
@@ -48,16 +45,16 @@ pub(crate) static PART: PartEntry = PartEntry {
 };
 
 fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
-    let _owner = crate::memory::owned(PART.decl.brick);
+    let _owner = engine_render::memory::owned(PART.decl.brick);
     Box::new(GroundCoverPass::new(&cx.core.device))
 }
 
 const SLOT: u64 = 512;
 pub(crate) const GROW_BYTES: u64 = size_of::<GrowUniform>() as u64;
 
-use crate::gpu_layouts::ground_cover::GrowUniform;
+use crate::gpu_layouts::GrowUniform;
 
-use crate::gpu_layouts::ground_cover::FrameUniform;
+use crate::gpu_layouts::FrameUniform;
 
 const DRAW_ARGS: u64 = size_of::<wgpu::util::DrawIndirectArgs>() as u64;
 
@@ -69,12 +66,13 @@ struct Growth {
 const MAX_TIERS: usize = 8;
 
 pub(crate) struct GroundCoverPass {
-    grow_layout: crate::pipelines::GroupLayout,
-    draw_layout: crate::pipelines::GroupLayout,
+    grow_layout: engine_render::pipelines::GroupLayout,
+    draw_layout: engine_render::pipelines::GroupLayout,
     compute: Option<(wgpu::ComputePipeline, wgpu::ComputePipeline)>,
-    pipelines: HashMap<(Targets, bool), wgpu::RenderPipeline>,
-    shading: SceneShading,
-    blades: crate::buffers::Growable,
+    pipelines: HashMap<(Targets, usize), wgpu::RenderPipeline>,
+    shadings: Vec<Vec<(&'static str, f64)>>,
+    shading: usize,
+    blades: engine_render::buffers::Growable,
     capacity: u32,
     blades_generation: u64,
     counts: wgpu::Buffer,
@@ -100,12 +98,13 @@ pub(crate) struct GroundCoverPass {
 impl GroundCoverPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         Self {
-            grow_layout: crate::pipelines::layout(device, &COVER_GROW),
-            draw_layout: crate::pipelines::layout(device, &COVER_DRAW),
+            grow_layout: engine_render::pipelines::layout(device, &COVER_GROW),
+            draw_layout: engine_render::pipelines::layout(device, &COVER_DRAW),
             compute: None,
             pipelines: HashMap::default(),
-            shading: SceneShading::ALL,
-            blades: crate::buffers::Growable::new(
+            shadings: Vec::new(),
+            shading: 0,
+            blades: engine_render::buffers::Growable::new(
                 device,
                 "engine/cover-blades",
                 BLADE_BYTES,
@@ -113,20 +112,20 @@ impl GroundCoverPass {
             ),
             capacity: 0,
             blades_generation: 0,
-            counts: crate::buffers::storage(
+            counts: engine_render::buffers::storage(
                 device,
                 "engine/cover-counts",
                 16,
                 wgpu::BufferUsages::COPY_SRC,
             ),
-            args: crate::buffers::storage(
+            args: engine_render::buffers::storage(
                 device,
                 "engine/cover-draw",
                 2 * DRAW_ARGS,
                 wgpu::BufferUsages::INDIRECT,
             ),
-            uniforms: crate::buffers::uniform(device, "engine/cover-grow", SLOT),
-            frame: crate::buffers::uniform(
+            uniforms: engine_render::buffers::uniform(device, "engine/cover-grow", SLOT),
+            frame: engine_render::buffers::uniform(
                 device,
                 "engine/cover-frame",
                 size_of::<FrameUniform>() as u64,
@@ -159,8 +158,8 @@ impl GroundCoverPass {
     fn prepare_growth(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
-        terrain: &TerrainPass,
+        queue: &engine_render::gpu_calls::Queue,
+        terrain: &dyn HeightfieldFace,
         terrains: &engine_terrain::RenderTerrains,
         (settings, wind, culling, eye, time): (&GroundCover, [f32; 2], Mat4, Vec3, f32),
         (height, grounded): (f32, bool),
@@ -190,8 +189,8 @@ impl GroundCoverPass {
     fn plan(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
-        terrain: &TerrainPass,
+        queue: &engine_render::gpu_calls::Queue,
+        terrain: &dyn HeightfieldFace,
         terrains: &engine_terrain::RenderTerrains,
         (settings, wind, grounded): (&GroundCover, [f32; 2], bool),
         (culling, eye, time, previous, height): (Mat4, Vec3, f32, f32, f32),
@@ -208,8 +207,10 @@ impl GroundCoverPass {
         let mut uniforms = std::mem::take(&mut self.grow_uniforms);
         uniforms.clear();
         let mut most = 0.0;
+        let mut held = 0;
         for (index, render) in terrains.terrains.iter().enumerate() {
-            let (directory, palette, terms, colors) = terrain.cover_terrain(index);
+            let terms = CoverTerms::kept(render, &mut held);
+            let (directory, palette, colors) = terrain.cover_terrain(index);
             let density = terms.densest * settings.density * lushest();
             let law = CoverLaw::of(terms, pixels_per_meter);
             if density <= 0.0 || law.span <= 0.0 || !render.drawn || render.surroundings {
@@ -281,7 +282,7 @@ impl GroundCoverPass {
             bytes[at..at + size_of::<GrowUniform>()].copy_from_slice(bytemuck::bytes_of(uniform));
         }
         if bytes.len() as u64 > self.uniforms.size() {
-            self.uniforms = crate::buffers::uniform(
+            self.uniforms = engine_render::buffers::uniform(
                 device,
                 "engine/cover-grow",
                 (bytes.len() as u64).next_power_of_two(),
@@ -305,17 +306,17 @@ impl GroundCoverPass {
             sources.generation.2,
         );
         if self.grow_group.stale(&key) {
-            let group = crate::pipelines::group(
+            let group = engine_render::pipelines::group(
                 device,
                 "engine/cover-grow",
                 &COVER_GROW,
                 &self.grow_layout,
                 &[
-                    ("heights", crate::pipelines::view(sources.heights)),
-                    ("control", crate::pipelines::view(sources.control)),
-                    crate::buffers::entry("directory", sources.directory),
-                    crate::buffers::entry("palette", sources.palette),
-                    crate::buffers::entry("covers", sources.covers),
+                    ("heights", engine_render::pipelines::view(sources.heights)),
+                    ("control", engine_render::pipelines::view(sources.control)),
+                    engine_render::buffers::entry("directory", sources.directory),
+                    engine_render::buffers::entry("palette", sources.palette),
+                    engine_render::buffers::entry("covers", sources.covers),
                     (
                         "grow",
                         wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -324,24 +325,24 @@ impl GroundCoverPass {
                             size: wgpu::BufferSize::new(GROW_BYTES),
                         }),
                     ),
-                    crate::buffers::entry("blades", &self.blades),
-                    crate::buffers::entry("counts", &self.counts),
-                    crate::buffers::entry("args", &self.args),
-                    ("macro_maps", crate::pipelines::view(sources.macro_maps)),
-                    ("normals", crate::pipelines::view(sources.normals)),
+                    engine_render::buffers::entry("blades", &self.blades),
+                    engine_render::buffers::entry("counts", &self.counts),
+                    engine_render::buffers::entry("args", &self.args),
+                    ("macro_maps", engine_render::pipelines::view(sources.macro_maps)),
+                    ("normals", engine_render::pipelines::view(sources.normals)),
                 ],
             );
             self.grow_group.set(key, group);
         }
         if self.draw_group.stale(&self.blades_generation) {
-            let group = crate::pipelines::group(
+            let group = engine_render::pipelines::group(
                 device,
                 "engine/cover",
                 &COVER_DRAW,
                 &self.draw_layout,
                 &[
-                    crate::buffers::entry("cover_blades", &self.blades),
-                    crate::buffers::entry("cover_frame", &self.frame),
+                    engine_render::buffers::entry("cover_blades", &self.blades),
+                    engine_render::buffers::entry("cover_frame", &self.frame),
                 ],
             );
             self.draw_group.set(self.blades_generation, group);
@@ -353,7 +354,7 @@ impl GroundCoverPass {
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        profiler: &crate::profiling::GpuProfiler,
+        profiler: &engine_render::profiling::GpuProfiler,
     ) {
         let (Some((grow, finish)), Some(group)) = (&self.compute, self.grow_group.get()) else {
             return;
@@ -388,19 +389,21 @@ impl GroundCoverPass {
         self.compute.get_or_insert_with(|| compute(device));
     }
 
-    fn specialize(&mut self, shading: SceneShading) {
-        if self.shading != shading {
-            self.shading = shading;
-            self.pipelines.clear();
+    fn specialize(&mut self, shading: &[(&'static str, f64)]) {
+        match self.shadings.iter().position(|known| known.as_slice() == shading) {
+            Some(known) => self.shading = known,
+            None => {
+                self.shading = self.shadings.len();
+                self.shadings.push(shading.to_vec());
+            }
         }
     }
 
-    fn warm_cover(&mut self, core: &Core, snapshot: &RenderSnapshot, opaque_kind: PassKind) {
+    fn warm_cover(&mut self, core: &Core, snapshot: &RenderSnapshot, targets: Option<Targets>) {
         let terrains = &engine_terrain::RenderTerrains::of(snapshot).terrains;
         if terrains.is_empty() {
             return;
         }
-        let lit = opaque_kind.lit;
         let terrain_environment = engine_terrain::TerrainEnvironment::of(snapshot);
         let cover = terrain_environment.ground_cover.sanitized();
         let grows = cover.enabled
@@ -410,12 +413,12 @@ impl GroundCoverPass {
             });
         if grows {
             self.warm(&core.device);
-            if let Some(targets) = opaque_kind.targets() {
+            if let Some(targets) = targets {
                 self.ensure_pipeline(
                     &core.device,
-                    (targets, lit),
+                    targets,
                     core.display.format(),
-                    crate::renderer::DEPTH_FORMAT,
+                    engine_render::renderer::DEPTH_FORMAT,
                 );
             }
         }
@@ -424,23 +427,22 @@ impl GroundCoverPass {
     fn ensure_pipeline(
         &mut self,
         device: &wgpu::Device,
-        (targets, lit): (Targets, bool),
+        targets: Targets,
         canvas: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
     ) {
-        if self.pipelines.contains_key(&(targets, lit)) {
+        if self.pipelines.contains_key(&(targets, self.shading)) {
             return;
         }
-        let layout = if lit {
-            crate::pipelines::layout_of(device, &crate::pipeline_layouts::LIT_COVER_PIPELINES)
-        } else {
-            crate::pipelines::layout_of(device, &crate::pipeline_layouts::COVER_PIPELINES)
-        };
-        let (vertex, fragment) = crate::entries::cover(targets, lit);
-        let color_targets = targets.color_targets(canvas);
-        let pipeline = crate::pipelines::geometry(
+        let layout = engine_render::pipelines::layout_of(
             device,
-            &crate::pipelines::Geometry {
+            &crate::pipeline_layouts::LIT_COVER_PIPELINES,
+        );
+        let (vertex, fragment) = crate::shaders::cover(targets);
+        let color_targets = targets.color_targets(canvas);
+        let pipeline = engine_render::pipelines::geometry(
+            device,
+            &engine_render::pipelines::Geometry {
                 label: "engine/cover",
                 layout: &layout,
                 vertex_constants: &[],
@@ -458,14 +460,14 @@ impl GroundCoverPass {
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
-                fragment: Some(crate::pipelines::Fragment {
+                fragment: Some(engine_render::pipelines::Fragment {
                     entry: fragment,
-                    constants: &self.shading.constants(),
+                    constants: &self.shadings[self.shading],
                     targets: &color_targets,
                 }),
             },
         );
-        self.pipelines.insert((targets, lit), pipeline);
+        self.pipelines.insert((targets, self.shading), pipeline);
     }
 
     fn draw_cover(&self, cx: &View<'_>, pass: &mut wgpu::RenderPass<'_>) -> u32 {
@@ -477,16 +479,14 @@ impl GroundCoverPass {
             return 0;
         };
         pass.set_bind_group(0, cx.core.shared_group("frame", &["refraction"]), &[]);
-        if kind.lit {
-            pass.set_bind_group(2, &cx.core.mesh_pipelines.empty_group, &[]);
-            pass.set_bind_group(3, cx.core.shared_group("lights", &[]), &[]);
-        }
-        self.draw_blades(pass, targets, kind.lit)
+        pass.set_bind_group(2, &cx.core.mesh_pipelines.empty_group, &[]);
+        pass.set_bind_group(3, cx.core.shared_group("lights", &[]), &[]);
+        self.draw_blades(pass, targets)
     }
 
-    fn draw_blades(&self, pass: &mut wgpu::RenderPass<'_>, targets: Targets, lit: bool) -> u32 {
+    fn draw_blades(&self, pass: &mut wgpu::RenderPass<'_>, targets: Targets) -> u32 {
         let (Some(pipeline), Some(group)) =
-            (self.pipelines.get(&(targets, lit)), self.draw_group.get())
+            (self.pipelines.get(&(targets, self.shading)), self.draw_group.get())
         else {
             return 0;
         };
@@ -511,7 +511,7 @@ fn turn_share(culling: Mat4) -> f32 {
     if across <= 0.0 {
         return 1.0;
     }
-    engine_core::math::min(libm::atanf(depth / across) / std::f32::consts::PI, 1.0)
+    engine_core::math::min(engine_math::atan(depth / across) / std::f32::consts::PI, 1.0)
 }
 
 fn lushest() -> f32 {
@@ -536,6 +536,17 @@ impl CoverTerms {
                 terms
             }
         })
+    }
+
+    fn kept(terrain: &RenderTerrain, held: &mut usize) -> Self {
+        let room = PALETTE_ENTRIES - *held;
+        let kept = &terrain.surface[..terrain.surface.len().min(room)];
+        *held += kept.len();
+        if kept.len() == terrain.surface.len() {
+            Self::of(kept.iter().filter_map(|look| look.cover.as_ref()))
+        } else {
+            Self::default()
+        }
     }
 }
 
@@ -624,11 +635,17 @@ pub(crate) fn planes(view_projection: Mat4) -> [[f32; 4]; 6] {
 }
 
 fn compute(device: &wgpu::Device) -> (wgpu::ComputePipeline, wgpu::ComputePipeline) {
-    let pipeline_layout =
-        crate::pipelines::layout_of(device, &crate::pipeline_layouts::COVER_GROW_PIPELINES);
+    let pipeline_layout = engine_render::pipelines::layout_of(
+        device,
+        &crate::pipeline_layouts::COVER_GROW_PIPELINES,
+    );
     (
-        crate::pipelines::compute_entry(device, &pipeline_layout, cover_grow::grow_cover),
-        crate::pipelines::compute_entry(device, &pipeline_layout, cover_grow::finish_cover),
+        engine_render::pipelines::compute_entry(device, &pipeline_layout, cover_grow::grow_cover),
+        engine_render::pipelines::compute_entry(
+            device,
+            &pipeline_layout,
+            cover_grow::finish_cover,
+        ),
     )
 }
 
@@ -638,20 +655,19 @@ impl GpuPart for GroundCoverPass {
         self.cover = table.resource("cover");
     }
 
-    fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
-        self.specialize(SceneShading::of(cx.snapshot));
-    }
-
     fn prepare_draws(&mut self, cx: &mut Step<'_>, _encoder: &mut wgpu::CommandEncoder) {
         self.drawn = false;
         self.framed = false;
-        let (Some(terrain), Some(passes)) = (cx.parts.get::<TerrainPass>(), cx.frame.passes) else {
+        let (Some(terrain), Some(passes)) =
+            (cx.parts.face::<dyn HeightfieldFace>(), cx.frame.passes)
+        else {
             return;
         };
         let core = &*cx.core;
         let snapshot = cx.frame.snapshot;
-        let opaque_kind = passes.opaque_kind;
-        self.warm_cover(core, snapshot, opaque_kind);
+        let targets = passes.opaque_kind.targets();
+        self.specialize(&core.mesh_pipelines.shading.constants());
+        self.warm_cover(core, snapshot, targets);
         if !terrain.drawn() {
             return;
         }
@@ -675,12 +691,12 @@ impl GpuPart for GroundCoverPass {
                 snapshot.environment.foliage.sanitized().ground_blend > 0.0,
             ),
         );
-        if let (true, Some(targets)) = (covered, opaque_kind.targets()) {
+        if let (true, Some(targets)) = (covered, targets) {
             self.ensure_pipeline(
                 &core.device,
-                (targets, opaque_kind.lit),
+                targets,
                 core.display.format(),
-                crate::renderer::DEPTH_FORMAT,
+                engine_render::renderer::DEPTH_FORMAT,
             );
         }
         self.framed = self.growing();

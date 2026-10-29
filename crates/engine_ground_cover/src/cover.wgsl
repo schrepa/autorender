@@ -1,11 +1,12 @@
-import package::frame::encode::encoded;
-import package::frame::view::{PI, camera, lighting, stable_normalize};
-import package::lighting::surface::{BODY_THIN, SurfacePoint, finish};
-import package::lights::shade::local_light;
-import package::meshes::declarations::{SceneTargets, TemporalTargets};
-import package::meshes::surface::{scene_targets, temporal_targets, widened};
-import package::terrain::variety::{COVER_FAR_SIDE, COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION,
+import package::face::dither::{encoded, stored};
+import package::face::heightfield::{COVER_FAR_SIDE, COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION,
     COVER_ROUGHNESS};
+import package::face::lighting::{BODY_THIN, SurfacePoint, finish, local_light, widened};
+import package::face::occupancy::foliage;
+import package::face::sun::sun_direction;
+import package::frame::view::{PI, camera, stable_normalize};
+import package::meshes::declarations::{SceneTargets, TemporalTargets};
+import package::meshes::surface::{scene_targets, temporal_targets};
 
 struct CoverBlade {
     root: vec3<f32>,
@@ -208,15 +209,15 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     if !front {
         face = -face;
     }
-    let through = dot(face, lighting.sun.xyz) < 0.0;
+    let through = dot(face, sun_direction()) < 0.0;
     let lit = select(face, -face, through);
     var normal = normalize(mix(lit, vec3<f32>(0.0, 1.0, 0.0), 0.6));
-    if lighting.foliage.w > 0.0 && input.ground != 0u {
+    if foliage().w > 0.0 && input.ground != 0u {
         let tilt = vec2<f32>(f32((input.ground >> 16u) & 0xffu), f32(input.ground >> 24u))
             / 255.0 * 2.0 - 1.0;
         let ground = vec3<f32>(tilt.x, sqrt(max(1.0 - dot(tilt, tilt), 0.0)), tilt.y);
         let above = input.along * unpack2x16float(input.ground & 0xffffu).x;
-        normal = normalize(mix(normal, ground, 1.0 - smoothstep(0.0, lighting.foliage.w, above)));
+        normal = normalize(mix(normal, ground, 1.0 - smoothstep(0.0, foliage().w, above)));
     }
     let relative = input.world - camera.position.xyz;
     let albedo = input.color * select(1.0, COVER_FAR_SIDE, through);
@@ -254,13 +255,6 @@ fn cover_temporal_output(input: CoverTemporalOutput) -> CoverOutput {
 
 @fragment
 fn fs_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(finish(cover_surface(input, front), vec3<f32>(0.0)).color,
-        input.clip_position.xy), 1.0);
-}
-
-@fragment
-fn fs_cover_lit(input: CoverOutput, @builtin(front_facing) front: bool)
-        -> @location(0) vec4<f32> {
     let point = cover_surface(input, front);
     return vec4<f32>(encoded(finish(point, local_light(point, input.clip_position.xy)).color,
         input.clip_position.xy), 1.0);
@@ -268,28 +262,16 @@ fn fs_cover_lit(input: CoverOutput, @builtin(front_facing) front: bool)
 
 @fragment
 fn fs_cover_post(input: CoverOutput, @builtin(front_facing) front: bool) -> SceneTargets {
-    return scene_targets(finish(cover_surface(input, front), vec3<f32>(0.0)),
-        input.clip_position.xy);
-}
-
-@fragment
-fn fs_cover_post_lit(input: CoverOutput, @builtin(front_facing) front: bool) -> SceneTargets {
     let point = cover_surface(input, front);
-    return scene_targets(finish(point, local_light(point, input.clip_position.xy)),
-        input.clip_position.xy);
+    let shaded = finish(point, local_light(point, input.clip_position.xy));
+    return scene_targets(shaded, stored(shaded.color, input.clip_position.xy));
 }
 
 @fragment
 fn fs_cover_temporal(input: CoverTemporalOutput, @builtin(front_facing) front: bool)
         -> TemporalTargets {
-    return temporal_targets(finish(cover_surface(cover_temporal_output(input), front),
-        vec3<f32>(0.0)), input.clip_position, input.previous);
-}
-
-@fragment
-fn fs_cover_temporal_lit(input: CoverTemporalOutput, @builtin(front_facing) front: bool)
-        -> TemporalTargets {
     let point = cover_surface(cover_temporal_output(input), front);
-    return temporal_targets(finish(point, local_light(point, input.clip_position.xy)),
+    let shaded = finish(point, local_light(point, input.clip_position.xy));
+    return temporal_targets(shaded, stored(shaded.color, input.clip_position.xy),
         input.clip_position, input.previous);
 }
