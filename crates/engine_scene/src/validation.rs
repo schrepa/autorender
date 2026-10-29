@@ -90,7 +90,7 @@ impl SceneDocument {
         for entity in entities {
             if let Some(terrain) = &entity.terrain {
                 for uri in terrain.files() {
-                    add(uri, SceneFileKind::Buffer);
+                    add(&uri, SceneFileKind::Buffer);
                 }
             }
         }

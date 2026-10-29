@@ -849,137 +849,127 @@
         "spacing": 1,
         "layers": [
           {
-            "noise": {
-              "seed": 3,
-              "height": 140,
-              "wavelength": 600
+            "type": "noise",
+            "seed": 3,
+            "height": 140,
+            "wavelength": 600
+          },
+          {
+            "type": "erosion",
+            "level": 1,
+            "rounds": 6,
+            "incision": 0.001953125,
+            "creep": 2
+          },
+          {
+            "type": "hydrology",
+            "level": 1
+          },
+          {
+            "type": "stamp",
+            "center": [
+              430,
+              96
+            ],
+            "radius": 10,
+            "falloff": 10,
+            "op": {
+              "lower": 12
             }
           },
           {
-            "erosion": {
-              "level": 1,
-              "rounds": 6,
-              "incision": 0.001953125,
-              "creep": 2
-            }
-          },
-          {
-            "hydrology": {
-              "level": 1
-            }
-          },
-          {
-            "stamp": {
-              "center": [
-                430,
-                96
+            "type": "path",
+            "points": [
+              [
+                100,
+                300
               ],
-              "radius": 10,
-              "falloff": 10,
-              "op": {
-                "lower": 12
-              }
-            }
-          },
-          {
-            "path": {
-              "points": [
-                [
-                  100,
-                  300
-                ],
-                [
-                  250,
-                  260
-                ],
-                [
-                  400,
-                  150
-                ],
-                [
-                  450,
-                  60
-                ]
+              [
+                250,
+                260
               ],
-              "width": 6,
-              "shoulder": 6,
-              "smoothing": 60,
-              "bridge_fill": 4,
-              "tunnel_cut": 25
+              [
+                400,
+                150
+              ],
+              [
+                450,
+                60
+              ]
+            ],
+            "width": 6,
+            "shoulder": 6,
+            "smoothing": 60,
+            "bridge_fill": 4,
+            "tunnel_cut": 25
+          },
+          {
+            "type": "stamp",
+            "center": [
+              750,
+              200
+            ],
+            "radius": 30,
+            "falloff": 40,
+            "op": {
+              "raise": 40
             }
           },
           {
-            "stamp": {
-              "center": [
-                750,
+            "type": "path",
+            "points": [
+              [
+                600,
                 200
               ],
-              "radius": 30,
-              "falloff": 40,
-              "op": {
-                "raise": 40
-              }
+              [
+                900,
+                200
+              ]
+            ],
+            "width": 6,
+            "shoulder": 6,
+            "smoothing": 400,
+            "bridge_fill": 4,
+            "tunnel_cut": 15
+          },
+          {
+            "type": "stamp",
+            "center": [
+              512,
+              512
+            ],
+            "radius": 40,
+            "falloff": 60,
+            "op": {
+              "flatten": 30
             }
           },
           {
-            "path": {
-              "points": [
-                [
-                  600,
-                  200
-                ],
-                [
-                  900,
-                  200
-                ]
-              ],
-              "width": 6,
-              "shoulder": 6,
-              "smoothing": 400,
-              "bridge_fill": 4,
-              "tunnel_cut": 15
-            }
+            "type": "stamp",
+            "center": [
+              560,
+              512
+            ],
+            "radius": 4,
+            "op": "hole"
           },
           {
-            "stamp": {
-              "center": [
-                512,
-                512
-              ],
-              "radius": 40,
-              "falloff": 60,
-              "op": {
-                "flatten": 30
-              }
-            }
-          },
-          {
-            "stamp": {
-              "center": [
-                560,
-                512
-              ],
-              "radius": 4,
-              "op": "hole"
-            }
-          },
-          {
-            "heightmap": {
-              "uri": "terrain-smoke/dome.r16",
-              "width": 65,
-              "height": 65,
-              "min": [
-                700,
-                700
-              ],
-              "size": [
-                128,
-                128
-              ],
-              "low": 0,
-              "high": 200,
-              "blend": "max"
-            }
+            "type": "heightmap",
+            "uri": "terrain-smoke/dome.r16",
+            "width": 65,
+            "height": 65,
+            "min": [
+              700,
+              700
+            ],
+            "size": [
+              128,
+              128
+            ],
+            "low": 0,
+            "high": 200,
+            "blend": "max"
           }
         ],
         "surface": {
@@ -1035,19 +1025,21 @@
                 {
                   "material": "rock",
                   "mask": {
-                    "slope": [
-                      25,
-                      35
-                    ]
+                    "ramp": {
+                      "map": "slope",
+                      "from": 25,
+                      "to": 35
+                    }
                   }
                 },
                 {
                   "material": "gravel",
                   "mask": {
-                    "path": [
-                      1,
-                      0
-                    ]
+                    "ramp": {
+                      "map": "path",
+                      "from": 1,
+                      "to": 0
+                    }
                   }
                 }
               ]
@@ -1055,10 +1047,11 @@
             {
               "id": "summit",
               "fitness": {
-                "height": [
-                  110,
-                  130
-                ]
+                "ramp": {
+                  "map": "height",
+                  "from": 110,
+                  "to": 130
+                }
               },
               "layers": [
                 {

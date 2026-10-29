@@ -124,18 +124,24 @@ pub mod bricks {
 }
 
 pub mod terrain {
+    pub use engine_layer_erosion as layer_erosion;
+    pub use engine_layer_heightmap as layer_heightmap;
+    pub use engine_layer_hydrology as layer_hydrology;
+    pub use engine_layer_noise as layer_noise;
+    pub use engine_layer_paths as layer_paths;
+    pub use engine_layer_relief as layer_relief;
+    pub use engine_layer_stamps as layer_stamps;
     pub use engine_terrain as data;
     pub use engine_terrain::{
         AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeLayer, BiomeRules, Biomes, Blend, Control,
-        DECK_DEPTH, DECK_MARGIN, DECK_RISE, Erosion, ErosionLayer, ErosionStage, Facing,
-        FarPlacement, GivenRiver, HeightImage, HeightmapLayer, HummocksLayer, Hydrology,
-        HydrologyLayer, HydrologySample, HydrologyStage, Layer, Layers, MAX_COLLIDER_EXTENT,
-        MAX_PLACEMENT_LODS, MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, Mask, MotionDetail,
-        NoiseLayer, NoiseMask, PathLayer, PathProfile, PathStage, Placed, PlacedCollider,
+        DECK_DEPTH, DECK_MARGIN, DECK_RISE, Expr, Facing, FarPlacement, GivenRiver, HeightImage,
+        Hydrology, HydrologySample, LayerKind, Layers, MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS,
+        MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, MotionDetail, NoiseMask, Placed, PlacedCollider,
         PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod, PlacementPart,
-        Pyramid, Remap, RiversLayer, Route, RouteOptions, Stamp, StampOp, StepsLayer,
-        SurfaceMaterial, SurfaceProjection, Surroundings, SurroundingsStatus, TerrainBakes,
-        TerrainEdit, TerrainPrefetch, TerrainRiver, TerrainSurface, Tile, TileKey,
+        Pyramid, Route, RouteOptions, Stamp, StampOp, SurfaceMaterial, SurfaceProjection,
+        Surroundings, SurroundingsStatus, TerrainBakes, TerrainEdit, TerrainLayer,
+        TerrainLayerKinds, TerrainPrefetch, TerrainRiver, TerrainSurface, Tile, TileKey, expr,
+        layer,
     };
 }
 
@@ -164,9 +170,11 @@ pub mod stats {
         GroundCoverStats, JobStats, LightStats, Names, OccupancyStats, ProbeStats, RenderStats,
         ShadowStats, SkyStats, TerrainBounceStats, TerrainRenderStats, WaterStats,
     };
+    pub use engine_layer_erosion::ErosionStats;
+    pub use engine_layer_paths::PathStats;
     pub use engine_navigation::NavStats;
     pub use engine_physics::PhysicsStats;
-    pub use engine_terrain::{ErosionStats, HydrologyStats, PathStats, TerrainStats};
+    pub use engine_terrain::{HydrologyStats, TerrainStats};
     pub use engine_world_streaming::CellStats;
 }
 

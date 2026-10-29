@@ -20,7 +20,7 @@ fn fixture() -> Value {
              "collider": {"shape": cube["shape"], "memberships": 2, "filter": 1, "sensor": false},
              "transform": {"translation": [0, 200, 0]}},
             {"id": "ground", "terrain": {"origin": [-1024, 0, -1024], "tiles": [8, 8], "spacing": 1,
-             "layers": [{"noise": {"seed": 5, "height": 40, "wavelength": 400}}]}},
+             "layers": [{"type": "noise", "seed": 5, "height": 40, "wavelength": 400}]}},
         ],
         "streamed": [
             {"id": "crate-near", "mesh": "box", "material": "plain", "collider": cube, "grounded": {"offset": 0.5}, "transform": {"translation": [20, 0, 0]}},

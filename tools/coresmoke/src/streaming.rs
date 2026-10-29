@@ -90,11 +90,11 @@ fn load() -> Result<Engine, String> {
     let path = root.join(FIXTURE);
     let source = std::fs::read_to_string(&path)
         .map_err(|error| format!("cannot read {FIXTURE}: {error}"))?;
+    let mut engine = Engine::new(EngineConfig::default());
+    engine.app.add_bricks(engine::bricks::standard());
     let document = SceneDocument::from_json(&source).map_err(|error| error.to_string())?;
     let files =
         engine_native::files::scene_files(&path, &source).map_err(|error| error.to_string())?;
-    let mut engine = Engine::new(EngineConfig::default());
-    engine.app.add_bricks(engine::bricks::standard());
     let _scene = document
         .instantiate_with(engine.app.world_mut(), &files)
         .map_err(|error| format!("{FIXTURE}: {error}"))?;
