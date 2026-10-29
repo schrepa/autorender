@@ -1265,7 +1265,8 @@ fn check_upload_structs(root: &Path) -> Result<(), String> {
     }
 }
 
-pub fn check(root: &Path) -> Result<(), String> {
+pub fn check(repository: &crate::Repository) -> Result<(), String> {
+    let root = repository.root.as_path();
     let modules = modules()?;
     let mirrors = check_layouts(&modules);
     let entry_points = check_bindings(&modules);
@@ -1279,7 +1280,7 @@ pub fn check(root: &Path) -> Result<(), String> {
     let structs = check_upload_structs(root);
     let handovers = handovers::check(&modules);
     let fades = fades::check(&modules);
-    let eye_reads = eye_reads::check(root);
+    let eye_reads = eye_reads::check(repository);
     let errors: Vec<String> = [
         mirrors.as_ref().err(),
         entry_points.as_ref().err(),

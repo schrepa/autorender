@@ -1,6 +1,10 @@
-use crate::{Problems, rust};
+use super::{Problems, rust};
+use crate::{Errors, Rules};
 
-pub const LOCKFILES: &[&str] = &["Cargo.lock", "web/package-lock.json"];
+pub fn lockfile(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name == "Cargo.lock" || name == "package-lock.json"
+}
 
 const MARKERS: [&str; 4] = [
     concat!("TO", "DO"),
@@ -14,58 +18,6 @@ const GROUPS: [&str; 2] = ["warnings", "clippy::all"];
 const ENGINE_DENIES: [&str; 2] = [
     "clippy::wildcard_enum_match_arm",
     "clippy::match_wildcard_for_single_variants",
-];
-
-const TILE_MAPS: (&str, &str) = (
-    "crates/engine_terrain/src/runtime/",
-    "crates/engine_terrain/src/runtime/tile_map.rs",
-);
-
-pub const UNSAFE_FILES: &[(&str, &str)] = &[
-    (
-        "crates/engine_profile/src/allocator.rs",
-        "implements the standard allocator's unsafe contract",
-    ),
-    (
-        "crates/engine_profiler/src/counters.rs",
-        "Vulkan's layer entry points and calls",
-    ),
-    (
-        "crates/engine_profiler/src/load.rs",
-        "Windows' process, processor time and GPU counter calls",
-    ),
-    (
-        "crates/engine_profiler/src/pix.rs",
-        "loads PIX's capturer and calls its capture functions",
-    ),
-    (
-        "crates/engine_profiler/src/renderdoc.rs",
-        "calls RenderDoc's capture functions",
-    ),
-    (
-        "crates/engine_profiler/src/sampler/linux.rs",
-        "signals threads and reads their registers",
-    ),
-    (
-        "crates/engine_profiler/src/sampler/macos.rs",
-        "suspends threads and reads their registers",
-    ),
-    (
-        "crates/engine_profiler/src/sampler/mod.rs",
-        "follows frame pointers within a thread's stack and reads sampled code",
-    ),
-    (
-        "crates/engine_profiler/src/sampler/windows.rs",
-        "suspends threads, reads their registers and unwinds them",
-    ),
-    (
-        "crates/engine_profiler/src/stack.rs",
-        "queries the calling thread's stack limits and committed pages",
-    ),
-    (
-        "crates/engine_render/src/renderer/native.rs",
-        "starts and stops a graphics debugger's capture",
-    ),
 ];
 
 pub fn check_text(path: &str, text: &str, problems: &mut Problems) {
@@ -91,7 +43,14 @@ pub fn check_text(path: &str, text: &str, problems: &mut Problems) {
     }
 }
 
-pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems) {
+pub fn check(
+    path: &str,
+    source: &str,
+    lints: &[String],
+    libraries: &[String],
+    rules: &Rules,
+    problems: &mut Problems,
+) {
     let split = rust::split(source);
     if crate_root(path) {
         let code: String = split.code.concat().split_whitespace().collect();
@@ -112,7 +71,7 @@ pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems
                 }
             }
         }
-        if engine_library(path) {
+        if libraries.iter().any(|library| library == path) {
             let denied: Vec<&str> = code
                 .match_indices("#![deny(")
                 .flat_map(|(at, attribute)| {
@@ -131,16 +90,15 @@ pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems
             }
         }
     }
-    if path.starts_with(TILE_MAPS.0) && path != TILE_MAPS.1 {
-        let code: String = split.code.concat().split_whitespace().collect();
-        if code.contains("HashMap<TileKey") {
-            problems.file(
-                path,
-                "keys a hash map by tile: use TileMap (tile_map.rs), whose tiles walk in key order",
-            );
+    for forbidden in rules.forbidden {
+        if path.starts_with(forbidden.within) && path != forbidden.except {
+            let code: String = split.code.concat().split_whitespace().collect();
+            if code.contains(forbidden.code) {
+                problems.file(path, forbidden.rule);
+            }
         }
     }
-    let listed = UNSAFE_FILES.iter().any(|(file, _)| *file == path);
+    let listed = rules.exceptions.unsafe_files.contains(&path);
     let first = split
         .code
         .iter()
@@ -149,16 +107,16 @@ pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems
         problems.at(
             path,
             line + 1,
-            "unsafe code outside the files tools/policy/src/sources.rs lists (UNSAFE_FILES); \
-             keep it in a listed file, or list this one with its reason",
+            "unsafe code outside the exceptions' unsafe_files: keep it in a listed file, or \
+             list this one",
         );
     }
     if listed && !split.code.iter().any(|code| rust::has_word(code, "unsafe")) {
         problems.at(
             path,
             1,
-            "listed in UNSAFE_FILES (tools/policy/src/sources.rs) but has no unsafe code: \
-             remove it from the list",
+            "listed in the exceptions' unsafe_files but has no unsafe code: remove it from \
+             the list",
         );
     }
     for (index, code) in split.code.iter().enumerate() {
@@ -184,16 +142,14 @@ pub fn check(path: &str, source: &str, lints: &[String], problems: &mut Problems
     }
 }
 
-const ENGINE_ERROR: &str = "crates/engine/src/error.rs";
-
 pub struct ErrorType {
     path: String,
     line: usize,
     name: String,
 }
 
-pub fn error_types(path: &str, source: &str, found: &mut Vec<ErrorType>) {
-    if !path.starts_with("crates/") || path == ENGINE_ERROR {
+pub fn error_types(path: &str, source: &str, errors: &Errors, found: &mut Vec<ErrorType>) {
+    if !path.starts_with(errors.within) || path == errors.file {
         return;
     }
     for (index, code) in rust::split(source).code.iter().enumerate() {
@@ -221,10 +177,12 @@ pub fn error_types(path: &str, source: &str, found: &mut Vec<ErrorType>) {
 pub fn conversions(
     root: &std::path::Path,
     found: &[ErrorType],
+    errors: &Errors,
     problems: &mut Problems,
 ) -> Result<(), String> {
-    let source = std::fs::read_to_string(root.join(ENGINE_ERROR))
-        .map_err(|error| format!("cannot read {ENGINE_ERROR}: {error}"))?;
+    let file = errors.file;
+    let source = std::fs::read_to_string(root.join(file))
+        .map_err(|error| format!("cannot read {file}: {error}"))?;
     let impls: Vec<String> = rust::split(&source)
         .code
         .iter()
@@ -242,7 +200,7 @@ pub fn conversions(
                 error.line,
                 &format!(
                     "{} is a public engine error without a conversion into engine::Error: \
-                     add `impl From<{}> for Error` to {ENGINE_ERROR}, an exhaustive match \
+                     add `impl From<{}> for Error` to {file}, an exhaustive match \
                      choosing each variant's code",
                     error.name, error.name
                 ),
@@ -257,12 +215,6 @@ fn covers(key: &str, lint: &str) -> bool {
         || key
             .strip_suffix("all")
             .is_some_and(|tool| tool.ends_with("::") && lint.starts_with(tool))
-}
-
-fn engine_library(path: &str) -> bool {
-    path.strip_prefix("crates/")
-        .and_then(|rest| rest.strip_suffix("/src/lib.rs"))
-        .is_some_and(|name| !name.contains('/'))
 }
 
 fn crate_root(path: &str) -> bool {

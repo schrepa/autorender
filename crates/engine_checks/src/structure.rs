@@ -1,46 +1,20 @@
-use std::path::Path;
-use std::process::Command;
+use crate::{Exceptions, Repository};
 
 const MAX_FILE_LINES: usize = 1500;
 const MAX_STRUCT_FIELDS: usize = 30;
 
-const LONG_FILES: &[(&str, usize)] = &[
-    ("crates/engine_render/src/meshes/terrain.wgsl", 1643),
-    ("crates/engine_render/src/water_sim.wgsl", 1645),
-    ("crates/engine_terrain/src/layers.rs", 1589),
-    ("crates/engine_terrain/src/steady_water.rs", 2360),
-    ("tools/lodbuild/src/simplify.rs", 2009),
-];
-
-const WIDE_STRUCTS: &[(&str, &str, usize)] = &[
-    ("crates/engine_core/src/frame_stats.rs", "RenderStats", 42),
-    (
-        "crates/engine_core/src/interpolation/gpu.rs",
-        "GpuInputs",
-        35,
-    ),
-    ("crates/engine_render/src/clouds.rs", "CloudPass", 48),
-    ("crates/engine_render/src/post.rs", "PostPass", 32),
-    ("crates/engine_render/src/renderer.rs", "Renderer", 37),
-    ("crates/engine_render/src/scatter.rs", "ScatterPass", 40),
-    ("crates/engine_render/src/terrain/atlas.rs", "TileAtlas", 32),
-    (
-        "crates/engine_terrain/src/runtime/residency.rs",
-        "TerrainState",
-        32,
-    ),
-];
-
-pub fn check(root: &Path) -> Result<(), String> {
+pub fn check(repository: &Repository, exceptions: &Exceptions) -> Result<(), String> {
+    let root = repository.root.as_path();
     let mut problems = Vec::new();
     let mut long = Vec::new();
     let mut wide = Vec::new();
-    let games: Vec<String> = crate::process::clients()
-        .iter()
-        .filter(|client| client.game.is_some() && !client.folder.starts_with("crates/"))
-        .map(|client| format!("{}/", client.folder))
+    let games: Vec<String> = repository
+        .projects()
+        .filter_map(|project| project.path.as_deref())
+        .filter(|folder| !folder.is_empty() && !folder.starts_with("crates/"))
+        .map(|folder| format!("{folder}/"))
         .collect();
-    for path in sources(root)? {
+    for path in crate::files::sources(root)? {
         if games.iter().any(|folder| path.starts_with(folder.as_str())) {
             continue;
         }
@@ -49,7 +23,7 @@ pub fn check(root: &Path) -> Result<(), String> {
         let lines = text.lines().count();
         if lines > MAX_FILE_LINES {
             long.push(path.clone());
-            match LONG_FILES.iter().find(|(file, _)| *file == path) {
+            match exceptions.long_files.iter().find(|(file, _)| *file == path) {
                 Some(&(_, most)) if lines > most => problems.push(format!(
                     "{path}: {lines} lines, more than its {most}: it may only shrink (split it)"
                 )),
@@ -67,7 +41,8 @@ pub fn check(root: &Path) -> Result<(), String> {
                 continue;
             }
             wide.push((path.clone(), name.clone()));
-            match WIDE_STRUCTS
+            match exceptions
+                .wide_structs
                 .iter()
                 .find(|(file, wide, _)| *file == path && *wide == name)
             {
@@ -81,66 +56,31 @@ pub fn check(root: &Path) -> Result<(), String> {
             }
         }
     }
-    for (path, _) in LONG_FILES {
+    for (path, _) in exceptions.long_files {
         if !long.iter().any(|file| file == path) {
             problems.push(format!(
-                "{path} is listed in LONG_FILES (tools/xtask/src/structure.rs) but is no longer \
-                 over {MAX_FILE_LINES} lines: remove its entry"
+                "{path} is listed in the exceptions' long_files but is no longer over \
+                 {MAX_FILE_LINES} lines: remove its entry"
             ));
         }
     }
-    for (path, name, _) in WIDE_STRUCTS {
+    for (path, name, _) in exceptions.wide_structs {
         if !wide.iter().any(|(file, wide)| file == path && wide == name) {
             problems.push(format!(
-                "{path}: struct {name} is listed in WIDE_STRUCTS (tools/xtask/src/structure.rs) \
-                 but no longer has over {MAX_STRUCT_FIELDS} fields: remove its entry"
+                "{path}: struct {name} is listed in the exceptions' wide_structs but no longer \
+                 has over {MAX_STRUCT_FIELDS} fields: remove its entry"
             ));
         }
     }
     if problems.is_empty() {
         println!(
             "No source grew: {} long files and {} wide structs, none over its size.",
-            LONG_FILES.len(),
-            WIDE_STRUCTS.len()
+            exceptions.long_files.len(),
+            exceptions.wide_structs.len()
         );
         return Ok(());
     }
     Err(problems.join("\n"))
-}
-
-pub(crate) fn sources(root: &Path) -> Result<Vec<String>, String> {
-    let output = Command::new("git")
-        .args([
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-        ])
-        .current_dir(root)
-        .output()
-        .map_err(|error| format!("cannot run git ls-files: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git ls-files failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let mut files: Vec<String> = String::from_utf8_lossy(&output.stdout)
-        .split('\0')
-        .filter(|path| {
-            [".rs", ".wgsl", ".ts", ".mjs"]
-                .iter()
-                .any(|extension| path.ends_with(extension))
-                && !path.starts_with("vendor/")
-                && !path.contains("/generated/")
-                && root.join(path).is_file()
-        })
-        .map(str::to_owned)
-        .collect();
-    files.sort();
-    files.dedup();
-    Ok(files)
 }
 
 fn code(text: &str) -> String {

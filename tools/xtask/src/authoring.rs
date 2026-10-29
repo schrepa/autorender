@@ -53,6 +53,7 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         .expect("the client list serializes")
         + "
 ";
+    let repository = crate::rules::repository(root)?;
     let engine = crate::bricks::standard_engine();
     let world = engine.app.world();
     let development = engine_dev::schemas::generated(world)?;
@@ -92,10 +93,14 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
             crate::coverage::coverage(root, &development)?,
         ),
         (
-            crate::bricks::BRICKS_FILE.to_owned(),
-            crate::bricks::bricks_json(root)?,
+            engine_checks::bricks::FILE.to_owned(),
+            engine_checks::bricks::bricks_json(repository, &mut crate::bricks::standard_engine())?,
         ),
     ]);
+    files.extend(engine_checks::faces::files(
+        repository,
+        &engine_checks::bricks::registered_crates(&engine),
+    )?);
     for client in crate::process::clients()
         .iter()
         .filter(|client| client.schema)
@@ -199,31 +204,9 @@ fn tooling_types(root: &Path) -> Result<(), String> {
 }
 
 pub fn write_generated(root: &Path) -> Result<(), String> {
-    for (path, contents) in generated(root)? {
-        if let Some(directory) = Path::new(&path).parent() {
-            fs::create_dir_all(root.join(directory))
-                .map_err(|error| format!("cannot create {}: {error}", directory.display()))?;
-        }
-        fs::write(root.join(&path), contents)
-            .map_err(|error| format!("cannot write {path}: {error}"))?;
-        println!("Generated {path}.");
-    }
-    Ok(())
+    engine_checks::generated::write(root, &generated(root)?)
 }
 
 pub fn check_generated(root: &Path) -> Result<(), String> {
-    let mut stale = Vec::new();
-    for (path, contents) in generated(root)? {
-        match fs::read_to_string(root.join(&path)) {
-            Ok(saved) if saved.replace("\r\n", "\n") == contents => {
-                println!("Generated file matches {path}.");
-            }
-            Ok(_) => stale.push(format!("{path} is out of date")),
-            Err(error) => stale.push(format!("cannot read {path}: {error}")),
-        }
-    }
-    if stale.is_empty() {
-        return Ok(());
-    }
-    Err(format!("{}; run `cargo xtask schema`", stale.join("; ")))
+    engine_checks::generated::check(root, &generated(root)?, "cargo xtask schema")
 }

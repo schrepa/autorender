@@ -30,7 +30,7 @@ sha2.workspace = true
 engine_assetc.workspace = true
 engine_profiler = { workspace = true, features = ["load"] }
 engine = { workspace = true, features = ["schema"] }
-policy.workspace = true
+engine_checks.workspace = true
 bevy_ecs = { workspace = true, features = ["debug"] }
 serde_json.workspace = true
 toml_edit.workspace = true

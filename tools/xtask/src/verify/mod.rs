@@ -13,6 +13,7 @@ const USAGE: &str = "usage: cargo xtask verify [--level quick|pr|merge] [--base 
 
 const QUICK_STAGES: &[&str] = &[
     "policy",
+    "comments",
     "fmt",
     "web layers",
     "web errors",
@@ -23,7 +24,8 @@ const QUICK_STAGES: &[&str] = &[
     "equivalence matrix",
     "coverage",
     "path map",
-    "features",
+    "dependencies",
+    "faces",
     "schedule ambiguities",
     "exports",
     "structure",
@@ -216,7 +218,9 @@ fn steps<'a>(
             steps.push(Step::new(stage.name, move || Ok((stage.run)(root)?)));
         }
         if everything || selection.shaders {
-            steps.push(Step::new("gpu", move || Ok(crate::gpu::check(root)?)));
+            steps.push(Step::new("gpu", move || {
+                Ok(engine_checks::gpu::check(crate::rules::repository(root)?)?)
+            }));
         }
         if everything || !selection.packages.is_empty() {
             let mut arguments = vec!["clippy".to_owned()];
@@ -255,7 +259,7 @@ fn steps<'a>(
         return Ok(steps);
     }
     steps.push(Step::new("lint", move || {
-        Ok(crate::lint::run_stages(root, crate::lint::LINT)?)
+        Ok(engine_checks::stages::run(root, crate::lint::LINT)?)
     }));
     let smokes: Vec<String> = if level == Level::Merge || everything || selection.all_smokes {
         vec!["--all".into()]

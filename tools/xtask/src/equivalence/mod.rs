@@ -9,10 +9,10 @@ use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant, SystemTime};
 
+use engine_checks::bench;
 use serde_json::{Value, json};
 
 use crate::Failure;
-use crate::bench;
 use crate::heavy::HeavyRun;
 use crate::measure::{self, git};
 

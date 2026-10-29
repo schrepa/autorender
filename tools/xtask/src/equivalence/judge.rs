@@ -2,11 +2,11 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
+use engine_checks::bench;
 use serde_json::{Map, Value};
 
 use super::matrix::Cell;
 use super::session::{Run, Shot};
-use crate::bench;
 
 struct Difference {
     pixels: usize,

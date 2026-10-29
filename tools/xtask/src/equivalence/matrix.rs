@@ -255,8 +255,8 @@ fn scene(entry: &Value, root: &Path, problems: &mut Vec<String>) -> (String, Str
 fn options(entry: &Value, problems: &mut Vec<String>) -> Vec<(String, String)> {
     let mut options = Vec::new();
     for (option, value) in entry["options"].as_object().into_iter().flatten() {
-        let text = crate::bench::switch(value);
-        if let Some(values) = crate::bench::setting_values(option)
+        let text = engine_checks::bench::switch(value);
+        if let Some(values) = engine_checks::bench::setting_values(option)
             && !values.contains(&text.as_str())
         {
             problems.push(format!(

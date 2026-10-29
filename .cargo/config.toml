@@ -1,6 +1,5 @@
 [alias]
 xtask = "run -p xtask --"
-policy = "run -p policy --"
 
 [target.wasm32-unknown-unknown]
 rustflags = ["-C", "target-feature=+simd128"]

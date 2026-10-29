@@ -509,7 +509,7 @@ pub(crate) fn work_counters(stats: &Value) -> Map<String, Value> {
     }
     let mut out = Map::new();
     flatten(stats, String::new(), &mut out);
-    for name in bench::NOT_WORK {
+    for name in engine_checks::bench::NOT_WORK {
         out.remove(*name);
     }
     out
@@ -518,7 +518,9 @@ pub(crate) fn work_counters(stats: &Value) -> Map<String, Value> {
 fn catalogued(catalog: &[Value], name: &str, work: bool) -> bool {
     catalog
         .iter()
-        .find(|entry| bench::covers(entry["name"].as_str().unwrap_or_default(), name))
+        .find(|entry| {
+            engine_checks::bench::covers(entry["name"].as_str().unwrap_or_default(), name)
+        })
         .is_some_and(|entry| (entry["kind"] == "work") == work)
 }
 
@@ -1048,7 +1050,7 @@ pub(crate) fn measure_with(
     let deadline = spec["deadline"].as_str().and_then(parse_iso);
     let pairs = spec["pairs"].as_u64().unwrap_or(MIN_PAIRS);
     let want_profiles = spec["want"]["profiles"] == true;
-    let catalog = bench::catalog(root)?;
+    let catalog = engine_checks::bench::catalog(root)?;
     let project = task_project(root, spec)?;
     let mut builds: BTreeMap<String, Build> = BTreeMap::new();
     let mut commits = vec![base_sha, candidate_sha];
@@ -1281,7 +1283,7 @@ pub fn check_format(report: &Value, formats: &Path, kind: &str) -> Result<(), St
             "the formats file holds no {kind} schema (schemas.{kind})"
         ));
     }
-    let problems = crate::formats::problems(schema, &with_file_hashes(report));
+    let problems = engine_checks::formats::problems(schema, &with_file_hashes(report));
     if !problems.is_empty() {
         return Err(format!(
             "the report does not match the factory's {kind} format:
