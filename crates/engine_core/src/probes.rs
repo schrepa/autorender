@@ -11,7 +11,7 @@ use crate::bricks::{Brick, Bricks};
 use crate::extraction::Nearest;
 use crate::sections::environment_section;
 use crate::{GlobalTransforms, RenderSnapshot, TransformIndex};
-use engine_settings::{InvalidSetting, settings};
+use engine_settings::{InvalidSetting, Rule, settings};
 
 pub struct ReflectionProbes;
 
@@ -65,13 +65,12 @@ impl ReflectionProbe {
 
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         if !(self.extent.is_finite() && self.extent.cmpgt(Vec3::ZERO).all()) {
-            return Err(InvalidSetting::new("extent", "must be finite and above 0"));
+            return Err(
+                InvalidSetting::broken("extent", Rule::above(0.0)).got(self.extent.to_array()),
+            );
         }
         if !(self.blend.is_finite() && self.blend >= 0.0) {
-            return Err(InvalidSetting::new(
-                "blend",
-                "must be finite and at least 0",
-            ));
+            return Err(InvalidSetting::broken("blend", Rule::at_least(0.0)).got(self.blend));
         }
         match self.interior {
             Some(interior) => interior

@@ -1,4 +1,5 @@
 import type { JobCacheIndex, PackDirectory } from "../../pkg/engine_worker";
+import { engineFailure } from "../generated/errors";
 import { JOB_CACHE_MIB, MAX_JOB_CACHE_MIB } from "../generated/host";
 
 const DIRECTORY = "engine-job-cache";
@@ -18,7 +19,7 @@ export function jobCacheSettings(): { budget: number; verify: boolean } | undefi
   const requested = new URLSearchParams(location.search).get("jobcache");
   const mebibytes = requested !== null && /^\d+$/.test(requested) ? Number(requested) : undefined;
   if (requested !== null && requested !== "off" && requested !== "verify" && !(mebibytes !== undefined && mebibytes <= MAX_JOB_CACHE_MIB)) {
-    throw new Error(`?jobcache is off, verify or 0 to ${MAX_JOB_CACHE_MIB} MiB, not ${requested}.`);
+    throw engineFailure({ code: "invalid_value", path: "?jobcache", allowed: { kind: "range", min: 0, max: MAX_JOB_CACHE_MIB }, got: requested });
   }
   if (requested === "off" || typeof navigator === "undefined" || !navigator.storage?.getDirectory) return undefined;
   return { budget: (mebibytes ?? JOB_CACHE_MIB) * MIB, verify: requested === "verify" };
@@ -157,9 +158,11 @@ async function openPacks(bindings: IndexBindings): Promise<Pack[]> {
 
 async function fetchRange(url: string, offset: number, length: number): Promise<Uint8Array> {
   const response = await fetch(url, { headers: { Range: `bytes=${offset}-${offset + length - 1}` } });
-  if (!response.ok) throw new Error(`${url}: ${response.status}`);
+  if (!response.ok) throw engineFailure({ code: "source_io", path: "$", got: { url, status: response.status } });
   const bytes = new Uint8Array(await response.arrayBuffer());
   const range = response.status === 206 ? bytes : bytes.slice(offset, offset + length);
-  if (range.length !== length) throw new Error(`${url}: ${range.length} bytes, not ${length}`);
+  if (range.length !== length) {
+    throw engineFailure({ code: "source_io", path: "$", allowed: { kind: "range", min: length, max: length }, got: range.length });
+  }
   return range;
 }

@@ -1,10 +1,10 @@
-use engine_core::{Interior, ReflectionProbe, bevy_ecs::world::EntityWorldMut, glam::Vec3};
+use engine_core::{Error, Interior, ReflectionProbe, bevy_ecs::world::EntityWorldMut, glam::Vec3};
 use engine_settings::settings;
 use serde::{Deserialize, Serialize};
 
 use crate::components::{Placement, Reach, SceneComponent};
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneError, SceneFiles};
+use crate::{SceneDocument, SceneFiles};
 
 settings! {
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -61,7 +61,7 @@ impl SceneComponent for SceneReflectionProbe {
         _: &str,
         _: &SceneDocument,
         _: Option<&SceneFiles>,
-    ) -> Result<ReflectionProbe, SceneError> {
+    ) -> Result<ReflectionProbe, Error> {
         Ok(self.runtime())
     }
 

@@ -1,9 +1,9 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use engine_core::{MAX_TEXTURE_DIMENSION, Texture};
+use engine_core::{Error, Expected, MAX_TEXTURE_DIMENSION, Texture};
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
-use crate::{SceneError, SceneFiles, files::valid_uri};
+use crate::{SceneFiles, files::valid_uri};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -60,11 +60,7 @@ impl SceneTexture {
         }
     }
 
-    pub(crate) fn texture(
-        &self,
-        path: &str,
-        files: Option<&SceneFiles>,
-    ) -> Result<Texture, SceneError> {
+    pub(crate) fn texture(&self, path: &str, files: Option<&SceneFiles>) -> Result<Texture, Error> {
         match (&self.uri, self.width, self.height, &self.rgba8) {
             (Some(uri), None, None, None) => {
                 let uri_path = format!("{path}.uri");
@@ -75,40 +71,45 @@ impl SceneTexture {
                 }
             }
             (None, Some(width), Some(height), Some(rgba8)) => {
-                if !(1..=MAX_TEXTURE_DIMENSION).contains(&width)
-                    || !(1..=MAX_TEXTURE_DIMENSION).contains(&height)
-                {
-                    return Err(SceneError::new(
-                        ErrorCode::InvalidTexture,
-                        path,
-                        format!("texture dimensions must be 1..{MAX_TEXTURE_DIMENSION}"),
-                    ));
+                for (field, size) in [("width", width), ("height", height)] {
+                    if !(1..=MAX_TEXTURE_DIMENSION).contains(&size) {
+                        return Err(
+                            Error::new(ErrorCode::InvalidTexture, format!("{path}.{field}"))
+                                .range(1.0, f64::from(MAX_TEXTURE_DIMENSION))
+                                .got(size),
+                        );
+                    }
                 }
                 let bytes = width as usize * height as usize * 4;
                 let encoded = bytes.div_ceil(3) * 4;
                 if rgba8.len() != encoded {
-                    return Err(SceneError::new(
-                        ErrorCode::InvalidTexture,
-                        format!("{path}.rgba8"),
-                        "base64 length must match width × height × 4 bytes",
-                    ));
+                    return Err(
+                        Error::new(ErrorCode::InvalidTexture, format!("{path}.rgba8"))
+                            .expected(Expected::Base64)
+                            .range(encoded as f64, encoded as f64)
+                            .got(rgba8.len()),
+                    );
                 }
-                let pixels = STANDARD.decode(rgba8).map_err(|error| {
-                    SceneError::new(
-                        ErrorCode::InvalidTexture,
-                        format!("{path}.rgba8"),
-                        error.to_string(),
-                    )
+                let pixels = STANDARD.decode(rgba8).map_err(|_| {
+                    Error::new(ErrorCode::InvalidTexture, format!("{path}.rgba8"))
+                        .expected(Expected::Base64)
                 })?;
-                Texture::from_rgba(width, height, pixels).map_err(|error| {
-                    SceneError::new(ErrorCode::InvalidTexture, path, error.to_string())
-                })
+                Texture::from_rgba(width, height, pixels)
+                    .map_err(|error| error.coded(ErrorCode::InvalidTexture).within(path))
             }
-            _ => Err(SceneError::new(
-                ErrorCode::InvalidTexture,
-                path,
-                "a texture has either width, height and rgba8, or a uri",
-            )),
+            (uri, width, height, rgba8) => Err(Error::new(ErrorCode::InvalidTexture, path)
+                .got(
+                    [
+                        ("uri", uri.is_some()),
+                        ("width", width.is_some()),
+                        ("height", height.is_some()),
+                        ("rgba8", rgba8.is_some()),
+                    ]
+                    .into_iter()
+                    .filter_map(|(field, given)| given.then_some(field))
+                    .collect::<Vec<_>>(),
+                )
+                .variants(["uri", "width,height,rgba8"])),
         }
     }
 }

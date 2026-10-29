@@ -1,5 +1,5 @@
 use engine_core::bevy_ecs::prelude::Entity;
-use engine_core::{DrawState, ErrorCode};
+use engine_core::{DrawState, Error, ErrorCode, Expected};
 use engine_dev::results::{
     CaptureResult, FramesResult, GameResult, KeptArtifact, WatchResult, result,
 };
@@ -14,9 +14,6 @@ use serde_json::{Map, Value, json};
 use crate::host::policy::BENCHMARK_LIMIT_MS;
 use crate::host::{AdapterStatus, Distribution, HostEnvironment, KNOWN_DIFFERENCES, now_ms};
 use crate::{Game, GameHost};
-
-const NEEDS_VIEW: &str = "benchmark needs a visible, nonzero paused canvas";
-const VIEW_CHANGED: &str = "visibility, canvas size or paused state changed during benchmark";
 
 #[derive(Debug)]
 pub(crate) enum Pending {
@@ -102,7 +99,7 @@ pub(crate) struct BenchmarkRun {
     end: Value,
 }
 
-type Stopped = (ErrorCode, String);
+type Stopped = Error;
 
 fn query(name: &str) -> Value {
     json!({ "verb": "query", "name": name })
@@ -119,34 +116,46 @@ fn shown(alpha: Option<&Value>) -> Value {
     }
 }
 
-fn parsed<T: DeserializeOwned>(control: &Map<String, Value>) -> Result<T, engine_dev::DevError> {
+fn parsed<T: DeserializeOwned>(control: &Map<String, Value>) -> Result<T, Error> {
     let mut fields = control.clone();
     fields.remove("op");
-    Ok(engine_scene::parse_value(Value::Object(fields))?)
+    engine_core::parse_value(Value::Object(fields))
+}
+
+fn failed_frame(code: ErrorCode, frame: u32, frames: u32, failed: &str) -> Error {
+    Error::new(code, "$").got(json!({ "frame": frame, "frames": frames, "failed": failed }))
+}
+
+fn view(context: &HostContext, interrupted: bool) -> Value {
+    json!({
+        "width": context.width,
+        "height": context.height,
+        "paused": context.paused,
+        "interrupted": interrupted,
+    })
 }
 
 impl BenchmarkRun {
     fn waited(&mut self, now: f64) -> Result<bool, Stopped> {
         if now - self.started >= BENCHMARK_LIMIT_MS as f64 {
-            return Err((
-                ErrorCode::BenchmarkTimeout,
-                "benchmark exceeded ten seconds; reduce samples or warmup; gameplay may have advanced"
-                    .into(),
-            ));
+            return Err(Error::new(ErrorCode::BenchmarkTimeout, "$")
+                .at_most(BENCHMARK_LIMIT_MS)
+                .got(now - self.started));
         }
         if let (Some(previous), Some(stats)) = (self.previous, self.unwaited.take())
             && self.ran > self.warmup
         {
             let mut fields = Vec::new();
             numbers(&stats, "", &mut fields);
-            if let Some((field, _)) = fields
+            if let Some((field, value)) = fields
                 .iter()
                 .find(|(_, value)| !value.is_finite() || *value < 0.0)
             {
-                return Err((
-                    ErrorCode::InvalidMeasurement,
-                    format!("invalid {field} statistic"),
-                ));
+                let mut got = Map::new();
+                got.insert(field.clone(), json!(value));
+                return Err(Error::new(ErrorCode::InvalidMeasurement, "$")
+                    .expected(Expected::Finite)
+                    .got(got));
             }
             self.intervals.push((now - previous).max(0.0));
             self.measurements.push(stats);
@@ -228,18 +237,16 @@ impl<G: Game> GameHost<G> {
         self.dev_pending = None;
         if line.len() > engine_dev::MAX_REQUEST_BYTES {
             return self.dev_refused(
-                ErrorCode::RequestTooLarge,
-                "$.command",
-                &format!("command exceeds {} bytes", engine_dev::MAX_REQUEST_BYTES),
+                Error::new(ErrorCode::RequestTooLarge, "$.command")
+                    .at_most(engine_dev::MAX_REQUEST_BYTES as u64)
+                    .got(line.len()),
             );
         }
         let command = match serde_json::from_str::<Value>(line) {
             Ok(command @ Value::Object(_)) if command["verb"].is_string() => command,
             _ => {
                 return self.dev_refused(
-                    ErrorCode::InvalidRequest,
-                    "$.command",
-                    "expected an object with a verb string",
+                    Error::new(ErrorCode::InvalidRequest, "$.command").expected(Expected::Object),
                 );
             }
         };
@@ -260,9 +267,7 @@ impl<G: Game> GameHost<G> {
     pub fn dev_resume(&mut self, outcome: Outcome, context: &HostContext) -> Step {
         let Some(pending) = self.dev_pending.take() else {
             return self.dev_refused(
-                ErrorCode::InvalidRequest,
-                "$",
-                "no development request is under way",
+                Error::new(ErrorCode::InvalidRequest, "$").expected(Expected::Running),
             );
         };
         match pending {
@@ -276,12 +281,13 @@ impl<G: Game> GameHost<G> {
                 ran,
                 show,
             } => {
-                if let Some(message) = outcome.failed {
-                    return self.dev_refused(
+                if let Some(failed) = outcome.failed {
+                    return self.dev_refused(failed_frame(
                         ErrorCode::RenderFailed,
-                        "$",
-                        &format!("frame {} of {count} failed: {message}", ran + 1),
-                    );
+                        ran + 1,
+                        count,
+                        &failed,
+                    ));
                 }
                 let ran = ran + 1;
                 if ran < count {
@@ -307,8 +313,10 @@ impl<G: Game> GameHost<G> {
                 self.dev_done(reply, context)
             }
             Pending::Shown { mut reply } => {
-                if let Some(message) = outcome.failed {
-                    return self.dev_refused(ErrorCode::CaptureFailed, "$", &message);
+                if let Some(failed) = outcome.failed {
+                    return self.dev_refused(
+                        Error::new(ErrorCode::CaptureFailed, "$").got(failed),
+                    );
                 }
                 if let Some(artifact) = outcome.artifact {
                     let observation = &reply["observation"];
@@ -327,13 +335,16 @@ impl<G: Game> GameHost<G> {
             }
             Pending::Game { name } => {
                 if let Some(names) = outcome.missing {
-                    return self.dev_refused_with(engine_dev::DevError {
-                        code: ErrorCode::UnsupportedCommand,
-                        ..engine_dev::DevError::unknown("$.args.name", &name, names)
-                    });
+                    return self.dev_refused(
+                        Error::new(ErrorCode::UnsupportedCommand, "$.args.name")
+                            .got(&name)
+                            .variants(names),
+                    );
                 }
-                if let Some(message) = outcome.failed {
-                    return self.dev_refused(ErrorCode::GameRule, "$.args.args", &message);
+                if let Some(failed) = outcome.failed {
+                    return self.dev_refused(
+                        Error::new(ErrorCode::GameRule, "$.args.args").got(failed),
+                    );
                 }
                 let mut rendered = self.dev_invoke(&control("render", json!({})), context);
                 if rendered["ok"] == true {
@@ -347,20 +358,20 @@ impl<G: Game> GameHost<G> {
             Pending::Reload { .. } => {
                 if outcome.missing.is_some() {
                     return self.dev_refused(
-                        ErrorCode::UnsupportedCommand,
-                        "$.name",
-                        "this game has no authored scene reload adapter",
+                        Error::new(ErrorCode::UnsupportedCommand, "$.name").got("reload"),
                     );
                 }
-                let message = outcome.failed.unwrap_or_else(|| {
-                    "the host handed the reload no scene (dev_reloaded)".to_owned()
-                });
-                self.dev_refused(ErrorCode::SourceIo, "$", &message)
+                let refused = Error::new(ErrorCode::SourceIo, "$");
+                self.dev_refused(match outcome.failed {
+                    Some(failed) => refused.got(failed),
+                    None => refused.expected(Expected::Present),
+                })
             }
             Pending::Benchmark(run) => self.dev_benchmark(run, &outcome, context),
             Pending::Probe { reply, waits } => {
-                if let Some(message) = outcome.failed {
-                    return self.dev_refused(ErrorCode::RenderFailed, "$", &message);
+                if let Some(failed) = outcome.failed {
+                    return self
+                        .dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(failed));
                 }
                 self.dev_probe(reply, waits, context)
             }
@@ -372,23 +383,23 @@ impl<G: Game> GameHost<G> {
                 slot,
                 waits,
             } => {
-                if let Some(message) = outcome.failed {
-                    return self.dev_refused(ErrorCode::RenderFailed, "$", &message);
+                if let Some(failed) = outcome.failed {
+                    return self
+                        .dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(failed));
                 }
                 self.dev_explain_wait((id, entity), slot, waits, context)
             }
             Pending::ExplainScene => {
                 if outcome.missing.is_some() {
                     return self.dev_refused(
-                        ErrorCode::UnsupportedCommand,
-                        "$.about",
-                        "this host loads no scene source",
+                        Error::new(ErrorCode::UnsupportedCommand, "$.about").got("scene"),
                     );
                 }
-                let message = outcome
-                    .failed
-                    .unwrap_or_else(|| "the host handed the explanation no scene".to_owned());
-                self.dev_refused(ErrorCode::SourceIo, "$", &message)
+                let refused = Error::new(ErrorCode::SourceIo, "$");
+                self.dev_refused(match outcome.failed {
+                    Some(failed) => refused.got(failed),
+                    None => refused.expected(Expected::Present),
+                })
             }
             Pending::Watch(run) => self.dev_watch(run, &outcome, context),
         }
@@ -401,9 +412,9 @@ impl<G: Game> GameHost<G> {
         }
         if waits >= LOSS_WAITS {
             return self.dev_refused(
-                ErrorCode::RenderFailed,
-                "$",
-                "the renderer drew on after losing its device",
+                Error::new(ErrorCode::RenderFailed, "$")
+                    .at_most(u64::from(LOSS_WAITS))
+                    .got(waits),
             );
         }
         self.dev_effect(
@@ -426,9 +437,9 @@ impl<G: Game> GameHost<G> {
         ] {
             if value >= size {
                 return self.dev_refused(
-                    ErrorCode::OutOfRange,
-                    path,
-                    &format!("the view is {} by {} pixels", context.width, context.height),
+                    Error::new(ErrorCode::OutOfRange, path)
+                        .range(0.0, f64::from(size.saturating_sub(1)))
+                        .got(value),
                 );
             }
         }
@@ -450,11 +461,11 @@ impl<G: Game> GameHost<G> {
                 reply["result"] = result::probe(probe);
                 self.dev_done(reply, context)
             }
-            Some(Err(message)) => self.dev_refused(ErrorCode::RenderFailed, "$", &message),
+            Some(Err(error)) => self.dev_refused(error),
             None if waits >= PROBE_WAITS => self.dev_refused(
-                ErrorCode::RenderFailed,
-                "$",
-                "the pixel probe's read-back did not arrive",
+                Error::new(ErrorCode::RenderFailed, "$")
+                    .at_most(u64::from(PROBE_WAITS))
+                    .got(waits),
             ),
             None => self.dev_effect(
                 Pending::Probe {
@@ -499,17 +510,13 @@ impl<G: Game> GameHost<G> {
                 }
                 self.dev_done(reply, context)
             }
-            Some(_) | None => {
-                self.dev_refused(ErrorCode::InvalidRequest, "$", "no reload is under way")
-            }
+            Some(_) | None => self.dev_refused(
+                Error::new(ErrorCode::InvalidRequest, "$").expected(Expected::Running),
+            ),
         }
     }
 
-    pub fn dev_refusal(&mut self, code: ErrorCode, path: &str, message: &str) -> Value {
-        self.dev_refusal_with(&engine_dev::DevError::new(code, path, message))
-    }
-
-    fn dev_refusal_with(&mut self, error: &engine_dev::DevError) -> Value {
+    pub fn dev_refusal(&mut self, error: &Error) -> Value {
         let status = engine_dev::named(engine_dev::Verb::Query, "status", json!({}));
         let status: Value = serde_json::from_str(&self.dev_command(&status, 1, 1, true))
             .expect("development replies are JSON");
@@ -607,21 +614,17 @@ impl<G: Game> GameHost<G> {
                         Effect::Frame { timestamp: 0.0 },
                     )
                 }
-                Err(error) => self.dev_refused_with(error),
+                Err(error) => self.dev_refused(error),
             },
             "explain" => match parsed::<ExplainQuestion>(control) {
                 Ok(question) => self.dev_explain_start(question, context),
-                Err(error) => self.dev_refused_with(error),
+                Err(error) => self.dev_refused(error),
             },
             "watch" => match parsed::<WatchRequest>(control) {
                 Ok(request) => self.dev_watch_start(request, context),
-                Err(error) => self.dev_refused_with(error),
+                Err(error) => self.dev_refused(error),
             },
-            _ => self.dev_refused(
-                ErrorCode::UnsupportedCommand,
-                "$.name",
-                &format!("this host cannot carry out {op}"),
-            ),
+            _ => self.dev_refused(Error::new(ErrorCode::UnsupportedCommand, "$.name").got(op)),
         }
     }
 
@@ -657,16 +660,13 @@ impl<G: Game> GameHost<G> {
         outcome: &Outcome,
         context: &HostContext,
     ) -> Step {
-        if let Some(message) = &outcome.failed {
-            return self.dev_refused(
+        if let Some(failed) = &outcome.failed {
+            return self.dev_refused(failed_frame(
                 ErrorCode::RenderFailed,
-                "$",
-                &format!(
-                    "frame {} of {} failed: {message}",
-                    run.ran + 1,
-                    run.request.frames
-                ),
-            );
+                run.ran + 1,
+                run.request.frames,
+                failed,
+            ));
         }
         let Some(costs) = self
             .engine()
@@ -675,9 +675,8 @@ impl<G: Game> GameHost<G> {
             .get_resource::<engine_core::BrickCosts>()
             .cloned()
         else {
-            return self.dev_refused_with(
-                engine_dev::DevError::new(ErrorCode::ProfilingUnavailable, "$", "BrickCosts")
-                    .expected("a dev or profiling build, which measures every brick"),
+            return self.dev_refused(
+                Error::new(ErrorCode::ProfilingUnavailable, "$").got("BrickCosts"),
             );
         };
         run.frames.push(costs);
@@ -716,7 +715,7 @@ impl<G: Game> GameHost<G> {
                         }
                         self.dev_done(reply, context)
                     }
-                    Err(error) => self.dev_refused_with(error),
+                    Err(error) => self.dev_refused(error),
                 }
             }
             ExplainQuestion::Scene {} => self.dev_effect(Pending::ExplainScene, Effect::Source),
@@ -727,7 +726,7 @@ impl<G: Game> GameHost<G> {
                     &id,
                 ) {
                     Ok(entity) => entity,
-                    Err(error) => return self.dev_refused_with(error),
+                    Err(error) => return self.dev_refused(error),
                 };
                 let readable = self
                     .engine()
@@ -824,16 +823,13 @@ impl<G: Game> GameHost<G> {
         outcome: &Outcome,
         context: &HostContext,
     ) -> Step {
-        if let Some(message) = &outcome.failed {
-            return self.dev_refused(
+        if let Some(failed) = &outcome.failed {
+            return self.dev_refused(failed_frame(
                 ErrorCode::RenderFailed,
-                "$",
-                &format!(
-                    "frame {} of {} failed: {message}",
-                    run.ran + 1,
-                    run.watcher.frames()
-                ),
-            );
+                run.ran + 1,
+                run.watcher.frames(),
+                failed,
+            ));
         }
         if !run.streaming {
             run.ran += 1;
@@ -925,18 +921,16 @@ impl<G: Game> GameHost<G> {
         Step::Reply(reply)
     }
 
-    fn dev_refused(&mut self, code: ErrorCode, path: &str, message: &str) -> Step {
-        self.dev_refused_with(engine_dev::DevError::new(code, path, message))
-    }
-
-    fn dev_refused_with(&mut self, error: engine_dev::DevError) -> Step {
+    fn dev_refused(&mut self, error: Error) -> Step {
         self.dev_pending = None;
-        Step::Reply(self.dev_refusal_with(&error))
+        Step::Reply(self.dev_refusal(&error))
     }
 
     fn dev_benchmark_start(&mut self, control: &Map<String, Value>, context: &HostContext) -> Step {
         if context.width == 0 || context.height == 0 {
-            return self.dev_refused(ErrorCode::BenchmarkInterrupted, "$", NEEDS_VIEW);
+            return self.dev_refused(
+                Error::new(ErrorCode::BenchmarkInterrupted, "$").got(view(context, false)),
+            );
         }
         let started = now_ms();
         let mode = control
@@ -956,8 +950,7 @@ impl<G: Game> GameHost<G> {
             .into_iter()
             .find(|reply| reply["ok"] != true)
         {
-            let (code, message) = stopped(refused);
-            return self.dev_refused(code, "$", &message);
+            return self.dev_refused(stopped(refused));
         }
         let run = BenchmarkRun {
             frame,
@@ -987,28 +980,25 @@ impl<G: Game> GameHost<G> {
         outcome: &Outcome,
         context: &HostContext,
     ) -> Step {
-        if let Some(message) = &outcome.failed {
-            return self.dev_refused(ErrorCode::BenchmarkFailed, "$", message);
+        if let Some(failed) = &outcome.failed {
+            return self.dev_refused(Error::new(ErrorCode::BenchmarkFailed, "$").got(failed));
         }
         if outcome.interrupted || !context.paused || (context.width, context.height) != run.view {
-            let message = if run.previous.is_none() {
-                NEEDS_VIEW
-            } else {
-                VIEW_CHANGED
-            };
-            return self.dev_refused(ErrorCode::BenchmarkInterrupted, "$", message);
+            return self.dev_refused(
+                Error::new(ErrorCode::BenchmarkInterrupted, "$")
+                    .got(view(context, outcome.interrupted)),
+            );
         }
         let done = match run.waited(outcome.now.unwrap_or_else(now_ms)) {
             Ok(done) => done,
-            Err((code, message)) => return self.dev_refused(code, "$", &message),
+            Err(error) => return self.dev_refused(error),
         };
         if done {
             return self.dev_benchmark_report(&run, context);
         }
         let reply = self.dev_invoke(&run.frame, context);
         if reply["ok"] != true {
-            let (code, message) = stopped(&reply);
-            return self.dev_refused(code, "$", &message);
+            return self.dev_refused(stopped(&reply));
         }
         run.end = reply["observation"].clone();
         run.unwaited = Some(self.stats_value());
@@ -1020,8 +1010,7 @@ impl<G: Game> GameHost<G> {
     fn dev_benchmark_report(&mut self, run: &BenchmarkRun, context: &HostContext) -> Step {
         let after = self.dev_invoke(&query("assets"), context);
         if after["ok"] != true {
-            let (code, message) = stopped(&after);
-            return self.dev_refused(code, "$", &message);
+            return self.dev_refused(stopped(&after));
         }
         let environment = HostEnvironment {
             canvas_width: run.view.0,
@@ -1037,21 +1026,19 @@ impl<G: Game> GameHost<G> {
                     "observation": run.end, "result": {"benchmark": benchmark, "temporary": true}});
                 self.dev_done(reply, context)
             }
-            Err((code, message)) => self.dev_refused(code, "$", &message),
+            Err(error) => self.dev_refused(error),
         }
     }
 }
 
 fn stopped(reply: &Value) -> Stopped {
-    let code = reply["error"]["code"]
-        .as_str()
-        .and_then(ErrorCode::named)
-        .unwrap_or(ErrorCode::BenchmarkFailed);
-    let message = reply["error"]["message"]
-        .as_str()
-        .unwrap_or("runtime rejected benchmark frame")
-        .to_owned();
-    (code, message)
+    match serde_json::from_value::<Error>(reply["error"].clone()) {
+        Ok(error) => Error {
+            path: "$".to_owned(),
+            ..error
+        },
+        Err(_) => Error::new(ErrorCode::BenchmarkFailed, "$"),
+    }
 }
 
 fn numbers(value: &Value, prefix: &str, out: &mut Vec<(String, f64)>) {
@@ -1075,9 +1062,10 @@ fn distribution(values: &[f64]) -> Result<Value, Stopped> {
     Distribution::of(values)
         .map(|distribution| json!(distribution))
         .ok_or_else(|| {
-            (
-                ErrorCode::InvalidMeasurement,
-                "measurements must be nonempty, finite and nonnegative".into(),
-            )
+            Error::new(ErrorCode::InvalidMeasurement, "$").expected(if values.is_empty() {
+                Expected::NonEmpty
+            } else {
+                Expected::Finite
+            })
         })
 }

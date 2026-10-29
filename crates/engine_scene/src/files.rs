@@ -7,9 +7,7 @@
 use engine_settings::ErrorCode;
 use std::collections::BTreeMap;
 
-use engine_core::{MeshLods, MeshVertex, Texture};
-
-use crate::SceneError;
+use engine_core::{Error, Expected, MeshLods, MeshVertex, Texture};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SceneFileKind {
@@ -42,20 +40,20 @@ impl SceneFiles {
         self.buffers.insert(uri.to_owned(), bytes);
     }
 
-    pub(crate) fn buffer(&self, uri: &str, path: &str) -> Result<&[u8], SceneError> {
+    pub(crate) fn buffer(&self, uri: &str, path: &str) -> Result<&[u8], Error> {
         self.buffers
             .get(uri)
             .map(Vec::as_slice)
             .ok_or_else(|| missing(uri, path))
     }
 
-    pub(crate) fn texture(&self, uri: &str, path: &str) -> Result<Texture, SceneError> {
+    pub(crate) fn texture(&self, uri: &str, path: &str) -> Result<Texture, Error> {
         let (width, height, pixels) = self.images.get(uri).ok_or_else(|| missing(uri, path))?;
         Texture::from_rgba(*width, *height, pixels.clone())
-            .map_err(|error| SceneError::new(ErrorCode::InvalidTexture, path, error.to_string()))
+            .map_err(|error| error.coded(ErrorCode::InvalidTexture).within(path))
     }
 
-    pub(crate) fn mesh(&self, uri: &str, path: &str) -> Result<MeshBuffer, SceneError> {
+    pub(crate) fn mesh(&self, uri: &str, path: &str) -> Result<MeshBuffer, Error> {
         let bytes = self.buffers.get(uri).ok_or_else(|| missing(uri, path))?;
         mesh_buffer(bytes, path)
     }
@@ -67,17 +65,17 @@ fn count(length: usize) -> [u8; 4] {
         .to_le_bytes()
 }
 
-fn missing(uri: &str, path: &str) -> SceneError {
-    SceneError::new(
-        ErrorCode::MissingFile,
-        path,
-        format!("the scene references {uri}, which was not supplied"),
-    )
+fn missing(uri: &str, path: &str) -> Error {
+    Error::new(ErrorCode::MissingFile, path)
+        .expected(Expected::File)
+        .got(uri)
 }
 
-pub(crate) fn valid_uri(uri: &str, path: &str) -> Result<(), SceneError> {
+const MAX_URI_BYTES: usize = 256;
+
+pub(crate) fn valid_uri(uri: &str, path: &str) -> Result<(), Error> {
     let valid = !uri.is_empty()
-        && uri.len() <= 256
+        && uri.len() <= MAX_URI_BYTES
         && uri
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || b"_./-".contains(&byte))
@@ -88,11 +86,10 @@ pub(crate) fn valid_uri(uri: &str, path: &str) -> Result<(), SceneError> {
     if valid {
         Ok(())
     } else {
-        Err(SceneError::new(
-            ErrorCode::InvalidUri,
-            path,
-            "must be a relative path of letters, digits, '_', '.', '-' and '/' inside the scene's folder",
-        ))
+        Err(Error::new(ErrorCode::InvalidUri, path)
+            .expected(Expected::Uri)
+            .at_most(MAX_URI_BYTES as u64)
+            .got(uri))
     }
 }
 
@@ -161,7 +158,7 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     bytes
 }
 
-pub fn decode_mesh_buffer(bytes: &[u8]) -> Result<engine_core::Mesh, SceneError> {
+pub fn decode_mesh_buffer(bytes: &[u8]) -> Result<engine_core::Mesh, Error> {
     mesh_buffer(bytes, "$")?.mesh("$")
 }
 
@@ -174,7 +171,7 @@ pub(crate) struct MeshBuffer {
 }
 
 impl MeshBuffer {
-    pub(crate) fn mesh(self, path: &str) -> Result<engine_core::Mesh, SceneError> {
+    pub(crate) fn mesh(self, path: &str) -> Result<engine_core::Mesh, Error> {
         let mesh = crate::document::with_extras(
             engine_core::Mesh::new(self.vertices, self.indices),
             self.colors,
@@ -184,14 +181,14 @@ impl MeshBuffer {
         match self.lods {
             Some(lods) => mesh
                 .with_lods(lods)
-                .map_err(|error| SceneError::new(ErrorCode::InvalidMesh, path, error.to_string())),
+                .map_err(|error| error.coded(ErrorCode::InvalidMesh).within(path)),
             None => Ok(mesh),
         }
     }
 }
 
-fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
-    let invalid = |rule: &str| SceneError::new(ErrorCode::InvalidMesh, path, rule.to_owned());
+fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, Error> {
+    let invalid = || Error::new(ErrorCode::InvalidMesh, path);
     let word = |offset: usize| {
         bytes
             .get(offset..offset + 4)
@@ -200,19 +197,19 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
     let extras = match bytes.get(..4) {
         Some(magic) if magic == MESH_BUFFER_MAGIC => false,
         Some(magic) if magic == MESH_BUFFER_EXTRAS_MAGIC => true,
-        _ => return Err(invalid("a mesh buffer starts with EMB1 or EMB2")),
+        _ => {
+            return Err(invalid()
+                .got(String::from_utf8_lossy(&bytes[..bytes.len().min(4)]))
+                .variants(["EMB1", "EMB2"]));
+        }
     };
     let (Some(vertex_count), Some(index_count)) = (word(4), word(8)) else {
-        return Err(invalid("a mesh buffer has vertex and index counts"));
+        return Err(invalid().at_least(12).got(bytes.len()));
     };
     let flags = if extras {
         match word(12) {
             Some(flags) if flags != 0 && flags & !11 == 0 => flags,
-            _ => {
-                return Err(invalid(
-                    "EMB2 flags name colors (1), second coordinates (2) and levels of detail (8)",
-                ));
-            }
+            flags => return Err(invalid().at_most(11).got(flags)),
         }
     } else {
         0
@@ -228,9 +225,12 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
         expected == bytes.len() || (flags & 8 != 0 && expected < bytes.len())
     });
     if !fits {
-        return Err(invalid(
-            "the buffer's length must match its vertex and index counts",
-        ));
+        let failure = invalid().got(bytes.len());
+        return Err(match expected.map(u64::try_from) {
+            Some(Ok(expected)) if flags & 8 != 0 => failure.at_least(expected),
+            Some(Ok(expected)) => failure.range(expected as f64, expected as f64),
+            Some(Err(_)) | None => failure,
+        });
     }
     let float = |offset: usize| {
         f32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("four_bytes"))
@@ -243,9 +243,10 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
             .iter()
             .all(|value| value.is_finite() && value.abs() <= 1_000_000.0)
         {
-            return Err(invalid(
-                "vertex positions must be finite and within ±1000000",
-            ));
+            return Err(invalid()
+                .expected(Expected::Finite)
+                .range(-1_000_000.0, 1_000_000.0)
+                .got(serde_json::json!({ "vertex": vertex, "position": &values[..3] })));
         }
         vertices.push(MeshVertex {
             position: [values[0], values[1], values[2]],
@@ -280,7 +281,7 @@ fn mesh_buffer(bytes: &[u8], path: &str) -> Result<MeshBuffer, SceneError> {
     let lods = (flags & 8 != 0)
         .then(|| {
             MeshLods::from_bytes(&bytes[offset + index_count * 4..])
-                .map_err(|error| SceneError::new(ErrorCode::InvalidMesh, path, error.to_string()))
+                .map_err(|error| error.coded(ErrorCode::InvalidMesh).within(path))
         })
         .transpose()?;
     Ok(MeshBuffer {

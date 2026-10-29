@@ -164,7 +164,7 @@ pub struct SplineMeshView {
     pub copies: Option<u32>,
     pub chunks: Option<usize>,
     pub vertices: Option<u32>,
-    pub error: Option<String>,
+    pub error: Option<engine_settings::Error>,
 }
 
 #[derive(Serialize)]

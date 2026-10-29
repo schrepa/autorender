@@ -1,4 +1,5 @@
 use engine_collision::{Collider, ColliderShape, CollisionLayers, validate_collider_transform};
+use engine_core::Error;
 use engine_core::bevy_ecs::world::EntityWorldMut;
 use engine_core::glam::Mat4;
 use engine_settings::ErrorCode;
@@ -6,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::components::{Placement, SceneComponent};
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneError, SceneFiles};
+use crate::{SceneDocument, SceneFiles};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -62,7 +63,7 @@ impl SceneColliderShape {
 }
 
 impl SceneCollider {
-    pub(crate) fn runtime(self, path: &str) -> Result<Collider, SceneError> {
+    pub(crate) fn runtime(self, path: &str) -> Result<Collider, Error> {
         Collider::new(self.shape.runtime())
             .map(|collider| {
                 collider
@@ -73,18 +74,15 @@ impl SceneCollider {
                     .with_sensor(self.sensor)
             })
             .map_err(|error| {
-                SceneError::new(
-                    ErrorCode::InvalidCollider,
-                    format!("{path}.shape"),
-                    error.to_string(),
-                )
+                error
+                    .coded(ErrorCode::InvalidCollider)
+                    .within(&format!("{path}.shape"))
             })
     }
 
-    pub(crate) fn validate_world(self, matrix: Mat4, path: &str) -> Result<(), SceneError> {
-        validate_collider_transform(self.shape.runtime(), matrix).map_err(|error| {
-            SceneError::new(ErrorCode::InvalidColliderTransform, path, error.to_string())
-        })
+    pub(crate) fn validate_world(self, matrix: Mat4, path: &str) -> Result<(), Error> {
+        validate_collider_transform(self.shape.runtime(), matrix)
+            .map_err(|error| error.coded(ErrorCode::InvalidColliderTransform).within(path))
     }
 }
 
@@ -98,7 +96,7 @@ impl SceneComponent for SceneCollider {
         path: &str,
         _: &SceneDocument,
         _: Option<&SceneFiles>,
-    ) -> Result<Collider, SceneError> {
+    ) -> Result<Collider, Error> {
         self.runtime(path)
     }
 

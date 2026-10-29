@@ -1,3 +1,4 @@
+import { engineFailure } from "../generated/errors";
 import type { Runtime } from "./host";
 
 type JsonObject = Record<string, unknown>;
@@ -22,14 +23,18 @@ declare global { interface Window { __engineProfile?: ProfileApi } }
 const MAX_FRAMES = 4096, MAX_BROWSER_ENTRIES = 1024, MAX_MEMORY_SAMPLES = 64, MAX_JSON_BYTES = 32 * 1024 * 1024;
 const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 function json(source: string): JsonObject {
-  if (source.length > MAX_JSON_BYTES) throw new Error("Profiling response exceeds 32 MiB");
+  if (source.length > MAX_JSON_BYTES) {
+    throw engineFailure({ code: "profile_too_large", path: "$", allowed: { kind: "at_most", max: MAX_JSON_BYTES }, got: source.length });
+  }
   const value: unknown = JSON.parse(source);
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected a profiling object");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw engineFailure({ code: "invalid_type", path: "$", expected: "object" });
   return value as JsonObject;
 }
 function copy(value: JsonObject): JsonObject {
   const source = JSON.stringify(value);
-  if (source.length > 32 * 1024) throw new Error("Profiling metadata exceeds 32 KiB");
+  if (source.length > 32 * 1024) {
+    throw engineFailure({ code: "profile_too_large", path: "$.metadata", allowed: { kind: "at_most", max: 32 * 1024 }, got: source.length });
+  }
   return JSON.parse(source) as JsonObject;
 }
 export function supportsProfiling<T extends Runtime>(runtime: T): runtime is T & ProfilingRuntime {
@@ -77,11 +82,13 @@ export class DetailedProfiler {
       backend: this.rustStatus };
   }
   start(options: ProfileOptions = {}): JsonObject {
-    if (this.disposed || this.busy) throw new Error("A detailed profile is busy or unavailable");
+    if (this.disposed || this.busy) throw engineFailure({ code: "runtime_busy", path: "$" });
     const settings = { duration_ms: 5000, max_events: 65536, ...options };
     if (!options || typeof options !== "object" || Array.isArray(options) || Object.keys(options).some(key => !["duration_ms", "max_events"].includes(key)) ||
       !Number.isInteger(settings.duration_ms) || settings.duration_ms < 100 || settings.duration_ms > 5000 ||
-      !Number.isInteger(settings.max_events) || settings.max_events < 256 || settings.max_events > 65536) throw new Error("Profile duration must be 100..5000 ms and max_events 256..65536");
+      !Number.isInteger(settings.max_events) || settings.max_events < 256 || settings.max_events > 65536) {
+      throw engineFailure({ code: "invalid_arguments", path: "$", got: options });
+    }
     this.context.allowed();
     const metadata = copy(this.context.metadata());
     this.runtime.profiling_start(settings.max_events);
@@ -122,7 +129,7 @@ export class DetailedProfiler {
   stop(): Promise<JsonObject> { return this.finish(false, "stopped_by_user"); }
   abort(reason: string): void { if (this.busy) void this.finish(false, reason); }
   export(): DetailedProfileReport {
-    if (this.busy || !this.report) throw new Error("Stop the detailed profile before exporting");
+    if (this.busy || !this.report) throw engineFailure({ code: "capture_failed", path: "$", expected: "present" });
     return this.report;
   }
   dispose(): void {
@@ -187,7 +194,9 @@ export class DetailedProfiler {
     const errors: string[] = []; let raw: RustCapture | null = null;
     try {
       const result = json(this.runtime.profiling_stop()) as unknown as RustCapture;
-      if (!result.cpu || !Array.isArray(result.cpu.events) || result.cpu.events.length > 65536) throw new Error("Invalid bounded CPU capture");
+      if (!result.cpu || !Array.isArray(result.cpu.events) || result.cpu.events.length > 65536) {
+        throw engineFailure({ code: "capture_failed", path: "$.cpu.events", allowed: { kind: "at_most", max: 65536 } });
+      }
       raw = result;
       const deadline = Math.min(this.started + 15_000, performance.now() + 250);
       while (!this.disposed && performance.now() < deadline) {

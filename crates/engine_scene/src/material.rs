@@ -1,10 +1,12 @@
 use engine_core::{
-    AlphaMode, Filter, Material, Sampler, TextureHandle, TextureRef, UvTransform, Wrap,
+    AlphaMode, Error, Expected, Filter, Material, Sampler, TextureHandle, TextureRef, UvTransform,
+    Wrap,
 };
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
-use crate::{SceneError, SceneSurface};
+use crate::SceneSurface;
+use crate::validation::moved;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(
@@ -302,22 +304,16 @@ impl SceneMaterial {
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    pub(crate) fn prepare(&self, path: &str) -> Result<PreparedMaterial, SceneError> {
-        let invalid = |field: &str, message: String| {
-            SceneError::new(
-                ErrorCode::InvalidMaterial,
-                format!("{path}.{field}"),
-                message,
-            )
+    pub(crate) fn prepare(&self, path: &str) -> Result<PreparedMaterial, Error> {
+        let invalid =
+            |field: &str| Error::new(ErrorCode::InvalidMaterial, format!("{path}.{field}"));
+        let failed = |error: Error, field: &str| {
+            moved(error, ErrorCode::InvalidMaterial, format!("{path}.{field}"))
         };
-        let mut material =
-            Material::new(self.color).map_err(|error| invalid("color", error.to_string()))?;
+        let mut material = Material::new(self.color).map_err(|error| failed(error, "color"))?;
         if let Some(mode) = self.alpha_mode {
             if self.alpha_cutoff.is_some() && mode != SceneAlphaMode::Mask {
-                return Err(invalid(
-                    "alpha_cutoff",
-                    "an alpha cutoff needs alpha_mode mask".into(),
-                ));
+                return Err(invalid("alpha_cutoff").expected(Expected::Absent));
             }
             let mode = match mode {
                 SceneAlphaMode::Opaque => AlphaMode::Opaque,
@@ -327,27 +323,24 @@ impl SceneMaterial {
             };
             material = material
                 .with_alpha_mode(mode)
-                .map_err(|error| invalid("alpha_cutoff", error.to_string()))?;
+                .map_err(|error| failed(error, "alpha_cutoff"))?;
         } else if self.alpha_cutoff.is_some() {
-            return Err(invalid(
-                "alpha_cutoff",
-                "an alpha cutoff needs alpha_mode mask".into(),
-            ));
+            return Err(invalid("alpha_cutoff").expected(Expected::Absent));
         }
         if let Some(opacity) = self.opacity {
             material = material
                 .with_opacity(opacity)
-                .map_err(|error| invalid("opacity", error.to_string()))?;
+                .map_err(|error| failed(error, "opacity"))?;
         }
         if let Some(surface) = self.surface {
             material = material
                 .with_surface(surface.surface())
-                .map_err(|error| invalid("surface", error.to_string()))?;
+                .map_err(|error| failed(error, "surface"))?;
         }
         if let Some(emissive) = self.emissive {
             material = material
                 .with_emissive(emissive)
-                .map_err(|error| invalid("emissive", error.to_string()))?;
+                .map_err(|error| failed(error, "emissive"))?;
         }
         if let Some(double_sided) = self.double_sided {
             material = material.with_double_sided(double_sided);
@@ -358,7 +351,7 @@ impl SceneMaterial {
         if let Some(tiling) = self.world_tiling {
             material = material
                 .with_world_mapping(tiling)
-                .map_err(|error| invalid("world_tiling", error.to_string()))?;
+                .map_err(|error| failed(error, "world_tiling"))?;
         }
         if let Some(top) = self.top {
             material = material
@@ -367,28 +360,26 @@ impl SceneMaterial {
                     coverage: top.coverage,
                     roughness: top.roughness.unwrap_or(0.85),
                 })
-                .map_err(|error| invalid("top", error.to_string()))?;
+                .map_err(|error| failed(error, "top"))?;
         }
         if let Some(grounding) = self.grounding {
             material = material
                 .with_grounding(engine_core::Grounding {
                     height: grounding.height,
                 })
-                .map_err(|error| invalid("grounding", error.to_string()))?;
+                .map_err(|error| failed(error, "grounding"))?;
         }
         let normal_scale = self.normal_scale.unwrap_or(1.0);
         if !normal_scale.is_finite() {
-            return Err(invalid(
-                "normal_scale",
-                "the normal scale must be finite".into(),
-            ));
+            return Err(invalid("normal_scale")
+                .expected(Expected::Finite)
+                .got(normal_scale));
         }
         let occlusion_strength = self.occlusion_strength.unwrap_or(1.0);
         if !occlusion_strength.is_finite() || !(0.0..=1.0).contains(&occlusion_strength) {
-            return Err(invalid(
-                "occlusion_strength",
-                "the occlusion strength must be in [0, 1]".into(),
-            ));
+            return Err(invalid("occlusion_strength")
+                .range(0.0, 1.0)
+                .got(occlusion_strength));
         }
         let mut maps: [Option<(String, Sampler, UvTransform, u32)>; 5] = Default::default();
         for ((slot, map), field) in maps.iter_mut().zip(self.maps()).zip(MAP_FIELDS) {
@@ -403,24 +394,21 @@ impl SceneMaterial {
                         rotation: map.rotation.unwrap_or(0.0),
                         scale: map.scale.unwrap_or([1.0; 2]),
                     };
-                    if !transform
-                        .offset
-                        .iter()
-                        .chain(&transform.scale)
-                        .chain([&transform.rotation])
-                        .all(|value| value.is_finite())
-                    {
-                        return Err(invalid(
-                            field,
-                            "texture offset, rotation and scale must be finite".into(),
-                        ));
+                    let unfinite = [
+                        ("offset", transform.offset.iter().all(|value| value.is_finite())),
+                        ("rotation", transform.rotation.is_finite()),
+                        ("scale", transform.scale.iter().all(|value| value.is_finite())),
+                    ]
+                    .into_iter()
+                    .find(|&(_, finite)| !finite);
+                    if let Some((part, _)) = unfinite {
+                        return Err(invalid(&format!("{field}.{part}")).expected(Expected::Finite));
                     }
                     let tex_coord = map.tex_coord.unwrap_or(0);
                     if tex_coord > 1 {
-                        return Err(invalid(
-                            field,
-                            "maps read texture coordinates 0 or 1".into(),
-                        ));
+                        return Err(invalid(&format!("{field}.tex_coord"))
+                            .at_most(1)
+                            .got(tex_coord));
                     }
                     (map.id.clone(), map.sampler(), transform, tex_coord)
                 }

@@ -1,10 +1,12 @@
 use engine_settings::ErrorCode;
 use std::collections::{BTreeMap, BTreeSet};
 
-use engine_core::{MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform, glam::Mat4, valid_global_matrix};
+use engine_core::{
+    Error, Expected, MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform, glam::Mat4, valid_global_matrix,
+};
 
-use crate::validation::{display_name, identifier, reference, unique_ids};
-use crate::{SceneDocument, SceneError, SceneObject, ScenePrefab};
+use crate::validation::{display_name, identifier, reference, unique_ids, unknown};
+use crate::{SceneDocument, SceneObject, ScenePrefab};
 
 pub(crate) struct ExpandedObject {
     pub source: SceneObject,
@@ -22,7 +24,7 @@ pub(crate) struct ExpandedScene {
 type Prefabs<'a> = BTreeMap<&'a str, (usize, &'a ScenePrefab)>;
 
 impl SceneDocument {
-    pub fn expanded_entities(&self) -> Result<Vec<SceneObject>, SceneError> {
+    pub fn expanded_entities(&self) -> Result<Vec<SceneObject>, Error> {
         Ok(self
             .prepare(None)?
             .entities
@@ -35,7 +37,7 @@ impl SceneDocument {
         &self,
         mesh_ids: &BTreeSet<&str>,
         material_ids: &BTreeSet<&str>,
-    ) -> Result<[ExpandedScene; 2], SceneError> {
+    ) -> Result<[ExpandedScene; 2], Error> {
         let (prefab_ids, prefabs) = self.validate_prefabs(mesh_ids, material_ids)?;
         let ids = (mesh_ids, material_ids, &prefab_ids);
         let entities = expand_list(&self.entities, "$.entities", ids, &prefabs)?;
@@ -47,14 +49,9 @@ impl SceneDocument {
             .collect();
         for entity in &streamed.entities {
             if known.contains(entity.source.id.as_str()) {
-                return Err(SceneError::new(
-                    ErrorCode::DuplicateId,
-                    format!("{}.id", entity.path),
-                    format!(
-                        "expanded entity ID '{}' is already used by an entity",
-                        entity.source.id
-                    ),
-                ));
+                return Err(Error::new(ErrorCode::DuplicateId, format!("{}.id", entity.path))
+                    .expected(Expected::Unique)
+                    .got(&entity.source.id));
             }
         }
         Ok([entities, streamed])
@@ -64,18 +61,14 @@ impl SceneDocument {
         &self,
         mesh_ids: &BTreeSet<&str>,
         material_ids: &BTreeSet<&str>,
-    ) -> Result<(BTreeSet<&str>, Prefabs<'_>), SceneError> {
+    ) -> Result<(BTreeSet<&str>, Prefabs<'_>), Error> {
         let prefab_ids = unique_ids(
             self.prefabs.iter().map(|prefab| prefab.id.as_str()),
             "$.prefabs",
         )?;
         for (index, prefab) in self.prefabs.iter().enumerate() {
             prefab.validate().map_err(|invalid| {
-                crate::error::broken_rule(
-                    ErrorCode::InvalidValue,
-                    &format!("$.prefabs[{index}]"),
-                    invalid,
-                )
+                invalid.error(ErrorCode::InvalidValue, &format!("$.prefabs[{index}]"))
             })?;
             let path = format!("$.prefabs[{index}].entities");
             unique_ids(
@@ -85,12 +78,10 @@ impl SceneDocument {
             let mut transforms = Vec::with_capacity(prefab.entities.len());
             for (local_index, entity) in prefab.entities.iter().enumerate() {
                 let path = format!("{path}[{local_index}]");
-                if entity.prefab.is_some() {
-                    return Err(SceneError::new(
-                        ErrorCode::NestedPrefab,
-                        format!("{path}.prefab"),
-                        "prefab definitions cannot reference another prefab",
-                    ));
+                if let Some(nested) = &entity.prefab {
+                    return Err(Error::new(ErrorCode::NestedPrefab, format!("{path}.prefab"))
+                        .expected(Expected::Absent)
+                        .got(nested));
                 }
                 transforms.push(validate_object(
                     entity,
@@ -125,7 +116,7 @@ fn expand_list(
     list_path: &str,
     (mesh_ids, material_ids, prefab_ids): (&BTreeSet<&str>, &BTreeSet<&str>, &BTreeSet<&str>),
     prefab_lookup: &Prefabs<'_>,
-) -> Result<ExpandedScene, SceneError> {
+) -> Result<ExpandedScene, Error> {
     unique_ids(list.iter().map(|entity| entity.id.as_str()), list_path)?;
     let mut expanded_count = list.len();
     for (index, entity) in list.iter().enumerate() {
@@ -173,11 +164,9 @@ fn expand_list(
     let mut ids = BTreeSet::new();
     for entity in &entities {
         if !ids.insert(entity.source.id.as_str()) {
-            return Err(SceneError::new(
-                ErrorCode::DuplicateId,
-                format!("{}.id", entity.path),
-                format!("expanded entity ID '{}' is already used", entity.source.id),
-            ));
+            return Err(Error::new(ErrorCode::DuplicateId, format!("{}.id", entity.path))
+                .expected(Expected::Unique)
+                .got(&entity.source.id));
         }
         entity.source.check_placement(&entity.path)?;
     }
@@ -199,7 +188,7 @@ fn validate_object(
     mesh_ids: &BTreeSet<&str>,
     material_ids: &BTreeSet<&str>,
     prefab_ids: &BTreeSet<&str>,
-) -> Result<Transform, SceneError> {
+) -> Result<Transform, Error> {
     if let Some(collider) = entity.collider {
         collider.runtime(&format!("{path}.collider"))?;
     }
@@ -209,12 +198,23 @@ fn validate_object(
             reference(material, material_ids, &format!("{path}.material"))?;
         }
         (None, None) => {}
-        _ => {
-            return Err(SceneError::new(
-                ErrorCode::InvalidRenderable,
-                path,
-                "an entity requires both mesh and material, or neither; prefab instance roots cannot also render",
-            ));
+        (Some(_), Some(_)) => {
+            return Err(
+                Error::new(ErrorCode::InvalidRenderable, format!("{path}.mesh"))
+                    .expected(Expected::Absent),
+            );
+        }
+        (Some(_), None) => {
+            return Err(
+                Error::new(ErrorCode::InvalidRenderable, format!("{path}.material"))
+                    .expected(Expected::Present),
+            );
+        }
+        (None, Some(_)) => {
+            return Err(
+                Error::new(ErrorCode::InvalidRenderable, format!("{path}.mesh"))
+                    .expected(Expected::Present),
+            );
         }
     }
     if let Some(prefab) = &entity.prefab {
@@ -222,7 +222,7 @@ fn validate_object(
     }
     entity
         .validate()
-        .map_err(|invalid| crate::error::broken_rule(ErrorCode::InvalidValue, path, invalid))?;
+        .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, path))?;
     if let Some(spline) = &entity.spline {
         spline.validate(&format!("{path}.spline"))?;
         reference(&spline.mesh, mesh_ids, &format!("{path}.spline.mesh"))?;
@@ -241,11 +241,9 @@ fn validate_object(
         let path = format!("{path}.tags[{index}]");
         identifier(tag, &path)?;
         if !tags.insert(tag) {
-            return Err(SceneError::new(
-                ErrorCode::DuplicateTag,
-                path,
-                format!("tag '{tag}' is repeated"),
-            ));
+            return Err(Error::new(ErrorCode::DuplicateTag, path)
+                .expected(Expected::Unique)
+                .got(tag));
         }
     }
     Ok(entity.transform.transform())
@@ -254,7 +252,7 @@ fn validate_object(
 fn validate_graph<'a>(
     entries: impl Iterator<Item = (&'a SceneObject, String)>,
     transforms: &[Transform],
-) -> Result<(), SceneError> {
+) -> Result<(), Error> {
     let entries: Vec<_> = entries.collect();
     let ids: BTreeMap<_, _> = entries
         .iter()
@@ -269,10 +267,10 @@ fn validate_graph<'a>(
                 .as_ref()
                 .map(|parent| {
                     ids.get(parent.as_str()).copied().ok_or_else(|| {
-                        SceneError::new(
-                            ErrorCode::UnknownParent,
-                            format!("{path}.parent"),
-                            format!("no entity in this scope has ID '{parent}'"),
+                        unknown(
+                            Error::new(ErrorCode::UnknownParent, format!("{path}.parent")),
+                            parent,
+                            ids.keys().copied(),
                         )
                     })
                 })
@@ -293,18 +291,20 @@ fn validate_graph<'a>(
                 break;
             }
             if path.contains(&index) {
-                return Err(SceneError::new(
+                return Err(Error::new(
                     ErrorCode::HierarchyCycle,
                     format!("{}.parent", entries[index].1),
-                    "parent references form a cycle",
-                ));
+                )
+                .expected(Expected::Acyclic)
+                .got(&entries[index].0.parent));
             }
             if path.len() > MAX_DEPTH {
-                return Err(SceneError::new(
+                return Err(Error::new(
                     ErrorCode::HierarchyDepth,
                     format!("{}.parent", entries[start].1),
-                    "hierarchies allow at most 64 parent edges",
-                ));
+                )
+                .at_most(MAX_DEPTH as u64)
+                .got(path.len()));
             }
             path.push(index);
             cursor = parents[index];
@@ -317,11 +317,12 @@ fn validate_graph<'a>(
                 )
             });
             if depth > MAX_DEPTH {
-                return Err(SceneError::new(
+                return Err(Error::new(
                     ErrorCode::HierarchyDepth,
                     format!("{}.parent", entries[index].1),
-                    "hierarchies allow at most 64 parent edges",
-                ));
+                )
+                .at_most(MAX_DEPTH as u64)
+                .got(depth));
             }
             let local = &transforms[index];
             let matrix = parent_matrix
@@ -331,14 +332,12 @@ fn validate_graph<'a>(
                     local.translation,
                 );
             if !valid_global_matrix(matrix) {
-                return Err(SceneError::new(
+                return Err(Error::new(
                     ErrorCode::InvalidWorldTransform,
                     format!("{}.transform", entries[index].1),
-                    format!(
-                        "composed transform for '{}' must be finite and invertible, with finite normal data and normalized normal-matrix inverse infinity norm <= 10000; reduce extreme anisotropy or shear",
-                        entries[index].0.id
-                    ),
-                ));
+                )
+                .expected(Expected::Invertible)
+                .got(entries[index].0.transform));
             }
             if let Some(collider) = entries[index].0.collider {
                 collider.validate_world(matrix, &format!("{}.collider", entries[index].1))?;

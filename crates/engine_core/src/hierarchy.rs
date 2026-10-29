@@ -6,7 +6,8 @@ use bevy_ecs::change_detection::ContiguousRef;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
 use glam::{Mat4, Vec4};
-use std::{convert::Infallible, fmt};
+use engine_settings::{Error, ErrorCode, Expected};
+use std::convert::Infallible;
 
 mod global;
 #[cfg(debug_assertions)]
@@ -60,54 +61,44 @@ pub struct HierarchyReport {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HierarchyError {
+enum Broken {
     MissingEntity(Entity),
     MissingTransform(Entity),
     Cycle(Entity),
-    DuplicateChild(Entity),
     DepthExceeded,
-    CapacityExceeded,
 }
 
-impl fmt::Display for HierarchyError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl Broken {
+    fn error(self) -> Error {
         match self {
-            Self::MissingEntity(entity) => write!(formatter, "entity {entity:?} does not exist"),
+            Self::MissingEntity(entity) => Error::new(ErrorCode::UnknownEntity, "$.entity")
+                .expected(Expected::Live)
+                .got(entity.to_bits()),
             Self::MissingTransform(entity) => {
-                write!(formatter, "entity {entity:?} has no local Transform")
+                Error::new(ErrorCode::MissingComponent, "$.entity.transform")
+                    .expected(Expected::Present)
+                    .got(entity.to_bits())
             }
-            Self::Cycle(entity) => write!(formatter, "parent relationship cycles at {entity:?}"),
-            Self::DuplicateChild(entity) => {
-                write!(formatter, "relationship batch repeats child {entity:?}")
-            }
-            Self::DepthExceeded => write!(
-                formatter,
-                "parent relationship exceeds {MAX_HIERARCHY_DEPTH} edges from a root"
-            ),
-            Self::CapacityExceeded => {
-                formatter.write_str("world exceeds its transform-node limit (TransformNodeLimit)")
-            }
+            Self::Cycle(entity) => Error::new(ErrorCode::HierarchyCycle, "$.parent")
+                .expected(Expected::Acyclic)
+                .got(entity.to_bits()),
+            Self::DepthExceeded => Error::new(ErrorCode::HierarchyDepth, "$.parent")
+                .at_most(MAX_HIERARCHY_DEPTH as u64),
         }
     }
 }
 
-impl std::error::Error for HierarchyError {}
-
-fn require_transform(world: &World, entity: Entity) -> Result<(), HierarchyError> {
+fn require_transform(world: &World, entity: Entity) -> Result<(), Error> {
     if !world.entities().contains(entity) {
-        return Err(HierarchyError::MissingEntity(entity));
+        return Err(Broken::MissingEntity(entity).error());
     }
     if world.get::<Transform>(entity).is_none() {
-        return Err(HierarchyError::MissingTransform(entity));
+        return Err(Broken::MissingTransform(entity).error());
     }
     Ok(())
 }
 
-pub fn set_parent(
-    world: &mut World,
-    child: Entity,
-    parent: Option<Entity>,
-) -> Result<(), HierarchyError> {
+pub fn set_parent(world: &mut World, child: Entity, parent: Option<Entity>) -> Result<(), Error> {
     set_parents(world, &[(child, parent)])
 }
 
@@ -115,22 +106,24 @@ struct RelationshipNode {
     entity: Entity,
     parent: Option<Entity>,
     state: State,
-    depth: Result<usize, HierarchyError>,
+    depth: Result<usize, Broken>,
     affected: bool,
 }
 
-pub fn set_parents(
-    world: &mut World,
-    changes: &[(Entity, Option<Entity>)],
-) -> Result<(), HierarchyError> {
+pub fn set_parents(world: &mut World, changes: &[(Entity, Option<Entity>)]) -> Result<(), Error> {
     let limit = node_limit(world);
+    let over = |count: usize| {
+        Error::new(ErrorCode::HierarchyDepth, "$")
+            .at_most(limit as u64)
+            .got(count)
+    };
     if changes.len() > limit {
-        return Err(HierarchyError::CapacityExceeded);
+        return Err(over(changes.len()));
     }
     let mut query = world.query::<(Entity, &Transform, Option<&Parent>)>();
     let count = query.iter(world).len();
     if count > limit {
-        return Err(HierarchyError::CapacityExceeded);
+        return Err(over(count));
     }
     if changes.is_empty() {
         return Ok(());
@@ -142,7 +135,9 @@ pub fn set_parents(
             require_transform(world, parent)?;
         }
         if replacements.insert(child, parent).is_some() {
-            return Err(HierarchyError::DuplicateChild(child));
+            return Err(Error::new(ErrorCode::HierarchyCycle, "$.child")
+                .expected(Expected::Unique)
+                .got(child.to_bits()));
         }
     }
     let mut nodes = Vec::with_capacity(count);
@@ -170,9 +165,9 @@ pub fn set_parents(
                 Some(parent) => match indices.get(&parent) {
                     None => (
                         Err(if world.entities().contains(parent) {
-                            HierarchyError::MissingTransform(parent)
+                            Broken::MissingTransform(parent)
                         } else {
-                            HierarchyError::MissingEntity(parent)
+                            Broken::MissingEntity(parent)
                         }),
                         false,
                     ),
@@ -183,11 +178,11 @@ pub fn set_parents(
                                 if depth < MAX_HIERARCHY_DEPTH {
                                     Ok(depth + 1)
                                 } else {
-                                    Err(HierarchyError::DepthExceeded)
+                                    Err(Broken::DepthExceeded)
                                 }
                             })
                         } else {
-                            Err(HierarchyError::Cycle(parent.entity))
+                            Err(Broken::Cycle(parent.entity))
                         };
                         (depth, parent.affected)
                     }
@@ -201,7 +196,8 @@ pub fn set_parents(
             }
             Ok(())
         },
-    )?;
+    )
+    .map_err(Broken::error)?;
     for &(child, parent) in changes {
         let mut entity = world.entity_mut(child);
         if let Some(parent) = parent {

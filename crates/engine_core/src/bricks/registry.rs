@@ -9,8 +9,8 @@ use engine_settings::ErrorCode;
 use serde_json::Value;
 
 use super::{
-    Brick, BrickSet, BrickStats, CORE_PASSES, CORE_ROW, EnvironmentSection, Error, ExplainEntry,
-    ExplainRecord, ExplainRequest, Operation, crate_of, parse_value, parse_value_at,
+    Brick, BrickSet, BrickStats, CORE_PASSES, CORE_ROW, EnvironmentSection, Error, Expected,
+    ExplainEntry, ExplainRecord, ExplainRequest, Operation, crate_of, parse_value, parse_value_at,
     short_type_name,
 };
 use crate::RenderSnapshot;
@@ -223,23 +223,18 @@ impl BrickRegistry {
                 return Err(Error::new(
                     ErrorCode::InvalidName,
                     format!("$.bricks.{}.passes.{unknown}", brick.name),
-                    format!(
-                        "the {} brick claims {unknown}, which is no render pass; passes: {}",
-                        brick.name,
-                        passes.join(", ")
-                    ),
-                ));
+                )
+                .got(unknown)
+                .variants(passes.iter().copied()));
             }
         }
         if let Some(unknown) = CORE_PASSES.iter().find(|&&pass| !passes.contains(&pass)) {
             return Err(Error::new(
                 ErrorCode::InvalidName,
                 format!("$.bricks.{CORE_ROW}.passes.{unknown}"),
-                format!(
-                    "the engine's core claims {unknown}, which is no render pass; passes: {}",
-                    passes.join(", ")
-                ),
-            ));
+            )
+            .got(unknown)
+            .variants(passes.iter().copied()));
         }
         if !self.left_out.is_empty() {
             return Ok(());
@@ -248,10 +243,9 @@ impl BrickRegistry {
             Some(unclaimed) => Err(Error::new(
                 ErrorCode::MissingPlugin,
                 format!("$.passes.{unclaimed}"),
-                format!(
-                    "no brick claims the {unclaimed} render pass: claim it with Bricks::passes"
-                ),
-            )),
+            )
+            .expected(Expected::Present)
+            .got(unclaimed)),
             None => Ok(()),
         }
     }
@@ -264,11 +258,11 @@ impl BrickRegistry {
 
     pub(super) fn admits(&self, name: &'static str) -> Result<(), Error> {
         if self.has(name) {
-            return Err(Error::new(
-                ErrorCode::DuplicateBrick,
-                format!("$.bricks.{name}"),
-                format!("the {name} brick is added twice: add each brick once"),
-            ));
+            return Err(
+                Error::new(ErrorCode::DuplicateBrick, format!("$.bricks.{name}"))
+                    .expected(Expected::Unique)
+                    .got(name),
+            );
         }
         Ok(())
     }
@@ -280,8 +274,9 @@ impl BrickRegistry {
             Error::new(
                 ErrorCode::DuplicateBrick,
                 format!("$.bricks.{name}.{kind}.{key}"),
-                format!("the {owner} brick already registers {kind} {key}: each has one brick"),
             )
+            .expected(Expected::Unique)
+            .got(owner)
         };
         for section in &record.settings {
             if let Some(known) = self.section(section.key) {
@@ -431,13 +426,9 @@ impl SettingsEntry {
 
 fn parse_section<T: EnvironmentSection>(value: Value, path: &str) -> Result<T, Error> {
     let section: T = parse_value_at(value, path)?;
-    section.section_check().map_err(|invalid| {
-        Error::new(
-            ErrorCode::InvalidEnvironment,
-            format!("{path}.{}", invalid.field),
-            invalid.rule,
-        )
-    })?;
+    section
+        .section_check()
+        .map_err(|invalid| invalid.error(ErrorCode::InvalidEnvironment, path))?;
     Ok(section)
 }
 

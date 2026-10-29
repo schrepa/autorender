@@ -3,11 +3,14 @@
     reason = "materials' textures are validated before they are ranked"
 )]
 
-use std::{fmt, ops::Range};
+use std::ops::Range;
 
 use engine_core::collections::HashMap;
 
-use engine_core::{MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot, TextureHandle};
+use engine_core::{
+    Error, ErrorCode, Expected, MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot,
+    TextureHandle,
+};
 
 const UNMAPPED_BUCKET: u32 = u32::MAX;
 
@@ -21,54 +24,12 @@ pub(crate) struct DrawBatch {
     pub instances: Range<u32>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum SnapshotError {
-    InstanceBudget { actual: usize, limit: usize },
-    DuplicateMesh { handle: MeshHandle },
-    MissingMesh { handle: MeshHandle },
-    DuplicateMaterial { handle: MaterialHandle },
-    MissingMaterial { handle: MaterialHandle },
-    DuplicateTexture { handle: TextureHandle },
-    MissingTexture { handle: TextureHandle },
-    InvalidCamera,
+fn refused(path: impl Into<String>, expected: Expected) -> Error {
+    Error::new(ErrorCode::RenderFailed, path).expected(expected)
 }
 
-impl fmt::Display for SnapshotError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InstanceBudget { actual, limit } => write!(
-                f,
-                "Render snapshot has {actual} instances; this GPU's instance buffers hold {limit}. Lower EngineConfig::max_render_instances or the scene workload."
-            ),
-            Self::DuplicateMesh { handle } => write!(
-                f,
-                "Render snapshot contains duplicate source mesh {handle:?}. Include each immutable mesh handle once."
-            ),
-            Self::MissingMesh { handle } => write!(
-                f,
-                "Render snapshot instance references missing mesh {handle:?}. Include its owned source in snapshot.meshes."
-            ),
-            Self::DuplicateMaterial { handle } => write!(
-                f,
-                "Render snapshot contains duplicate source material {handle:?}. Include each material handle once."
-            ),
-            Self::MissingMaterial { handle } => write!(
-                f,
-                "Render snapshot instance references missing material {handle:?}. Include it in snapshot.materials."
-            ),
-            Self::DuplicateTexture { handle } => write!(
-                f,
-                "Render snapshot contains duplicate source texture {handle:?}. Include each immutable texture handle once."
-            ),
-            Self::MissingTexture { handle } => write!(
-                f,
-                "Render snapshot material references missing texture {handle:?}. Include its owned source in snapshot.textures."
-            ),
-            Self::InvalidCamera => f.write_str(
-                "Render snapshot view-projection contains a nonfinite value. Supply a finite camera matrix.",
-            ),
-        }
-    }
+fn snapshot_camera() -> Error {
+    refused("$.snapshot.view_projection", Expected::Finite)
 }
 
 #[derive(Default)]
@@ -112,7 +73,7 @@ impl BatchPlan {
         }
     }
 
-    pub fn prepare_frame(&mut self, frame: &RenderFrame<'_>) -> Result<(), SnapshotError> {
+    pub fn prepare_frame(&mut self, frame: &RenderFrame<'_>) -> Result<(), Error> {
         let key = (frame.identity(), frame.structure_revision());
         let source_key = (frame.identity(), frame.source_revision());
         let snapshot = frame.snapshot();
@@ -124,7 +85,7 @@ impl BatchPlan {
         if reuse_slots && self.retained_structure == Some(key) {
             if !snapshot.view_projection.is_finite() {
                 self.invalidate();
-                return Err(SnapshotError::InvalidCamera);
+                return Err(snapshot_camera());
             }
             self.order_reused = true;
         } else {
@@ -219,7 +180,7 @@ impl BatchPlan {
         snapshot: &RenderSnapshot,
         selected: &[usize],
         reuse_slot_mapping: bool,
-    ) -> Result<(), SnapshotError> {
+    ) -> Result<(), Error> {
         self.rebuilds += 1;
         let instance_count = selected.len();
         let profile_validation = engine_profile::span("render", "batch_source_validation");
@@ -234,13 +195,12 @@ impl BatchPlan {
         if let Some(limit) = self.instance_limit
             && (snapshot.instances.len() > limit || instance_count > limit)
         {
-            return Err(SnapshotError::InstanceBudget {
-                actual: snapshot.instances.len().max(instance_count),
-                limit,
-            });
+            return Err(Error::new(ErrorCode::RenderFailed, "$.snapshot.instances")
+                .at_most(limit as u64)
+                .got(snapshot.instances.len().max(instance_count)));
         }
         if !snapshot.view_projection.is_finite() {
-            return Err(SnapshotError::InvalidCamera);
+            return Err(snapshot_camera());
         }
         drop(profile_validation);
         let profile_sources = engine_profile::span("render", "batch_source_index");
@@ -249,9 +209,11 @@ impl BatchPlan {
         self.source_indices
             .sort_unstable_by_key(|index| snapshot.meshes[*index].handle);
         for pair in self.source_indices.windows(2) {
-            let handle = snapshot.meshes[pair[0]].handle;
-            if handle == snapshot.meshes[pair[1]].handle {
-                return Err(SnapshotError::DuplicateMesh { handle });
+            if snapshot.meshes[pair[0]].handle == snapshot.meshes[pair[1]].handle {
+                return Err(refused(
+                    format!("$.snapshot.meshes[{}]", pair[1]),
+                    Expected::Unique,
+                ));
             }
         }
         self.mesh_handles.reserve_exact(snapshot.meshes.len());
@@ -267,9 +229,11 @@ impl BatchPlan {
         self.material_source_indices
             .sort_unstable_by_key(|index| snapshot.materials[*index].handle);
         for pair in self.material_source_indices.windows(2) {
-            let handle = snapshot.materials[pair[0]].handle;
-            if handle == snapshot.materials[pair[1]].handle {
-                return Err(SnapshotError::DuplicateMaterial { handle });
+            if snapshot.materials[pair[0]].handle == snapshot.materials[pair[1]].handle {
+                return Err(refused(
+                    format!("$.snapshot.materials[{}]", pair[1]),
+                    Expected::Unique,
+                ));
             }
         }
         self.texture_source_indices
@@ -279,19 +243,24 @@ impl BatchPlan {
         self.texture_source_indices
             .sort_unstable_by_key(|index| snapshot.textures[*index].handle);
         for pair in self.texture_source_indices.windows(2) {
-            let handle = snapshot.textures[pair[0]].handle;
-            if handle == snapshot.textures[pair[1]].handle {
-                return Err(SnapshotError::DuplicateTexture { handle });
+            if snapshot.textures[pair[0]].handle == snapshot.textures[pair[1]].handle {
+                return Err(refused(
+                    format!("$.snapshot.textures[{}]", pair[1]),
+                    Expected::Unique,
+                ));
             }
         }
-        for source in &snapshot.materials {
+        for (index, source) in snapshot.materials.iter().enumerate() {
             for handle in source.material.textures() {
                 if self
                     .texture_source_indices
                     .binary_search_by_key(&handle, |&index| snapshot.textures[index].handle)
                     .is_err()
                 {
-                    return Err(SnapshotError::MissingTexture { handle });
+                    return Err(refused(
+                        format!("$.snapshot.materials[{index}].textures"),
+                        Expected::Present,
+                    ));
                 }
             }
         }
@@ -345,7 +314,7 @@ impl BatchPlan {
         &mut self,
         snapshot: &RenderSnapshot,
         selected: &[usize],
-    ) -> Result<(), SnapshotError> {
+    ) -> Result<(), Error> {
         let _profile = engine_profile::span("render", "batch_instance_group");
         self.instance_buckets.clear();
         self.instance_buckets.reserve_exact(selected.len());
@@ -432,15 +401,15 @@ impl BatchPlan {
         material_indices: &[usize],
         mesh: MeshHandle,
         material: Option<MaterialHandle>,
-    ) -> Result<(usize, Option<usize>), SnapshotError> {
+    ) -> Result<(usize, Option<usize>), Error> {
         let mesh_index = mesh_indices
             .binary_search_by_key(&mesh, |&index| snapshot.meshes[index].handle)
-            .map_err(|_| SnapshotError::MissingMesh { handle: mesh })?;
+            .map_err(|_| refused("$.snapshot.meshes", Expected::Present))?;
         let material_index = material
             .map(|handle| {
                 material_indices
                     .binary_search_by_key(&handle, |&index| snapshot.materials[index].handle)
-                    .map_err(|_| SnapshotError::MissingMaterial { handle })
+                    .map_err(|_| refused("$.snapshot.materials", Expected::Present))
             })
             .transpose()?;
         Ok((mesh_index, material_index))

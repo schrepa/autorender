@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use engine::host::HostSettings;
-use engine::{Engine, Game};
+use engine::{Engine, Error, ErrorCode, Expected, Game};
 use serde_json::{Map, Value, json};
 
 use crate::Offscreen;
@@ -28,35 +28,48 @@ pub struct Settle {
 }
 
 impl Method {
-    pub fn parse(text: &str) -> Result<Self, String> {
-        let method: Value =
-            serde_json::from_str(text).map_err(|error| format!("method: {error}"))?;
+    pub fn parse(text: &str) -> Result<Self, Error> {
+        let method: Value = engine::bricks::parse_json(text)?;
         let number = |value: &Value, path: &str| {
             value
                 .as_f64()
                 .filter(|number| number.is_finite() && *number >= 0.0)
-                .ok_or_else(|| format!("method: {path} is a number of at least 0"))
+                .ok_or_else(|| {
+                    Error::new(ErrorCode::InvalidValue, format!("$.{path}"))
+                        .expected(Expected::Number)
+                        .at_least(0)
+                        .got(value)
+                })
         };
         let count = |value: &Value, path: &str| {
             value
                 .as_u64()
                 .and_then(|count| u32::try_from(count).ok())
-                .ok_or_else(|| format!("method: {path} is a count"))
+                .ok_or_else(|| {
+                    Error::new(ErrorCode::InvalidValue, format!("$.{path}"))
+                        .expected(Expected::Integer)
+                        .range(0.0, f64::from(u32::MAX))
+                        .got(value)
+                })
         };
         let settle = &method["settle"];
         let stats = match &settle["stats"] {
             Value::Object(stats) => stats.clone(),
             Value::Null => Map::new(),
-            Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {
-                return Err("method: settle.stats is an object of statistics' values".into());
+            stats @ (Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_)) => {
+                return Err(Error::new(ErrorCode::InvalidType, "$.settle.stats")
+                    .expected(Expected::Object)
+                    .got(stats));
             }
         };
         let mut below = BTreeMap::new();
         for (metric, threshold) in settle["metrics"].as_object().into_iter().flatten() {
             if !metric.starts_with("cpu:") {
-                return Err(format!(
-                    "method: settle.metrics.{metric}: native runs settle on CPU spans (cpu:NAME)"
-                ));
+                return Err(
+                    Error::new(ErrorCode::InvalidValue, format!("$.settle.metrics.{metric}"))
+                        .expected(Expected::Supported)
+                        .got(metric),
+                );
             }
             below.insert(
                 metric.clone(),
@@ -68,7 +81,9 @@ impl Method {
         }
         let sample = &method["sample"];
         if sample["paced"] != false {
-            return Err("method: sample.paced is false: offscreen frames are unpaced".into());
+            return Err(Error::new(ErrorCode::InvalidValue, "$.sample.paced")
+                .got(&sample["paced"])
+                .nearest(false));
         }
         let capture = match &method["capture"] {
             Value::Null => None,
@@ -78,11 +93,15 @@ impl Method {
             | Value::Array(_)
             | Value::Object(_)) => {
                 if capture["overlays"] == true {
-                    return Err("method: capture.overlays: offscreen frames have none".into());
+                    return Err(Error::new(ErrorCode::InvalidValue, "$.capture.overlays")
+                        .got(true)
+                        .nearest(false));
                 }
-                let path = capture["path"]
-                    .as_str()
-                    .ok_or("method: capture.path is the PNG file's path")?;
+                let path = capture["path"].as_str().ok_or_else(|| {
+                    Error::new(ErrorCode::InvalidType, "$.capture.path")
+                        .expected(Expected::Path)
+                        .got(&capture["path"])
+                })?;
                 Some((
                     number(&capture["timestamp_ms"], "capture.timestamp_ms")?,
                     PathBuf::from(path),
@@ -92,7 +111,12 @@ impl Method {
         let frames = count(&sample["frames"], "sample.frames")?;
         let frames_in_flight = count(&method["frames_in_flight"], "frames_in_flight")?;
         if frames == 0 || frames_in_flight == 0 {
-            return Err("method: sample.frames and frames_in_flight are above 0".into());
+            let zero = if frames == 0 {
+                "$.sample.frames"
+            } else {
+                "$.frames_in_flight"
+            };
+            return Err(Error::new(ErrorCode::OutOfRange, zero).at_least(1).got(0));
         }
         Ok(Self {
             settle: Settle {
@@ -160,15 +184,11 @@ pub fn run<G: Game, E: Into<engine::Error>>(
     let capture = match &method.capture {
         Some((timestamp, path)) => {
             if *timestamp < at(frame) {
-                return Err(engine::Error::new(
-                    engine::ErrorCode::InvalidMeasurement,
-                    "$.capture.timestamp_ms",
-                    format!(
-                        "capture.timestamp_ms {timestamp} falls before the end of the warm-up and \
-                     sampled frames, {} ms",
-                        at(frame)
-                    ),
-                ));
+                return Err(
+                    Error::new(ErrorCode::InvalidMeasurement, "$.capture.timestamp_ms")
+                        .got(*timestamp)
+                        .nearest(at(frame)),
+                );
             }
             while at(frame + 1) <= *timestamp {
                 game.frame(at(frame))?;
@@ -265,14 +285,9 @@ fn stat<'a>(stats: &'a Value, path: &str) -> Option<&'a Value> {
 #[cfg(feature = "profiling")]
 fn spans_of_frame<G: Game>(game: &mut Offscreen<G>) -> engine::Result<BTreeMap<String, f64>> {
     game.host_mut()
-        .profiling_start(engine::profiling::MAX_EVENTS)
-        .map_err(|reason| {
-            engine::Error::new(engine::ErrorCode::ProfilingUnavailable, "$", reason)
-        })?;
+        .profiling_start(engine::profiling::MAX_EVENTS)?;
     let frame = game.frame(0.0);
-    let report = game.host_mut().profiling_stop().map_err(|reason| {
-        engine::Error::new(engine::ErrorCode::ProfilingUnavailable, "$", reason)
-    })?;
+    let report = game.host_mut().profiling_stop()?;
     frame?;
     let mut spans = BTreeMap::new();
     for (name, durations) in cpu_spans(&report) {
@@ -330,9 +345,7 @@ fn timings<G: Game>(
     let (mut left, mut capture, mut complete) = (frames, FIRST_CAPTURE, true);
     while left > 0 {
         let count = capture.min(left);
-        game.host_mut().profiling_start(budget).map_err(|reason| {
-            engine::Error::new(engine::ErrorCode::ProfilingUnavailable, "$", reason)
-        })?;
+        game.host_mut().profiling_start(budget)?;
         let mut drawn = Ok(());
         for _ in 0..count {
             drawn = game.frame(at(*frame));
@@ -341,9 +354,7 @@ fn timings<G: Game>(
                 break;
             }
         }
-        let mut report = game.host_mut().profiling_stop().map_err(|reason| {
-            engine::Error::new(engine::ErrorCode::ProfilingUnavailable, "$", reason)
-        })?;
+        let mut report = game.host_mut().profiling_stop()?;
         drawn?;
         game.host().wait_for_gpu()?;
         game.host_mut().profiling_poll();
@@ -403,16 +414,16 @@ fn timings<G: Game>(
     if !gpu {
         unavailable.push(json!({
             "metric": "gpu:*",
-            "reason": format!(
-                "the GPU ({}) offers no timestamp queries inside passes",
-                game.host().adapter().backend
-            ),
+            "reason": Error::new(ErrorCode::ProfilingUnavailable, "$.gpu.timestamps")
+                .expected(Expected::Supported)
+                .got(game.host().adapter().backend),
         }));
     }
     if !complete {
         unavailable.push(json!({
             "metric": "cpu:*",
-            "reason": "the engine's capture dropped events: some frames' CPU spans are missing",
+            "reason": Error::new(ErrorCode::ProfilingUnavailable, "$.cpu.events")
+                .expected(Expected::Present),
         }));
     }
     Ok(Timings {
@@ -424,7 +435,8 @@ fn timings<G: Game>(
 
 #[cfg(not(feature = "profiling"))]
 fn timings<G: Game>(_: &mut Offscreen<G>, _: u32, _: &mut u32) -> engine::Result<Timings> {
-    let reason = "the program was built without the profiling feature";
+    let reason =
+        Error::new(ErrorCode::ProfilingUnavailable, "$").expected(Expected::Supported);
     Ok(Timings {
         metrics: Map::new(),
         gpu: false,

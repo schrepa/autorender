@@ -10,6 +10,8 @@ macro_rules! error_codes {
                 $((ErrorCode::$variant, $code),)*
             ];
 
+            pub const NAMES: &'static [&'static str] = &[$($code,)*];
+
             pub const fn as_str(self) -> &'static str {
                 match self {
                     $(ErrorCode::$variant => $code,)*
@@ -35,6 +37,14 @@ impl std::fmt::Display for ErrorCode {
 impl serde::Serialize for ErrorCode {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ErrorCode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let name = String::deserialize(deserializer)?;
+        Self::named(&name)
+            .ok_or_else(|| serde::de::Error::unknown_variant(&name, Self::NAMES))
     }
 }
 
@@ -208,4 +218,5 @@ error_codes! {
     SourceBudget => "source_budget",
     SourceSymlink => "source_symlink",
     SourceType => "source_type",
+    InvalidPack => "invalid_pack",
 }

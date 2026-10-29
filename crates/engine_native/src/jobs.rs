@@ -286,8 +286,11 @@ impl JobPool {
         &self.mismatched
     }
 
-    pub fn write_pack(&mut self, path: &Path) -> Result<Written, String> {
-        let cook = self.cook.take().ok_or("the pool is not cooking")?;
+    pub fn write_pack(&mut self, path: &Path) -> Result<Written, engine::Error> {
+        let cook = self.cook.take().ok_or_else(|| {
+            engine::Error::new(engine::ErrorCode::InvalidRequest, "$")
+                .expected(engine::Expected::Running)
+        })?;
         if let Some(store) = &mut self.store {
             store.close_packs();
         }

@@ -12,9 +12,11 @@ pub use engine_settings as settings;
 pub use engine_time_of_day as time_of_day;
 pub use engine_world_streaming as world_streaming;
 pub mod camera;
-mod error;
 pub mod game;
-pub use error::{Error, JS_ERROR_NAME, Result};
+pub use engine_core::{Allowed, Detail, Error, Expected};
+pub use engine_settings::JS_ERROR_NAME;
+
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 #[doc(hidden)]
 pub mod surface;
 pub use game::{Game, Inspectors};
@@ -29,24 +31,23 @@ pub use engine_core::{bevy_ecs, glam};
 mod games {
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, App, AssetBudget,
-        AssetError, AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, Clouds, Cube, DebugView,
+        AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, Clouds, Cube, DebugView,
         DebugViewMode, Dither, DynamicResolution, DynamicResolutionStats, Engine, EngineConfig,
         EngineEntityCommands, Environment, Filter, FixedPostSimulation, FixedPreSimulation,
         FixedSimulation, FixedSimulationSystems, FixedTime, Foliage, FrameReport, FrameTime,
         GlobalTransform, GlobalTransforms, Ground, GroundSample, Grounded, Grounding, Haze,
-        HeightHeld, HierarchyError, Highlights, InputState, Interior, InterpolateTransform,
-        InterpolationError, LevelOfDetail, LightRegion, LocalLight, LocalLightSettings,
-        MakeSources, MakeTextures, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex,
-        NightSky, OcclusionCulling, Parent, ParticleBlend, ParticleEmitter, ParticleSettings,
-        Plugin, PluginGroup, Presentation, PresentationState, PresentedTime, PresentedTransform,
-        PresentedTransforms, Records, ReflectionProbe, ReflectionProbeSettings, Reflections,
-        Resolution, ResolutionStats, Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot,
-        StreamingFocus, SubpixelCulling, Surface, TemporalAntialiasing, Texture, TextureHandle,
-        TextureRef, TextureSet, TextureSource, TextureUsage, Tint, TopLayer, Transform,
-        TransformEditError, UvTransform, ViewSync, ViewSyncSystems, WaterKind, WaterObstacle,
-        WaterObstacles, WaterSample, WaterSource, WaterSources, WorldSync, WorldSyncSystems, Wrap,
-        edit_transform, math, reset_all_interpolation, reset_interpolation, set_parent,
-        set_parents, trim_cards,
+        HeightHeld, Highlights, InputState, Interior, InterpolateTransform, LevelOfDetail,
+        LightRegion, LocalLight, LocalLightSettings, MakeSources, MakeTextures, Material,
+        MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, NightSky, OcclusionCulling, Parent,
+        ParticleBlend, ParticleEmitter, ParticleSettings, Plugin, PluginGroup, Presentation,
+        PresentationState, PresentedTime, PresentedTransform, PresentedTransforms, Records,
+        ReflectionProbe, ReflectionProbeSettings, Reflections, Resolution, ResolutionStats, Sampler,
+        Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamingFocus, SubpixelCulling, Surface,
+        TemporalAntialiasing, Texture, TextureHandle, TextureRef, TextureSet, TextureSource,
+        TextureUsage, Tint, TopLayer, Transform, UvTransform, ViewSync, ViewSyncSystems, WaterKind,
+        WaterObstacle, WaterObstacles, WaterSample, WaterSource, WaterSources, WorldSync,
+        WorldSyncSystems, Wrap, edit_transform, math, reset_all_interpolation, reset_interpolation,
+        set_parent, set_parents, trim_cards,
     };
     pub use engine_core::{
         Culling, LightingModel, Lights, Particles, PostEffects, ReflectionProbes,
@@ -110,25 +111,23 @@ pub mod bricks {
     }
 
     pub fn standard_names(names: &str, path: &str) -> crate::Result<Vec<&'static str>> {
-        standard()
-            .check_names(names.split(','), path)
-            .map_err(crate::Error::from)
+        standard().check_names(names.split(','), path)
     }
 }
 
 pub mod terrain {
     pub use engine_terrain as data;
     pub use engine_terrain::{
-        AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeError, BiomeLayer, BiomeRules, Biomes,
-        Blend, Control, DECK_DEPTH, DECK_MARGIN, DECK_RISE, Erosion, ErosionLayer, ErosionStage,
-        Facing, FarPlacement, GivenRiver, HeightImage, HeightmapLayer, HummocksLayer, Hydrology,
-        HydrologyLayer, HydrologySample, HydrologyStage, Layer, LayerError, Layers,
-        MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS, MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, Mask,
-        MotionDetail, NoiseLayer, NoiseMask, PathLayer, PathProfile, PathStage, Placed,
-        PlacedCollider, PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod,
-        PlacementPart, Pyramid, PyramidError, Remap, RiversLayer, Route, RouteOptions, Stamp,
-        StampOp, StepsLayer, SurfaceMaterial, SurfaceProjection, Surroundings, SurroundingsStatus,
-        TerrainBakes, TerrainEdit, TerrainPrefetch, TerrainRiver, TerrainSurface, Tile, TileKey,
+        AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeLayer, BiomeRules, Biomes, Blend, Control,
+        DECK_DEPTH, DECK_MARGIN, DECK_RISE, Erosion, ErosionLayer, ErosionStage, Facing,
+        FarPlacement, GivenRiver, HeightImage, HeightmapLayer, HummocksLayer, Hydrology,
+        HydrologyLayer, HydrologySample, HydrologyStage, Layer, Layers, MAX_COLLIDER_EXTENT,
+        MAX_PLACEMENT_LODS, MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, Mask, MotionDetail,
+        NoiseLayer, NoiseMask, PathLayer, PathProfile, PathStage, Placed, PlacedCollider,
+        PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod, PlacementPart,
+        Pyramid, Remap, RiversLayer, Route, RouteOptions, Stamp, StampOp, StepsLayer,
+        SurfaceMaterial, SurfaceProjection, Surroundings, SurroundingsStatus, TerrainBakes,
+        TerrainEdit, TerrainPrefetch, TerrainRiver, TerrainSurface, Tile, TileKey,
     };
 }
 
@@ -173,7 +172,7 @@ mod app_host;
 mod dev_host;
 mod game_host;
 pub use engine_render::shaders::MODULES as SHADER_MODULES;
-pub use engine_render::{AdapterInfo, RENDER_PASSES, RenderError, RenderTarget};
+pub use engine_render::{AdapterInfo, RENDER_PASSES, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine_render::{GpuMark, GpuPreference, NativeWindow, start_native_instances_with};
 pub use game_host::GameHost;

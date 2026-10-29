@@ -6,16 +6,16 @@ pub struct StartingRenderer {
 }
 
 impl StartingRenderer {
-    pub async fn finish(self) -> Result<Renderer, RenderError> {
+    pub async fn finish(self) -> Result<Renderer, Error> {
         if let Some(error) = self.validation.await {
-            return Err(render_error("WebGPU pipeline initialization failed", error));
+            return Err(failed_with("$.pipelines", error));
         }
         Ok(self.renderer)
     }
 }
 
 impl Renderer {
-    pub async fn new(target: RenderTarget) -> Result<Self, RenderError> {
+    pub async fn new(target: RenderTarget) -> Result<Self, Error> {
         Self::start(target).await?.finish().await
     }
 
@@ -23,11 +23,11 @@ impl Renderer {
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    pub async fn start(target: RenderTarget) -> Result<StartingRenderer, RenderError> {
+    pub async fn start(target: RenderTarget) -> Result<StartingRenderer, Error> {
         let instance = target.instance();
         let surface = target
             .surface(&instance)
-            .map_err(|error| render_error("Could not create the GPU surface", error))?;
+            .map_err(|error| failed_with("$.surface", error))?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: target.power_preference(),
@@ -36,7 +36,7 @@ impl Renderer {
                 ..Default::default()
             })
             .await
-            .map_err(|error| render_error("No WebGPU adapter is available. Use a WebGPU-capable browser on HTTPS or localhost", error))?;
+            .map_err(|error| failed_with("$.adapter", error))?;
         let adapter_info = crate::AdapterInfo::of(&adapter.get_info());
         let adapter_limits = adapter.limits();
         let required = crate::pipeline_layouts::REQUIRED_LIMITS;
@@ -79,7 +79,7 @@ impl Renderer {
                 ..Default::default()
             })
             .await
-            .map_err(|error| render_error("Could not initialize the WebGPU device", error))?;
+            .map_err(|error| failed_with("$.device", error))?;
         let queue = crate::gpu_calls::Queue::new(wgpu_queue);
 
         let health = Arc::new(Mutex::new(health::Reports::default()));

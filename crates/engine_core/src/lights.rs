@@ -13,7 +13,7 @@ use crate::extraction::{Nearest, Poses};
 use crate::sections::environment_section;
 use crate::ticks::ScanClock;
 use crate::{GlobalTransforms, RenderSnapshot};
-use engine_settings::{ExtraRules, InvalidSetting, Setting, settings};
+use engine_settings::{Expected, ExtraRules, InvalidSetting, Setting, settings};
 
 pub struct Lights;
 
@@ -46,13 +46,13 @@ settings! {
 impl ExtraRules for Spot {
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         if self.direction.length_squared() == 0.0 {
-            return Err(InvalidSetting::new("direction", "must be nonzero"));
+            return Err(InvalidSetting::new("direction", Expected::Nonzero)
+                .got(self.direction.to_array()));
         }
         if self.outer_angle < self.inner_angle {
-            return Err(InvalidSetting::new(
-                "outer_angle",
-                "must be at least the inner angle",
-            ));
+            return Err(InvalidSetting::new("outer_angle", Expected::Sorted)
+                .got(self.outer_angle)
+                .nearest(self.inner_angle));
         }
         Ok(())
     }

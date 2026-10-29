@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use crate::AssetError;
+use engine_settings::{Error, ErrorCode, Expected};
 
 pub const MAX_TEXTURE_DIMENSION: u32 = 8192;
 
@@ -96,21 +96,18 @@ pub struct Texture {
 }
 
 impl Texture {
-    pub fn new(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, AssetError> {
+    pub fn new(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, Error> {
         let texture = Self::from_rgba(width, height, rgba8)?;
-        if let Some(pixel) = texture
-            .pixels()
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .position(|pixel| pixel[3] != 255)
-        {
-            return Err(AssetError::UnsupportedTextureAlpha { pixel });
+        let pixels = texture.pixels().as_chunks::<4>().0;
+        if let Some(pixel) = pixels.iter().position(|pixel| pixel[3] != 255) {
+            return Err(invalid(format!("$.rgba8[{}]", pixel * 4 + 3))
+                .expected(Expected::Opaque)
+                .got(pixels[pixel][3]));
         }
         Ok(texture)
     }
 
-    pub fn from_rgba(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, AssetError> {
+    pub fn from_rgba(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, Error> {
         Self::from_levels(TextureFormat::Rgba8, width, height, vec![rgba8])
     }
 
@@ -119,32 +116,33 @@ impl Texture {
         width: u32,
         height: u32,
         levels: Vec<Vec<u8>>,
-    ) -> Result<Self, AssetError> {
-        let invalid = |reason| Err(AssetError::InvalidCompressedTexture { reason });
-        if width == 0
-            || height == 0
-            || width > MAX_TEXTURE_DIMENSION
-            || height > MAX_TEXTURE_DIMENSION
-        {
-            return Err(AssetError::InvalidTextureDimensions {
-                width,
-                height,
-                limit: MAX_TEXTURE_DIMENSION,
-            });
-        }
-        if format.is_compressed() && (!width.is_multiple_of(4) || !height.is_multiple_of(4)) {
-            return invalid("dimensions must be multiples of the 4 × 4 block");
+    ) -> Result<Self, Error> {
+        for (path, size) in [("$.width", width), ("$.height", height)] {
+            if !(1..=MAX_TEXTURE_DIMENSION).contains(&size) {
+                return Err(invalid(path)
+                    .range(1.0, f64::from(MAX_TEXTURE_DIMENSION))
+                    .got(size));
+            }
+            if format.is_compressed() && !size.is_multiple_of(4) {
+                return Err(invalid(path)
+                    .expected(Expected::Multiple)
+                    .got(size)
+                    .nearest(size.next_multiple_of(4)));
+            }
         }
         if levels.is_empty() || levels.len() > full_chain(width, height) as usize {
-            return invalid("a texture has from one level to a full mip chain");
+            return Err(invalid("$.levels")
+                .expected(Expected::Array)
+                .range(1.0, f64::from(full_chain(width, height)))
+                .got(levels.len()));
         }
         for (level, bytes) in levels.iter().enumerate() {
             let expected = format.level_bytes((width >> level).max(1), (height >> level).max(1));
             if bytes.len() != expected {
-                return Err(AssetError::InvalidTextureLength {
-                    expected,
-                    actual: bytes.len(),
-                });
+                return Err(invalid(format!("$.levels[{level}]"))
+                    .expected(Expected::Matching)
+                    .range(expected as f64, expected as f64)
+                    .got(bytes.len()));
             }
         }
         let masked = !format.is_compressed()
@@ -216,6 +214,10 @@ impl Texture {
     pub fn byte_len(&self) -> usize {
         self.levels.iter().map(|level| level.len()).sum()
     }
+}
+
+fn invalid(path: impl Into<String>) -> Error {
+    Error::new(ErrorCode::InvalidTexture, path)
 }
 
 pub fn full_chain(width: u32, height: u32) -> u32 {

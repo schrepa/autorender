@@ -9,11 +9,9 @@ mod collider;
 mod components;
 mod document;
 mod environment;
-mod error;
 mod files;
 mod hierarchy;
 mod instance;
-mod json;
 mod lighting;
 mod material;
 mod probe;
@@ -32,13 +30,12 @@ pub use engine_core::EnvironmentSection;
 #[cfg(feature = "schema")]
 pub use environment::section_schemas;
 pub use environment::{AtmospherePreset, SceneAtmosphere, SceneEnvironment};
-pub use error::SceneError;
 pub use files::{
     MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshStreams, SceneFile, SceneFileKind, SceneFiles,
     decode_mesh_buffer, encode_mesh_buffer, encode_mesh_buffer_with,
 };
 pub use instance::{MeshOrigin, SceneEntity, SceneInstance, authored_id};
-pub use json::{parse_json, parse_value};
+pub use engine_core::{parse_json, parse_value};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
 pub use material::{
     SceneAlphaMode, SceneFilter, SceneGrounding, SceneMap, SceneMaterial, SceneMipmapFilter,

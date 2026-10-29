@@ -1,11 +1,9 @@
 use engine_scene::SceneEnvironment;
-use engine_settings::ErrorCode;
+use engine_settings::{Error, ErrorCode, Expected};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
-
-use crate::DevError;
 
 #[cfg(not(target_arch = "wasm32"))]
 use engine_settings::stated;
@@ -111,89 +109,70 @@ pub struct Envelope {
 }
 
 impl Envelope {
-    pub fn parse(source: &str) -> Result<Self, DevError> {
+    pub fn parse(source: &str) -> Result<Self, Error> {
         if source.len() > MAX_REQUEST_BYTES {
-            return Err(DevError::new(
-                ErrorCode::RequestTooLarge,
-                "$",
-                format!("request must fit {MAX_REQUEST_BYTES} UTF-8 bytes"),
-            )
-            .expected(format!("at most {MAX_REQUEST_BYTES} bytes")));
+            return Err(Error::new(ErrorCode::RequestTooLarge, "$")
+                .at_most(MAX_REQUEST_BYTES as u64)
+                .got(source.len()));
         }
-        let request: Value = engine_scene::parse_json(source)?;
+        let request: Value = engine_core::parse_json(source)?;
         let Value::Object(mut fields) = request else {
-            return Err(
-                DevError::new(ErrorCode::InvalidType, "$", "a request is an object")
-                    .expected("object"),
-            );
+            return Err(Error::new(ErrorCode::InvalidType, "$").expected(Expected::Object));
         };
         check_version(fields.remove("version"))?;
         let verb = match fields.remove("verb") {
             None => {
-                return Err(DevError::new(
-                    ErrorCode::MissingField,
-                    "$.verb",
-                    "missing field `verb`",
-                )
-                .allowed(Verb::names()));
+                return Err(Error::new(ErrorCode::MissingField, "$.verb")
+                    .expected(Expected::Present)
+                    .variants(Verb::names()));
             }
-            Some(Value::String(name)) => Verb::named(&name)
-                .ok_or_else(|| DevError::unknown("$.verb", &name, Verb::names()))?,
-            Some(_) => {
-                return Err(DevError::new(
-                    ErrorCode::InvalidType,
-                    "$.verb",
-                    "the verb is a string",
-                )
-                .expected("string")
-                .allowed(Verb::names()));
+            Some(Value::String(name)) => Verb::named(&name).ok_or_else(|| {
+                Error::new(ErrorCode::UnknownVariant, "$.verb")
+                    .got(&name)
+                    .variants(Verb::names())
+            })?,
+            Some(other) => {
+                return Err(Error::new(ErrorCode::InvalidType, "$.verb")
+                    .expected(Expected::String)
+                    .got(other)
+                    .variants(Verb::names()));
             }
         };
         Ok(Self { verb, fields })
     }
 
-    pub fn name(&self) -> Result<&str, DevError> {
+    pub fn name(&self) -> Result<&str, Error> {
         match self.fields.get("name") {
             Some(Value::String(name)) => Ok(name),
-            Some(_) => Err(
-                DevError::new(ErrorCode::InvalidType, "$.name", "the name is a string")
-                    .expected("string"),
-            ),
-            None => Err(DevError::new(
-                ErrorCode::MissingField,
-                "$.name",
-                "missing field `name`",
-            )),
+            Some(other) => Err(Error::new(ErrorCode::InvalidType, "$.name")
+                .expected(Expected::String)
+                .got(other)),
+            None => Err(Error::new(ErrorCode::MissingField, "$.name").expected(Expected::Present)),
         }
     }
 
-    pub fn args(&self) -> Result<Value, DevError> {
+    pub fn args(&self) -> Result<Value, Error> {
         let extra = self
             .fields
             .keys()
             .find(|key| !["name", "args"].contains(&key.as_str()));
         if let Some(extra) = extra {
-            return Err(DevError::new(
-                ErrorCode::UnknownField,
-                format!("$.{extra}"),
-                format!("unknown field `{extra}`, expected `name` or `args`"),
-            )
-            .allowed(["name", "args"]));
+            return Err(Error::new(ErrorCode::UnknownField, format!("$.{extra}"))
+                .expected(Expected::Absent)
+                .got(extra)
+                .variants(["name", "args"]));
         }
         match self.fields.get("args") {
             None => Ok(Value::Object(Map::new())),
             Some(args @ Value::Object(_)) => Ok(args.clone()),
-            Some(_) => Err(
-                DevError::new(ErrorCode::InvalidType, "$.args", "args are an object")
-                    .expected("object"),
-            ),
+            Some(other) => Err(Error::new(ErrorCode::InvalidType, "$.args")
+                .expected(Expected::Object)
+                .got(other)),
         }
     }
 
-    pub fn body<T: DeserializeOwned>(&self) -> Result<T, DevError> {
-        Ok(engine_scene::parse_value(Value::Object(
-            self.fields.clone(),
-        ))?)
+    pub fn body<T: DeserializeOwned>(&self) -> Result<T, Error> {
+        engine_core::parse_value(Value::Object(self.fields.clone()))
     }
 }
 
@@ -213,16 +192,21 @@ pub fn named(verb: Verb, name: &str, args: Value) -> String {
     request(verb, serde_json::json!({ "name": name, "args": args }))
 }
 
-pub(crate) fn parse_named<T: DeserializeOwned>(name: &str, args: Value) -> Result<T, DevError> {
-    let Value::Object(mut fields) = args else {
-        return Err(
-            DevError::new(ErrorCode::InvalidType, "$.args", "args are an object")
-                .expected("object"),
-        );
+pub(crate) fn parse_named<T: DeserializeOwned>(name: &str, args: Value) -> Result<T, Error> {
+    let mut fields = match args {
+        Value::Object(fields) => fields,
+        other @ (Value::Null
+        | Value::Bool(_)
+        | Value::Number(_)
+        | Value::String(_)
+        | Value::Array(_)) => {
+            return Err(Error::new(ErrorCode::InvalidType, "$.args")
+                .expected(Expected::Object)
+                .got(other));
+        }
     };
     fields.insert("op".to_owned(), Value::from(name));
-    engine_scene::parse_value(Value::Object(fields)).map_err(|error| {
-        let mut error = DevError::from(error);
+    engine_core::parse_value(Value::Object(fields)).map_err(|mut error| {
         let path = match error.path.strip_prefix('$') {
             Some("" | ".op") => "$.args".to_owned(),
             Some(rest) => format!("$.args{rest}"),
@@ -233,27 +217,22 @@ pub(crate) fn parse_named<T: DeserializeOwned>(name: &str, args: Value) -> Resul
     })
 }
 
-fn check_version(version: Option<Value>) -> Result<(), DevError> {
+fn check_version(version: Option<Value>) -> Result<(), Error> {
     #[derive(Deserialize)]
     struct Version {
         version: u32,
     }
+    let accepted = f64::from(PROTOCOL_VERSION);
     let Some(version) = version else {
-        return Err(DevError::new(
-            ErrorCode::MissingField,
-            "$.version",
-            "missing field `version`",
-        )
-        .expected(PROTOCOL_VERSION.to_string()));
+        return Err(Error::new(ErrorCode::MissingField, "$.version")
+            .expected(Expected::Present)
+            .range(accepted, accepted));
     };
-    let Version { version } = engine_scene::parse_value(serde_json::json!({ "version": version }))?;
+    let Version { version } = engine_core::parse_value(serde_json::json!({ "version": version }))?;
     if version != PROTOCOL_VERSION {
-        return Err(DevError::new(
-            ErrorCode::UnsupportedVersion,
-            "$.version",
-            format!("accepted protocol version: {PROTOCOL_VERSION}"),
-        )
-        .expected(PROTOCOL_VERSION.to_string()));
+        return Err(Error::new(ErrorCode::UnsupportedVersion, "$.version")
+            .got(version)
+            .range(accepted, accepted));
     }
     Ok(())
 }

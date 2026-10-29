@@ -29,16 +29,14 @@ impl Display {
         target: RenderTarget,
         adapter: &wgpu::Adapter,
         (max_dimension, max_layers): (u32, u32),
-    ) -> Result<Self, RenderError> {
+    ) -> Result<Self, Error> {
         let (width, height) = target.size();
         let extent = clamped_extent(width, height, max_dimension);
         let (width, height) = extent.unwrap_or((1, 1));
         let mut configuration = match &surface {
             Some(surface) => surface
                 .get_default_config(adapter, width, height)
-                .ok_or_else(|| {
-                    RenderError("This adapter cannot present to the supplied canvas.".into())
-                })?,
+                .ok_or_else(|| failed("$.surface").expected(Expected::Supported))?,
             None => wgpu::SurfaceConfiguration {
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
                 format: wgpu::TextureFormat::Bgra8Unorm,
@@ -169,7 +167,7 @@ impl Display {
         &mut self,
         device: &wgpu::Device,
         depth: &mut DepthTarget,
-    ) -> Result<Option<DisplayFrame>, RenderError> {
+    ) -> Result<Option<DisplayFrame>, Error> {
         let _profile = engine_profile::span("render", "surface_acquisition");
         if self.reconfigure_next_frame {
             self.configure_surface(device);
@@ -200,14 +198,12 @@ impl Display {
                 self.surface = self
                     .target
                     .surface(&self.instance)
-                    .map_err(|error| render_error("Could not recover the GPU surface", error))?;
+                    .map_err(|error| failed_with("$.surface", error))?;
                 self.reconfigure_next_frame = true;
                 return Ok(None);
             }
             wgpu::CurrentSurfaceTexture::Validation => {
-                return Err(RenderError(
-                    "WebGPU surface validation failed. Reload to recreate the engine.".into(),
-                ));
+                return Err(failed("$.surface").expected(Expected::Live));
             }
         };
         Ok(Some(DisplayFrame {

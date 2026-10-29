@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use engine::host::{FramePhase, HostSettings};
-use engine::{Engine, Game, GameHost, GpuPreference, RenderTarget};
+use engine::{Engine, ErrorCode, Game, GameHost, GpuPreference, RenderTarget};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::WindowEvent;
@@ -62,8 +62,8 @@ pub fn run<'a, G: Game, E: Into<engine::Error>>(
     window: Window,
     build: impl FnOnce() -> Result<(Engine, G), E> + 'a,
 ) -> engine::Result<Option<WindowReport>> {
-    let event_loop =
-        EventLoop::new().map_err(|error| host_error("Could not open a window", error))?;
+    let event_loop = EventLoop::new()
+        .map_err(|error| host_error(ErrorCode::RenderFailed, "$.event_loop", error))?;
     let mut app = App {
         options: window,
         build: Some(Box::new(move || build().map_err(Into::into))),
@@ -73,7 +73,7 @@ pub fn run<'a, G: Game, E: Into<engine::Error>>(
     };
     event_loop
         .run_app(&mut app)
-        .map_err(|error| host_error("The window failed", error))?;
+        .map_err(|error| host_error(ErrorCode::RenderFailed, "$.event_loop", error))?;
     app.outcome
 }
 
@@ -110,7 +110,7 @@ impl<'a, G: Game> App<'a, G> {
         let window = Arc::new(
             event_loop
                 .create_window(attributes)
-                .map_err(|error| host_error("Could not open a window", error))?,
+                .map_err(|error| host_error(ErrorCode::RenderFailed, "$.window", error))?,
         );
         let size = window.inner_size();
         let size = (size.width, size.height);

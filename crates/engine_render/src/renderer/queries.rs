@@ -103,10 +103,8 @@ impl Renderer {
         self.pipeline_counts.list()
     }
 
-    pub fn create_listed_pipelines(&mut self, record: &[u8]) -> Result<u32, RenderError> {
-        self.pipeline_counts
-            .create_listed(record)
-            .map_err(|error| render_error("The pipeline list does not read", error))
+    pub fn create_listed_pipelines(&mut self, record: &[u8]) -> Result<u32, Error> {
+        self.pipeline_counts.create_listed(record)
     }
 
     pub fn pipelines_listed(&self) -> (u32, u32) {

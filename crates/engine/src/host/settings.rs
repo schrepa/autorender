@@ -60,12 +60,14 @@ macro_rules! settings {
         }),*];
 
         impl HostSettings {
-            pub fn set(&mut self, name: &str, value: &str) -> Result<bool, String> {
+            pub fn set(&mut self, name: &str, value: &str) -> Result<bool, engine_core::Error> {
                 match name {
                     $($name => {
                         let Some(parsed) = parse!(value, $values) else {
                             let values: &[&str] = words!($values);
-                            return Err(format!("{} is {}, not {value}", $name, values.join(" or ")));
+                            return Err(engine_core::Error::new(engine_core::ErrorCode::InvalidValue, "$")
+                                .got(value)
+                                .variants(values.iter().copied()));
                         };
                         self.$field = parsed;
                         Ok(true)

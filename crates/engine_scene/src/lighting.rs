@@ -1,13 +1,13 @@
 use engine_core::{
-    LightRegion, LocalLight, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MIN_SPOT_DEGREES, ParticleBlend,
-    ParticleEmitter, Spot, bevy_ecs::world::EntityWorldMut, glam::Vec3,
+    Error, LightRegion, LocalLight, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MIN_SPOT_DEGREES,
+    ParticleBlend, ParticleEmitter, Spot, bevy_ecs::world::EntityWorldMut, glam::Vec3,
 };
 use engine_settings::{ExtraRules, InvalidSetting, Setting, settings};
 use serde::{Deserialize, Serialize};
 
 use crate::components::{Placement, Reach, SceneComponent};
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneError, SceneFiles};
+use crate::{SceneDocument, SceneFiles};
 
 settings! {
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -256,7 +256,7 @@ impl SceneComponent for SceneLight {
         _: &str,
         _: &SceneDocument,
         _: Option<&SceneFiles>,
-    ) -> Result<LocalLight, SceneError> {
+    ) -> Result<LocalLight, Error> {
         Ok(self.runtime())
     }
 
@@ -279,7 +279,7 @@ impl SceneComponent for SceneEmitter {
         _: &str,
         _: &SceneDocument,
         _: Option<&SceneFiles>,
-    ) -> Result<ParticleEmitter, SceneError> {
+    ) -> Result<ParticleEmitter, Error> {
         Ok(self.runtime())
     }
 

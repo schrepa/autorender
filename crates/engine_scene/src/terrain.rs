@@ -3,20 +3,21 @@ use std::sync::Arc;
 
 use engine_core::bevy_ecs::world::EntityWorldMut;
 use engine_core::glam::{Vec2, Vec3};
-use engine_core::{MaterialHandle, MeshHandle};
+use engine_core::{Error, Expected, MaterialHandle, MeshHandle};
 use engine_settings::{Rule, Setting};
 use engine_terrain::{
     Biome, Biomes, Blend, Cover, ErosionLayer, ErosionStage, HeightImage, HeightmapLayer,
-    HummocksLayer, HydrologyLayer, HydrologyStage, Layer, Layers, MAX_CREDIT, NoiseLayer,
-    PathLayer, PathStage, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
-    PlacementLod, PlacementPart, Pyramid, RiversLayer, Stamp, StepsLayer, SurfaceMaterial,
-    SurfaceProjection, Surroundings, Terrain, TerrainSurface,
+    HummocksLayer, HydrologyLayer, HydrologyStage, Layer, Layers, MAX_CREDIT, MAX_PLACEMENT_LODS,
+    MAX_PLACEMENT_PARTS, NoiseLayer, PathLayer, PathStage, PlacedCollider, PlacedShape,
+    PlacementAsset, PlacementLayer, PlacementLod, PlacementPart, Pyramid, RiversLayer, Stamp,
+    StepsLayer, SurfaceMaterial, SurfaceProjection, Surroundings, Terrain, TerrainSurface,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::components::{Placement, SceneComponent};
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneError, SceneFiles, SceneMaterial, SceneMesh, files::valid_uri};
+use crate::validation::unknown;
+use crate::{SceneDocument, SceneFiles, SceneMaterial, SceneMesh, files::valid_uri};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -269,8 +270,8 @@ pub(crate) type PreparedAsset = (
 fn prepared_parts(
     asset: &SceneTerrainAsset,
     (materials, meshes): (&[SceneMaterial], &[SceneMesh]),
-    (at, invalid): (&str, &dyn Fn(String, String) -> SceneError),
-) -> Result<Vec<(usize, Vec<usize>)>, SceneError> {
+    (at, invalid): (&str, &dyn Fn(String) -> Error),
+) -> Result<Vec<(usize, Vec<usize>)>, Error> {
     let mut prepared = Vec::with_capacity(asset.parts.len());
     for (index, part) in asset.parts.iter().enumerate() {
         let field = format!("{at}.parts[{index}]");
@@ -278,9 +279,10 @@ fn prepared_parts(
             .iter()
             .position(|candidate| candidate.id == part.material)
             .ok_or_else(|| {
-                invalid(
-                    format!("{field}.material"),
-                    "must name a material of this document".into(),
+                unknown(
+                    invalid(format!("{field}.material")),
+                    &part.material,
+                    materials.iter().map(|material| material.id.as_str()),
                 )
             })?;
         let part_meshes = part
@@ -292,9 +294,10 @@ fn prepared_parts(
                     .iter()
                     .position(|candidate| candidate.id == *mesh)
                     .ok_or_else(|| {
-                        invalid(
-                            format!("{field}.meshes[{level}]"),
-                            "must name a mesh of this document".into(),
+                        unknown(
+                            invalid(format!("{field}.meshes[{level}]")),
+                            mesh,
+                            meshes.iter().map(|mesh| mesh.id.as_str()),
                         )
                     })
             })
@@ -302,12 +305,18 @@ fn prepared_parts(
         prepared.push((material, part_meshes));
     }
     let counts: Vec<usize> = prepared.iter().map(|(_, meshes)| meshes.len()).collect();
-    if let Err((part, rule)) = PlacementPart::check(&counts, 1 + asset.lods.len()) {
-        let field = match part {
-            Some(part) => format!("{at}.parts[{part}].meshes"),
-            None => format!("{at}.parts"),
-        };
-        return Err(invalid(field, rule.into()));
+    let levels = 1 + asset.lods.len();
+    if let Err((part, _)) = PlacementPart::check(&counts, levels) {
+        return Err(match part {
+            Some(part) => invalid(format!("{at}.parts[{part}].meshes"))
+                .expected(Expected::Array)
+                .range(1.0, levels as f64)
+                .got(counts[part]),
+            None => invalid(format!("{at}.parts"))
+                .expected(Expected::Array)
+                .at_most(MAX_PLACEMENT_PARTS as u64)
+                .got(counts.len()),
+        });
     }
     Ok(prepared)
 }
@@ -429,13 +438,12 @@ impl SceneTerrain {
         path: &str,
         materials: &[SceneMaterial],
         meshes: &[SceneMesh],
-    ) -> Result<(TerrainSurface, Vec<Option<usize>>, Vec<PreparedAsset>), SceneError> {
-        let invalid = |field: String, rule: String| {
-            SceneError::new(
-                ErrorCode::InvalidTerrain,
-                format!("{path}.surface.{field}"),
-                rule,
-            )
+    ) -> Result<(TerrainSurface, Vec<Option<usize>>, Vec<PreparedAsset>), Error> {
+        let invalid = |field: String| {
+            Error::new(ErrorCode::InvalidTerrain, format!("{path}.surface.{field}"))
+        };
+        let broken = |error: engine_settings::InvalidSetting, at: &str| {
+            error.error(ErrorCode::InvalidTerrain, &format!("{path}.surface.{at}"))
         };
         let Some(surface) = &self.surface else {
             let looks = TerrainSurface::default();
@@ -457,10 +465,7 @@ impl SceneTerrain {
                 depth: material.depth,
             };
             if let Err(error) = look.validate() {
-                return Err(invalid(
-                    format!("{at}.{}", error.field),
-                    error.rule.into_owned(),
-                ));
+                return Err(broken(error, &at));
             }
             let document = material
                 .material
@@ -470,9 +475,10 @@ impl SceneTerrain {
                         .iter()
                         .position(|candidate| candidate.id == *id)
                         .ok_or_else(|| {
-                            invalid(
-                                format!("{at}.material"),
-                                "must name a material of this document".into(),
+                            unknown(
+                                invalid(format!("{at}.material")),
+                                id,
+                                materials.iter().map(|material| material.id.as_str()),
                             )
                         })
                 })
@@ -485,7 +491,9 @@ impl SceneTerrain {
             meshes
                 .iter()
                 .position(|candidate| candidate.id == id)
-                .ok_or_else(|| invalid(field, "must name a mesh of this document".into()))
+                .ok_or_else(|| {
+                    unknown(invalid(field), id, meshes.iter().map(|mesh| mesh.id.as_str()))
+                })
         };
         for (index, asset) in surface.assets.iter().enumerate() {
             let at = format!("assets[{index}]");
@@ -494,9 +502,10 @@ impl SceneTerrain {
                 .iter()
                 .position(|candidate| candidate.id == asset.material)
                 .ok_or_else(|| {
-                    invalid(
-                        format!("{at}.material"),
-                        "must name a material of this document".into(),
+                    unknown(
+                        invalid(format!("{at}.material")),
+                        &asset.material,
+                        materials.iter().map(|material| material.id.as_str()),
                     )
                 })?;
             let lods = asset
@@ -509,12 +518,22 @@ impl SceneTerrain {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let errors: Vec<f32> = lods.iter().map(|&(_, error)| error).collect();
-            if let Err((level, rule)) = PlacementLod::check(&errors) {
-                let field = match level {
-                    Some(level) => format!("{at}.lods[{level}].error"),
-                    None => format!("{at}.lods"),
-                };
-                return Err(invalid(field, rule.into()));
+            if let Err((level, _)) = PlacementLod::check(&errors) {
+                return Err(match level {
+                    Some(level) => invalid(format!("{at}.lods[{level}].error"))
+                        .expected(Expected::Above)
+                        .range(
+                            level
+                                .checked_sub(1)
+                                .map_or(0.0, |previous| f64::from(errors[previous])),
+                            f64::MAX,
+                        )
+                        .got(errors[level]),
+                    None => invalid(format!("{at}.lods"))
+                        .expected(Expected::Array)
+                        .at_most(MAX_PLACEMENT_LODS as u64)
+                        .got(errors.len()),
+                });
             }
             let parts = prepared_parts(asset, (materials, meshes), (&at, &invalid))?;
             let shadow = asset
@@ -523,12 +542,12 @@ impl SceneTerrain {
                 .map(|id| mesh_index(id, format!("{at}.shadow")))
                 .transpose()?;
             if let Err(error) = asset.sway.check("sway", PlacementAsset::SWAY) {
-                return Err(invalid(format!("{at}.sway"), error.rule.into_owned()));
+                return Err(broken(error, &at));
             }
             let collider = asset.collider.map(SceneTerrainCollider::runtime);
             if let Some(Err(error)) = collider.map(|collider| collider.check("collider", Rule::Any))
             {
-                return Err(invalid(format!("{at}.collider"), error.rule.into_owned()));
+                return Err(broken(error, &at));
             }
             assets.push((mesh, material, lods, parts, shadow, asset.sway, collider));
         }
@@ -549,8 +568,11 @@ impl SceneTerrain {
             placed: surface.placed.clone(),
             macro_colors: surface.macro_colors,
         };
-        let surface =
-            TerrainSurface::new(&biomes, looks).map_err(|error| invalid(error.path, error.rule))?;
+        let surface = TerrainSurface::new(&biomes, looks).map_err(|error| {
+            error
+                .coded(ErrorCode::InvalidTerrain)
+                .within(&format!("{path}.surface"))
+        })?;
         Ok((surface, indices, assets))
     }
 
@@ -559,7 +581,7 @@ impl SceneTerrain {
         path: &str,
         files: Option<&SceneFiles>,
         (materials, meshes): (&[SceneMaterial], &[SceneMesh]),
-    ) -> Result<PreparedTerrain, SceneError> {
+    ) -> Result<PreparedTerrain, Error> {
         let (surface, indices, assets) = self.surface(path, materials, meshes)?;
         let bridge = match self
             .surface
@@ -571,10 +593,10 @@ impl SceneTerrain {
                     .iter()
                     .position(|material| material.id == *id)
                     .ok_or_else(|| {
-                        SceneError::new(
-                            ErrorCode::InvalidTerrain,
-                            format!("{path}.surface.bridge"),
-                            "must name a material of this document",
+                        unknown(
+                            Error::new(ErrorCode::InvalidTerrain, format!("{path}.surface.bridge")),
+                            id,
+                            materials.iter().map(|material| material.id.as_str()),
                         )
                     })?,
             ),
@@ -594,7 +616,7 @@ impl SceneTerrain {
         path: &str,
         files: Option<&SceneFiles>,
         (materials, meshes): (&[SceneMaterial], &[SceneMesh]),
-    ) -> Result<Terrain, SceneError> {
+    ) -> Result<Terrain, Error> {
         Ok(self.prepare(path, files, (materials, meshes))?.terrain)
     }
 
@@ -603,12 +625,11 @@ impl SceneTerrain {
         path: &str,
         files: Option<&SceneFiles>,
         surface: TerrainSurface,
-    ) -> Result<Terrain, SceneError> {
-        let invalid = |field: &str, rule: String| {
-            SceneError::new(ErrorCode::InvalidTerrain, format!("{path}.{field}"), rule)
-        };
+    ) -> Result<Terrain, Error> {
+        let invalid =
+            |field: &str| Error::new(ErrorCode::InvalidTerrain, format!("{path}.{field}"));
         if !self.origin.iter().all(|value| value.is_finite()) {
-            return Err(invalid("origin", "must be finite".into()));
+            return Err(invalid("origin").expected(Expected::Finite).got(self.origin));
         }
         let origin = Vec3::from_array(self.origin);
         let surroundings = self.surroundings.map(|surroundings| Surroundings {
@@ -616,20 +637,18 @@ impl SceneTerrain {
             blend: surroundings.blend,
         });
         if let Some(Err(error)) = surroundings.map(|surroundings| surroundings.validate()) {
-            return Err(invalid(
-                &format!("surroundings.{}", error.field),
-                error.rule.into_owned(),
-            ));
+            return Err(error.error(ErrorCode::InvalidTerrain, &format!("{path}.surroundings")));
         }
         if self.layers.is_empty() {
-            return Err(invalid("layers", "a terrain needs layers".into()));
+            return Err(invalid("layers").expected(Expected::NonEmpty));
         }
         let source = self.layers(path, files)?;
         let (Some(tiles), Some(spacing)) = (self.tiles, self.spacing) else {
-            return Err(invalid("tiles", "terrains need tiles and spacing".into()));
+            let field = if self.tiles.is_none() { "tiles" } else { "spacing" };
+            return Err(invalid(field).expected(Expected::Present));
         };
-        let pyramid =
-            Pyramid::new(tiles, spacing).map_err(|error| invalid("tiles", error.to_string()))?;
+        let pyramid = Pyramid::new(tiles, spacing)
+            .map_err(|error| error.coded(ErrorCode::InvalidTerrain).within(path))?;
         Ok(Terrain {
             origin,
             pyramid,
@@ -642,7 +661,7 @@ impl SceneTerrain {
         })
     }
 
-    fn layers(&self, path: &str, files: Option<&SceneFiles>) -> Result<Layers, SceneError> {
+    fn layers(&self, path: &str, files: Option<&SceneFiles>) -> Result<Layers, Error> {
         let layers = self
             .layers
             .iter()
@@ -672,14 +691,8 @@ impl SceneTerrain {
                     SceneTerrainLayer::Hummocks(hummocks) => Layer::Hummocks(*hummocks),
                 })
             })
-            .collect::<Result<Vec<_>, SceneError>>()?;
-        Layers::new(layers).map_err(|error| {
-            SceneError::new(
-                ErrorCode::InvalidTerrain,
-                format!("{path}.layers[{}].{}", error.layer, error.field),
-                error.rule,
-            )
-        })
+            .collect::<Result<Vec<_>, Error>>()?;
+        Layers::new(layers).map_err(|error| error.coded(ErrorCode::InvalidTerrain).within(path))
     }
 
     pub fn from_runtime(
@@ -791,46 +804,35 @@ impl SceneTerrain {
 }
 
 impl SceneHeightmap {
-    fn prepare(
-        &self,
-        path: &str,
-        files: Option<&SceneFiles>,
-    ) -> Result<HeightmapLayer, SceneError> {
+    fn prepare(&self, path: &str, files: Option<&SceneFiles>) -> Result<HeightmapLayer, Error> {
         valid_uri(&self.uri, &format!("{path}.uri"))?;
         for (field, text) in [("source", &self.source), ("attribution", &self.attribution)] {
-            if text
-                .as_ref()
-                .is_some_and(|text| text.chars().count() > MAX_CREDIT)
-            {
-                return Err(SceneError::new(
-                    ErrorCode::InvalidTerrain,
-                    format!("{path}.{field}"),
-                    format!("must hold at most {MAX_CREDIT} characters"),
-                ));
+            let characters = text.as_ref().map_or(0, |text| text.chars().count());
+            if characters > MAX_CREDIT {
+                return Err(
+                    Error::new(ErrorCode::InvalidTerrain, format!("{path}.{field}"))
+                        .at_most(MAX_CREDIT as u64)
+                        .got(characters),
+                );
             }
         }
-        if !(2..=MAX_HEIGHTMAP).contains(&self.width) || !(2..=MAX_HEIGHTMAP).contains(&self.height)
-        {
-            return Err(SceneError::new(
-                ErrorCode::InvalidTerrain,
-                format!("{path}.width"),
-                format!("width and height must be 2 to {MAX_HEIGHTMAP} samples"),
-            ));
+        for (field, samples) in [("width", self.width), ("height", self.height)] {
+            if !(2..=MAX_HEIGHTMAP).contains(&samples) {
+                return Err(
+                    Error::new(ErrorCode::InvalidTerrain, format!("{path}.{field}"))
+                        .range(2.0, f64::from(MAX_HEIGHTMAP))
+                        .got(samples),
+                );
+            }
         }
         let image = match files {
             Some(files) => {
                 let bytes = files.buffer(&self.uri, &format!("{path}.uri"))?;
                 HeightImage::from_le_bytes(self.width, self.height, bytes).ok_or_else(|| {
-                    SceneError::new(
-                        ErrorCode::InvalidTerrain,
-                        format!("{path}.uri"),
-                        format!(
-                            "a {} by {} heightmap holds {} bytes of 16-bit samples",
-                            self.width,
-                            self.height,
-                            self.width as usize * self.height as usize * 2
-                        ),
-                    )
+                    let wanted = f64::from(self.width) * f64::from(self.height) * 2.0;
+                    Error::new(ErrorCode::InvalidTerrain, format!("{path}.uri"))
+                        .range(wanted, wanted)
+                        .got(bytes.len())
                 })?
             }
             None => HeightImage::new(
@@ -860,17 +862,14 @@ impl engine_settings::Setting for SceneTerrain {}
 impl SceneComponent for SceneTerrain {
     type Prepared = PreparedTerrain;
 
-    const PLACEMENT: Placement = Placement::Entities(
-        ErrorCode::InvalidStreamed,
-        "terrains stream their own tiles; author them in entities",
-    );
+    const PLACEMENT: Placement = Placement::Entities(ErrorCode::InvalidStreamed);
 
     fn prepare(
         &self,
         path: &str,
         document: &SceneDocument,
         files: Option<&SceneFiles>,
-    ) -> Result<PreparedTerrain, SceneError> {
+    ) -> Result<PreparedTerrain, Error> {
         SceneTerrain::prepare(self, path, files, (&document.materials, &document.meshes))
     }
 

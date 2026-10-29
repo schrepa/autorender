@@ -1,18 +1,19 @@
+import { engineFailure } from "../generated/errors";
 import { jobPool } from "./jobs.ts";
 
 export async function loadSceneSource(url: string, signal: AbortSignal): Promise<string> {
   const response = await fetch(url, { cache: "no-store", signal });
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});
-    throw new Error(`Scene fetch failed: HTTP ${response.status}`);
+    throw engineFailure({ code: "source_io", path: "$", got: { url, status: response.status } });
   }
   const limit = 64 * 1024 * 1024;
   const declared = Number(response.headers.get("content-length"));
   if (declared > limit) {
     await response.body?.cancel().catch(() => {});
-    throw new Error("Scene exceeds the 64 MiB source budget.");
+    throw engineFailure({ code: "source_too_large", path: "$", allowed: { kind: "at_most", max: limit }, got: declared });
   }
-  if (!response.body) throw new Error("Scene response has no body.");
+  if (!response.body) throw engineFailure({ code: "source_io", path: "$", expected: "present", got: { url } });
   const reader = response.body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let length = 0;
@@ -22,7 +23,7 @@ export async function loadSceneSource(url: string, signal: AbortSignal): Promise
       const { done, value } = await reader.read();
       if (done) break;
       length += value.byteLength;
-      if (length > limit) throw new Error("Scene exceeds the 64 MiB source budget.");
+      if (length > limit) throw engineFailure({ code: "source_too_large", path: "$", allowed: { kind: "at_most", max: limit }, got: length });
       source += decoder.decode(value, { stream: true });
     }
     return source + decoder.decode();
@@ -72,7 +73,7 @@ export async function fetchBytes(url: string, signal?: AbortSignal): Promise<Uin
   const response = await fetch(url, { cache: "no-store", signal });
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});
-    throw new Error(`Scene file ${url} fetch failed: HTTP ${response.status}`);
+    throw engineFailure({ code: "missing_file", path: "$", got: { url, status: response.status } });
   }
   return new Uint8Array(await response.arrayBuffer());
 }

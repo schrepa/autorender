@@ -3,7 +3,7 @@ use engine_assets::{
     AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle, MeshLods, Surface, Texture,
     TextureHandle,
 };
-use engine_settings::{ExtraRules, InvalidSetting, settings};
+use engine_settings::{ExtraRules, InvalidSetting, rule, settings};
 use glam::{BVec4A, Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
 
 use crate::NodePose;
@@ -149,19 +149,17 @@ settings! {
 impl ExtraRules for Camera {
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         if (self.target - self.position).length_squared() < Self::MIN_DEPTH * Self::MIN_DEPTH {
-            return Err(InvalidSetting::new(
-                "target",
-                format!(
-                    "must be at least {} units from the position",
-                    Self::MIN_DEPTH
-                ),
-            ));
+            return Err(
+                InvalidSetting::broken("target", rule::at_least(Self::MIN_DEPTH))
+                    .got((self.target - self.position).length()),
+            );
         }
         if self.far - self.near < Self::MIN_DEPTH {
-            return Err(InvalidSetting::new(
+            return Err(InvalidSetting::broken(
                 "far",
-                format!("must be at least {} beyond near", Self::MIN_DEPTH),
-            ));
+                rule::range(self.near + Self::MIN_DEPTH, Self::REACH),
+            )
+            .got(self.far));
         }
         Ok(())
     }

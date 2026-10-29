@@ -1,7 +1,7 @@
+use engine_settings::Error;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::DevError;
 use crate::views::PresentationStateView;
 
 #[derive(Serialize)]
@@ -19,7 +19,7 @@ pub struct Reply {
     )]
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<DevError>,
+    pub error: Option<Error>,
 }
 
 #[derive(Serialize)]

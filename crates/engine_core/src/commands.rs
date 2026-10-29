@@ -22,7 +22,7 @@ impl EngineEntityCommands for EntityCommands<'_> {
             let world = entity.into_world_mut();
             edit_transform(world, id, |edited| *edited = transform)?;
             reset_interpolation(world, id);
-            Ok::<(), crate::TransformEditError>(())
+            Ok::<(), engine_settings::Error>(())
         })
     }
 }

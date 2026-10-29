@@ -3,14 +3,16 @@ use crate::render_features::RenderFeatures;
 
 #[derive(Default)]
 pub(super) struct Reports {
-    fatal: Option<String>,
+    fatal: Option<Error>,
     named: u64,
 }
 
 impl Reports {
     pub(super) fn lost(&mut self, reason: wgpu::DeviceLostReason, message: &str) {
         self.fatal.get_or_insert_with(|| {
-            format!("GPU device lost ({reason:?}): {message}. Reload to recreate the engine.")
+            failed("$.device")
+                .expected(Expected::Live)
+                .got((format!("{reason:?}"), message))
         });
     }
 
@@ -21,9 +23,8 @@ impl Reports {
         }
         match RenderFeatures::named_by(&message) {
             0 => {
-                self.fatal.get_or_insert_with(|| {
-                    format!("WebGPU rendering failed: {message}. Reload to recreate the engine.")
-                });
+                self.fatal
+                    .get_or_insert_with(|| failed("$.gpu").got(message));
             }
             named => self.named |= named,
         }
@@ -31,11 +32,11 @@ impl Reports {
 }
 
 impl Renderer {
-    pub(super) fn check_health(&mut self) -> Result<(), RenderError> {
+    pub(super) fn check_health(&mut self) -> Result<(), Error> {
         let mut named = 0;
         if let Ok(mut reports) = self.health.lock() {
-            if let Some(message) = &reports.fatal {
-                return Err(RenderError(message.clone()));
+            if let Some(fatal) = &reports.fatal {
+                return Err(fatal.clone());
             }
             named = std::mem::take(&mut reports.named);
         }
@@ -59,13 +60,12 @@ impl Renderer {
     }
 
     #[cfg(feature = "dev")]
-    pub fn inject_fault(&mut self, feature: &str) -> Result<(), RenderError> {
+    pub fn inject_fault(&mut self, feature: &str) -> Result<(), Error> {
         if self.features.inject(feature) {
             return Ok(());
         }
-        Err(RenderError(format!(
-            "No lazily created feature is named {feature:?}; they are {}.",
-            RenderFeatures::lazy_names().collect::<Vec<_>>().join(", ")
-        )))
+        Err(Error::new(ErrorCode::UnknownVariant, "$.feature")
+            .got(feature)
+            .variants(RenderFeatures::lazy_names()))
     }
 }

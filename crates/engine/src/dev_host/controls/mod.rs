@@ -2,8 +2,8 @@ mod environment;
 mod input;
 mod view;
 
-use engine_core::ErrorCode;
-use engine_dev::{Control, DevError, HostControl};
+use engine_core::{Error, ErrorCode};
+use engine_dev::{Control, HostControl};
 use engine_scene::SceneInstance;
 use serde_json::{Value, json};
 
@@ -16,15 +16,21 @@ pub(super) fn run(
     scene: Option<&SceneInstance>,
     (args, control): (Value, Control),
     size: (u32, u32),
-) -> Result<Value, DevError> {
+) -> Result<Value, Error> {
     match control {
         Control::Operation(call) => {
             let result = call.apply(&mut app.engine, scene)?;
-            then_render(app, size, &call.changed(), result)
+            then_render(app, size, result)
         }
-        Control::Host(control) => {
-            host_control(host, app, (args, control), size).map_err(DevError::in_args)
-        }
+        Control::Host(control) => host_control(host, app, (args, control), size).map_err(in_args),
+    }
+}
+
+fn in_args(error: Error) -> Error {
+    if error.path.starts_with("$.") || error.path.starts_with("$[") {
+        error.within("$.args")
+    } else {
+        error
     }
 }
 
@@ -33,7 +39,7 @@ fn host_control(
     app: &mut AppHost,
     (args, control): (Value, HostControl),
     size: (u32, u32),
-) -> Result<Value, DevError> {
+) -> Result<Value, Error> {
     match control {
         HostControl::Present { alpha } => view::present(app, alpha, size),
         HostControl::Culling { enabled } => view::culling(app, enabled, size),
@@ -86,19 +92,12 @@ fn host_control(
 fn then_render(
     app: &mut AppHost,
     (width, height): (u32, u32),
-    what: &str,
     result: Value,
-) -> Result<Value, DevError> {
-    rendered(app.dev_render(width, height), what)?;
+) -> Result<Value, Error> {
+    rendered(app.dev_render(width, height))?;
     Ok(result)
 }
 
-fn rendered(outcome: crate::Result<()>, what: &str) -> Result<(), DevError> {
-    outcome.map_err(|error| {
-        DevError::new(
-            ErrorCode::RenderFailed,
-            "$",
-            format!("{what} before render failed: {error}"),
-        )
-    })
+fn rendered(outcome: crate::Result<()>) -> Result<(), Error> {
+    outcome.map_err(|error| Error::new(ErrorCode::RenderFailed, "$").got(error))
 }

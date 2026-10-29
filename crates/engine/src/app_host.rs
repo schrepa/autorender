@@ -2,7 +2,7 @@ use engine_core::{
     Engine, ErrorCode, FrameReport, FrameStats, InputState, JobId, JobRequest, JobShare,
     RecordFetch, RecordKey,
 };
-use engine_render::{RenderError, RenderTarget, Renderer};
+use engine_render::{RenderTarget, Renderer};
 
 use crate::{Error, Result};
 
@@ -134,9 +134,9 @@ impl AppHost {
         target: RenderTarget,
         build: impl FnOnce() -> Result<Engine>,
     ) -> Result<Self> {
-        let starting = Renderer::start(target).await.map_err(render_failure)?;
+        let starting = Renderer::start(target).await?;
         let engine = built(build)?;
-        let renderer = Box::new(starting.finish().await.map_err(render_failure)?);
+        let renderer = Box::new(starting.finish().await?);
         let mut host = Self::with(engine, renderer);
         host.claim_passes()?;
         Ok(host)
@@ -549,7 +549,9 @@ impl AppHost {
             .get_resource_mut::<engine_core::Jobs>()
         {
             Some(mut jobs) => jobs.run_here(kind, input),
-            None => Err("the engine runs no jobs".to_owned()),
+            None => Err(Error::new(ErrorCode::MissingResource, "$")
+                .got("Jobs")
+                .to_string()),
         }
     }
 
@@ -602,11 +604,9 @@ impl AppHost {
         input: InputState,
     ) -> Result<()> {
         if !timestamp_ms.is_finite() {
-            return Err(Error::new(
-                ErrorCode::InvalidInput,
-                "$.timestamp",
-                "Frame timestamp must be finite.",
-            ));
+            return Err(Error::new(ErrorCode::InvalidInput, "$.timestamp")
+                .expected(crate::Expected::Finite)
+                .got(timestamp_ms));
         }
         self.begin_attribution();
         #[cfg(feature = "profiling")]
@@ -658,10 +658,7 @@ impl AppHost {
         height: u32,
         input: InputState,
     ) -> Result<()> {
-        let invalid = |error: engine_core::DevStepError| {
-            Error::new(ErrorCode::InvalidStep, "$.ticks", error.to_string())
-        };
-        engine_core::DevStepError::validate(ticks).map_err(invalid)?;
+        engine_core::check_dev_ticks(ticks)?;
         self.begin_attribution();
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
@@ -672,7 +669,7 @@ impl AppHost {
             self.last_timestamp_ms = None;
             self.set_input(input);
             let start = now_ms();
-            let report = self.engine.step_fixed(ticks).map_err(invalid)?;
+            let report = self.engine.step_fixed(ticks)?;
             let simulation_ms = now_ms() - start;
             self.render_frame(width, height, simulation_ms, report, FrameKind::Exact)?;
         }
@@ -697,11 +694,9 @@ impl AppHost {
     #[cfg(feature = "dev")]
     pub fn dev_present(&mut self, alpha: f32, width: u32, height: u32) -> Result<()> {
         if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {
-            return Err(Error::new(
-                ErrorCode::InvalidPresentationAlpha,
-                "$.alpha",
-                "Presentation alpha must be finite and in [0, 1].",
-            ));
+            return Err(Error::new(ErrorCode::InvalidPresentationAlpha, "$.alpha")
+                .range(0.0, 1.0)
+                .got(alpha));
         }
         self.begin_attribution();
         #[cfg(feature = "profiling")]
@@ -792,11 +787,9 @@ impl AppHost {
         };
         let after_extraction = now_ms();
         let rendered = if let FrameKind::Display { .. } = kind {
-            self.renderer
-                .render_display_frame(frame)
-                .map_err(render_failure)?
+            self.renderer.render_display_frame(frame)?
         } else {
-            self.renderer.render_frame(frame).map_err(render_failure)?
+            self.renderer.render_frame(frame)?
         };
         if frame.gpu().is_some() {
             self.gpu_inputs_stale = !rendered.submitted;
@@ -967,8 +960,4 @@ impl AppHost {
         self.engine.reset_clock();
         *self.engine.app.world_mut().resource_mut::<InputState>() = InputState::default();
     }
-}
-
-pub(crate) fn render_failure(error: RenderError) -> Error {
-    Error::new(ErrorCode::RenderFailed, "$", error.0)
 }

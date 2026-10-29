@@ -12,7 +12,7 @@ use crate::bricks::{Brick, Bricks};
 use crate::extraction::{Nearest, Poses};
 use crate::sections::environment_section;
 use crate::{RenderSnapshot, TransformIndex};
-use engine_settings::{ExtraRules, InvalidSetting, Setting, settings};
+use engine_settings::{Allowed, Expected, ExtraRules, InvalidSetting, Rule, Setting, settings};
 
 pub struct Particles;
 
@@ -64,13 +64,16 @@ settings! {
 impl ExtraRules for ParticleEmitter {
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         if self.direction.length_squared() == 0.0 {
-            return Err(InvalidSetting::new("direction", "must be nonzero"));
+            return Err(InvalidSetting::new("direction", Expected::Nonzero)
+                .got(self.direction.to_array()));
         }
-        if f64::from(self.rate) * f64::from(self.lifetime) > f64::from(MAX_EMITTER_PARTICLES) {
-            return Err(InvalidSetting::new(
-                "rate",
-                "rate times lifetime must be at most the particle limit",
-            ));
+        let particles = f64::from(self.rate) * f64::from(self.lifetime);
+        if particles > f64::from(MAX_EMITTER_PARTICLES) {
+            return Err(InvalidSetting::broken("rate", Rule::Any)
+                .allowed(Allowed::AtMost {
+                    max: u64::from(MAX_EMITTER_PARTICLES),
+                })
+                .got(particles));
         }
         Ok(())
     }

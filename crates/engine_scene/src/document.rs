@@ -1,10 +1,8 @@
-use engine_core::{Camera, Mesh, MeshVertex, Surface, Transform, glam};
+use engine_core::{Camera, Error, Expected, Mesh, MeshVertex, Surface, Transform, glam};
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    SceneEnvironment, SceneError, SceneFiles, SceneMaterial, SceneTexture, files::valid_uri,
-};
+use crate::{SceneEnvironment, SceneFiles, SceneMaterial, SceneTexture, files::valid_uri};
 
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 
@@ -34,20 +32,18 @@ pub struct SceneDocument {
 }
 
 impl SceneDocument {
-    pub fn from_json(source: &str) -> Result<Self, SceneError> {
+    pub fn from_json(source: &str) -> Result<Self, Error> {
         if source.len() > MAX_SOURCE_BYTES {
-            return Err(SceneError::new(
-                ErrorCode::SourceTooLarge,
-                "$",
-                format!("scene source must be at most {MAX_SOURCE_BYTES} bytes"),
-            ));
+            return Err(Error::new(ErrorCode::SourceTooLarge, "$")
+                .at_most(MAX_SOURCE_BYTES as u64)
+                .got(source.len()));
         }
         let document: Self = crate::parse_json(source)?;
         document.validate()?;
         Ok(document)
     }
 
-    pub fn to_json(&self) -> Result<String, SceneError> {
+    pub fn to_json(&self) -> Result<String, Error> {
         self.validate()?;
         let mut output = BoundedSource {
             bytes: Vec::new(),
@@ -57,7 +53,7 @@ impl SceneDocument {
         if output.exceeded {
             return Err(source_too_large());
         }
-        result.map_err(|error| SceneError::new(ErrorCode::InvalidJson, "$", error.to_string()))?;
+        result.map_err(|_| Error::new(ErrorCode::InvalidJson, "$"))?;
         if output.bytes.len() == MAX_SOURCE_BYTES {
             return Err(source_too_large());
         }
@@ -88,12 +84,8 @@ impl SceneDocument {
     }
 }
 
-fn source_too_large() -> SceneError {
-    SceneError::new(
-        ErrorCode::SourceTooLarge,
-        "$",
-        format!("canonical scene source exceeds {MAX_SOURCE_BYTES} bytes"),
-    )
+fn source_too_large() -> Error {
+    Error::new(ErrorCode::SourceTooLarge, "$").at_most(MAX_SOURCE_BYTES as u64)
 }
 
 struct BoundedSource {
@@ -105,7 +97,7 @@ impl std::io::Write for BoundedSource {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         if bytes.len() > MAX_SOURCE_BYTES - self.bytes.len() {
             self.exceeded = true;
-            return Err(std::io::Error::other("scene source budget exceeded"));
+            return Err(std::io::ErrorKind::FileTooLarge.into());
         }
         self.bytes.extend_from_slice(bytes);
         Ok(bytes.len())
@@ -234,7 +226,7 @@ pub enum MeshSource {
 }
 
 impl MeshSource {
-    pub(crate) fn mesh(&self, path: &str, files: Option<&SceneFiles>) -> Result<Mesh, SceneError> {
+    pub(crate) fn mesh(&self, path: &str, files: Option<&SceneFiles>) -> Result<Mesh, Error> {
         match self {
             Self::Cube {} => Ok(Mesh::cube()),
             Self::Plane {} => Ok(Mesh::plane()),
@@ -248,19 +240,18 @@ impl MeshSource {
                 files.mesh(uri, &uri_path)?.mesh(path)
             }
             Self::Inline { vertices, indices } => {
-                let extras = |present: &dyn Fn(&SceneVertex) -> bool, what: &str| {
+                let extras = |present: &dyn Fn(&SceneVertex) -> bool, field: &str| {
                     let count = vertices.iter().filter(|vertex| present(vertex)).count();
-                    if count != 0 && count != vertices.len() {
-                        Err(SceneError::new(
+                    match vertices.iter().position(|vertex| !present(vertex)) {
+                        Some(lacking) if count != 0 => Err(Error::new(
                             ErrorCode::InvalidMesh,
-                            format!("{path}.vertices"),
-                            format!("either every vertex has {what} or none does"),
-                        ))
-                    } else {
-                        Ok(count != 0)
+                            format!("{path}.vertices[{lacking}].{field}"),
+                        )
+                        .expected(Expected::Present)),
+                        Some(_) | None => Ok(count != 0),
                     }
                 };
-                let colored = extras(&|vertex| vertex.color.is_some(), "a color")?;
+                let colored = extras(&|vertex| vertex.color.is_some(), "color")?;
                 let second = extras(&|vertex| vertex.uv1.is_some(), "uv1")?;
                 with_extras(
                     Mesh::new(
@@ -287,14 +278,12 @@ impl MeshSource {
 }
 
 pub(crate) fn with_extras(
-    mesh: Result<Mesh, engine_core::AssetError>,
+    mesh: Result<Mesh, Error>,
     colors: Option<Vec<[f32; 4]>>,
     uv1: Option<Vec<[f32; 2]>>,
     path: &str,
-) -> Result<Mesh, SceneError> {
-    let invalid = |error: engine_core::AssetError| {
-        SceneError::new(ErrorCode::InvalidMesh, path, error.to_string())
-    };
+) -> Result<Mesh, Error> {
+    let invalid = |error: Error| error.coded(ErrorCode::InvalidMesh).within(path);
     let mut mesh = mesh.map_err(invalid)?;
     if let Some(colors) = colors {
         mesh = mesh.with_colors(colors).map_err(invalid)?;

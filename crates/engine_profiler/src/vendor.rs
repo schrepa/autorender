@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use engine::{Error, ErrorCode, Expected};
 use serde_json::{Value, json};
 
 use crate::capabilities::installed;
@@ -30,18 +31,20 @@ const PIX_COUNTERS: &[&str] = &[
     "Clipper Primitives Out",
 ];
 
-pub fn pix_counters(capture: &Path, folder: &Path, counters: &[String]) -> Result<Value, String> {
-    let pixtool = installed("pixtool", PIXTOOL).ok_or(
-        "PIX is not installed: install it (https://devblogs.microsoft.com/pix/download) and \
-         Windows Developer Mode, which replays need",
-    )?;
+pub fn pix_counters(capture: &Path, folder: &Path, counters: &[String]) -> Result<Value, Error> {
+    let pixtool = installed("pixtool", PIXTOOL).ok_or_else(|| {
+        Error::new(ErrorCode::PixUnavailable, "$.pixtool").expected(Expected::Present)
+    })?;
+    let ran = |error: std::io::Error| {
+        Error::new(ErrorCode::PixUnavailable, "$.pixtool").got(error.to_string())
+    };
     settled(capture);
     let listed = Command::new(&pixtool)
         .args(["--output=quiet", "open-capture"])
         .arg(capture)
         .arg("list-counters")
         .output()
-        .map_err(|error| format!("pixtool did not run: {error}"))?;
+        .map_err(ran)?;
     let available: Vec<String> = String::from_utf8_lossy(&listed.stdout)
         .lines()
         .map(str::trim)
@@ -49,11 +52,9 @@ pub fn pix_counters(capture: &Path, folder: &Path, counters: &[String]) -> Resul
         .map(str::to_owned)
         .collect();
     if available.is_empty() {
-        return Err(format!(
-            "PIX replayed no counters for {}: {}",
-            capture.display(),
-            tail(&listed.stdout, &listed.stderr)
-        ));
+        return Err(Error::new(ErrorCode::PixUnavailable, "$.counters")
+            .expected(Expected::NonEmpty)
+            .got(tail(&listed.stdout, &listed.stderr)));
     }
     let wanted: Vec<String> = if counters.is_empty() {
         PIX_COUNTERS
@@ -64,7 +65,7 @@ pub fn pix_counters(capture: &Path, folder: &Path, counters: &[String]) -> Resul
     } else {
         counters.to_vec()
     };
-    std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(folder).map_err(|_| unwritable("$.folder", folder))?;
     let events = folder.join("pix-events.csv");
     let mut command = Command::new(&pixtool);
     command
@@ -75,14 +76,11 @@ pub fn pix_counters(capture: &Path, folder: &Path, counters: &[String]) -> Resul
     for name in &wanted {
         command.arg(format!("--counters={}", name.replace([' ', '(', ')'], "*")));
     }
-    let saved = command
-        .output()
-        .map_err(|error| format!("pixtool did not run: {error}"))?;
+    let saved = command.output().map_err(ran)?;
     let table = std::fs::read_to_string(&events).map_err(|_| {
-        format!(
-            "PIX saved no event list: {}",
-            tail(&saved.stdout, &saved.stderr)
-        )
+        Error::new(ErrorCode::PixUnavailable, "$.events")
+            .expected(Expected::File)
+            .got(tail(&saved.stdout, &saved.stderr))
     })?;
     let mut summary = summarize_events(&table, &wanted);
     summary["tool"] = "pix".into();
@@ -272,14 +270,15 @@ pub fn nsight_trace(
     start_ms: u64,
     frames: u32,
     folder: &Path,
-) -> Result<Value, String> {
-    let ngfx = installed("ngfx", NGFX).ok_or(
-        "Nsight Graphics is not installed: install it (https://developer.nvidia.com/nsight-graphics), \
-         and allow GPU performance counters for all users",
-    )?;
-    let program = std::env::current_exe().map_err(|error| error.to_string())?;
-    let directory = std::env::current_dir().map_err(|error| error.to_string())?;
-    std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
+) -> Result<Value, Error> {
+    let ngfx = installed("ngfx", NGFX).ok_or_else(|| {
+        Error::new(ErrorCode::ProfilingUnavailable, "$.ngfx").expected(Expected::Present)
+    })?;
+    let program = std::env::current_exe()
+        .map_err(|error| Error::new(ErrorCode::SourceIo, "$.program").got(error.to_string()))?;
+    let directory = std::env::current_dir()
+        .map_err(|error| Error::new(ErrorCode::SourceIo, "$.directory").got(error.to_string()))?;
+    std::fs::create_dir_all(folder).map_err(|_| unwritable("$.folder", folder))?;
     let before = files(folder);
     let quoted: Vec<String> = arguments
         .iter()
@@ -308,7 +307,9 @@ pub fn nsight_trace(
             "--real-time-shader-profiler",
         ])
         .output()
-        .map_err(|error| format!("ngfx did not run: {error}"))?;
+        .map_err(|error| {
+            Error::new(ErrorCode::ProfilingUnavailable, "$.ngfx").got(error.to_string())
+        })?;
     let said = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
@@ -316,12 +317,8 @@ pub fn nsight_trace(
     );
     if said.contains("Performance Counters unavailable") {
         return Err(
-            "Nsight needs the GPU's performance counters, which NVIDIA's driver keeps to \
-             administrators: allow them for all users once (Windows: NVIDIA Control Panel, \
-             Desktop > Enable Developer Settings, then Developer > Manage GPU Performance \
-             Counters > Allow access to the GPU performance counters to all users; Linux: the \
-             nvidia module's option NVreg_RestrictProfilingToAdminUsers=0)"
-                .into(),
+            Error::new(ErrorCode::ProfilingUnavailable, "$.ngfx.counters")
+                .expected(Expected::Supported),
         );
     }
     let written: Vec<String> = files(folder)
@@ -330,10 +327,9 @@ pub fn nsight_trace(
         .map(|file| file.display().to_string())
         .collect();
     if written.is_empty() {
-        return Err(format!(
-            "Nsight wrote no trace: {}",
-            tail(&output.stdout, &output.stderr)
-        ));
+        return Err(Error::new(ErrorCode::ProfilingUnavailable, "$.trace")
+            .expected(Expected::File)
+            .got(tail(&output.stdout, &output.stderr)));
     }
     let summary = json!({
         "tool": "nsight",
@@ -374,7 +370,13 @@ fn tail(stdout: &[u8], stderr: &[u8]) -> String {
     lines[lines.len().saturating_sub(4)..].join(" ")
 }
 
-fn write(path: &Path, value: &Value) -> Result<(), String> {
+fn write(path: &Path, value: &Value) -> Result<(), Error> {
     let text = serde_json::to_string_pretty(value).expect("JSON values serialize");
-    std::fs::write(path, text).map_err(|error| format!("cannot write {}: {error}", path.display()))
+    std::fs::write(path, text).map_err(|_| unwritable("$.summary", path))
+}
+
+fn unwritable(at: &str, path: &Path) -> Error {
+    Error::new(ErrorCode::SourceIo, at)
+        .expected(Expected::Writable)
+        .got(path.display().to_string())
 }

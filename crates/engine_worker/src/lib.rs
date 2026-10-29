@@ -322,12 +322,11 @@ mod browser {
         }
 
         pub fn unpack(&self, stored: &[u8], raw: u32) -> Result<Vec<u8>, JsValue> {
-            crate::unpack_bytes(stored, raw).map_err(|error| JsValue::from_str(&error))
+            Ok(crate::unpack_bytes(stored, raw)?)
         }
 
         pub fn decode_image(&self, uri: &str, bytes: &[u8]) -> Result<JsValue, JsValue> {
-            let image =
-                crate::decode_image(uri, bytes).map_err(|error| JsValue::from_str(&error))?;
+            let image = crate::decode_image(uri, bytes)?;
             let object = js_sys::Object::new();
             let set = |field: &str, value: &JsValue| {
                 let _ = js_sys::Reflect::set(&object, &JsValue::from_str(field), value);
@@ -354,14 +353,11 @@ mod browser {
     impl PackDirectory {
         #[wasm_bindgen(constructor)]
         pub fn new(header: &[u8], directory: &[u8]) -> Result<PackDirectory, JsValue> {
-            crate::PackIndex::open(header, directory)
-                .map(|index| Self { index })
-                .map_err(|error| JsValue::from_str(&error))
+            Ok(crate::PackIndex::open(header, directory).map(|index| Self { index })?)
         }
 
         pub fn locate(header: &[u8]) -> Result<Vec<f64>, JsValue> {
-            let (offset, stored, raw) =
-                crate::pack_directory(header).map_err(|error| JsValue::from_str(&error))?;
+            let (offset, stored, raw) = crate::pack_directory(header)?;
             Ok(vec![offset as f64, stored as f64, raw as f64])
         }
 
@@ -376,11 +372,12 @@ mod browser {
         }
 
         pub fn unpack(&self, key: &str, stored: &[u8]) -> Result<Vec<u8>, JsValue> {
-            let entry = self
-                .index
-                .find(key)
-                .ok_or_else(|| JsValue::from_str("the pack holds no such record"))?;
-            crate::unpack(&entry, stored).map_err(|error| JsValue::from_str(&error))
+            let entry = self.index.find(key).ok_or_else(|| {
+                engine_settings::Error::new(engine_settings::ErrorCode::InvalidPack, "$.key")
+                    .expected(engine_settings::Expected::Present)
+                    .got(key)
+            })?;
+            Ok(crate::unpack(&entry, stored)?)
         }
 
         pub fn records(&self) -> u32 {

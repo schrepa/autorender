@@ -49,7 +49,7 @@ macro_rules! __game_surface {
                 fn dev_request(line: &str, context: &str) -> String as Json<Step>;
                 fn dev_resume(outcome: &str, context: &str) -> String as Json<Step>;
                 fn dev_reloaded(source: &str, context: &str, files: Option<$crate::browser::SceneFileSet>) -> String as Json<Step>;
-                fn dev_refusal(code: &str, path: &str, message: &str) -> String as Json<Reply>;
+                fn dev_refusal(error: &str) -> String as Json<Reply>;
             }
             profiling_mut {
                 fn profiling_start(max_events: u32) -> Result<(), $crate::__private::JsValue>;

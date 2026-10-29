@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_assets::{AssetError, AssetLibrary, TextureHandle};
+use engine_assets::{AssetLibrary, TextureHandle};
+use engine_settings::Error;
 pub use engine_textures::{
     Family as TextureFamily, Source as TextureSource, Usage as TextureUsage,
 };
@@ -137,7 +138,7 @@ impl Records {
         &mut self,
         assets: &mut AssetLibrary,
         set: TextureSet,
-    ) -> Result<Vec<TextureHandle>, AssetError> {
+    ) -> Result<Vec<TextureHandle>, Error> {
         let handles = set
             .textures
             .iter()

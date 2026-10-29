@@ -1,7 +1,7 @@
 use engine_core::bevy_ecs::prelude::World;
-use engine_core::{BrickRegistry, missing_brick};
+use engine_core::{BrickRegistry, Error, missing_brick};
 
-use crate::{SceneDocument, SceneError, SceneObject};
+use crate::{SceneDocument, SceneObject};
 
 macro_rules! object_bricks {
     ($(
@@ -34,7 +34,7 @@ fn added(world: &World, name: &str) -> bool {
 }
 
 impl SceneDocument {
-    pub(crate) fn check_bricks(&self, world: &World) -> Result<(), SceneError> {
+    pub(crate) fn check_bricks(&self, world: &World) -> Result<(), Error> {
         let lists =
             [("$.entities".to_owned(), &self.entities)]
                 .into_iter()
@@ -47,12 +47,12 @@ impl SceneDocument {
                 if let Some((field, brick)) =
                     object.bricks().find(|&(_, brick)| !added(world, brick))
                 {
-                    return Err(missing_brick(brick, format!("{list}[{index}].{field}")).into());
+                    return Err(missing_brick(brick, format!("{list}[{index}].{field}")));
                 }
             }
         }
         if !self.streamed.is_empty() && !added(world, "world_streaming") {
-            return Err(missing_brick("world_streaming", "$.streamed").into());
+            return Err(missing_brick("world_streaming", "$.streamed"));
         }
         if let Some(environment) = &self.environment {
             environment.check(world, "$.environment")?;

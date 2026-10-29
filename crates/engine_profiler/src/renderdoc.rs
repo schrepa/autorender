@@ -59,19 +59,23 @@ impl RenderDoc {
         }
     }
 
-    pub fn begin(&self, path: &Path) -> Result<(), String> {
+    pub fn begin(&self, path: &Path) -> Result<(), engine::Error> {
         #[cfg(windows)]
         {
             let template =
                 std::ffi::CString::new(path.with_extension("").to_string_lossy().as_bytes())
-                    .map_err(|_| "the capture path holds a NUL".to_owned())?;
+                    .map_err(|_| {
+                        engine::Error::new(engine::ErrorCode::CaptureFailed, "$.path")
+                            .expected(engine::Expected::Path)
+                            .got(path.display().to_string())
+                    })?;
             // SAFETY: the API table RenderDoc filled; RenderDoc copies the
             // template; null device and window capture its only device.
             unsafe {
                 ((*self.api).set_capture_file_path_template)(template.as_ptr().cast());
                 ((*self.api).start_frame_capture)(std::ptr::null_mut(), std::ptr::null_mut());
                 if ((*self.api).is_frame_capturing)() == 0 {
-                    return Err("RenderDoc did not start its capture".into());
+                    return Err(engine::Error::new(engine::ErrorCode::CaptureFailed, "$.start"));
                 }
             }
             Ok(())
@@ -79,11 +83,11 @@ impl RenderDoc {
         #[cfg(not(windows))]
         {
             let _ = path;
-            Err("RenderDoc's API is reached on Windows".into())
+            Err(unsupported())
         }
     }
 
-    pub fn end(&self) -> Result<(), String> {
+    pub fn end(&self) -> Result<(), engine::Error> {
         #[cfg(windows)]
         {
             // SAFETY: ends the capture begun above on the same device.
@@ -91,13 +95,18 @@ impl RenderDoc {
                 ((*self.api).end_frame_capture)(std::ptr::null_mut(), std::ptr::null_mut())
             };
             if ended == 0 {
-                return Err("RenderDoc could not end its capture".into());
+                return Err(engine::Error::new(engine::ErrorCode::CaptureFailed, "$.end"));
             }
             Ok(())
         }
         #[cfg(not(windows))]
         {
-            Err("RenderDoc's API is reached on Windows".into())
+            Err(unsupported())
         }
     }
+}
+
+#[cfg(not(windows))]
+fn unsupported() -> engine::Error {
+    engine::Error::new(engine::ErrorCode::CaptureFailed, "$").expected(engine::Expected::Supported)
 }

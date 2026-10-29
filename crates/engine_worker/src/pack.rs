@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use engine_settings::{Error, ErrorCode, Expected};
+
 pub const PACK_HEADER: usize = 32;
 pub const LISTING_KIND: &str = "pack_listing";
 const MAGIC: &[u8; 4] = b"EPAK";
@@ -18,23 +20,29 @@ pub struct PackIndex {
     entries: Vec<PackEntry>,
 }
 
-pub fn pack_directory(header: &[u8]) -> Result<(u64, u64, u64), String> {
-    let header = header
-        .get(..PACK_HEADER)
-        .ok_or("a pack's header is 32 bytes")?;
+pub fn pack_directory(header: &[u8]) -> Result<(u64, u64, u64), Error> {
+    let header = header.get(..PACK_HEADER).ok_or_else(|| {
+        Error::new(ErrorCode::InvalidPack, "$.header")
+            .at_least(PACK_HEADER as u64)
+            .got(header.len())
+    })?;
     if &header[..4] != MAGIC {
-        return Err("not a pack".into());
+        return Err(Error::new(ErrorCode::InvalidPack, "$.header")
+            .expected(Expected::Matching)
+            .got(String::from_utf8_lossy(&header[..4])));
     }
     let word = |at: usize| u64::from_le_bytes(header[at..at + 8].try_into().unwrap_or_default());
     Ok((word(8), word(16), word(24)))
 }
 
 impl PackIndex {
-    pub fn open(header: &[u8], directory: &[u8]) -> Result<Self, String> {
+    pub fn open(header: &[u8], directory: &[u8]) -> Result<Self, Error> {
         let (at, stored, raw) = pack_directory(header)?;
         let count = u32::from_le_bytes(header[4..8].try_into().unwrap_or_default()) as usize;
         if directory.len() as u64 != stored || raw != (count * ENTRY) as u64 {
-            return Err("the pack's directory has the wrong size".into());
+            return Err(Error::new(ErrorCode::InvalidPack, "$.directory")
+                .expected(Expected::Matching)
+                .got(directory.len()));
         }
         let first = at + stored;
         let bytes = decompress(directory, count * ENTRY)?;
@@ -55,7 +63,7 @@ impl PackIndex {
             })
             .collect();
         if !entries.windows(2).all(|pair| pair[0].key < pair[1].key) {
-            return Err("the pack's directory is out of order".into());
+            return Err(Error::new(ErrorCode::InvalidPack, "$.directory").expected(Expected::Sorted));
         }
         Ok(Self { entries })
     }
@@ -81,24 +89,28 @@ impl PackIndex {
     }
 }
 
-pub fn unpack(entry: &PackEntry, stored: &[u8]) -> Result<Vec<u8>, String> {
+pub fn unpack(entry: &PackEntry, stored: &[u8]) -> Result<Vec<u8>, Error> {
     if stored.len() != entry.stored as usize {
-        return Err("a pack's record has the wrong size".into());
+        return Err(Error::new(ErrorCode::InvalidPack, "$.record")
+            .range(f64::from(entry.stored), f64::from(entry.stored))
+            .got(stored.len()));
     }
     unpack_bytes(stored, entry.raw)
 }
 
-pub fn unpack_bytes(stored: &[u8], raw: u32) -> Result<Vec<u8>, String> {
+pub fn unpack_bytes(stored: &[u8], raw: u32) -> Result<Vec<u8>, Error> {
     decompress(stored, raw as usize)
 }
 
-fn decompress(stored: &[u8], raw: usize) -> Result<Vec<u8>, String> {
+fn decompress(stored: &[u8], raw: usize) -> Result<Vec<u8>, Error> {
     let mut out = Vec::with_capacity(raw);
     ruzstd::decoding::FrameDecoder::new()
         .decode_all_to_vec(stored, &mut out)
-        .map_err(|error| format!("a pack's record does not decompress: {error}"))?;
+        .map_err(|error| Error::new(ErrorCode::InvalidPack, "$.record").got(error.to_string()))?;
     if out.len() != raw {
-        return Err("a pack's record has the wrong size".into());
+        return Err(Error::new(ErrorCode::InvalidPack, "$.record")
+            .range(raw as f64, raw as f64)
+            .got(out.len()));
     }
     Ok(out)
 }
@@ -174,14 +186,17 @@ pub fn listing_bytes<'a>(records: impl IntoIterator<Item = (&'a [u8; 32], &'a st
     serde_json::to_vec(&kinds).unwrap_or_default()
 }
 
-pub fn read_listing(bytes: &[u8]) -> Result<BTreeMap<[u8; 32], String>, String> {
+pub fn read_listing(bytes: &[u8]) -> Result<BTreeMap<[u8; 32], String>, Error> {
     let kinds: BTreeMap<String, Vec<String>> = serde_json::from_slice(bytes)
-        .map_err(|error| format!("the pack's listing is not JSON: {error}"))?;
+        .map_err(|_| Error::new(ErrorCode::InvalidPack, "$.listing").expected(Expected::Json))?;
     let mut listed = BTreeMap::new();
     for (kind, keys) in kinds {
-        for key in keys {
-            let parsed = key_from_hex(&key)
-                .ok_or_else(|| format!("the pack's listing names {key}, not a record key"))?;
+        for (at, key) in keys.into_iter().enumerate() {
+            let parsed = key_from_hex(&key).ok_or_else(|| {
+                Error::new(ErrorCode::InvalidPack, format!("$.listing.{kind}[{at}]"))
+                    .expected(Expected::Id)
+                    .got(&key)
+            })?;
             listed.insert(parsed, kind.clone());
         }
     }

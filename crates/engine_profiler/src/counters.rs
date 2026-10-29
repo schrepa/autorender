@@ -8,6 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use ash::vk;
+use engine::{Error, ErrorCode, Expected};
 use serde_json::{Value, json};
 
 const POOLS: usize = 256;
@@ -24,22 +25,26 @@ static SELECTION: OnceLock<Selection> = OnceLock::new();
 static LOADER: OnceLock<ash::Entry> = OnceLock::new();
 static INSTANCE: OnceLock<ash::Instance> = OnceLock::new();
 static COUNTING: OnceLock<Counting> = OnceLock::new();
-static UNAVAILABLE: Mutex<Option<String>> = Mutex::new(None);
+static UNAVAILABLE: Mutex<Option<Error>> = Mutex::new(None);
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     static GROUPS: RefCell<(Vec<String>, u64)> = const { RefCell::new((Vec::new(), 0)) };
 }
 
-pub fn enable(selection: Selection) -> Result<(), String> {
-    SELECTION
-        .set(selection)
-        .map_err(|_| "hardware counters were enabled twice".to_owned())?;
+pub fn enable(selection: Selection) -> Result<(), Error> {
+    SELECTION.set(selection).map_err(|_| {
+        Error::new(ErrorCode::ProfilingUnavailable, "$").expected(Expected::Absent)
+    })?;
     if engine::start_native_instances_with(start) {
         Ok(())
     } else {
-        Err("GPU instances already start another way".into())
+        Err(Error::new(ErrorCode::ProfilingUnavailable, "$.instance").expected(Expected::Absent))
     }
+}
+
+fn failed(path: &str, error: impl std::fmt::Display) -> Error {
+    Error::new(ErrorCode::ProfilingUnavailable, path).got(error.to_string())
 }
 
 pub fn enabled() -> bool {
@@ -59,10 +64,10 @@ pub(crate) fn end() -> Option<Value> {
     SELECTION.get()?;
     ACTIVE.store(false, Ordering::Release);
     let Some(counting) = COUNTING.get() else {
-        let reason = lock(&UNAVAILABLE)
-            .clone()
-            .unwrap_or_else(|| "no Vulkan device started".into());
-        return Some(json!({ "status": format!("unavailable: {reason}") }));
+        let error = lock(&UNAVAILABLE).clone().unwrap_or_else(|| {
+            Error::new(ErrorCode::ProfilingUnavailable, "$.device").expected(Expected::Present)
+        });
+        return Some(json!({ "status": "unavailable", "error": error }));
     };
     Some(counting.report())
 }
@@ -73,15 +78,15 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn unavailable(reason: String) {
-    lock(&UNAVAILABLE).get_or_insert(reason);
+fn unavailable(error: Error) {
+    lock(&UNAVAILABLE).get_or_insert(error);
 }
 
 fn start(descriptor: wgpu::InstanceDescriptor) -> wgpu::Instance {
     match start_vulkan(&descriptor) {
         Ok(instance) => instance,
-        Err(reason) => {
-            unavailable(format!("Vulkan could not start: {reason}"));
+        Err(error) => {
+            unavailable(error);
             wgpu::Instance::new(descriptor)
         }
     }
@@ -95,16 +100,20 @@ macro_rules! void {
     };
 }
 
-fn start_vulkan(descriptor: &wgpu::InstanceDescriptor) -> Result<wgpu::Instance, String> {
+fn start_vulkan(descriptor: &wgpu::InstanceDescriptor) -> Result<wgpu::Instance, Error> {
+    let single = || {
+        Error::new(ErrorCode::ProfilingUnavailable, "$.vulkan.instance").expected(Expected::Absent)
+    };
     if INSTANCE.get().is_some() {
-        return Err("counters follow one GPU instance per program".into());
+        return Err(single());
     }
     let loader = match LOADER.get() {
         Some(loader) => loader,
         None => {
             // SAFETY: loading the system's Vulkan loader, as wgpu's start
             // does.
-            let loaded = unsafe { ash::Entry::load() }.map_err(|error| error.to_string())?;
+            let loaded =
+                unsafe { ash::Entry::load() }.map_err(|error| failed("$.vulkan.loader", error))?;
             LOADER.get_or_init(|| loaded)
         }
     };
@@ -117,14 +126,20 @@ fn start_vulkan(descriptor: &wgpu::InstanceDescriptor) -> Result<wgpu::Instance,
     };
     // SAFETY: Vulkan calls through the loader.
     let version = unsafe { entry.try_enumerate_instance_version() }
-        .map_err(|error| error.to_string())?
+        .map_err(|error| failed("$.vulkan.version", error))?
         .unwrap_or(vk::API_VERSION_1_0);
     if version < vk::API_VERSION_1_1 {
-        return Err("Vulkan 1.1 or later is needed".into());
+        return Err(Error::new(ErrorCode::ProfilingUnavailable, "$.vulkan.version")
+            .expected(Expected::Supported)
+            .got(format!(
+                "{}.{}",
+                vk::api_version_major(version),
+                vk::api_version_minor(version)
+            )));
     }
     let flags = descriptor.flags | wgpu::InstanceFlags::DEBUG;
     let extensions = wgpu::hal::vulkan::Instance::desired_extensions(&entry, version, flags)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| failed("$.vulkan.extensions", error))?;
     let names: Vec<*const c_char> = extensions.iter().map(|name| name.as_ptr()).collect();
     let application = vk::ApplicationInfo::default()
         .application_name(c"engine")
@@ -134,12 +149,12 @@ fn start_vulkan(descriptor: &wgpu::InstanceDescriptor) -> Result<wgpu::Instance,
         .application_info(&application)
         .enabled_extension_names(&names);
     // SAFETY: a valid create info whose pointers outlive the call.
-    let instance =
-        unsafe { entry.create_instance(&info, None) }.map_err(|error| error.to_string())?;
+    let instance = unsafe { entry.create_instance(&info, None) }
+        .map_err(|error| failed("$.vulkan.instance", error))?;
     // SAFETY: the instance just created, with the loader's functions.
     let raw = unsafe { ash::Instance::load(loader.static_fn(), instance.handle()) };
     if INSTANCE.set(raw).is_err() {
-        return Err("counters follow one GPU instance per program".into());
+        return Err(single());
     }
     // SAFETY: Vulkan calls through the loader.
     let optimus = unsafe { loader.enumerate_instance_layer_properties() }.is_ok_and(|layers| {
@@ -163,7 +178,7 @@ fn start_vulkan(descriptor: &wgpu::InstanceDescriptor) -> Result<wgpu::Instance,
             None,
         )
     }
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| failed("$.vulkan.instance", error))?;
     // SAFETY: a valid Vulkan instance, which wgpu owns from here.
     Ok(unsafe { wgpu::Instance::from_hal::<wgpu::hal::api::Vulkan>(hal) })
 }
@@ -236,8 +251,8 @@ unsafe extern "system" fn create_device(
         .map_or(0, |queue| queue.queue_family_index);
     let plan = match plan(instance, physical, family) {
         Ok(plan) => plan,
-        Err(reason) => {
-            unavailable(reason);
+        Err(error) => {
+            unavailable(error);
             // SAFETY: forwarded as called.
             return unsafe { create(physical, info, allocator, device) };
         }
@@ -275,7 +290,7 @@ unsafe extern "system" fn create_device(
             Ok(counting) => {
                 let _ = COUNTING.set(counting);
             }
-            Err(reason) => unavailable(reason),
+            Err(error) => unavailable(error),
         }
     }
     result
@@ -309,26 +324,31 @@ fn plan(
     instance: &ash::Instance,
     physical: vk::PhysicalDevice,
     family: u32,
-) -> Result<Plan, String> {
+) -> Result<Plan, Error> {
     let selection = SELECTION.get().cloned().unwrap_or(Selection::First);
     // SAFETY: Vulkan calls on a valid physical device.
     let extensions = unsafe { instance.enumerate_device_extension_properties(physical) }
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| failed("$.device.extensions", error))?;
     let offered = extensions.iter().any(|extension| {
         extension.extension_name_as_c_str() == Ok(ash::khr::performance_query::NAME)
     });
     if !offered {
-        return Err("this GPU's driver offers no Vulkan performance queries \
-                    (VK_KHR_performance_query); Intel's drivers and Mesa's do, and Nsight \
-                    (NVIDIA) or Radeon GPU Profiler (AMD) count without them"
-            .into());
+        return Err(Error::new(
+            ErrorCode::ProfilingUnavailable,
+            "$.device.extensions.VK_KHR_performance_query",
+        )
+        .expected(Expected::Present));
     }
     let mut feature = vk::PhysicalDevicePerformanceQueryFeaturesKHR::default();
     let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut feature);
     // SAFETY: as above.
     unsafe { instance.get_physical_device_features2(physical, &mut features) };
     if feature.performance_counter_query_pools == vk::FALSE {
-        return Err("this GPU's driver offers performance queries without query pools".into());
+        return Err(Error::new(
+            ErrorCode::ProfilingUnavailable,
+            "$.device.features.performance_counter_query_pools",
+        )
+        .expected(Expected::Supported));
     }
     let loader = LOADER
         .get()
@@ -339,7 +359,7 @@ fn plan(
         queries
             .enumerate_physical_device_queue_family_performance_query_counters_len(physical, family)
     }
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| failed("$.device.counters", error))?;
     let mut counters = vec![vk::PerformanceCounterKHR::default(); listed];
     let mut descriptions = vec![vk::PerformanceCounterDescriptionKHR::default(); listed];
     // SAFETY: as above, into arrays of the length listed.
@@ -351,7 +371,7 @@ fn plan(
             &mut descriptions,
         )
     }
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| failed("$.device.counters", error))?;
     let text = |name: Result<&CStr, _>| {
         name.map_or_else(
             |_| String::new(),
@@ -403,7 +423,12 @@ fn plan(
         }
     }
     if indices.is_empty() {
-        return Err("none of the counters asked for are this GPU's".into());
+        let none =
+            Error::new(ErrorCode::ProfilingUnavailable, "$.counters").expected(Expected::NonEmpty);
+        return Err(match &selection {
+            Selection::Named(wanted) => none.got(wanted),
+            Selection::First => none,
+        });
     }
     let chosen = indices
         .iter()
@@ -483,7 +508,7 @@ impl Counting {
         raw: vk::Device,
         family: u32,
         plan: Plan,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, Error> {
         // SAFETY: a valid device of `instance`.
         let device = unsafe { ash::Device::load(instance.fp_v1_0(), raw) };
         let labels = ash::ext::debug_utils::Device::new(instance, &device);
@@ -497,18 +522,18 @@ impl Counting {
         let lock = vk::AcquireProfilingLockInfoKHR::default().timeout(u64::MAX);
         // SAFETY: the device holds the lock until it is destroyed.
         unsafe { queries.acquire_profiling_lock(&lock) }
-            .map_err(|error| format!("the driver refused its profiling lock: {error}"))?;
+            .map_err(|error| failed("$.device.profiling_lock", error))?;
         let mut state = State::default();
         // SAFETY: as above.
         let made = unsafe { Self::objects(&device, family, &plan, &mut state) };
-        if let Err(reason) = made {
+        if let Err(error) = made {
             // SAFETY: this module's objects, unused yet, and the lock taken
             // above.
             unsafe {
                 Self::destroy(&device, &mut state);
                 queries.release_profiling_lock();
             }
-            return Err(reason);
+            return Err(error);
         }
         Ok(Self {
             device,
@@ -525,7 +550,7 @@ impl Counting {
         family: u32,
         plan: &Plan,
         state: &mut State,
-    ) -> Result<(), String> {
+    ) -> Result<(), Error> {
         for _ in 0..POOLS {
             let mut performance = vk::QueryPoolPerformanceCreateInfoKHR::default()
                 .queue_family_index(family)
@@ -536,7 +561,7 @@ impl Counting {
                 .push_next(&mut performance);
             // SAFETY: valid create infos; `destroy` destroys the pools.
             let raw = unsafe { device.create_query_pool(&info, None) }
-                .map_err(|error| format!("the driver refused the counters' query pool: {error}"))?;
+                .map_err(|error| failed("$.device.query_pool", error))?;
             state.pools.push(Pool {
                 raw,
                 passes: Vec::new(),
@@ -548,18 +573,18 @@ impl Counting {
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
         // SAFETY: as above.
         state.command_pool = unsafe { device.create_command_pool(&command_pool_info, None) }
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| failed("$.device.command_pool", error))?;
         let allocate = vk::CommandBufferAllocateInfo::default()
             .command_pool(state.command_pool)
             .command_buffer_count(RESETS as u32);
         // SAFETY: as above.
         let buffers = unsafe { device.allocate_command_buffers(&allocate) }
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| failed("$.device.command_buffers", error))?;
         let fence = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
         for buffer in buffers {
             // SAFETY: as above.
-            let fence =
-                unsafe { device.create_fence(&fence, None) }.map_err(|error| error.to_string())?;
+            let fence = unsafe { device.create_fence(&fence, None) }
+                .map_err(|error| failed("$.device.fence", error))?;
             state.resets.push((buffer, fence));
         }
         Ok(())
@@ -1018,7 +1043,7 @@ unsafe extern "system" fn queue_submit(
     pools.retain(|&index| !state.pools[index].passes.is_empty());
     if !pools.is_empty() {
         if let Err(error) = counting.reset(&mut state, queue, &pools) {
-            unavailable(format!("resetting queries failed: {error}"));
+            unavailable(failed("$.device.reset", error));
             ACTIVE.store(false, Ordering::Release);
         }
         for &index in &pools {

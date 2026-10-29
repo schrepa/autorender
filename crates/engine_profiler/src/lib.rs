@@ -15,11 +15,10 @@ pub mod counters {
         Named(Vec<String>),
     }
 
-    pub fn enable(_: Selection) -> Result<(), String> {
+    pub fn enable(_: Selection) -> Result<(), engine::Error> {
         Err(
-            "hardware counters count through Vulkan; on Apple's GPUs, Xcode's Metal \
-             tools (Instruments' Metal System Trace) count"
-                .into(),
+            engine::Error::new(engine::ErrorCode::ProfilingUnavailable, "$")
+                .expected(engine::Expected::Supported),
         )
     }
 

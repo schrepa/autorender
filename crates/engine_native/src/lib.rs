@@ -39,8 +39,8 @@ pub fn main<G: engine::Game, E: Into<engine::Error>>(
     }
     match HostOptions::parse(arguments) {
         Ok(options) => exit(options.run(title, build)),
-        Err(message) => {
-            eprintln!("{message}\n\n{}", usage());
+        Err(error) => {
+            eprintln!("{error}");
             ExitCode::from(2)
         }
     }
@@ -56,10 +56,15 @@ pub fn exit(outcome: engine::Result<()>) -> ExitCode {
     }
 }
 
-fn host_error(what: &str, error: impl std::fmt::Display) -> engine::Error {
-    engine::Error::new(
-        engine::ErrorCode::RenderFailed,
-        "$",
-        format!("{what}: {error}"),
-    )
+fn host_error(code: engine::ErrorCode, path: &str, error: impl std::fmt::Display) -> engine::Error {
+    engine::Error::new(code, path).got(error.to_string())
+}
+
+pub fn file_error(path: &str, file: &std::path::Path, error: &std::io::Error) -> engine::Error {
+    let code = if error.kind() == std::io::ErrorKind::NotFound {
+        engine::ErrorCode::MissingFile
+    } else {
+        engine::ErrorCode::SourceIo
+    };
+    engine::Error::new(code, path).got(file.display().to_string())
 }

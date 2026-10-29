@@ -1,3 +1,4 @@
+import { engineFailure } from "../generated/errors";
 import type { Distribution } from "../generated/host";
 
 type RecordingJson = null | boolean | number | string | RecordingJson[] | { [key: string]: RecordingJson };
@@ -39,14 +40,16 @@ const DEFAULTS: Options = { warmup: 30, duration_ms: 10_000, timeout_ms: 30_000,
 const MAX_DIAGNOSTICS = 121;
 
 function jsonCopy(value: unknown, maxBytes: number): RecordingJson {
-  const source = JSON.stringify(value, (_key, item: unknown) => {
-    if (typeof item === "number" && !Number.isFinite(item)) throw new Error("recording metadata must contain finite numbers");
+  const source = JSON.stringify(value, (key, item: unknown) => {
+    if (typeof item === "number" && !Number.isFinite(item)) throw engineFailure({ code: "invalid_number", path: `$.${key}`, expected: "finite" });
     if (typeof item === "bigint" || typeof item === "function" || typeof item === "symbol" || item === undefined) {
-      throw new Error("recording metadata must be JSON data");
+      throw engineFailure({ code: "invalid_type", path: `$.${key}`, expected: "json", got: typeof item });
     }
     return item;
   });
-  if (!source || new TextEncoder().encode(source).length > maxBytes) throw new Error("recording JSON exceeds its byte limit");
+  if (!source || new TextEncoder().encode(source).length > maxBytes) {
+    throw engineFailure({ code: "request_too_large", path: "$", allowed: { kind: "at_most", max: maxBytes } });
+  }
   return JSON.parse(source) as RecordingJson;
 }
 
@@ -55,7 +58,7 @@ function checkedOptions(options: RecordingOptions): Options {
   if (Object.keys(options).some(key => !Object.hasOwn(DEFAULTS, key)) || Object.values(result).some(value => !Number.isInteger(value)) ||
       result.warmup < 0 || result.warmup > 120 || result.duration_ms < 1 || result.duration_ms > 10_000 ||
       result.timeout_ms < result.duration_ms || result.timeout_ms > 30_000 || result.max_samples < 1 || result.max_samples > 1800) {
-    throw new Error("recording requires warmup0..120, duration1..10000ms, timeout duration..30000ms and max_samples1..1800");
+    throw engineFailure({ code: "invalid_arguments", path: "$", got: options });
   }
   return result;
 }
@@ -65,7 +68,7 @@ function values<T extends number | boolean>(input: Record<string, T> | undefined
   const entries = Object.entries(input ?? {});
   if (entries.length > maximum || entries.some(([key, value]) => key.length > 64 || !/^[A-Za-z][A-Za-z0-9_]*$/.test(key) ||
       (typeof value !== "boolean" && (typeof value !== "number" || !finite(value))))) {
-    throw new Error("recording fields must be bounded named finite nonnegative numbers or booleans");
+    throw engineFailure({ code: "invalid_value", path: "$", allowed: { kind: "at_most", max: maximum }, got: entries.length });
   }
   return Object.fromEntries(entries);
 }
@@ -112,7 +115,7 @@ export class Recorder {
   get active(): boolean { return this.running; }
 
   start(metadata: RecordingMetadata, options: RecordingOptions = {}): void {
-    if (this.running) throw new Error("a recording is already active");
+    if (this.running) throw engineFailure({ code: "runtime_busy", path: "$" });
     const configured = checkedOptions(options);
     const copied = jsonCopy(metadata, 16 * 1024);
     this.options = configured; this.metadata = copied; this.browser = environment();
@@ -134,15 +137,15 @@ export class Recorder {
           !finite(input.simulation_ms + input.extraction_ms + input.render_ms) ||
           (this.previous && input.timestamp <= this.previous.timestamp) ||
           (this.previous && input.dropped_seconds < this.previous.dropped_seconds)) {
-        throw new Error("invalid or nonmonotonic frame statistics");
+        throw engineFailure({ code: "invalid_measurement", path: "$", expected: "sorted" });
       }
       const phases = values(input.phases_ms, 16);
-      if (Object.values(phases).some(value => typeof value !== "number")) throw new Error("phase timers must be numbers");
+      if (Object.values(phases).some(value => typeof value !== "number")) throw engineFailure({ code: "invalid_measurement", path: "$.phases_ms", expected: "number" });
       const counters = values(input.counters, 40);
       const counterKeys = Object.keys(counters).sort().join(",");
       const phaseKeys = Object.keys(phases).sort().join(",");
       if ((this.counterKeys !== undefined && counterKeys !== this.counterKeys) ||
-          (this.phaseKeys !== undefined && phaseKeys !== this.phaseKeys)) throw new Error("recording statistic fields changed");
+          (this.phaseKeys !== undefined && phaseKeys !== this.phaseKeys)) throw engineFailure({ code: "invalid_measurement", path: "$", expected: "matching" });
       this.counterKeys = counterKeys; this.phaseKeys = phaseKeys;
       this.firstTimestamp ??= input.timestamp;
       if (this.previous) {

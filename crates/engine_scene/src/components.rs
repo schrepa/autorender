@@ -2,13 +2,13 @@ use std::collections::BTreeMap;
 
 use engine_core::bevy_ecs::world::EntityWorldMut;
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{Grounded, InterpolateTransform, Mesh, Tint};
+use engine_core::{Error, Expected, Grounded, InterpolateTransform, Mesh, Tint};
 use engine_navigation::NavAgent;
 use engine_settings::ErrorCode;
 use engine_terrain::TerrainPrefetch;
 
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneError, SceneFiles};
+use crate::{SceneDocument, SceneFiles};
 
 macro_rules! entity_components {
     ($then:ident) => {
@@ -72,8 +72,8 @@ pub(crate) use entity_components;
 
 pub(crate) enum Placement {
     Anywhere,
-    Roots(ErrorCode, &'static str),
-    Entities(ErrorCode, &'static str),
+    Roots(ErrorCode),
+    Entities(ErrorCode),
 }
 
 pub(crate) struct Reach<'a> {
@@ -119,7 +119,7 @@ pub(crate) trait SceneComponent {
         path: &str,
         document: &SceneDocument,
         files: Option<&SceneFiles>,
-    ) -> Result<Self::Prepared, SceneError>;
+    ) -> Result<Self::Prepared, Error>;
 
     fn spawn(prepared: &Self::Prepared, entity: &mut EntityWorldMut<'_>, lookups: &Lookups);
 
@@ -131,12 +131,7 @@ impl SceneComponent for [f32; 4] {
 
     const PLACEMENT: Placement = Placement::Anywhere;
 
-    fn prepare(
-        &self,
-        _: &str,
-        _: &SceneDocument,
-        _: Option<&SceneFiles>,
-    ) -> Result<Tint, SceneError> {
+    fn prepare(&self, _: &str, _: &SceneDocument, _: Option<&SceneFiles>) -> Result<Tint, Error> {
         Ok(Tint(*self))
     }
 
@@ -150,12 +145,7 @@ impl SceneComponent for TerrainPrefetch {
 
     const PLACEMENT: Placement = Placement::Anywhere;
 
-    fn prepare(
-        &self,
-        _: &str,
-        _: &SceneDocument,
-        _: Option<&SceneFiles>,
-    ) -> Result<Self, SceneError> {
+    fn prepare(&self, _: &str, _: &SceneDocument, _: Option<&SceneFiles>) -> Result<Self, Error> {
         Ok(*self)
     }
 
@@ -167,17 +157,9 @@ impl SceneComponent for TerrainPrefetch {
 impl SceneComponent for Grounded {
     type Prepared = Self;
 
-    const PLACEMENT: Placement = Placement::Roots(
-        ErrorCode::InvalidGrounded,
-        "only roots stand on the ground; ground the placement or root instead",
-    );
+    const PLACEMENT: Placement = Placement::Roots(ErrorCode::InvalidGrounded);
 
-    fn prepare(
-        &self,
-        _: &str,
-        _: &SceneDocument,
-        _: Option<&SceneFiles>,
-    ) -> Result<Self, SceneError> {
+    fn prepare(&self, _: &str, _: &SceneDocument, _: Option<&SceneFiles>) -> Result<Self, Error> {
         Ok(*self)
     }
 
@@ -189,17 +171,9 @@ impl SceneComponent for Grounded {
 impl SceneComponent for engine_physics::RigidBody {
     type Prepared = Self;
 
-    const PLACEMENT: Placement = Placement::Roots(
-        ErrorCode::InvalidRigidBody,
-        "only roots move as bodies; give the placement or root the body instead",
-    );
+    const PLACEMENT: Placement = Placement::Roots(ErrorCode::InvalidRigidBody);
 
-    fn prepare(
-        &self,
-        _: &str,
-        _: &SceneDocument,
-        _: Option<&SceneFiles>,
-    ) -> Result<Self, SceneError> {
+    fn prepare(&self, _: &str, _: &SceneDocument, _: Option<&SceneFiles>) -> Result<Self, Error> {
         Ok(*self)
     }
 
@@ -211,17 +185,9 @@ impl SceneComponent for engine_physics::RigidBody {
 impl SceneComponent for NavAgent {
     type Prepared = Self;
 
-    const PLACEMENT: Placement = Placement::Roots(
-        ErrorCode::InvalidNavAgent,
-        "only roots walk; give the placement or root the agent instead",
-    );
+    const PLACEMENT: Placement = Placement::Roots(ErrorCode::InvalidNavAgent);
 
-    fn prepare(
-        &self,
-        _: &str,
-        _: &SceneDocument,
-        _: Option<&SceneFiles>,
-    ) -> Result<Self, SceneError> {
+    fn prepare(&self, _: &str, _: &SceneDocument, _: Option<&SceneFiles>) -> Result<Self, Error> {
         Ok(*self)
     }
 
@@ -241,33 +207,26 @@ macro_rules! components {
         },
     )*) => {
         impl crate::SceneObject {
-            pub(crate) fn check_placement(&self, path: &str) -> Result<(), SceneError> {
+            pub(crate) fn check_placement(&self, path: &str) -> Result<(), Error> {
                 $(
                     if self.$field.is_some()
                         && self.parent.is_some()
-                        && let Placement::Roots(code, rule) = <$type as SceneComponent>::PLACEMENT
+                        && let Placement::Roots(code) = <$type as SceneComponent>::PLACEMENT
                     {
-                        return Err(SceneError::new(
-                            code,
-                            format!("{path}.{}", stringify!($field)),
-                            rule,
-                        ));
+                        return Err(Error::new(code, format!("{path}.{}", stringify!($field)))
+                            .expected(Expected::Absent));
                     }
                 )*
                 Ok(())
             }
 
-            pub(crate) fn check_streamed(&self, path: &str) -> Result<(), SceneError> {
+            pub(crate) fn check_streamed(&self, path: &str) -> Result<(), Error> {
                 $(
                     if self.$field.is_some()
-                        && let Placement::Entities(code, rule) =
-                            <$type as SceneComponent>::PLACEMENT
+                        && let Placement::Entities(code) = <$type as SceneComponent>::PLACEMENT
                     {
-                        return Err(SceneError::new(
-                            code,
-                            format!("{path}.{}", stringify!($field)),
-                            rule,
-                        ));
+                        return Err(Error::new(code, format!("{path}.{}", stringify!($field)))
+                            .expected(Expected::Absent));
                     }
                 )*
                 Ok(())
@@ -278,7 +237,7 @@ macro_rules! components {
                 path: &str,
                 document: &SceneDocument,
                 files: Option<&SceneFiles>,
-            ) -> Result<PreparedComponents, SceneError> {
+            ) -> Result<PreparedComponents, Error> {
                 Ok(PreparedComponents {
                     $($field: self
                         .$field

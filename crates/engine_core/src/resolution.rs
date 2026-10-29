@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::bricks::{Brick, Bricks};
 use crate::sections::environment_section;
-use engine_settings::{ExtraRules, InvalidSetting, settings};
+use engine_settings::{Expected, ExtraRules, InvalidSetting, settings};
 
 impl Brick for Resolution {
     fn register(bricks: &mut Bricks<'_>) {
@@ -55,10 +55,9 @@ settings! {
 impl ExtraRules for DynamicResolution {
     fn check_extra(&self) -> Result<(), InvalidSetting> {
         if self.min_scale > self.max_scale {
-            return Err(InvalidSetting::new(
-                "min_scale",
-                "must be at most max_scale",
-            ));
+            return Err(InvalidSetting::new("min_scale", Expected::Sorted)
+                .got(self.min_scale)
+                .nearest(self.max_scale));
         }
         Ok(())
     }

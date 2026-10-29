@@ -14,13 +14,11 @@ impl Renderer {
         &mut self,
         frame: RenderFrame<'f>,
         display: bool,
-    ) -> Result<(FrameKind, Option<engine_core::GpuPresentation<'f>>), RenderError> {
+    ) -> Result<(FrameKind, Option<engine_core::GpuPresentation<'f>>), Error> {
         let snapshot = frame.snapshot();
         {
             let _profile = engine_profile::span("render", "batch_plan");
-            self.plan
-                .prepare_frame(&frame)
-                .map_err(|error| render_error("Invalid render frame", error))?;
+            self.plan.prepare_frame(&frame)?;
         }
         let gpu = frame.gpu();
         let gpu_mode = gpu.is_some();
@@ -42,12 +40,12 @@ impl Renderer {
         self.display
             .plan_region(display && !debug && !self.features.post.disabled());
         let profile_residency = engine_profile::span("render", "validate_and_retire");
-        for source in &snapshot.textures {
-            if source.texture.width().max(source.texture.height()) > self.display.max_dimension {
-                return Err(RenderError(format!(
-                    "Texture {:?} exceeds the device's {}-pixel dimension limit.",
-                    source.handle, self.display.max_dimension,
-                )));
+        for (index, source) in snapshot.textures.iter().enumerate() {
+            let side = source.texture.width().max(source.texture.height());
+            if side > self.display.max_dimension {
+                return Err(failed(&format!("$.snapshot.textures[{index}]"))
+                    .at_most(u64::from(self.display.max_dimension))
+                    .got(side));
             }
         }
         self.shadows.plan_groups(&self.plan, frame, gpu_mode);

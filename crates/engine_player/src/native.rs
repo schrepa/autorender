@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use engine::{Engine, Error, ErrorCode};
-use engine_native::{Arguments, HostOptions, files};
+use engine::{Engine, Error, ErrorCode, Expected};
+use engine_native::{Arguments, HostOptions, file_error, files};
 
 use crate::{ScenePlayer, bricks};
 
@@ -28,15 +28,15 @@ pub fn main(arguments: impl Iterator<Item = String>) -> ExitCode {
     }
     match Options::parse(arguments) {
         Ok(options) => engine_native::exit(options.run()),
-        Err(message) => {
-            eprintln!("{message}\n\n{USAGE}\n\n{}", engine_native::usage());
+        Err(error) => {
+            eprintln!("{error}");
             ExitCode::from(2)
         }
     }
 }
 
 impl Options {
-    fn parse(arguments: Vec<String>) -> Result<Self, String> {
+    fn parse(arguments: Vec<String>) -> Result<Self, Error> {
         let mut options = Self {
             source: None,
             without: String::new(),
@@ -74,21 +74,12 @@ impl Options {
 
     fn build(&self) -> engine::Result<(Engine, ScenePlayer)> {
         let path = self.source.as_ref().ok_or_else(|| {
-            Error::new(
-                ErrorCode::InvalidArguments,
-                "$.source",
-                "required: --source PATH",
-            )
+            Error::new(ErrorCode::InvalidArguments, "--source").expected(Expected::Present)
         })?;
-        let source = std::fs::read_to_string(path).map_err(|error| {
-            Error::new(
-                ErrorCode::MissingFile,
-                "$.source",
-                format!("{}: {error}", path.display()),
-            )
-        })?;
+        let source =
+            std::fs::read_to_string(path).map_err(|error| file_error("--source", path, &error))?;
         let files = files::scene_files(path, &source)?;
-        let without = bricks(&self.without, "$.without")?;
-        ScenePlayer::new(&source, &files, &without).map_err(Error::from)
+        let without = bricks(&self.without, "--without")?;
+        ScenePlayer::new(&source, &files, &without)
     }
 }

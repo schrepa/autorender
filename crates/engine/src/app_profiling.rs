@@ -1,4 +1,5 @@
 use super::{AppHost, now_ms};
+use engine_core::{Error, ErrorCode, Expected};
 use serde_json::{Value, json};
 
 fn linear_memory_bytes() -> Option<usize> {
@@ -36,17 +37,26 @@ impl AppHost {
         }
     }
 
-    pub fn profiling_start(&mut self, max_events: usize) -> Result<(), &'static str> {
+    pub fn profiling_start(&mut self, max_events: usize) -> Result<(), Error> {
         engine_profile::set_clock(now_ms);
-        let id = engine_profile::start(max_events)?;
+        if !(1..=engine_profile::MAX_EVENTS).contains(&max_events) {
+            return Err(Error::new(ErrorCode::InvalidArguments, "$.max_events")
+                .range(1.0, engine_profile::MAX_EVENTS as f64)
+                .got(max_events));
+        }
+        if engine_profile::active() {
+            return Err(Error::new(ErrorCode::CaptureFailed, "$").expected(Expected::Absent));
+        }
+        let id = engine_profile::start(max_events)
+            .map_err(|_| Error::new(ErrorCode::CaptureFailed, "$"))?;
         self.attribution.captured.clear();
         self.renderer.profile_begin(id);
         Ok(())
     }
 
-    pub fn profiling_stop(&mut self) -> Result<Value, &'static str> {
+    pub fn profiling_stop(&mut self) -> Result<Value, Error> {
         if !engine_profile::active() {
-            return Err("no profiling capture is active");
+            return Err(Error::new(ErrorCode::CaptureFailed, "$").expected(Expected::Running));
         }
         self.renderer.profile_poll();
         let cpu = engine_profile::finish();

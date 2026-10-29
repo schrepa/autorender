@@ -351,19 +351,19 @@ pub(crate) enum Invalid {
     Unwritten { pass: Pass, resource: Resource },
 }
 
-impl std::fmt::Display for Invalid {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Invalid {
+    pub(crate) fn error(self) -> engine_core::Error {
+        use engine_core::{Error, ErrorCode, Expected};
         match self {
-            Self::Twice(pass) => write!(
-                formatter,
-                "The render graph's {} pass is declared twice.",
-                pass.name()
-            ),
-            Self::Unwritten { pass, resource } => write!(
-                formatter,
-                "The render graph's {} pass reads {resource:?} before any pass writes it.",
-                pass.name()
-            ),
+            Self::Twice(pass) => {
+                Error::new(ErrorCode::RenderFailed, format!("$.passes.{}", pass.name()))
+                    .expected(Expected::Unique)
+            }
+            Self::Unwritten { pass, resource } => {
+                Error::new(ErrorCode::RenderFailed, format!("$.passes.{}", pass.name()))
+                    .expected(Expected::Present)
+                    .got(format!("{resource:?}"))
+            }
         }
     }
 }

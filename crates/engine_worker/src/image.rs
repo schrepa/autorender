@@ -1,3 +1,5 @@
+use engine_settings::{Error, ErrorCode, Expected};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImageFormat {
     pub name: &'static str,
@@ -39,12 +41,19 @@ pub fn image_format(bytes: &[u8]) -> Option<&'static ImageFormat> {
     IMAGE_FORMATS.iter().find(|format| format.name == name)
 }
 
-pub fn decode_image(uri: &str, bytes: &[u8]) -> Result<Image, String> {
+pub fn decode_image(uri: &str, bytes: &[u8]) -> Result<Image, Error> {
+    let failed = |error: String| {
+        Error::new(ErrorCode::InvalidTexture, "$")
+            .expected(Expected::Image)
+            .got(serde_json::json!({ "file": uri, "failed": error }))
+    };
     match image_format(bytes).map(|format| format.name) {
-        Some("png") => decode_png(bytes).map_err(|error| format!("{uri}: {error}")),
-        Some("jpeg") => decode_jpeg(bytes).map_err(|error| format!("{uri}: {error}")),
+        Some("png") => decode_png(bytes).map_err(failed),
+        Some("jpeg") => decode_jpeg(bytes).map_err(failed),
         Some("ktx2-rgba8") => read_rgba8_ktx2(uri, bytes),
-        Some(_) | None => Err(format!("{uri} is not a PNG, JPEG or KTX2 image")),
+        Some(_) | None => Err(Error::new(ErrorCode::InvalidTexture, "$")
+            .expected(Expected::Image)
+            .got(uri)),
     }
 }
 
@@ -58,13 +67,17 @@ fn word(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four_bytes"))
 }
 
-fn read_rgba8_ktx2(uri: &str, bytes: &[u8]) -> Result<Image, String> {
-    let invalid = |what: &str| format!("{uri} {what}");
+fn read_rgba8_ktx2(uri: &str, bytes: &[u8]) -> Result<Image, Error> {
+    let invalid = |expected: Expected| {
+        Error::new(ErrorCode::InvalidTexture, "$")
+            .expected(expected)
+            .got(uri)
+    };
     if bytes.len() < 104 {
-        return Err(invalid("is not a valid KTX2 image"));
+        return Err(invalid(Expected::Image));
     }
     if !RGBA8_FORMATS.contains(&word(bytes, 12)) || word(bytes, 44) != 0 {
-        return Err(invalid("must be uncompressed RGBA8"));
+        return Err(invalid(Expected::Supported));
     }
     let (width, height) = (word(bytes, 20), word(bytes, 24));
     if word(bytes, 28) > 1
@@ -73,7 +86,7 @@ fn read_rgba8_ktx2(uri: &str, bytes: &[u8]) -> Result<Image, String> {
         || width == 0
         || height == 0
     {
-        return Err(invalid("must be a single 2D image"));
+        return Err(invalid(Expected::Supported));
     }
     let (offset, length) = (word(bytes, 80) as usize, word(bytes, 88) as usize);
     if word(bytes, 84) != 0
@@ -81,7 +94,7 @@ fn read_rgba8_ktx2(uri: &str, bytes: &[u8]) -> Result<Image, String> {
         || length != width as usize * height as usize * 4
         || offset + length > bytes.len()
     {
-        return Err(invalid("has an invalid base level"));
+        return Err(invalid(Expected::Image));
     }
     Ok(Image {
         width,
@@ -117,7 +130,7 @@ fn decode_png(bytes: &[u8]) -> Result<Image, String> {
             .iter()
             .flat_map(|&gray| [gray, gray, gray, 255])
             .collect(),
-        png::ColorType::Indexed => return Err("indexed colors did not expand".into()),
+        png::ColorType::Indexed => return Err("indexed".into()),
     };
     Ok(Image {
         width: info.width,
@@ -136,7 +149,7 @@ fn decode_jpeg(bytes: &[u8]) -> Result<Image, String> {
     let pixels = decoder.decode().map_err(|error| error.to_string())?;
     let (width, height) = decoder
         .dimensions()
-        .ok_or("the decoder found no dimensions")?;
+        .ok_or("dimensions")?;
     Ok(Image {
         width: width as u32,
         height: height as u32,
