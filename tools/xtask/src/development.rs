@@ -165,11 +165,37 @@ fn check(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     }
 }
 
+fn logged_text(text: &str) -> String {
+    fn strings(value: &Value, out: &mut String) {
+        match value {
+            Value::String(text) => {
+                out.push_str(text);
+                out.push('\n');
+            }
+            Value::Array(items) => items.iter().for_each(|item| strings(item, out)),
+            Value::Object(fields) => fields.values().for_each(|field| strings(field, out)),
+            Value::Null | Value::Bool(_) | Value::Number(_) => {}
+        }
+    }
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        match serde_json::from_str::<Value>(line) {
+            Ok(record) => strings(&record, &mut out),
+            Err(_) => {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    out
+}
+
 fn locations(text: &str) -> Vec<String> {
     const EXTENSIONS: [&str; 6] = [".rs:", ".mjs:", ".ts:", ".wgsl:", ".json:", ".toml:"];
     let mut found: Vec<String> = Vec::new();
     let separators =
         |character: char| character.is_whitespace() || "()[]{}'\"`,;<>".contains(character);
+    let text = logged_text(text);
     for token in text.split(separators) {
         for extension in EXTENSIONS {
             let Some(at) = token.find(extension) else {

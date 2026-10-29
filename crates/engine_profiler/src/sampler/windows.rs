@@ -11,8 +11,7 @@ use windows_sys::Win32::System::Threading::{
 };
 use windows_sys::Win32::System::WindowsProgramming::QueryThreadCycleTime;
 
-pub(super) const METHOD: Option<&str> =
-    Some("suspend, read registers, unwind with the system's tables");
+pub(super) const METHOD: Option<&str> = Some("suspend_unwind_tables");
 
 #[derive(Clone, Copy)]
 pub(super) struct Id(u32);

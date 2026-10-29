@@ -114,7 +114,7 @@ impl InputGatherer {
         }
         let movement = std::array::from_fn(|entry| {
             let (name, axis, way) = MOVEMENT[entry];
-            (index(name).expect("movement keys are keys"), axis, way)
+            (index(name).expect("movement_key_known"), axis, way)
         });
         Ok(Self {
             holds: [0; KEYS.len()],

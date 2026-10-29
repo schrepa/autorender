@@ -422,7 +422,7 @@ impl WaterBlocks {
     }
 
     fn write(&self, queue: &Queue, block: u32, texels: &Texels) {
-        let arrays = self.arrays.as_ref().expect("a block allocates its arrays");
+        let arrays = self.arrays.as_ref().expect("block_arrays_allocated");
         let index = block % PER_LAYER;
         let origin = wgpu::Origin3d {
             x: index % SIDE * BLOCK,

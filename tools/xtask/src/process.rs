@@ -35,7 +35,7 @@ pub struct Client {
 pub fn clients() -> &'static [Client] {
     static CLIENTS: std::sync::OnceLock<Vec<Client>> = std::sync::OnceLock::new();
     CLIENTS.get_or_init(|| {
-        read_clients().unwrap_or_else(|error| panic!("cannot list the browser clients: {error}"))
+        read_clients().unwrap_or_else(|error| panic!("browser_clients_listed {error}"))
     })
 }
 
@@ -331,7 +331,12 @@ pub fn engine_commit() -> (&'static str, String) {
 }
 
 pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String> {
-    println!("Running {program} {}", arguments.join(" "));
+    let record = serde_json::json!({
+        "event": "running",
+        "program": program,
+        "arguments": arguments,
+    });
+    println!("{record}");
     let status = Command::new(program)
         .args(arguments)
         .envs([engine_commit()])
@@ -351,7 +356,12 @@ pub fn run(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String>
 }
 
 pub fn run_to_stderr(root: &Path, program: &str, arguments: &[&str]) -> Result<(), String> {
-    eprintln!("Running {program} {}", arguments.join(" "));
+    let record = serde_json::json!({
+        "event": "running",
+        "program": program,
+        "arguments": arguments,
+    });
+    eprintln!("{record}");
     let mut child = Command::new(program)
         .args(arguments)
         .current_dir(root)

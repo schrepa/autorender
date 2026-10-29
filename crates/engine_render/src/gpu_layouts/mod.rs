@@ -28,7 +28,7 @@ impl Layout {
             }
             index += 1;
         }
-        panic!("no field of that name")
+        panic!("field_unknown")
     }
 }
 

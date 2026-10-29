@@ -277,7 +277,7 @@ impl TemporalPass {
         };
         self.pose_groups[2 * frame.parity + previous]
             .get()
-            .expect("prepared this frame")
+            .expect("prepared_this_frame")
     }
 
     pub(crate) fn ensure_lit_layout(
@@ -299,9 +299,7 @@ impl TemporalPass {
 
     pub(crate) fn mesh_layout(&self, lit: bool) -> &wgpu::PipelineLayout {
         if lit {
-            self.lit_layout
-                .as_ref()
-                .expect("created with the first lit frame")
+            self.lit_layout.as_ref().expect("lit_layout_created")
         } else {
             &self.mesh_layout
         }
@@ -312,11 +310,11 @@ impl TemporalPass {
     }
 
     pub(crate) fn history_target(&self, frame: &ResolveFrame) -> &wgpu::TextureView {
-        &self.targets.get().expect("sized in begin").history[frame.parity]
+        &self.targets.get().expect("sized_in_begin").history[frame.parity]
     }
 
     pub(crate) fn motion(&self) -> &wgpu::TextureView {
-        &self.targets.get().expect("sized in begin").motion
+        &self.targets.get().expect("sized_in_begin").motion
     }
 
     pub(crate) fn prepare_resolve(
@@ -369,7 +367,7 @@ impl TemporalPass {
     fn draw_resolve(&self, mut pass: wgpu::RenderPass<'_>, frame: &ResolveFrame) {
         let group = self.resolve_groups[frame.parity]
             .get()
-            .expect("bound in prepare_resolve");
+            .expect("bound_in_prepare_resolve");
         pass.set_pipeline(&self.resolve_pipeline);
         pass.set_bind_group(0, group, &[]);
         pass.draw(0..3, 0..1);

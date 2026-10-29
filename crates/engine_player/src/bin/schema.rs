@@ -4,6 +4,6 @@ fn main() {
     });
     engine::tooling::print_generated(&[(
         "crates/engine_player/src/generated/inspectors.json",
-        serde_json::to_string_pretty(&schemas).expect("schemas serialize") + "\n",
+        serde_json::to_string_pretty(&schemas).expect("schema_serializes") + "\n",
     )]);
 }

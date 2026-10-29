@@ -157,7 +157,7 @@ impl TransparentPass {
     }
 
     fn views(&self) -> [&wgpu::TextureView; 2] {
-        let targets = self.targets.get().expect("sized in begin");
+        let targets = self.targets.get().expect("sized_in_begin");
         [&targets.accumulated, &targets.revealed]
     }
 
@@ -221,7 +221,7 @@ impl TransparentPass {
     }
 
     fn composite(&self, pass: &mut wgpu::RenderPass<'_>, post: bool, dither: bool) {
-        let targets = self.targets.get().expect("sized in begin");
+        let targets = self.targets.get().expect("sized_in_begin");
         pass.set_pipeline(
             self.composite[composite_index(post, dither)]
                 .as_ref()
@@ -300,7 +300,7 @@ impl Transparency {
     fn surfaces(&self) -> &TransparentPass {
         self.surfaces
             .as_ref()
-            .expect("frames drawing something transparent create the surfaces")
+            .expect("transparent_surfaces_created")
     }
 
     pub(crate) fn views(&self) -> [&wgpu::TextureView; 2] {

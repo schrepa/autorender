@@ -329,7 +329,7 @@ impl Selection {
         };
         self.select_parity = poses.parity;
         if self.select_groups[poses.parity].stale(&key) {
-            let pose_buffer = poses.buffer(poses.parity).expect("the frame's pose buffer");
+            let pose_buffer = poses.buffer(poses.parity).expect("pose_buffer_present");
             let (candidate_buffer, batch_buffer, flag_buffer) = match presented {
                 Some(presented) if source == Source::Presented => {
                     (presented.candidates, presented.batches, presented.flags)

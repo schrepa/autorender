@@ -171,7 +171,7 @@ pub(crate) fn ensure_commit(root: &Path, sha: &str, pull: Option<u64>) -> Result
     if git(root, &["cat-file", "-e", &commit]).is_ok() {
         return Ok(());
     }
-    eprintln!("Fetching {sha}.");
+    eprintln!("{}", json!({"event": "fetching", "commit": sha}));
     if let Some(pull) = pull {
         let reference = format!("pull/{pull}/head");
         let _ = git(root, &["fetch", "--no-tags", "origin", &reference]);
@@ -240,7 +240,12 @@ fn prepare_build(
     });
     let mut build = match kept {
         Some(kept) => {
-            eprintln!("Reusing the build of {} at {sha}.", project.package);
+            let record = json!({
+                "event": "build_reused",
+                "package": project.package,
+                "commit": sha,
+            });
+            eprintln!("{record}");
             kept
         }
         None => {
@@ -295,7 +300,10 @@ pub(crate) fn build_arm(
     backend: &str,
 ) -> Result<Value, String> {
     let package = project.package.as_str();
-    eprintln!("Building {package} at {sha}.");
+    eprintln!(
+        "{}",
+        json!({"event": "building", "package": package, "commit": sha})
+    );
     let target = root.join("target").join("measure").join("target");
     let features = FEATURES.join(",");
     let started = Instant::now();
@@ -339,7 +347,7 @@ pub(crate) fn build_arm(
     });
     fs::write(
         folder.join("build.json"),
-        serde_json::to_string_pretty(&build).expect("builds serialize"),
+        serde_json::to_string_pretty(&build).expect("build_serializes"),
     )
     .map_err(|error| error.to_string())?;
     Ok(build)
@@ -370,14 +378,14 @@ fn run_host(
         .map_err(|error| format!("cannot start {}: {error}", program.display()))?;
     let mut load = Monitor::new(child.id());
     let mut loaded = Load::default();
-    let mut errors = child.stderr.take().expect("piped");
+    let mut errors = child.stderr.take().expect("stdio_piped");
     let stderr = std::thread::spawn(move || {
         let mut text = String::new();
         let _ = errors.read_to_string(&mut text);
         text
     });
     let (mut marks, mut report, mut stdout) = (BTreeMap::new(), Value::Null, String::new());
-    for line in BufReader::new(child.stdout.take().expect("piped")).lines() {
+    for line in BufReader::new(child.stdout.take().expect("stdio_piped")).lines() {
         let at = Instant::now();
         let line = line.map_err(|error| error.to_string())?;
         if let Ok(value) = serde_json::from_str::<Value>(&line) {
@@ -545,7 +553,7 @@ impl Workload<'_> {
         self.sides
             .iter()
             .find(|side| side.role == role)
-            .expect("both roles have a side")
+            .expect("role_has_side")
     }
 }
 
@@ -763,7 +771,10 @@ fn measure_run(
         if catalogued(catalog, name, false) {
             metrics.insert(name.clone(), value.clone());
         } else {
-            eprintln!("Left out {name}: bench/metrics.json at the tools' commit lacks it.");
+            eprintln!(
+                "{}",
+                json!({"event": "metric_uncatalogued", "metric": name})
+            );
         }
     }
     let frame_ms: Option<Vec<f64>> = report["frame_ms"]
@@ -792,7 +803,8 @@ fn measure_run(
         let known = catalogued(catalog, name, true);
         if !known {
             eprintln!(
-                "Left out work counter {name}: bench/metrics.json at the tools' commit lacks it."
+                "{}",
+                json!({"event": "work_counter_uncatalogued", "counter": name})
             );
         }
         known
@@ -1146,12 +1158,14 @@ pub(crate) fn measure_with(
             let mut measured = Vec::new();
             for role in order {
                 let stem = format!("{:03}-{role}", runs.len() + measured.len());
-                eprintln!(
-                    "{} ({}): round {}, {role} run.",
-                    workload.name,
-                    workload.feature,
-                    round + 1
-                );
+                let record = json!({
+                    "event": "measure_run",
+                    "workload": workload.name,
+                    "feature": workload.feature,
+                    "round": round + 1,
+                    "role": role,
+                });
+                eprintln!("{record}");
                 let side = workload.side(role);
                 match measure_run(side, &workload, &machine, &catalog, &folder, &stem) {
                     Ok((record, missing)) => {
@@ -1190,7 +1204,12 @@ pub(crate) fn measure_with(
         if want_profiles && workload.feature != "off" {
             for side in &workload.sides {
                 if !profiles.iter().any(|profile| profile["arm"] == side.role) {
-                    eprintln!("{}: profiling the {} arm.", workload.name, side.role);
+                    let record = json!({
+                        "event": "profiling_arm",
+                        "workload": workload.name,
+                        "role": side.role,
+                    });
+                    eprintln!("{record}");
                     profiles.push(profile_run(side, &machine, &folder));
                 }
             }
@@ -1260,11 +1279,12 @@ pub(crate) fn measure_with(
     }
     fs::write(
         &options.out,
-        serde_json::to_string_pretty(&report).expect("reports serialize") + "\n",
+        serde_json::to_string_pretty(&report).expect("report_serializes") + "\n",
     )
     .map_err(|error| format!("cannot write {}: {error}", options.out.display()))?;
     print_summary(&report);
-    println!("Wrote {}.", options.out.display());
+    let record = json!({"event": "written", "file": options.out.display().to_string()});
+    println!("{record}");
     match &options.formats {
         Some(formats) => check_format(&report, formats, "measure"),
         None => Ok(()),
@@ -1294,7 +1314,7 @@ pub fn check_format(report: &Value, formats: &Path, kind: &str) -> Result<(), St
             )
         ));
     }
-    println!("The report matches the factory's {kind} format.");
+    println!("{}", json!({"event": "format_matches", "format": kind}));
     Ok(())
 }
 
@@ -1369,13 +1389,7 @@ fn print_summary(report: &Value) {
                 .collect();
             engine::host::median(&values)
         };
-        let mut line = format!(
-            "{} ({}): {} runs, settle {}",
-            workload["name"].as_str().unwrap_or_default(),
-            workload["feature"].as_str().unwrap_or_default(),
-            runs.len(),
-            workload["settle"].as_str().unwrap_or_default()
-        );
+        let mut metrics = Map::new();
         for metric in [
             "frame_ms_mean",
             "frame_ms_pipelined_mean",
@@ -1384,12 +1398,22 @@ fn print_summary(report: &Value) {
             if let (Some(base), Some(candidate)) =
                 (median("base", metric), median("candidate", metric))
             {
-                line.push_str(&format!(
-                    "; {metric} {base:.3} -> {candidate:.3} ({:+.1}%)",
-                    (candidate / base - 1.0) * 100.0
-                ));
+                let change = json!({
+                    "base": base,
+                    "candidate": candidate,
+                    "change_percent": (candidate / base - 1.0) * 100.0,
+                });
+                metrics.insert(metric.to_owned(), change);
             }
         }
-        println!("{line}");
+        let record = json!({
+            "event": "workload_summary",
+            "workload": workload["name"],
+            "feature": workload["feature"],
+            "runs": runs.len(),
+            "settle": workload["settle"],
+            "medians": metrics,
+        });
+        println!("{record}");
     }
 }

@@ -9,7 +9,12 @@ pub const TRACE: &str = "target/coresmoke/terrain-trace.txt";
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let trace = root.join(TRACE).display().to_string();
-    println!("Running the core smoke (cargo run -p coresmoke)");
+    let record = serde_json::json!({
+        "event": "running",
+        "program": "cargo",
+        "arguments": ["run", "-p", "coresmoke"],
+    });
+    println!("{record}");
     let output = Command::new("cargo")
         .args(["run", "-q", "--locked", "-p", "coresmoke", "--target-dir"])
         .arg(crate::process::tools_target(root))
@@ -31,8 +36,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         observed.record(name.clone(), value.clone());
     }
     for broken in report["broken"].as_array().into_iter().flatten() {
-        let broken = broken.as_str().unwrap_or_default().to_owned();
-        observed.check(false, || broken);
+        observed.check(false, || broken.to_string());
     }
     Ok(())
 }

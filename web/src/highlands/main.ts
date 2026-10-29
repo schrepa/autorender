@@ -25,8 +25,8 @@ startGame<HighlandsGame>({
     const { default: init, HighlandsGame, HighlandsRocks } = await loadGame("highlands", () => import("../../pkg/highlands"));
     await init();
     Object.assign(parameters, JSON.parse(HighlandsGame.parameters()) as Record<string, string>);
-    for (const [name, description] of Object.entries(JSON.parse(HighlandsGame.controls()) as Record<string, string>)) {
-      controls[name] = { description, run(game, args) { game.control(name, String(args.name)); return { [name]: args.name }; } };
+    for (const [name, values] of Object.entries(JSON.parse(HighlandsGame.controls()) as Record<string, string>)) {
+      controls[name] = { values, run(game, args) { game.control(name, String(args.name)); return { [name]: args.name }; } };
     }
     return HighlandsGame.create(canvas, await rocks(new HighlandsRocks(), signal), location.search);
   },

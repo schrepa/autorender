@@ -134,7 +134,7 @@ impl DevHost {
             return response;
         }
         let mut envelope: Value =
-            serde_json::from_str(&response).expect("development response is JSON");
+            serde_json::from_str(&response).expect("reply_json");
         if envelope["ok"] == true {
             envelope["result"]["build"] = build_identity();
             envelope["result"]["adapter"] =
@@ -180,7 +180,7 @@ impl DevHost {
         envelope["ok"] = json!(false);
         envelope
             .as_object_mut()
-            .expect("object envelope")
+            .expect("envelope_object")
             .remove("result");
         envelope["error"] = json!(error);
         envelope.to_string()
@@ -189,7 +189,7 @@ impl DevHost {
     fn observation(&mut self, app: &mut AppHost, scene: Option<&SceneInstance>) -> Value {
         let status = engine_dev::named(Verb::Query, "status", json!({}));
         serde_json::from_str(&execute(&self.tools, app, scene, &status))
-            .expect("development tools serialize an object envelope")
+            .expect("envelope_object")
     }
 }
 

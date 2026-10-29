@@ -179,7 +179,7 @@ impl MaterialStore {
                         .iter()
                         .chain(placed_textures(snapshot))
                         .find(|texture| texture.handle == map.texture)
-                        .expect("the plan and placements validated every material's textures");
+                        .expect("material_textures_validated");
                     let gpu = create_texture(
                         device,
                         queue,

@@ -107,7 +107,10 @@ impl Server {
             "this checkout",
             Duration::from_secs(120),
         )?;
-        eprintln!("Serving this checkout's page at {}.", server.url);
+        eprintln!(
+            "{}",
+            serde_json::json!({"event": "serving", "url": server.url})
+        );
         Ok(server)
     }
 }

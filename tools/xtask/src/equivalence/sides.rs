@@ -78,7 +78,10 @@ fn build_program(
 
 pub(super) fn working_tree(root: &Path, projects: &[&str]) -> Result<Side, String> {
     let (_, commit) = crate::process::engine_commit();
-    eprintln!("Building the working tree ({commit}).");
+    eprintln!(
+        "{}",
+        json!({"event": "building", "label": "working_tree", "commit": commit})
+    );
     let into = root.join(FOLDER).join("working-tree");
     let mut programs = BTreeMap::new();
     for folder in projects {
@@ -126,7 +129,10 @@ pub(super) fn commit_side(
         .map(|(folder, project)| (folder.clone(), cache.join(project.program())))
         .collect();
     if kept.is_some() {
-        eprintln!("Reusing the build of {label} ({role}).");
+        eprintln!(
+            "{}",
+            json!({"event": "build_reused", "label": label, "role": role})
+        );
         fs::write(cache.join("used"), measure::iso(SystemTime::now()))
             .map_err(|error| error.to_string())?;
         return Ok(Side {
@@ -137,7 +143,10 @@ pub(super) fn commit_side(
         });
     }
     let tree = checkout_tree(root, "tree", &sha)?;
-    eprintln!("Building {label} ({role}).");
+    eprintln!(
+        "{}",
+        json!({"event": "building", "label": label, "role": role})
+    );
     let target = root.join(FOLDER).join("target");
     let mut hashes = Map::new();
     for project in wanted.values() {
@@ -159,7 +168,7 @@ pub(super) fn commit_side(
     });
     fs::write(
         &record,
-        serde_json::to_string_pretty(&build).expect("builds serialize"),
+        serde_json::to_string_pretty(&build).expect("build_serializes"),
     )
     .map_err(|error| error.to_string())?;
     fs::write(cache.join("used"), measure::iso(SystemTime::now()))

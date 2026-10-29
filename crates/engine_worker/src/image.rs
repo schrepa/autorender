@@ -3,22 +3,12 @@ use engine_settings::{Error, ErrorCode, Expected};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ImageFormat {
     pub name: &'static str,
-    pub what: &'static str,
 }
 
 pub const IMAGE_FORMATS: &[ImageFormat] = &[
-    ImageFormat {
-        name: "png",
-        what: "PNG: palettes, low bit depths and transparency expand to 8-bit RGBA, 16-bit channels drop to 8",
-    },
-    ImageFormat {
-        name: "jpeg",
-        what: "JPEG, to RGBA with opaque alpha",
-    },
-    ImageFormat {
-        name: "ktx2-rgba8",
-        what: "uncompressed RGBA8 KTX2 (VK_FORMAT_R8G8B8A8_UNORM or _SRGB), its base level as stored",
-    },
+    ImageFormat { name: "png" },
+    ImageFormat { name: "jpeg" },
+    ImageFormat { name: "ktx2-rgba8" },
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]

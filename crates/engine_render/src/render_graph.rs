@@ -59,7 +59,7 @@ resources! {
     DebugTerrain: Frame,
 }
 
-const _: () = assert!(RESOURCES.len() <= 64, "a resource set is a u64");
+const _: () = assert!(RESOURCES.len() <= 64, "resources_fit_u64");
 
 impl Resource {
     fn bit(self) -> u64 {
@@ -213,7 +213,7 @@ passes! {
     probe_captures: ProbeCaptures,
 }
 
-const _: () = assert!(PASS_NAMES.len() <= 64, "a pass mask is a u64");
+const _: () = assert!(PASS_NAMES.len() <= 64, "passes_fit_u64");
 
 impl Pass {
     pub(crate) fn name(self) -> &'static str {
@@ -334,7 +334,7 @@ impl NodeBuilder<'_> {
             .colors
             .iter_mut()
             .find(|slot| slot.is_none())
-            .expect("at most four color attachments");
+            .expect("color_attachment_free");
         *slot = Some((resource, access));
         self
     }
@@ -390,7 +390,7 @@ impl RenderGraph {
             depth_ops: None,
         });
         NodeBuilder {
-            node: self.nodes.last_mut().expect("pushed above"),
+            node: self.nodes.last_mut().expect("node_pushed"),
         }
     }
 

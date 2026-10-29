@@ -116,7 +116,7 @@ impl ImpostorAtlas {
         let Some(layer) = self.layer(gpu.device, gpu.encoder, budget) else {
             return false;
         };
-        let arrays = self.arrays.as_ref().expect("grown above");
+        let arrays = self.arrays.as_ref().expect("arrays_grown");
         let mut at = RECORD_HEADER;
         for kind in 0..KINDS {
             for level in 0..self.shape.levels() {
@@ -162,7 +162,7 @@ impl ImpostorAtlas {
     ) {
         let shape = self.shape;
         let record = self.record_key(content);
-        let baked = &self.targets.as_ref().expect("drawn above").layer;
+        let baked = &self.targets.as_ref().expect("targets_drawn").layer;
         let (regions, bytes) = level_regions(shape);
         let buffer = crate::memory::buffer(
             device,

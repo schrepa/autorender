@@ -59,9 +59,9 @@ pub fn profiled(frames: &[BrickCosts], request: &ProfileRequest) -> (ProfileResu
         .any(|brick| brick.gpu_ms.is_some())
         .then(|| bricks.iter().filter_map(|brick| brick.gpu_ms).sum());
     let contents = json!({
-        "request": serde_json::to_value(request).expect("requests serialize"),
-        "bricks": serde_json::to_value(&bricks).expect("rows serialize"),
-        "frames": serde_json::to_value(frames).expect("costs serialize"),
+        "request": serde_json::to_value(request).expect("request_serializes"),
+        "bricks": serde_json::to_value(&bricks).expect("row_serializes"),
+        "frames": serde_json::to_value(frames).expect("cost_serializes"),
     });
     let total = bricks.len();
     let shown = match request.detail {

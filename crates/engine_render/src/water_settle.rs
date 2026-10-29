@@ -888,40 +888,41 @@ fn say(square: &Square, steps: u32, done: bool) {
     };
     let state = match (stirs, done, taken < most) {
         (false, false, _) => "settling",
-        (false, true, true) => "settled, now stirring",
-        (false, true, false) => "out of steps, now stirring",
+        (false, true, true) => "settled_stirring",
+        (false, true, false) => "steps_spent_stirring",
         (true, false, _) => "stirring",
         (true, true, true) => "stirred",
-        (true, true, false) => "out of stirring's steps",
+        (true, true, false) => "stir_steps_spent",
     };
     let sources: f32 = start.sources.iter().map(|source| source.rate).sum();
     let area = f64::from(start.cell * start.cell);
     let look = square.looks.last().copied();
-    eprintln!(
-        "Water settling {x} by {z} cells of {} m, {} blocks of them stored ({} tiles kept, \
-         rivers bringing {sources:.0} m3/s): {state} after {} steps, {} stirred, {steps} a \
-         frame; {} cells stepping, {} flowing; {:.0} m3 held, flowing at {:.3} m/s, losing \
-         {:.1} W/m2, heaving {:.4} m and swirling {:.3}/s on average, {} cells at the fastest \
-         water runs; {:.0} m3 against the edges of the blocks stored, over {} cells",
-        start.cell,
-        start.stored.stored(),
-        square.records.len(),
-        square.steps,
-        square.stirred,
-        square.stepping,
-        square.flowing,
-        look.map_or(0.0, |look| look.volume * area),
-        look.map_or(0.0, |look| look.speed),
-        look.map_or(0.0, |look| look.energy),
-        look.map_or(0.0, |look| look.heave),
-        look.map_or(0.0, |look| look.swirl),
-        look.map_or(0.0, |look| look.clamped),
-        look.map_or(0.0, |look| look.against * area),
-        look.map_or(0.0, |look| look.against_cells),
-    );
+    let record = serde_json::json!({
+        "event": "water_settling",
+        "cells": [x, z],
+        "cell_m": start.cell,
+        "blocks_stored": start.stored.stored(),
+        "tiles_kept": square.records.len(),
+        "sources_m3_per_s": sources,
+        "state": state,
+        "steps": square.steps,
+        "stirred_steps": square.stirred,
+        "steps_per_frame": steps,
+        "cells_stepping": square.stepping,
+        "cells_flowing": square.flowing,
+        "held_m3": look.map_or(0.0, |look| look.volume * area),
+        "mean_speed_m_per_s": look.map_or(0.0, |look| look.speed),
+        "mean_loss_w_per_m2": look.map_or(0.0, |look| look.energy),
+        "mean_heave_m": look.map_or(0.0, |look| look.heave),
+        "mean_swirl_per_s": look.map_or(0.0, |look| look.swirl),
+        "cells_at_fastest": look.map_or(0.0, |look| look.clamped),
+        "against_edges_m3": look.map_or(0.0, |look| look.against * area),
+        "cells_against_edges": look.map_or(0.0, |look| look.against_cells),
+    });
+    eprintln!("{record}");
 }
 
-const REACH_NAMES: [&str; 5] = ["pools", "plane beds", "steps", "cascades", "falls"];
+const REACH_NAMES: [&str; 5] = ["pools", "plane_beds", "steps", "cascades", "falls"];
 
 fn say_made(square: &Square, made: &[SteadyWater]) {
     let [x, z] = square.start.stored.cells;
@@ -938,28 +939,29 @@ fn say_made(square: &Square, made: &[SteadyWater]) {
             reach.2 += u64::from(cells);
         }
     }
-    let channels: Vec<String> = REACH_NAMES
+    let channels: serde_json::Map<String, serde_json::Value> = REACH_NAMES
         .iter()
         .zip(reaches)
         .map(|(name, (friction, fast, cells))| {
-            if cells == 0 {
-                return format!("{name} none");
-            }
-            let count = cells as f64;
-            format!(
-                "{name} Manning's n {:.3}, {:.0}% above Froude 1, over {cells} cells",
-                friction / count,
-                100.0 * fast / count
-            )
+            let count = at_least_one(cells as f64);
+            let reach = serde_json::json!({
+                "cells": cells,
+                "mean_manning_n": friction / count,
+                "share_above_froude_1": fast / count,
+            });
+            ((*name).to_owned(), reach)
         })
         .collect();
-    eprintln!(
-        "Water settled over {x} by {z} cells for {} tiles: {clamped} cells at the fastest water \
-         runs; {standing} of {} solids standing in its water; in channels, {}",
-        made.len(),
-        square.start.solids.len(),
-        channels.join("; ")
-    );
+    let record = serde_json::json!({
+        "event": "water_settled",
+        "cells": [x, z],
+        "tiles": made.len(),
+        "cells_at_fastest": clamped,
+        "solids_standing": standing,
+        "solids": square.start.solids.len(),
+        "channels": channels,
+    });
+    eprintln!("{record}");
 }
 
 fn at_least_one(value: f64) -> f64 {

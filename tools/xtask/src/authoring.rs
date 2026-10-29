@@ -19,12 +19,21 @@ pub fn validate_sources(root: &Path) -> Result<(), String> {
         let report = read_scene_source(path)
             .and_then(|source| validate_scene(&source))
             .map_err(|error| format!("{display}: {error}"))?;
-        println!(
-            "Validated {display}: scene={} revision={} authored_entities={} prefabs={} expanded_entities={}",
-            report.id, report.revision, report.entities, report.prefabs, report.expanded_entities
-        );
+        let record = serde_json::json!({
+            "event": "scene_validated",
+            "file": display.to_string(),
+            "scene": report.id,
+            "revision": report.revision,
+            "authored_entities": report.entities,
+            "prefabs": report.prefabs,
+            "expanded_entities": report.expanded_entities,
+        });
+        println!("{record}");
     }
-    println!("Validated {} scene source(s).", paths.len());
+    println!(
+        "{}",
+        serde_json::json!({"event": "scenes_validated", "scenes": paths.len()})
+    );
     Ok(())
 }
 
@@ -50,7 +59,7 @@ fn scene_paths(directory: &Path) -> Result<Vec<PathBuf>, String> {
 
 fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     let clients = serde_json::to_string_pretty(&crate::process::clients_json())
-        .expect("the client list serializes")
+        .expect("client_list_serializes")
         + "
 ";
     let repository = crate::rules::repository(root)?;

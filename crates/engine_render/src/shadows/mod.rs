@@ -411,7 +411,7 @@ impl ShadowPass {
             |index, level| draws[index].range(level),
             inputs.mesh_layout,
         );
-        let pipelines = self.pipelines.as_ref().expect("created above");
+        let pipelines = self.pipelines.as_ref().expect("pipelines_created");
         let wind = engine_terrain::TerrainEnvironment::of(snapshot).wind;
         let gusting = [
             wind.velocity[0],
@@ -467,7 +467,7 @@ impl ShadowPass {
             snapshot.detail_eye,
             still_changed || groups_changed,
         );
-        let pipelines = self.pipelines.as_ref().expect("created above");
+        let pipelines = self.pipelines.as_ref().expect("pipelines_created");
         if let Some(draw) = sky {
             cull.sky = draw.rows;
             cull.sky_rect = draw.rect;

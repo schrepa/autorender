@@ -3,7 +3,7 @@
     {
       "name": "frame_ms_mean",
       "kind": "timing",
-      "statistic": "the mean of the sampled frames drawn offscreen one at a time, unpaced, each waiting for its GPU work (CPU and GPU in series), timed by the host from time zero after the run settled and warmed up",
+      "statistic": "mean_serialized",
       "runtimes": [
         "native"
       ],
@@ -13,7 +13,7 @@
     {
       "name": "frame_ms_p95",
       "kind": "timing",
-      "statistic": "the 95th percentile of the same frames, interpolated linearly between the two sorted frame times around its rank (engine::host::Distribution): the measure command takes it from each frame's time the run reports, so both arms' come from the tools' code",
+      "statistic": "p95_serialized",
       "runtimes": [
         "native"
       ],
@@ -23,7 +23,7 @@
     {
       "name": "frame_ms_pipelined_mean",
       "kind": "timing",
-      "statistic": "the sampled frames drawn again with at most two in flight (each submitted once the GPU drew the frame two before it): the measure command's clock from the host's mark before the first to its mark after the GPU finished the last, over their number",
+      "statistic": "mean_pipelined",
       "runtimes": [
         "native"
       ],
@@ -33,7 +33,7 @@
     {
       "name": "wall:frame_ms_mean",
       "kind": "timing",
-      "statistic": "frame_ms_mean timed from outside the engine: the measure command's clock from the host's mark before the first sampled frame to its mark after the last, over their number",
+      "statistic": "mean_wall_clock",
       "runtimes": [
         "native"
       ],
@@ -43,7 +43,7 @@
     {
       "name": "load:prepare_ms",
       "kind": "timing",
-      "statistic": "from the host's launch to its first prepared frame: the GPU started, pipelines built and terrain loaded, with time held still",
+      "statistic": "launch_to_prepared",
       "runtimes": [
         "native"
       ],
@@ -53,7 +53,7 @@
     {
       "name": "gpu:*",
       "kind": "timing",
-      "statistic": "a render pass's GPU time from timestamp queries: the median of its samples over the sampled frames, drawn a third time under the engine's capture (profiling builds)",
+      "statistic": "pass_median",
       "runtimes": [
         "native"
       ],
@@ -63,7 +63,7 @@
     {
       "name": "cpu:*",
       "kind": "timing",
-      "statistic": "an engine span's CPU time: the median over the sampled frames of its milliseconds in each frame (its spans and loop aggregates summed, frames without it counting 0), from the same capture",
+      "statistic": "span_median",
       "runtimes": [
         "native"
       ],
@@ -73,7 +73,7 @@
     {
       "name": "mem:main_stack_peak_bytes",
       "kind": "memory",
-      "statistic": "the main thread's committed stack at the end of the run (Windows)",
+      "statistic": "end_of_run",
       "runtimes": [
         "native"
       ],
@@ -83,7 +83,7 @@
     {
       "name": "mem:live_requested_bytes",
       "kind": "memory",
-      "statistic": "the bytes the program's allocations held as the capture of the sampled frames began (profiling builds)",
+      "statistic": "capture_start",
       "runtimes": [
         "native"
       ],
@@ -93,7 +93,7 @@
     {
       "name": "mem:peak_requested_bytes",
       "kind": "memory",
-      "statistic": "the most bytes the program's allocations held at once, from its start until that capture began (profiling builds)",
+      "statistic": "peak_before_capture",
       "runtimes": [
         "native"
       ],
@@ -104,7 +104,7 @@
       "name": "ambient_occlusion.active",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -115,7 +115,7 @@
       "name": "bloom.active",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -126,7 +126,7 @@
       "name": "clouds.rows",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -137,7 +137,7 @@
       "name": "clouds.view_pixels",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -148,7 +148,7 @@
       "name": "culled_instances",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -159,7 +159,7 @@
       "name": "culling_enabled",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -170,7 +170,7 @@
       "name": "disabled_features",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the number of the renderer's features the last sampled frame found disabled for good",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -181,7 +181,7 @@
       "name": "draw_calls",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -192,7 +192,7 @@
       "name": "dropped_instances",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -203,7 +203,7 @@
       "name": "dropped_seconds",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -214,7 +214,7 @@
       "name": "dynamic_resolution.active",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -225,7 +225,7 @@
       "name": "dynamic_resolution.budget_ms",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -236,7 +236,7 @@
       "name": "dynamic_resolution.scale",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -247,7 +247,7 @@
       "name": "fixed_steps",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -258,7 +258,7 @@
       "name": "ground_cover.blades",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -269,7 +269,7 @@
       "name": "ground_cover.dropped",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -280,7 +280,7 @@
       "name": "ground_cover.reach",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -291,7 +291,7 @@
       "name": "ground_cover.tiers",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -302,7 +302,7 @@
       "name": "haze.active",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -313,7 +313,7 @@
       "name": "instances",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -324,7 +324,7 @@
       "name": "invalid_transforms",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -335,7 +335,7 @@
       "name": "jobs.cache_bytes",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -346,7 +346,7 @@
       "name": "jobs.cache_hits",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -357,7 +357,7 @@
       "name": "jobs.cache_mismatches",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -368,7 +368,7 @@
       "name": "jobs.cache_misses",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -379,7 +379,7 @@
       "name": "jobs.held",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -390,7 +390,7 @@
       "name": "jobs.cancelled",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -401,7 +401,7 @@
       "name": "jobs.completed",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -412,7 +412,7 @@
       "name": "jobs.failed",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -423,7 +423,7 @@
       "name": "jobs.in_place",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -434,7 +434,7 @@
       "name": "jobs.running",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -445,7 +445,7 @@
       "name": "jobs.shared_bytes",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -456,7 +456,7 @@
       "name": "jobs.shares",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -467,7 +467,7 @@
       "name": "jobs.submitted",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -478,7 +478,7 @@
       "name": "jobs.workers",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -489,7 +489,7 @@
       "name": "level_of_detail.dropped_impostors",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -500,7 +500,7 @@
       "name": "level_of_detail.meshes_without_levels",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -511,7 +511,7 @@
       "name": "level_of_detail.impostor_instances",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
+      "statistic": "last_frame_or_absent",
       "runtimes": [
         "native"
       ],
@@ -522,7 +522,7 @@
       "name": "level_of_detail.impostors",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -533,7 +533,7 @@
       "name": "level_of_detail.lod0_instances",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
+      "statistic": "last_frame_or_absent",
       "runtimes": [
         "native"
       ],
@@ -544,7 +544,7 @@
       "name": "level_of_detail.lod1_instances",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
+      "statistic": "last_frame_or_absent",
       "runtimes": [
         "native"
       ],
@@ -555,7 +555,7 @@
       "name": "level_of_detail.lod2_instances",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
+      "statistic": "last_frame_or_absent",
       "runtimes": [
         "native"
       ],
@@ -566,7 +566,7 @@
       "name": "loading",
       "kind": "work",
       "rule": "false",
-      "statistic": "whether any sampled frame was",
+      "statistic": "any_frame",
       "runtimes": [
         "native"
       ],
@@ -577,7 +577,7 @@
       "name": "local_lights.cluster_overflow",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
+      "statistic": "last_frame_or_absent",
       "runtimes": [
         "native"
       ],
@@ -588,7 +588,7 @@
       "name": "local_lights.dropped",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -599,7 +599,7 @@
       "name": "local_lights.invalid",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -610,7 +610,7 @@
       "name": "local_lights.shaded",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -621,7 +621,7 @@
       "name": "local_lights.visible",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
+      "statistic": "last_frame_or_absent",
       "runtimes": [
         "native"
       ],
@@ -632,7 +632,7 @@
       "name": "mesh_upload_bytes",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -643,7 +643,7 @@
       "name": "missing_assets",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -654,7 +654,7 @@
       "name": "navigation.agents",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -665,7 +665,7 @@
       "name": "navigation.arrived",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -676,7 +676,7 @@
       "name": "navigation.grounds",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -687,7 +687,7 @@
       "name": "navigation.portals",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -698,7 +698,7 @@
       "name": "navigation.searching",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -709,7 +709,7 @@
       "name": "navigation.unreachable",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -720,7 +720,7 @@
       "name": "navigation.waiting",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -731,7 +731,7 @@
       "name": "navigation.walking",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -742,7 +742,7 @@
       "name": "navigation.work",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -753,7 +753,7 @@
       "name": "occlusion_culling.active",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -764,7 +764,7 @@
       "name": "occlusion_culling.instances",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
+      "statistic": "last_frame_or_absent",
       "runtimes": [
         "native"
       ],
@@ -775,7 +775,7 @@
       "name": "occupancy.averages",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -786,7 +786,7 @@
       "name": "occupancy.redraws",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -797,7 +797,7 @@
       "name": "particles.drawn",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -808,7 +808,7 @@
       "name": "particles.dropped",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -819,7 +819,7 @@
       "name": "particles.invalid",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -830,7 +830,7 @@
       "name": "physics.awake",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -841,7 +841,7 @@
       "name": "physics.bodies",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -852,7 +852,7 @@
       "name": "physics.contacts",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -863,7 +863,7 @@
       "name": "physics.held",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -874,7 +874,7 @@
       "name": "physics.solids",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -885,7 +885,7 @@
       "name": "physics.water_samples",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -896,7 +896,7 @@
       "name": "physics.wet",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -907,7 +907,7 @@
       "name": "pipelines",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -918,7 +918,7 @@
       "name": "pipelines_compiling",
       "kind": "work",
       "rule": "false",
-      "statistic": "whether any sampled frame was",
+      "statistic": "any_frame",
       "runtimes": [
         "native"
       ],
@@ -929,7 +929,7 @@
       "name": "pipelines_created",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -940,7 +940,7 @@
       "name": "pipelines_listed",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -951,7 +951,7 @@
       "name": "pipelines_unlisted",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -962,7 +962,7 @@
       "name": "reflection_probes.dropped",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -973,7 +973,7 @@
       "name": "reflection_probes.faces",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -984,7 +984,7 @@
       "name": "reflection_probes.ready",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -995,7 +995,7 @@
       "name": "reflections.active",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1006,7 +1006,7 @@
       "name": "render_candidates",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1017,7 +1017,7 @@
       "name": "render_passes",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the number of render passes the last sampled frame ran",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1028,7 +1028,7 @@
       "name": "resident_mesh_bytes",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1039,7 +1039,7 @@
       "name": "resident_meshes",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1050,7 +1050,7 @@
       "name": "resident_texture_bytes",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1061,7 +1061,7 @@
       "name": "resident_textures",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1072,7 +1072,7 @@
       "name": "resolution.display_height",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1083,7 +1083,7 @@
       "name": "resolution.display_width",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1094,7 +1094,7 @@
       "name": "resolution.dropped_pixels",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1105,7 +1105,7 @@
       "name": "resolution.render_height",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1116,7 +1116,7 @@
       "name": "resolution.render_width",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1127,7 +1127,7 @@
       "name": "shadows.active",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1138,7 +1138,7 @@
       "name": "shadows.casters",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
+      "statistic": "last_frame_or_absent",
       "runtimes": [
         "native"
       ],
@@ -1149,7 +1149,7 @@
       "name": "shadows.draws",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1160,7 +1160,7 @@
       "name": "shadows.moving_casters",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
+      "statistic": "last_frame_or_absent",
       "runtimes": [
         "native"
       ],
@@ -1171,7 +1171,7 @@
       "name": "shadows.moving_left_out",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
+      "statistic": "last_frame_or_absent",
       "runtimes": [
         "native"
       ],
@@ -1182,7 +1182,7 @@
       "name": "shadows.moving_tiles",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1193,7 +1193,7 @@
       "name": "shadows.sky_drawn",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1204,7 +1204,7 @@
       "name": "shadows.sky_maps",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1215,7 +1215,7 @@
       "name": "shadows.tiles_drawn",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1226,7 +1226,7 @@
       "name": "shadows.tiles_marked",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1237,7 +1237,7 @@
       "name": "shadows.tiles_missing",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1248,7 +1248,7 @@
       "name": "shadows.tiles_reclaimed",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1259,7 +1259,7 @@
       "name": "shadows.tiles_resident",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1270,7 +1270,7 @@
       "name": "sky.exposure.active",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1281,40 +1281,40 @@
       "name": "sky.exposure.metered",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value, read back a few frames late: the meter's average of the light in view before exposure, log2",
+      "statistic": "last_frame_late",
       "runtimes": [
         "native"
       ],
-      "unit": "hundredths of a stop",
+      "unit": "centistops",
       "direction": null
     },
     {
       "name": "sky.exposure.stops",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value, read back a few frames late: the exposure frames show over the authored one, log2",
+      "statistic": "last_frame_late",
       "runtimes": [
         "native"
       ],
-      "unit": "hundredths of a stop",
+      "unit": "centistops",
       "direction": null
     },
     {
       "name": "sky.exposure.view",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value, read back a few frames late: how much brighter the view is than the light falling on level ground gives an open view, log2",
+      "statistic": "last_frame_late",
       "runtimes": [
         "native"
       ],
-      "unit": "hundredths of a stop",
+      "unit": "centistops",
       "direction": null
     },
     {
       "name": "sky.tables",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1325,7 +1325,7 @@
       "name": "subpixel_culling.active",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1336,7 +1336,7 @@
       "name": "subpixel_culling.instances",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
+      "statistic": "last_frame_or_absent",
       "runtimes": [
         "native"
       ],
@@ -1347,7 +1347,7 @@
       "name": "temporal_antialiasing.active",
       "kind": "work",
       "rule": "equal",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1358,7 +1358,7 @@
       "name": "terrain.bounce.levels",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1369,7 +1369,7 @@
       "name": "terrain.bounce.probes",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1380,7 +1380,7 @@
       "name": "terrain.bounce.relit",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1391,7 +1391,7 @@
       "name": "terrain.bounce.dropped",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1402,7 +1402,7 @@
       "name": "terrain.dropped_materials",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1413,7 +1413,7 @@
       "name": "terrain.dropped_placed_objects",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1424,7 +1424,7 @@
       "name": "terrain.dropped_tiles",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1435,7 +1435,7 @@
       "name": "terrain.fallback_tiles",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1446,7 +1446,7 @@
       "name": "terrain.gpu_controls",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1457,7 +1457,7 @@
       "name": "terrain.horizons",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1468,7 +1468,7 @@
       "name": "terrain.leaves",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1479,7 +1479,7 @@
       "name": "terrain.lighting_uploads",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1490,7 +1490,7 @@
       "name": "terrain.loading_tiles",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1501,7 +1501,7 @@
       "name": "terrain.macro_maps",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1512,7 +1512,7 @@
       "name": "terrain.placed_far_objects",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1523,7 +1523,7 @@
       "name": "terrain.placed_impostors",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1534,7 +1534,7 @@
       "name": "terrain.placed_objects",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1545,7 +1545,7 @@
       "name": "terrain.refused_splits",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1556,7 +1556,7 @@
       "name": "terrain.shadow_patches",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1567,7 +1567,7 @@
       "name": "terrain.shallow_subdivisions",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1578,7 +1578,7 @@
       "name": "terrain.sky_maps",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1589,7 +1589,7 @@
       "name": "terrain.tiles",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1600,7 +1600,7 @@
       "name": "terrain.triangles",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1611,7 +1611,7 @@
       "name": "terrain.white_water",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1622,7 +1622,7 @@
       "name": "texture_upload_bytes",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1633,7 +1633,7 @@
       "name": "triangles",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value (absent where the frame has none)",
+      "statistic": "last_frame_or_absent",
       "runtimes": [
         "native"
       ],
@@ -1644,7 +1644,7 @@
       "name": "upload_bytes",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1655,7 +1655,7 @@
       "name": "visible_instances",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1666,7 +1666,7 @@
       "name": "water.blocks",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1677,7 +1677,7 @@
       "name": "water.dropped_blocks",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1688,7 +1688,7 @@
       "name": "water.dropped_touches",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1699,7 +1699,7 @@
       "name": "water.foam_particles",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1710,7 +1710,7 @@
       "name": "water.foam_points",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1721,7 +1721,7 @@
       "name": "water.foam_points_cut",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1732,7 +1732,7 @@
       "name": "water.foam_reach",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1743,7 +1743,7 @@
       "name": "water.leaves",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1754,7 +1754,7 @@
       "name": "water.live_behind",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1765,7 +1765,7 @@
       "name": "water.live_budget_cut",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1776,7 +1776,7 @@
       "name": "water.live_cells",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1787,7 +1787,7 @@
       "name": "water.live_cut",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1798,7 +1798,7 @@
       "name": "water.live_setup",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1809,7 +1809,7 @@
       "name": "water.live_steps",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1820,7 +1820,7 @@
       "name": "water.live_waiting",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1831,7 +1831,7 @@
       "name": "water.particle_texels",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1842,7 +1842,7 @@
       "name": "water.particles_born",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1853,7 +1853,7 @@
       "name": "water.dropped_particles",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1864,7 +1864,7 @@
       "name": "water.refused",
       "kind": "work",
       "rule": "not-above",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1875,7 +1875,7 @@
       "name": "water.touches",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1886,7 +1886,7 @@
       "name": "water.wave_particles",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1897,7 +1897,7 @@
       "name": "world_streaming.cells",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1908,7 +1908,7 @@
       "name": "world_streaming.despawned",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1919,7 +1919,7 @@
       "name": "world_streaming.entities",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1930,7 +1930,7 @@
       "name": "world_streaming.items",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1941,7 +1941,7 @@
       "name": "world_streaming.loaded",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1952,7 +1952,7 @@
       "name": "world_streaming.pending",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1963,7 +1963,7 @@
       "name": "world_streaming.spawned",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1974,7 +1974,7 @@
       "name": "bricks_cost.frame",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1985,7 +1985,7 @@
       "name": "bricks_cost.rows",
       "kind": "work",
       "rule": "shown",
-      "statistic": "the last sampled frame's value",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],

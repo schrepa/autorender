@@ -697,13 +697,10 @@ mod capture {
                 .count();
             json!({
                 "supported": self.supported,
-                "reason": if self.supported { Value::Null } else { json!("timestamp-query unavailable on adapter") },
+                "reason": if self.supported { Value::Null } else { json!("timestamp_query_unavailable") },
                 "capture_id": self.capture.map(|id| id.to_string()),
                 "active": active,
-                "scope": "every span the captured frames recorded, by name: opaque_meshes (the opaque passes), the passes and dispatch groups the renderer times, each group of spans whole under the group's name from its first begin to its last end, stage_<pass> for every render graph pass whole (with the copies and passes it records, timed or not), stage_lead, stage_gaps and stage_tail (the frame's GPU span before, between and after the passes: stalls inside passes with almost no gaps mean other work shares the GPU), pre_<what> for the command buffers submitted before the frame's, frame_gpu (the frame's first timed begin to last timed end, including other work between its passes), frame_gpu_gap (from the previous frame's last end, when consecutive) and frame_gpu_interval (first begin to first begin per frame); start_ms is where a recorded span (or draw) began, from the frame's first timestamp; excludes uploads, queue latency, presentation and timestamp readback",
-                "clock": "GPU duration only; frame/submission IDs correlate origin, clocks are not aligned",
                 "timestamp_period_ns": if self.supported { Some(self.period_ns) } else { None },
-                "precision": "browser may quantize timestamp values; zero durations remain valid samples",
                 "ring_slots": SLOTS,
                 "sample_limit": SAMPLE_LIMIT,
                 "span_limit": SPANS,
@@ -718,7 +715,6 @@ mod capture {
                     "statistics": self.draw_support.statistics,
                     "limit": DRAWS,
                     "dropped": self.draws_dropped.get(),
-                    "scope": "each draw of the opaque passes in captured frames, where the device times work inside passes (timestamps) and counts pipeline statistics: vertex shader invocations, primitives out of clipping and fragment shader invocations; browsers have neither",
                 },
                 "errors": self.errors,
                 "sample_limit_reached": self.sample_limit_reached,

@@ -168,7 +168,7 @@ impl Renderer {
             self.culling
                 .pyramid
                 .as_ref()
-                .expect("viewed above")
+                .expect("pyramid_viewed")
                 .encode(encoder, span);
             self.gpu_presentation.encode_occlusion(
                 &self.device,

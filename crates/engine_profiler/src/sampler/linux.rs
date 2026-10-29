@@ -4,8 +4,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-pub(super) const METHOD: Option<&str> =
-    Some("signal the thread, follow frame pointers from its registers");
+pub(super) const METHOD: Option<&str> = Some("signal_frame_pointers");
 
 #[derive(Clone, Copy)]
 pub(super) struct Id(libc::pthread_t);

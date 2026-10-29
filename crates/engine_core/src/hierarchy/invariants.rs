@@ -15,18 +15,18 @@ impl GlobalTransforms {
             ("dirty flags", self.dirty.flags.len()),
             ("order", self.order.len()),
         ] {
-            assert!(len == nodes, "hierarchy: {nodes} sources but {len} {name}");
+            assert!(len == nodes, "hierarchy_lengths_match {nodes} {len} {name}");
         }
         assert!(
             self.indices.len() == nodes,
-            "hierarchy: {nodes} sources but {} indexed entities",
+            "hierarchy_indexed_match {nodes} {}",
             self.indices.len()
         );
         for (index, source) in self.sources.iter().enumerate() {
             assert!(
                 self.indices.get(&source.entity) == Some(&index)
                     && self.entities[index] == source.entity,
-                "hierarchy: node {index}'s entity {:?} is not indexed as it",
+                "hierarchy_entity_indexed {index} {:?}",
                 source.entity
             );
         }
@@ -34,7 +34,7 @@ impl GlobalTransforms {
         for (at, &index) in self.order.iter().enumerate() {
             assert!(
                 index < nodes && position[index] == usize::MAX,
-                "hierarchy: node {index} is out of range or twice in the order"
+                "hierarchy_order_once {index}"
             );
             position[index] = at;
         }
@@ -44,13 +44,13 @@ impl GlobalTransforms {
                 .and_then(|parent| self.indices.get(&parent).copied());
             assert!(
                 link.parent() == parent,
-                "hierarchy: node {index} links parent {:?}, its source names {parent:?}",
+                "hierarchy_parent_linked {index} {:?} {parent:?}",
                 link.parent()
             );
             if !link.topology_valid() {
                 assert!(
                     link.global == Global::Invalid && !link.has_children(),
-                    "hierarchy: node {index}, outside valid topology, has a global or children"
+                    "hierarchy_invalid_node_bare {index}"
                 );
                 continue;
             }
@@ -60,14 +60,14 @@ impl GlobalTransforms {
                     let above = &self.links[parent];
                     assert!(
                         above.topology_valid() && position[parent] < position[index],
-                        "hierarchy: node {index}'s parent {parent} is invalid or after it in the order"
+                        "hierarchy_parent_first {index} {parent}"
                     );
                     usize::from(above.depth()) + 1
                 }
             };
             assert!(
                 usize::from(link.depth()) == depth && depth <= MAX_HIERARCHY_DEPTH,
-                "hierarchy: node {index} caches depth {}, its ancestry gives {depth}",
+                "hierarchy_depth_cached {index} {} {depth}",
                 link.depth()
             );
             if link.global == Global::Deferred {
@@ -76,7 +76,7 @@ impl GlobalTransforms {
                         && link
                             .parent()
                             .is_none_or(|parent| self.links[parent].global == Global::Stored),
-                    "hierarchy: node {index} defers its global with children, or its parent's is                      not stored"
+                    "hierarchy_deferred_leaf {index}"
                 );
             }
             let children = self.children(index).collect::<Vec<_>>();
@@ -84,7 +84,7 @@ impl GlobalTransforms {
                 children
                     .iter()
                     .all(|&child| self.links[child].parent() == Some(index)),
-                "hierarchy: node {index} lists a child that is not its own"
+                "hierarchy_children_own {index}"
             );
         }
         let linked = (0..nodes)
@@ -97,7 +97,7 @@ impl GlobalTransforms {
             .count();
         assert!(
             linked == parented,
-            "hierarchy: {linked} children are linked, {parented} valid nodes have a parent"
+            "hierarchy_links_match_parents {linked} {parented}"
         );
         let invalid = self
             .links
@@ -106,8 +106,7 @@ impl GlobalTransforms {
             .count();
         assert!(
             self.report.invalid_transforms == invalid + self.report.overflow_transforms,
-            "hierarchy: the report counts {} invalid transforms, the nodes {invalid} and {} \
-             beyond the bound",
+            "hierarchy_invalid_counted {} {invalid} {}",
             self.report.invalid_transforms,
             self.report.overflow_transforms
         );

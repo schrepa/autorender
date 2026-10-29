@@ -19,7 +19,7 @@ fn registry(world: &World) -> Result<&BrickRegistry, String> {
 }
 
 fn serialized(schema: schemars::Schema) -> Value {
-    serde_json::to_value(schema).expect("schemas serialize")
+    serde_json::to_value(schema).expect("schema_serializes")
 }
 
 fn definition_of(mut schema: Value, definitions: &mut Map<String, Value>) -> (String, Value) {
@@ -343,7 +343,7 @@ fn marked(verb: Verb, object: &mut Value) {
         .entry("properties")
         .or_insert_with(|| json!({}))
         .as_object_mut()
-        .expect("properties are an object");
+        .expect("properties_object");
     properties.insert(
         "verb".to_owned(),
         json!({ "const": verb.name(), "type": "string" }),

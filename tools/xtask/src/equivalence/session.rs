@@ -72,8 +72,8 @@ impl Session {
             .stderr(errors)
             .spawn()
             .map_err(|error| format!("cannot start {}: {error}", program.display()))?;
-        let input = child.stdin.take().expect("piped");
-        let output = child.stdout.take().expect("piped");
+        let input = child.stdin.take().expect("stdio_piped");
+        let output = child.stdout.take().expect("stdio_piped");
         let (send, lines) = channel();
         std::thread::spawn(move || {
             for line in BufReader::new(output).lines() {

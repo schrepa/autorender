@@ -189,22 +189,25 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     for path in &changed {
         selection.add(root, &smokes, path);
     }
-    println!(
-        "{} files changed since {}.",
-        changed.len(),
-        &base[..base.len().min(12)]
-    );
+    let record = serde_json::json!({
+        "event": "changes",
+        "files": changed.len(),
+        "base": &base[..base.len().min(12)],
+    });
+    println!("{record}");
     if !selection.unmapped.is_empty() {
-        println!(
-            "No rule of the path map covers {}: everything runs.",
-            selection.unmapped.join(", ")
-        );
+        let record = serde_json::json!({
+            "event": "paths_unmapped",
+            "paths": selection.unmapped,
+        });
+        println!("{record}");
     }
     let steps = steps(root, level, &base, &selection)?;
-    println!("Steps:");
-    for step in &steps {
-        println!("  {}", step.name);
-    }
+    let names: Vec<&str> = steps.iter().map(|step| step.name.as_str()).collect();
+    println!(
+        "{}",
+        serde_json::json!({"event": "steps_planned", "steps": names})
+    );
     if plan_only {
         return Ok(());
     }
@@ -415,12 +418,20 @@ fn run_steps(steps: &[Step]) -> Ran {
     let mut results: Vec<(&str, Option<u8>, Duration)> = Vec::new();
     let mut records = Vec::new();
     for step in steps {
-        println!("\n== verify: {} ==", step.name);
+        println!(
+            "{}",
+            serde_json::json!({"event": "step_started", "step": step.name})
+        );
         let started = Instant::now();
         let (code, failure) = match (step.run)() {
             Ok(()) => (None, None),
             Err(failure) => {
-                eprintln!("{} failed: {}", step.name, failure.message);
+                let record = serde_json::json!({
+                    "event": "step_failed",
+                    "step": step.name,
+                    "error": failure.message,
+                });
+                eprintln!("{record}");
                 (Some(failure.code), Some(failure.message))
             }
         };
@@ -441,19 +452,15 @@ fn run_steps(steps: &[Step]) -> Ran {
 }
 
 fn tabled(results: &[(&str, Option<u8>, Duration)]) -> Result<(), Failure> {
-    let width = results
-        .iter()
-        .map(|(name, _, _)| name.len())
-        .max()
-        .unwrap_or(4)
-        .max(4);
-    println!("\n{:width$}  result   seconds", "step");
     for (name, code, took) in results {
-        let result = match code {
-            None => "ok".to_owned(),
-            Some(code) => format!("exit {code}"),
-        };
-        println!("{name:width$}  {result:7}  {:7.1}", took.as_secs_f64());
+        let record = serde_json::json!({
+            "event": "step_result",
+            "step": name,
+            "ok": code.is_none(),
+            "exit": code,
+            "seconds": took.as_secs_f64(),
+        });
+        println!("{record}");
     }
     let failed: Vec<&str> = results
         .iter()
@@ -526,11 +533,12 @@ pub(crate) fn check(root: &Path) -> Result<(), String> {
         ));
     }
     if problems.is_empty() {
-        println!(
-            "The path map covers {} tracked files and calls for {} smoke checks.",
-            tracked.lines().count(),
-            smokes.len()
-        );
+        let record = serde_json::json!({
+            "event": "path_map_covers",
+            "files": tracked.lines().count(),
+            "smokes": smokes.len(),
+        });
+        println!("{record}");
         return Ok(());
     }
     Err(format!(

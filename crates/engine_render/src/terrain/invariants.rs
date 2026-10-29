@@ -10,29 +10,23 @@ impl TerrainPass {
         let atlas = &self.atlas;
         let tables = &self.tables;
         for key in atlas.slots.keys() {
-            debug_assert!(
-                atlas.held.contains_key(key),
-                "T1: slot {key:?} holds no tile"
-            );
+            debug_assert!(atlas.held.contains_key(key), "t1_slot_holds_tile {key:?}");
         }
         debug_assert!(
             atlas.held.len() == atlas.slots.len(),
-            "T1: {} tiles held for {} slots",
+            "t1_held_matches_slots {} {}",
             atlas.held.len(),
             atlas.slots.len()
         );
         let timed = atlas.arrivals.keys().chain(atlas.surfaced.keys());
         for key in timed.chain(atlas.shaded.iter()) {
-            debug_assert!(
-                atlas.slots.contains_key(key),
-                "T1: {key:?} has a time or its shading but no slot"
-            );
+            debug_assert!(atlas.slots.contains_key(key), "t1_timed_has_slot {key:?}");
         }
         let mut owners = vec![0_u8; atlas.next_layer as usize];
         for (key, &layer) in &atlas.slots {
             debug_assert!(
                 layer < atlas.next_layer,
-                "T2: {key:?} holds layer {layer}, never handed out ({})",
+                "t2_layer_handed_out {key:?} {layer} {}",
                 atlas.next_layer
             );
             if let Some(owner) = owners.get_mut(layer as usize) {
@@ -42,7 +36,7 @@ impl TerrainPass {
         for &layer in &atlas.free {
             debug_assert!(
                 layer < atlas.next_layer,
-                "T2: free layer {layer} never handed out ({})",
+                "t2_free_layer_handed_out {layer} {}",
                 atlas.next_layer
             );
             if let Some(owner) = owners.get_mut(layer as usize) {
@@ -50,14 +44,11 @@ impl TerrainPass {
             }
         }
         for (layer, &owner) in owners.iter().enumerate() {
-            debug_assert!(
-                owner == 1,
-                "T2: layer {layer} is resident or free {owner} times"
-            );
+            debug_assert!(owner == 1, "t2_layer_owned_once {layer} {owner}");
         }
         debug_assert!(
             atlas.next_layer <= atlas.layers(),
-            "T2: {} layers handed out of the arrays' {}",
+            "t2_layers_within_arrays {} {}",
             atlas.next_layer,
             atlas.layers()
         );
@@ -67,7 +58,7 @@ impl TerrainPass {
         for pair in runs.windows(2) {
             debug_assert!(
                 pair[1] >= pair[0] + HOLE_WORDS as u32,
-                "T3: hole runs at {} and {} overlap",
+                "t3_hole_runs_apart {} {}",
                 pair[0],
                 pair[1]
             );
@@ -78,18 +69,18 @@ impl TerrainPass {
                     .held
                     .get(key)
                     .is_some_and(|tile| tile.hole_bits().is_some()),
-                "T3: {key:?} has a hole run but no resident tile with holes"
+                "t3_hole_run_has_tile {key:?}"
             );
             debug_assert!(
                 offset >= tables.fade_words && offset + HOLE_WORDS as u32 <= words,
-                "T3: {key:?}'s hole run at {offset} lies outside {}..{words}",
+                "t3_hole_run_inside {key:?} {offset} {} {words}",
                 tables.fade_words
             );
         }
         for (key, tile) in &atlas.held {
             debug_assert!(
                 tile.hole_bits().is_none() || tables.hole_offsets.contains_key(key),
-                "T3: resident {key:?} has holes but no run"
+                "t3_holed_tile_has_run {key:?}"
             );
         }
         let records = self.patches.records();
@@ -98,7 +89,7 @@ impl TerrainPass {
             ranges.extend(terrain.maps.iter().map(|(_, range)| range.clone()));
             debug_assert!(
                 u64::from(terrain.uniform) + SLOT <= tables.uniforms.size(),
-                "T4: a uniform at {} past the buffer",
+                "t4_uniform_inside {}",
                 terrain.uniform
             );
         }
@@ -107,14 +98,14 @@ impl TerrainPass {
         for range in &ranges {
             debug_assert!(
                 range.end as usize <= records.len(),
-                "T4: range {range:?} past the {} records",
+                "t4_range_inside {range:?} {}",
                 records.len()
             );
         }
         for pair in ranges.windows(2) {
             debug_assert!(
                 pair[0].end <= pair[1].start,
-                "T4: ranges {:?} and {:?} overlap",
+                "t4_ranges_apart {:?} {:?}",
                 pair[0],
                 pair[1]
             );
@@ -124,12 +115,12 @@ impl TerrainPass {
         for record in records {
             debug_assert!(
                 resident.contains(&record.atlas[0]),
-                "T4: a record names layer {} no tile holds",
+                "t4_record_layer_held {}",
                 record.atlas[0]
             );
             debug_assert!(
                 record.holes == NO_HOLES || runs.binary_search(&record.holes).is_ok(),
-                "T4: a record names hole run {} that is not one",
+                "t4_record_hole_run_known {}",
                 record.holes
             );
         }
@@ -142,18 +133,15 @@ impl TerrainPass {
                 match atlas.held.get(&key) {
                     Some(held) => debug_assert!(
                         Arc::ptr_eq(held, tile) && !waits,
-                        "T6: resident {key:?} is another tile than listed, or also waits"
+                        "t6_resident_listed_alone {key:?}"
                     ),
-                    None => debug_assert!(
-                        waits,
-                        "T6: listed {key:?} neither holds a layer nor waits for one"
-                    ),
+                    None => debug_assert!(waits, "t6_listed_held_or_waiting {key:?}"),
                 }
             }
         }
         debug_assert!(
             atlas.held.len() + atlas.unplaced.len() == listed,
-            "T6: {} resident and {} waiting tiles for {listed} listed",
+            "t6_tiles_match_listed {} {} {listed}",
             atlas.held.len(),
             atlas.unplaced.len()
         );
@@ -170,7 +158,7 @@ impl TerrainPass {
                         .get(key)
                         .is_some_and(|tile| tile.hole_bits().is_some())
                 }),
-            "T6: {} tiles noted with holes, {holed} resident with holes",
+            "t6_holed_noted {} {holed}",
             atlas.holed.len()
         );
         if let Some((fades, _)) = atlas.faded_with {
@@ -181,19 +169,13 @@ impl TerrainPass {
                     *word |= atlas::fade_half(normals, materials) << ((layer % 2) * 16);
                 }
             }
-            debug_assert!(
-                words == atlas.fades,
-                "T7: the layers' fades differ from what their tiles give"
-            );
+            debug_assert!(words == atlas.fades, "t7_fades_match_tiles");
         }
-        debug_assert!(
-            self.water.follows(&atlas.held),
-            "T8: tiles' water holds blocks for other tiles than those resident"
-        );
+        debug_assert!(self.water.follows(&atlas.held), "t8_water_follows_resident");
         debug_assert!(
             tables.directory_bases.len() == terrains.terrains.len()
                 && tables.palette_bases.len() == terrains.terrains.len(),
-            "T5: {} directory and {} palette bases for {} terrains",
+            "t5_bases_match_terrains {} {} {}",
             tables.directory_bases.len(),
             tables.palette_bases.len(),
             terrains.terrains.len()
@@ -219,7 +201,7 @@ impl TerrainPass {
                             .unwrap_or(NOT_RESIDENT);
                         debug_assert!(
                             word == layer,
-                            "T5: the directory names layer {word} for {key:?} of terrain {}, which holds {layer}",
+                            "t5_directory_layer {word} {key:?} {} {layer}",
                             terrain.id
                         );
                     }

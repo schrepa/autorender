@@ -11,7 +11,7 @@ impl DevTools {
                 .with_default(camera_value(&Camera::default())),
             camera_value,
         )
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.insert(Inspector {
             brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "Mesh3d"),
@@ -25,13 +25,13 @@ impl DevTools {
                 Some(json!(mesh_view(assets, (entity?, mesh3d), context)))
             }),
         })
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.register_component::<LocalLight>(
             InspectorDescriptor::generated(schemas, "LocalLight")
                 .with_default(json!(SceneLight::default())),
             |light| json!(SceneLight::from(light)),
         )
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.insert(Inspector {
             brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "Grounded"),
@@ -41,13 +41,13 @@ impl DevTools {
             }),
             read: Box::new(grounded_view),
         })
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.register_component::<Tint>(
             InspectorDescriptor::generated(schemas, "Tint")
                 .with_default(json!(crate::views::TintView(Tint::WHITE.0))),
             |tint| json!(crate::views::TintView(tint.0)),
         )
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.insert(Inspector {
             brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "SplineMesh"),
@@ -57,12 +57,12 @@ impl DevTools {
             }),
             read: Box::new(spline_mesh_view),
         })
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.register_component::<ReflectionProbe>(
             InspectorDescriptor::generated(schemas, "ReflectionProbe"),
             |probe| json!(SceneReflectionProbe::from(probe)),
         )
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.insert(Inspector {
             brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "Input"),
@@ -70,7 +70,7 @@ impl DevTools {
             has: Box::new(|world, _| world.get_resource::<InputState>().is_some()),
             read: Box::new(input_view),
         })
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.register_resource::<engine_core::Jobs>(
             InspectorDescriptor::generated(schemas, "Jobs"),
             |jobs| {
@@ -94,7 +94,7 @@ impl DevTools {
                 })
             },
         )
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.register_resource::<engine_core::StaticTables>(
             InspectorDescriptor::generated(schemas, "StaticTables"),
             |tables| {
@@ -117,13 +117,13 @@ impl DevTools {
                 })
             },
         )
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.register_component::<ParticleEmitter>(
             InspectorDescriptor::generated(schemas, "ParticleEmitter")
                 .with_default(json!(SceneEmitter::default())),
             |emitter| json!(SceneEmitter::from(emitter)),
         )
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.register_component::<engine_world_streaming::StreamedId>(
             InspectorDescriptor::generated(schemas, "StreamedId"),
             |id| {
@@ -132,7 +132,7 @@ impl DevTools {
                 })
             },
         )
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.insert(Inspector {
             descriptor: InspectorDescriptor::generated(schemas, "Collider"),
             kind: InspectorKind::Component,
@@ -145,7 +145,7 @@ impl DevTools {
             }),
             brick: Some("collision"),
         })
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
         self.insert(Inspector {
             descriptor: InspectorDescriptor::generated(schemas, "RigidBody")
                 .with_default(json!(engine_physics::RigidBody::default())),
@@ -159,7 +159,7 @@ impl DevTools {
             }),
             brick: Some("physics"),
         })
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
     }
 }
 

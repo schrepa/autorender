@@ -88,7 +88,7 @@ fn named(constants: &[(String, f64)]) -> Vec<(&str, f64)> {
 
 impl Key {
     fn text(&self) -> String {
-        serde_json::to_string(self).expect("pipeline keys serialize")
+        serde_json::to_string(self).expect("pipeline_key_serializes")
     }
 
     fn create(
@@ -272,7 +272,7 @@ impl Registry {
         self.labels
             .get(layout)
             .copied()
-            .expect("pipeline layouts come from pipelines::pipeline_layout")
+            .expect("layout_from_pipeline_layout")
     }
 
     fn keep_layout(&mut self, label: &'static str, layout: wgpu::PipelineLayout) {
@@ -403,7 +403,7 @@ fn create_all(device: &wgpu::Device, wanted: &[Wanted]) -> Vec<(String, Created)
             .collect();
         spawned
             .into_iter()
-            .map(|part| part.join().expect("creating pipelines does not panic"))
+            .map(|part| part.join().expect("pipeline_creation_unpanicked"))
             .collect::<Vec<_>>()
     });
     let mut made = Vec::new();
@@ -423,7 +423,11 @@ fn create_all(device: &wgpu::Device, wanted: &[Wanted]) -> Vec<(String, Created)
         .collect();
     wasm_bindgen_futures::spawn_local(async move {
         if let Some(error) = errors.pop().await {
-            web_sys::console::warn_1(&format!("A listed pipeline failed: {error}").into());
+            let record = serde_json::json!({
+                "event": "listed_pipeline_failed",
+                "error": error.to_string(),
+            });
+            web_sys::console::warn_1(&record.to_string().into());
         }
     });
     made
@@ -493,7 +497,7 @@ impl PipelineCounts {
         with_registry(&self.device, |registry| {
             let canvas = registry
                 .canvas
-                .map(|canvas| serde_json::to_string(&canvas).expect("formats serialize"))
+                .map(|canvas| serde_json::to_string(&canvas).expect("formats_serialize"))
                 .unwrap_or_default();
             let mut record = LIST.to_vec();
             for text in std::iter::once(&canvas).chain(registry.keys()) {
@@ -702,7 +706,7 @@ pub(crate) fn pipeline_layout(
                 .iter()
                 .zip(declared.groups)
                 .all(|(group, table)| group.table.label == table.label),
-        "{} binds other groups than it declares (crate::pipeline_layouts)",
+        "groups_as_declared {}",
         declared.label
     );
     with_registry(device, |registry| {
@@ -873,7 +877,7 @@ impl Fillers {
             | Kind::Storage(_)
             | Kind::StorageArray(_)
             | Kind::Sampler(_)) => {
-                panic!("no filler for {kind:?}")
+                panic!("filler_missing {kind:?}")
             }
         }
     }
@@ -886,11 +890,11 @@ pub(crate) fn group(
     layout: &GroupLayout,
     resources: &[(&str, wgpu::BindingResource<'_>)],
 ) -> wgpu::BindGroup {
-    debug_assert_eq!(layout.table.label, table.label, "{label}'s layout");
+    debug_assert_eq!(layout.table.label, table.label, "layout_matches {label}");
     debug_assert_eq!(
         resources.len(),
         table.bindings.len(),
-        "{label} binds every binding of {}",
+        "binds_every_binding {label} {}",
         table.label
     );
     let entries: Vec<wgpu::BindGroupEntry<'_>> = resources
@@ -911,7 +915,7 @@ pub(crate) fn filled_group(
     resources: &[(&str, wgpu::BindingResource<'_>)],
     fillers: &Fillers,
 ) -> wgpu::BindGroup {
-    debug_assert_eq!(layout.table.label, table.label, "{label}'s layout");
+    debug_assert_eq!(layout.table.label, table.label, "layout_matches {label}");
     for (name, _) in resources {
         table.binding(name);
     }
@@ -935,7 +939,7 @@ pub(crate) fn filled_group(
             }
         })
         .collect();
-    debug_assert!(written <= WRITE_FILLERS, "more written fillers than ranges");
+    debug_assert!(written <= WRITE_FILLERS, "fillers_within_ranges");
     bind_group(device, label, layout, &entries)
 }
 
@@ -974,7 +978,7 @@ pub(crate) fn compute_entry(
         }
         registry.creating(&text);
         let Created::Compute(pipeline) = key.create(device, layout, module) else {
-            unreachable!("a compute key creates a compute pipeline");
+            unreachable!("compute_key_compute_pipeline");
         };
         registry.compute.insert(text, pipeline.clone());
         pipeline
@@ -1013,7 +1017,7 @@ pub(crate) fn sampled(
             .fragment
             .as_ref()
             .is_none_or(|fragment| fragment.entry.module == geometry.vertex.module),
-        "{}'s stages come from one module",
+        "stages_one_module {}",
         geometry.label
     );
     with_registry(device, |registry| {
@@ -1051,7 +1055,7 @@ pub(crate) fn sampled(
         }
         registry.creating(&text);
         let Created::Render(pipeline) = key.create(device, geometry.layout, geometry.module) else {
-            unreachable!("a render key creates a render pipeline");
+            unreachable!("render_key_render_pipeline");
         };
         registry.render.insert(text, pipeline.clone());
         pipeline

@@ -14,7 +14,7 @@ macro_rules! results {
         pub mod result {
             $(
                 pub fn $op(result: $result) -> serde_json::Value {
-                    serde_json::to_value(result).expect("results serialize")
+                    serde_json::to_value(result).expect("result_serializes")
                 }
             )*
         }
@@ -92,7 +92,6 @@ pub struct AssetsResult {
     pub texture_assets: Vec<TextureAsset>,
     pub resident_cpu_bytes: usize,
     pub readiness: &'static str,
-    pub ownership: &'static str,
     pub missing: Vec<MissingAsset>,
     pub missing_total: usize,
 }

@@ -53,7 +53,7 @@ impl HeavyRun {
                     });
                     fs::write(
                         &owner,
-                        serde_json::to_string_pretty(&record).expect("owners serialize"),
+                        serde_json::to_string_pretty(&record).expect("owner_serializes"),
                     )
                     .map_err(|error| format!("cannot write {}: {error}", owner.display()))?;
                     break;
@@ -70,10 +70,12 @@ impl HeavyRun {
             match held.as_ref().and_then(|held| held["pid"].as_u64()) {
                 Some(pid) if !alive(pid) => {
                     if holder(&owner).is_some_and(|again| again["pid"].as_u64() == Some(pid)) {
-                        eprintln!(
-                            "heavy-run: taking over a stale lock from pid {pid} ({})",
-                            describe(held.as_ref())
-                        );
+                        let record = json!({
+                            "event": "heavy_lock_taken_over",
+                            "pid": pid,
+                            "holder": describe(held.as_ref()),
+                        });
+                        eprintln!("{record}");
                         let _ = fs::remove_dir_all(&folder);
                     }
                     continue;
@@ -96,12 +98,15 @@ impl HeavyRun {
             if reported.is_none_or(|at| at.elapsed() > Duration::from_secs(60)) {
                 reported = Some(Instant::now());
                 match &held {
-                    Some(held) => eprintln!(
-                        "heavy-run: waiting for the heavy-run lock held by pid {} ({}) since {}",
-                        held["pid"],
-                        describe(Some(held)),
-                        held["started"].as_str().unwrap_or("unknown")
-                    ),
+                    Some(held) => {
+                        let record = json!({
+                            "event": "heavy_lock_waiting",
+                            "pid": held["pid"],
+                            "holder": describe(Some(held)),
+                            "since": held["started"],
+                        });
+                        eprintln!("{record}");
+                    }
                     None => {
                         let mine = ticket
                             .as_ref()
@@ -111,9 +116,11 @@ impl HeavyRun {
                             .iter()
                             .position(|name| Some(name.as_str()) == mine)
                             .unwrap_or(0);
-                        eprintln!(
-                            "heavy-run: waiting for its turn after {before} queued before it"
-                        );
+                        let record = json!({
+                            "event": "heavy_lock_queued",
+                            "queued_before": before,
+                        });
+                        eprintln!("{record}");
                     }
                 }
             }
@@ -130,19 +137,20 @@ impl HeavyRun {
             if foreign.is_empty() {
                 break;
             }
-            let pids: Vec<String> = foreign.iter().map(u32::to_string).collect();
             if started.elapsed() > FOREIGN_CHROME_WAIT {
-                eprintln!(
-                    "heavy-run: foreign headless Chrome {} still running after 15 min; going ahead",
-                    pids.join(",")
-                );
+                let record = json!({
+                    "event": "foreign_chrome_ignored",
+                    "pids": foreign,
+                    "waited_s": FOREIGN_CHROME_WAIT.as_secs(),
+                });
+                eprintln!("{record}");
                 break;
             }
             if reported.is_none_or(|at| at.elapsed() > Duration::from_secs(60)) {
                 reported = Some(Instant::now());
                 eprintln!(
-                    "heavy-run: waiting for foreign headless Chrome {} (factory?)",
-                    pids.join(",")
+                    "{}",
+                    json!({"event": "foreign_chrome_waiting", "pids": foreign})
                 );
             }
             std::thread::sleep(Duration::from_secs(5));

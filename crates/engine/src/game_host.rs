@@ -31,7 +31,7 @@ impl<G: Game> GameHost<G> {
             Ok(engine)
         })
         .await?;
-        let game = game.expect("launching built the game");
+        let game = game.expect("game_built");
         #[cfg(feature = "dev")]
         let development = {
             let mut development = crate::dev_host::DevHost::default();

@@ -164,16 +164,18 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
             }
         }
         let result = match (observed.broken.is_empty(), differences.is_empty()) {
-            (false, _) => "BROKEN",
+            (false, _) => "broken",
             (true, true) => "equal",
             (true, false) if bless => "blessed",
-            (true, false) => "DIFFERS",
+            (true, false) => "differs",
         };
-        summary.push(format!(
-            "{:10} {result:8} {:5} observations {seconds:6.1} s",
-            corpus.name,
-            observed.values.len()
-        ));
+        summary.push(serde_json::json!({
+            "event": "corpus_result",
+            "corpus": corpus.name,
+            "result": result,
+            "observations": observed.values.len(),
+            "seconds": seconds,
+        }));
         for broken in &observed.broken {
             problems.push(format!("{}: {broken}", corpus.name));
         }
@@ -199,12 +201,13 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
         let replayed = replay_in_wasm(root, jobs)?;
         let seconds = start.elapsed().as_secs_f64();
         let mismatched = replayed["mismatched"].as_u64().unwrap_or(0);
-        summary.push(format!(
-            "{:15} {:8} {:5} jobs {seconds:6.1} s",
-            format!("{name} in Wasm"),
-            if mismatched == 0 { "equal" } else { "DIFFERS" },
-            replayed["jobs"]
-        ));
+        summary.push(serde_json::json!({
+            "event": "wasm_replay_result",
+            "corpus": name,
+            "result": if mismatched == 0 { "equal" } else { "differs" },
+            "jobs": replayed["jobs"],
+            "seconds": seconds,
+        }));
         if mismatched > 0 {
             problems.push(format!(
                 "{name} in Wasm: {mismatched} job(s) give other bits than natively: {}",
@@ -213,14 +216,16 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
         }
     }
     if bless {
-        let text = serde_json::to_string_pretty(&goldens).expect("goldens serialize") + "\n";
+        let text = serde_json::to_string_pretty(&goldens).expect("goldens_serialize") + "\n";
         if let Some(folder) = path.parent() {
             fs::create_dir_all(folder)
                 .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
         }
         fs::write(&path, text).map_err(|error| format!("cannot write {GOLDENS}: {error}"))?;
     }
-    println!("{}", summary.join("\n"));
+    for record in &summary {
+        println!("{record}");
+    }
     if problems.is_empty() {
         return Ok(());
     }
@@ -235,7 +240,12 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
 fn replay_in_wasm(root: &Path, jobs: &str) -> Result<Value, Failure> {
     crate::pipeline::build_wasm(root, true, crate::pipeline::QUICK)?;
     let jobs = root.join(jobs).display().to_string();
-    println!("Running node web/scripts/pure-wasm.mjs {jobs}");
+    let record = serde_json::json!({
+        "event": "running",
+        "program": "node",
+        "arguments": ["web/scripts/pure-wasm.mjs", jobs],
+    });
+    println!("{record}");
     let output = std::process::Command::new("node")
         .args(["web/scripts/pure-wasm.mjs", &jobs])
         .current_dir(root)

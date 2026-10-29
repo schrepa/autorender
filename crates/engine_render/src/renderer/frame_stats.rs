@@ -44,7 +44,7 @@ fn stat_counters(stats: &RenderStats) {
             engine_profile::counter(name, number);
         }
     }
-    let value = serde_json::to_value(stats).expect("render stats serialize");
+    let value = serde_json::to_value(stats).expect("render_stats_serialize");
     visit(&mut "render".to_owned(), &value);
 }
 

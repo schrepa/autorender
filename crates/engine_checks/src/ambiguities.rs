@@ -28,7 +28,7 @@ pub fn check(mut engine: Engine) -> Result<(), String> {
         world.resource_mut::<Schedules>().insert(schedule);
     }
     if problems.is_empty() {
-        println!("The engine's schedules order every pair of conflicting systems.");
+        println!("{}", serde_json::json!({"event": "schedules_ordered"}));
         return Ok(());
     }
     Err(problems.join("\n"))

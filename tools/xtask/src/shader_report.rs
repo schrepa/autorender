@@ -55,7 +55,7 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
                         break;
                     };
                     let report = entry_report(checked, entry, &folder, rga.as_deref());
-                    *done[index].lock().expect("no worker panics") = Some(report);
+                    *done[index].lock().expect("worker_not_panicked") = Some(report);
                 }
             });
         }
@@ -64,8 +64,8 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
         .into_iter()
         .map(|slot| {
             slot.into_inner()
-                .expect("no worker panics")
-                .expect("every entry ran")
+                .expect("worker_not_panicked")
+                .expect("every_entry_ran")
         })
         .collect::<Result<Vec<_>, _>>()?;
     let report = json!({
@@ -85,11 +85,14 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
     let path = folder.join("report.json");
     std::fs::write(
         &path,
-        serde_json::to_string_pretty(&report).expect("reports serialize"),
+        serde_json::to_string_pretty(&report).expect("report_serializes"),
     )
     .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
     print_summary(&report);
-    println!("Wrote {}.", path.display());
+    println!(
+        "{}",
+        json!({"event": "written", "file": path.display().to_string()})
+    );
     Ok(())
 }
 
@@ -135,7 +138,7 @@ fn entry_report(
     };
     let stem = format!("{}.{}", checked.name, entry.name);
     let spirv = folder.join("spirv").join(format!("{stem}.spv"));
-    std::fs::create_dir_all(spirv.parent().expect("files have folders"))
+    std::fs::create_dir_all(spirv.parent().expect("file_has_folder"))
         .map_err(|error| error.to_string())?;
     let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
     std::fs::write(&spirv, &bytes).map_err(|error| error.to_string())?;
@@ -376,8 +379,14 @@ fn rga_program(root: &Path) -> Result<Option<PathBuf>, String> {
         return Ok(Some(found));
     }
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-    let archive = folder.join(url.rsplit('/').next().expect("URLs have names"));
-    println!("Downloading Radeon GPU Analyzer {RGA_VERSION} (once) from {url}");
+    let archive = folder.join(url.rsplit('/').next().expect("url_has_name"));
+    let record = json!({
+        "event": "downloading",
+        "tool": "radeon_gpu_analyzer",
+        "version": RGA_VERSION,
+        "url": url,
+    });
+    println!("{record}");
     let status = Command::new("curl")
         .args(["-sSL", "--fail", "-o"])
         .arg(&archive)
@@ -461,26 +470,20 @@ fn print_summary(report: &Value) {
         )
     });
     println!(
-        "{} entry points. Most costly (RDNA 3 vector registers and instructions, naga expressions and samples):",
-        entries.len()
+        "{}",
+        json!({"event": "entry_points", "entries": entries.len()})
     );
     for entry in ranked.iter().take(15) {
         let amd = &entry["amd"]["gfx1100"];
-        println!(
-            "  {:<44} {:>8} vgprs {:>5} instructions {:>5} expressions {:>3} samples",
-            format!(
-                "{}::{}",
-                entry["module"].as_str().unwrap_or(""),
-                entry["entry_point"].as_str().unwrap_or("")
-            ),
-            amd["resources"]["used_vgprs"]
-                .as_f64()
-                .map_or("-".into(), |value| value.to_string()),
-            amd["instructions"]
-                .as_u64()
-                .map_or("-".into(), |value| value.to_string()),
-            entry["naga"]["expressions"],
-            entry["naga"]["texture_samples"],
-        );
+        let record = json!({
+            "event": "costly_entry_point",
+            "module": entry["module"],
+            "entry_point": entry["entry_point"],
+            "rdna3_vgprs": amd["resources"]["used_vgprs"],
+            "rdna3_instructions": amd["instructions"],
+            "naga_expressions": entry["naga"]["expressions"],
+            "texture_samples": entry["naga"]["texture_samples"],
+        });
+        println!("{record}");
     }
 }

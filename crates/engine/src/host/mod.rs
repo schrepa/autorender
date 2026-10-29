@@ -34,7 +34,7 @@ pub use settings::{HostSettings, SETTINGS, Setting};
 pub fn typescript() -> String {
     use crate::tooling::{constant, declarations};
     let schema =
-        |schema: schemars::Schema| serde_json::to_value(schema).expect("schemas serialize");
+        |schema: schemars::Schema| serde_json::to_value(schema).expect("schema_serializes");
     let mut output = declarations(&schema(schemars::schema_for!(Distribution)), "Distribution")
         .trim_start()
         .to_owned();
@@ -60,17 +60,14 @@ pub fn typescript() -> String {
         .map(|&(phase, name)| (name.to_owned(), (phase as u32).into()))
         .collect();
     output.push_str(&constant("FRAME_PHASES", &phases.into()));
-    let formats: serde_json::Map<String, serde_json::Value> = IMAGE_FORMATS
+    let formats: Vec<serde_json::Value> = IMAGE_FORMATS
         .iter()
-        .map(|format| {
-            let described = serde_json::json!({ "what": format.what });
-            (format.name.to_owned(), described)
-        })
+        .map(|format| format.name.into())
         .collect();
     output.push_str(&constant("IMAGE_FORMATS", &formats.into()));
     let settings: serde_json::Map<String, serde_json::Value> = SETTINGS
         .iter()
-        .map(|setting| (setting.name.to_owned(), setting.described().into()))
+        .map(|setting| (setting.name.to_owned(), setting.accepted().into()))
         .collect();
     output.push_str(&constant("HOST_SETTINGS", &settings.into()));
     output

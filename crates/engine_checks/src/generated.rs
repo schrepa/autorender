@@ -9,7 +9,7 @@ pub fn write(root: &Path, files: &[(String, String)]) -> Result<(), String> {
         }
         fs::write(root.join(path), contents)
             .map_err(|error| format!("cannot write {path}: {error}"))?;
-        println!("Generated {path}.");
+        println!("{}", serde_json::json!({"event": "generated", "file": path}));
     }
     Ok(())
 }
@@ -19,7 +19,10 @@ pub fn check(root: &Path, files: &[(String, String)], schema: &str) -> Result<()
     for (path, contents) in files {
         match fs::read_to_string(root.join(path)) {
             Ok(saved) if saved.replace("\r\n", "\n") == *contents => {
-                println!("Generated file matches {path}.");
+                println!(
+                    "{}",
+                    serde_json::json!({"event": "generated_matches", "file": path})
+                );
             }
             Ok(_) => stale.push(format!("{path} is out of date")),
             Err(error) => stale.push(format!("cannot read {path}: {error}")),

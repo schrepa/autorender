@@ -74,7 +74,7 @@ pub fn check(repository: &Repository, rules: &Rules) -> Result<(), String> {
         }
     }
     if problems.0.is_empty() {
-        println!("Policy holds.");
+        println!("{}", serde_json::json!({"event": "policy_holds"}));
         return Ok(());
     }
     Err(format!(

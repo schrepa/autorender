@@ -951,7 +951,7 @@ impl AppHost {
     }
 
     pub fn stats_json(&self) -> String {
-        serde_json::to_string(&self.stats()).expect("frame stats serialize")
+        serde_json::to_string(&self.stats()).expect("stats_serialize")
     }
 
     pub fn suspend(&mut self) {

@@ -90,7 +90,7 @@ impl Table {
         self.bindings
             .iter()
             .find(|binding| binding.name == name)
-            .unwrap_or_else(|| panic!("{} has no binding named {name}", self.label))
+            .unwrap_or_else(|| panic!("binding_unknown {} {name}", self.label))
     }
 }
 

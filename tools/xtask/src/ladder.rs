@@ -297,7 +297,14 @@ impl Runner<'_> {
         .flat_map(|(option, value)| [option.to_owned(), value])
         .collect();
         arguments.extend_from_slice(self.passed);
-        eprintln!("{} ({name}) from {meters} m: {}.", spot.name, eye.view());
+        let record = json!({
+            "event": "ladder_capture",
+            "place": spot.name,
+            "look": name,
+            "distance_m": meters,
+            "view": eye.view(),
+        });
+        eprintln!("{record}");
         let _ = fs::remove_file(&capture);
         let started = Instant::now();
         let output = Command::new(self.program)
@@ -733,35 +740,28 @@ fn report(inputs: Value, ladder: &Ladder, runs: &[Run], sheets: &[PathBuf]) -> V
     })
 }
 
-fn row(distance: f64, values: impl IntoIterator<Item = Option<f64>>) -> String {
-    let mut line = format!("  {distance:>8} m");
-    for value in values {
-        match value {
-            Some(value) => line.push_str(&format!("{value:>8.3}")),
-            None => line.push_str(&format!("{:>8}", "-")),
-        }
-    }
-    line
-}
-
 fn print_tables(ladder: &Ladder, runs: &[Run]) {
-    let header: String = OCTAVES.iter().map(|size| format!("{size:>8}")).collect();
     for (place, spot) in ladder.places.iter().enumerate() {
         for (look, name) in ladder.looks.iter().enumerate() {
-            let rows = table(runs, place, look);
-            println!(
-                "{} ({name}): contrast (RMS, stops) by world size (m)",
-                spot.name
-            );
-            println!("  {:>10}{header}", "distance");
-            for (run, bands) in &rows {
-                let contrast = bands.iter().map(|band| band.map(|band| band.contrast));
-                println!("{}", row(ladder.distances[run.distance], contrast));
-            }
-            println!("  as a share of its capture's median band");
-            for (run, bands) in &rows {
-                let ratio = bands.iter().map(|band| band.and_then(|band| band.ratio));
-                println!("{}", row(ladder.distances[run.distance], ratio));
+            for (run, bands) in table(runs, place, look) {
+                let contrast: Vec<Option<f64>> = bands
+                    .iter()
+                    .map(|band| band.map(|band| band.contrast))
+                    .collect();
+                let ratio: Vec<Option<f64>> = bands
+                    .iter()
+                    .map(|band| band.and_then(|band| band.ratio))
+                    .collect();
+                let record = json!({
+                    "event": "ladder_row",
+                    "place": spot.name,
+                    "look": name,
+                    "distance_m": ladder.distances[run.distance],
+                    "sizes_m": OCTAVES,
+                    "contrast_stops": contrast,
+                    "median_band_ratio": ratio,
+                });
+                println!("{record}");
             }
         }
     }
@@ -810,15 +810,16 @@ pub fn ladder(root: &Path, arguments: &[String]) -> Result<(), String> {
     let report = report(inputs, &ladder, &runs, &sheets);
     fs::write(
         &path,
-        serde_json::to_string_pretty(&report).expect("reports serialize") + "\n",
+        serde_json::to_string_pretty(&report).expect("report_serializes") + "\n",
     )
     .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
     print_tables(&ladder, &runs);
-    println!(
-        "Wrote {} and {} contact sheets beside it.",
-        path.display(),
-        sheets.len()
-    );
+    let record = json!({
+        "event": "written",
+        "file": path.display().to_string(),
+        "contact_sheets": sheets.len(),
+    });
+    println!("{record}");
     let failed: Vec<String> = runs
         .iter()
         .filter_map(|run| {

@@ -112,7 +112,7 @@ pub fn split(source: &str) -> Split {
 fn last(lines: &mut [String]) -> &mut String {
     lines
         .last_mut()
-        .expect("a split starts with one line and only adds lines")
+        .expect("split_adds_lines")
 }
 
 fn block_comment(chars: &[char], start: usize, split: &mut Split) -> usize {

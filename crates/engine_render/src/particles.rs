@@ -362,7 +362,7 @@ mod gpu {
                 return;
             }
             pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(1, self.group.get().expect("prepared this frame"), &[]);
+            pass.set_bind_group(1, self.group.get().expect("prepared_this_frame"), &[]);
             if frame.alpha > 0 {
                 pass.set_pipeline(&self.alpha);
                 pass.draw(0..4, 0..frame.alpha);
@@ -385,7 +385,7 @@ mod gpu {
             }
             pass.set_pipeline(self.additive[usize::from(post)].as_ref().expect("ensured"));
             pass.set_bind_group(0, camera, &[]);
-            pass.set_bind_group(1, self.group.get().expect("prepared this frame"), &[]);
+            pass.set_bind_group(1, self.group.get().expect("prepared_this_frame"), &[]);
             pass.draw(0..4, frame.mist..frame.total);
         }
     }

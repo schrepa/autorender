@@ -7,6 +7,6 @@ impl DevTools {
                 .with_default(json!(SceneAtmosphere::from(&Atmosphere::default()))),
             |atmosphere| json!(SceneAtmosphere::from(atmosphere)),
         )
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
     }
 }

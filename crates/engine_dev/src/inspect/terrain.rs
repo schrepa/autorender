@@ -12,7 +12,7 @@ impl DevTools {
             read: Box::new(terrain_view),
             brick: Some("terrain"),
         })
-        .expect("built-in descriptor is bounded");
+        .expect("descriptor_bounded");
     }
 }
 

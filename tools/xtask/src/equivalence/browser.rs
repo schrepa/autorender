@@ -42,7 +42,10 @@ pub(super) fn serve(root: &Path, side: &Side, name: &str, folder: &Path) -> Resu
         .filter_map(|path| path.strip_prefix(PUBLIC))
         .map(str::to_owned)
         .collect();
-    eprintln!("Serving {} for the browser leg.", side.label);
+    eprintln!(
+        "{}",
+        json!({"event": "serving_browser_leg", "side": side.label})
+    );
     let server = Server::page(&tree, &folder.join(format!("server-{name}.log")))?;
     Ok(Page { server, withheld })
 }

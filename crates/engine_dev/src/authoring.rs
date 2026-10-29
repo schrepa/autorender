@@ -134,7 +134,7 @@ pub fn save_scene(
         path: temp_path,
         file: Some(file),
     };
-    let output = temporary.file.as_mut().expect("temporary file is open");
+    let output = temporary.file.as_mut().expect("temporary_file_open");
     output
         .write_all(candidate.as_bytes())
         .map_err(|error| io_error(&temporary.path, &error))?;

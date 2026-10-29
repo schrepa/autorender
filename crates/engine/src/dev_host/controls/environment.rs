@@ -16,7 +16,7 @@ pub(super) fn set(
         serde_json::to_value(engine_scene::SceneEnvironment::current(
             app.engine.app.world(),
         ))
-        .expect("environments serialize")
+        .expect("environment_serializes")
     };
     let before = current(app);
     let environment = if control.merge {

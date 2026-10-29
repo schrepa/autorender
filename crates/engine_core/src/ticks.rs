@@ -31,7 +31,7 @@ impl ChangeWindow {
         assert_eq!(
             changed,
             tick.is_newer_than(self.last_run, Tick::new(self.this_run)),
-            "the change window disagrees with Bevy on tick {tick:?}"
+            "change_window_matches_bevy {tick:?}"
         );
         changed
     }

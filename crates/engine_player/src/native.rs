@@ -1,18 +1,35 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use engine::command_line::CommandOption;
 use engine::{Engine, Error, ErrorCode, Expected};
 use engine_native::{Arguments, HostOptions, file_error, files};
 
 use crate::{ScenePlayer, bricks};
 
-const USAGE: &str = "Usage: engine-player-native --source PATH [--without BRICK,...] [OPTIONS]";
+fn player_options() -> [CommandOption; 2] {
+    [
+        CommandOption::taking("--source", "PATH").required(),
+        CommandOption::taking("--without", "BRICK,..."),
+    ]
+}
+
+fn options() -> Vec<CommandOption> {
+    let mut options = player_options().to_vec();
+    options.extend(engine_native::options());
+    options
+}
 
 #[cfg(feature = "dev")]
-const PARAMETERS: [(&str, &str); 2] = [
-    ("source", "scene file"),
-    ("without", "comma-separated features the engine leaves out"),
-];
+fn parameters() -> Vec<(String, String)> {
+    player_options()
+        .into_iter()
+        .filter_map(|option| {
+            let name = option.name.strip_prefix("--")?.to_owned();
+            Some((name, option.value?))
+        })
+        .collect()
+}
 
 struct Options {
     source: Option<PathBuf>,
@@ -22,14 +39,15 @@ struct Options {
 
 pub fn main(arguments: impl Iterator<Item = String>) -> ExitCode {
     let arguments: Vec<String> = arguments.collect();
-    if arguments.iter().any(|argument| argument == "--help") {
-        println!("{USAGE}\n\n{}", engine_native::usage());
+    if let Some(help) = engine::command_line::help(&arguments, &options()) {
+        println!("{help}");
         return ExitCode::SUCCESS;
     }
     match Options::parse(arguments) {
         Ok(options) => engine_native::exit(options.run()),
         Err(error) => {
-            eprintln!("{error}");
+            let record = serde_json::json!({"event": "arguments_rejected", "error": error});
+            eprintln!("{record}");
             ExitCode::from(2)
         }
     }
@@ -63,7 +81,7 @@ impl Options {
             let mut session = self
                 .host
                 .dev_session(|| self.build())?
-                .parameters(PARAMETERS);
+                .parameters(parameters());
             if let Some(path) = &self.source {
                 session = session.source(path);
             }

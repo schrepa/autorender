@@ -9,6 +9,7 @@ pub mod bounds;
 mod bricks;
 mod clock;
 mod clouds;
+pub mod command_line;
 mod commands;
 mod debug_view;
 mod detail_eye;
@@ -206,7 +207,7 @@ impl Engine {
         let mut assets = AssetLibrary::default();
         let cube_mesh = assets
             .insert_mesh(Mesh::cube())
-            .expect("an unlimited library holds a cube");
+            .expect("unlimited_library_holds_cube");
         assets.set_budget(config.asset_budget);
         let mut app = App::empty();
         app.world_mut()
@@ -451,7 +452,7 @@ impl Engine {
         if self
             .app
             .get_schedule(FixedPreSimulation)
-            .expect("engine pre schedule exists")
+            .expect("engine_pre_schedule")
             .systems_len()
             != 0
         {
@@ -472,7 +473,7 @@ impl Engine {
         if self
             .app
             .get_schedule(FixedPostSimulation)
-            .expect("engine post schedule exists")
+            .expect("engine_post_schedule")
             .systems_len()
             != 0
         {
@@ -610,7 +611,7 @@ impl Engine {
         let state = self.app.plugins_state();
         assert!(
             !matches!(state, PluginsState::Adding),
-            "engine plugins must be ready before the first frame"
+            "plugins_ready_before_frame"
         );
         match state {
             PluginsState::Ready => {
@@ -639,18 +640,14 @@ impl Engine {
         for (label, schedule) in schedules.iter() {
             assert!(
                 schedule.systems_len() == 0 || run.contains(&schedule.label()),
-                "{label:?} has systems, but the engine never runs it: add gameplay systems to \
-                 FixedPreSimulation, FixedSimulation, FixedPostSimulation or Presentation"
+                "schedule_never_runs {label:?}"
             );
         }
     }
 }
 
 fn refuse_bevy_hierarchy(add: On<Add, bevy_ecs::hierarchy::ChildOf>) {
-    panic!(
-        "{} was given Bevy's ChildOf, which the engine ignores: give it a parent with set_parent",
-        add.entity
-    );
+    panic!("child_of_ignored {}", add.entity);
 }
 
 impl Default for Engine {

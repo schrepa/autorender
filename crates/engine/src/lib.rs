@@ -26,6 +26,7 @@ pub use surface::runtime_typescript;
 pub mod tooling;
 
 pub use engine_core::collections;
+pub use engine_core::command_line;
 pub use engine_core::{bevy_ecs, glam};
 
 mod games {

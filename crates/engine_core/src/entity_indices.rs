@@ -64,6 +64,6 @@ impl Index<&Entity> for EntityIndices {
     type Output = usize;
 
     fn index(&self, entity: &Entity) -> &usize {
-        self.get(entity).expect("entity has an index")
+        self.get(entity).expect("entity_indexed")
     }
 }

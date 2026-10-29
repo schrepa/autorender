@@ -329,7 +329,7 @@ impl<G: Game> GameHost<G> {
                         tick: observation["tick"].as_str().map(str::to_owned),
                     };
                     reply["result"]["artifact"] =
-                        serde_json::to_value(kept).expect("results serialize");
+                        serde_json::to_value(kept).expect("result_serializes");
                 }
                 self.dev_done(reply, context)
             }
@@ -490,7 +490,7 @@ impl<G: Game> GameHost<G> {
             }) => {
                 let reply = self.dev_reload(source, &expected_revision, &revision, files);
                 let mut reply: Value =
-                    serde_json::from_str(&reply).expect("development replies are JSON");
+                    serde_json::from_str(&reply).expect("reply_json");
                 if reply["ok"] == true {
                     let rendered = self.dev_invoke(&control("render", json!({})), context);
                     if rendered["ok"] != true {
@@ -519,7 +519,7 @@ impl<G: Game> GameHost<G> {
     pub fn dev_refusal(&mut self, error: &Error) -> Value {
         let status = engine_dev::named(engine_dev::Verb::Query, "status", json!({}));
         let status: Value = serde_json::from_str(&self.dev_command(&status, 1, 1, true))
-            .expect("development replies are JSON");
+            .expect("reply_json");
         json!({"ok": false, "observation": status["observation"], "error": error})
     }
 
@@ -532,7 +532,7 @@ impl<G: Game> GameHost<G> {
             context.height,
             context.paused,
         );
-        serde_json::from_str(&reply).expect("development replies are JSON")
+        serde_json::from_str(&reply).expect("reply_json")
     }
 
     fn dev_control(&mut self, control: &Map<String, Value>, context: &HostContext) -> Step {
@@ -895,7 +895,7 @@ impl<G: Game> GameHost<G> {
     }
 
     fn stats_value(&self) -> Value {
-        serde_json::from_str(&self.stats()).expect("frame statistics are JSON")
+        serde_json::from_str(&self.stats()).expect("stats_json")
     }
 
     fn dev_effect(&mut self, pending: Pending, effect: Effect) -> Step {

@@ -23,7 +23,7 @@ pub fn edit_transform<R>(
     if !same_local_bits(&source, &next) {
         *world
             .get_mut::<Transform>(entity)
-            .expect("editing a source copy cannot remove its world component") = next;
+            .expect("world_component_kept") = next;
     }
     Ok(result)
 }

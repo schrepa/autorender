@@ -87,19 +87,18 @@ pub(crate) fn installed(program: &str, paths: &[&str]) -> Option<String> {
     })
 }
 
-fn layer(what: &str, tool: &str, found: Option<String>, setup: &str, adds: &str) -> Value {
+fn layer(name: &str, tools: &[&str], found: Option<String>, commands: &[&str]) -> Value {
     json!({
-        "layer": what,
+        "layer": name,
         "priority": "recommended",
-        "tool": tool,
+        "tools": tools,
         "installed": found,
-        "setup": setup,
-        "adds": adds,
+        "commands": commands,
     })
 }
 
 fn highly(mut layer: Value) -> Value {
-    layer["priority"] = "highly recommended".into();
+    layer["priority"] = "highly_recommended".into();
     layer
 }
 
@@ -108,47 +107,46 @@ pub(crate) fn recommended(adapter: &engine::AdapterInfo, shallow_stacks: bool) -
     let os = std::env::consts::OS;
     if os == "linux" && shallow_stacks {
         layers.push(layer(
-            "complete CPU stacks",
-            "frame pointers",
+            "cpu_stacks_complete",
+            &[],
             None,
-            "build with RUSTFLAGS=-Cforce-frame-pointers=yes (the agent's native profiling builds do)",
-            "the in-process sampler follows frame pointers on Linux; without them stacks stop early",
+            &["RUSTFLAGS=-Cforce-frame-pointers=yes"],
         ));
     }
     match os {
         "windows" => layers.push(layer(
-            "system-wide CPU sampling with kernel stacks",
-            "samply (or Windows Performance Recorder)",
+            "cpu_sampling_system",
+            &["samply", "wpr"],
             installed("samply", &[]).or_else(|| installed("wpr", &[])),
-            "install samply (cargo install samply) and run `samply record PROGRAM ...` (any native game's program); Windows asks for admin once per recording (ETW)",
-            "kernel and driver stacks, other processes, context switches",
+            &["cargo install samply", "samply record PROGRAM"],
         )),
         "linux" => layers.push(layer(
-            "system-wide CPU sampling and hardware counters",
-            "samply or perf",
+            "cpu_sampling_system",
+            &["samply", "perf"],
             installed("samply", &[]).or_else(|| installed("perf", &[])),
-            "allow it once: `sudo sysctl kernel.perf_event_paranoid=1` (Ubuntu and Debian default to 4 and 3), or grant CAP_PERFMON; then `samply record` or `perf record -g`",
-            "kernel stacks, cache misses, branch mispredictions per line",
+            &[
+                "sudo sysctl kernel.perf_event_paranoid=1",
+                "samply record PROGRAM",
+                "perf record -g PROGRAM",
+            ],
         )),
         "macos" => layers.push(layer(
-            "system-wide CPU sampling and counters",
-            "Instruments (xctrace) or samply",
+            "cpu_sampling_system",
+            &["xctrace", "samply"],
             installed("xctrace", &[]).or_else(|| installed("samply", &[])),
-            "install Xcode, or samply (`samply record` launches programs without setup)",
-            "kernel stacks, CPU counters, Processor Trace on M4 and later",
+            &["samply record PROGRAM"],
         )),
         _ => {}
     }
     layers.push(layer(
-        "exact instruction counts",
+        "instruction_counts",
         if os == "linux" {
-            "Valgrind (callgrind)"
+            &["valgrind"]
         } else {
-            "DynamoRIO (drcachesim)"
+            &["drrun"]
         },
         installed("valgrind", &[]).or_else(|| installed("drrun", &[])),
-        "run a short offscreen capture under the tool; 20 to 50 times slower, so only a few frames",
-        "every instruction executed and every cache miss, deterministic",
+        &[],
     ));
     let counted = match vendor(adapter) {
         "intel" => os == "windows" || os == "linux",
@@ -157,66 +155,62 @@ pub(crate) fn recommended(adapter: &engine::AdapterInfo, shallow_stacks: bool) -
     };
     if counted {
         layers.push(highly(layer(
-            "GPU hardware counters per pass, in process",
-            "the GPU driver's Vulkan performance queries",
-            Some("with the driver".into()),
-            "none: profile with `--counters on` (or a comma-separated list of the driver's counter names); the game then draws on Vulkan, and counting perturbs timings, so time without it",
-            "each pass's shader-core activity, stalls and occupancy, sampler and memory traffic, depth-test rejects and pixels",
+            "gpu_counters_per_pass",
+            &["vulkan_performance_query"],
+            Some("driver".into()),
+            &["--counters on"],
         )));
     }
     if vendor(adapter) == "nvidia" {
         layers.push(highly(layer(
-            "GPU cost per shader line, unit throughputs per pass",
-            "Nsight Graphics (GPU Trace with its real-time shader profiler; GPUs from 2020 on)",
+            "gpu_cost_per_shader_line",
+            &["ngfx"],
             installed("ngfx", &[r"C:\Program Files\NVIDIA Corporation\Nsight Graphics */host/windows-desktop-nomad-x64/ngfx.exe"]),
-            "install Nsight Graphics and have an administrator allow GPU performance counters for all users once (NVIDIA Control Panel: Desktop > Enable Developer Settings, then Developer > Manage GPU Performance Counters; Linux: the nvidia module's NVreg_RestrictProfilingToAdminUsers=0); then run in a window with `--vendor nsight --vendor-dir DIR`",
-            "per-shader-line warp stalls, SM, cache and memory throughputs per pass",
+            &["--vendor nsight --vendor-dir DIR"],
         )));
     }
     if os == "windows" {
         layers.push(highly(layer(
-            "GPU hardware counters per draw, replayed from a frame-exact capture",
-            "PIX (its counter plugins: Intel's, AMD's, NVIDIA's and Qualcomm's GPUs)",
+            "gpu_counters_per_draw",
+            &["pixtool"],
             installed("pixtool", &[r"C:\Program Files\Microsoft PIX\*/pixtool.exe"]),
-            "install PIX and turn on Windows Developer Mode, which replays need; then `--offscreen N --vendor pix --vendor-dir DIR` on D3D12 (dxcompiler.dll beside the program); NVIDIA's counters also need the performance-counter permission Nsight needs",
-            "each draw's and render-graph node's shader-core activity, stalls, occupancy, sampler and memory counters, and the capture, replayable in PIX",
+            &["--offscreen N --vendor pix --vendor-dir DIR"],
         )));
     }
     match vendor(adapter) {
         "amd" => layers.push(highly(layer(
-            "GPU cost per shader instruction",
-            "Radeon GPU Profiler (instruction timing; RDNA 1 to 4)",
+            "gpu_cost_per_instruction",
+            &["RadeonDeveloperPanelCLI", "RadeonGPUProfiler"],
             installed("RadeonDeveloperPanelCLI", &[]).or_else(|| installed("RadeonGPUProfiler", &[])),
-            "install the Radeon Developer Tool Suite and capture with `RadeonDeveloperPanelCLI --rgp-instruction-tracing`; on Linux with RADV, MESA_VK_TRACE=rgp",
-            "per-instruction latency, wave occupancy, cache counters per pass",
+            &[
+                "RadeonDeveloperPanelCLI --rgp-instruction-tracing",
+                "MESA_VK_TRACE=rgp",
+            ],
         ))),
         "apple" => layers.push(highly(layer(
-            "GPU cost per shader line",
-            "Xcode (Metal frame capture, shader profiler)",
+            "gpu_cost_per_shader_line",
+            &["xcrun"],
             installed("xcrun", &[]),
-            "install Xcode; capture with MTL_CAPTURE_ENABLED=1 and `--gpu-capture frame.gputrace`, then open it in Xcode (per-line costs; heat maps on M3 and later)",
-            "per-shader-line cost and instruction counts",
+            &["MTL_CAPTURE_ENABLED=1 PROGRAM --gpu-capture frame.gputrace"],
         ))),
         _ => {}
     }
     if os != "macos" {
         layers.push(layer(
-            "frame-exact capture of every command (Vulkan, D3D12)",
-            "RenderDoc",
+            "frame_capture",
+            &["renderdoccmd"],
             installed(
                 "renderdoccmd",
                 &[r"C:\Program Files\RenderDoc\renderdoccmd.exe"],
             ),
-            "install RenderDoc; run `renderdoccmd capture -w PROGRAM --offscreen 30 --gpu-capture frame` (Vulkan: WGPU_BACKEND=vulkan)",
-            "every command, resource and shader of one frame, with pass names",
+            &["renderdoccmd capture -w PROGRAM --offscreen 30 --gpu-capture frame"],
         ));
     }
     layers.push(layer(
-        "shader machine code and register pressure, any machine",
-        "Radeon GPU Analyzer (offline, no GPU needed)",
+        "shader_machine_code",
+        &["rga"],
         installed("rga", &[]),
-        "`cargo xtask gpu --report DIR` compiles every shader with it (downloaded on first use)",
-        "AMD ISA, VGPR use and occupancy for every shader entry point",
+        &["cargo xtask gpu --report DIR"],
     ));
     layers
 }
