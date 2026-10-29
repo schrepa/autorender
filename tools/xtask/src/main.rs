@@ -108,7 +108,7 @@ fn execute() -> Result<(), Failure> {
         return Ok(ladder::ladder(&root, &options)?);
     }
     if task == "cook" {
-        return Ok(cook::cook(&root, &options)?);
+        return cook::cook(&root, &options);
     }
     if task == "equivalence" {
         return equivalence::equivalence(&root, &options);

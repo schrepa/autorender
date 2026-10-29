@@ -601,7 +601,7 @@ mod capture {
                 if let Some((first, last)) = span {
                     self.last_span = Some((origin.frame, first, last));
                 }
-                self.latest = frame_ms.map(|ms| Latest::of(ms, &names, &stamps, &duration));
+                self.latest = frame_ms.map(|ms| Latest::of(ms, &names, &stamps, duration));
                 if Some(origin.capture) != self.capture {
                     continue;
                 }

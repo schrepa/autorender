@@ -80,10 +80,12 @@ pub use engine_terrain::{MAX_BOUNCE_LEVELS, MAX_OCCUPANCY_LEVELS};
 pub mod bricks {
     pub use engine_core::{
         AddBrick, AuthoredId, Brick, BrickCost, BrickCosts, BrickList, BrickRecord, BrickRegistry,
-        BrickRow, BrickSet, BrickStats, BrickTable, Bricks, CORE_PASSES, CORE_ROW, Error,
-        Extracted, InspectedKind, InspectorEntry, List, Operation, OperationEntry, OperationScene,
-        Owned, SettingsEntry, Slot, StatsEntry, UNATTRIBUTED_ROW, WARMUP_FRAMES, authored_entity,
+        BrickRow, BrickSet, BrickStats, BrickTable, Bricks, CORE_PASSES, CORE_ROW, DrawState,
+        Error, ExplainEntry, ExplainRecord, ExplainRequest, ExplainedEntity, Explainer, Extracted,
+        InspectedKind, InspectorEntry, List, Operation, OperationEntry, OperationScene, Owned,
+        SettingsEntry, Slot, StatsEntry, UNATTRIBUTED_ROW, WARMUP_FRAMES, authored_entity,
         authored_id, bounds, brick_name, missing_brick, parse_json, parse_value, parse_value_at,
+        source_line,
     };
 
     pub fn standard() -> BrickList {

@@ -143,7 +143,7 @@ impl BrickRegistry {
     pub fn record_owner(&self, kind: &str) -> Option<&BrickRecord> {
         self.bricks
             .iter()
-            .find(|brick| brick.records.iter().any(|&claimed| claimed == kind))
+            .find(|brick| brick.records.contains(&kind))
     }
 
     pub fn sections(&self) -> impl Iterator<Item = &SettingsEntry> + '_ {

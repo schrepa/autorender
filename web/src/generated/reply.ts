@@ -100,7 +100,7 @@ export interface DetailShares {
 }
 
 export interface DevError {
-  allowed: string[];
+  allowed?: string[];
   code: ErrorCode;
   expected?: string | null;
   message: string;

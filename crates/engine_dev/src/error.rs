@@ -7,9 +7,16 @@ pub struct DevError {
     pub code: ErrorCode,
     pub path: String,
     pub message: String,
+    #[serde(flatten)]
+    pub hints: Box<Hints>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct Hints {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expected: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nearest: Option<String>,
@@ -21,9 +28,7 @@ impl DevError {
             code,
             path: path.into(),
             message: message.into(),
-            expected: None,
-            allowed: Vec::new(),
-            nearest: None,
+            hints: Box::default(),
         }
     }
 
@@ -35,21 +40,24 @@ impl DevError {
         let allowed: Vec<String> = allowed.into_iter().map(Into::into).collect();
         let nearest = nearest(got, &allowed);
         Self {
-            nearest,
-            allowed,
+            hints: Box::new(Hints {
+                expected: None,
+                allowed,
+                nearest,
+            }),
             ..Self::new(ErrorCode::UnknownVariant, path, got)
         }
     }
 
     #[must_use]
     pub fn expected(mut self, expected: impl Into<String>) -> Self {
-        self.expected = Some(expected.into());
+        self.hints.expected = Some(expected.into());
         self
     }
 
     #[must_use]
     pub fn allowed<S: Into<String>>(mut self, allowed: impl IntoIterator<Item = S>) -> Self {
-        self.allowed = allowed.into_iter().map(Into::into).collect();
+        self.hints.allowed = allowed.into_iter().map(Into::into).collect();
         self
     }
 

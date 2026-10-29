@@ -189,7 +189,7 @@ fn slow_frame(costs: &BrickCosts, top: usize, detail: Detail) -> Vec<ExplainReco
         .then(|| costs.rows.iter().filter_map(|row| row.gpu_ms).sum());
     let cost = |row: &BrickCost| row.cpu_ms + row.gpu_ms.unwrap_or(0.0);
     let mut rows: Vec<&BrickCost> = costs.rows.iter().collect();
-    rows.sort_by(|a, b| cost(*b).total_cmp(&cost(*a)));
+    rows.sort_by(|a, b| cost(b).total_cmp(&cost(a)));
     let share = |part: f64, total: f64| if total > 0.0 { part / total } else { 0.0 };
     rows.into_iter()
         .take(top)
@@ -256,6 +256,6 @@ fn refused(world: &World, error: &DevError) -> ExplainRecord {
         .with("code", error.code)
         .with("path", &error.path)
         .with("message", &error.message)
-        .with("expected", &error.expected)
-        .with("allowed", &error.allowed)
+        .with("expected", &error.hints.expected)
+        .with("allowed", &error.hints.allowed)
 }

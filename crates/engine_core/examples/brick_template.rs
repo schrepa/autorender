@@ -27,10 +27,7 @@ impl EnvironmentSection for Template {
     const OPT_IN: bool = true;
 
     fn section_off() -> Self {
-        Self {
-            enabled: false,
-            ..Self::default()
-        }
+        Self { enabled: false }
     }
 
     fn section_check(&self) -> Result<(), InvalidSetting> {

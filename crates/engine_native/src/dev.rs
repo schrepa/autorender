@@ -165,7 +165,13 @@ impl<G: Game> DevSession<G> {
         {
             return match deep {
                 Value::Object(deep) => self.profile(deep),
-                _ => self.error(ErrorCode::InvalidType, "$.deep", "deep is an object"),
+                Value::Null
+                | Value::Bool(_)
+                | Value::Number(_)
+                | Value::String(_)
+                | Value::Array(_) => {
+                    self.error(ErrorCode::InvalidType, "$.deep", "deep is an object")
+                }
             };
         }
         let context = self.context();

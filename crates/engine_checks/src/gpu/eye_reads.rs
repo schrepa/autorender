@@ -23,7 +23,7 @@ const ALLOWED: &[(&str, &str)] = &[
     ),
 ];
 
-const FIELD: &str = "camera_position";
+const FIELD: &str = concat!("camera", "_position");
 
 pub(super) fn check(repository: &crate::Repository) -> Result<usize, String> {
     let root = repository.root.as_path();

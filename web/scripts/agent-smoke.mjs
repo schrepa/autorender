@@ -248,8 +248,8 @@ try {
   const watched = await cli("watch", { stats: ["tick"], entities: [{ entity: playerId, component: "Transform" }], frames: 2 });
   assert.ok(watched.streamed.some(record => record.stat === "tick"), JSON.stringify(watched.streamed));
   assert.equal(watched.result.records, watched.streamed.length);
-  const described = (await cli("describe", { name: "raycast" })).result;
-  assert.deepEqual([described.kind, described.verb, described.brick], ["operation", "query", "collision"], JSON.stringify(described));
+  const raycast = (await cli("describe", { name: "raycast" })).result;
+  assert.deepEqual([raycast.kind, raycast.verb, raycast.brick], ["operation", "query", "collision"], JSON.stringify(raycast));
   const resumed = await cli("control", "resume");
   assert.equal(resumed.result.paused, false);
   await cli("control", "step", { ticks: 1 }, false);

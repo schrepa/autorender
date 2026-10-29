@@ -23,7 +23,9 @@ static LIVE: AtomicU64 = AtomicU64::new(0);
 static PEAK: AtomicU64 = AtomicU64::new(0);
 static FAILURES: AtomicU64 = AtomicU64::new(0);
 static SAMPLING: AtomicBool = AtomicBool::new(false);
-static SAMPLER: Mutex<Option<fn(u16, usize)>> = Mutex::new(None);
+type Sampler = fn(u16, usize);
+
+static SAMPLER: Mutex<Option<Sampler>> = Mutex::new(None);
 
 thread_local! {
     static UNTIL_SAMPLE: Cell<u32> = const { Cell::new(SAMPLE_EVERY) };
