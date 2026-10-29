@@ -83,9 +83,8 @@ pub use runtime::{
     SurfaceProjection, Surroundings, SurroundingsStatus, Terrain, TerrainBakes, TerrainBrick,
     TerrainControl, TerrainControlResult, TerrainDebugView, TerrainEdit, TerrainEnvironment,
     TerrainKey, TerrainPrefetch, TerrainRiver, TerrainSample, TerrainSettings, TerrainStats,
-    TerrainSurface, TerrainWaterView, Terrains, TerrainsView, Walked, WalkedTerrain, Water,
-    WaterRead, WaterSourceCell, WaterWindow, Wind, live_steps, settled_alike, stream_now,
-    terrain_key, work_between_frames,
+    TerrainSurface, TerrainWaterView, Terrains, TerrainsView, Water, WaterRead, WaterSourceCell,
+    WaterWindow, Wind, live_steps, settled_alike, stream_now, terrain_key, work_between_frames,
 };
 pub use runtime::{
     HeightSample, RouteFound, StandingWater, TerrainEditControl, TerrainEdited, TerrainHeightQuery,

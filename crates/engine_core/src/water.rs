@@ -21,35 +21,6 @@ pub struct WaterSample {
     pub foam: f32,
 }
 
-pub type WaterSource = fn(&World, Vec3) -> Option<WaterSample>;
-
-#[derive(Resource, Default)]
-pub struct WaterSources {
-    sources: Vec<(&'static str, WaterSource)>,
-}
-
-impl WaterSources {
-    pub fn register(&mut self, name: &'static str, source: WaterSource) {
-        match self.sources.iter_mut().find(|(held, _)| *held == name) {
-            Some(entry) => entry.1 = source,
-            None => self.sources.push((name, source)),
-        }
-    }
-
-    pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.sources.iter().map(|(name, _)| *name)
-    }
-
-    pub fn sample_in(world: &World, point: Vec3) -> Option<WaterSample> {
-        let sources = world.get_resource::<Self>()?;
-        sources
-            .sources
-            .iter()
-            .filter_map(|(_, source)| source(world, point))
-            .max_by(|a, b| a.surface.total_cmp(&b.surface))
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WaterObstacle {
     pub center: Vec3,
