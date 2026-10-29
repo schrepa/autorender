@@ -3,29 +3,87 @@ use engine_core::{MaterialHandle, MeshHandle, RenderSnapshot, TextureHandle};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::scatter_pool::{ScatterPool, TileObjects};
-use super::{Core, GpuMesh};
-use crate::debug_view::{DebugViewPass, DrawKind, DrawRecord, bind_record};
-use crate::gpu_data::{ColorData, Variant, pack_color, pack_surface};
-use crate::graph::Targets;
-use crate::impostors::{
-    BakeGpu, BakePart, BakeSource, Contents, IMPOSTOR_MIN_TRIANGLES, ImpostorRecord, Supplied,
-};
-use crate::materials::MaterialStore;
-use crate::mesh_arena::{MeshArena, MeshDraw};
-use crate::occupancy::Cover;
-use crate::parts::{Prelude, Step, View};
+use crate::gpu_layouts::Cover;
 use crate::scatter::{
     GroupLayout, LAYER_SHIFT, LEVELS, NEAR_LEVEL_SHIFT, NO_LAYER, RANK_MAX, RANK_SHIFT, Record,
     STATE_FRESH, ScatterPass, SnapSources, TERRAIN_INDEX, TerrainInfo,
 };
-use crate::shadows::ShadowPass;
-use crate::temporal::TemporalPass;
-use crate::terrain::TerrainPass;
+use crate::scatter_pool::{ScatterPool, TileObjects};
 use engine_core::glam::{Mat4, Vec3};
+use engine_faces::heightfield::HeightfieldFace;
+use engine_faces::placed::Placements;
+use engine_faces::shadows::ShadowCastersFace;
+use engine_render::entries::PassKind;
+use engine_render::gpu_data::{ColorData, Variant, pack_color, pack_surface};
+use engine_render::gpu_layouts::impostors::ImpostorRecord;
+use engine_render::graph::Targets;
+use engine_render::impostors::{
+    AtlasShape, BakeGpu, BakePart, BakeSource, Contents, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas,
+    ImpostorPipelines, Supplied,
+};
+use engine_render::materials::MaterialStore;
+use engine_render::mesh_arena::{MeshArena, MeshDraw};
+use engine_render::parts::{Prelude, Step, View};
+use engine_render::renderer::{Core, DrawKind, DrawRecord, GpuMesh, RECORD_SLOT};
 use engine_terrain::{Tile, TileKey};
 
 type PartLevels = (Vec<(u32, u32, i32)>, Vec<MeshHandle>);
+
+const PLACED_FRAMES: u32 = 12;
+
+fn placed_shape(pixels: f32) -> AtlasShape {
+    let texels = (pixels.ceil() as u32).clamp(2, 1 << 15);
+    AtlasShape {
+        frames: PLACED_FRAMES,
+        texels: texels.next_power_of_two(),
+        hemisphere: true,
+    }
+}
+
+pub(crate) struct PlacedImpostors {
+    pub(crate) atlas: ImpostorAtlas,
+    pipelines: ImpostorPipelines,
+    contents: Contents,
+    pub(crate) dropped: u32,
+    card: Option<wgpu::RenderPipeline>,
+}
+
+impl PlacedImpostors {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
+        Self {
+            atlas: ImpostorAtlas::new(
+                device,
+                placed_shape(engine_core::LevelOfDetail::default().impostor_pixels),
+            ),
+            pipelines: ImpostorPipelines::new(device),
+            contents: Contents::default(),
+            dropped: 0,
+            card: None,
+        }
+    }
+
+    fn prepare_cards(
+        &mut self,
+        core: &mut Core,
+        (gpu_mode, kind): (bool, PassKind),
+        records: &[ImpostorRecord],
+    ) -> bool {
+        self.card = None;
+        let shown = gpu_mode && records.iter().any(|record| record.sphere[3] > 0.0);
+        let Some(targets) = kind.targets().filter(|_| shown) else {
+            return false;
+        };
+        if !self.atlas.prepare(&core.device, &core.queue, &self.pipelines, records) {
+            return false;
+        }
+        self.card = core.ensure_card_pipeline(targets).cloned();
+        self.card.is_some()
+    }
+
+    fn card(&self) -> Option<&wgpu::RenderPipeline> {
+        self.card.as_ref()
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct ScatterDraws {
@@ -54,19 +112,15 @@ impl ScatterDraws {
         &self.covers
     }
 
-    pub(crate) fn placements(&self) -> crate::world_trace::Placements<'_> {
-        crate::world_trace::Placements {
+    pub(crate) fn placements(&self) -> Placements<'_> {
+        Placements {
             tiles: self.pool.tiles(),
-            records: &self.pool.records,
-            poses: &self.pool.poses,
-            impostors: &self.impostors,
+            records: bytemuck::cast_slice(&self.pool.records),
+            poses: bytemuck::cast_slice(&self.pool.poses),
+            impostors: bytemuck::cast_slice(&self.impostors),
             colors: &self.colors,
             revision: self.pool.revision(),
         }
-    }
-
-    pub(crate) fn placed_impostors(core: &Core) -> u32 {
-        core.impostors.placed.live()
     }
 }
 
@@ -150,12 +204,12 @@ impl ScatterDraws {
                     .insert((terrain.id, tile.key()), Arc::clone(tile), objects);
             }
         }
-        let terrain_part = cx.parts.get::<TerrainPass>();
-        let infos: Vec<TerrainInfo> = terrain_part.map_or_else(Vec::new, |part| {
+        let heightfield = cx.parts.face::<dyn HeightfieldFace>();
+        let infos: Vec<TerrainInfo> = heightfield.map_or_else(Vec::new, |heightfield| {
             terrains
                 .iter()
                 .enumerate()
-                .map(|(index, terrain)| crate::world_trace::terrain_info(part, index, terrain))
+                .map(|(index, terrain)| terrain_info(heightfield, index, terrain))
                 .collect()
         });
         let (dirty, counts_changed) = self.pool.take_changes();
@@ -186,8 +240,8 @@ impl ScatterDraws {
             }
             scatter.set_groups(&core.device, &core.queue, &self.layouts, &counts);
         }
-        let sources = terrain_part
-            .and_then(TerrainPass::cover_sources)
+        let sources = heightfield
+            .and_then(|heightfield| heightfield.cover_sources())
             .map(|sources| SnapSources {
                 heights: sources.heights,
                 control: sources.control,
@@ -216,14 +270,14 @@ impl ScatterDraws {
             .then_some(level_of_detail.pixel_error);
         let fade = core.switch_fades.share;
         let height = core.display.size().height as f32;
-        let impostors = passes
-            .impostor_pass
-            .is_some()
+        let impostors = scatter
+            .placed
+            .prepare_cards(core, (cx.frame.kind.gpu_mode, passes.opaque_kind), &self.impostors)
             .then_some(level_of_detail.impostor_pixels);
         let regions = cx
             .parts
-            .get::<ShadowPass>()
-            .map_or(&[][..], ShadowPass::region_views);
+            .face::<dyn ShadowCastersFace>()
+            .map_or(&[][..], |shadows| shadows.region_views());
         scatter.prepare(
             &core.device,
             &core.queue,
@@ -233,13 +287,24 @@ impl ScatterDraws {
         )
     }
 
-    pub(crate) fn prepare_impostors(&mut self, cx: &mut Step<'_>, prelude: &mut Prelude) -> bool {
+    pub(crate) fn prepare_impostors(
+        &mut self,
+        cx: &mut Step<'_>,
+        prelude: &mut Prelude,
+        placed: &mut PlacedImpostors,
+    ) -> bool {
         let snapshot = cx.frame.snapshot;
         let settings = snapshot.environment.level_of_detail;
         let enabled = cx.frame.kind.gpu_mode && settings.enabled && settings.impostors;
-        let core = &mut *cx.core;
+        let core = &*cx.core;
+        placed.atlas.fit(&core.device, placed_shape(settings.sanitized().impostor_pixels));
+        placed.dropped = 0;
         let (meshes, materials) = (&core.meshes, &core.materials);
-        core.impostors.placed.retain(
+        placed.contents.retain(
+            |mesh| meshes.contains_key(&mesh),
+            |texture| materials.is_texture_resident(texture),
+        );
+        placed.atlas.retain(
             |(mesh, material)| {
                 meshes.contains_key(mesh)
                     && material.is_none_or(|handle| materials.group(handle).is_some())
@@ -249,7 +314,7 @@ impl ScatterDraws {
         let budget = settings
             .max_impostors
             .map(|budget| budget.saturating_sub(core.impostors.atlas.live()));
-        core.impostors.placed.enforce_budget(budget);
+        placed.atlas.enforce_budget(budget);
         let groups = &self.groups;
         let mut records = Vec::with_capacity(groups.len());
         for (index, group) in groups.iter().enumerate() {
@@ -267,7 +332,7 @@ impl ScatterDraws {
                 });
             if let (true, Some(mesh), Some(asset)) = (eligible, mesh, asset) {
                 let key = (group.meshes[0], Some(group.material));
-                record = match core.impostors.placed.record(key, Some(&group.source)) {
+                record = match placed.atlas.record(key, Some(&group.source)) {
                     Some(resident) => resident,
                     None => {
                         let textures = |handle: TextureHandle| {
@@ -277,7 +342,7 @@ impl ScatterDraws {
                                 .find(|texture| texture.handle == handle)
                                 .map(|texture| &*texture.texture)
                         };
-                        let contents = &mut core.impostors.contents;
+                        let contents = &mut placed.contents;
                         let content = (
                             contents.mesh(group.meshes[0], &asset.mesh.mesh),
                             contents.material(Some(&group.source), textures),
@@ -304,20 +369,17 @@ impl ScatterDraws {
                             queue: &core.queue,
                             encoder: &mut *prelude,
                             mips: core.materials.mips(),
-                            pipelines: &mut core.impostors.pipelines,
+                            pipelines: &mut placed.pipelines,
                         };
-                        let supplied = core
-                            .impostors
-                            .placed
-                            .supply(gpu, key, &bake, content, budget);
-                        core.impostors.dropped += u32::from(matches!(supplied, Supplied::Refused));
+                        let supplied = placed.atlas.supply(gpu, key, &bake, content, budget);
+                        placed.dropped += u32::from(matches!(supplied, Supplied::Refused));
                         supplied.record()
                     }
                 };
             }
             records.push(record);
         }
-        core.impostors.placed.release_targets();
+        placed.atlas.release_targets();
         let restyled = records != self.impostors;
         for (index, (layout, record)) in self.layouts.iter_mut().zip(&records).enumerate() {
             let impostor = (record.error(), index as u32);
@@ -462,13 +524,9 @@ impl ScatterDraws {
             return 0;
         };
         let kind = passes.opaque_kind;
-        let temporal = cx.frame.temporal.is_some()
-            && cx
-                .parts
-                .get::<TemporalPass>()
-                .is_some_and(TemporalPass::active);
+        let temporal = cx.frame.temporal.is_some();
         pass.set_bind_group(0, cx.core.shared_group("frame", &["refraction"]), &[]);
-        if kind.lit && !prepass {
+        if !prepass {
             pass.set_bind_group(3, cx.core.shared_group("lights", &[]), &[]);
         }
         pass.set_bind_group(2, &groups[usize::from(temporal)], &[]);
@@ -476,10 +534,7 @@ impl ScatterDraws {
             .frame
             .shape
             .is_some_and(|shape| shape.targets == Targets::Debug)
-            .then(|| cx.parts.get::<DebugViewPass>())
-            .flatten()
-            .and_then(DebugViewPass::records)
-            .map(|records| (records, casts_shadows(cx)));
+            .then(|| casts_shadows(cx));
         let mut draws = 0;
         let fading = scatter.fading_view();
         for (view, fades) in [(0, false), (fading, true)] {
@@ -510,10 +565,10 @@ impl ScatterDraws {
                     }
                     pass.set_index_buffer(source.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.set_vertex_buffer(1, ids);
-                    if let Some((records, casts)) = debug {
+                    if let Some(casts) = debug {
                         let casts = casts && draw.casts.is_some();
                         let record = DrawRecord::of(DrawKind::Placed, level, casts);
-                        bind_record(pass, Some(records), record);
+                        pass.set_vertex_buffer(RECORD_SLOT, cx.core.draw_record(record));
                     }
                     pass.draw_indexed_indirect(args, offset);
                     draws += 1;
@@ -523,19 +578,15 @@ impl ScatterDraws {
         if prepass {
             return draws;
         }
-        if let Some((targets, lit)) = passes.impostor_pass
-            && let (Some(pipeline), Some(group)) = (
-                cx.core.impostors.pipelines.pipeline(targets, lit),
-                cx.core.impostors.placed.group(),
-            )
+        if let (Some(pipeline), Some(group)) = (scatter.placed.card(), scatter.placed.atlas.group())
             && let Some((cards, args, offset)) = scatter.card_source(0)
         {
             pass.set_pipeline(pipeline);
             pass.set_bind_group(1, group, &[]);
             pass.set_vertex_buffer(0, cards);
-            if let Some((records, casts)) = debug {
+            if let Some(casts) = debug {
                 let record = DrawRecord::of(DrawKind::PlacedCard, 0, casts);
-                bind_record(pass, Some(records), record);
+                pass.set_vertex_buffer(RECORD_SLOT, cx.core.draw_record(record));
             }
             pass.draw_indirect(args, offset);
             draws += 1;
@@ -576,7 +627,7 @@ impl ScatterDraws {
             }
             draws += draw_casters(scatter, cx.core, pass, (index, draw), view);
         }
-        if let (Some(pipeline), Some(group)) = (cards, cx.core.impostors.placed.group())
+        if let (Some(pipeline), Some(group)) = (cards, scatter.placed.atlas.group())
             && let Some((cards, args, offset)) = scatter.card_source(view)
         {
             pass.set_pipeline(pipeline);
@@ -590,7 +641,19 @@ impl ScatterDraws {
 }
 
 fn casts_shadows(cx: &View<'_>) -> bool {
-    cx.frame.runs(cx.table, "shadow_maps")
+    cx.parts.produces(cx.table.resource("shadow_maps"))
+}
+
+fn terrain_info(
+    heightfield: &dyn HeightfieldFace,
+    index: usize,
+    terrain: &engine_terrain::RenderTerrain,
+) -> TerrainInfo {
+    let (directory, palette, colors) = heightfield.cover_terrain(index);
+    TerrainInfo {
+        origin: terrain.origin.extend(terrain.pyramid.spacing(0)).to_array(),
+        levels: [directory, terrain.pyramid.levels(), palette, colors],
+    }
 }
 
 fn placed_material(
@@ -861,7 +924,7 @@ fn tile_objects(
             state: STATE_FRESH,
             pad: [0; 3],
         });
-        objects.3.push(crate::gpu_data::ground_data(
+        objects.3.push(engine_render::gpu_data::ground_data(
             draw.source.grounding(),
             placed.ground,
             placed.sink,
@@ -871,7 +934,7 @@ fn tile_objects(
     objects
 }
 
-fn pose_rows(model: Mat4) -> crate::gpu_data::PoseData {
+fn pose_rows(model: Mat4) -> engine_render::gpu_data::PoseData {
     let rows = model.transpose();
     [
         rows.x_axis.to_array(),

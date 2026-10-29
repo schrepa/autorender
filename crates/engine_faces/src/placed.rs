@@ -23,4 +23,6 @@ pub trait PlacedFace {
     fn placements(&self) -> Placements<'_>;
 
     fn slot_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer, u64);
+
+    fn frames(&self) -> Option<(&wgpu::TextureView, u64)>;
 }

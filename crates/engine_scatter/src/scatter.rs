@@ -4,50 +4,54 @@ use std::rc::Rc;
 
 use crate::shaders::entry::{scatter_cull, scatter_snap};
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{MeshHandle, RenderStats};
+use engine_core::{MeshHandle, RecordKey, RenderSnapshot, RenderStats};
+use engine_faces::placed::{PlacedFace, Placements};
+use engine_faces::shadows::KeptRefresh;
 
-use crate::bindings::{RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP, SHADOW_POSES, TEMPORAL_POSES};
-use crate::buffers::{Growable, ReadbackRing};
-use crate::cached::Cached;
-use crate::gpu_data::{ColorData, GroundData, PoseData};
-use crate::graph::{
+use crate::bindings::{CASTER_POSES, SCATTER_CULL, SCATTER_SNAP};
+use crate::gpu_layouts::Cover;
+use crate::scatter_draws::{PlacedImpostors, ScatterDraws};
+use engine_render::bindings::{RETAINED_POSES, TEMPORAL_POSES};
+use engine_render::buffers::{Growable, ReadbackRing};
+use engine_render::cached::Cached;
+use engine_render::gpu_data::{ColorData, GroundData, PoseData};
+use engine_render::gpu_layouts::impostors::ImpostorRecord;
+use engine_render::graph::{
     FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
 };
-use crate::impostors::ImpostorRecord;
-use crate::occupancy::Cover;
-use crate::parts::{
-    Begin, BeginOut, Create, DrawAt, Encode, GpuPart, Hook, OpaqueSlot, PartDecl, PartEntry,
-    Prelude, Step, View,
+use engine_render::parts::{
+    Begin, BeginOut, Create, DrawAt, Encode, GpuPart, Hook, OpaqueSlot, PartAssets, PartDecl,
+    PartEntry, Prelude, Step, View,
 };
-use crate::renderer::scatter_draws::ScatterDraws;
-use crate::shadows::KeptRefresh;
 
-use crate::gpu_layouts::constants::CARD_VERTICES;
-pub(crate) use crate::gpu_layouts::constants::DEAD;
-use crate::gpu_layouts::constants::FADED;
-pub(crate) use crate::gpu_layouts::constants::LAYER_SHIFT;
-pub(crate) use crate::gpu_layouts::constants::NEAR_LEVEL_SHIFT;
-pub(crate) use crate::gpu_layouts::constants::NO_LAYER;
-pub(crate) use crate::gpu_layouts::constants::RANK_SHIFT;
-use crate::gpu_layouts::constants::SCATTER_GROUP;
-pub(crate) use crate::gpu_layouts::constants::SCATTER_LEVELS as LEVELS;
-use crate::gpu_layouts::constants::SHOWN_NONE;
-pub(crate) use crate::gpu_layouts::constants::STATE_ADOPT;
-pub(crate) use crate::gpu_layouts::constants::TERRAIN_INDEX;
-use crate::gpu_layouts::scatter::FrameUniform;
+pub(crate) use crate::gpu_layouts::DEAD;
+use crate::gpu_layouts::FADED;
+use crate::gpu_layouts::FrameUniform;
+pub(crate) use crate::gpu_layouts::LAYER_SHIFT;
+pub(crate) use crate::gpu_layouts::NEAR_LEVEL_SHIFT;
+pub(crate) use crate::gpu_layouts::NO_LAYER;
+pub(crate) use crate::gpu_layouts::RANK_SHIFT;
+use crate::gpu_layouts::SCATTER_GROUP;
+pub(crate) use crate::gpu_layouts::SCATTER_LEVELS as LEVELS;
+use crate::gpu_layouts::SHOWN_NONE;
+pub(crate) use crate::gpu_layouts::STATE_ADOPT;
+pub(crate) use crate::gpu_layouts::TERRAIN_INDEX;
+use engine_render::gpu_layouts::constants::CARD_VERTICES;
 
 pub(crate) const STATE_FRESH: u32 = SHOWN_NONE | SHOWN_NONE << 3 | FADED << 6;
 
 const FADE_MARGIN: f32 = 0.1;
 
-use crate::gpu_layouts::scatter::ViewData;
+const REGIONS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
+
+use crate::gpu_layouts::ViewData;
 
 pub(crate) const NEAR_LEVEL_MASK: u32 = 0x1f;
 pub(crate) const RANK_MAX: f32 = 1023.0;
 
-pub(crate) use crate::gpu_layouts::scatter::Record;
+pub(crate) use crate::gpu_layouts::Record;
 
-pub(crate) use crate::gpu_layouts::scatter::TerrainInfo;
+pub(crate) use crate::gpu_layouts::TerrainInfo;
 
 pub(crate) struct SnapSources<'a> {
     pub heights: &'a wgpu::TextureView,
@@ -60,11 +64,11 @@ pub(crate) struct SnapSources<'a> {
     pub terrains: &'a [TerrainInfo],
 }
 
-use crate::gpu_layouts::scatter::GroupData;
+use crate::gpu_layouts::GroupData;
 
 type SnapKey = (u64, u64, (u64, u64, u64));
 
-use crate::gpu_layouts::scatter::DrawArgs;
+use crate::gpu_layouts::DrawArgs;
 
 pub(crate) struct GroupLayout {
     pub levels: Vec<(u32, u32, i32)>,
@@ -82,12 +86,18 @@ struct GroupLists {
     count: u32,
 }
 
+pub(crate) trait PlacedCovers {
+    fn covers(&self) -> &[Cover];
+
+    fn objects(&self) -> u32;
+}
+
 pub(crate) struct ScatterPass {
-    layout: crate::pipelines::GroupLayout,
-    pose_layouts: [crate::pipelines::GroupLayout; 2],
-    shadow_layout: crate::pipelines::GroupLayout,
+    layout: engine_render::pipelines::GroupLayout,
+    pose_layouts: [engine_render::pipelines::GroupLayout; 2],
+    shadow_layout: engine_render::pipelines::GroupLayout,
     pipeline: Option<wgpu::ComputePipeline>,
-    snap_layout: crate::pipelines::GroupLayout,
+    snap_layout: engine_render::pipelines::GroupLayout,
     snap_pipeline: Option<wgpu::ComputePipeline>,
     snap: wgpu::Buffer,
     terrains: Growable,
@@ -119,6 +129,7 @@ pub(crate) struct ScatterPass {
     terrains_generation: u64,
     left_out: LeftOut,
     pub(crate) resident: u32,
+    pub(crate) placed: PlacedImpostors,
     held: Held,
 }
 
@@ -168,32 +179,32 @@ struct LeftOut {
 
 impl ScatterPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let _owner = crate::memory::owned(PART.decl.brick);
+        let _owner = engine_render::memory::owned(PART.decl.brick);
         let growable =
             |label, bytes| Growable::new(device, label, bytes, wgpu::BufferUsages::empty());
-        let regions_placeholder = crate::targets::texture_2d(
+        let regions_placeholder = engine_render::targets::texture_2d(
             device,
             "engine/scatter-regions-placeholder",
             (1, 1),
             1,
             1,
-            crate::shadows::SHADOW_FORMAT,
+            REGIONS_FORMAT,
             wgpu::TextureUsages::TEXTURE_BINDING,
         );
         Self {
-            layout: crate::pipelines::layout(device, &SCATTER_CULL),
+            layout: engine_render::pipelines::layout(device, &SCATTER_CULL),
             pose_layouts: [
-                crate::pipelines::layout(device, &RETAINED_POSES),
-                crate::pipelines::layout(device, &TEMPORAL_POSES),
+                engine_render::pipelines::layout(device, &RETAINED_POSES),
+                engine_render::pipelines::layout(device, &TEMPORAL_POSES),
             ],
-            shadow_layout: crate::pipelines::layout(device, &SHADOW_POSES),
+            shadow_layout: engine_render::pipelines::layout(device, &CASTER_POSES),
             pipeline: None,
-            snap_layout: crate::pipelines::layout(device, &SCATTER_SNAP),
+            snap_layout: engine_render::pipelines::layout(device, &SCATTER_SNAP),
             snap_pipeline: None,
-            snap: crate::buffers::uniform(
+            snap: engine_render::buffers::uniform(
                 device,
                 "engine/scatter-snap",
-                size_of::<crate::gpu_layouts::scatter::SnapUniform>() as u64,
+                size_of::<crate::gpu_layouts::SnapUniform>() as u64,
             ),
             terrains: growable("engine/scatter-terrains", size_of::<TerrainInfo>() as u64),
             snap_group: Cached::default(),
@@ -201,7 +212,7 @@ impl ScatterPass {
             snapped: None,
             slots_written: false,
             terrains_generation: 0,
-            frame: crate::buffers::uniform(
+            frame: engine_render::buffers::uniform(
                 device,
                 "engine/scatter-frame",
                 size_of::<FrameUniform>() as u64,
@@ -255,6 +266,7 @@ impl ScatterPass {
                 readback: ReadbackRing::new("engine/scatter-readback"),
             },
             resident: 0,
+            placed: PlacedImpostors::new(device),
             held: Held::default(),
         }
     }
@@ -287,7 +299,7 @@ impl ScatterPass {
     pub(crate) fn set_groups(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         groups: &[GroupLayout],
         counts: &[u32],
     ) {
@@ -347,7 +359,7 @@ impl ScatterPass {
     pub(crate) fn write_slots(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         (poses, colors, records, grounds): (&[PoseData], &[ColorData], &[Record], &[GroundData]),
         dirty: Option<std::ops::Range<u32>>,
     ) -> Option<std::ops::Range<u32>> {
@@ -434,7 +446,7 @@ impl ScatterPass {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         (view_projection, eye): (Mat4, Vec3),
         (pixel_error, height, impostors, fade): (Option<f32>, f32, Option<f32>, f32),
         regions: &[(usize, KeptRefresh)],
@@ -450,7 +462,7 @@ impl ScatterPass {
         let mut views = std::mem::take(&mut self.frame_views.data);
         views.clear();
         views.push(ViewData {
-            planes: crate::ground_cover::planes(view_projection),
+            planes: engine_render::gpu_data::planes(view_projection),
             limits: [0.0; 4],
         });
         for &(map, region) in regions {
@@ -500,20 +512,20 @@ impl ScatterPass {
         queue.write_buffer(&self.draws, 0, bytemuck::cast_slice(&self.args.lists));
         self.pipeline.get_or_insert_with(|| pipeline(device));
         if self.cull_group.stale(&self.generation) {
-            let group = crate::pipelines::group(
+            let group = engine_render::pipelines::group(
                 device,
                 "engine/scatter-cull",
                 &SCATTER_CULL,
                 &self.layout,
                 &[
-                    crate::buffers::entry("frame", &self.frame),
-                    crate::buffers::entry("records", &self.records),
-                    crate::buffers::entry("groups", &self.groups),
-                    crate::buffers::entry("ids", &self.ids),
-                    crate::buffers::entry("draws", &self.draws),
-                    crate::buffers::entry("views", &self.views),
-                    crate::buffers::entry("cards", &self.cards),
-                    crate::buffers::entry("card_args", &self.card_args),
+                    engine_render::buffers::entry("frame", &self.frame),
+                    engine_render::buffers::entry("records", &self.records),
+                    engine_render::buffers::entry("groups", &self.groups),
+                    engine_render::buffers::entry("ids", &self.ids),
+                    engine_render::buffers::entry("draws", &self.draws),
+                    engine_render::buffers::entry("views", &self.views),
+                    engine_render::buffers::entry("cards", &self.cards),
+                    engine_render::buffers::entry("card_args", &self.card_args),
                 ],
             );
             self.cull_group.set(self.generation, group);
@@ -526,43 +538,43 @@ impl ScatterPass {
         let [retained, temporal] = &self.pose_layouts;
         self.pose_groups.get_or_insert_with(self.generation, || {
             [
-                crate::pipelines::group(
+                engine_render::pipelines::group(
                     device,
                     "engine/scatter-poses",
                     &RETAINED_POSES,
                     retained,
                     &[
-                        crate::buffers::entry("poses", &self.poses),
-                        crate::buffers::entry("colors", &self.colors),
-                        crate::buffers::entry("grounds", &self.grounds),
+                        engine_render::buffers::entry("poses", &self.poses),
+                        engine_render::buffers::entry("colors", &self.colors),
+                        engine_render::buffers::entry("grounds", &self.grounds),
                     ],
                 ),
-                crate::pipelines::group(
+                engine_render::pipelines::group(
                     device,
                     "engine/scatter-temporal-poses",
                     &TEMPORAL_POSES,
                     temporal,
                     &[
-                        crate::buffers::entry("poses", &self.poses),
-                        crate::buffers::entry("colors", &self.colors),
-                        crate::buffers::entry("previous_poses", &self.poses),
-                        crate::buffers::entry("grounds", &self.grounds),
+                        engine_render::buffers::entry("poses", &self.poses),
+                        engine_render::buffers::entry("colors", &self.colors),
+                        engine_render::buffers::entry("previous_poses", &self.poses),
+                        engine_render::buffers::entry("grounds", &self.grounds),
                     ],
                 ),
             ]
         });
         self.shadow_group.get_or_insert_with(self.generation, || {
-            crate::pipelines::group(
+            engine_render::pipelines::group(
                 device,
                 "engine/scatter-shadow-poses",
-                &SHADOW_POSES,
+                &CASTER_POSES,
                 &self.shadow_layout,
                 &[
-                    crate::buffers::entry("slot_poses", &self.poses),
-                    crate::buffers::entry("slot_colors", &self.colors),
+                    engine_render::buffers::entry("slot_poses", &self.poses),
+                    engine_render::buffers::entry("slot_colors", &self.colors),
                     (
                         "shadow_regions",
-                        crate::pipelines::view(&self.regions_placeholder.view),
+                        engine_render::pipelines::view(&self.regions_placeholder.view),
                     ),
                 ],
             )
@@ -572,7 +584,7 @@ impl ScatterPass {
     pub(crate) fn prepare_snap(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         sources: Option<SnapSources<'_>>,
         eye: Vec3,
     ) {
@@ -589,7 +601,7 @@ impl ScatterPass {
         }
         queue.write_buffer(&self.terrains, 0, bytes);
         let view = eye.extend(0.0).to_array();
-        let uniform = crate::gpu_layouts::scatter::SnapUniform {
+        let uniform = crate::gpu_layouts::SnapUniform {
             counts: [self.objects, sources.terrains.len() as u32, 0, 0],
             eye: view,
         };
@@ -617,35 +629,27 @@ impl ScatterPass {
             self.slots_written = false;
         }
         if self.snap_group.stale(&key) {
-            let group = crate::pipelines::group(
+            let group = engine_render::pipelines::group(
                 device,
                 "engine/scatter-snap",
                 &SCATTER_SNAP,
                 &self.snap_layout,
                 &[
-                    crate::buffers::entry("snap", &self.snap),
-                    crate::buffers::entry("records", &self.records),
-                    crate::buffers::entry("poses", &self.poses),
-                    crate::buffers::entry("terrains", &self.terrains),
-                    crate::buffers::entry("directory", sources.directory),
-                    ("heights", crate::pipelines::view(sources.heights)),
-                    crate::buffers::entry("grounds", &self.grounds),
-                    ("control", crate::pipelines::view(sources.control)),
-                    crate::buffers::entry("palette", sources.palette),
-                    ("macro_maps", crate::pipelines::view(sources.macro_maps)),
+                    engine_render::buffers::entry("snap", &self.snap),
+                    engine_render::buffers::entry("records", &self.records),
+                    engine_render::buffers::entry("poses", &self.poses),
+                    engine_render::buffers::entry("terrains", &self.terrains),
+                    engine_render::buffers::entry("directory", sources.directory),
+                    ("heights", engine_render::pipelines::view(sources.heights)),
+                    engine_render::buffers::entry("grounds", &self.grounds),
+                    ("control", engine_render::pipelines::view(sources.control)),
+                    engine_render::buffers::entry("palette", sources.palette),
+                    ("macro_maps", engine_render::pipelines::view(sources.macro_maps)),
                 ],
             );
             self.snap_group.set(key, group);
         }
         self.snapping = true;
-    }
-
-    pub(crate) fn objects(&self) -> u32 {
-        self.objects
-    }
-
-    pub(crate) fn slot_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
-        (&self.records, &self.poses, self.generation)
     }
 
     pub(crate) fn pose_groups(&self) -> Option<&[wgpu::BindGroup; 2]> {
@@ -695,7 +699,7 @@ impl ScatterPass {
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        profiler: &crate::profiling::GpuProfiler,
+        profiler: &engine_render::profiling::GpuProfiler,
     ) {
         let (Some(pipeline), Some(group)) = (&self.pipeline, self.cull_group.get()) else {
             return;
@@ -761,21 +765,25 @@ impl ScatterPass {
 }
 
 fn snap_pipeline(device: &wgpu::Device) -> wgpu::ComputePipeline {
-    let pipeline_layout =
-        crate::pipelines::layout_of(device, &crate::pipeline_layouts::SCATTER_SNAP_PIPELINES);
-    crate::pipelines::compute_entry(device, &pipeline_layout, scatter_snap::snap_scatter)
+    let pipeline_layout = engine_render::pipelines::layout_of(
+        device,
+        &crate::pipeline_layouts::SCATTER_SNAP_PIPELINES,
+    );
+    engine_render::pipelines::compute_entry(device, &pipeline_layout, scatter_snap::snap_scatter)
 }
 
 fn pipeline(device: &wgpu::Device) -> wgpu::ComputePipeline {
-    let pipeline_layout =
-        crate::pipelines::layout_of(device, &crate::pipeline_layouts::SCATTER_CULL_PIPELINES);
-    crate::pipelines::compute_entry(device, &pipeline_layout, scatter_cull::cull_scatter)
+    let pipeline_layout = engine_render::pipelines::layout_of(
+        device,
+        &crate::pipeline_layouts::SCATTER_CULL_PIPELINES,
+    );
+    engine_render::pipelines::compute_entry(device, &pipeline_layout, scatter_cull::cull_scatter)
 }
 
 pub(crate) static PART: PartEntry = PartEntry {
     decl: PartDecl {
         name: "scatter",
-        brick: "terrain",
+        brick: "scatter",
         passes: &[PassDecl {
             name: "scatter",
             stage: Stage::Prepare,
@@ -793,8 +801,11 @@ pub(crate) static PART: PartEntry = PartEntry {
         effects: &[],
         labels: &[],
         lazy: false,
-        faces: &[],
-        needs: &[],
+        faces: &[
+            engine_render::offer_face!(ScatterPass => dyn PlacedFace),
+            engine_render::offer_face!(ScatterPass => dyn PlacedCovers),
+        ],
+        needs: &["meshes"],
         piece: None,
     },
     create,
@@ -804,33 +815,39 @@ fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
     Box::new(ScatterPass::new(&cx.core.device))
 }
 
-impl ScatterPass {
-    pub(crate) fn placed_meshes(&self) -> &BTreeSet<MeshHandle> {
-        &self.held.meshes.0
-    }
-
-    pub(crate) fn placed_generation(&self) -> u64 {
-        self.held.meshes.1
-    }
-
-    pub(crate) fn impostors(&self) -> &[ImpostorRecord] {
-        self.held.draws.impostors()
-    }
-
-    pub(crate) fn placements(&self) -> crate::world_trace::Placements<'_> {
-        self.held.draws.placements()
-    }
-
-    pub(crate) fn covers(&self) -> &[Cover] {
-        self.held.draws.covers()
-    }
-
-    pub(crate) fn moved(&self) -> &[(Vec3, Vec3)] {
+impl PlacedFace for ScatterPass {
+    fn moved(&self) -> &[(Vec3, Vec3)] {
         &self.held.moved
     }
 
-    pub(crate) fn restyled(&self) -> bool {
+    fn restyled(&self) -> bool {
         self.held.restyled
+    }
+
+    fn impostors(&self) -> &[ImpostorRecord] {
+        self.held.draws.impostors()
+    }
+
+    fn placements(&self) -> Placements<'_> {
+        self.held.draws.placements()
+    }
+
+    fn slot_buffers(&self) -> (&wgpu::Buffer, &wgpu::Buffer, u64) {
+        (&self.records, &self.poses, self.generation)
+    }
+
+    fn frames(&self) -> Option<(&wgpu::TextureView, u64)> {
+        self.placed.atlas.frames()
+    }
+}
+
+impl PlacedCovers for ScatterPass {
+    fn covers(&self) -> &[Cover] {
+        self.held.draws.covers()
+    }
+
+    fn objects(&self) -> u32 {
+        self.objects
     }
 }
 
@@ -852,8 +869,24 @@ impl GpuPart for ScatterPass {
         }
     }
 
+    fn asset_generation(&self) -> u64 {
+        self.held.meshes.1
+    }
+
+    fn assets<'s>(&self, snapshot: &'s RenderSnapshot, assets: &mut PartAssets<'s>) {
+        let placed = engine_terrain::RenderTerrains::of(snapshot)
+            .terrains
+            .iter()
+            .flat_map(|terrain| terrain.assets.iter().flatten());
+        for asset in placed {
+            assets.meshes.extend(asset.meshes().map(|mesh| (mesh.handle, mesh)));
+            assets.materials.extend(asset.materials());
+            assets.textures.extend(asset.textures.iter());
+        }
+    }
+
     fn prepare(&mut self, cx: &mut Step<'_>, prelude: &mut Prelude) {
-        self.held.restyled = self.held.draws.prepare_impostors(cx, prelude);
+        self.held.restyled = self.held.draws.prepare_impostors(cx, prelude, &mut self.placed);
     }
 
     fn prepare_draws(&mut self, cx: &mut Step<'_>, _encoder: &mut wgpu::CommandEncoder) {
@@ -900,12 +933,13 @@ impl GpuPart for ScatterPass {
                 casters,
                 cards,
             } => draws.draw_shadow(self, cx, pass, (map, casters, cards)),
-            DrawAt::Opaque { .. } | DrawAt::ProbeFace { .. } => 0,
+            DrawAt::Opaque { .. } | DrawAt::View { .. } | DrawAt::Transparent { .. } => 0,
         }
     }
 
     fn after_submit(&mut self) {
         self.held.prepared = false;
+        self.placed.atlas.after_submit();
         let entries = Rc::clone(&self.left_out.entries);
         self.left_out
             .readback
@@ -916,10 +950,37 @@ impl GpuPart for ScatterPass {
         ScatterPass::capacity_bytes(self)
     }
 
-    fn stats(&self, cx: &View<'_>, stats: &mut RenderStats) {
+    fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
+        let placed = self.placed.atlas.live();
         stats.terrain.placed_objects = self.resident;
         stats.terrain.placed_far_objects = self.held.draws.far_objects();
-        stats.terrain.placed_impostors = ScatterDraws::placed_impostors(cx.core);
+        stats.terrain.placed_impostors = placed;
         stats.terrain.dropped_placed_objects = self.left_out();
+        stats.level_of_detail.impostors += placed;
+        stats.level_of_detail.dropped_impostors += self.placed.dropped;
+    }
+
+    fn set_cooking(&mut self, cooking: bool) {
+        self.placed.atlas.set_cooking(cooking);
+    }
+
+    fn records_left(&self) -> Option<(&'static str, u64)> {
+        Some(("placed impostors", self.placed.atlas.left()))
+    }
+
+    fn want_records(&mut self, wants: &mut Vec<RecordKey>) {
+        self.placed.atlas.take_wants(wants);
+    }
+
+    fn asks_record(&self, record: RecordKey) -> bool {
+        self.placed.atlas.asks(record)
+    }
+
+    fn answer_record(&mut self, record: RecordKey, bytes: Option<Vec<u8>>) {
+        self.placed.atlas.answer(record, bytes);
+    }
+
+    fn take_made_records(&mut self, made: &mut Vec<(RecordKey, Vec<u8>)>) {
+        self.placed.atlas.take_made(made);
     }
 }
