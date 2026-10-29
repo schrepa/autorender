@@ -1,53 +1,14 @@
+import package::face::sun::sun_direction;
 import package::frame::view::{detail_distance, detail_level};
-import package::shadows::sample::shadow;
+import package::terrain::bounce::{BOUNCE, BOUNCE_HIGH, BOUNCE_LOW, bounce_held, bounce_texel};
 import package::terrain::horizons::{HORIZON_LAYERS, HORIZON_RECORDS, HORIZON_RECORD_VECTORS,
-    TERRAIN_HORIZONS, terrain_horizon_records, terrain_horizon_sampler, terrain_horizons};
-
-override BOUNCE: bool = true;
-
-const BOUNCE_LOW: f32 = 1.5;
-const BOUNCE_HIGH: f32 = 24.0;
-const BOUNCE_WINDOW_ROW: u32 = 4096u;
+    TERRAIN_HORIZONS, horizon_crest, horizon_records, horizon_turn, terrain_horizon_records,
+    terrain_horizon_sampler, terrain_horizons};
 
 struct BounceLight {
     light: vec3<f32>,
     sky: f32,
     weight: f32,
-}
-
-fn bounce_layer(texel: vec2<f32>, first: u32, normal: vec3<f32>) -> vec4<f32> {
-    let mean = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, texel, first, 0.0);
-    let x = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, texel, first + 1u,
-        0.0);
-    let y = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, texel, first + 2u,
-        0.0);
-    let z = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, texel, first + 3u,
-        0.0);
-    return mean + x * normal.x + y * normal.y + z * normal.z;
-}
-
-fn bounce_texel(at: u32, level: u32, uv: vec2<f32>) -> vec2<f32> {
-    let header = terrain_horizon_records[at + 2u];
-    let arranged = terrain_horizon_records[at + 3u];
-    let columns = f32(u32(header.y) >> level);
-    let window = min(header.w, columns);
-    let packed = u32(terrain_horizon_records[at + 4u + level / 4u][level % 4u]);
-    let first = vec2<f32>(f32(packed % BOUNCE_WINDOW_ROW), f32(packed / BOUNCE_WINDOW_ROW));
-    let column = clamp(uv * columns - 0.5, vec2<f32>(0.0), vec2<f32>(columns - 1.0)) - first;
-    if any(column < vec2<f32>(0.0)) || any(column > vec2<f32>(window - 1.0)) {
-        return vec2<f32>(-1.0);
-    }
-    let row = u32(arranged.z);
-    let region = vec2<f32>(f32(level % row), f32(level / row)) * header.w;
-    return (region + column + 0.5) * arranged.x;
-}
-
-fn bounce_held(texel: vec2<f32>, first: u32, normal: vec3<f32>, above: f32) -> vec4<f32> {
-    let held = bounce_layer(texel, first, normal);
-    if above <= 0.0 {
-        return held;
-    }
-    return mix(held, bounce_layer(texel, first + 4u, normal), above);
 }
 
 struct BounceAt {
@@ -58,13 +19,43 @@ struct BounceAt {
     layer: f32,
 }
 
+fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
+    if !TERRAIN_HORIZONS {
+        return 1.0;
+    }
+    let sun = sun_direction();
+    let level = length(sun.xz);
+    if level < 1.0e-4 {
+        return 1.0;
+    }
+    let rise = sun.y / level;
+    let turn = horizon_turn(sun.xz);
+    let count = min(horizon_records(), HORIZON_RECORDS / HORIZON_RECORD_VECTORS);
+    var visible = 1.0;
+    for (var index = 0u; index < count; index++) {
+        let at = HORIZON_RECORD_VECTORS * index;
+        let crest = horizon_crest(at, turn, world, on_terrain);
+        if !crest.inside {
+            continue;
+        }
+        let clearance = crest.distance * (crest.slope - rise);
+        let shape = terrain_horizon_records[at + 1u];
+        let edge = max(crest.distance * shape.y, 0.5);
+        visible = min(visible, smoothstep(-edge, edge, crest.elevation + shape.z - clearance));
+        if visible <= 0.0 {
+            break;
+        }
+    }
+    return visible;
+}
+
 fn bounce_at(world: vec3<f32>, on_terrain: bool) -> BounceAt {
     var found: BounceAt;
     found.texel = vec2<f32>(-1.0);
     if !BOUNCE || !TERRAIN_HORIZONS {
         return found;
     }
-    let count = min(u32(shadow.level_state.w), HORIZON_RECORDS / HORIZON_RECORD_VECTORS);
+    let count = min(horizon_records(), HORIZON_RECORDS / HORIZON_RECORD_VECTORS);
     for (var index = 0u; index < count; index++) {
         let at = HORIZON_RECORD_VECTORS * index;
         let header = terrain_horizon_records[at + 2u];

@@ -1,8 +1,10 @@
-import package::frame::view::{PI, lighting};
-import package::sky::air::{cloud_passing, sky_average};
+import package::face::heightfield::{COVER_FAR_SIDE, cover_seen, macro_tint};
+import package::face::horizons::terrain_visibility;
+import package::face::sky::{ambient, cloud_passing, sky_average};
+import package::face::sun::{sun_color, sun_direction};
+import package::frame::view::PI;
 import package::terrain::horizons::{HORIZON_LAYERS, HORIZON_RECORD_VECTORS, terrain_horizon_records,
-    terrain_horizon_sampler, terrain_horizons, terrain_visibility};
-import package::terrain::variety::{COVER_FAR_SIDE, cover_seen, macro_tint};
+    terrain_horizon_sampler, terrain_horizons};
 
 struct BounceFrame {
     bins: array<vec4<f32>, BOUNCE_BINS>,
@@ -111,10 +113,10 @@ fn bounce_ground(@builtin(global_invocation_id) id: vec3<u32>) {
         seen = sky_texel.r;
         turn = sky_texel.gba * 2.0 - 1.0;
     }
-    var light = sky_average(normalize(normal + turn)) * (lighting.zenith.w * seen);
-    let wrapped = max((dot(normal, lighting.sun.xyz) + 0.25) / 1.25, 0.0);
+    var light = sky_average(normalize(normal + turn)) * (ambient() * seen);
+    let wrapped = max((dot(normal, sun_direction()) + 0.25) / 1.25, 0.0);
     if wrapped > 0.0 {
-        light += lighting.sun_color.rgb
+        light += sun_color()
             * (wrapped * terrain_visibility(world, true) * cloud_passing(world));
     }
     textureStore(bounce_light_out, id.xy, terrain.layers.y, vec4<f32>(albedo * light, 1.0));

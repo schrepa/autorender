@@ -3,14 +3,14 @@ use std::rc::Rc;
 
 use super::*;
 use crate::bindings::{TERRAIN_SUBDIVISION, TERRAIN_SUBDIVISION_CAMERA};
-use crate::buffers::{Growable, ReadbackRing};
-use crate::cached::{Bound, GroupCache, Versioned};
+use engine_render::buffers::{Growable, ReadbackRing};
+use engine_render::cached::{Bound, GroupCache, Versioned};
 use crate::gpu_layouts::constants::{
     SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SUBDIVISION_DRAW, SUBDIVISION_LEAVES,
     SUBDIVISION_REFUSED, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES,
 };
-use crate::gpu_layouts::terrain::SubdivisionUniform;
-use crate::shaders::entry::meshes;
+use crate::shaders::entry::terrain as draw;
+use engine_faces::heightfield::SubdivisionUniform;
 
 const LEAF_BYTES: u64 = 24;
 const NODE_BYTES: u64 = 4;
@@ -87,8 +87,8 @@ pub(crate) struct SurfaceTrees {
     uniforms: Versioned<wgpu::Buffer>,
     uniforms_written: Vec<u8>,
     pub(super) stand_in: wgpu::Buffer,
-    camera_layout: crate::pipelines::GroupLayout,
-    tree_layout: crate::pipelines::GroupLayout,
+    camera_layout: engine_render::pipelines::GroupLayout,
+    tree_layout: engine_render::pipelines::GroupLayout,
     camera_group: Option<wgpu::BindGroup>,
     pipelines: Option<[wgpu::ComputePipeline; 3]>,
     frames: u64,
@@ -129,7 +129,7 @@ impl SurfaceTrees {
                 ARGS_BYTES,
                 wgpu::BufferUsages::INDIRECT,
             ),
-            indices: crate::memory::buffer_init(
+            indices: engine_render::memory::buffer_init(
                 device,
                 &wgpu::util::BufferInitDescriptor {
                     label: Some("engine/terrain-surface-indices"),
@@ -137,20 +137,20 @@ impl SurfaceTrees {
                     usage: wgpu::BufferUsages::INDEX,
                 },
             ),
-            uniforms: Versioned::new(crate::buffers::uniform(
+            uniforms: Versioned::new(engine_render::buffers::uniform(
                 device,
                 "engine/terrain-subdivision",
                 SLOT,
             )),
             uniforms_written: Vec::new(),
-            stand_in: crate::buffers::storage(
+            stand_in: engine_render::buffers::storage(
                 device,
                 "engine/terrain-surface-stand-in",
                 LEAF_BYTES,
                 wgpu::BufferUsages::empty(),
             ),
-            camera_layout: crate::pipelines::layout(device, &TERRAIN_SUBDIVISION_CAMERA),
-            tree_layout: crate::pipelines::layout(device, &TERRAIN_SUBDIVISION),
+            camera_layout: engine_render::pipelines::layout(device, &TERRAIN_SUBDIVISION_CAMERA),
+            tree_layout: engine_render::pipelines::layout(device, &TERRAIN_SUBDIVISION),
             camera_group: None,
             pipelines: None,
             frames: 0,
@@ -202,7 +202,10 @@ impl SurfaceTrees {
         self.ground(index).map(|_| self.slot_draw(index))
     }
 
-    pub(super) fn water(&self, index: usize) -> Option<(u32, SurfaceDraw)> {
+    pub(super) fn water(
+        &self,
+        index: usize,
+    ) -> Option<(u32, engine_faces::heightfield::SurfaceDraw<'_>)> {
         let slot = (self.grounds..self.frame.len()).find(|&slot| {
             self.frame
                 .get(slot)
@@ -210,7 +213,14 @@ impl SurfaceTrees {
                 .flatten()
                 .is_some_and(|subdivided| subdivided.terrain == index)
         })?;
-        Some(((slot as u64 * SLOT) as u32, self.slot_draw(slot)))
+        Some((
+            (slot as u64 * SLOT) as u32,
+            engine_faces::heightfield::SurfaceDraw {
+                indices: &self.indices,
+                args: &self.args,
+                offset: slot as u64 * ARGS_BYTES + DRAW_OFFSET,
+            },
+        ))
     }
 
     fn slot_draw(&self, slot: usize) -> SurfaceDraw {
@@ -228,7 +238,7 @@ impl SurfaceTrees {
     pub(super) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         terrains: &RenderTerrains,
         views: &TerrainViews<'_>,
         holds_water: impl Fn(u64) -> bool,
@@ -264,7 +274,7 @@ impl SurfaceTrees {
             self.readbacks.clear();
         }
         if slots * SLOT > self.uniforms.size() {
-            self.uniforms.replace(crate::buffers::uniform(
+            self.uniforms.replace(engine_render::buffers::uniform(
                 device,
                 "engine/terrain-subdivision",
                 (slots * SLOT).next_power_of_two(),
@@ -299,7 +309,7 @@ impl SurfaceTrees {
 
     fn lay_out(
         &mut self,
-        (device, queue): (&wgpu::Device, &crate::gpu_calls::Queue),
+        (device, queue): (&wgpu::Device, &engine_render::gpu_calls::Queue),
         (terrain, index, measure): (&RenderTerrain, usize, Measure),
         (depth, (first, room)): (u32, (u32, u32)),
         planes: [[f32; 4]; 6],
@@ -339,7 +349,7 @@ impl SurfaceTrees {
     fn tree(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         (terrain, measure): (&RenderTerrain, Measure),
         (wanted, capacity): (u32, u32),
     ) -> (f32, u32) {
@@ -361,7 +371,7 @@ impl SurfaceTrees {
                 tree.room = capacity;
             }
             _ => {
-                let buffer = crate::buffers::storage(
+                let buffer = engine_render::buffers::storage(
                     device,
                     "engine/terrain-subdivision-tree",
                     tree_bytes(depth),
@@ -389,7 +399,7 @@ impl SurfaceTrees {
         encoder: &mut wgpu::CommandEncoder,
         camera: &wgpu::Buffer,
         terrain_group: &wgpu::BindGroup,
-        profiler: &crate::profiling::GpuProfiler,
+        profiler: &engine_render::profiling::GpuProfiler,
     ) {
         if !self.any() {
             return;
@@ -452,24 +462,24 @@ impl SurfaceTrees {
     fn bind(&mut self, device: &wgpu::Device, camera: &wgpu::Buffer) {
         let (camera_layout, tree_layout) = (&self.camera_layout, &self.tree_layout);
         self.pipelines.get_or_insert_with(|| {
-            let layout = crate::pipelines::layout_of(
+            let layout = engine_render::pipelines::layout_of(
                 device,
                 &crate::pipeline_layouts::TERRAIN_SUBDIVISION_PIPELINES,
             );
             [
-                meshes::subdivide_begin,
-                meshes::subdivide_decide,
-                meshes::subdivide_apply,
+                draw::subdivide_begin,
+                draw::subdivide_decide,
+                draw::subdivide_apply,
             ]
-            .map(|entry| crate::pipelines::compute_entry(device, &layout, entry))
+            .map(|entry| engine_render::pipelines::compute_entry(device, &layout, entry))
         });
         self.camera_group.get_or_insert_with(|| {
-            crate::pipelines::group(
+            engine_render::pipelines::group(
                 device,
                 "engine/terrain-subdivision-camera",
                 &TERRAIN_SUBDIVISION_CAMERA,
                 camera_layout,
-                &[crate::buffers::entry("camera", camera)],
+                &[engine_render::buffers::entry("camera", camera)],
             )
         });
         let uniform = Bound::of(
@@ -543,7 +553,7 @@ fn tree_bytes(depth: u32) -> u64 {
     (u64::from(counts_words(depth)) + (1_u64 << (depth - 5))) * 4
 }
 
-fn seed(queue: &crate::gpu_calls::Queue, buffer: &wgpu::Buffer, depth: u32) {
+fn seed(queue: &engine_render::gpu_calls::Queue, buffer: &wgpu::Buffer, depth: u32) {
     let word = |at: u64, value: u32| queue.write_buffer(buffer, at * 4, &value.to_le_bytes());
     word(1, 2);
     for level in 1..=depth - SUBDIVISION_COUNTED {

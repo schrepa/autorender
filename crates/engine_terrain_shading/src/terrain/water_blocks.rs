@@ -56,24 +56,6 @@ impl Texels {
     }
 }
 
-pub(crate) struct TerrainWaterDraws<'a> {
-    pub(crate) heights: &'a wgpu::TextureView,
-    pub(crate) views: &'a wgpu::Buffer,
-    pub(crate) uniforms: &'a wgpu::Buffer,
-    pub(crate) directory: &'a wgpu::Buffer,
-    pub(crate) leaves: &'a wgpu::Buffer,
-    pub(crate) trees: &'a wgpu::Buffer,
-    pub(crate) surfaces: &'a wgpu::TextureView,
-    pub(crate) info: &'a wgpu::TextureView,
-    pub(crate) generation: [u64; 6],
-    pub(crate) terrains: Vec<(u64, u32, u32, SurfaceDraw)>,
-    pub(crate) targets: [f32; 2],
-    pub(crate) blocks: [u32; 2],
-    pub(crate) subdivided: [u32; 2],
-    pub(crate) ground: Option<(&'a crate::pipelines::GroupLayout, &'a wgpu::BindGroup)>,
-    pub(crate) held: &'a HashMap<(u64, TileKey), Arc<Tile>>,
-}
-
 pub(crate) struct WaterBlocks {
     arrays: Option<Arrays>,
     pub(crate) generation: u64,
@@ -94,7 +76,7 @@ pub(crate) struct WaterBlocks {
 impl WaterBlocks {
     pub(super) fn new(device: &wgpu::Device) -> Self {
         let stand_in = |label: &'static str, format| {
-            let texture = crate::memory::texture(
+            let texture = engine_render::memory::texture(
                 device,
                 &wgpu::TextureDescriptor {
                     label: Some(label),
@@ -175,7 +157,7 @@ impl WaterBlocks {
         &'a self,
         pass: &'a TerrainPass,
         terrains: &RenderTerrains,
-    ) -> Option<TerrainWaterDraws<'a>> {
+    ) -> Option<WaterDraws<'a>> {
         let (heights, _, _) = pass.atlas.views()?;
         let (surfaces, info) = self.views()?;
         let (leaves, leaves_generation) = pass.surface_leaves()?;
@@ -187,7 +169,7 @@ impl WaterBlocks {
                 Some((terrain.id, uniform, tree, leaves))
             })
             .collect();
-        Some(TerrainWaterDraws {
+        Some(WaterDraws {
             heights,
             views: &pass.patches.views,
             uniforms: &pass.tables.uniforms,
@@ -208,11 +190,6 @@ impl WaterBlocks {
             targets: pass.surface.targets(),
             blocks: [self.resident(), self.dropped],
             subdivided: pass.surface.water_stats(),
-            ground: pass
-                .pipelines
-                .surface_group()
-                .map(|group| (&pass.pipelines.layout, group)),
-            held: &pass.atlas.held,
         })
     }
 
@@ -366,7 +343,7 @@ impl WaterBlocks {
         }
         let layers = needed.next_power_of_two().min(max_layers.max(1));
         let array = |label: &'static str, format| {
-            crate::memory::texture(
+            engine_render::memory::texture(
                 device,
                 &wgpu::TextureDescriptor {
                     label: Some(label),

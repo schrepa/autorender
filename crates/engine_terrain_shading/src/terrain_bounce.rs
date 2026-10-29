@@ -6,8 +6,8 @@ use engine_terrain::bounce::{PROBE_BYTES, TerrainBounce, bin_moments};
 use engine_terrain::{MAX_BOUNCE_LEVELS, RenderTerrain, RenderTerrains, TerrainSettings};
 
 use crate::bindings::BOUNCE;
-use crate::buffers::Growable;
-use crate::cached::{Bound, GroupCache};
+use engine_render::buffers::Growable;
+use engine_render::cached::{Bound, GroupCache};
 use crate::gpu_layouts::bounce::{BounceFrame, BounceTerrain};
 use crate::gpu_layouts::constants::BOUNCE_GROUP;
 use crate::shaders::entry::terrain_bounce;
@@ -26,7 +26,7 @@ const SCRATCH_PROBE_BYTES: u64 = (BOUNCE_LAYERS * 16) as u64;
 const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const GROUND_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Uint;
 const GROUND_LAYERS: u32 = 2;
-const BINDINGS: usize = 19;
+const BINDINGS: usize = 18;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct BounceLevels {
@@ -60,8 +60,7 @@ impl BounceLevels {
 }
 
 pub(crate) struct SceneSources<'a> {
-    pub(crate) lighting: &'a wgpu::Buffer,
-    pub(crate) shadow: (&'static str, Bound<'a>),
+    pub(crate) pieces: &'a wgpu::Buffer,
     pub(crate) cloud_shadows: (&'static str, Bound<'a>),
 }
 
@@ -82,7 +81,7 @@ struct Maps {
 }
 
 pub(crate) struct Bounce {
-    layout: crate::pipelines::GroupLayout,
+    layout: engine_render::pipelines::GroupLayout,
     pipelines: Option<[wgpu::ComputePipeline; 3]>,
     frame: wgpu::Buffer,
     terrains: Vec<Growable>,
@@ -111,8 +110,8 @@ pub(crate) struct Bounce {
 }
 
 impl Bounce {
-    pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
-        let frame = crate::buffers::uniform(
+    pub(crate) fn new(device: &wgpu::Device, queue: &engine_render::gpu_calls::Queue) -> Self {
+        let frame = engine_render::buffers::uniform(
             device,
             "engine/terrain-bounce-frame",
             size_of::<BounceFrame>() as u64,
@@ -125,7 +124,7 @@ impl Bounce {
             }),
         );
         let stand_in = |label, usage| {
-            crate::targets::texture_2d(device, label, (1, 1), 1, 1, LIGHT_FORMAT, usage)
+            engine_render::targets::texture_2d(device, label, (1, 1), 1, 1, LIGHT_FORMAT, usage)
                 .create_view(&wgpu::TextureViewDescriptor {
                     dimension: Some(wgpu::TextureViewDimension::D2Array),
                     ..Default::default()
@@ -135,7 +134,7 @@ impl Bounce {
             Growable::new(device, label, bytes as u64, wgpu::BufferUsages::empty())
         };
         Self {
-            layout: crate::pipelines::layout(device, &BOUNCE),
+            layout: engine_render::pipelines::layout(device, &BOUNCE),
             pipelines: None,
             frame,
             terrains: (0..MOST_LEVELS)
@@ -253,7 +252,7 @@ impl Bounce {
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         terrains: &RenderTerrains,
         (horizons, sky, colors, palette): (&Horizons, &SkyMaps, &MacroMaps, &[u32]),
         cooking: bool,
@@ -380,7 +379,7 @@ impl Bounce {
             .grow(device, u64::from(scratch) * SCRATCH_PROBE_BYTES);
     }
 
-    fn upload(&mut self, device: &wgpu::Device, queue: &crate::gpu_calls::Queue) {
+    fn upload(&mut self, device: &wgpu::Device, queue: &engine_render::gpu_calls::Queue) {
         let mut words: Vec<u32> = Vec::new();
         let mut probes: Vec<u8> = Vec::new();
         self.bases.clear();
@@ -409,7 +408,7 @@ impl Bounce {
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        profiler: &crate::profiling::GpuProfiler,
+        profiler: &engine_render::profiling::GpuProfiler,
         (terrain, scene): (TerrainSources<'_>, SceneSources<'_>),
     ) {
         if !self.relights() {
@@ -427,27 +426,26 @@ impl Bounce {
             blocks: self.blocks.bound(),
             probes: self.probes.bound(),
             scratch: self.scratch.bound(),
-            surface: Bound::counted(generation, crate::pipelines::view(&maps.ground_view)),
+            surface: Bound::counted(generation, engine_render::pipelines::view(&maps.ground_view)),
             sky: Bound::counted(
                 terrain.sky.generation(),
-                crate::pipelines::view(terrain.sky.view()),
+                engine_render::pipelines::view(terrain.sky.view()),
             ),
             colors: Bound::counted(
                 terrain.colors.generation(),
-                crate::pipelines::view(terrain.colors.view()),
+                engine_render::pipelines::view(terrain.colors.view()),
             ),
             palette: Bound::fixed(terrain.palette.as_entire_binding()),
-            sampler: Bound::fixed(crate::pipelines::sampler(&self.sampler)),
+            sampler: Bound::fixed(engine_render::pipelines::sampler(&self.sampler)),
             horizons,
             written,
             scene: [
-                ("lighting", Bound::fixed(scene.lighting.as_entire_binding())),
-                scene.shadow,
+                ("pieces", Bound::fixed(scene.pieces.as_entire_binding())),
                 scene.cloud_shadows,
             ],
         };
         let level =
-            |index: usize| Bound::counted(generation, crate::pipelines::view(&maps.levels[index]));
+            |index: usize| Bound::counted(generation, engine_render::pipelines::view(&maps.levels[index]));
         let (layout, label) = ((&BOUNCE, &self.layout), "engine/terrain-bounce");
         let finest = self.terrains[0].bound();
         let ground = self.ground_group.bind(
@@ -456,7 +454,7 @@ impl Bounce {
             layout,
             shared.entries(
                 finest.clone(),
-                Bound::fixed(crate::pipelines::view(&self.light_stand_in)),
+                Bound::fixed(engine_render::pipelines::view(&self.light_stand_in)),
                 level(0),
             ),
         );
@@ -482,8 +480,8 @@ impl Bounce {
                 layout,
                 shared.entries(
                     records.bound(),
-                    Bound::counted(generation, crate::pipelines::view(&maps.light_view)),
-                    Bound::fixed(crate::pipelines::view(&self.out_stand_in)),
+                    Bound::counted(generation, engine_render::pipelines::view(&maps.light_view)),
+                    Bound::fixed(engine_render::pipelines::view(&self.out_stand_in)),
                 ),
             ));
         }
@@ -525,7 +523,7 @@ struct Shared<'a> {
     sampler: Bound<'a>,
     horizons: [(&'static str, Bound<'a>); 3],
     written: Bound<'a>,
-    scene: [(&'static str, Bound<'a>); 3],
+    scene: [(&'static str, Bound<'a>); 2],
 }
 
 impl<'a> Shared<'a> {
@@ -535,11 +533,10 @@ impl<'a> Shared<'a> {
         light_in: Bound<'a>,
         light_out: Bound<'a>,
     ) -> [(&'static str, Bound<'a>); BINDINGS] {
-        let [lighting, shadow, cloud_shadows] = self.scene.clone();
+        let [pieces, cloud_shadows] = self.scene.clone();
         let [horizons, records, horizon_sampler] = self.horizons.clone();
         [
-            lighting,
-            shadow,
+            pieces,
             horizons,
             records,
             horizon_sampler,
@@ -711,7 +708,7 @@ fn mean_of(four: [&[u8]; 4]) -> [u8; PROBE_BYTES] {
 }
 
 fn write_ground(
-    queue: &crate::gpu_calls::Queue,
+    queue: &engine_render::gpu_calls::Queue,
     ground: &wgpu::Texture,
     index: usize,
     bounce: &TerrainBounce,
@@ -744,7 +741,7 @@ fn write_ground(
 
 fn maps(device: &wgpu::Device, side: u32, slots: usize) -> Maps {
     let layers = slots.max(1) as u32;
-    let ground = crate::targets::texture_2d(
+    let ground = engine_render::targets::texture_2d(
         device,
         "engine/terrain-bounce-ground",
         (side, side),
@@ -754,7 +751,7 @@ fn maps(device: &wgpu::Device, side: u32, slots: usize) -> Maps {
         wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
     );
     let levels = 32 - side.leading_zeros();
-    let light = crate::targets::texture_2d(
+    let light = engine_render::targets::texture_2d(
         device,
         "engine/terrain-bounce-light",
         (side, side),
@@ -788,11 +785,11 @@ fn maps(device: &wgpu::Device, side: u32, slots: usize) -> Maps {
 
 fn pipelines(device: &wgpu::Device) -> [wgpu::ComputePipeline; 3] {
     let pipeline_layout =
-        crate::pipelines::layout_of(device, &crate::pipeline_layouts::BOUNCE_PIPELINES);
+        engine_render::pipelines::layout_of(device, &crate::pipeline_layouts::BOUNCE_PIPELINES);
     [
         terrain_bounce::bounce_ground,
         terrain_bounce::bounce_down,
         terrain_bounce::bounce_gather,
     ]
-    .map(|entry| crate::pipelines::compute_entry(device, &pipeline_layout, entry))
+    .map(|entry| engine_render::pipelines::compute_entry(device, &pipeline_layout, entry))
 }

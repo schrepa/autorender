@@ -1,10 +1,10 @@
 use engine_core::{Texture, TextureFormat, TextureHandle};
 use engine_terrain::{RenderSurfaceMaps, RenderTerrains};
 
-use crate::gpu_calls::Queue;
-use crate::gpu_data::mip_levels;
-use crate::materials::{gpu_format, write_level};
-use crate::mipmaps::MipGenerator;
+use engine_render::gpu_calls::Queue;
+use engine_render::gpu_data::mip_levels;
+use engine_render::materials::{gpu_format, write_level};
+use engine_render::mipmaps::MipGenerator;
 
 type LayerKey = [Option<TextureHandle>; 3];
 
@@ -42,7 +42,7 @@ struct Shape {
 }
 
 impl TerrainMaps {
-    pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, queue: &engine_render::gpu_calls::Queue) -> Self {
         let arrays = defaults(device, queue);
         let views = [view(&arrays[0]), view(&arrays[1])];
         Self {
@@ -60,7 +60,7 @@ impl TerrainMaps {
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
                 mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                anisotropy_clamp: crate::gpu_layouts::constants::MATERIAL_ANISOTROPY,
+                anisotropy_clamp: engine_render::gpu_layouts::constants::MATERIAL_ANISOTROPY,
                 ..Default::default()
             }),
             views_generation: 0,
@@ -285,7 +285,7 @@ fn textures(maps: &RenderSurfaceMaps) -> [Option<&Texture>; 3] {
     textures_of(maps).map(|texture| texture.map(|texture| &*texture.texture))
 }
 
-fn defaults(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> [wgpu::Texture; 2] {
+fn defaults(device: &wgpu::Device, queue: &engine_render::gpu_calls::Queue) -> [wgpu::Texture; 2] {
     let arrays = [0, 1].map(|array| {
         let format = gpu_format(TextureFormat::Rgba8, array == 0).0;
         array_texture(device, (1, 1), 1 + array, 1, format, false)
@@ -315,7 +315,7 @@ fn array_texture(
     if rendered {
         usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
     }
-    crate::targets::texture_2d(
+    engine_render::targets::texture_2d(
         device,
         "engine/terrain-material-maps",
         size,

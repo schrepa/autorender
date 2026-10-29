@@ -1,6 +1,7 @@
 use super::atlas::TileAtlas;
 use super::tables::TerrainTables;
 use super::*;
+use crate::gpu_layouts::constants::GROUND_TEXELS;
 use engine_core::glam::Vec2;
 use engine_terrain::{PATCH_QUADS, PATCHES_PER_TILE, Pyramid};
 
@@ -23,14 +24,6 @@ pub(crate) struct PatchDraws {
     pub(crate) frame: TerrainFrame,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct GroundChange {
-    pub(crate) min: Vec3,
-    pub(crate) max: Vec3,
-    pub(crate) pyramid: Pyramid,
-    pub(crate) level: u32,
-}
-
 pub(super) struct Layout<'a> {
     pub(super) atlas: &'a TileAtlas,
     pub(super) tables: &'a TerrainTables,
@@ -42,7 +35,7 @@ pub(super) struct Layout<'a> {
 impl PatchDraws {
     pub(super) fn new(device: &wgpu::Device) -> Self {
         let indices = grid_indices();
-        let index_buffer = crate::memory::buffer_init(
+        let index_buffer = engine_render::memory::buffer_init(
             device,
             &wgpu::util::BufferInitDescriptor {
                 label: Some("engine/terrain-indices"),
@@ -60,7 +53,7 @@ impl PatchDraws {
             uniforms: Vec::new(),
             written_uniforms: Vec::new(),
             uniforms_generation: None,
-            views: crate::buffers::uniform(device, "engine/terrain-views", VIEWS * SLOT),
+            views: engine_render::buffers::uniform(device, "engine/terrain-views", VIEWS * SLOT),
             written_views: None,
             kept_stack: Vec::new(),
             kept_ground: HashMap::default(),
@@ -134,13 +127,13 @@ impl PatchDraws {
     fn lay_out_kept(
         &mut self,
         terrains: &RenderTerrains,
-        (map, region, eye): (usize, crate::shadows::KeptRefresh, DVec3),
+        (map, region, eye): (usize, KeptRefresh, DVec3),
         parts: &Layout<'_>,
     ) {
         let planes = region.planes.map(Vec4::from_array);
         for frame in &mut self.frame.terrains {
             let terrain = &terrains.terrains[frame.terrain];
-            let level = crate::shadow_fit::ground_level(&terrain.pyramid, region.texel);
+            let level = ground_level(&terrain.pyramid, region.texel);
             let first = self.records.len() as u32;
             kept_patches(
                 (&mut self.records, &mut self.kept_stack),
@@ -200,7 +193,7 @@ impl PatchDraws {
 
     pub(super) fn write(
         &mut self,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         views: &TerrainViews<'_>,
         (uniforms, generation): (&wgpu::Buffer, u64),
     ) {
@@ -237,7 +230,7 @@ impl PatchDraws {
 
     pub(super) fn write_probe_view(
         &self,
-        queue: &crate::gpu_calls::Queue,
+        queue: &engine_render::gpu_calls::Queue,
         face: usize,
         relative: Mat4,
         eye: Vec3,
@@ -485,7 +478,7 @@ pub(super) fn patch_layout() -> wgpu::VertexBufferLayout<'static> {
 }
 
 fn instance_buffer(device: &wgpu::Device, records: u64) -> wgpu::Buffer {
-    crate::memory::buffer(
+    engine_render::memory::buffer(
         device,
         &wgpu::BufferDescriptor {
             label: Some("engine/terrain-patches"),
@@ -587,8 +580,7 @@ fn terrain_uniform(
         Some((cover, _)) if terrain.surroundings => [0.0, 0.0, cover.density, 0.0],
         Some((cover, pixels)) => {
             let terms = tables.cover_terms.get(index).copied().unwrap_or_default();
-            let law = crate::ground_cover::CoverLaw::of(terms, pixels);
-            [law.span, 0.0, cover.density, 0.0]
+            [terms.span(pixels), 0.0, cover.density, 0.0]
         }
     };
     let deepest = tables
@@ -631,6 +623,13 @@ fn terrain_uniform(
         },
         water: [tables.water_base, 0, 0, 0],
     }
+}
+
+fn ground_level(pyramid: &Pyramid, texel: f32) -> u32 {
+    let coarsest = pyramid.levels().saturating_sub(1);
+    (0..coarsest)
+        .find(|&level| pyramid.spacing(level) >= GROUND_TEXELS * texel)
+        .unwrap_or(coarsest)
 }
 
 pub(crate) fn planes(clip: Mat4, sides_only: bool) -> Vec<Vec4> {

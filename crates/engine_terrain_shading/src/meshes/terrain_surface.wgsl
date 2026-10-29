@@ -1,18 +1,5 @@
-import package::terrain::vertex::{terrain, terrain_load};
-
-@group(1) @binding(23) var<storage, read> terrain_directory: array<u32>;
-
-struct SurfaceTriangle {
-    a: vec2<f32>,
-    b: vec2<f32>,
-    c: vec2<f32>,
-}
-
-@group(1) @binding(36) var<storage, read> terrain_surface_leaves: array<SurfaceTriangle>;
-
-const SURFACE_MESHLET_LEVEL: u32 = 2u;
-const SURFACE_MESHLET_VERTICES: u32 = 15u;
-const SURFACE_MESHLET_INDICES: u32 = 48u;
+import package::face::heightfield::{SURFACE_MESHLET_LEVEL, SurfaceTriangle, terrain,
+    terrain_directory, terrain_level_height, terrain_surface_leaves};
 
 fn surface_leaf(leaf: u32) -> SurfaceTriangle {
     return terrain_surface_leaves[terrain.surface.x + leaf];
@@ -24,83 +11,6 @@ fn surface_half(triangle: SurfaceTriangle, half: u32) -> SurfaceTriangle {
         return SurfaceTriangle(triangle.c, triangle.a, middle);
     }
     return SurfaceTriangle(triangle.b, triangle.c, middle);
-}
-
-fn surface_along(tail: vec2<f32>, head: vec2<f32>, steps: u32) -> vec2<f32> {
-    var low = tail;
-    var high = head;
-    for (var bit = SURFACE_MESHLET_LEVEL; bit > 0u; bit--) {
-        let middle = (low + high) * 0.5;
-        if ((steps >> (bit - 1u)) & 1u) == 0u {
-            high = middle;
-        } else {
-            low = middle;
-        }
-    }
-    return select(low, head, steps == (1u << SURFACE_MESHLET_LEVEL));
-}
-
-fn surface_vertex(triangle: SurfaceTriangle, vertex: u32) -> vec2<f32> {
-    let parts = 1u << SURFACE_MESHLET_LEVEL;
-    var row = parts;
-    var first = SURFACE_MESHLET_VERTICES - parts - 1u;
-    while vertex < first {
-        first -= row;
-        row--;
-    }
-    let j = vertex - first;
-    let i = row - j;
-    var tail = triangle.c;
-    var head = triangle.b;
-    var steps = j;
-    if row == parts {
-        tail = triangle.a;
-    } else if j == 0u {
-        head = triangle.a;
-        steps = i;
-    } else if i != 0u {
-        let share = vec2<f32>(f32(i), f32(j)) / f32(parts);
-        return triangle.c + (triangle.a - triangle.c) * share.x
-            + (triangle.b - triangle.c) * share.y;
-    }
-    return surface_along(tail, head, steps);
-}
-
-struct TerrainLevelHeight {
-    height: f32,
-    found: bool,
-}
-
-fn terrain_level_height(local: vec2<f32>, level: u32) -> TerrainLevelHeight {
-    let base = terrain.directory.x;
-    let levels = terrain.directory.y;
-    var held: TerrainLevelHeight;
-    for (var index = level; index < levels; index++) {
-        let header = base + index * 4u;
-        let samples = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
-        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
-        let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
-        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
-        if layer == 0xffffffffu {
-            continue;
-        }
-        let within = clamp(samples - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
-        let corner = min(vec2<u32>(within), vec2<u32>(255u));
-        let f = within - vec2<f32>(corner);
-        let texel = corner + vec2<u32>(1u);
-        let h00 = terrain_load(layer, texel);
-        let h10 = terrain_load(layer, texel + vec2<u32>(1u, 0u));
-        let h01 = terrain_load(layer, texel + vec2<u32>(0u, 1u));
-        let h11 = terrain_load(layer, texel + vec2<u32>(1u, 1u));
-        held.found = true;
-        if f.x + f.y <= 1.0 {
-            held.height = h00 + f.x * (h10 - h00) + f.y * (h01 - h00);
-        } else {
-            held.height = h11 + (1.0 - f.x) * (h01 - h11) + (1.0 - f.y) * (h10 - h11);
-        }
-        return held;
-    }
-    return held;
 }
 
 fn terrain_true_height(local: vec2<f32>) -> f32 {

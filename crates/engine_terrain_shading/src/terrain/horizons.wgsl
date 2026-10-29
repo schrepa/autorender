@@ -1,9 +1,9 @@
-import package::frame::view::{PI, lighting};
-import package::shadows::sample::shadow;
+import package::frame::view::PI;
 
 @group(0) @binding(14) var terrain_horizons: texture_2d_array<f32>;
 const HORIZON_RECORDS: u32 = 384u;
-@group(0) @binding(15) var<uniform> terrain_horizon_records: array<vec4<f32>, HORIZON_RECORDS>;
+const HORIZON_RECORD_SLOTS: u32 = 385u;
+@group(0) @binding(15) var<uniform> terrain_horizon_records: array<vec4<f32>, HORIZON_RECORD_SLOTS>;
 @group(0) @binding(16) var terrain_horizon_sampler: sampler;
 
 override TERRAIN_HORIZONS: bool = true;
@@ -11,6 +11,10 @@ override TERRAIN_HORIZONS: bool = true;
 const HORIZON_DIRECTIONS: u32 = 16u;
 const HORIZON_LAYERS: u32 = 9u;
 const HORIZON_RECORD_VECTORS: u32 = 6u;
+
+fn horizon_records() -> u32 {
+    return u32(terrain_horizon_records[HORIZON_RECORDS].x);
+}
 
 struct HorizonTurn {
     first: u32,
@@ -64,34 +68,4 @@ fn horizon_crest(at: u32, turn: HorizonTurn, world: vec3<f32>, on_terrain: bool)
         crest.elevation = world.y - shape.w - ground;
     }
     return crest;
-}
-
-fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
-    if !TERRAIN_HORIZONS {
-        return 1.0;
-    }
-    let sun = lighting.sun.xyz;
-    let level = length(sun.xz);
-    if level < 1.0e-4 {
-        return 1.0;
-    }
-    let rise = sun.y / level;
-    let turn = horizon_turn(sun.xz);
-    let count = min(u32(shadow.level_state.w), HORIZON_RECORDS / HORIZON_RECORD_VECTORS);
-    var visible = 1.0;
-    for (var index = 0u; index < count; index++) {
-        let at = HORIZON_RECORD_VECTORS * index;
-        let crest = horizon_crest(at, turn, world, on_terrain);
-        if !crest.inside {
-            continue;
-        }
-        let clearance = crest.distance * (crest.slope - rise);
-        let shape = terrain_horizon_records[at + 1u];
-        let edge = max(crest.distance * shape.y, 0.5);
-        visible = min(visible, smoothstep(-edge, edge, crest.elevation + shape.z - clearance));
-        if visible <= 0.0 {
-            break;
-        }
-    }
-    return visible;
 }
