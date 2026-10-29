@@ -317,6 +317,9 @@ impl Modules {
             globs: BTreeSet::new(),
         };
         for name in declared_modules(&root) {
+            if test_code(&name) {
+                continue;
+            }
             let mut files = Vec::new();
             let file = source.join(format!("{name}.rs"));
             if file.exists() {
@@ -718,6 +721,13 @@ fn quoted_after(value: &str, key: &str) -> Option<String> {
     rest.split_once('"').map(|(path, _)| path.to_owned())
 }
 
+fn test_code(name: &str) -> bool {
+    let stem = name.strip_suffix(".rs").unwrap_or(name);
+    ["smoke", "smokes", "tests"].contains(&stem)
+        || stem.ends_with("_smoke")
+        || stem.ends_with("_smokes")
+}
+
 fn list(folder: &Path, files: &mut Vec<PathBuf>) {
     let entries = fs::read_dir(folder)
         .unwrap_or_else(|error| panic!("cannot list {}: {error}", folder.display()));
@@ -734,7 +744,7 @@ fn list(folder: &Path, files: &mut Vec<PathBuf>) {
             || [".swp", ".tmp", ".orig", ".rej"]
                 .iter()
                 .any(|suffix| name.ends_with(suffix));
-        if scratch {
+        if scratch || test_code(&name) {
             continue;
         }
         if path.is_dir() {
