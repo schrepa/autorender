@@ -3,7 +3,8 @@ use std::path::Path;
 
 use toml_edit::{Document, Item, TableLike};
 
-use crate::Problems;
+use super::Problems;
+use crate::Repository;
 
 const DEPENDENCY_TABLES: &[&str] = &["dependencies", "dev-dependencies", "build-dependencies"];
 
@@ -32,15 +33,18 @@ fn inherited(item: &Item) -> bool {
 }
 
 pub fn check(
-    root: &Path,
+    repository: &Repository,
     package_jsons: &[String],
     problems: &mut Problems,
 ) -> Result<Vec<String>, String> {
-    let workspace_manifest = parse(root, "Cargo.toml")?;
+    let root = repository.root.as_path();
+    let workspace_folder = repository.workspace_root.as_path();
+    let workspace_manifest = parse(workspace_folder, "Cargo.toml")?;
     let workspace = workspace_manifest
         .as_item()
         .get("workspace")
         .ok_or("Cargo.toml has no [workspace]")?;
+    let whole = repository.is_workspace_root();
     let mut lints = Vec::new();
     match table(workspace, "lints") {
         Some(tools) => {
@@ -53,14 +57,33 @@ pub fn check(
                 }
             }
         }
-        None => problems.file(
+        None if whole => problems.file(
             "Cargo.toml",
             "the workspace declares no [workspace.lints] table",
         ),
+        None => {}
     }
     let inherited_keys: Vec<&str> = table(workspace, "package")
         .map(|package| package.iter().map(|(key, _)| key).collect())
         .unwrap_or_default();
+    if whole {
+        pinned(workspace, problems);
+        check_toolchain(root, problems)?;
+    }
+    for member in repository.own() {
+        let Some(path) = member.file("Cargo.toml") else {
+            continue;
+        };
+        let manifest = parse(root, &path)?;
+        check_member(&path, manifest.as_item(), &inherited_keys, problems);
+    }
+    for path in package_jsons {
+        check_package_json(root, path, problems)?;
+    }
+    Ok(lints)
+}
+
+fn pinned(workspace: &Item, problems: &mut Problems) {
     for (name, dependency) in table(workspace, "dependencies")
         .into_iter()
         .flat_map(TableLike::iter)
@@ -91,47 +114,6 @@ pub fn check(
             _ => {}
         }
     }
-    for member in members(root, workspace)? {
-        let path = format!("{member}/Cargo.toml");
-        let manifest = parse(root, &path)?;
-        check_member(&path, manifest.as_item(), &inherited_keys, problems);
-    }
-    check_toolchain(root, problems)?;
-    for path in package_jsons {
-        check_package_json(root, path, problems)?;
-    }
-    Ok(lints)
-}
-
-fn members(root: &Path, workspace: &Item) -> Result<Vec<String>, String> {
-    let mut members = Vec::new();
-    let patterns = workspace
-        .get("members")
-        .and_then(Item::as_array)
-        .ok_or("Cargo.toml lists no [workspace] members")?;
-    for pattern in patterns.iter().filter_map(|pattern| pattern.as_str()) {
-        let Some(parent) = pattern.strip_suffix("/*") else {
-            if pattern.contains(['*', '?', '[']) {
-                return Err(format!(
-                    "tools/policy reads member patterns `dir/*` only, not {pattern:?}"
-                ));
-            }
-            members.push(pattern.to_owned());
-            continue;
-        };
-        let mut found = Vec::new();
-        for entry in fs::read_dir(root.join(parent))
-            .map_err(|error| format!("cannot read the members under {parent}: {error}"))?
-        {
-            let entry = entry.map_err(|error| error.to_string())?;
-            if entry.path().join("Cargo.toml").is_file() {
-                found.push(format!("{parent}/{}", entry.file_name().to_string_lossy()));
-            }
-        }
-        found.sort();
-        members.extend(found);
-    }
-    Ok(members)
 }
 
 fn check_member(path: &str, manifest: &Item, inherited_keys: &[&str], problems: &mut Problems) {

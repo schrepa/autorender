@@ -54,7 +54,7 @@ fn read_clients() -> Result<Vec<Client>, String> {
     let mut clients = Vec::new();
     for package in metadata["packages"].as_array().into_iter().flatten() {
         let engine = &package["metadata"]["engine"];
-        if engine.is_null() {
+        if engine["game"].is_null() && engine["page"].is_null() && engine["worker"] != true {
             continue;
         }
         let name = package["name"].as_str().unwrap_or_default();

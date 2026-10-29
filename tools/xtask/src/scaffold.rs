@@ -1,37 +1,87 @@
 use std::{fs, path::Path};
 
-use crate::process::{clients, project_option, run};
+use serde_json::json;
 
-const USAGE: &str = "usage: cargo xtask new --project DIR";
+use crate::process::{WASM_TARGET, clients, project_option, run};
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
+const USAGE: &str = "usage: cargo xtask new app --project DIR | new brick PART NAME";
+
+const APP_TEMPLATE: &str = "crates/engine/examples/app_template.rs";
+
+const APP_NATIVE: &str = "crates/engine_native/examples/app_native.rs";
+
+const APP_XTASK: &str = "crates/engine_checks/examples/app_xtask.rs";
+
+const BRICK_TEMPLATE: &str = "crates/engine_core/examples/brick_template.rs";
+
+const TEMPLATE_GAME: &str = "#[path = \"../../engine/examples/app_template.rs\"]\nmod app;";
+
 pub fn new(root: &Path, options: &[String]) -> Result<(), String> {
+    match options.split_first() {
+        Some((kind, rest)) if kind == "app" => app(root, rest),
+        Some((kind, rest)) if kind == "brick" => brick(root, rest),
+        _ => Err(USAGE.into()),
+    }
+}
+
+fn pascal(words: &str, separator: char) -> String {
+    words
+        .split(separator)
+        .filter(|word| !word.is_empty())
+        .map(|word| word[..1].to_ascii_uppercase() + &word[1..])
+        .collect()
+}
+
+fn lowercase_words(name: &str, separator: char) -> bool {
+    name.starts_with(|character: char| character.is_ascii_lowercase())
+        && name.split(separator).all(|word| {
+            !word.is_empty()
+                && word
+                    .chars()
+                    .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit())
+        })
+}
+
+fn write_files(root: &Path, files: &[(std::path::PathBuf, String)]) -> Result<(), String> {
+    for (path, contents) in files {
+        let folder = path
+            .parent()
+            .ok_or_else(|| format!("{} has no folder", path.display()))?;
+        fs::create_dir_all(folder)
+            .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
+        fs::write(path, contents)
+            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+        let shown = path.strip_prefix(root).unwrap_or(path);
+        println!(
+            "{}",
+            json!({"event": "created", "file": crate::process::slashed(shown)})
+        );
+    }
+    Ok(())
+}
+
+fn template(root: &Path, path: &str) -> Result<String, String> {
+    fs::read_to_string(root.join(path)).map_err(|error| format!("cannot read {path}: {error}"))
+}
+
+fn app(root: &Path, options: &[String]) -> Result<(), String> {
     let (project, rest) = project_option(options)?;
     let (Some(project), true) = (project, rest.is_empty()) else {
         return Err(USAGE.into());
     };
     let project = project.trim_end_matches('/').to_owned();
     let name = project.rsplit('/').next().unwrap_or_default().to_owned();
-    let valid = name.split('-').all(|word| {
-        !word.is_empty()
-            && word
-                .chars()
-                .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit())
-    }) && name.starts_with(|character: char| character.is_ascii_lowercase());
-    if !valid || name.starts_with("engine") || name == "xtask" {
-        return Err(format!(
-            "{name:?} is not an app name: lowercase words of letters and digits joined by \
-             dashes, not starting with `engine`"
-        ));
+    if !lowercase_words(&name, '-') || name.starts_with("engine") || name == "xtask" {
+        return Err(json!({
+            "code": "invalid_name",
+            "path": "--project",
+            "got": name,
+            "expected": "lowercase words of letters and digits joined by dashes, not starting with engine",
+        })
+        .to_string());
     }
     let wasm = name.replace('-', "_");
-    let pascal: String = name
-        .split('-')
-        .map(|word| word[..1].to_ascii_uppercase() + &word[1..])
-        .collect();
+    let pascal = pascal(&name, '-');
     let crate_dir = root.join(&project);
     let page = format!("{name}.html");
     for taken in [
@@ -49,20 +99,71 @@ pub fn new(root: &Path, options: &[String]) -> Result<(), String> {
     {
         return Err(format!("a client named {name} already exists"));
     }
-
-    let template = fs::read_to_string(root.join("crates/engine/examples/app_template.rs"))
-        .map_err(|error| format!("cannot read the app template: {error}"))?;
-    let body = template
-        .lines()
-        .skip_while(|line| line.starts_with("//!"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let source = format!(
-        "//! {pascal}: a game the engine runs on its page, `web/{page}`, and natively.\n{}\n",
-        body.replace("Template", &pascal)
+    let source = template(root, APP_TEMPLATE)?.replace("Template", &pascal);
+    let native = template(root, APP_NATIVE)?;
+    let xtask = template(root, APP_XTASK)?;
+    for (path, text) in [(APP_NATIVE, &native), (APP_XTASK, &xtask)] {
+        if !text.contains(TEMPLATE_GAME) {
+            return Err(format!(
+                "{path} no longer reaches the app template as `{TEMPLATE_GAME}`"
+            ));
+        }
+    }
+    let game = format!("use {wasm} as app;");
+    let files = [
+        (crate_dir.join("Cargo.toml"), app_manifest(&name, &page)),
+        (crate_dir.join("src/lib.rs"), source),
+        (
+            crate_dir.join("src/main.rs"),
+            native
+                .replace(TEMPLATE_GAME, &game)
+                .replace("Template", &pascal),
+        ),
+        (
+            crate_dir.join("xtask/Cargo.toml"),
+            xtask_manifest(&name),
+        ),
+        (
+            crate_dir.join("xtask/src/main.rs"),
+            xtask.replace(TEMPLATE_GAME, &game),
+        ),
+        (
+            crate_dir.join(".cargo/config.toml"),
+            format!("[alias]\nxtask = \"run -p {name}-xtask --\"\n"),
+        ),
+        (root.join("web").join(&page), page_html(&name, &pascal)),
+        (
+            root.join("web/src").join(&name).join("main.ts"),
+            page_entry(&wasm, &pascal),
+        ),
+    ];
+    write_files(root, &files)?;
+    join_workspace(root, &project)?;
+    join_workspace(root, &format!("{project}/xtask"))?;
+    join_dependencies(root, &name, &project)?;
+    run(root, "cargo", &["check", "-p", &name])?;
+    run(root, "cargo", &["check", "-p", &format!("{name}-xtask")])?;
+    run(root, "cargo", &["xtask", "schema"])?;
+    run(
+        root,
+        "cargo",
+        &["run", "-p", &format!("{name}-xtask"), "--", "schema"],
+    )?;
+    println!(
+        "{}",
+        json!({
+            "event": "app_created",
+            "project": project,
+            "page": format!("web/{page}"),
+            "native": format!("{name}-native"),
+            "xtask": format!("{name}-xtask"),
+        })
     );
-    let native = native_entry(root, &name, &wasm, &pascal)?;
-    let manifest = format!(
+    Ok(())
+}
+
+fn app_manifest(name: &str, page: &str) -> String {
+    format!(
         r#"[package]
 name = "{name}"
 version.workspace = true
@@ -73,14 +174,10 @@ publish.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-# The game in a native window; named apart from the library, whose files
-# on Windows would otherwise share its name.
 [[bin]]
 name = "{name}-native"
 path = "src/main.rs"
 
-# A browser game: xtask builds it and serves {page}, which tools select as
-# `{name}`.
 [package.metadata.engine]
 page = "{page}"
 game = "{name}"
@@ -88,16 +185,12 @@ native = "{name}-native"
 
 [features]
 default = []
-# Native development sessions over standard input and output (`--dev`).
 dev = ["engine/dev", "engine_native/dev"]
-# Native profiles, hardware counters and vendor deep dives (`--profile`,
-# `--counters`, `--vendor`), which development sessions take as `profile`.
 profiling = ["engine/profiling", "engine_native/profiling"]
 
 [dependencies]
 engine.workspace = true
 
-# The native host: a window, offscreen frames, captures and profiles.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 engine_native.workspace = true
 
@@ -109,8 +202,30 @@ web-sys.workspace = true
 [lints]
 workspace = true
 "#
-    );
-    let html = format!(
+    )
+}
+
+fn xtask_manifest(name: &str) -> String {
+    format!(
+        r#"[package]
+name = "{name}-xtask"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+engine_checks.workspace = true
+{name}.workspace = true
+
+[lints]
+workspace = true
+"#
+    )
+}
+
+fn page_html(name: &str, pascal: &str) -> String {
+    format!(
         r#"<!doctype html>
 <html lang="en">
   <head>
@@ -124,10 +239,12 @@ workspace = true
   </body>
 </html>
 "#
-    );
-    let entry = format!(
-        r#"// {pascal} on the engine's own page: its canvas and statistics.
-import {{ loadGame }} from "../engine/bindings";
+    )
+}
+
+fn page_entry(wasm: &str, pascal: &str) -> String {
+    format!(
+        r#"import {{ loadGame }} from "../engine/bindings";
 import {{ startGame }} from "../engine/host";
 
 startGame({{
@@ -138,32 +255,189 @@ startGame({{
   }},
 }});
 "#
-    );
-    let files = [
-        (crate_dir.join("Cargo.toml"), manifest),
-        (crate_dir.join("src/lib.rs"), source),
-        (crate_dir.join("src/main.rs"), native),
-        (root.join("web").join(&page), html),
-        (root.join("web/src").join(&name).join("main.ts"), entry),
-    ];
-    for (path, contents) in &files {
-        fs::create_dir_all(path.parent().expect("files have folders"))
-            .map_err(|error| format!("cannot create {}: {error}", path.display()))?;
-        fs::write(path, contents)
-            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
-        println!(
-            "Created {}.",
-            path.strip_prefix(root).unwrap_or(path).display()
-        );
+    )
+}
+
+fn brick(root: &Path, options: &[String]) -> Result<(), String> {
+    let [part, name] = options else {
+        return Err(USAGE.into());
+    };
+    for (path, given) in [("PART", part), ("NAME", name)] {
+        if !lowercase_words(given, '_') {
+            return Err(json!({
+                "code": "invalid_name",
+                "path": path,
+                "got": given,
+                "expected": "lowercase words of letters and digits joined by underscores",
+            })
+            .to_string());
+        }
     }
-    join_workspace(root, &project)?;
-    run(root, "cargo", &["check", "-p", &name])?;
-    run(root, "cargo", &["xtask", "schema"])?;
+    let package = format!("engine_{name}");
+    let folder = format!("crates/{package}");
+    let repository = crate::rules::repository(root)?;
+    if root.join(&folder).exists() || repository.package(&package).is_some() {
+        return Err(format!("{folder} already exists"));
+    }
+    let pascal = pascal(name, '_');
+    let claim = part_claim(root, repository, part)?;
+    let mut source = template(root, BRICK_TEMPLATE)?
+        .replace("Template", &pascal)
+        .replace("\"template\"", &format!("\"{name}\""));
+    let stats = format!(".stats::<{pascal}Stats>()");
+    let mut dependencies = String::new();
+    let mut metadata = String::new();
+    match &claim {
+        Some(claim) => {
+            source = source.replace(
+                &stats,
+                &format!("{stats}\n            .{}::<{}>()", claim.kind, claim.path),
+            );
+            if claim.package != "engine_core" {
+                dependencies = format!("{}.workspace = true\n", claim.package);
+            }
+            if let Some(replaced) = &claim.replaces {
+                metadata = format!("\n[package.metadata.engine]\nreplaces = \"{replaced}\"\n");
+            }
+        }
+        None => println!(
+            "{}",
+            json!({"event": "part_undeclared", "part": part, "brick": name})
+        ),
+    }
+    let manifest = format!(
+        r#"[package]
+name = "{package}"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+schema = ["dep:schemars", "engine_core/schema", "engine_settings/schema"]
+
+[dependencies]
+engine_core.workspace = true
+engine_settings.workspace = true
+{dependencies}bevy_ecs.workspace = true
+serde.workspace = true
+schemars = {{ workspace = true, optional = true }}
+
+[lints]
+workspace = true
+{metadata}"#
+    );
+    let crate_dir = root.join(&folder);
+    write_files(
+        root,
+        &[
+            (crate_dir.join("Cargo.toml"), manifest),
+            (crate_dir.join("src/lib.rs"), source),
+        ],
+    )?;
+    join_workspace(root, &folder)?;
+    join_dependencies(root, &package, &folder)?;
+    run(root, "cargo", &["check", "-p", &package])?;
+    run(root, "cargo", &["check", "-p", &package, "--features", "schema"])?;
+    run(root, "cargo", &["check", "-p", &package, "--target", WASM_TARGET])?;
     println!(
-        "Run `cargo xtask dev` and open http://127.0.0.1:5173/{page}, or `cargo run -p {name}` \
-         for its window."
+        "{}",
+        json!({
+            "event": "brick_created",
+            "crate": package,
+            "brick": name,
+            "part": part,
+            "claims": claim.as_ref().map(|claim| claim.kind),
+            "replaces": claim.as_ref().and_then(|claim| claim.replaces.clone()),
+        })
     );
     Ok(())
+}
+
+struct Claim {
+    kind: &'static str,
+    path: String,
+    package: String,
+    replaces: Option<String>,
+}
+
+fn part_claim(
+    root: &Path,
+    repository: &engine_checks::Repository,
+    part: &str,
+) -> Result<Option<Claim>, String> {
+    let declaration = format!("const NAME: &'static str = \"{part}\";");
+    for path in engine_checks::files::sources(root)? {
+        if !path.ends_with(".rs") || !path.starts_with("crates/") {
+            continue;
+        }
+        let text = fs::read_to_string(root.join(&path))
+            .map_err(|error| format!("cannot read {path}: {error}"))?;
+        for (kind, marker) in [("slot", "impl Slot for "), ("list", "impl List for ")] {
+            for (at, _) in text.match_indices(marker) {
+                let rest = &text[at + marker.len()..];
+                let block = &rest[..rest.find('}').unwrap_or(rest.len())];
+                if !block.contains(&declaration) {
+                    continue;
+                }
+                let name: String = rest
+                    .chars()
+                    .take_while(|character| character.is_alphanumeric() || *character == '_')
+                    .collect();
+                let Some(package) = repository.own().find(|package| {
+                    package
+                        .path
+                        .as_deref()
+                        .is_some_and(|folder| path.starts_with(&format!("{folder}/src/")))
+                }) else {
+                    continue;
+                };
+                let face = engine_checks::faces::face(&package.folder)?;
+                let module = module_of(&path, package.path.as_deref().unwrap_or_default());
+                let inner = if face.reaches(&[name.clone()]) || module.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{module}::{name}")
+                };
+                let replaces = if kind == "slot" {
+                    let engine = crate::bricks::standard_engine();
+                    engine
+                        .app
+                        .world()
+                        .get_resource::<engine::bricks::BrickRegistry>()
+                        .and_then(|registry| {
+                            registry
+                                .bricks()
+                                .iter()
+                                .find(|brick| brick.slot == Some(part))
+                                .map(|brick| brick.crate_name.to_owned())
+                        })
+                } else {
+                    None
+                };
+                return Ok(Some(Claim {
+                    kind,
+                    path: format!("{}::{inner}", package.crate_name()),
+                    package: package.name.clone(),
+                    replaces,
+                }));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn module_of(path: &str, folder: &str) -> String {
+    let inside = path
+        .strip_prefix(&format!("{folder}/src/"))
+        .unwrap_or(path)
+        .trim_end_matches(".rs");
+    let inside = inside.strip_suffix("/mod").unwrap_or(inside);
+    if inside == "lib" {
+        return String::new();
+    }
+    inside.replace('/', "::")
 }
 
 fn join_workspace(root: &Path, project: &str) -> Result<(), String> {
@@ -185,27 +459,32 @@ fn join_workspace(root: &Path, project: &str) -> Result<(), String> {
         + members.len();
     let joined = format!("{}\"{project}\", {}", &manifest[..at], &manifest[at..]);
     fs::write(&path, joined).map_err(|error| format!("cannot write Cargo.toml: {error}"))?;
-    println!("Added {project} to the workspace's members.");
+    println!("{}", json!({"event": "member_added", "member": project}));
     Ok(())
 }
 
-fn native_entry(root: &Path, name: &str, wasm: &str, pascal: &str) -> Result<String, String> {
-    let template = fs::read_to_string(root.join("crates/engine_native/examples/app_native.rs"))
-        .map_err(|error| format!("cannot read the native entry: {error}"))?;
-    let game = "#[path = \"../../engine/examples/app_template.rs\"]\nmod app;";
-    if !template.contains(game) {
-        return Err(format!(
-            "the native entry no longer reaches the template as `{game}`"
-        ));
+fn join_dependencies(root: &Path, package: &str, folder: &str) -> Result<(), String> {
+    let path = root.join("Cargo.toml");
+    let manifest =
+        fs::read_to_string(&path).map_err(|error| format!("cannot read Cargo.toml: {error}"))?;
+    if manifest.contains(&format!("\n{package} = ")) {
+        return Ok(());
     }
-    let body = template
-        .lines()
-        .skip_while(|line| line.starts_with("//!"))
-        .collect::<Vec<_>>()
-        .join("\n");
-    Ok(format!(
-        "//! {pascal} natively, in a window on DX12, Vulkan or Metal: `cargo run -p {name}`;\n//! `-- --help` lists the host's options.\n{}\n",
-        body.replace(game, &format!("use {wasm} as app;"))
-            .replace("Template", pascal)
-    ))
+    let table = manifest
+        .find("[workspace.dependencies]")
+        .ok_or("Cargo.toml has no [workspace.dependencies]")?;
+    let at = manifest[table..]
+        .find('\n')
+        .map_or(manifest.len(), |end| table + end + 1);
+    let joined = format!(
+        "{}{package} = {{ path = \"{folder}\" }}\n{}",
+        &manifest[..at],
+        &manifest[at..]
+    );
+    fs::write(&path, joined).map_err(|error| format!("cannot write Cargo.toml: {error}"))?;
+    println!(
+        "{}",
+        json!({"event": "dependency_added", "package": package, "path": folder})
+    );
+    Ok(())
 }

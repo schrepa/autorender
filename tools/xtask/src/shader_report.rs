@@ -2,9 +2,8 @@ use engine_core::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use engine_checks::gpu::{Checked, modules};
 use serde_json::{Value, json};
-
-use crate::gpu::{Checked, modules};
 
 const RGA_VERSION: &str = "2.14.2";
 #[cfg(windows)]

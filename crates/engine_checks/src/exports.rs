@@ -2,52 +2,42 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const INTERNAL: &[&str] = &[
-    "CHUNK_LENGTH",
-    "DevStepError",
-    "GroundedAt",
-    "JobBudget",
-    "JobFailures",
-    "JobWorker",
-    "LOD_RECORD",
-    "LodInput",
-    "MAX_DEV_TICKS",
-    "RenderTables",
-    "StaticTable",
-    "StaticTables",
-    "atmosphere_fields",
-    "job_output",
-    "lod_input",
-    "state_atmosphere_rules",
-    "table_data",
-];
+use crate::{Facade, Repository};
 
-pub fn check(root: &Path) -> Result<(), String> {
-    let core = core_names(root)?;
-    let lists = facade_lists(root)?;
+pub fn check(repository: &Repository, facade: &Facade) -> Result<(), String> {
+    let folder = |name: &str| {
+        repository
+            .package(name)
+            .map(|package| package.folder.join("src"))
+            .ok_or_else(|| format!("the facade's package {name} is not in the workspace"))
+    };
+    let core = core_names(&folder(facade.inner)?)?;
+    let lists = facade_lists(&repository.root, &folder(facade.package)?, facade.inner)?;
+    let internal = facade.internal;
     let mut problems = Vec::new();
-    if INTERNAL.windows(2).any(|pair| pair[0] >= pair[1]) {
-        problems.push("INTERNAL (tools/xtask/src/exports.rs) must be sorted and unique".to_owned());
+    if internal.windows(2).any(|pair| pair[0] >= pair[1]) {
+        problems.push("the facade's internal list must be sorted and unique".to_owned());
     }
-    for name in INTERNAL {
+    for name in internal {
         if !core.contains(*name) {
             problems.push(format!(
-                "INTERNAL lists {name}, which engine_core does not export"
+                "the facade's internal list names {name}, which {} does not export",
+                facade.inner
             ));
         }
     }
     for name in &core {
         let places = lists.get(name).map_or(&[][..], Vec::as_slice);
-        match (INTERNAL.contains(&name.as_str()), places) {
+        match (internal.contains(&name.as_str()), places) {
             (true, []) | (false, [_]) => {}
             (true, places) => problems.push(format!(
-                "{name} is in INTERNAL and exported by the facade ({})",
+                "{name} is in the facade's internal list and exported by the facade ({})",
                 places.join(", ")
             )),
             (false, []) => problems.push(format!(
-                "engine_core exports {name}, which no facade list does: add it to the games' or \
-                 the lower-level list (crates/engine/src/lib.rs), a module's list, or INTERNAL \
-                 (tools/xtask/src/exports.rs)"
+                "{} exports {name}, which no facade list does: add it to one of {}'s lists or \
+                 to the facade's internal list",
+                facade.inner, facade.package
             )),
             (false, places) => problems.push(format!(
                 "{name} is in {} facade lists ({}): keep it in one",
@@ -58,9 +48,10 @@ pub fn check(root: &Path) -> Result<(), String> {
     }
     if problems.is_empty() {
         println!(
-            "The facade exports each of engine_core's {} public names once, but the {} internal ones.",
+            "The facade exports each of {}'s {} public names once, but the {} internal ones.",
+            facade.inner,
             core.len(),
-            INTERNAL.len()
+            internal.len()
         );
         Ok(())
     } else {
@@ -71,7 +62,7 @@ pub fn check(root: &Path) -> Result<(), String> {
 fn code(path: &Path) -> Result<String, String> {
     let source = fs::read_to_string(path)
         .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    Ok(policy::rust::split(&source).code.join("\n"))
+    Ok(crate::policy::rust::split(&source).code.join("\n"))
 }
 
 fn rust_files(directory: &Path) -> Result<Vec<PathBuf>, String> {
@@ -97,11 +88,10 @@ enum Declared {
     Glob(String),
 }
 
-fn core_names(root: &Path) -> Result<BTreeSet<String>, String> {
-    let source = root.join("crates/engine_core/src");
+fn core_names(source: &Path) -> Result<BTreeSet<String>, String> {
     let mut names = BTreeSet::new();
-    module_names(&source.join("lib.rs"), &source, &mut names)?;
-    for file in rust_files(&source)? {
+    module_names(&source.join("lib.rs"), source, &mut names)?;
+    for file in rust_files(source)? {
         let code = code(&file)?;
         for (at, _) in code.match_indices("#[macro_export]") {
             if let Some(rest) = code[at + "#[macro_export]".len()..]
@@ -318,17 +308,21 @@ fn join(prefix: &str, path: &str) -> String {
     }
 }
 
-fn facade_lists(root: &Path) -> Result<BTreeMap<String, Vec<String>>, String> {
+fn facade_lists(
+    root: &Path,
+    source: &Path,
+    inner: &str,
+) -> Result<BTreeMap<String, Vec<String>>, String> {
     let mut lists: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for file in rust_files(&root.join("crates/engine/src"))? {
+    let marker = format!("pub use {inner}::");
+    for file in rust_files(source)? {
         let code = code(&file)?;
         let shown = file
             .strip_prefix(root)
             .unwrap_or(&file)
             .display()
             .to_string();
-        let marker = "pub use engine_core::";
-        for (at, _) in code.match_indices(marker) {
+        for (at, _) in code.match_indices(marker.as_str()) {
             let line = code[..at].matches('\n').count() + 1;
             let tree = &code[at + marker.len()..];
             let tree = &tree[..tree.find(';').unwrap_or(tree.len())];

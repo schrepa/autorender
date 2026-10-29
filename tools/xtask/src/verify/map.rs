@@ -39,9 +39,21 @@ pub(crate) const MAP: &[Rule] = &[
             ".gitignore",
             "clippy.toml",
             "scripts/*.ps1",
-            "tools/policy/**",
+            "faces.json",
+            "crates/engine_checks/**",
         ],
         checks: &[],
+    },
+    Rule {
+        paths: &[
+            "crates/engine_checks/src/gpu.rs",
+            "crates/engine_checks/src/gpu/**",
+        ],
+        checks: &[Shaders],
+    },
+    Rule {
+        paths: &["crates/engine_checks/src/bench.rs"],
+        checks: &[Equivalence, Tools("measure")],
     },
     Rule {
         paths: &["**/*.wgsl"],
@@ -395,7 +407,6 @@ pub(crate) const MAP: &[Rule] = &[
         paths: &[
             "tools/xtask/Cargo.toml",
             "tools/xtask/src/*.rs",
-            "tools/xtask/src/gpu/**",
             "tools/xtask/src/verify/**",
         ],
         checks: &[],
@@ -465,7 +476,7 @@ pub(crate) const MAP: &[Rule] = &[
     Rule {
         paths: &[
             "tools/xtask/src/measure.rs",
-            "tools/xtask/src/formats.rs",
+            "crates/engine_checks/src/formats.rs",
             "tools/xtask/src/shader_report.rs",
             "tools/xtask/src/bench.rs",
             "tools/xtask/src/selfcheck.rs",

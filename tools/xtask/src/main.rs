@@ -1,4 +1,3 @@
-mod ambiguities;
 mod authoring;
 mod bench;
 mod bricks;
@@ -8,26 +7,22 @@ mod cook;
 mod coverage;
 mod development;
 mod equivalence;
-mod exports;
-mod formats;
-mod gpu;
 mod heavy;
 mod importing;
 mod iteration_build;
 mod ladder;
-mod leaves;
 mod lint;
 mod measure;
 mod pipeline;
 mod process;
 mod profiling;
 mod pure;
+mod rules;
 mod scaffold;
 mod selfcheck;
 mod serve;
 mod shader_report;
 mod smoke;
-mod structure;
 mod verify;
 
 use std::{env, process::ExitCode};
@@ -158,10 +153,10 @@ fn execute() -> Result<(), Failure> {
     }
     Ok(match task.as_str() {
         "build" => pipeline::build(&root),
-        "lint" => lint::run_stages(&root, lint::LINT),
+        "lint" => engine_checks::stages::run(root.as_path(), lint::LINT),
         "assets" => authoring::validate_sources(&root),
         "schema" => authoring::write_generated(&root),
-        "gpu" => gpu::check(&root),
+        "gpu" => rules::repository(&root).and_then(engine_checks::gpu::check),
         _ => Err(format!(
             "unknown command {task:?}; run `cargo xtask help` for usage"
         )),
@@ -193,7 +188,7 @@ fn commands() -> Vec<(String, &'static str)> {
         ("asset import --file PATH --id ID (--output PATH | --into PATH --expected-revision N) [--replace] [--as-prefab]".into(), "Import a static textured GLB with structured results"),
         ("assets".into(), "Validate authored scene sources without changing them"),
         ("schema".into(), "Write the generated protocol summary, client list, stats and game surface types, each app's own, and bricks.json (every standard brick's record)"),
-        ("new --project DIR".into(), "Start a game in DIR, a workspace member, with its page web/NAME.html (NAME the folder's name), from the engine's app template"),
+        ("new app --project DIR | new brick PART NAME".into(), "Start a game in DIR, a workspace member, with its page web/NAME.html (NAME the folder's name) and its own xtask running verify through engine_checks, from the engine's app template; or a brick crate crates/engine_NAME for the slot or list PART, from the engine's brick template"),
         ("smoke [--project DIR] --list | [--project DIR] [--serve] [--keep-going] [--native-profile PROFILE] (--all | NAME...)".into(), "List or run the browser smoke checks (web/scripts/NAME-smoke.mjs), or with --project a game's own checks (DIR/checks/NAME.mjs): against the development server DEMO_URL names, or with --serve one of this checkout started on a free port (never 5173-5175) and stopped after; holding the machine's heavy-run lock; stopping at the first failure, or with --keep-going running every one and listing each result; --native-profile builds the native programs checks run with that cargo profile (dev: debug assertions on); exit 3 when an assertion failed"),
         ("pure [--bless] [--wasm] [CORPUS...]".into(), "Run the deterministic checks of engine code over tracked fixtures, without a GPU or browser (corpora: terrain, scenes, simplify, gltf, import, caches): each checks what the code promises and that its outputs equal the goldens in tools/xtask/pure/goldens.json; --bless rewrites them from a run whose promises hold, for review; --wasm replays the terrain corpus's jobs in the browser worker's Wasm module with Node (web/pkg-dev, built first) and requires the native bits; exit 3 when a promise broke or an output changed"),
         ("core-smoke [--bless]".into(), "Run the core smoke (the caches corpus of pure): tools/coresmoke in the dev profile, debug assertions on, checks the incremental caches against fresh engines under seeded random edits, and holds a deterministic terrain streaming trace (written to target/coresmoke/terrain-trace.txt) to its golden; a failure prints the seed and the edits"),

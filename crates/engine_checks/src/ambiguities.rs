@@ -1,9 +1,7 @@
-use std::path::Path;
-
+use engine::Engine;
 use engine::bevy_ecs::schedule::{LogLevel, ScheduleBuildSettings, Schedules};
 
-pub fn check(_root: &Path) -> Result<(), String> {
-    let mut engine = crate::bricks::standard_engine();
+pub fn check(mut engine: Engine) -> Result<(), String> {
     engine.app.finish();
     engine.app.cleanup();
     let world = engine.app.world_mut();

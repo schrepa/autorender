@@ -25,12 +25,15 @@ const ALLOWED: &[(&str, &str)] = &[
 
 const FIELD: &str = "camera_position";
 
-pub(super) fn check(root: &Path) -> Result<usize, String> {
+pub(super) fn check(repository: &crate::Repository) -> Result<usize, String> {
+    let root = repository.root.as_path();
     let mut files = Vec::new();
     walk(&root.join("crates"), &mut files);
-    for client in crate::process::clients() {
-        if !client.folder.starts_with("crates/") {
-            walk(&root.join(&client.folder), &mut files);
+    for project in repository.own().filter(|package| package.project()) {
+        if let Some(folder) = project.path.as_deref()
+            && !folder.starts_with("crates/")
+        {
+            walk(&root.join(folder), &mut files);
         }
     }
     files.sort();
@@ -53,7 +56,7 @@ pub(super) fn check(root: &Path) -> Result<usize, String> {
             for line in lines {
                 problems.push(format!(
                     "{path}:{line}: reads the render snapshot's `{FIELD}`; decisions of detail by \
-                     distance read `detail_eye` (only the files tools/xtask/src/gpu/eye_reads.rs \
+                     distance read `detail_eye` (only the files crates/engine_checks/src/gpu/eye_reads.rs \
                      lists read the camera's eye, for transforms, culling, optics, sky and fog)"
                 ));
             }
@@ -63,7 +66,7 @@ pub(super) fn check(root: &Path) -> Result<usize, String> {
     for &(allowed, _) in ALLOWED {
         if !readers.iter().any(|reader| reader == allowed) {
             problems.push(format!(
-                "tools/xtask/src/gpu/eye_reads.rs lists {allowed}, which reads no `{FIELD}`: \
+                "crates/engine_checks/src/gpu/eye_reads.rs lists {allowed}, which reads no `{FIELD}`: \
                  remove it"
             ));
         }
