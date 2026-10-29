@@ -267,7 +267,10 @@ impl Scanner<'_> {
                     return Some((start, self.at, true));
                 }
                 '"' | '\'' => self.quoted(character),
-                '`' => self.template(),
+                '`' => {
+                    self.at += 1;
+                    self.template();
+                }
                 '/' if self.regex_starts() => self.regex(),
                 '{' => {
                     self.depth += 1;
@@ -307,9 +310,6 @@ impl Scanner<'_> {
     }
 
     fn template(&mut self) {
-        if self.characters.get(self.at) == Some(&'`') {
-            self.at += 1;
-        }
         while self.at < self.characters.len() {
             match self.characters[self.at] {
                 '\\' => self.at += 2,
