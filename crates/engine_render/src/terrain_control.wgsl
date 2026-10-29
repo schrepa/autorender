@@ -55,7 +55,8 @@ const OP_FLOOD: u32 = 18u;
 const OP_WORN: u32 = 19u;
 const OP_DEPOSIT: u32 = 20u;
 const OP_FACING: u32 = 21u;
-const OP_END: u32 = 22u;
+const OP_VALUE: u32 = 22u;
+const OP_END: u32 = 23u;
 
 fn real(at: u32) -> f32 {
     return bitcast<f32>(data[at]);
@@ -438,6 +439,25 @@ fn input_ramp(code: u32, inputs: Inputs, low: f32, high: f32) -> f32 {
     }
 }
 
+fn input_value(code: u32, inputs: Inputs) -> f32 {
+    let g = inputs.gradient;
+    switch code {
+        case OP_HEIGHT: { return inputs.height; }
+        case OP_GRADIENT: { return sqrt(g.x * g.x + g.y * g.y); }
+        case OP_CURVATURE: { return inputs.curvature; }
+        case OP_WORN: { return pmax(-inputs.erosion, 0.0); }
+        case OP_DEPOSIT: { return pmax(inputs.erosion, 0.0); }
+        case OP_FLOW: { return inputs.flow; }
+        case OP_WETNESS: { return inputs.wetness; }
+        case OP_LAKE: { return inputs.lake; }
+        case OP_RIVER: { return inputs.river; }
+        case OP_GRAIN: { return inputs.grain; }
+        case OP_POWER: { return inputs.power; }
+        case OP_FLOOD: { return inputs.flood; }
+        default: { return abs(inputs.path_distance) - inputs.path_half; }
+    }
+}
+
 fn evaluate(start: u32, inputs: Inputs) -> f32 {
     var stack: array<f32, MAX_STACK>;
     var top = 0u;
@@ -464,6 +484,11 @@ fn evaluate(start: u32, inputs: Inputs) -> f32 {
                 stack[top] = ramp(tilt, real(pc + 3u), real(pc + 4u));
                 top += 1u;
                 pc += 5u;
+            }
+            case OP_VALUE: {
+                stack[top] = input_value(data[pc + 1u], inputs);
+                top += 1u;
+                pc += 2u;
             }
             case OP_NOISE: {
                 stack[top] = noise_mask(inputs.x, inputs.z, inputs.spacing, real(pc + 1u),

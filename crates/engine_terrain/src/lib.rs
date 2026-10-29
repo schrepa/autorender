@@ -11,6 +11,7 @@ pub mod bounce;
 pub mod codec;
 mod erosion;
 pub mod expr;
+mod expr_layer;
 pub mod flow;
 pub mod given;
 pub mod gpu;

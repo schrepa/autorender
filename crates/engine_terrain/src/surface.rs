@@ -3,47 +3,17 @@ use engine_math::{clamp, max, min, sin_cos};
 use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
 use serde::{Deserialize, Serialize};
 
-use crate::layers::{Layer, Layers};
+use crate::PathSample;
+use crate::expr::{Expr, MAX_EXPR_DEPTH, MAX_EXPR_LIST};
+use crate::gpu::op;
+use crate::layer::maps;
+use crate::layers::Layers;
 use crate::noise::{gradient_value, gradient_values, smooth};
-use crate::{Erosion, PathSample};
 
 pub const MAX_SURFACE_MATERIALS: usize = 255;
 pub const MAX_BIOMES: usize = 255;
-const MAX_MASK_DEPTH: usize = 8;
-const MAX_MASK_LIST: usize = 16;
 const MAX_NOISE_OCTAVES: u32 = 8;
 const MAX_BIOME_LAYERS: usize = 64;
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum Mask {
-    Constant(f32),
-    Height([f32; 2]),
-    Slope(
-        #[cfg_attr(feature = "schema", schemars(inner(range(min = 0.0, max = MAX_SLOPE_DEGREES))))]
-        [f32; 2],
-    ),
-    Curvature([f32; 2]),
-    Facing(Facing),
-    Worn([f32; 2]),
-    Deposit([f32; 2]),
-    Flow([f32; 2]),
-    Wetness([f32; 2]),
-    Lake([f32; 2]),
-    River([f32; 2]),
-    Grain([f32; 2]),
-    Power([f32; 2]),
-    Flood([f32; 2]),
-    Path([f32; 2]),
-    Noise(NoiseMask),
-    Multiply(Vec<Mask>),
-    Add(Vec<Mask>),
-    Min(Vec<Mask>),
-    Max(Vec<Mask>),
-    Invert(Box<Mask>),
-    Remap(Remap),
-}
 
 pub const MAX_SLOPE_DEGREES: f32 = 90.0;
 
@@ -79,23 +49,8 @@ fn one_octave() -> u32 {
     1
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct Remap {
-    pub mask: Box<Mask>,
-    pub from: f32,
-    pub to: f32,
-}
-
-impl Mask {
-    pub fn one() -> Self {
-        Self::Constant(1.0)
-    }
-}
-
-fn is_one(mask: &Mask) -> bool {
-    *mask == Mask::one()
+fn is_one(expr: &Expr) -> bool {
+    *expr == Expr::one()
 }
 
 fn one() -> f32 {
@@ -112,8 +67,8 @@ settings! {
     #[serde(deny_unknown_fields)]
     pub struct BiomeLayer {
         pub material: String = String::new() => any,
-        #[serde(default = "Mask::one", skip_serializing_if = "is_one")]
-        pub mask: Mask = Mask::one() => any,
+        #[serde(default = "Expr::one", skip_serializing_if = "is_one")]
+        pub mask: Expr = Expr::one() => any,
         #[serde(default = "one", skip_serializing_if = "is_unit")]
         pub opacity: f32 = one() => range(0.0, 1.0),
     }
@@ -124,11 +79,11 @@ settings! {
 #[serde(deny_unknown_fields)]
 pub struct Biome {
     pub id: String,
-    #[serde(default = "Mask::one", skip_serializing_if = "is_one")]
-    pub fitness: Mask,
+    #[serde(default = "Expr::one", skip_serializing_if = "is_one")]
+    pub fitness: Expr,
     pub layers: Vec<BiomeLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wetness: Option<Mask>,
+    pub wetness: Option<Expr>,
 }
 
 settings! {
@@ -208,6 +163,15 @@ pub(crate) fn unknown(path: impl Into<String>, got: &str, names: &[String]) -> E
         .variants(names)
 }
 
+pub(crate) fn unknown_map(path: &str, got: &str, published: Vec<String>) -> Error {
+    Error::new(ErrorCode::UnknownMap, path).got(got).variants(
+        maps::GPU
+            .iter()
+            .map(|name| (*name).to_owned())
+            .chain(published),
+    )
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Reads {
     pub(crate) water: bool,
@@ -216,7 +180,7 @@ pub(crate) struct Reads {
 }
 
 impl Reads {
-    fn and(self, other: Self) -> Self {
+    pub(crate) fn and(self, other: Self) -> Self {
         Self {
             water: self.water || other.water,
             path: self.path || other.path,
@@ -254,26 +218,218 @@ impl RowScratch {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Input {
+    Height,
+    Slope,
+    Curvature,
+    Flow,
+    Wetness,
+    Lake,
+    River,
+    Grain,
+    Power,
+    Flood,
+    Worn,
+    Deposit,
+    Path,
+}
+
+const INPUTS: [(&str, Input); 13] = [
+    (maps::HEIGHT, Input::Height),
+    (maps::SLOPE, Input::Slope),
+    (maps::CURVATURE, Input::Curvature),
+    (maps::FLOW, Input::Flow),
+    (maps::WETNESS, Input::Wetness),
+    (maps::LAKE, Input::Lake),
+    (maps::RIVER, Input::River),
+    (maps::GRAIN, Input::Grain),
+    (maps::POWER, Input::Power),
+    (maps::FLOOD, Input::Flood),
+    (maps::WORN, Input::Worn),
+    (maps::DEPOSIT, Input::Deposit),
+    (maps::PATH, Input::Path),
+];
+
+impl Input {
+    pub(crate) fn named(name: &str) -> Option<Self> {
+        INPUTS
+            .iter()
+            .find(|(known, _)| *known == name)
+            .map(|&(_, input)| input)
+    }
+
+    fn op(self) -> u32 {
+        match self {
+            Self::Height => op::HEIGHT,
+            Self::Slope => op::GRADIENT,
+            Self::Curvature => op::CURVATURE,
+            Self::Flow => op::FLOW,
+            Self::Wetness => op::WETNESS,
+            Self::Lake => op::LAKE,
+            Self::River => op::RIVER,
+            Self::Grain => op::GRAIN,
+            Self::Power => op::POWER,
+            Self::Flood => op::FLOOD,
+            Self::Worn => op::WORN,
+            Self::Deposit => op::DEPOSIT,
+            Self::Path => op::PATH,
+        }
+    }
+
+    fn reads(self) -> Reads {
+        match self {
+            Self::Flow
+            | Self::Wetness
+            | Self::Lake
+            | Self::River
+            | Self::Grain
+            | Self::Power
+            | Self::Flood => Reads {
+                water: true,
+                ..Reads::default()
+            },
+            Self::Path => Reads {
+                path: true,
+                ..Reads::default()
+            },
+            Self::Worn | Self::Deposit => Reads {
+                erosion: true,
+                ..Reads::default()
+            },
+            Self::Height | Self::Slope | Self::Curvature => Reads::default(),
+        }
+    }
+
+    fn shaped(self) -> bool {
+        match self {
+            Self::Slope | Self::Curvature => true,
+            Self::Height
+            | Self::Flow
+            | Self::Wetness
+            | Self::Lake
+            | Self::River
+            | Self::Grain
+            | Self::Power
+            | Self::Flood
+            | Self::Worn
+            | Self::Deposit
+            | Self::Path => false,
+        }
+    }
+
+    fn at(self, inputs: &SampleInputs) -> f32 {
+        match self {
+            Self::Height => inputs.height,
+            Self::Slope => slope_of(inputs.gradient),
+            Self::Curvature => inputs.curvature,
+            Self::Flow => inputs.water.flow,
+            Self::Wetness => inputs.water.wetness,
+            Self::Lake => inputs.water.lake,
+            Self::River => inputs.water.river,
+            Self::Grain => inputs.water.grain,
+            Self::Power => inputs.water.power,
+            Self::Flood => inputs.water.flood,
+            Self::Worn => worn(inputs.erosion),
+            Self::Deposit => deposit(inputs.erosion),
+            Self::Path => path_value(inputs.path),
+        }
+    }
+
+    fn ramp_row(self, row: &RowInputs<'_>, out: &mut [f32], ends: [f32; 2]) {
+        let (gradients, waters) = (row.gradient.iter().copied(), row.water.iter());
+        match self {
+            Self::Height => ramps(out, row.height.iter().copied(), ends),
+            Self::Slope => ramps(out, gradients.map(slope_of), ends),
+            Self::Curvature => ramps(out, row.curvature.iter().copied(), ends),
+            Self::Worn => ramps(out, row.erosion.iter().copied().map(worn), ends),
+            Self::Deposit => ramps(out, row.erosion.iter().copied().map(deposit), ends),
+            Self::Flow => ramps(out, waters.map(|water| water.flow), ends),
+            Self::Wetness => ramps(out, waters.map(|water| water.wetness), ends),
+            Self::Lake => ramps(out, waters.map(|water| water.lake), ends),
+            Self::River => ramps(out, waters.map(|water| water.river), ends),
+            Self::Grain => ramps(out, waters.map(|water| water.grain), ends),
+            Self::Power => ramps(out, waters.map(|water| water.power), ends),
+            Self::Flood => ramps(out, waters.map(|water| water.flood), ends),
+            Self::Path => {
+                for (value, &sample) in out.iter_mut().zip(row.path) {
+                    *value = path_ramp(sample, row.spacing, ends);
+                }
+            }
+        }
+    }
+
+    fn value_row(self, row: &RowInputs<'_>, out: &mut [f32]) {
+        let (gradients, waters) = (row.gradient.iter().copied(), row.water.iter());
+        match self {
+            Self::Height => fill_row(out, row.height.iter().copied()),
+            Self::Slope => fill_row(out, gradients.map(slope_of)),
+            Self::Curvature => fill_row(out, row.curvature.iter().copied()),
+            Self::Worn => fill_row(out, row.erosion.iter().copied().map(worn)),
+            Self::Deposit => fill_row(out, row.erosion.iter().copied().map(deposit)),
+            Self::Flow => fill_row(out, waters.map(|water| water.flow)),
+            Self::Wetness => fill_row(out, waters.map(|water| water.wetness)),
+            Self::Lake => fill_row(out, waters.map(|water| water.lake)),
+            Self::River => fill_row(out, waters.map(|water| water.river)),
+            Self::Grain => fill_row(out, waters.map(|water| water.grain)),
+            Self::Power => fill_row(out, waters.map(|water| water.power)),
+            Self::Flood => fill_row(out, waters.map(|water| water.flood)),
+            Self::Path => fill_row(out, row.path.iter().copied().map(path_value)),
+        }
+    }
+}
+
+pub(crate) struct Scope {
+    gpu: bool,
+    users: Vec<(String, String)>,
+}
+
+impl Scope {
+    pub(crate) fn gpu() -> Self {
+        Self {
+            gpu: true,
+            users: Vec::new(),
+        }
+    }
+
+    pub(crate) fn cpu() -> Self {
+        Self {
+            gpu: false,
+            users: Vec::new(),
+        }
+    }
+
+    pub(crate) fn users(self) -> Vec<(String, String)> {
+        self.users
+    }
+
+    fn user(&mut self, name: &str, path: String) -> Result<usize, Error> {
+        if self.gpu {
+            return Err(Error::new(ErrorCode::UnreadableMap, path)
+                .got(name)
+                .variants(maps::GPU));
+        }
+        if let Some(index) = self.users.iter().position(|(known, _)| known == name) {
+            return Ok(index);
+        }
+        self.users.push((name.to_owned(), path));
+        Ok(self.users.len() - 1)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Compiled {
     Constant(f32),
-    Height([f32; 2]),
-    Gradient([f32; 2]),
-    Curvature([f32; 2]),
+    Ramp(Input, [f32; 2]),
+    Value(Input),
+    User {
+        map: usize,
+        ends: Option<[f32; 2]>,
+    },
     Facing {
         toward: [f32; 2],
         ends: [f32; 2],
     },
-    Worn([f32; 2]),
-    Deposit([f32; 2]),
-    Flow([f32; 2]),
-    Wetness([f32; 2]),
-    Lake([f32; 2]),
-    River([f32; 2]),
-    Grain([f32; 2]),
-    Power([f32; 2]),
-    Flood([f32; 2]),
-    Path([f32; 2]),
     Noise {
         frequency: f32,
         seed: u32,
@@ -339,6 +495,12 @@ fn ramps(out: &mut [f32], values: impl IntoIterator<Item = f32>, ends: [f32; 2])
     }
 }
 
+fn fill_row(out: &mut [f32], values: impl IntoIterator<Item = f32>) {
+    for (value, input) in out.iter_mut().zip(values) {
+        *value = input;
+    }
+}
+
 #[inline]
 fn slope_of([x, z]: [f32; 2]) -> f32 {
     (x * x + z * z).sqrt()
@@ -359,32 +521,32 @@ fn deposit(change: f32) -> f32 {
     max(change, 0.0)
 }
 
-pub(crate) fn erosions(layers: &Layers) -> impl Iterator<Item = &Erosion> {
-    layers.layers().iter().filter_map(|layer| match layer {
-        Layer::Erosion(stage) => stage.baked.as_deref(),
-        Layer::Noise(_)
-        | Layer::Heightmap(_)
-        | Layer::Stamp(_)
-        | Layer::Rivers(_)
-        | Layer::Hydrology(_)
-        | Layer::Path(_)
-        | Layer::Steps(_)
-        | Layer::Hummocks(_) => None,
-    })
+#[inline]
+fn path_value(PathSample { distance, half }: PathSample) -> f32 {
+    distance.abs() - half
+}
+
+#[inline]
+fn path_ramp(PathSample { distance, half }: PathSample, spacing: f32, ends: [f32; 2]) -> f32 {
+    [-0.375, -0.125, 0.125, 0.375]
+        .iter()
+        .map(|offset| ramp((distance + offset * spacing).abs() - half, ends))
+        .sum::<f32>()
+        * 0.25
 }
 
 pub(crate) fn erosion_row(layers: &Layers, xs: &[f32], z: f32, spacing: f32, out: &mut [f32]) {
     out.fill(0.0);
-    for erosion in erosions(layers) {
-        erosion.change_row(xs.iter().copied(), z, spacing, |index, change| {
-            out[index] += change;
+    for change in layers.changes() {
+        change.change_row(xs.iter().copied(), z, spacing, |index, value| {
+            out[index] += value;
         });
     }
 }
 
 fn fold(
     masks: &[Compiled],
-    row: &RowInputs<'_>,
+    (row, maps): (&RowInputs<'_>, &[Vec<f32>]),
     out: &mut [f32],
     scratch: &mut RowScratch,
     start: f32,
@@ -393,7 +555,7 @@ fn fold(
     out.fill(start);
     let mut part = scratch.take(out.len());
     for mask in masks {
-        mask.evaluate_row(row, &mut part, scratch);
+        mask.evaluate_row(row, maps, &mut part, scratch);
         for (value, &next) in out.iter_mut().zip(&part) {
             *value = op(*value, next);
         }
@@ -402,38 +564,19 @@ fn fold(
 }
 
 impl Compiled {
-    pub(crate) fn from(mask: &Mask, path: &str, depth: usize) -> Result<Self, Error> {
-        if depth > MAX_MASK_DEPTH {
+    pub(crate) fn from(
+        expr: &Expr,
+        path: &str,
+        depth: usize,
+        scope: &mut Scope,
+    ) -> Result<Self, Error> {
+        if depth > MAX_EXPR_DEPTH {
             return Err(terrain_error(path)
-                .at_most(MAX_MASK_DEPTH as u64)
+                .at_most(MAX_EXPR_DEPTH as u64)
                 .got(depth));
         }
-        let finite = |values: &[f32]| values.iter().all(|value| value.is_finite());
-        let ramped = |ends: &[f32; 2], key: &str, input: fn([f32; 2]) -> Self| {
-            if finite(ends) {
-                Ok(input(*ends))
-            } else {
-                Err(terrain_error(format!("{path}.{key}"))
-                    .expected(Expected::Finite)
-                    .got(ends))
-            }
-        };
-        let list = |masks: &[Mask], name: &str| -> Result<Vec<Compiled>, Error> {
-            if masks.is_empty() || masks.len() > MAX_MASK_LIST {
-                return Err(terrain_error(format!("{path}.{name}"))
-                    .range(1.0, MAX_MASK_LIST as f64)
-                    .got(masks.len()));
-            }
-            masks
-                .iter()
-                .enumerate()
-                .map(|(index, mask)| {
-                    Self::from(mask, &format!("{path}.{name}[{index}]"), depth + 1)
-                })
-                .collect()
-        };
-        Ok(match mask {
-            Mask::Constant(value) => {
+        Ok(match expr {
+            Expr::Constant(value) => {
                 if !value.is_finite() {
                     return Err(terrain_error(format!("{path}.constant"))
                         .expected(Expected::Finite)
@@ -441,17 +584,39 @@ impl Compiled {
                 }
                 Self::Constant(*value)
             }
-            Mask::Height(ends) => ramped(ends, "height", Self::Height)?,
-            Mask::Slope(ends) => {
-                if let Err(invalid) =
-                    ends.check("slope", Rule::Range(0.0, MAX_SLOPE_DEGREES as f64))
-                {
-                    return Err(setting_error(invalid, path));
+            Expr::Map(name) => match Input::named(name) {
+                Some(input) => Self::Value(input),
+                None => Self::User {
+                    map: scope.user(name, format!("{path}.map"))?,
+                    ends: None,
+                },
+            },
+            Expr::Ramp(ramp) => {
+                let at = format!("{path}.ramp");
+                let ends = [ramp.from, ramp.to];
+                let input = Input::named(&ramp.map);
+                if input == Some(Input::Slope) {
+                    for (value, field) in [(ramp.from, "from"), (ramp.to, "to")] {
+                        if let Err(invalid) =
+                            value.check(field, Rule::Range(0.0, MAX_SLOPE_DEGREES as f64))
+                        {
+                            return Err(setting_error(invalid, &at));
+                        }
+                    }
+                    return Ok(Self::Ramp(Input::Slope, ends.map(tangent)));
                 }
-                Self::Gradient(ends.map(tangent))
+                if !(ramp.from.is_finite() && ramp.to.is_finite()) {
+                    return Err(terrain_error(at).expected(Expected::Finite).got(ends));
+                }
+                match input {
+                    Some(input) => Self::Ramp(input, ends),
+                    None => Self::User {
+                        map: scope.user(&ramp.map, format!("{at}.map"))?,
+                        ends: Some(ends),
+                    },
+                }
             }
-            Mask::Curvature(ends) => ramped(ends, "curvature", Self::Curvature)?,
-            Mask::Facing(facing) => {
+            Expr::Facing(facing) => {
                 if let Err(invalid) = facing.validate() {
                     return Err(setting_error(invalid, &format!("{path}.facing")));
                 }
@@ -461,17 +626,7 @@ impl Compiled {
                     ends: facing.ramp,
                 }
             }
-            Mask::Worn(ends) => ramped(ends, "worn", Self::Worn)?,
-            Mask::Deposit(ends) => ramped(ends, "deposit", Self::Deposit)?,
-            Mask::Flow(ends) => ramped(ends, "flow", Self::Flow)?,
-            Mask::Wetness(ends) => ramped(ends, "wetness", Self::Wetness)?,
-            Mask::Lake(ends) => ramped(ends, "lake", Self::Lake)?,
-            Mask::River(ends) => ramped(ends, "river", Self::River)?,
-            Mask::Grain(ends) => ramped(ends, "grain", Self::Grain)?,
-            Mask::Power(ends) => ramped(ends, "power", Self::Power)?,
-            Mask::Flood(ends) => ramped(ends, "flood", Self::Flood)?,
-            Mask::Path(ends) => ramped(ends, "path", Self::Path)?,
-            Mask::Noise(noise) => {
+            Expr::Noise(noise) => {
                 if let Err(invalid) = noise.validate() {
                     return Err(setting_error(invalid, &format!("{path}.noise")));
                 }
@@ -481,16 +636,17 @@ impl Compiled {
                     octaves: noise.octaves,
                 }
             }
-            Mask::Multiply(masks) => Self::Multiply(list(masks, "multiply")?),
-            Mask::Add(masks) => Self::Add(list(masks, "add")?),
-            Mask::Min(masks) => Self::Min(list(masks, "min")?),
-            Mask::Max(masks) => Self::Max(list(masks, "max")?),
-            Mask::Invert(mask) => Self::Invert(Box::new(Self::from(
-                mask,
+            Expr::Mul(list) => Self::Multiply(Self::list(list, (path, "mul"), depth, scope)?),
+            Expr::Add(list) => Self::Add(Self::list(list, (path, "add"), depth, scope)?),
+            Expr::Min(list) => Self::Min(Self::list(list, (path, "min"), depth, scope)?),
+            Expr::Max(list) => Self::Max(Self::list(list, (path, "max"), depth, scope)?),
+            Expr::Invert(inner) => Self::Invert(Box::new(Self::from(
+                inner,
                 &format!("{path}.invert"),
                 depth + 1,
+                scope,
             )?)),
-            Mask::Remap(remap) => {
+            Expr::Remap(remap) => {
                 if !(remap.from.is_finite() && remap.to.is_finite()) {
                     return Err(terrain_error(format!("{path}.remap"))
                         .expected(Expected::Finite)
@@ -498,9 +654,10 @@ impl Compiled {
                 }
                 Self::Remap(
                     Box::new(Self::from(
-                        &remap.mask,
-                        &format!("{path}.remap.mask"),
+                        &remap.of,
+                        &format!("{path}.remap.of"),
                         depth + 1,
+                        scope,
                     )?),
                     [remap.from, remap.to],
                 )
@@ -508,32 +665,36 @@ impl Compiled {
         })
     }
 
+    fn gpu(expr: &Expr, path: &str) -> Result<Self, Error> {
+        Self::from(expr, path, 0, &mut Scope::gpu())
+    }
+
+    fn list(
+        exprs: &[Expr],
+        (path, name): (&str, &str),
+        depth: usize,
+        scope: &mut Scope,
+    ) -> Result<Vec<Self>, Error> {
+        if exprs.is_empty() || exprs.len() > MAX_EXPR_LIST {
+            return Err(terrain_error(format!("{path}.{name}"))
+                .range(1.0, MAX_EXPR_LIST as f64)
+                .got(exprs.len()));
+        }
+        exprs
+            .iter()
+            .enumerate()
+            .map(|(index, expr)| {
+                Self::from(expr, &format!("{path}.{name}[{index}]"), depth + 1, scope)
+            })
+            .collect()
+    }
+
     pub(crate) fn reads(&self) -> Reads {
         match self {
-            Self::Flow(_)
-            | Self::Wetness(_)
-            | Self::Lake(_)
-            | Self::River(_)
-            | Self::Grain(_)
-            | Self::Power(_)
-            | Self::Flood(_) => Reads {
-                water: true,
-                ..Reads::default()
-            },
-            Self::Path(_) => Reads {
-                path: true,
-                ..Reads::default()
-            },
-            Self::Worn(_) | Self::Deposit(_) => Reads {
-                erosion: true,
-                ..Reads::default()
-            },
-            Self::Constant(_)
-            | Self::Height(_)
-            | Self::Gradient(_)
-            | Self::Curvature(_)
-            | Self::Facing { .. }
-            | Self::Noise { .. } => Reads::default(),
+            Self::Ramp(input, _) | Self::Value(input) => input.reads(),
+            Self::Constant(_) | Self::User { .. } | Self::Facing { .. } | Self::Noise { .. } => {
+                Reads::default()
+            }
             Self::Multiply(masks) | Self::Add(masks) | Self::Min(masks) | Self::Max(masks) => masks
                 .iter()
                 .fold(Reads::default(), |reads, mask| reads.and(mask.reads())),
@@ -541,23 +702,22 @@ impl Compiled {
         }
     }
 
+    pub(crate) fn shaped(&self) -> bool {
+        match self {
+            Self::Ramp(input, _) | Self::Value(input) => input.shaped(),
+            Self::Facing { .. } => true,
+            Self::Constant(_) | Self::User { .. } | Self::Noise { .. } => false,
+            Self::Multiply(masks) | Self::Add(masks) | Self::Min(masks) | Self::Max(masks) => {
+                masks.iter().any(Self::shaped)
+            }
+            Self::Invert(mask) | Self::Remap(mask, _) => mask.shaped(),
+        }
+    }
+
     pub(crate) fn cost(&self) -> u64 {
         match self {
             Self::Constant(_) => 0,
-            Self::Height(_)
-            | Self::Gradient(_)
-            | Self::Curvature(_)
-            | Self::Facing { .. }
-            | Self::Worn(_)
-            | Self::Deposit(_)
-            | Self::Flow(_)
-            | Self::Wetness(_)
-            | Self::Lake(_)
-            | Self::River(_)
-            | Self::Grain(_)
-            | Self::Power(_)
-            | Self::Flood(_)
-            | Self::Path(_) => 1,
+            Self::Ramp(..) | Self::Value(_) | Self::User { .. } | Self::Facing { .. } => 1,
             Self::Noise { octaves, .. } => 2 * u64::from(*octaves),
             Self::Multiply(masks) | Self::Add(masks) | Self::Min(masks) | Self::Max(masks) => {
                 masks.iter().map(Self::cost).sum::<u64>() + 1
@@ -569,39 +729,31 @@ impl Compiled {
     pub(crate) fn evaluate_row(
         &self,
         row: &RowInputs<'_>,
+        maps: &[Vec<f32>],
         out: &mut [f32],
         scratch: &mut RowScratch,
     ) {
-        let (gradients, waters) = (row.gradient.iter().copied(), row.water.iter());
         match self {
             Self::Constant(value) => out.fill(*value),
-            Self::Height(ends) => ramps(out, row.height.iter().copied(), *ends),
-            Self::Gradient(ends) => ramps(out, gradients.map(slope_of), *ends),
-            Self::Curvature(ends) => ramps(out, row.curvature.iter().copied(), *ends),
+            Self::Ramp(input, ends) => input.ramp_row(row, out, *ends),
+            Self::Value(input) => input.value_row(row, out),
+            Self::User { map, ends } => {
+                out.fill(0.0);
+                if let Some(values) = maps.get(*map) {
+                    fill_row(out, values.iter().copied());
+                }
+                if let Some(ends) = ends {
+                    for value in out.iter_mut() {
+                        *value = ramp(*value, *ends);
+                    }
+                }
+            }
             Self::Facing { toward, ends } => {
                 ramps(
                     out,
-                    gradients.map(|gradient| facing(*toward, gradient)),
+                    (row.gradient.iter().copied()).map(|gradient| facing(*toward, gradient)),
                     *ends,
                 );
-            }
-            Self::Worn(ends) => ramps(out, row.erosion.iter().copied().map(worn), *ends),
-            Self::Deposit(ends) => ramps(out, row.erosion.iter().copied().map(deposit), *ends),
-            Self::Flow(ends) => ramps(out, waters.map(|water| water.flow), *ends),
-            Self::Wetness(ends) => ramps(out, waters.map(|water| water.wetness), *ends),
-            Self::Lake(ends) => ramps(out, waters.map(|water| water.lake), *ends),
-            Self::River(ends) => ramps(out, waters.map(|water| water.river), *ends),
-            Self::Grain(ends) => ramps(out, waters.map(|water| water.grain), *ends),
-            Self::Power(ends) => ramps(out, waters.map(|water| water.power), *ends),
-            Self::Flood(ends) => ramps(out, waters.map(|water| water.flood), *ends),
-            Self::Path(ends) => {
-                for (value, &PathSample { distance, half }) in out.iter_mut().zip(row.path) {
-                    *value = [-0.375, -0.125, 0.125, 0.375]
-                        .iter()
-                        .map(|offset| ramp((distance + offset * row.spacing).abs() - half, *ends))
-                        .sum::<f32>()
-                        * 0.25;
-                }
             }
             Self::Noise {
                 frequency,
@@ -647,18 +799,18 @@ impl Compiled {
                 scratch.give(at_x);
                 scratch.give(at_z);
             }
-            Self::Multiply(masks) => fold(masks, row, out, scratch, 1.0, |a, b| a * b),
-            Self::Add(masks) => fold(masks, row, out, scratch, -0.0, |a, b| a + b),
-            Self::Min(masks) => fold(masks, row, out, scratch, f32::INFINITY, min),
-            Self::Max(masks) => fold(masks, row, out, scratch, f32::NEG_INFINITY, max),
+            Self::Multiply(masks) => fold(masks, (row, maps), out, scratch, 1.0, |a, b| a * b),
+            Self::Add(masks) => fold(masks, (row, maps), out, scratch, -0.0, |a, b| a + b),
+            Self::Min(masks) => fold(masks, (row, maps), out, scratch, f32::INFINITY, min),
+            Self::Max(masks) => fold(masks, (row, maps), out, scratch, f32::NEG_INFINITY, max),
             Self::Invert(mask) => {
-                mask.evaluate_row(row, out, scratch);
+                mask.evaluate_row(row, maps, out, scratch);
                 for value in out.iter_mut() {
                     *value = 1.0 - *value;
                 }
             }
             Self::Remap(mask, ends) => {
-                mask.evaluate_row(row, out, scratch);
+                mask.evaluate_row(row, maps, out, scratch);
                 for value in out.iter_mut() {
                     *value = ramp(*value, *ends);
                 }
@@ -667,7 +819,6 @@ impl Compiled {
     }
 
     pub(crate) fn emit(&self, out: &mut Vec<u32>) -> u32 {
-        use crate::gpu::op;
         let ramp = |out: &mut Vec<u32>, code: u32, ends: &[f32; 2]| {
             out.extend([code, ends[0].to_bits(), ends[1].to_bits()]);
             1
@@ -685,24 +836,20 @@ impl Compiled {
                 out.extend([op::CONSTANT, value.to_bits()]);
                 1
             }
-            Self::Height(ends) => ramp(out, op::HEIGHT, ends),
-            Self::Gradient(ends) => ramp(out, op::GRADIENT, ends),
-            Self::Curvature(ends) => ramp(out, op::CURVATURE, ends),
+            Self::Ramp(input, ends) => ramp(out, input.op(), ends),
+            Self::Value(input) => {
+                out.extend([op::VALUE, input.op()]);
+                1
+            }
+            Self::User { .. } => {
+                out.extend([op::CONSTANT, 0.0_f32.to_bits()]);
+                1
+            }
             Self::Facing { toward, ends } => {
                 out.extend([op::FACING, toward[0].to_bits(), toward[1].to_bits()]);
                 out.extend(ends.map(f32::to_bits));
                 1
             }
-            Self::Worn(ends) => ramp(out, op::WORN, ends),
-            Self::Deposit(ends) => ramp(out, op::DEPOSIT, ends),
-            Self::Flow(ends) => ramp(out, op::FLOW, ends),
-            Self::Wetness(ends) => ramp(out, op::WETNESS, ends),
-            Self::Lake(ends) => ramp(out, op::LAKE, ends),
-            Self::River(ends) => ramp(out, op::RIVER, ends),
-            Self::Grain(ends) => ramp(out, op::GRAIN, ends),
-            Self::Power(ends) => ramp(out, op::POWER, ends),
-            Self::Flood(ends) => ramp(out, op::FLOOD, ends),
-            Self::Path(ends) => ramp(out, op::PATH, ends),
             Self::Noise {
                 frequency,
                 seed,
@@ -731,27 +878,11 @@ impl Compiled {
     pub(crate) fn evaluate(&self, inputs: &SampleInputs) -> f32 {
         match self {
             Self::Constant(value) => *value,
-            Self::Height(ends) => ramp(inputs.height, *ends),
-            Self::Gradient(ends) => ramp(slope_of(inputs.gradient), *ends),
-            Self::Curvature(ends) => ramp(inputs.curvature, *ends),
+            Self::Ramp(Input::Path, ends) => path_ramp(inputs.path, inputs.spacing, *ends),
+            Self::Ramp(input, ends) => ramp(input.at(inputs), *ends),
+            Self::Value(input) => input.at(inputs),
+            Self::User { ends, .. } => ends.map_or(0.0, |ends| ramp(0.0, ends)),
             Self::Facing { toward, ends } => ramp(facing(*toward, inputs.gradient), *ends),
-            Self::Worn(ends) => ramp(worn(inputs.erosion), *ends),
-            Self::Deposit(ends) => ramp(deposit(inputs.erosion), *ends),
-            Self::Flow(ends) => ramp(inputs.water.flow, *ends),
-            Self::Wetness(ends) => ramp(inputs.water.wetness, *ends),
-            Self::Lake(ends) => ramp(inputs.water.lake, *ends),
-            Self::River(ends) => ramp(inputs.water.river, *ends),
-            Self::Grain(ends) => ramp(inputs.water.grain, *ends),
-            Self::Power(ends) => ramp(inputs.water.power, *ends),
-            Self::Flood(ends) => ramp(inputs.water.flood, *ends),
-            Self::Path(ends) => {
-                let PathSample { distance, half } = inputs.path;
-                [-0.375, -0.125, 0.125, 0.375]
-                    .iter()
-                    .map(|offset| ramp((distance + offset * inputs.spacing).abs() - half, *ends))
-                    .sum::<f32>()
-                    * 0.25
-            }
             Self::Noise {
                 frequency,
                 seed,
@@ -883,7 +1014,7 @@ impl Biomes {
                     .range(1.0, MAX_BIOME_LAYERS as f64)
                     .got(biome.layers.len()));
             }
-            let fitness = Compiled::from(&biome.fitness, &format!("{at}.fitness"), 0)?;
+            let fitness = Compiled::gpu(&biome.fitness, &format!("{at}.fitness"))?;
             let mut layers = Vec::with_capacity(biome.layers.len());
             for (layer_index, layer) in biome.layers.iter().enumerate() {
                 let path = format!("{at}.layers[{layer_index}]");
@@ -899,12 +1030,12 @@ impl Biomes {
                 }
                 layers.push(CompiledLayer {
                     material: material as u8,
-                    mask: Compiled::from(&layer.mask, &format!("{path}.mask"), 0)?,
+                    mask: Compiled::gpu(&layer.mask, &format!("{path}.mask"))?,
                     opacity: layer.opacity,
                 });
             }
             let wetness = match &biome.wetness {
-                Some(rule) => Some(Compiled::from(rule, &format!("{at}.wetness"), 0)?),
+                Some(rule) => Some(Compiled::gpu(rule, &format!("{at}.wetness"))?),
                 None => None,
             };
             biomes.push(CompiledBiome {
@@ -933,7 +1064,7 @@ impl Biomes {
                     gradient: layer.slope.map(tangent),
                 };
                 biomes.push(CompiledBiome {
-                    fitness: Compiled::Gradient(steep.gradient),
+                    fitness: Compiled::Ramp(Input::Slope, steep.gradient),
                     layers: vec![CompiledLayer {
                         material: steep.material,
                         mask: Compiled::Constant(1.0),
@@ -998,6 +1129,10 @@ impl BiomeRules {
         self.wet_biomes
     }
 
+    pub fn check_maps(&self, layers: &Layers) -> Result<(), Error> {
+        crate::placement::check_maps(&self.placements, layers)
+    }
+
     #[must_use]
     pub fn without_placements(&self) -> Self {
         let mut rules = self.clone();
@@ -1050,7 +1185,7 @@ impl BiomeRules {
     }
 
     pub(crate) fn program(&self, words: &mut Vec<u32>) -> (u32, u32, u32) {
-        use crate::gpu::{BIOME_WORDS, op};
+        use crate::gpu::BIOME_WORDS;
         let (table, entry) = (words.len(), BIOME_WORDS as usize);
         words.extend(std::iter::repeat_n(0, entry * self.biomes.len()));
         let (mut stack, mut materials) = (1, 0);
@@ -1111,19 +1246,19 @@ impl BiomeRules {
             let mut rows = Vec::with_capacity(biome.layers.len() + 2);
             let mut fitness = scratch.take(if index == 0 { 0 } else { len });
             if index > 0 {
-                biome.fitness.evaluate_row(row, &mut fitness, scratch);
+                biome.fitness.evaluate_row(row, &[], &mut fitness, scratch);
             }
             rows.push(fitness);
             for (layer_index, layer) in biome.layers.iter().enumerate() {
                 let mut mask = scratch.take(if layer_index == 0 { 0 } else { len });
                 if layer_index > 0 {
-                    layer.mask.evaluate_row(row, &mut mask, scratch);
+                    layer.mask.evaluate_row(row, &[], &mut mask, scratch);
                 }
                 rows.push(mask);
             }
             let mut wetness = scratch.take(if biome.wetness.is_some() { len } else { 0 });
             if let Some(rule) = &biome.wetness {
-                rule.evaluate_row(row, &mut wetness, scratch);
+                rule.evaluate_row(row, &[], &mut wetness, scratch);
             }
             rows.push(wetness);
             values.push(rows);
@@ -1221,32 +1356,7 @@ impl BiomeRules {
     }
 }
 
-use crate::codec::{record, tagged};
-
-tagged!(Mask {
-    0 => Constant(value),
-    1 => Height(ends),
-    2 => Slope(ends),
-    3 => Curvature(ends),
-    4 => Flow(ends),
-    5 => Wetness(ends),
-    6 => Lake(ends),
-    7 => River(ends),
-    8 => Path(ends),
-    9 => Noise(noise),
-    10 => Multiply(masks),
-    11 => Add(masks),
-    12 => Min(masks),
-    13 => Max(masks),
-    14 => Invert(mask),
-    15 => Remap(remap),
-    16 => Grain(ends),
-    17 => Power(ends),
-    18 => Flood(ends),
-    19 => Facing(facing),
-    20 => Worn(ends),
-    21 => Deposit(ends),
-});
+use crate::codec::record;
 
 record!(Facing { heading, ramp });
 record!(NoiseMask {
@@ -1254,7 +1364,6 @@ record!(NoiseMask {
     seed,
     octaves,
 });
-record!(Remap { mask, from, to });
 record!(BiomeLayer {
     material,
     mask,

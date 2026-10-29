@@ -370,5 +370,6 @@ gpu_mirrors! {
     engine_terrain::gpu::op::WORN => ["OP_WORN" in TERRAIN_CONTROL_SHADER];
     engine_terrain::gpu::op::DEPOSIT => ["OP_DEPOSIT" in TERRAIN_CONTROL_SHADER];
     engine_terrain::gpu::op::FACING => ["OP_FACING" in TERRAIN_CONTROL_SHADER];
+    engine_terrain::gpu::op::VALUE => ["OP_VALUE" in TERRAIN_CONTROL_SHADER];
     engine_terrain::gpu::op::END => ["OP_END" in TERRAIN_CONTROL_SHADER];
 }
