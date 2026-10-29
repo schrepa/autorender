@@ -7,7 +7,7 @@ use poses::presentation_view;
 use engine_settings::ErrorCode;
 use std::{collections::BTreeMap, io::Write};
 
-use engine_collision::{CollisionError, CollisionWorld, CollisionWorldView, refresh_collision_world};
+use engine_collision::{CollisionError, CollisionWorld, refresh_collision_world};
 use engine_core::{
     ActionId, ActionInput, AssetLibrary, Atmosphere, BrickRegistry, Camera, Engine, FixedTime,
     FrameTime, GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle,

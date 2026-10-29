@@ -64,6 +64,7 @@ pub use pyramid::{Pyramid, PyramidError, TileKey};
 pub use relief::{HummocksLayer, StepsLayer};
 pub use rivers::{RIVER_STEP, Rivers};
 pub use runtime::{
+    TerrainKey, terrain_key,
     Cover, DECK_DEPTH, DECK_MARGIN, DECK_RISE, FALLS_SHOWN, FallView, GUST_QUICK_ACROSS,
     GUST_QUICK_RATE, GUST_QUICK_SHARE, GUST_QUICK_TRAVEL, GUST_SLOW_RATE, GUST_SLOW_SHARE,
     GUST_SLOW_TRAVEL, GroundCover, LIVE_PIXELS, LONGEST_FRAME, LakeView, MAX_BOUNCE_LEVELS,

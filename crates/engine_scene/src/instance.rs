@@ -37,6 +37,7 @@ pub fn authored_id(world: &World, entity: Entity) -> Option<engine_core::Authore
         .map(|metadata| engine_core::AuthoredId {
             scene: metadata.scene_id.clone(),
             id: metadata.authored_id.clone(),
+            name: metadata.name.clone(),
         })
 }
 
@@ -201,9 +202,6 @@ impl SceneInstance {
         self.streamed
     }
 
-    pub(crate) fn shared_entities(&self) -> Arc<BTreeMap<String, Entity>> {
-        self.entities.clone()
-    }
 
     pub fn belongs_to(&self, world: &World) -> bool {
         self.world_id == world.id()

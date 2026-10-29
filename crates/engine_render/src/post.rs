@@ -350,6 +350,7 @@ impl PostPass {
                 world_terrains: crate::world_trace::WorldTrace::walked(
                     engine_terrain::RenderTerrains::of(snapshot),
                 ),
+                occupancy: engine_terrain::TerrainEnvironment::of(snapshot).occupancy,
             },
         );
         let uniform = PostUniform {

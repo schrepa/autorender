@@ -6,7 +6,6 @@
 mod antialiasing;
 mod atmosphere;
 mod bricks;
-mod authored;
 pub mod bounds;
 mod clock;
 mod clouds;
@@ -51,7 +50,6 @@ mod water;
 
 pub use antialiasing::*;
 pub use atmosphere::*;
-pub use authored::*;
 pub use bevy_app::{App, Plugin, PluginGroup, PluginGroupBuilder};
 pub use bevy_ecs;
 pub use bricks::*;

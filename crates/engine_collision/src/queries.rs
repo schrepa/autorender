@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::{Entity, World};
 use engine_core::bounds::{self, MAX_SCAN_ENTITIES, default_limit};
-use engine_core::{ActiveScene, Error, ErrorCode, Operation};
+use engine_core::{Error, ErrorCode, Operation, OperationScene};
 use engine_settings::rule::range;
 #[cfg(feature = "schema")]
 use engine_settings::stated;
@@ -349,8 +349,9 @@ fn bounded<T: Setting>(value: T, rule: Rule, code: ErrorCode, path: &str) -> Res
 }
 
 fn scan(world: &World) -> Result<(), Error> {
-    if ActiveScene::of(world)
-        .and_then(|scene| scene.entity_count())
+    if world
+        .get_resource::<OperationScene>()
+        .map(OperationScene::entity_count)
         .is_some_and(|count| count > MAX_SCAN_ENTITIES)
     {
         return Err(Error::new(
@@ -363,14 +364,16 @@ fn scan(world: &World) -> Result<(), Error> {
 }
 
 fn hit_entity(world: &World, entity: Entity) -> HitEntity {
-    let identity = ActiveScene::of(world)
-        .map(|scene| scene.identity(world, entity))
-        .unwrap_or_default();
+    let scene = world.get_resource::<OperationScene>();
+    let authored = scene.and_then(|scene| scene.authored(world, entity));
+    let in_active_scene = scene
+        .zip(authored.as_ref())
+        .is_some_and(|(scene, authored)| scene.holds(authored, entity));
     HitEntity {
-        id: identity.id,
-        scene: identity.scene,
-        name: identity.name,
-        in_active_scene: identity.in_active_scene,
+        id: authored.as_ref().map(|authored| authored.id.clone()),
+        scene: authored.as_ref().map(|authored| authored.scene.clone()),
+        name: authored.map(|authored| authored.name),
+        in_active_scene,
         alive: world.get_entity(entity).is_ok(),
     }
 }
@@ -515,8 +518,8 @@ fn resolve_entity(
             "expected a bounded authored entity ID",
         ));
     }
-    let scene = ActiveScene::of(world)
-        .filter(|scene| scene.entity_count().is_some())
+    let scene = world
+        .get_resource::<OperationScene>()
         .ok_or_else(|| {
             Error::new(
                 ErrorCode::NoScene,

@@ -140,6 +140,7 @@ impl DevTools {
             read: Box::new(|world, entity, _context| {
                 engine_collision::collider_view(world, entity?).map(|view| json!(view))
             }),
+            brick: Some("collision"),
         })
         .expect("built-in descriptor is bounded");
         self.insert(Inspector {
@@ -154,6 +155,7 @@ impl DevTools {
             read: Box::new(|world, entity, _context| {
                 engine_physics::rigid_body_view(world, entity?).map(|view| json!(view))
             }),
+            brick: Some("physics"),
         })
         .expect("built-in descriptor is bounded");
     }

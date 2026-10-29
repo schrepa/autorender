@@ -49,6 +49,6 @@ impl Brick for PhysicsBrick {
                     obstacles::obstruct.in_set(PhysicsSystems::Obstruct),
                 ),
             )
-            .inspector::<PhysicsWorld, PhysicsWorldView>(PhysicsWorldView::of);
+            .inspector::<PhysicsWorld, PhysicsWorldView>(|_, world| PhysicsWorldView::of(world));
     }
 }

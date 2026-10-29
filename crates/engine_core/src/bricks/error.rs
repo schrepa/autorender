@@ -8,6 +8,7 @@ use serde_json::error::Category;
 use serde_path_to_error::Segment;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Error {
     pub code: ErrorCode,
     pub path: String,

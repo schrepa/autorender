@@ -608,6 +608,7 @@ dependencies = [
  "engine_core",
  "engine_native",
  "engine_scene",
+ "engine_terrain",
  "serde_json",
 ]
 
@@ -813,13 +814,17 @@ dependencies = [
  "engine_collision",
  "engine_core",
  "engine_dev",
+ "engine_navigation",
  "engine_panic",
  "engine_physics",
  "engine_profile",
  "engine_render",
  "engine_scene",
  "engine_settings",
+ "engine_terrain",
+ "engine_time_of_day",
  "engine_worker",
+ "engine_world_streaming",
  "js-sys",
  "schemars",
  "serde",
@@ -836,6 +841,7 @@ dependencies = [
  "engine_core",
  "engine_lodbuild",
  "engine_scene",
+ "engine_terrain",
  "glam 0.30.9",
  "gltf",
  "png",
@@ -861,14 +867,16 @@ dependencies = [
 name = "engine_collision"
 version = "0.1.0"
 dependencies = [
- "bevy_app",
  "bevy_ecs",
  "engine_core",
  "engine_profile",
  "engine_settings",
+ "engine_terrain",
  "glam 0.30.9",
  "parry3d",
  "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -883,11 +891,12 @@ dependencies = [
  "engine_settings",
  "engine_sources",
  "engine_tables",
- "engine_terrain",
  "engine_textures",
  "glam 0.30.9",
  "schemars",
  "serde",
+ "serde_json",
+ "serde_path_to_error",
 ]
 
 [[package]]
@@ -896,10 +905,14 @@ version = "0.1.0"
 dependencies = [
  "engine_collision",
  "engine_core",
+ "engine_navigation",
  "engine_physics",
  "engine_profile",
  "engine_scene",
  "engine_settings",
+ "engine_terrain",
+ "engine_time_of_day",
+ "engine_world_streaming",
  "schemars",
  "serde",
  "serde_json",
@@ -938,6 +951,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_navigation"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "engine_core",
+ "engine_math",
+ "engine_settings",
+ "engine_sources",
+ "engine_terrain",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "engine_panic"
 version = "0.1.0"
 dependencies = [
@@ -950,12 +979,12 @@ dependencies = [
 name = "engine_physics"
 version = "0.1.0"
 dependencies = [
- "bevy_app",
  "bevy_ecs",
  "engine_collision",
  "engine_core",
  "engine_profile",
  "engine_settings",
+ "engine_terrain",
  "glam 0.30.9",
  "parry3d",
  "rapier3d",
@@ -1009,7 +1038,9 @@ dependencies = [
  "engine_core",
  "engine_profile",
  "engine_sources",
+ "engine_terrain",
  "engine_textures",
+ "engine_time_of_day",
  "glam 0.30.9",
  "js-sys",
  "libm",
@@ -1029,12 +1060,14 @@ dependencies = [
  "base64",
  "engine_collision",
  "engine_core",
+ "engine_navigation",
  "engine_physics",
  "engine_settings",
+ "engine_terrain",
+ "engine_world_streaming",
  "schemars",
  "serde",
  "serde_json",
- "serde_path_to_error",
 ]
 
 [[package]]
@@ -1068,13 +1101,19 @@ dependencies = [
 name = "engine_terrain"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
+ "engine_assets",
+ "engine_core",
  "engine_math",
+ "engine_profile",
  "engine_settings",
  "engine_sources",
+ "engine_textures",
  "glam 0.30.9",
  "libm",
  "schemars",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1088,11 +1127,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_time_of_day"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "engine_core",
+ "engine_settings",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
+]
+
+[[package]]
 name = "engine_worker"
 version = "0.1.0"
 dependencies = [
  "engine_lodbuild",
  "engine_math",
+ "engine_navigation",
  "engine_panic",
  "engine_sources",
  "engine_tables",
@@ -1105,6 +1157,20 @@ dependencies = [
  "sha2",
  "wasm-bindgen",
  "zune-jpeg",
+]
+
+[[package]]
+name = "engine_world_streaming"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "engine_core",
+ "engine_profile",
+ "engine_settings",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4057,6 +4123,7 @@ dependencies = [
  "engine_dev",
  "engine_lodbuild",
  "engine_native",
+ "engine_navigation",
  "engine_profiler",
  "engine_render",
  "engine_scene",

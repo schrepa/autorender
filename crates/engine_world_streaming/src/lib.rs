@@ -612,8 +612,8 @@ impl Brick for WorldStreamingBrick {
             .resource::<CellStats>()
             .stats::<CellStats>()
             .systems(WorldSync, stream_cells.in_set(WorldSyncSystems::Stream))
-            .inspector(dev::world_cells as fn(&WorldCells) -> WorldCellsView)
-            .inspector(dev::world_changes as fn(&WorldChanges) -> WorldChangesView)
+            .inspector::<WorldCells, WorldCellsView>(|_, cells| dev::world_cells(cells))
+            .inspector::<WorldChanges, WorldChangesView>(|_, changes| dev::world_changes(changes))
             .operation::<WorldChangesControl>();
     }
 }

@@ -3,7 +3,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use engine_core::Terrain;
 use engine_navigation::{
     Gait, NavOptions, NavPath, PortalsJob, TilePortals, WalkData, WalkGround, WalkSearch,
 };

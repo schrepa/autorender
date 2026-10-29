@@ -1,4 +1,3 @@
-use engine_collision::CollisionWorldView;
 use engine_core::Distribution;
 use serde::Serialize;
 use serde_json::Value;

@@ -92,3 +92,16 @@ impl Operation for TerrainControl {
         schemars::schema_for!(Self)
     }
 }
+
+#[derive(Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum TerrainKey {
+    Authored(String),
+    Entity(u64),
+}
+
+pub fn terrain_key(world: &World, entity: Entity) -> TerrainKey {
+    engine_core::authored_id(world, entity)
+        .map_or_else(|| TerrainKey::Entity(entity.to_bits()), TerrainKey::Authored)
+}

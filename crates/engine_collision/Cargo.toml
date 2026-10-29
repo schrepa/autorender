@@ -16,7 +16,6 @@ engine_core.workspace = true
 engine_profile.workspace = true
 engine_terrain.workspace = true
 engine_settings.workspace = true
-engine_terrain.workspace = true
 bevy_ecs.workspace = true
 glam.workspace = true
 parry3d.workspace = true

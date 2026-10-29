@@ -47,7 +47,7 @@ use identity::Generation;
 use lighting::{Basis, Lighting, ground_tiles, light, lighting_level, lit};
 use macro_colors::{MacroColors, ask_colors, want_colors};
 pub use occupancy::*;
-pub use operations::{TerrainControl, TerrainControlResult};
+pub use operations::{TerrainControl, TerrainControlResult, TerrainKey, terrain_key};
 use plan::*;
 pub use queries::*;
 pub use residency::*;

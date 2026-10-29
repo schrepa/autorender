@@ -9,7 +9,7 @@ pub struct TerrainDebug {
 }
 
 impl TerrainDebug {
-    pub(crate) fn detail_eye(world: &World) -> Vec3 {
+    pub fn detail_eye(world: &World) -> Vec3 {
         world
             .get_resource::<Self>()
             .and_then(|debug| debug.freeze)

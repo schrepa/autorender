@@ -443,7 +443,7 @@ pub struct InspectorEntry {
 impl InspectorEntry {
     pub(super) fn resource<R: Resource, V: serde::Serialize + 'static>(
         brick: &'static str,
-        view: fn(&R) -> V,
+        view: fn(&World, &R) -> V,
     ) -> Self {
         Self {
             name: short_type_name::<R>(),
@@ -451,7 +451,7 @@ impl InspectorEntry {
             brick,
             type_id: TypeId::of::<R>(),
             read: Arc::new(move |world: &World, _: Option<Entity>| {
-                world.get_resource::<R>().map(|value| to_json(view(value)))
+                world.get_resource::<R>().map(|value| to_json(view(world, value)))
             }),
             has: |world, _| world.contains_resource::<R>(),
             #[cfg(feature = "schema")]

@@ -42,8 +42,8 @@ impl Brick for TerrainBrick {
             )
             .extract(extract_terrains)
             .operation::<TerrainControl>()
-            .inspector::<Terrains, TerrainsView>(TerrainsView::of)
-            .inspector::<TerrainDebug, TerrainDebugView>(TerrainDebugView::of);
+            .inspector::<Terrains, TerrainsView>(|_, terrains| TerrainsView::of(terrains))
+            .inspector::<TerrainDebug, TerrainDebugView>(|_, debug| TerrainDebugView::of(debug));
     }
 }
 

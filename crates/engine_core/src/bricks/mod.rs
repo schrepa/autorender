@@ -9,7 +9,7 @@ pub use registry::{
     BrickRecord, BrickRegistry, InspectedKind, InspectorEntry, OperationEntry, Owned,
     SettingsEntry, StatsEntry,
 };
-pub use scene::{AuthoredId, OperationScene};
+pub use scene::{AuthoredId, OperationScene, authored_entity, authored_id};
 
 use std::sync::{Mutex, OnceLock, PoisonError};
 
@@ -114,7 +114,7 @@ impl Bricks<'_> {
         self
     }
 
-    pub fn resource<R: Resource + Default>(&mut self) -> &mut Self {
+    pub fn resource<R: Resource + bevy_ecs::world::FromWorld>(&mut self) -> &mut Self {
         self.app.init_resource::<R>();
         self.record.own_resource::<R>();
         self
@@ -168,7 +168,7 @@ impl Bricks<'_> {
     #[cfg(not(feature = "schema"))]
     pub fn inspector<R: Resource, V: serde::Serialize + 'static>(
         &mut self,
-        view: fn(&R) -> V,
+        view: fn(&World, &R) -> V,
     ) -> &mut Self {
         let entry = InspectorEntry::resource(self.record.name, view);
         self.record.inspectors.push(entry);
@@ -178,7 +178,7 @@ impl Bricks<'_> {
     #[cfg(feature = "schema")]
     pub fn inspector<R: Resource, V: serde::Serialize + schemars::JsonSchema + 'static>(
         &mut self,
-        view: fn(&R) -> V,
+        view: fn(&World, &R) -> V,
     ) -> &mut Self {
         let entry = InspectorEntry::resource(self.record.name, view)
             .with_schema(registry::schema_of::<V>);

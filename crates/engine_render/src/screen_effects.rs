@@ -6,6 +6,7 @@ pub(crate) struct UniformFrame {
     pub(crate) haze_turn: f32,
     pub(crate) haze_history: [f32; 2],
     pub(crate) world_terrains: u32,
+    pub(crate) occupancy: engine_terrain::Occupancy,
 }
 
 pub(crate) fn haze_runs(environment: &Environment) -> bool {
@@ -83,9 +84,9 @@ macro_rules! screen_effects {
 screen_effects! {
     occlusion {
         gate: |environment| environment.ambient_occlusion.sanitized().enabled(),
-        uniform: |settings, on, _| {
+        uniform: |settings, on, frame| {
             let occlusion = settings.ambient_occlusion.sanitized();
-            let share = crate::occupancy::texel_share(&settings.occupancy.sanitized());
+            let share = crate::occupancy::texel_share(&frame.occupancy);
             [occlusion.radius, occlusion.intensity, share, on]
         },
         reads: [Depth],

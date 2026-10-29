@@ -78,10 +78,10 @@ pub use engine_terrain::{MAX_BOUNCE_LEVELS, MAX_OCCUPANCY_LEVELS};
 pub mod bricks {
     pub use engine_core::{
         AddBrick, AuthoredId, Brick, BrickList, BrickRecord, BrickRegistry, BrickSet, BrickStats,
-        Bricks, Culling, DebugViewBrick, Error, Extracted, InspectedKind, InspectorEntry,
-        LevelOfDetailBrick, LightingModel, Lights, List, Operation, OperationEntry,
-        OperationScene, Owned, Particles, PostEffects, ReflectionProbes, ResolutionBrick,
-        SettingsEntry, ShadowsBrick, SkyBrick, Slot, StatsEntry, brick_name, missing_brick,
+        Bricks, Culling, DebugView, Error, Extracted, InspectedKind, InspectorEntry,
+        LevelOfDetail, LightingModel, Lights, List, Operation, OperationEntry,
+        OperationScene, Owned, Particles, PostEffects, ReflectionProbes, Resolution,
+        SettingsEntry, Shadows, Sky, Slot, StatsEntry, brick_name, missing_brick,
         parse_json, parse_value, parse_value_at,
     };
 
@@ -96,13 +96,13 @@ pub mod bricks {
             .with::<Lights>()
             .with::<Particles>()
             .with::<ReflectionProbes>()
-            .with::<SkyBrick>()
-            .with::<ShadowsBrick>()
+            .with::<Sky>()
+            .with::<Shadows>()
             .with::<PostEffects>()
-            .with::<LevelOfDetailBrick>()
+            .with::<LevelOfDetail>()
             .with::<Culling>()
-            .with::<ResolutionBrick>()
-            .with::<DebugViewBrick>()
+            .with::<Resolution>()
+            .with::<DebugView>()
             .with::<LightingModel>()
     }
 
