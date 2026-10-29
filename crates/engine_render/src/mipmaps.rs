@@ -1,14 +1,14 @@
 use crate::bindings::MIPMAPS;
 use crate::shaders::entry::mipmaps;
 
-pub(crate) struct MipGenerator {
+pub struct MipGenerator {
     pipelines: [wgpu::RenderPipeline; 2],
     layout: crate::pipelines::GroupLayout,
     sampler: wgpu::Sampler,
 }
 
 impl MipGenerator {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
+    pub fn new(device: &wgpu::Device) -> Self {
         let layout = crate::pipelines::layout(device, &MIPMAPS);
         let pipeline_layout =
             crate::pipelines::layout_of(device, &crate::pipeline_layouts::MIPMAP_PIPELINES);
@@ -45,7 +45,7 @@ impl MipGenerator {
         }
     }
 
-    pub(crate) fn record(
+    pub fn record(
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
@@ -54,7 +54,7 @@ impl MipGenerator {
         self.record_views(device, encoder, texture, None)
     }
 
-    pub(crate) fn record_layer(
+    pub fn record_layer(
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,

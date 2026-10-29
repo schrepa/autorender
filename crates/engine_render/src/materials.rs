@@ -42,7 +42,7 @@ struct Defaults {
     group: wgpu::BindGroup,
 }
 
-pub(crate) struct MaterialStore {
+pub struct MaterialStore {
     layout: crate::pipelines::GroupLayout,
     samplers: HashMap<Sampler, wgpu::Sampler>,
     textures: BTreeMap<(TextureHandle, bool), GpuTexture>,
@@ -237,17 +237,17 @@ impl MaterialStore {
         self.generation
     }
 
-    pub(crate) fn mips(&self) -> &MipGenerator {
+    pub fn mips(&self) -> &MipGenerator {
         &self.mips
     }
 
-    pub(crate) fn group(&self, material: MaterialHandle) -> Option<&wgpu::BindGroup> {
+    pub fn group(&self, material: MaterialHandle) -> Option<&wgpu::BindGroup> {
         self.materials
             .get(&material)
             .map(|material| &material.group)
     }
 
-    pub(crate) fn binding(&self, material: Option<MaterialHandle>) -> (&wgpu::BindGroup, Variant) {
+    pub fn binding(&self, material: Option<MaterialHandle>) -> (&wgpu::BindGroup, Variant) {
         match material {
             Some(handle) => {
                 let material = &self.materials[&handle];
@@ -257,7 +257,7 @@ impl MaterialStore {
         }
     }
 
-    pub(crate) fn is_texture_resident(&self, handle: TextureHandle) -> bool {
+    pub fn is_texture_resident(&self, handle: TextureHandle) -> bool {
         self.textures
             .range((handle, false)..=(handle, true))
             .next()
@@ -359,7 +359,7 @@ fn bind_group(
     )
 }
 
-pub(crate) fn gpu_format(
+pub fn gpu_format(
     format: TextureFormat,
     srgb: bool,
 ) -> (wgpu::TextureFormat, wgpu::Features) {
@@ -403,7 +403,7 @@ pub(crate) fn gpu_format(
     }
 }
 
-pub(crate) fn write_level(
+pub fn write_level(
     queue: &crate::gpu_calls::Queue,
     texture: &wgpu::Texture,
     (level, layer): (u32, u32),

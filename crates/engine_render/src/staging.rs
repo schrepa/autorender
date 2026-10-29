@@ -2,7 +2,7 @@ use std::{cell::Cell, rc::Rc};
 
 use crate::uploads::UploadRange;
 
-pub(crate) const MIN_STAGED_BYTES: usize = 256 * 1024;
+pub const MIN_STAGED_BYTES: usize = 256 * 1024;
 const MAX_BUFFERS: usize = 6;
 const SIZE_STEP: u64 = 256 * 1024;
 
@@ -21,18 +21,18 @@ struct Staging {
     state: Rc<Cell<State>>,
 }
 
-pub(crate) struct Prestaged {
+pub struct Prestaged {
     buffer: wgpu::Buffer,
     state: Rc<Cell<State>>,
     bytes: u64,
 }
 
 impl Prestaged {
-    pub(crate) fn bytes(&self) -> u64 {
+    pub fn bytes(&self) -> u64 {
         self.bytes
     }
 
-    pub(crate) fn copy_to(
+    pub fn copy_to(
         self,
         encoder: &mut wgpu::CommandEncoder,
         destination: &wgpu::Buffer,
@@ -51,17 +51,17 @@ impl Drop for Prestaged {
 }
 
 #[derive(Default)]
-pub(crate) struct StagingRing {
+pub struct StagingRing {
     buffers: Vec<Staging>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Staged {
+pub enum Staged {
     Recorded,
     NoMappedBuffer,
 }
 
-pub(crate) struct Segment<'a> {
+pub struct Segment<'a> {
     pub destination: &'a wgpu::Buffer,
     pub base: u64,
     pub records: &'a [u8],
@@ -70,7 +70,7 @@ pub(crate) struct Segment<'a> {
 }
 
 impl Segment<'_> {
-    pub(crate) fn bytes(&self) -> usize {
+    pub fn bytes(&self) -> usize {
         self.ranges
             .iter()
             .map(|range| (range.end - range.start) * self.stride)
@@ -79,7 +79,7 @@ impl Segment<'_> {
 }
 
 impl StagingRing {
-    pub(crate) fn record(
+    pub fn record(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
@@ -101,7 +101,7 @@ impl StagingRing {
         )
     }
 
-    pub(crate) fn record_segments(
+    pub fn record_segments(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
@@ -148,7 +148,7 @@ impl StagingRing {
         Staged::Recorded
     }
 
-    pub(crate) fn prestage(&mut self, device: &wgpu::Device, bytes: &[u8]) -> Option<Prestaged> {
+    pub fn prestage(&mut self, device: &wgpu::Device, bytes: &[u8]) -> Option<Prestaged> {
         let index = self.mapped(device, bytes.len())?;
         let staging = &self.buffers[index];
         if !crate::platform::write_mapped(staging.buffer.slice(0..bytes.len() as u64), [(0, bytes)])
@@ -201,7 +201,7 @@ impl StagingRing {
         Some(index)
     }
 
-    pub(crate) fn after_submit(&mut self) {
+    pub fn after_submit(&mut self) {
         for staging in &self.buffers {
             if staging.state.get() != State::Recorded {
                 continue;
@@ -221,7 +221,7 @@ impl StagingRing {
         }
     }
 
-    pub(crate) fn capacity_bytes(&self) -> u64 {
+    pub fn capacity_bytes(&self) -> u64 {
         self.buffers.iter().map(|staging| staging.size).sum()
     }
 }

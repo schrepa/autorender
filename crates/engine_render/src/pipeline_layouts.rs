@@ -1,14 +1,8 @@
 use crate::bindings::{
-    BOUNCE, CLOUD_COMPOSITE, CLOUD_MARCH, CLOUD_VIEW, COVER_DRAW, COVER_GROW, DEBUG_VIEW, EMPTY,
-    ENVIRONMENT_DOWN, ENVIRONMENT_PREFILTER, ENVIRONMENT_SKY, EXPOSURE, GroupRef, HAZE,
-    IMPOSTOR_BAKE, IMPOSTOR_DRAW, LIGHT_BINNING, MATERIAL, MIPMAPS, OCCUPANCY, PARTICLES, POST,
+    EMPTY, GroupRef, IMPOSTOR_BAKE, IMPOSTOR_DRAW, MATERIAL, MIPMAPS, POST,
     PRESENTATION_COMPACT, PRESENTATION_COMPOSE, PRESENTATION_CULL, PRESENTATION_FADES,
-    PRESENTATION_LEVEL, PRESENTATION_TESTS, PYRAMID_DOWN, PYRAMID_FIRST, REFLECTIONS,
-    RETAINED_POSES, SCATTER_CULL, SCATTER_SNAP, SHADOW_MARKS, SHADOW_POSES, SHADOW_SELECT,
-    SHADOW_VIEW, SKY_TABLES, SKY_TRANSMITTANCE, TAA_RESOLVE, TEMPORAL_POSES, TERRAIN,
-    TERRAIN_CONTROL, TERRAIN_NORMALS, TERRAIN_RESOLVE, TERRAIN_SUBDIVISION,
-    TERRAIN_SUBDIVISION_CAMERA, TRANSPARENT_COMPOSITE, WATER, WATER_BEHIND, WATER_PARTICLES,
-    WATER_SETUP, WATER_SIM,
+    PRESENTATION_LEVEL, PRESENTATION_TESTS, PYRAMID_DOWN, PYRAMID_FIRST, RETAINED_POSES,
+    TEMPORAL_POSES, TRANSPARENT_COMPOSITE,
 };
 
 pub const UNIFORM_BINDING_BYTES: u64 = 16_384;
@@ -43,18 +37,21 @@ pub struct PipelineLayout {
     pub limits: StageLimits,
 }
 
+#[doc(hidden)]
+#[macro_export]
 macro_rules! group_ref {
     (($group:ident without [$($set:ident),* $(,)?])) => {
-        GroupRef::Shared {
+        $crate::bindings::GroupRef::Shared {
             group: stringify!($group),
             without: &[$(stringify!($set)),*],
         }
     };
     ($table:ident) => {
-        GroupRef::Own(&$table)
+        $crate::bindings::GroupRef::Own(&$table)
     };
 }
 
+#[macro_export]
 macro_rules! pipeline_layouts {
     ($(
         $(#[$doc:meta])*
@@ -62,43 +59,41 @@ macro_rules! pipeline_layouts {
     )*) => {
         $(
             $(#[$doc])*
-            pub const $name: PipelineLayout = PipelineLayout {
-                label: concat!("engine/", stringify!($name)),
-                groups: &[$(group_ref!($group)),+],
-                limits: StageLimits {
-                    $($($field: $value,)+)?
-                    ..REQUIRED_LIMITS
-                },
-            };
+            pub const $name: $crate::pipeline_layouts::PipelineLayout =
+                $crate::pipeline_layouts::PipelineLayout {
+                    label: concat!("engine/", stringify!($name)),
+                    groups: &[$($crate::group_ref!($group)),+],
+                    limits: $crate::pipeline_layouts::StageLimits {
+                        $($($field: $value,)+)?
+                        ..$crate::pipeline_layouts::REQUIRED_LIMITS
+                    },
+                };
         )*
 
-        pub const PIPELINE_LAYOUTS: &[(&str, &PipelineLayout)] = &[$((stringify!($name), &$name)),*];
+        pub const PIPELINE_LAYOUTS: &[(&str, &$crate::pipeline_layouts::PipelineLayout)] =
+            &[$((stringify!($name), &$name)),*];
     };
 }
 
-pipeline_layouts! {
-    MESH_PIPELINES = [(frame without [refraction]), MATERIAL, RETAINED_POSES];
+crate::pipeline_layouts! {
     LIT_MESH_PIPELINES = [
         (frame without [refraction]),
         MATERIAL,
         RETAINED_POSES,
         (lights without []),
     ];
-    TEMPORAL_MESH_PIPELINES = [(frame without [refraction]), MATERIAL, TEMPORAL_POSES];
     LIT_TEMPORAL_MESH_PIPELINES = [
         (frame without [refraction]),
         MATERIAL,
         TEMPORAL_POSES,
         (lights without []),
     ];
-    IMPOSTOR_PIPELINES = [(frame without [refraction]), IMPOSTOR_DRAW, RETAINED_POSES];
     LIT_IMPOSTOR_PIPELINES = [
         (frame without [refraction]),
         IMPOSTOR_DRAW,
         RETAINED_POSES,
         (lights without []),
     ];
-    TEMPORAL_IMPOSTOR_PIPELINES = [(frame without [refraction]), IMPOSTOR_DRAW, TEMPORAL_POSES];
     LIT_TEMPORAL_IMPOSTOR_PIPELINES = [
         (frame without [refraction]),
         IMPOSTOR_DRAW,
@@ -106,64 +101,11 @@ pipeline_layouts! {
         (lights without []),
     ];
     IMPOSTOR_BAKE_PIPELINES = [EMPTY, MATERIAL, IMPOSTOR_BAKE];
-    SKY_PIPELINES = [(frame without [refraction]), SKY_TRANSMITTANCE];
-    CLOUD_COMPOSITE_PIPELINES = [(frame without [refraction]), CLOUD_COMPOSITE];
-    TERRAIN_PIPELINES = [(frame without [sky_tables, refraction]), TERRAIN];
-    LIT_TERRAIN_PIPELINES = [
-        (frame without [sky_tables, refraction]),
-        TERRAIN,
-        EMPTY,
-        (lights without []),
-    ];
-    TERRAIN_RESOLVE_PIPELINES = [
-        (frame without [sky_tables, refraction]),
-        TERRAIN,
-        TERRAIN_RESOLVE,
-    ];
-    LIT_TERRAIN_RESOLVE_PIPELINES = [
-        (frame without [sky_tables, refraction]),
-        TERRAIN,
-        TERRAIN_RESOLVE,
-        (lights without []),
-    ];
-    TERRAIN_SUBDIVISION_PIPELINES = [TERRAIN_SUBDIVISION_CAMERA, TERRAIN, TERRAIN_SUBDIVISION];
-    COVER_PIPELINES = [(frame without [refraction]), COVER_DRAW];
-    LIT_COVER_PIPELINES = [(frame without [refraction]), COVER_DRAW, EMPTY, (lights without [])];
-    WATER_PIPELINES = [(frame without []), WATER, WATER_BEHIND];
-    PARTICLE_PIPELINES = [(frame without [refraction]), PARTICLES];
-    HAZE_PIPELINES = [(frame without [refraction]), HAZE];
-    CASTER_PIPELINES = [SHADOW_VIEW, SHADOW_POSES];
-    MASKED_CASTER_PIPELINES = [SHADOW_VIEW, SHADOW_POSES, MATERIAL];
-    IMPOSTOR_CASTER_PIPELINES = [SHADOW_VIEW, SHADOW_POSES, IMPOSTOR_DRAW];
-    TERRAIN_CASTER_PIPELINES = [SHADOW_VIEW, TERRAIN];
-    SHADOW_SELECT_PIPELINES = [SHADOW_SELECT];
-    SHADOW_MARKS_PIPELINES = [SHADOW_MARKS];
     POST_PIPELINES = [POST];
-    REFLECTION_PIPELINES = [(frame without [occupancy, sky_tables, probes, refraction]), REFLECTIONS];
-    TAA_RESOLVE_PIPELINES = [TAA_RESOLVE];
     TRANSPARENT_COMPOSITE_PIPELINES = [TRANSPARENT_COMPOSITE];
-    DEBUG_VIEW_PIPELINES = [DEBUG_VIEW];
-    EXPOSURE_PIPELINES = [EXPOSURE];
-    LIGHT_BINNING_PIPELINES = [LIGHT_BINNING];
     MIPMAP_PIPELINES = [MIPMAPS];
     PYRAMID_FIRST_PIPELINES = [PYRAMID_FIRST];
     PYRAMID_DOWN_PIPELINES = [PYRAMID_DOWN];
-    ENVIRONMENT_SKY_PIPELINES = [ENVIRONMENT_SKY];
-    ENVIRONMENT_DOWN_PIPELINES = [ENVIRONMENT_DOWN];
-    ENVIRONMENT_PREFILTER_PIPELINES = [ENVIRONMENT_PREFILTER];
-    CLOUD_MARCH_PIPELINES = [CLOUD_MARCH];
-    CLOUD_VIEW_PIPELINES = [CLOUD_VIEW];
-    SKY_TABLE_PIPELINES = [SKY_TABLES];
-    WATER_SIM_PIPELINES = [WATER_SIM];
-    WATER_SETUP_PIPELINES = [EMPTY, TERRAIN, WATER_SETUP];
-    WATER_PARTICLE_PIPELINES = [(frame without []), WATER, WATER_PARTICLES];
-    COVER_GROW_PIPELINES = [COVER_GROW];
-    OCCUPANCY_PIPELINES = [OCCUPANCY];
-    SCATTER_SNAP_PIPELINES = [SCATTER_SNAP];
-    SCATTER_CULL_PIPELINES = [SCATTER_CULL];
-    TERRAIN_NORMAL_PIPELINES = [TERRAIN_NORMALS];
-    TERRAIN_CONTROL_PIPELINES = [TERRAIN_CONTROL];
-    BOUNCE_PIPELINES = [BOUNCE];
     PRESENTATION_COMPOSE_PIPELINES = [PRESENTATION_COMPOSE, PRESENTATION_LEVEL];
     PRESENTATION_CULL_PIPELINES = [PRESENTATION_CULL];
     PRESENTATION_TEST_PIPELINES = [PRESENTATION_TESTS];
@@ -171,4 +113,4 @@ pipeline_layouts! {
     PRESENTATION_FADE_PIPELINES = [PRESENTATION_FADES];
 }
 
-pub const LAYOUT_BUDGET: usize = 58;
+pub const LAYOUT_BUDGET: usize = 54;

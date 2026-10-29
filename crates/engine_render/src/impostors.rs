@@ -13,24 +13,25 @@ use engine_core::{Material, MaterialHandle, MeshHandle, RecordKey};
 
 use crate::bindings::{IMPOSTOR_BAKE, IMPOSTOR_DRAW};
 use crate::cached::Cached;
+use crate::entries::MeshEntries;
 use crate::gpu_data::Variant;
 use crate::gpu_layouts::constants::IMPOSTOR_FOLIAGE as FOLIAGE;
 use crate::gpu_layouts::constants::IMPOSTOR_FRAMES_SHIFT as FRAMES_SHIFT;
-pub(crate) use crate::gpu_layouts::constants::IMPOSTOR_HEMISPHERE as HEMISPHERE;
+pub use crate::gpu_layouts::constants::IMPOSTOR_HEMISPHERE as HEMISPHERE;
 use crate::gpu_layouts::constants::IMPOSTOR_KINDS as KINDS;
 use crate::gpu_layouts::constants::IMPOSTOR_MASKED as MASKED;
 use crate::gpu_layouts::constants::VARIANT_FOLIAGE;
-pub(crate) use crate::gpu_layouts::impostors::ImpostorRecord;
+pub use crate::gpu_layouts::impostors::ImpostorRecord;
 use crate::graph::Targets;
 use crate::mesh_arena::MeshDraw;
 use crate::mipmaps::MipGenerator;
 use crate::parts::{Prelude, PreludeStage};
-use crate::scene_shading::SceneShading;
-pub(crate) use content::Contents;
+use crate::renderer::ShadingSet;
+pub use content::Contents;
 
 const IMPOSTOR_RECORD: &str = "impostor";
 
-pub(crate) const IMPOSTOR_MIN_TRIANGLES: usize = 64;
+pub const IMPOSTOR_MIN_TRIANGLES: usize = 64;
 
 const RGBA8_SIZE: u32 = 512;
 
@@ -41,20 +42,20 @@ const PLACED_FRAMES: u32 = 12;
 const FIRST_BYTES: u64 = 16 << 20;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct AtlasShape {
+pub struct AtlasShape {
     pub frames: u32,
     pub texels: u32,
     pub hemisphere: bool,
 }
 
 impl AtlasShape {
-    pub(crate) const SPHERE: Self = Self {
+    pub const SPHERE: Self = Self {
         frames: 8,
         texels: 16,
         hemisphere: false,
     };
 
-    pub(crate) fn placed(pixels: f32) -> Self {
+    pub fn placed(pixels: f32) -> Self {
         let texels = (pixels.ceil() as u32).clamp(2, 1 << 15);
         Self {
             frames: PLACED_FRAMES,
@@ -63,11 +64,11 @@ impl AtlasShape {
         }
     }
 
-    pub(crate) fn size(self) -> u32 {
+    pub fn size(self) -> u32 {
         self.frames * self.texels
     }
 
-    pub(crate) fn levels(self) -> u32 {
+    pub fn levels(self) -> u32 {
         self.texels.trailing_zeros()
     }
 
@@ -186,7 +187,7 @@ impl AtlasFormat {
 }
 
 impl ImpostorRecord {
-    pub(crate) fn new(
+    pub fn new(
         min: Vec3,
         max: Vec3,
         layer: u32,
@@ -207,7 +208,7 @@ impl ImpostorRecord {
         }
     }
 
-    pub(crate) fn error(&self) -> f32 {
+    pub fn error(&self) -> f32 {
         let texels = self.flags & (HEMISPHERE - 1);
         if texels == 0 {
             return 0.0;
@@ -215,19 +216,19 @@ impl ImpostorRecord {
         2.0 * self.sphere[3] / texels as f32
     }
 
-    pub(crate) fn framed(&self) -> bool {
+    pub fn framed(&self) -> bool {
         self.flags & (HEMISPHERE - 1) != 0 && self.sphere[3] > 0.0
     }
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct Layers {
+pub struct Layers {
     free: Vec<u32>,
     used: u32,
 }
 
 impl Layers {
-    pub(crate) fn allocate(&mut self, limit: u32) -> Option<u32> {
+    pub fn allocate(&mut self, limit: u32) -> Option<u32> {
         if let Some(index) = self
             .free
             .iter()
@@ -243,20 +244,20 @@ impl Layers {
         })
     }
 
-    pub(crate) fn release(&mut self, layer: u32) {
+    pub fn release(&mut self, layer: u32) {
         self.free.push(layer);
     }
 
-    pub(crate) fn extent(&self) -> u32 {
+    pub fn extent(&self) -> u32 {
         self.used
     }
 
-    pub(crate) fn live(&self) -> u32 {
+    pub fn live(&self) -> u32 {
         self.used - self.free.len() as u32
     }
 }
 
-pub(crate) fn grown_layers(needed: u32, bytes: u64, limit: u32) -> u32 {
+pub fn grown_layers(needed: u32, bytes: u64, limit: u32) -> u32 {
     let first = (FIRST_BYTES / bytes.max(1)).clamp(1, 16) as u32;
     needed.max(first).next_power_of_two().min(limit).max(needed)
 }
@@ -275,7 +276,7 @@ fn layer_limit(device: &wgpu::Device, budget: Option<u32>) -> u32 {
 
 const MIPS_LABEL: &str = "engine/texture-mips";
 
-pub(crate) trait MipEncoder {
+pub trait MipEncoder {
     fn mips(&mut self, device: &wgpu::Device) -> &mut wgpu::CommandEncoder;
 }
 
@@ -295,7 +296,7 @@ impl MipEncoder for Prelude {
     }
 }
 
-pub(crate) type ImpostorKey = (MeshHandle, Option<MaterialHandle>);
+pub type ImpostorKey = (MeshHandle, Option<MaterialHandle>);
 
 struct Arrays {
     texture: wgpu::Texture,
@@ -315,14 +316,14 @@ struct Supply {
     material: Option<Material>,
 }
 
-pub(crate) enum Supplied {
+pub enum Supplied {
     Resident(ImpostorRecord),
     Coming,
     Refused,
 }
 
 impl Supplied {
-    pub(crate) fn record(&self) -> ImpostorRecord {
+    pub fn record(&self) -> ImpostorRecord {
         match self {
             Self::Resident(record) => *record,
             Self::Coming | Self::Refused => ImpostorRecord::default(),
@@ -330,7 +331,7 @@ impl Supplied {
     }
 }
 
-pub(crate) struct BakeSource<'a> {
+pub struct BakeSource<'a> {
     pub draw: MeshDraw<'a>,
     pub extended: bool,
     pub group: &'a wgpu::BindGroup,
@@ -340,34 +341,35 @@ pub(crate) struct BakeSource<'a> {
     pub parts: Vec<BakePart<'a>>,
 }
 
-pub(crate) struct BakePart<'a> {
+pub struct BakePart<'a> {
     pub draw: MeshDraw<'a>,
     pub extended: bool,
     pub group: &'a wgpu::BindGroup,
     pub variant: Variant,
 }
 
-pub(crate) struct BakeGpu<'a> {
+pub struct BakeGpu<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a crate::gpu_calls::Queue,
     pub encoder: &'a mut dyn MipEncoder,
     pub mips: &'a MipGenerator,
     pub pipelines: &'a mut ImpostorPipelines,
+    pub entries: &'a MeshEntries,
 }
 
-pub(crate) struct ImpostorPipelines {
+pub struct ImpostorPipelines {
     bake_layout: crate::pipelines::GroupLayout,
     bake_pipeline_layout: wgpu::PipelineLayout,
     bake_pipelines: HashMap<Variant, wgpu::RenderPipeline>,
     shade_pipelines: HashMap<Variant, wgpu::RenderPipeline>,
     draw_layout: crate::pipelines::GroupLayout,
-    draw_pipelines: HashMap<(Targets, bool), wgpu::RenderPipeline>,
+    draw_pipelines: HashMap<(Targets, ShadingSet), wgpu::RenderPipeline>,
     sampler: wgpu::Sampler,
     no_shade: Option<wgpu::TextureView>,
 }
 
 impl ImpostorPipelines {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
+    pub fn new(device: &wgpu::Device) -> Self {
         let bake_layout = crate::pipelines::layout(device, &IMPOSTOR_BAKE);
         let bake_pipeline_layout =
             crate::pipelines::layout_of(device, &crate::pipeline_layouts::IMPOSTOR_BAKE_PIPELINES);
@@ -393,29 +395,25 @@ impl ImpostorPipelines {
         }
     }
 
-    pub(crate) fn pipeline(&self, targets: Targets, lit: bool) -> Option<&wgpu::RenderPipeline> {
-        self.draw_pipelines.get(&(targets, lit))
+    pub fn pipeline(&self, targets: Targets, shading: ShadingSet) -> Option<&wgpu::RenderPipeline> {
+        self.draw_pipelines.get(&(targets, shading))
     }
 
-    pub(crate) fn insert_pipeline(
+    pub fn insert_pipeline(
         &mut self,
         targets: Targets,
-        lit: bool,
+        shading: ShadingSet,
         pipeline: wgpu::RenderPipeline,
     ) {
-        self.draw_pipelines.insert((targets, lit), pipeline);
+        self.draw_pipelines.insert((targets, shading), pipeline);
     }
 
-    pub(crate) fn forget_pipelines(&mut self, targets: Targets) {
+    pub fn forget_pipelines(&mut self, targets: Targets) {
         self.draw_pipelines.retain(|(kind, _), _| *kind != targets);
-    }
-
-    pub(crate) fn forget_shading(&mut self) {
-        self.draw_pipelines.clear();
     }
 }
 
-pub(crate) struct ImpostorAtlas {
+pub struct ImpostorAtlas {
     shape: AtlasShape,
     format: AtlasFormat,
     arrays: Option<Arrays>,
@@ -451,7 +449,7 @@ fn record_buffer(device: &wgpu::Device, records: usize) -> wgpu::Buffer {
 }
 
 impl ImpostorAtlas {
-    pub(crate) fn new(device: &wgpu::Device, shape: AtlasShape) -> Self {
+    pub fn new(device: &wgpu::Device, shape: AtlasShape) -> Self {
         let format = AtlasFormat::of(device);
         Self {
             shape: shape.held_on(device, format),
@@ -477,11 +475,11 @@ impl ImpostorAtlas {
         }
     }
 
-    pub(crate) fn set_cooking(&mut self, cooking: bool) {
+    pub fn set_cooking(&mut self, cooking: bool) {
         self.cooking = cooking;
     }
 
-    pub(crate) fn fit(&mut self, device: &wgpu::Device, shape: AtlasShape) {
+    pub fn fit(&mut self, device: &wgpu::Device, shape: AtlasShape) {
         let shape = shape.held_on(device, self.format);
         if shape == self.shape {
             return;
@@ -500,15 +498,15 @@ impl ImpostorAtlas {
         self.generation += 1;
     }
 
-    pub(crate) fn generation(&self) -> u64 {
+    pub fn generation(&self) -> u64 {
         self.generation
     }
 
-    pub(crate) fn live(&self) -> u32 {
+    pub fn live(&self) -> u32 {
         self.layers.live()
     }
 
-    pub(crate) fn capacity_bytes(&self) -> u64 {
+    pub fn capacity_bytes(&self) -> u64 {
         let layers = self.arrays.as_ref().map_or(0, |arrays| arrays.layers);
         u64::from(layers) * self.layer_bytes() + self.records.size()
     }
@@ -517,11 +515,11 @@ impl ImpostorAtlas {
         self.format.level_bytes(self.shape.size()) as u64 * 4 * 4 / 3
     }
 
-    pub(crate) fn contains(&self, key: ImpostorKey) -> bool {
+    pub fn contains(&self, key: ImpostorKey) -> bool {
         self.baked.contains_key(&key)
     }
 
-    pub(crate) fn record(
+    pub fn record(
         &self,
         key: ImpostorKey,
         material: Option<&Material>,
@@ -532,20 +530,20 @@ impl ImpostorAtlas {
             .map(|baked| baked.record)
     }
 
-    pub(crate) fn take_wants(&mut self, out: &mut Vec<RecordKey>) {
+    pub fn take_wants(&mut self, out: &mut Vec<RecordKey>) {
         out.append(&mut self.wants);
     }
 
-    pub(crate) fn asks(&self, record: RecordKey) -> bool {
+    pub fn asks(&self, record: RecordKey) -> bool {
         self.supplies.values().any(|supply| supply.record == record)
     }
 
-    pub(crate) fn answer(&mut self, record: RecordKey, bytes: Option<Vec<u8>>) {
+    pub fn answer(&mut self, record: RecordKey, bytes: Option<Vec<u8>>) {
         self.answers.insert(record, bytes);
         self.generation += 1;
     }
 
-    pub(crate) fn left(&self) -> u64 {
+    pub fn left(&self) -> u64 {
         (self.supplies.len() + self.readbacks.len()) as u64
     }
 
@@ -557,7 +555,7 @@ impl ImpostorAtlas {
         )
     }
 
-    pub(crate) fn retain(
+    pub fn retain(
         &mut self,
         mut keep: impl FnMut(&ImpostorKey) -> bool,
         mut material: impl FnMut(MaterialHandle) -> Option<Material>,
@@ -593,7 +591,7 @@ impl ImpostorAtlas {
             .retain(|record, _| supplies.values().any(|supply| supply.record == *record));
     }
 
-    pub(crate) fn enforce_budget(&mut self, budget: Option<u32>) {
+    pub fn enforce_budget(&mut self, budget: Option<u32>) {
         if !self.cooking && budget.is_some_and(|budget| self.layers.live() > budget) {
             self.baked.clear();
             self.layers = Layers::default();
@@ -601,7 +599,7 @@ impl ImpostorAtlas {
         }
     }
 
-    pub(crate) fn supply(
+    pub fn supply(
         &mut self,
         mut gpu: BakeGpu<'_>,
         key: ImpostorKey,
@@ -705,7 +703,7 @@ impl ImpostorAtlas {
         self.generation += 1;
     }
 
-    pub(crate) fn release_targets(&mut self) {
+    pub fn release_targets(&mut self) {
         self.targets = None;
     }
 
@@ -798,13 +796,13 @@ impl ImpostorAtlas {
         self.arrays_generation += 1;
     }
 
-    pub(crate) fn frames(&self) -> Option<(&wgpu::TextureView, u64)> {
+    pub fn frames(&self) -> Option<(&wgpu::TextureView, u64)> {
         self.arrays
             .as_ref()
             .map(|arrays| (&arrays.whole, self.arrays_generation))
     }
 
-    pub(crate) fn prepare(
+    pub fn prepare(
         &mut self,
         device: &wgpu::Device,
         queue: &crate::gpu_calls::Queue,
@@ -856,7 +854,7 @@ impl ImpostorAtlas {
         true
     }
 
-    pub(crate) fn group(&self) -> Option<&wgpu::BindGroup> {
+    pub fn group(&self) -> Option<&wgpu::BindGroup> {
         self.group.get()
     }
 }
@@ -864,18 +862,17 @@ impl ImpostorAtlas {
 const CARD_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
     wgpu::vertex_attr_array![2 => Uint32, 3 => Uint32];
 
-pub(crate) fn draw_pipeline(
+pub fn draw_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
-    (targets, lit): (Targets, bool),
-    shading: SceneShading,
+    (targets, entries): (Targets, &MeshEntries),
+    shading: &[(&'static str, f64)],
     canvas: wgpu::TextureFormat,
     depth: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
-    let vertex = crate::entries::impostor_vertex(targets);
-    let fragment = crate::entries::impostor_fragment(targets, lit);
+    let vertex = (entries.card_vertex)(targets);
+    let fragment = (entries.card_fragment)(targets);
     let color_targets = targets.color_targets(canvas);
-    let constants = shading.constants();
     let mut buffers = vec![Some(wgpu::VertexBufferLayout {
         array_stride: 8,
         step_mode: wgpu::VertexStepMode::Instance,
@@ -906,7 +903,7 @@ pub(crate) fn draw_pipeline(
             }),
             fragment: Some(crate::pipelines::Fragment {
                 entry: fragment,
-                constants: &constants,
+                constants: shading,
                 targets: &color_targets,
             }),
         },

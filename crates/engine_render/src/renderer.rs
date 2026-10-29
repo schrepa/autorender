@@ -64,15 +64,16 @@ pub(crate) mod scatter_pool;
 mod startup;
 
 pub use attribution::GpuPassTimes;
-pub(crate) use camera::CameraBindings;
+pub use camera::CameraBindings;
 pub use core_state::Core;
-pub(crate) use display::{DepthTarget, Display, DisplayFrame};
+pub(crate) use display::DisplayFrame;
+pub use display::{DepthTarget, Display};
+pub use impostor_draws::ImpostorDraws;
 pub use extra_views::CasterDraw;
-pub(crate) use impostor_draws::ImpostorDraws;
 pub use instances::FramePoses;
-pub(crate) use instances::Instances;
-pub(crate) use meshes::{BatchBinds, DrawOrder, MeshPipelines};
-pub(crate) use meshes::{extra_layout, vertex_layout};
+pub use instances::Instances;
+pub use meshes::{BatchBinds, DrawOrder, MeshPipelines, ShadingSet};
+pub use meshes::{extra_layout, vertex_layout};
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::GpuMark;
 pub(crate) use opaque::{OPAQUE_PART, OpaqueReads, encode_phase};
@@ -81,17 +82,17 @@ pub use previous::{MOTION_FORMAT, Motion};
 pub use startup::StartingRenderer;
 
 const INITIAL_CAPACITY: usize = 1_024;
-pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-pub(crate) struct GpuMesh {
+pub struct GpuMesh {
     pub(crate) placement: Result<Placement, OwnMesh>,
-    pub(crate) extended: bool,
-    pub(crate) index_count: u32,
-    pub(crate) byte_len: u64,
-    pub(crate) lods: Vec<(u32, u32, f32)>,
-    pub(crate) plan: Vec<(u32, u32, f32)>,
-    pub(crate) casters: Vec<(u32, u32)>,
-    pub(crate) without_levels: bool,
+    pub extended: bool,
+    pub index_count: u32,
+    pub byte_len: u64,
+    pub lods: Vec<(u32, u32, f32)>,
+    pub plan: Vec<(u32, u32, f32)>,
+    pub casters: Vec<(u32, u32)>,
+    pub without_levels: bool,
 }
 
 #[derive(Default)]
@@ -106,7 +107,7 @@ pub(crate) struct OwnMesh {
 }
 
 impl GpuMesh {
-    pub(crate) fn draw<'a>(&'a self, arena: &'a MeshArena) -> MeshDraw<'a> {
+    pub fn draw<'a>(&'a self, arena: &'a MeshArena) -> MeshDraw<'a> {
         match &self.placement {
             Ok(placement) => MeshDraw {
                 index_count: self.index_count,
@@ -123,12 +124,12 @@ impl GpuMesh {
         }
     }
 
-    pub(crate) fn caster_range(&self, level: usize, own: (u32, u32)) -> (u32, u32) {
+    pub fn caster_range(&self, level: usize, own: (u32, u32)) -> (u32, u32) {
         self.casters.get(level).copied().unwrap_or(own)
     }
 }
 
-pub(crate) fn lod_levels(mesh: &GpuMesh) -> usize {
+pub fn lod_levels(mesh: &GpuMesh) -> usize {
     1 + mesh.plan.len().min(LOD_LEVELS - 1)
 }
 

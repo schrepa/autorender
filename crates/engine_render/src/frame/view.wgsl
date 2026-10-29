@@ -11,34 +11,7 @@ struct Camera {
     region: vec4<f32>,
     detail: vec4<f32>,
 }
-struct Lighting {
-    sun: vec4<f32>,
-    sun_color: vec4<f32>,
-    zenith: vec4<f32>,
-    horizon: vec4<f32>,
-    ground: vec4<f32>,
-    fog: vec4<f32>,
-    effects: vec4<f32>,
-    grade: vec4<f32>,
-    shadow_tint: vec4<f32>,
-    highlight_tint: vec4<f32>,
-    aerial: vec4<f32>,
-    aerial_color: vec4<f32>,
-    occupancy: vec4<f32>,
-    occupancy_maps: vec4<f32>,
-    occupancy_centers: array<vec4<f32>, 4>,
-    cloud_shadow: vec4<f32>,
-    cloud_layer: vec4<f32>,
-    night: vec4<f32>,
-    star_turn: vec4<f32>,
-    moon: vec4<f32>,
-    foliage: vec4<f32>,
-    highlights: vec4<f32>,
-    night_shape: vec4<f32>,
-    haze_march: vec4<f32>,
-}
 @group(0) @binding(0) var<uniform> camera: Camera;
-@group(0) @binding(1) var<uniform> lighting: Lighting;
 
 const PI: f32 = 3.14159265;
 

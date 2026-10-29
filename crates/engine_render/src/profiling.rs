@@ -1,19 +1,19 @@
 #[derive(Clone, Copy)]
-pub(crate) struct Span<'a> {
+pub struct Span<'a> {
     query_set: &'a wgpu::QuerySet,
     begin: u32,
 }
 
 impl<'a> Span<'a> {
-    pub(crate) fn render(self) -> wgpu::RenderPassTimestampWrites<'a> {
+    pub fn render(self) -> wgpu::RenderPassTimestampWrites<'a> {
         self.render_part(true, true)
     }
 
-    pub(crate) fn compute(self) -> wgpu::ComputePassTimestampWrites<'a> {
+    pub fn compute(self) -> wgpu::ComputePassTimestampWrites<'a> {
         self.compute_part(true, true)
     }
 
-    pub(crate) fn render_part(self, begin: bool, end: bool) -> wgpu::RenderPassTimestampWrites<'a> {
+    pub fn render_part(self, begin: bool, end: bool) -> wgpu::RenderPassTimestampWrites<'a> {
         wgpu::RenderPassTimestampWrites {
             query_set: self.query_set,
             beginning_of_pass_write_index: begin.then_some(self.begin),
@@ -21,7 +21,7 @@ impl<'a> Span<'a> {
         }
     }
 
-    pub(crate) fn compute_part(
+    pub fn compute_part(
         self,
         begin: bool,
         end: bool,
@@ -33,7 +33,7 @@ impl<'a> Span<'a> {
         }
     }
 
-    pub(crate) fn mark(self, encoder: &mut wgpu::CommandEncoder, end: bool) {
+    pub fn mark(self, encoder: &mut wgpu::CommandEncoder, end: bool) {
         encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("engine/profile-timestamp"),
             timestamp_writes: Some(self.compute_part(!end, end)),
@@ -45,27 +45,27 @@ impl<'a> Span<'a> {
     not(feature = "profiling"),
     expect(dead_code, reason = "only profiling builds time draws")
 )]
-pub(crate) struct Draw(u32);
+pub struct Draw(u32);
 
 #[cfg(feature = "profiling")]
-pub(crate) const FEATURES: wgpu::Features = wgpu::Features::TIMESTAMP_QUERY
+pub const FEATURES: wgpu::Features = wgpu::Features::TIMESTAMP_QUERY
     .union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES)
     .union(wgpu::Features::PIPELINE_STATISTICS_QUERY);
 
 #[cfg(feature = "profiling")]
-pub(crate) use capture::GpuProfiler;
+pub use capture::GpuProfiler;
 
 #[cfg(not(feature = "profiling"))]
-pub(crate) struct GpuProfiler;
+pub struct GpuProfiler;
 
 #[cfg(not(feature = "profiling"))]
 impl GpuProfiler {
-    pub(crate) fn new(_features: wgpu::Features, _period_ns: f64) -> Self {
+    pub fn new(_features: wgpu::Features, _period_ns: f64) -> Self {
         Self
     }
 
     #[inline(always)]
-    pub(crate) fn begin_draw(
+    pub fn begin_draw(
         &self,
         _pass: &mut wgpu::RenderPass<'_>,
         _label: impl FnOnce() -> String,
@@ -74,36 +74,36 @@ impl GpuProfiler {
     }
 
     #[inline(always)]
-    pub(crate) fn end_draw(&self, _pass: &mut wgpu::RenderPass<'_>, _draw: Option<Draw>) {}
+    pub fn end_draw(&self, _pass: &mut wgpu::RenderPass<'_>, _draw: Option<Draw>) {}
 
     #[inline(always)]
-    pub(crate) fn begin_frame(&mut self, _device: &wgpu::Device) {}
+    pub fn begin_frame(&mut self, _device: &wgpu::Device) {}
 
     #[inline(always)]
-    pub(crate) fn capturing(&self) -> bool {
+    pub fn capturing(&self) -> bool {
         false
     }
 
     #[inline(always)]
-    pub(crate) fn span(&self, _name: &'static str) -> Option<Span<'_>> {
+    pub fn span(&self, _name: &'static str) -> Option<Span<'_>> {
         None
     }
 
     #[inline(always)]
-    pub(crate) fn span_in(&self, _group: &'static str, _name: &'static str) -> Option<Span<'_>> {
+    pub fn span_in(&self, _group: &'static str, _name: &'static str) -> Option<Span<'_>> {
         None
     }
 
     #[inline(always)]
-    pub(crate) fn busy(&self, _name: &'static str) -> Option<Span<'_>> {
+    pub fn busy(&self, _name: &'static str) -> Option<Span<'_>> {
         None
     }
 
     #[inline(always)]
-    pub(crate) fn end_frame(&mut self, _encoder: &mut wgpu::CommandEncoder) {}
+    pub fn end_frame(&mut self, _encoder: &mut wgpu::CommandEncoder) {}
 
     #[inline(always)]
-    pub(crate) fn submitted(&mut self) {}
+    pub fn submitted(&mut self) {}
 }
 
 #[cfg(feature = "profiling")]
@@ -278,10 +278,10 @@ mod capture {
         draws: Vec<DrawSample>,
     }
 
-    pub(crate) struct Latest {
-        pub(crate) frame_ms: f64,
-        pub(crate) idle_ms: f64,
-        pub(crate) spans: Vec<(&'static str, f64)>,
+    pub struct Latest {
+        pub frame_ms: f64,
+        pub idle_ms: f64,
+        pub spans: Vec<(&'static str, f64)>,
     }
 
     impl Latest {
@@ -304,7 +304,7 @@ mod capture {
         }
     }
 
-    pub(crate) struct GpuProfiler {
+    pub struct GpuProfiler {
         supported: bool,
         draw_support: Support,
         period_ns: f64,
@@ -326,7 +326,7 @@ mod capture {
     }
 
     impl GpuProfiler {
-        pub(crate) fn new(features: wgpu::Features, period_ns: f64) -> Self {
+        pub fn new(features: wgpu::Features, period_ns: f64) -> Self {
             let supported = features.contains(wgpu::Features::TIMESTAMP_QUERY);
             Self {
                 supported,
@@ -354,7 +354,7 @@ mod capture {
             }
         }
 
-        pub(crate) fn begin(&mut self, device: &wgpu::Device, capture: u64) {
+        pub fn begin(&mut self, device: &wgpu::Device, capture: u64) {
             self.poll();
             self.capture = Some(capture);
             self.attempted = 0;
@@ -385,7 +385,7 @@ mod capture {
                 .collect();
         }
 
-        pub(crate) fn begin_frame(&mut self, device: &wgpu::Device) {
+        pub fn begin_frame(&mut self, device: &wgpu::Device) {
             self.current = None;
             self.drawing = false;
             self.submission = self.submission.saturating_add(1);
@@ -433,23 +433,23 @@ mod capture {
             self.current = Some(index);
         }
 
-        pub(crate) fn latest(&self) -> Option<&Latest> {
+        pub fn latest(&self) -> Option<&Latest> {
             self.latest.as_ref()
         }
 
-        pub(crate) fn capturing(&self) -> bool {
+        pub fn capturing(&self) -> bool {
             self.current.is_some()
         }
 
-        pub(crate) fn span(&self, name: &'static str) -> Option<Span<'_>> {
+        pub fn span(&self, name: &'static str) -> Option<Span<'_>> {
             self.recorded(None, name)
         }
 
-        pub(crate) fn span_in(&self, group: &'static str, name: &'static str) -> Option<Span<'_>> {
+        pub fn span_in(&self, group: &'static str, name: &'static str) -> Option<Span<'_>> {
             self.recorded(Some(group), name)
         }
 
-        pub(crate) fn busy(&self, name: &'static str) -> Option<Span<'_>> {
+        pub fn busy(&self, name: &'static str) -> Option<Span<'_>> {
             self.recorded(Some(BUSY), name)
         }
 
@@ -473,7 +473,7 @@ mod capture {
             })
         }
 
-        pub(crate) fn begin_draw(
+        pub fn begin_draw(
             &self,
             pass: &mut wgpu::RenderPass<'_>,
             label: impl FnOnce() -> String,
@@ -498,7 +498,7 @@ mod capture {
             Some(Draw(index))
         }
 
-        pub(crate) fn end_draw(&self, pass: &mut wgpu::RenderPass<'_>, draw: Option<Draw>) {
+        pub fn end_draw(&self, pass: &mut wgpu::RenderPass<'_>, draw: Option<Draw>) {
             let (Some(Draw(index)), Some(current)) = (draw, self.current) else {
                 return;
             };
@@ -511,7 +511,7 @@ mod capture {
             }
         }
 
-        pub(crate) fn end_frame(&mut self, encoder: &mut wgpu::CommandEncoder) {
+        pub fn end_frame(&mut self, encoder: &mut wgpu::CommandEncoder) {
             let Some(index) = self.current else {
                 return;
             };
@@ -539,7 +539,7 @@ mod capture {
             }
         }
 
-        pub(crate) fn submitted(&mut self) {
+        pub fn submitted(&mut self) {
             let Some(index) = self.current.take() else {
                 return;
             };
@@ -562,7 +562,7 @@ mod capture {
             clippy::too_many_lines,
             reason = "longer than the line ceiling; it may only shrink"
         )]
-        pub(crate) fn poll(&mut self) {
+        pub fn poll(&mut self) {
             for index in 0..self.slots.len() {
                 if Some(index) == self.current {
                     continue;
@@ -725,7 +725,7 @@ mod capture {
             }
         }
 
-        pub(crate) fn status(&self) -> Value {
+        pub fn status(&self) -> Value {
             let active = self.capture.is_some() && engine_profile::capture_id() == self.capture;
             let pending = self
                 .slots
@@ -764,7 +764,7 @@ mod capture {
             })
         }
 
-        pub(crate) fn report(&mut self) -> Value {
+        pub fn report(&mut self) -> Value {
             self.poll();
             let mut report = self.status();
             report["samples"] = Value::Array(

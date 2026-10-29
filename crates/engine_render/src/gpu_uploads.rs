@@ -1,9 +1,9 @@
-pub(crate) use crate::uploads::whole_stream;
+pub use crate::uploads::whole_stream;
 use crate::uploads::{UploadRange, WRITE_CALL_BYTES};
 
 const MAX_RANGES: usize = 64;
 
-pub(crate) fn changed_ranges(
+pub fn changed_ranges(
     stamps: &[u64],
     since: u64,
     stride: usize,
@@ -39,7 +39,7 @@ pub(crate) fn changed_ranges(
     true
 }
 
-pub(crate) fn listed_ranges(
+pub fn listed_ranges(
     nodes: &[u32],
     len: usize,
     stride: usize,

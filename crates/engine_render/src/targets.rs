@@ -1,11 +1,34 @@
 use crate::cached::Versioned;
-use crate::debug_view::{COUNT_FORMAT as DEBUG_COUNT_FORMAT, IDS_FORMAT as DEBUG_IDS_FORMAT};
 pub(crate) use crate::graph::Targets;
 use crate::post::{GLOW_FORMAT, SCENE_FORMAT, SURFACE_FORMAT};
-use crate::temporal::MOTION_FORMAT;
+
+pub const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+pub const DEBUG_IDS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
+pub const DEBUG_COUNT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
+pub const DEBUG_TERRAIN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
+
+fn debug_color_targets() -> Vec<Option<wgpu::ColorTargetState>> {
+    let add = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    };
+    vec![
+        Some(DEBUG_IDS_FORMAT.into()),
+        Some(wgpu::ColorTargetState {
+            format: DEBUG_COUNT_FORMAT,
+            blend: Some(wgpu::BlendState {
+                color: add,
+                alpha: add,
+            }),
+            write_mask: wgpu::ColorWrites::ALL,
+        }),
+        Some(DEBUG_TERRAIN_FORMAT.into()),
+    ]
+}
 
 impl Targets {
-    pub(crate) fn formats(self, canvas: wgpu::TextureFormat) -> Vec<wgpu::TextureFormat> {
+    pub fn formats(self, canvas: wgpu::TextureFormat) -> Vec<wgpu::TextureFormat> {
         match self {
             Self::Canvas => vec![canvas],
             Self::Post => vec![SCENE_FORMAT, GLOW_FORMAT, SURFACE_FORMAT],
@@ -14,12 +37,12 @@ impl Targets {
         }
     }
 
-    pub(crate) fn color_targets(
+    pub fn color_targets(
         self,
         canvas: wgpu::TextureFormat,
     ) -> Vec<Option<wgpu::ColorTargetState>> {
         if self == Self::Debug {
-            return crate::debug_view::color_targets();
+            return debug_color_targets();
         }
         self.formats(canvas)
             .into_iter()
@@ -28,10 +51,10 @@ impl Targets {
     }
 }
 
-pub(crate) const RENDER_TARGET: wgpu::TextureUsages =
+pub const RENDER_TARGET: wgpu::TextureUsages =
     wgpu::TextureUsages::RENDER_ATTACHMENT.union(wgpu::TextureUsages::TEXTURE_BINDING);
 
-pub(crate) fn texture_2d(
+pub fn texture_2d(
     device: &wgpu::Device,
     label: &str,
     (width, height): (u32, u32),
@@ -59,7 +82,7 @@ pub(crate) fn texture_2d(
     )
 }
 
-pub(crate) fn texel(
+pub fn texel(
     device: &wgpu::Device,
     queue: &crate::gpu_calls::Queue,
     label: &str,
@@ -93,25 +116,25 @@ pub(crate) fn texel(
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct FrameSize {
-    pub(crate) width: u32,
-    pub(crate) height: u32,
+pub struct FrameSize {
+    pub width: u32,
+    pub height: u32,
 }
 
 impl FrameSize {
-    pub(crate) fn pixels(self) -> (u32, u32) {
+    pub fn pixels(self) -> (u32, u32) {
         (self.width, self.height)
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct FrameRegion {
-    pub(crate) display: FrameSize,
-    pub(crate) render: FrameSize,
+pub struct FrameRegion {
+    pub display: FrameSize,
+    pub render: FrameSize,
 }
 
 impl FrameRegion {
-    pub(crate) fn new(display: FrameSize, render: FrameSize) -> Self {
+    pub fn new(display: FrameSize, render: FrameSize) -> Self {
         let within = |size: u32, whole: u32| size.clamp(1, whole.max(1));
         Self {
             display,
@@ -122,37 +145,37 @@ impl FrameRegion {
         }
     }
 
-    pub(crate) fn whole(display: FrameSize) -> Self {
+    pub fn whole(display: FrameSize) -> Self {
         Self::new(display, display)
     }
 
-    pub(crate) fn upscales(self) -> bool {
+    pub fn upscales(self) -> bool {
         self.render != self.display
     }
 
-    pub(crate) fn share(self) -> [f32; 2] {
+    pub fn share(self) -> [f32; 2] {
         [
             self.render.width as f32 / self.display.width.max(1) as f32,
             self.render.height as f32 / self.display.height.max(1) as f32,
         ]
     }
 
-    pub(crate) fn mip_bias(self) -> f32 {
+    pub fn mip_bias(self) -> f32 {
         self.share()[0].log2()
     }
 
-    pub(crate) fn uniform(self) -> [f32; 4] {
+    pub fn uniform(self) -> [f32; 4] {
         let [x, y] = self.share();
         [self.render.width as f32, self.render.height as f32, x, y]
     }
 }
 
-pub(crate) fn draw_within(pass: &mut wgpu::RenderPass<'_>, (width, height): (u32, u32)) {
+pub fn draw_within(pass: &mut wgpu::RenderPass<'_>, (width, height): (u32, u32)) {
     pass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
     pass.set_scissor_rect(0, 0, width, height);
 }
 
-pub(crate) struct ScreenTarget<T> {
+pub struct ScreenTarget<T> {
     made: Option<(FrameSize, Versioned<T>)>,
     mark: u64,
     created: Vec<u64>,
@@ -169,7 +192,7 @@ impl<T> Default for ScreenTarget<T> {
 }
 
 impl<T> ScreenTarget<T> {
-    pub(crate) fn resizes(&mut self, size: FrameSize) -> bool {
+    pub fn resizes(&mut self, size: FrameSize) -> bool {
         if self.size() == Some(size) {
             return false;
         }
@@ -178,20 +201,20 @@ impl<T> ScreenTarget<T> {
         true
     }
 
-    pub(crate) fn set(&mut self, size: FrameSize, targets: T) {
+    pub fn set(&mut self, size: FrameSize, targets: T) {
         self.created = crate::memory::created_since(self.mark);
         self.made = Some((size, Versioned::new(targets)));
     }
 
-    pub(crate) fn get(&self) -> Option<&Versioned<T>> {
+    pub fn get(&self) -> Option<&Versioned<T>> {
         self.made.as_ref().map(|(_, targets)| targets)
     }
 
-    pub(crate) fn size(&self) -> Option<FrameSize> {
+    pub fn size(&self) -> Option<FrameSize> {
         self.made.as_ref().map(|(size, _)| *size)
     }
 
-    pub(crate) fn release(&mut self) {
+    pub fn release(&mut self) {
         crate::memory::release_ids(&std::mem::take(&mut self.created));
         self.made = None;
     }

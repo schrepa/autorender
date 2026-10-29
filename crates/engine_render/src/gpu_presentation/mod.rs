@@ -128,7 +128,7 @@ type PoseKey = (u64, u64, u64, u64, u64);
 
 type OcclusionKey = (usize, u64, u64, u64);
 
-pub(crate) struct GpuPresentationPass {
+pub struct GpuPresentationPass {
     shaders: Shaders,
     frame: wgpu::Buffer,
     frame_phase2: wgpu::Buffer,

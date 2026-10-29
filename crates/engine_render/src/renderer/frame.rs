@@ -7,9 +7,9 @@ mod submit;
 mod views;
 
 #[derive(Default)]
-pub(crate) struct SwitchFades {
+pub struct SwitchFades {
     presented: f32,
-    pub(crate) share: f32,
+    pub share: f32,
 }
 
 impl SwitchFades {

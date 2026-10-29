@@ -70,7 +70,7 @@ struct FrameKey {
 }
 
 #[derive(Default)]
-pub(crate) struct RetainedUploads {
+pub struct RetainedUploads {
     committed: Option<FrameKey>,
     pending: Option<FrameKey>,
     stamps: Vec<(u64, u64)>,
@@ -79,7 +79,7 @@ pub(crate) struct RetainedUploads {
 }
 
 #[derive(Default)]
-pub(crate) struct PreparedRetained {
+pub struct PreparedRetained {
     pub repacked: usize,
     pub poses_repacked: usize,
     pub colors_repacked: usize,

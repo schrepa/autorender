@@ -1,21 +1,21 @@
 use super::*;
+use crate::pipeline_layouts::{LIT_IMPOSTOR_PIPELINES, LIT_TEMPORAL_IMPOSTOR_PIPELINES};
 
-pub(crate) struct ImpostorDraws {
-    pub(crate) atlas: ImpostorAtlas,
-    pub(crate) placed: ImpostorAtlas,
-    pub(crate) pipelines: ImpostorPipelines,
-    pub(crate) contents: Contents,
-    pub(crate) records: Vec<ImpostorRecord>,
-    pub(crate) dropped: u32,
+pub struct ImpostorDraws {
+    pub atlas: ImpostorAtlas,
+    pub pipelines: ImpostorPipelines,
+    pub contents: Contents,
+    pub records: Vec<ImpostorRecord>,
+    pub dropped: u32,
 }
 
 impl ImpostorDraws {
-    pub(crate) fn live(&self) -> u32 {
-        self.atlas.live() + self.placed.live()
+    pub fn live(&self) -> u32 {
+        self.atlas.live()
     }
 
-    pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.atlas.capacity_bytes() + self.placed.capacity_bytes()
+    pub fn capacity_bytes(&self) -> u64 {
+        self.atlas.capacity_bytes()
     }
 }
 
@@ -27,10 +27,6 @@ impl Core {
         encoder: &mut Option<wgpu::CommandEncoder>,
     ) {
         let settings = snapshot.environment.level_of_detail;
-        let pixels = settings.sanitized().impostor_pixels;
-        self.impostors
-            .placed
-            .fit(&self.device, AtlasShape::placed(pixels));
         let key = |renderer: &Self| {
             (
                 renderer.structure_key(),
@@ -67,6 +63,9 @@ impl Core {
             |texture| materials.is_texture_resident(texture),
         );
         let settings = snapshot.environment.level_of_detail;
+        let Some(entries) = self.mesh_entries else {
+            return;
+        };
         if !(gpu_mode && settings.enabled && settings.impostors) {
             return;
         }
@@ -113,6 +112,7 @@ impl Core {
                             encoder: &mut *encoder,
                             mips: self.materials.mips(),
                             pipelines: &mut self.impostors.pipelines,
+                            entries,
                         };
                         let supplied = self.impostors.atlas.supply(
                             gpu,
@@ -130,13 +130,8 @@ impl Core {
         }
     }
 
-    pub(crate) fn prepare_impostor_draws(
-        &mut self,
-        kind: PassKind,
-        placed_records: &[ImpostorRecord],
-    ) -> Option<(Targets, bool)> {
+    pub(crate) fn prepare_impostor_draws(&mut self, kind: PassKind) -> Option<Targets> {
         let targets = kind.targets()?;
-        let lit = kind.lit;
         let impostors = &mut self.impostors;
         let batches = impostors.atlas.prepare(
             &self.device,
@@ -144,39 +139,41 @@ impl Core {
             &impostors.pipelines,
             &impostors.records,
         );
-        let placed = impostors.placed.prepare(
-            &self.device,
-            &self.queue,
-            &impostors.pipelines,
-            placed_records,
-        );
-        if !(batches || placed) {
+        if !batches {
             return None;
         }
-        if self.impostors.pipelines.pipeline(targets, lit).is_none() {
-            use crate::pipeline_layouts::{
-                IMPOSTOR_PIPELINES, LIT_IMPOSTOR_PIPELINES, LIT_TEMPORAL_IMPOSTOR_PIPELINES,
-                TEMPORAL_IMPOSTOR_PIPELINES,
-            };
-            let declared = match (targets == Targets::Temporal, lit) {
-                (true, true) => &LIT_TEMPORAL_IMPOSTOR_PIPELINES,
-                (true, false) => &TEMPORAL_IMPOSTOR_PIPELINES,
-                (false, true) => &LIT_IMPOSTOR_PIPELINES,
-                (false, false) => &IMPOSTOR_PIPELINES,
+        self.ensure_card_pipeline(targets)?;
+        Some(targets)
+    }
+
+    pub fn ensure_card_pipeline(&mut self, targets: Targets) -> Option<&wgpu::RenderPipeline> {
+        let entries = self.mesh_entries?;
+        let shading = self.mesh_pipelines.shading();
+        if self.impostors.pipelines.pipeline(targets, shading).is_none() {
+            let declared = if targets == Targets::Temporal {
+                &LIT_TEMPORAL_IMPOSTOR_PIPELINES
+            } else {
+                &LIT_IMPOSTOR_PIPELINES
             };
             let layout = crate::pipelines::layout_of(&self.device, declared);
             let pipeline = crate::impostors::draw_pipeline(
                 &self.device,
                 &layout,
-                (targets, lit),
-                self.mesh_pipelines.shading,
+                (targets, entries),
+                self.mesh_pipelines.constants(),
                 self.display.format(),
                 DEPTH_FORMAT,
             );
             self.impostors
                 .pipelines
-                .insert_pipeline(targets, lit, pipeline);
+                .insert_pipeline(targets, shading, pipeline);
         }
-        Some((targets, lit))
+        self.impostors.pipelines.pipeline(targets, shading)
+    }
+
+    pub fn card_pipeline(&self, targets: Targets) -> Option<&wgpu::RenderPipeline> {
+        self.impostors
+            .pipelines
+            .pipeline(targets, self.mesh_pipelines.shading())
     }
 }

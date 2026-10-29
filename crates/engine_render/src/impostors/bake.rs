@@ -34,13 +34,14 @@ impl ImpostorAtlas {
             encoder,
             mips,
             pipelines,
+            entries,
         } = gpu;
         let encoder = encoder.mips(device);
         let shape = self.shape;
         let targets = self
             .targets
             .get_or_insert_with(|| bake_targets(device, shape));
-        draw_layer(device, encoder, pipelines, targets, source, shape);
+        draw_layer((device, entries), encoder, pipelines, targets, source, shape);
         for texture in &targets.layer {
             mips.record(device, encoder, texture);
         }
@@ -51,7 +52,7 @@ impl ImpostorAtlas {
 type BakeDraw<'a> = (&'a MeshDraw<'a>, bool, &'a wgpu::BindGroup, Variant);
 
 fn draw_layer(
-    device: &wgpu::Device,
+    (device, entries): (&wgpu::Device, &MeshEntries),
     encoder: &mut wgpu::CommandEncoder,
     pipelines: &mut ImpostorPipelines,
     targets: &BakeTargets,
@@ -80,11 +81,11 @@ fn draw_layer(
         pipelines
             .bake_pipelines
             .entry(variant)
-            .or_insert_with(|| bake_pipeline(device, layout, variant, false));
+            .or_insert_with(|| bake_pipeline(device, layout, (variant, entries), false));
         pipelines
             .shade_pipelines
             .entry(variant)
-            .or_insert_with(|| bake_pipeline(device, layout, variant, true));
+            .or_insert_with(|| bake_pipeline(device, layout, (variant, entries), true));
     }
     let no_shade = pipelines
         .no_shade
@@ -393,12 +394,12 @@ fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
 fn bake_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
-    variant: Variant,
+    (variant, entries): (Variant, &MeshEntries),
     shade: bool,
 ) -> wgpu::RenderPipeline {
     let constants = variant.constants();
     let extended = variant.extended();
-    let (vertex, fragment) = crate::entries::impostor_bake(extended, shade);
+    let (vertex, fragment) = (entries.card_bake)(extended, shade);
     let mut buffers = vec![crate::renderer::vertex_layout()];
     if extended {
         buffers.push(crate::renderer::extra_layout());

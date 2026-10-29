@@ -11,7 +11,7 @@ gpu_structs! {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct ImpostorBakeUniform as ["ImpostorBake"] {
+    pub struct ImpostorBakeUniform as ["ImpostorBake"] {
         pub sphere: [f32; 4],
         pub flags: [u32; 4],
         pub tile: [u32; 4],

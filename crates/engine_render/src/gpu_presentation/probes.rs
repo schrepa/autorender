@@ -216,11 +216,11 @@ impl GpuPresentationPass {
         self.groups.draw_source(batch, index, PROBE_FACES, 0)
     }
 
-    pub(crate) fn still_frames(&self) -> (&wgpu::Buffer, u64) {
+    pub fn still_frames(&self) -> (&wgpu::Buffer, u64) {
         (&self.stillness.frames, self.stillness.generation())
     }
 
-    pub(crate) fn stillness_settled(&self) -> bool {
+    pub fn stillness_settled(&self) -> bool {
         self.stillness.settled()
     }
 }

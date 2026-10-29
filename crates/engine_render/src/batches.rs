@@ -17,7 +17,7 @@ const UNMAPPED_BUCKET: u32 = u32::MAX;
 type GroupIds = HashMap<u64, u32>;
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct DrawBatch {
+pub struct DrawBatch {
     pub mesh: MeshHandle,
     pub source_index: usize,
     pub material: Option<MaterialHandle>,
@@ -53,7 +53,7 @@ fn index_by_handle<H: Ord>(
 }
 
 #[derive(Default)]
-pub(crate) struct BatchPlan {
+pub struct BatchPlan {
     pub ordered_instances: Vec<usize>,
     pub batches: Vec<DrawBatch>,
     previous_order: Vec<usize>,
@@ -86,7 +86,7 @@ pub(crate) struct BatchPlan {
 }
 
 impl BatchPlan {
-    pub(crate) fn with_instance_limit(limit: usize) -> Self {
+    pub fn with_instance_limit(limit: usize) -> Self {
         Self {
             instance_limit: Some(limit),
             ..Self::default()
@@ -162,11 +162,11 @@ impl BatchPlan {
         }
     }
 
-    pub(crate) fn generation(&self) -> u64 {
+    pub fn generation(&self) -> u64 {
         self.generation
     }
 
-    pub(crate) fn rebuilds(&self) -> u64 {
+    pub fn rebuilds(&self) -> u64 {
         self.rebuilds
     }
 

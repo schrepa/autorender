@@ -23,7 +23,7 @@ impl Renderer {
         let shared = shared_of(&entries)?;
         let layouts = brick_layouts(bricks);
         let device = self.core.device.clone();
-        crate::pipelines::set_linker(&device, linker);
+        crate::pipelines::link(&device, linker);
         crate::pipelines::install(&device, &shared, &layouts);
         self.core.camera.install(&device, &layouts);
         self.core

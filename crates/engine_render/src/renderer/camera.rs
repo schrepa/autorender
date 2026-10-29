@@ -20,8 +20,8 @@ struct SharedView {
     views: Vec<GrowableGroupCache>,
 }
 
-pub(crate) struct CameraBindings {
-    pub(crate) buffer: wgpu::Buffer,
+pub struct CameraBindings {
+    pub buffer: wgpu::Buffer,
     pieces: Versioned<wgpu::Buffer>,
     placed: Vec<(usize, PieceAt)>,
     staged: Vec<u8>,

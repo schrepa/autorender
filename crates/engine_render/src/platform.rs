@@ -2,11 +2,11 @@ use std::fmt;
 
 use engine_core::{Error, ErrorCode, Expected};
 
-pub(crate) fn failed(path: &str) -> Error {
+pub fn failed(path: &str) -> Error {
     Error::new(ErrorCode::RenderFailed, path)
 }
 
-pub(crate) fn failed_with(path: &str, error: impl fmt::Display) -> Error {
+pub fn failed_with(path: &str, error: impl fmt::Display) -> Error {
     failed(path).got(error.to_string())
 }
 
@@ -104,7 +104,7 @@ pub enum GpuPreference {
 }
 
 impl RenderTarget {
-    pub(crate) fn instance(&self) -> wgpu::Instance {
+    pub fn instance(&self) -> wgpu::Instance {
         match self {
             #[cfg(target_arch = "wasm32")]
             Self::Canvas(_) => wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -122,7 +122,7 @@ impl RenderTarget {
         }
     }
 
-    pub(crate) fn power_preference(&self) -> wgpu::PowerPreference {
+    pub fn power_preference(&self) -> wgpu::PowerPreference {
         match self {
             #[cfg(target_arch = "wasm32")]
             Self::Canvas(_) => wgpu::PowerPreference::HighPerformance,
@@ -134,7 +134,7 @@ impl RenderTarget {
         }
     }
 
-    pub(crate) fn surface(
+    pub fn surface(
         &self,
         instance: &wgpu::Instance,
     ) -> Result<Option<wgpu::Surface<'static>>, wgpu::CreateSurfaceError> {
@@ -152,7 +152,7 @@ impl RenderTarget {
         }
     }
 
-    pub(crate) fn present_mode(&self) -> wgpu::PresentMode {
+    pub fn present_mode(&self) -> wgpu::PresentMode {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Self::Window { vsync: false, .. } => wgpu::PresentMode::AutoNoVsync,
@@ -160,7 +160,7 @@ impl RenderTarget {
         }
     }
 
-    pub(crate) fn size(&self) -> (u32, u32) {
+    pub fn size(&self) -> (u32, u32) {
         match self {
             #[cfg(target_arch = "wasm32")]
             Self::Canvas(canvas) => (canvas.width(), canvas.height()),
@@ -169,7 +169,7 @@ impl RenderTarget {
         }
     }
 
-    pub(crate) fn set_size(&mut self, (width, height): (u32, u32)) {
+    pub fn set_size(&mut self, (width, height): (u32, u32)) {
         match self {
             #[cfg(target_arch = "wasm32")]
             Self::Canvas(canvas) => {
@@ -194,7 +194,7 @@ pub struct AdapterInfo {
 }
 
 impl AdapterInfo {
-    pub(crate) fn of(info: &wgpu::AdapterInfo) -> Self {
+    pub fn of(info: &wgpu::AdapterInfo) -> Self {
         Self {
             name: info.name.clone(),
             vendor: info.vendor,
@@ -208,7 +208,7 @@ impl AdapterInfo {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn map_callback(
+pub fn map_callback(
     callback: impl FnOnce(Result<(), wgpu::BufferAsyncError>) + 'static,
 ) -> impl FnOnce(Result<(), wgpu::BufferAsyncError>) + 'static {
     callback
@@ -234,7 +234,7 @@ type Arrived = (
 static ARRIVED: std::sync::Mutex<Vec<Arrived>> = std::sync::Mutex::new(Vec::new());
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn map_callback(
+pub fn map_callback(
     callback: impl FnOnce(Result<(), wgpu::BufferAsyncError>) + 'static,
 ) -> impl FnOnce(Result<(), wgpu::BufferAsyncError>) + Send + 'static {
     let key = PARKED.with(|parked| {
@@ -262,7 +262,7 @@ fn run_parked(key: u64, result: Result<(), wgpu::BufferAsyncError>) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn run_arrived_maps() {
+pub fn run_arrived_maps() {
     let this = std::thread::current().id();
     loop {
         let next = ARRIVED.lock().ok().and_then(|mut arrived| {
@@ -276,7 +276,7 @@ pub(crate) fn run_arrived_maps() {
     }
 }
 
-pub(crate) fn write_mapped<'a>(
+pub fn write_mapped<'a>(
     slice: wgpu::BufferSlice<'_>,
     writes: impl IntoIterator<Item = (usize, &'a [u8])>,
 ) -> bool {
@@ -306,7 +306,7 @@ pub(crate) fn write_mapped<'a>(
     }
 }
 
-pub(crate) async fn yield_now() {
+pub async fn yield_now() {
     #[cfg(target_arch = "wasm32")]
     {
         use wasm_bindgen::JsValue;
@@ -322,7 +322,7 @@ pub(crate) async fn yield_now() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn ready<F: std::future::Future>(future: F) -> Option<F::Output> {
+pub fn ready<F: std::future::Future>(future: F) -> Option<F::Output> {
     let mut future = std::pin::pin!(future);
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
     match future.as_mut().poll(&mut context) {
@@ -331,7 +331,7 @@ pub(crate) fn ready<F: std::future::Future>(future: F) -> Option<F::Output> {
     }
 }
 
-pub(crate) fn poll(device: &wgpu::Device) {
+pub fn poll(device: &wgpu::Device) {
     #[cfg(not(target_arch = "wasm32"))]
     {
         let _ = device.poll(wgpu::PollType::Poll);

@@ -24,6 +24,8 @@ use crate::bindings::{
 use crate::linker::{Composed, Linker};
 use crate::pipeline_layouts::{PIPELINE_LAYOUTS, PipelineLayout, StageLimits};
 
+pub type Layouts = &'static [(&'static str, &'static PipelineLayout)];
+
 thread_local! {
     static CREATED: Cell<u32> = const { Cell::new(0) };
     static REGISTRIES: RefCell<Vec<Registry>> = const { RefCell::new(Vec::new()) };
@@ -265,7 +267,7 @@ struct Registry {
     canvas: Option<wgpu::TextureFormat>,
     linker: Linker,
     shared: SharedGroups,
-    features: Vec<(&'static str, bool)>,
+    layouts_listed: Vec<Layouts>,
     declared: BTreeMap<&'static str, PipelineLayout>,
     resolved: BTreeMap<&'static str, Result<Arc<ResolvedLayout>, Error>>,
     groups: BTreeMap<GroupKey, GroupLayout>,
@@ -288,7 +290,7 @@ impl Registry {
             canvas: None,
             linker: Linker::new(crate::shaders::MODULES),
             shared: SharedGroups::default(),
-            features: Vec::new(),
+            layouts_listed: vec![PIPELINE_LAYOUTS],
             declared: BTreeMap::new(),
             resolved: BTreeMap::new(),
             groups: BTreeMap::new(),
@@ -314,8 +316,9 @@ impl Registry {
 
     fn declared(&self, label: &str) -> Option<PipelineLayout> {
         self.declared.get(label).copied().or_else(|| {
-            PIPELINE_LAYOUTS
+            self.layouts_listed
                 .iter()
+                .flat_map(|layouts| layouts.iter())
                 .find(|(_, declared)| declared.label == label)
                 .map(|&(_, declared)| *declared)
         })
@@ -523,58 +526,58 @@ fn with_registry<R>(device: &wgpu::Device, act: impl FnOnce(&mut Registry) -> R)
     })
 }
 
-pub(crate) fn install(
+pub fn install(
     device: &wgpu::Device,
     shared: &SharedGroups,
-    features: Vec<(&'static str, bool)>,
+    layouts: impl IntoIterator<Item = Layouts>,
 ) {
     with_registry(device, |registry| {
-        let mut changed = false;
+        let mut listed = vec![PIPELINE_LAYOUTS];
+        for layouts in layouts {
+            if !listed.iter().any(|known| std::ptr::eq(*known, layouts)) {
+                listed.push(layouts);
+            }
+        }
+        registry.layouts_listed = listed;
         if registry.shared != *shared {
             registry.shared = shared.clone();
             registry.resolved.clear();
             registry.groups.clear();
             registry.layouts.clear();
-            changed = true;
-        }
-        if registry.features != features {
-            registry.features.clone_from(&features);
-            changed = true;
-        }
-        registry.linker.set_features(features);
-        if changed {
             registry.forget_pipelines();
         }
     });
 }
 
-pub(crate) fn set_linker(device: &wgpu::Device, linker: Linker) {
+pub fn link(device: &wgpu::Device, linker: Linker) {
     with_registry(device, |registry| {
-        registry.linker = linker;
-        registry.forget_pipelines();
-    });
-}
-
-pub(crate) fn add_generated(
-    device: &wgpu::Device,
-    path: String,
-    brick: &'static str,
-    source: String,
-) {
-    with_registry(device, |registry| {
-        let named = format!("\"{path}\"");
-        if registry.linker.add_generated(path, brick, source) {
-            registry.render.retain(|text, _| !text.contains(&named));
-            registry.compute.retain(|text, _| !text.contains(&named));
+        if registry.linker.sources_hash() != linker.sources_hash() {
+            registry.linker = linker;
+            registry.forget_pipelines();
         }
     });
 }
 
-pub(crate) fn layout_of(device: &wgpu::Device, declared: &PipelineLayout) -> wgpu::PipelineLayout {
+pub fn add_generated(device: &wgpu::Device, path: String, brick: &'static str, source: String) {
+    with_registry(device, |registry| {
+        let named = format!("\"{path}\"");
+        let imported = registry.linker.imports(&path);
+        if registry.linker.add_generated(path, brick, source) {
+            if imported {
+                registry.forget_pipelines();
+            } else {
+                registry.render.retain(|text, _| !text.contains(&named));
+                registry.compute.retain(|text, _| !text.contains(&named));
+            }
+        }
+    });
+}
+
+pub fn layout_of(device: &wgpu::Device, declared: &PipelineLayout) -> wgpu::PipelineLayout {
     with_registry(device, |registry| registry.layout_of(declared))
 }
 
-pub(crate) fn shared_layout(
+pub fn shared_layout(
     device: &wgpu::Device,
     group: &'static str,
     without: &'static [&'static str],
@@ -953,7 +956,7 @@ fn group_layout(
     }
 }
 
-pub(crate) fn layout(device: &wgpu::Device, table: &'static Table) -> GroupLayout {
+pub fn layout(device: &wgpu::Device, table: &'static Table) -> GroupLayout {
     let bindings = table
         .bindings
         .iter()
@@ -971,7 +974,7 @@ pub(crate) fn layout(device: &wgpu::Device, table: &'static Table) -> GroupLayou
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct GroupLayout {
+pub struct GroupLayout {
     key: GroupKey,
     bindings: Vec<ResolvedBinding>,
     layout: wgpu::BindGroupLayout,
@@ -995,7 +998,7 @@ impl std::ops::Deref for GroupLayout {
     }
 }
 
-pub(crate) fn pipeline_layout(
+pub fn pipeline_layout(
     device: &wgpu::Device,
     declared: &PipelineLayout,
     groups: &[&GroupLayout],
@@ -1012,13 +1015,13 @@ pub(crate) fn pipeline_layout(
     layout_of(device, declared)
 }
 
-pub(crate) struct Family {
+pub struct Family {
     group: GroupLayout,
-    pub(crate) pipeline: wgpu::PipelineLayout,
+    pub pipeline: wgpu::PipelineLayout,
 }
 
 impl Family {
-    pub(crate) fn new(
+    pub fn new(
         device: &wgpu::Device,
         declared: &PipelineLayout,
         more: &[&GroupLayout],
@@ -1034,7 +1037,7 @@ impl Family {
         Self { group, pipeline }
     }
 
-    pub(crate) fn group(
+    pub fn group(
         &self,
         device: &wgpu::Device,
         label: &str,
@@ -1045,11 +1048,11 @@ impl Family {
     }
 }
 
-pub(crate) fn view(view: &wgpu::TextureView) -> wgpu::BindingResource<'_> {
+pub fn view(view: &wgpu::TextureView) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::TextureView(view)
 }
 
-pub(crate) fn sampler(sampler: &wgpu::Sampler) -> wgpu::BindingResource<'_> {
+pub fn sampler(sampler: &wgpu::Sampler) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::Sampler(sampler)
 }
 
@@ -1058,7 +1061,7 @@ const FILLER_BYTES: u64 = 256;
 
 const UNIFORM_FILLER_BYTES: u64 = 4096;
 
-pub(crate) struct Fillers {
+pub struct Fillers {
     uniform: wgpu::Buffer,
     read: wgpu::Buffer,
     write: wgpu::Buffer,
@@ -1071,7 +1074,7 @@ pub(crate) struct Fillers {
 }
 
 impl Fillers {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
+    pub fn new(device: &wgpu::Device) -> Self {
         let buffer = |label, size, usage| {
             crate::memory::buffer(
                 device,
@@ -1170,7 +1173,7 @@ impl Fillers {
     }
 }
 
-pub(crate) fn group(
+pub fn group(
     device: &wgpu::Device,
     label: &str,
     table: &Table,
@@ -1198,7 +1201,7 @@ pub(crate) fn group(
     bind_group(device, label, layout, &entries)
 }
 
-pub(crate) fn filled_group(
+pub fn filled_group(
     device: &wgpu::Device,
     label: &str,
     table: &Table,
@@ -1262,7 +1265,7 @@ fn bind_group(
     })
 }
 
-pub(crate) fn compute_entry(
+pub fn compute_entry(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     entry: Entry,
@@ -1290,7 +1293,7 @@ pub(crate) fn compute_entry(
     })
 }
 
-pub(crate) struct Geometry<'a> {
+pub struct Geometry<'a> {
     pub label: &'a str,
     pub layout: &'a wgpu::PipelineLayout,
     pub vertex: Entry,
@@ -1301,17 +1304,17 @@ pub(crate) struct Geometry<'a> {
     pub fragment: Option<Fragment<'a>>,
 }
 
-pub(crate) struct Fragment<'a> {
+pub struct Fragment<'a> {
     pub entry: Entry,
     pub constants: &'a [(&'a str, f64)],
     pub targets: &'a [Option<wgpu::ColorTargetState>],
 }
 
-pub(crate) fn geometry(device: &wgpu::Device, geometry: &Geometry<'_>) -> wgpu::RenderPipeline {
+pub fn geometry(device: &wgpu::Device, geometry: &Geometry<'_>) -> wgpu::RenderPipeline {
     sampled(device, geometry, 1)
 }
 
-pub(crate) fn sampled(
+pub fn sampled(
     device: &wgpu::Device,
     geometry: &Geometry<'_>,
     samples: u32,
@@ -1360,7 +1363,7 @@ pub(crate) fn sampled(
     })
 }
 
-pub(crate) struct Fullscreen<'a> {
+pub struct Fullscreen<'a> {
     pub label: &'a str,
     pub layout: &'a wgpu::PipelineLayout,
     pub vertex: Entry,
@@ -1370,22 +1373,22 @@ pub(crate) struct Fullscreen<'a> {
     pub depth: Option<wgpu::DepthStencilState>,
 }
 
+#[macro_export]
 macro_rules! vertex_attributes {
     ($ty:ident { $($location:literal => $field:ident as $format:ident),+ $(,)? }) => {
         [$({
             const FIELD: &$crate::gpu_layouts::Field = $ty::LAYOUT.field(stringify!($field));
-            const _: () = assert!(wgpu::VertexFormat::$format.size() as usize == FIELD.size);
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::$format,
+            const _: () = assert!(::wgpu::VertexFormat::$format.size() as usize == FIELD.size);
+            ::wgpu::VertexAttribute {
+                format: ::wgpu::VertexFormat::$format,
                 offset: FIELD.offset as u64,
                 shader_location: $location,
             }
         }),+]
     };
 }
-pub(crate) use vertex_attributes;
 
-pub(crate) fn fullscreen(device: &wgpu::Device, pass: &Fullscreen<'_>) -> wgpu::RenderPipeline {
+pub fn fullscreen(device: &wgpu::Device, pass: &Fullscreen<'_>) -> wgpu::RenderPipeline {
     geometry(
         device,
         &Geometry {

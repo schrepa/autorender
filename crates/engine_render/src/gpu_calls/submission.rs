@@ -4,20 +4,20 @@ use std::{
     sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc},
 };
 
-pub(crate) enum Recorded {
+pub enum Recorded {
     Encoder(wgpu::CommandEncoder),
     Buffer(wgpu::CommandBuffer),
 }
 
 #[derive(Default)]
-pub(crate) struct Handover(Vec<Recorded>);
+pub struct Handover(Vec<Recorded>);
 
 impl Handover {
-    pub(crate) fn push(&mut self, recorded: Recorded) {
+    pub fn push(&mut self, recorded: Recorded) {
         self.0.push(recorded);
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
