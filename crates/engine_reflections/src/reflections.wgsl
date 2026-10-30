@@ -2,10 +2,9 @@ import package::engine::color::decode_srgb;
 import package::engine::screen_points::{depth_normal, world_at};
 import package::face::cover::{cover_growth, cover_seen, cover_tint};
 import package::face::ground::{
-    GroundTerrain, LevelTile, NOT_RESIDENT, PEAK_CELLS, PEAK_MIPS, TILE_QUADS, TerrainInfo,
-    ground_colors, ground_colors_mip, ground_extent, ground_of, level_tile, level_tiles,
-    macro_color, material_look, tile_height, tile_layer, tile_material, tile_peak,
-    triangle_height,
+    LevelTile, NOT_RESIDENT, PEAK_CELLS, PEAK_MIPS, TILE_QUADS, TerrainInfo, ground_colors,
+    ground_colors_mip, ground_extent, ground_of, ground_tile, level_tiles, macro_color,
+    material_look, tile_height, tile_layer, tile_material, tile_peak, triangle_height,
 };
 import package::face::horizons::{bounce_light, terrain_visibility};
 import package::face::placed::{Pose, Record, placed_shown};
@@ -394,25 +393,6 @@ fn in_cutout(local: vec2<f32>, cutout: vec4<f32>) -> bool {
     return cutout.z > cutout.x && all(local >= cutout.xy) && all(local <= cutout.zw);
 }
 
-struct FinestTile {
-    level: u32,
-    tile: LevelTile,
-}
-
-fn finest_tile(terrain: GroundTerrain, local: vec2<f32>, first: u32) -> FinestTile {
-    var found: FinestTile;
-    found.tile.layer = NOT_RESIDENT;
-    for (var level = first; level < terrain.levels; level++) {
-        let tile = level_tile(terrain, level, local / (terrain.spacing * f32(1u << level)));
-        if tile.layer != NOT_RESIDENT {
-            found.level = level;
-            found.tile = tile;
-            return found;
-        }
-    }
-    return found;
-}
-
 struct WorldHit {
     met: bool,
     s: f32,
@@ -502,7 +482,7 @@ fn trace_ground(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32
         }
         steps++;
         let at = o + direction * s;
-        let found = finest_tile(ground, at.xz, 0u);
+        let found = ground_tile(ground, at.xz, 0u);
         if found.tile.layer == NOT_RESIDENT {
             let size = f32(TILE_QUADS) * ground.spacing * f32(1u << (ground.levels - 1u));
             s = square_exit(o.xz / size, direction.xz / size, floor(at.xz / size), 1.0);
@@ -785,9 +765,9 @@ fn ground_albedo(terrain: TraceTerrain, local: vec2<f32>, normal: vec3<f32>, tow
     let ground = ground_of(info);
     let asked = u32(clamp(floor(log2(max(footprint / ground.spacing, 1.0))), 0.0,
         f32(ground.levels - 1u)));
-    var found = finest_tile(ground, local, max(finest, asked));
+    var found = ground_tile(ground, local, max(finest, asked));
     if found.tile.layer == NOT_RESIDENT {
-        found = finest_tile(ground, local, finest);
+        found = ground_tile(ground, local, finest);
     }
     let samples = local / (ground.spacing * f32(1u << found.level));
     let material = tile_material(found.tile, vec2<u32>(round(max(samples, vec2<f32>(0.0)))));

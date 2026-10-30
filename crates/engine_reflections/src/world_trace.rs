@@ -11,6 +11,7 @@ use std::ops::Range;
 
 use crate::gpu_layouts::{IMPOSTOR_KINDS, NO_PLACED, PlacedGroup, TraceTerrain};
 
+#[derive(Default)]
 pub(crate) struct Placements<'a> {
     pub tiles: Vec<((u64, TileKey), Range<u32>, usize)>,
     pub records: &'a [PlacedRecord],
@@ -61,6 +62,7 @@ struct Placeholders {
     _textures: [wgpu::Texture; 3],
     views: [wgpu::TextureView; 3],
     record: wgpu::Buffer,
+    pose: wgpu::Buffer,
 }
 
 pub(crate) struct WorldTrace {
@@ -142,6 +144,12 @@ impl WorldTrace {
                     device,
                     "engine/post-world-record",
                     size_of::<PlacedRecord>() as u64,
+                    wgpu::BufferUsages::empty(),
+                ),
+                pose: engine_render::buffers::storage(
+                    device,
+                    "engine/post-world-pose",
+                    size_of::<PoseRows>() as u64,
                     wgpu::BufferUsages::empty(),
                 ),
             },
@@ -439,7 +447,7 @@ impl WorldTrace {
     pub(crate) fn bindings<'a>(
         &'a self,
         sources: TraceSources<'a>,
-        (records, poses, placed): (&'a wgpu::Buffer, &'a wgpu::Buffer, u64),
+        placed: Option<(&'a wgpu::Buffer, &'a wgpu::Buffer, u64)>,
         frames: Option<(&'a wgpu::TextureView, u64)>,
     ) -> [(&'static str, Bound<'a>); 12] {
         let [heights_placeholder, control_placeholder, frames_placeholder] =
@@ -448,11 +456,16 @@ impl WorldTrace {
             [heights_placeholder, control_placeholder]
                 .map(|view| Bound::fixed(engine_render::pipelines::view(view)))
         });
-        let records = if records.size() >= size_of::<PlacedRecord>() as u64 {
-            Bound::counted(placed, records.as_entire_binding())
-        } else {
-            Bound::fixed(self.placeholders.record.as_entire_binding())
-        };
+        let records = placed
+            .filter(|(records, _, _)| records.size() >= size_of::<PlacedRecord>() as u64)
+            .map_or_else(
+                || Bound::fixed(self.placeholders.record.as_entire_binding()),
+                |(records, _, generation)| Bound::counted(generation, records.as_entire_binding()),
+            );
+        let poses = placed.map_or_else(
+            || Bound::fixed(self.placeholders.pose.as_entire_binding()),
+            |(_, poses, generation)| Bound::counted(generation, poses.as_entire_binding()),
+        );
         let frames = frames.map_or_else(
             || Bound::fixed(engine_render::pipelines::view(frames_placeholder)),
             |(view, generation)| Bound::counted(generation, engine_render::pipelines::view(view)),
@@ -467,10 +480,7 @@ impl WorldTrace {
             ("world_terrains", self.terrains.bound()),
             ("world_placed", self.placed.bound()),
             ("placed_records", records),
-            (
-                "placed_poses",
-                Bound::counted(placed, poses.as_entire_binding()),
-            ),
+            ("placed_poses", poses),
             ("placed_groups", self.groups.bound()),
             ("placed_frames", frames),
         ]

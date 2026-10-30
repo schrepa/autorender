@@ -8,14 +8,19 @@ publish.workspace = true
 [features]
 default = []
 dev = ["engine_render/dev"]
+schema = ["dep:schemars", "engine_core/schema", "engine_settings/schema"]
 
 [dependencies]
 engine_core.workspace = true
 engine_faces.workspace = true
 engine_render.workspace = true
+engine_settings.workspace = true
 engine_terrain.workspace = true
+bevy_ecs.workspace = true
 bytemuck.workspace = true
+serde.workspace = true
 wgpu.workspace = true
+schemars = { workspace = true, optional = true }
 
 [lints]
 workspace = true

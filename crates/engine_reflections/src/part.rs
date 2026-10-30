@@ -3,11 +3,12 @@ use engine_faces::heightfield::{HeightfieldFace, TerrainInfo};
 use engine_faces::placed::PlacedFace;
 use engine_render::bindings::GroupRef;
 use engine_render::cached::{Bound, GroupCache, Versioned};
+use engine_render::composite::{PixelEffect, PostStage};
 use engine_render::depth_pyramid::{DepthPyramid, Reduction};
 use engine_render::gpu_calls::Queue;
 use engine_render::graph::{
-    Access, Clear, FrameGraph, GraphTable, PassDecl, PassId, ResourceId, Stage, TRANSPARENT,
-    Targets,
+    Access, Clear, FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId,
+    Stage, TRANSPARENT,
 };
 use engine_render::lazy::Lazy;
 use engine_render::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View};
@@ -25,12 +26,15 @@ use engine_terrain::{GroundCover, RenderTerrains};
 
 use crate::gpu_layouts::ReflectionsPiece;
 use crate::layouts::{
-    REFLECTION_LEVEL_PIPELINES, REFLECTION_LEVELS, REFLECTION_PIPELINES, REFLECTIONS,
+    COMPOSITE_REFLECTIONS, REFLECTION_LEVEL_PIPELINES, REFLECTION_LEVELS, REFLECTION_PIPELINES,
+    REFLECTIONS,
 };
 use crate::shaders::entry::reflections;
 use crate::world_trace::{Placements, TraceFrame, WorldTrace};
 
 const SCENE_LEVELS: u32 = 6;
+const TARGET: &str = "reflections";
+const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 pub(crate) static PART: PartEntry = PartEntry {
     decl: PartDecl {
@@ -40,10 +44,17 @@ pub(crate) static PART: PartEntry = PartEntry {
             name: "reflections",
             stage: Stage::PostScene,
         }],
-        resources: &[],
+        resources: &[ResourceDecl {
+            name: TARGET,
+            lifetime: Lifetime::Frame,
+        }],
         hooks: &[],
-        contributes: &[],
-        effects: &[],
+        contributes: &[COMPOSITE_REFLECTIONS],
+        effects: &[PixelEffect {
+            stage: PostStage::Scene,
+            module: "reflections::apply",
+            reads: &[TARGET],
+        }],
         labels: &["engine/reflections-"],
         lazy: true,
         faces: &[],
@@ -58,8 +69,20 @@ pub(crate) static PART: PartEntry = PartEntry {
     create,
 };
 
-fn create(_: &Create<'_>) -> Box<dyn GpuPart> {
-    Box::new(ReflectionsPass::default())
+fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
+    Box::new(ReflectionsPass::new(&cx.core.device))
+}
+
+fn linear_clamp(device: &wgpu::Device, label: &'static str) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some(label),
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        ..Default::default()
+    })
 }
 
 #[derive(Clone, Copy, Default)]
@@ -72,12 +95,50 @@ struct Ids {
     reflections: Option<ResourceId>,
 }
 
-#[derive(Default)]
+struct Composited {
+    sampler: wgpu::Sampler,
+    _off_texture: wgpu::Texture,
+    off: Versioned<wgpu::TextureView>,
+}
+
 struct ReflectionsPass {
     reflections: Lazy<Reflections>,
+    composited: Composited,
     active: bool,
     piece: ReflectionsPiece,
     ids: Ids,
+}
+
+impl ReflectionsPass {
+    fn new(device: &wgpu::Device) -> Self {
+        let off = engine_render::targets::texture_2d(
+            device,
+            "engine/reflections-off",
+            (1, 1),
+            1,
+            1,
+            REFLECTION_FORMAT,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        Self {
+            reflections: Lazy::default(),
+            composited: Composited {
+                sampler: linear_clamp(device, "engine/reflections-sampler"),
+                off: Versioned::new(off.create_view(&wgpu::TextureViewDescriptor::default())),
+                _off_texture: off,
+            },
+            active: false,
+            piece: ReflectionsPiece::default(),
+            ids: Ids::default(),
+        }
+    }
+
+    fn release(&mut self) {
+        if let Some(reflections) = self.reflections.get_mut() {
+            reflections.release_targets();
+        }
+        self.reflections.release();
+    }
 }
 
 fn shared_group<'c>(
@@ -98,13 +159,13 @@ impl GpuPart for ReflectionsPass {
             scene: table.resource("scene"),
             glow: table.resource("glow"),
             surface: table.resource("surface"),
-            reflections: table.resource("reflections"),
+            reflections: table.resource(TARGET),
         };
     }
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         let snapshot = cx.frame.snapshot;
-        let settings = snapshot.section::<engine_core::Reflections>();
+        let settings = snapshot.section::<crate::Reflections>();
         self.piece = ReflectionsPiece {
             surface: [
                 settings.max_roughness,
@@ -118,32 +179,27 @@ impl GpuPart for ReflectionsPass {
                 0.0,
                 WorldTrace::walked(RenderTerrains::of(snapshot)) as f32,
             ],
+            applied: [settings.distance, settings.intensity, 0.0, 0.0],
         };
         self.active = false;
         if cx.frame.kind.debug {
             return;
         }
         let core = &*cx.core;
-        let Some(post) = cx.parts.post().filter(|post| post.active()) else {
-            if let Some(reflections) = self.reflections.get_mut() {
-                reflections.release_targets();
-            }
+        let runs = settings.enabled() && cx.parts.face::<dyn HeightfieldFace>().is_some();
+        let Some((post, scene)) = cx
+            .parts
+            .post()
+            .filter(|_| runs)
+            .and_then(|post| Some((post, post.scene_texture()?)))
+        else {
+            self.release();
             return;
         };
-        if !settings.enabled() {
-            if let Some(reflections) = self.reflections.get_mut() {
-                reflections.world_trace.release();
-            }
-            return;
-        }
-        let target = post.attachment("reflections");
-        let (Some(scene), Some(target)) = (post.scene_texture(), target) else {
-            return;
-        };
-        let formats = (target.texture().format(), scene.format());
+        let format = scene.format();
         let device = &core.device;
         self.reflections.create(device, "engine/reflections-", || {
-            Reflections::new(device, formats)
+            Reflections::new(device, format)
         });
         if let Some(reflections) = self.reflections.get_mut() {
             self.active = reflections.begin(
@@ -153,6 +209,7 @@ impl GpuPart for ReflectionsPass {
                 post,
             );
         }
+        self.piece.applied[2] = if self.active { 1.0 } else { 0.0 };
     }
 
     fn finish(&mut self, cx: &mut Step<'_>) {
@@ -163,14 +220,14 @@ impl GpuPart for ReflectionsPass {
             return;
         };
         let core = &*cx.core;
-        let (Some(terrain), Some(placed), Some((_, uniform))) = (
+        let (Some(terrain), Some(uniform)) = (
             cx.parts.face::<dyn HeightfieldFace>(),
-            cx.parts.face::<dyn PlacedFace>(),
-            cx.parts.post().and_then(|post| post.resolve_inputs()),
+            cx.parts.post().and_then(|post| post.uniform()),
         ) else {
             reflections.forget();
             return;
         };
+        let placed = cx.parts.face::<dyn PlacedFace>();
         let snapshot = cx.frame.snapshot;
         let terrains = RenderTerrains::of(snapshot);
         let infos: Vec<TerrainInfo> = terrains
@@ -186,7 +243,9 @@ impl GpuPart for ReflectionsPass {
             terrains,
             infos: &infos,
             terrain,
-            placed: Placements::of(placed.placements()),
+            placed: placed.map_or_else(Placements::default, |placed| {
+                Placements::of(placed.placements())
+            }),
             cover: if cover.enabled { cover.density } else { 0.0 },
         };
         reflections.prepare_reflections(
@@ -195,24 +254,18 @@ impl GpuPart for ReflectionsPass {
             &trace,
             (
                 terrain.trace_sources(),
-                placed.slot_buffers(),
-                placed.frames(),
+                placed.map(|placed| placed.slot_buffers()),
+                placed.and_then(|placed| placed.frames()),
             ),
         );
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
-        let (true, Some(shape), Some(pass), Some(reflections)) = (
-            self.active,
-            cx.frame.shape,
-            self.ids.pass,
-            self.ids.reflections,
-        ) else {
+        let (true, Some(pass), Some(reflections)) =
+            (self.active, self.ids.pass, self.ids.reflections)
+        else {
             return;
         };
-        if shape.targets == Targets::Canvas {
-            return;
-        }
         let ids = self.ids;
         let _ = graph
             .add(cx.table, pass)
@@ -253,6 +306,29 @@ impl GpuPart for ReflectionsPass {
         pass.set_bind_group(1, group, &[]);
         pass.draw(0..3, 0..1);
         0
+    }
+
+    fn attachment(&self, resource: &str) -> Option<wgpu::TextureView> {
+        if resource != TARGET {
+            return None;
+        }
+        let targets = self.reflections.get()?.targets.get()?;
+        Some(targets.reflected_view.clone())
+    }
+
+    fn contribute<'s>(&'s self, group: &str, out: &mut Vec<(&'static str, Bound<'s>)>) {
+        if group != COMPOSITE_REFLECTIONS.group {
+            return;
+        }
+        let shown = self.reflections.get().and_then(Reflections::shown);
+        out.push((
+            "reflections",
+            shown.unwrap_or_else(|| self.composited.off.bound()),
+        ));
+        out.push((
+            "reflections_sampler",
+            Bound::fixed(pipelines::sampler(&self.composited.sampler)),
+        ));
     }
 
     fn capacity_bytes(&self) -> u64 {
@@ -313,7 +389,9 @@ impl Watched {
     }
 }
 
-struct LevelTargets {
+struct Targets {
+    reflected: wgpu::Texture,
+    reflected_view: wgpu::TextureView,
     texture: wgpu::Texture,
     scene: wgpu::Texture,
     levels: wgpu::TextureView,
@@ -321,18 +399,28 @@ struct LevelTargets {
     bytes: u64,
 }
 
-impl Drop for LevelTargets {
+impl Drop for Targets {
     fn drop(&mut self) {
+        self.reflected.destroy();
         self.texture.destroy();
     }
 }
 
-impl LevelTargets {
+impl Targets {
     fn new(
         device: &wgpu::Device,
         FrameSize { width, height }: FrameSize,
         scene: &wgpu::Texture,
     ) -> Self {
+        let reflected = engine_render::targets::texture_2d(
+            device,
+            "engine/post-reflections",
+            (width, height),
+            1,
+            1,
+            REFLECTION_FORMAT,
+            RENDER_TARGET,
+        );
         let count = SCENE_LEVELS.min(engine_render::gpu_data::mip_levels(width, height) - 1);
         let format = scene.format();
         let texture = engine_render::targets::texture_2d(
@@ -353,12 +441,16 @@ impl LevelTargets {
         };
         let views = (0..=count).map(level_view).collect();
         let texel = u64::from(format.block_copy_size(None).unwrap_or(4));
+        let reflected_texel = u64::from(REFLECTION_FORMAT.block_copy_size(None).unwrap_or(4));
         let bytes = (0..=count)
             .map(|level| {
                 u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * texel
             })
-            .sum();
+            .sum::<u64>()
+            + u64::from(width) * u64::from(height) * reflected_texel;
         Self {
+            reflected_view: reflected.create_view(&wgpu::TextureViewDescriptor::default()),
+            reflected,
             levels: texture.create_view(&wgpu::TextureViewDescriptor::default()),
             texture,
             scene: scene.clone(),
@@ -370,7 +462,7 @@ impl LevelTargets {
 
 type TraceInputs<'a> = (
     engine_faces::heightfield::TraceSources<'a>,
-    (&'a wgpu::Buffer, &'a wgpu::Buffer, u64),
+    Option<(&'a wgpu::Buffer, &'a wgpu::Buffer, u64)>,
     Option<(&'a wgpu::TextureView, u64)>,
 );
 
@@ -383,7 +475,7 @@ struct Reflections {
     sampler: wgpu::Sampler,
     nearest: DepthPyramid,
     world_trace: WorldTrace,
-    targets: ScreenTarget<LevelTargets>,
+    targets: ScreenTarget<Targets>,
     region: FrameRegion,
     inputs: Watched,
     level_groups: Vec<GroupCache<3>>,
@@ -391,10 +483,7 @@ struct Reflections {
 }
 
 impl Reflections {
-    fn new(
-        device: &wgpu::Device,
-        (target, scene): (wgpu::TextureFormat, wgpu::TextureFormat),
-    ) -> Self {
+    fn new(device: &wgpu::Device, scene: wgpu::TextureFormat) -> Self {
         let pipeline_layout = pipelines::layout_of(device, &REFLECTION_PIPELINES);
         let pipeline = fullscreen(
             device,
@@ -404,7 +493,7 @@ impl Reflections {
                 vertex: reflections::vs_fullscreen,
                 fragment: reflections::fs_reflections,
                 constants: &[],
-                targets: &[Some(target.into())],
+                targets: &[Some(REFLECTION_FORMAT.into())],
                 depth: None,
             },
         );
@@ -427,15 +516,7 @@ impl Reflections {
                 },
             )
         };
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("engine/post-reflections-sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            ..Default::default()
-        });
+        let sampler = linear_clamp(device, "engine/post-reflections-sampler");
         Self {
             pipeline,
             layout: pipelines::layout(device, &REFLECTIONS),
@@ -469,6 +550,11 @@ impl Reflections {
         self.group.clear();
     }
 
+    fn shown(&self) -> Option<Bound<'_>> {
+        let targets = self.targets.get()?;
+        Some(Bound::of(targets, pipelines::view(&targets.reflected_view)))
+    }
+
     fn capacity_bytes(&self) -> u64 {
         self.targets.get().map_or(0, |targets| targets.bytes)
             + self.nearest.capacity_bytes()
@@ -482,11 +568,11 @@ impl Reflections {
         (region, depth): (FrameRegion, &Versioned<wgpu::TextureView>),
         post: &PostPass,
     ) -> bool {
-        let (Some(scene), Some(glow), Some(surface), Some((_, uniform))) = (
+        let (Some(scene), Some(glow), Some(surface), Some(uniform)) = (
             post.scene_texture(),
             post.attachment("glow"),
             post.attachment("surface"),
-            post.resolve_inputs(),
+            post.uniform(),
         ) else {
             return false;
         };
@@ -501,7 +587,7 @@ impl Reflections {
             self.targets.release();
         }
         if self.targets.resizes(size) {
-            let targets = LevelTargets::new(device, size, scene);
+            let targets = Targets::new(device, size, scene);
             self.targets.set(size, targets);
         }
         let Some(targets) = self.targets.get() else {

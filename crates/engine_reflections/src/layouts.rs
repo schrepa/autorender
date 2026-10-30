@@ -4,7 +4,9 @@ use engine_faces::placed::PlacedRecord;
 use engine_render::bindings::Sample::{Depth, Float, Uint, Unfilterable};
 use engine_render::bindings::Sampling::Filtering;
 use engine_render::bindings::View::{D2, D2Array};
-use engine_render::bindings::{Stages, Table, read, read_of, sampler, texture, uniform_of};
+use engine_render::bindings::{
+    Contribution, Stages, Table, read, read_of, sampler, texture, uniform_of,
+};
 use engine_render::gpu_layouts::scene::PostUniform;
 
 use crate::gpu_layouts::{PlacedGroup, TraceTerrain};
@@ -42,6 +44,15 @@ pub(crate) const REFLECTION_LEVELS: Table = Table {
         uniform_of("post", size_of::<PostUniform>(), F),
         texture("source", Float, D2, F),
         sampler("linear", Filtering, F),
+    ],
+};
+
+pub(crate) const COMPOSITE_REFLECTIONS: Contribution = Contribution {
+    group: "composite",
+    set: "reflections",
+    bindings: &[
+        texture("reflections", Float, D2, F),
+        sampler("reflections_sampler", Filtering, F),
     ],
 };
 
