@@ -6,6 +6,7 @@ use engine_render::gpu_layouts::impostors::ImpostorRecord;
 use glam::Vec3;
 
 pub const DEAD: u32 = u32::MAX;
+pub const HIDDEN: u32 = 0x8000_0000;
 
 engine_render::gpu_structs! {
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]

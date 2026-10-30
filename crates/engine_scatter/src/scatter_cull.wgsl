@@ -1,4 +1,5 @@
-import package::face::heightfield::seen_share;
+import package::face::placed::{DEAD, HIDDEN, Record};
+import package::frame::view::seen_share;
 import package::meshes::declarations::FADE_SLOT;
 
 struct Frame {
@@ -11,17 +12,6 @@ struct Frame {
 struct View {
     planes: array<vec4<f32>, 6>,
     limits: vec4<f32>,
-}
-
-struct Record {
-    center: vec3<f32>,
-    radius: f32,
-    group: u32,
-    scale: f32,
-    terrain: u32,
-    sink: f32,
-    state: u32,
-    pad: array<u32, 3>,
 }
 
 const SHOWN_CARD: u32 = 5u;
@@ -67,9 +57,6 @@ struct CardArgs {
 
 const FADING: u32 = 0x80000000u;
 const FADING_OUT: u32 = 0x40000000u;
-
-const DEAD: u32 = 0xffffffffu;
-const HIDDEN: u32 = 0x80000000u;
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var<storage, read_write> records: array<Record>;

@@ -965,7 +965,11 @@ impl GpuPart for ScatterPass {
         stats.terrain.placed_impostors = placed;
         stats.terrain.dropped_placed_objects = self.left_out();
         stats.level_of_detail.impostors += placed;
-        stats.level_of_detail.dropped_impostors += self.placed.dropped;
+        let share = engine_core::Cut::of(placed + self.placed.dropped, placed);
+        let cut = &mut stats.level_of_detail.impostor_cut;
+        cut.asked += share.asked;
+        cut.kept += share.kept;
+        cut.cut += share.cut;
     }
 
     fn set_cooking(&mut self, cooking: bool) {

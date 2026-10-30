@@ -86,6 +86,7 @@ engine_render::gpu_consts! {
     pub(crate) const FADED: u32 = 65535 => ["FADED" in "scatter::cull"];
     pub(crate) const STATE_ADOPT: u32 = u32::MAX => ["STATE_ADOPT" in "scatter::cull"];
     pub(crate) const DEAD: u32 = engine_faces::placed::DEAD => ["DEAD"];
+    pub(crate) const HIDDEN: u32 = engine_faces::placed::HIDDEN => ["HIDDEN"];
     pub(crate) const TERRAIN_INDEX: u32 = 0x1ff => ["TERRAIN_INDEX"];
     pub(crate) const LAYER_SHIFT: u32 = 9 => ["LAYER_SHIFT"];
     pub(crate) const NO_LAYER: u32 = 0x7f => ["NO_LAYER"];
