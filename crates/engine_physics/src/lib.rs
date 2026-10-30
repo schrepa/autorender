@@ -44,6 +44,7 @@ impl Brick for PhysicsBrick {
             .stats::<PhysicsStats>()
             .resource::<PhysicsWorld>()
             .resource::<WaterObstacles>()
+            .resource::<obstacles::WaterReaches>()
             .configure_sets(
                 FixedSimulation,
                 (PhysicsSystems::Step, PhysicsSystems::Obstruct)
@@ -54,7 +55,9 @@ impl Brick for PhysicsBrick {
                 FixedSimulation,
                 (
                     world::step.in_set(PhysicsSystems::Step),
-                    obstacles::obstruct.in_set(PhysicsSystems::Obstruct),
+                    (obstacles::reach_water, obstacles::obstruct)
+                        .chain()
+                        .in_set(PhysicsSystems::Obstruct),
                 ),
             )
             .inspector::<PhysicsWorld, PhysicsWorldView>(|_, world| PhysicsWorldView::of(world))

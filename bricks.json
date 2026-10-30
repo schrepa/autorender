@@ -461,13 +461,16 @@
         "physics",
         "scene_components"
       ],
-      "reads": [],
+      "reads": [
+        "collision"
+      ],
       "records": [],
       "resources": [
         "engine_physics::settings::Physics",
         "engine_physics::settings::PhysicsStats",
         "engine_physics::world::PhysicsWorld",
-        "engine_core::water::WaterObstacles"
+        "engine_core::water::WaterObstacles",
+        "engine_physics::obstacles::WaterReaches"
       ],
       "settings": [
         {
@@ -488,7 +491,7 @@
       ],
       "system_set": "physics",
       "type": "engine_physics::PhysicsBrick",
-      "version": "35762a3833921e8418d8b01254ec769f03b500ebb8baa2fa732c6a4fe35dbbd1"
+      "version": "bad234825a27f59415557faac3ca193379fd36530825dc05248023b3603181c0"
     },
     {
       "components": [],
@@ -2753,7 +2756,7 @@
       "stats": [],
       "system_set": "scene_views",
       "type": "engine::host::views::SceneViewsBrick",
-      "version": "70d888f69a3cace90e4ea0fd38a19f6a9f7ad817813c51f84c9ef08a2d063c8e"
+      "version": "da5ab11e3700f0feb684a3aabae52bcd79c331143a2905435e7e7eac95275683"
     }
   ],
   "frame": {
