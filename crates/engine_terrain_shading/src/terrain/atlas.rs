@@ -113,9 +113,7 @@ pub(crate) struct TileAtlas {
     pub(crate) controls: u32,
     normal_jobs: Vec<(u32, f32)>,
     normal_pass: Option<(engine_render::pipelines::GroupLayout, wgpu::ComputePipeline)>,
-    control_jobs: Vec<ControlJob>,
-    control_pass: Option<(engine_render::pipelines::GroupLayout, wgpu::ComputePipeline)>,
-    gpu_materials: bool,
+    control: Control,
     surfaces: HashMap<u64, (Arc<SurfaceData>, wgpu::Buffer)>,
     pub(super) sky_sampler: wgpu::Sampler,
     pub(super) control_sampler: wgpu::Sampler,
@@ -151,9 +149,7 @@ impl TileAtlas {
             controls: 0,
             normal_jobs: Vec::new(),
             normal_pass: None,
-            control_jobs: Vec::new(),
-            control_pass: None,
-            gpu_materials: false,
+            control: Control::default(),
             surfaces: HashMap::default(),
             control_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("engine/terrain-control-sampler"),
@@ -204,9 +200,9 @@ impl TileAtlas {
 
     pub(super) fn follow_materials(&mut self, device: &wgpu::Device, terrains: &RenderTerrains) {
         let gpu = (terrains.terrains.iter()).any(|terrain| terrain.gpu_surface.is_some());
-        self.gpu_materials = gpu;
+        self.control.gpu = gpu;
         if !gpu {
-            self.control_pass = None;
+            self.control.pass = None;
         }
         let Some(arrays) = &mut self.arrays else {
             return;
@@ -520,7 +516,7 @@ impl TileAtlas {
             let surface = surfaces[&key.0];
             let spacing = tile.spacing();
             let first = surface.first_sample(key.1, spacing);
-            self.control_jobs.push(ControlJob {
+            self.control.jobs.push(ControlJob {
                 layer,
                 terrain: key.0,
                 first: [first[0] as i32, first[1] as i32],
@@ -674,13 +670,13 @@ impl TileAtlas {
 
     pub(super) fn warm(&mut self, device: &wgpu::Device) {
         self.normal_pass(device);
-        if self.gpu_materials {
+        if self.control.gpu {
             self.control_pass(device);
         }
     }
 
     fn control_pass(&mut self, device: &wgpu::Device) {
-        self.control_pass.get_or_insert_with(|| {
+        self.control.pass.get_or_insert_with(|| {
             let layout = engine_render::pipelines::layout(device, &TERRAIN_CONTROL);
             let pipeline_layout = engine_render::pipelines::layout_of(
                 device,
@@ -724,19 +720,19 @@ impl TileAtlas {
 
     fn compute_controls(&mut self, device: &wgpu::Device, queue: &Queue) {
         let ready = (self.arrays.as_ref()).is_some_and(|arrays| arrays.rivers.is_some());
-        if !ready || self.control_jobs.is_empty() {
-            self.control_jobs.clear();
+        if !ready || self.control.jobs.is_empty() {
+            self.control.jobs.clear();
             return;
         }
         self.control_pass(device);
-        let (Some(arrays), Some((layout, pipeline))) = (&self.arrays, &self.control_pass) else {
+        let (Some(arrays), Some((layout, pipeline))) = (&self.arrays, &self.control.pass) else {
             return;
         };
         let Some((_, rivers)) = &arrays.rivers else {
             return;
         };
-        let mut words = vec![0_u32; self.control_jobs.len() * SLOT as usize / 4];
-        for (index, job) in self.control_jobs.iter().enumerate() {
+        let mut words = vec![0_u32; self.control.jobs.len() * SLOT as usize / 4];
+        for (index, job) in self.control.jobs.iter().enumerate() {
             let at = index * SLOT as usize / 4;
             words[at] = job.layer;
             words[at + 1] = job.level;
@@ -760,7 +756,7 @@ impl TileAtlas {
                 timestamp_writes: None,
             });
             pass.set_pipeline(pipeline);
-            for (index, job) in self.control_jobs.iter().enumerate() {
+            for (index, job) in self.control.jobs.iter().enumerate() {
                 let Some((_, data)) = self.surfaces.get(&job.terrain) else {
                     continue;
                 };
@@ -799,8 +795,8 @@ impl TileAtlas {
             }
         }
         queue.submit_now([encoder.finish()]);
-        self.controls += self.control_jobs.len() as u32;
-        self.control_jobs.clear();
+        self.controls += self.control.jobs.len() as u32;
+        self.control.jobs.clear();
     }
 
     fn normal_pass(&mut self, device: &wgpu::Device) {
@@ -905,9 +901,8 @@ impl TileAtlas {
             return;
         }
         let layers = needed.next_power_of_two().max(16).min(max_layers.max(1));
-        let array = |label, format, usage, mips| {
-            layer_array(device, (label, format, usage, mips), layers)
-        };
+        let array =
+            |label, format, usage, mips| layer_array(device, (label, format, usage, mips), layers);
         let texture = array(
             "engine/terrain-heights",
             HEIGHT_FORMAT,
@@ -926,7 +921,7 @@ impl TileAtlas {
             wgpu::TextureUsages::STORAGE_BINDING,
             1,
         );
-        let rivers = self.gpu_materials.then(|| rivers_array(device, layers));
+        let rivers = self.control.gpu.then(|| rivers_array(device, layers));
         let pyramid = |label: &'static str| {
             engine_render::memory::texture(
                 device,
@@ -1255,6 +1250,13 @@ fn ancestor_texels(
         }
     }
     out
+}
+
+#[derive(Default)]
+struct Control {
+    jobs: Vec<ControlJob>,
+    pass: Option<(engine_render::pipelines::GroupLayout, wgpu::ComputePipeline)>,
+    gpu: bool,
 }
 
 struct ControlJob {

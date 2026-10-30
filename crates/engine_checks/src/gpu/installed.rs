@@ -160,8 +160,7 @@ impl Installed {
     }
 
     fn core_generated(&mut self, parts: &[&'static PartEntry]) -> Result<(), String> {
-        let made =
-            engine_render::generated::generated(parts).map_err(|error| error.to_string())?;
+        let made = engine_render::generated::generated(parts).map_err(|error| error.to_string())?;
         for made in made {
             let module = generated(made.path, made.source);
             self.linker.add_generated(

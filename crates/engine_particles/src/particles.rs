@@ -451,9 +451,9 @@ impl Particles {
         );
         let (region, depth) = (cx.core.display.region, &cx.core.depth.view);
         let depth_format = cx.core.depth.texture.format();
-        let particles = self
-            .particles
-            .get_or_insert_with(|| ParticlePass::new(device, depth_format, &accumulation_targets()));
+        let particles = self.particles.get_or_insert_with(|| {
+            ParticlePass::new(device, depth_format, &accumulation_targets())
+        });
         let prepared = particles.prepare(device, queue, snapshot, emitters, region.render, depth);
         if prepared.is_some() {
             particles.ensure_additive(device);
@@ -472,8 +472,8 @@ impl GpuPart for Particles {
 
     fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
         let snapshot = cx.snapshot;
-        self.emits = snapshot.section::<ParticleSettings>().enabled
-            && !snapshot.particles.list.is_empty();
+        self.emits =
+            snapshot.section::<ParticleSettings>().enabled && !snapshot.particles.list.is_empty();
         if !self.emits {
             self.particles = None;
         }

@@ -5,9 +5,9 @@ use engine_core::bevy_ecs::world::{EntityWorldMut, World};
 use engine_core::glam::{Vec2, Vec3};
 use engine_core::{Error, Expected, MaterialHandle, MeshHandle, missing_brick};
 use engine_scene::{
-    ComponentContext, ComponentKind, ComponentPath, Lookups, Placement, Prepared, PreparedComponent,
-    SceneFiles, SceneMaterial, SceneMesh, added, identifier, no_files, no_paths, object_example,
-    parsed, ruled, unknown, valid_uri, valid_world,
+    ComponentContext, ComponentKind, ComponentPath, Lookups, Placement, Prepared,
+    PreparedComponent, SceneFiles, SceneMaterial, SceneMesh, added, identifier, no_files, no_paths,
+    object_example, parsed, ruled, unknown, valid_uri, valid_world,
 };
 use engine_settings::{Rule, Setting};
 use serde::{Deserialize, Serialize};

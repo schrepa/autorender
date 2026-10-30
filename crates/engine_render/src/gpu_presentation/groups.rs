@@ -191,7 +191,13 @@ impl DrawGroups {
             if wanted != held || (grown && wanted) {
                 let bytes = if wanted { planes * capacity * 4 } else { 0 };
                 let usage = wgpu::BufferUsages::VERTEX;
-                sized(device, &mut self.visible_ids[index], VISIBLE_IDS[index], bytes, usage);
+                sized(
+                    device,
+                    &mut self.visible_ids[index],
+                    VISIBLE_IDS[index],
+                    bytes,
+                    usage,
+                );
                 changed = true;
             }
             if wanted != held || (batches_grown && wanted) {
@@ -201,7 +207,10 @@ impl DrawGroups {
                 changed = true;
             }
         }
-        let impostors = kept.impostor_ids().into_iter().zip(self.kept.impostor_ids());
+        let impostors = kept
+            .impostor_ids()
+            .into_iter()
+            .zip(self.kept.impostor_ids());
         for (index, (wanted, held)) in impostors.enumerate() {
             if wanted != held || (grown && wanted) {
                 let bytes = if wanted { capacity * 8 } else { 0 };

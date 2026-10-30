@@ -1011,18 +1011,16 @@ impl GpuPart for SkyPass {
                 let camera = cx.core.shared_group("frame", CAMERA_VIEW);
                 self.haze.encode(encoder, camera, profiler);
             }
-            COMPOSITE_PASS => {
-                if self.frame.is_some_and(|frame| frame.view()) {
-                    let mut render = cx.render_pass(
-                        encoder,
-                        "engine/cloud-composite",
-                        profiler
-                            .span("cloud_composite")
-                            .map(engine_render::profiling::Span::render),
-                    );
-                    self.clouds
-                        .draw_composite(&mut render, cx.core.shared_group("frame", CAMERA_VIEW));
-                }
+            COMPOSITE_PASS if self.frame.is_some_and(|frame| frame.view()) => {
+                let mut render = cx.render_pass(
+                    encoder,
+                    "engine/cloud-composite",
+                    profiler
+                        .span("cloud_composite")
+                        .map(engine_render::profiling::Span::render),
+                );
+                self.clouds
+                    .draw_composite(&mut render, cx.core.shared_group("frame", CAMERA_VIEW));
             }
             _ => {}
         }

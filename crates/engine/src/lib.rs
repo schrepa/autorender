@@ -45,14 +45,14 @@ pub mod solids {
 
 mod games {
     pub use engine_ambient_occlusion::AmbientOcclusionBrick;
-    pub use engine_auto_exposure::AutoExposureBrick;
-    pub use engine_bloom::BloomBrick;
+    pub use engine_auto_exposure::{AutoExposure, AutoExposureBrick};
+    pub use engine_bloom::{Bloom, BloomBrick};
     pub use engine_core::Culling;
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, App, AssetBudget,
-        AssetLibrary, AutoExposure, Bloom, Camera, Clouds, Cube, DebugView, DebugViewMode, Dither,
-        DynamicResolution, DynamicResolutionStats, Engine, EngineConfig, EngineEntityCommands,
-        Filter, FixedPostSimulation, FixedPreSimulation, FixedSimulation, FixedSimulationSystems,
+        AssetLibrary, Camera, Clouds, Cube, DebugView, DebugViewMode, Dither, DynamicResolution,
+        DynamicResolutionStats, Engine, EngineConfig, EngineEntityCommands, Filter,
+        FixedPostSimulation, FixedPreSimulation, FixedSimulation, FixedSimulationSystems,
         FixedTime, Foliage, FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Grading,
         Ground, GroundFace, GroundPoint, Grounded, Grounding, Haze, HeightHeld, Highlights,
         InputState, Interior, InterpolateTransform, LevelOfDetail, LightPreset, LightRegion,
@@ -60,14 +60,14 @@ mod games {
         Mesh3d, MeshHandle, MeshVertex, NightSky, OcclusionCulling, Parent, ParticleBlend,
         ParticleEmitter, ParticleSettings, Plugin, PluginGroup, Presentation, PresentationState,
         PresentedTime, PresentedTransform, PresentedTransforms, ProvidedAssets, Records,
-        ReflectionProbe, ReflectionProbeSettings, Reflections, Resolution, ResolutionStats,
-        Sampler, Shadows, Sky, SkyLighting, SkyOcclusion, SplineMesh, Spot, StreamingFocus,
-        SubpixelCulling, Sunlight, Surface, SurfaceLight, TemporalAntialiasing, Texture,
-        TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage, Tint, TopLayer,
-        Transform, UvTransform, ViewSync, ViewSyncSystems, WaterBodies, WaterBodiesList, WaterFace,
-        WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSurfaces, WaterWorker, Wind,
-        WorldSync, WorldSyncSystems, Wrap, edit_transform, math, reset_all_interpolation,
-        reset_interpolation, set_parent, set_parents, trim_cards,
+        ReflectionProbe, ReflectionProbeSettings, Resolution, ResolutionStats, Sampler, Shadows,
+        Sky, SkyLighting, SkyOcclusion, SplineMesh, Spot, StreamingFocus, SubpixelCulling,
+        Sunlight, Surface, SurfaceLight, TemporalAntialiasing, Texture, TextureHandle, TextureRef,
+        TextureSet, TextureSource, TextureUsage, Tint, TopLayer, Transform, UvTransform, ViewSync,
+        ViewSyncSystems, WaterBodies, WaterBodiesList, WaterFace, WaterKind, WaterObstacle,
+        WaterObstacles, WaterSample, WaterSurfaces, WaterWorker, Wind, WorldSync, WorldSyncSystems,
+        Wrap, edit_transform, math, reset_all_interpolation, reset_interpolation, set_parent,
+        set_parents, trim_cards,
     };
     pub use engine_debug_view::DebugViewBrick;
     pub use engine_dither::DitherBrick;
@@ -81,7 +81,7 @@ mod games {
     pub use engine_particles::ParticlesBrick;
     pub use engine_physics::Physics;
     pub use engine_probes::ReflectionProbesBrick;
-    pub use engine_reflections::ReflectionsBrick;
+    pub use engine_reflections::{Reflections, ReflectionsBrick};
     pub use engine_scatter::ScatterBrick;
     pub use engine_shadows::ShadowsBrick;
     pub use engine_sky::SkyBrick;

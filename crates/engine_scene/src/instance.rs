@@ -470,8 +470,8 @@ pub struct Lookups {
     scene_id: String,
     pub(crate) meshes: BTreeMap<String, MeshHandle>,
     pub(crate) materials: BTreeMap<String, MaterialHandle>,
-    pub(crate) owned_meshes: Vec<MeshHandle>,
-    pub(crate) owned_materials: Vec<MaterialHandle>,
+    pub owned_meshes: Vec<MeshHandle>,
+    pub owned_materials: Vec<MaterialHandle>,
 }
 
 impl Lookups {

@@ -7,10 +7,6 @@ pub const RULES: Rules = Rules {
     exceptions: Exceptions {
         long_files: &[
             ("crates/engine_terrain/src/steady_water.rs", 2360),
-            (
-                "crates/engine_terrain_shading/src/meshes/terrain.wgsl",
-                1643,
-            ),
             ("crates/engine_water/src/sim.wgsl", 1645),
             ("tools/lodbuild/src/simplify.rs", 2009),
         ],

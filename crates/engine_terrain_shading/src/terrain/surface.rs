@@ -21,14 +21,26 @@ const _: () = assert!(SURFACE_MESHLET_VERTICES <= 1 << 16, "meshlet_fits_u16");
 
 type Spec = (&'static str, u64, wgpu::BufferUsages);
 
-const LEAVES: Spec = ("engine/terrain-surface-leaves", LEAF_BYTES, wgpu::BufferUsages::empty());
-const NODES: Spec = ("engine/terrain-surface-nodes", NODE_BYTES, wgpu::BufferUsages::empty());
+const LEAVES: Spec = (
+    "engine/terrain-surface-leaves",
+    LEAF_BYTES,
+    wgpu::BufferUsages::empty(),
+);
+const NODES: Spec = (
+    "engine/terrain-surface-nodes",
+    NODE_BYTES,
+    wgpu::BufferUsages::empty(),
+);
 const COUNTERS: Spec = (
     "engine/terrain-surface-counters",
     ARGS_BYTES,
     wgpu::BufferUsages::COPY_SRC,
 );
-const ARGS: Spec = ("engine/terrain-surface-args", ARGS_BYTES, wgpu::BufferUsages::INDIRECT);
+const ARGS: Spec = (
+    "engine/terrain-surface-args",
+    ARGS_BYTES,
+    wgpu::BufferUsages::INDIRECT,
+);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Measure {

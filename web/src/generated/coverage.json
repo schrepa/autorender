@@ -317,6 +317,7 @@
         "core_only_frames",
         "culling_settings",
         "debug_view",
+        "flat_sprites",
         "foliage_settings",
         "gpu_presentation",
         "host_faults",
@@ -589,6 +590,7 @@
       "smokes": [
         "agent",
         "culling_settings",
+        "flat_sprites",
         "foliage_settings",
         "host_faults",
         "host_images",
@@ -658,6 +660,7 @@
         "culling_settings",
         "debug_view",
         "debug_view_terrain",
+        "flat_sprites",
         "foliage_settings",
         "frame_loop",
         "gpu_presentation",
@@ -936,6 +939,7 @@
     {
       "kind": "list",
       "members": [
+        "terrain",
         "navigation",
         "collision",
         "physics"

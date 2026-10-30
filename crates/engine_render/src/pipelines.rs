@@ -558,21 +558,6 @@ pub fn link(device: &wgpu::Device, linker: Linker) {
     });
 }
 
-pub fn add_generated(device: &wgpu::Device, path: String, brick: &'static str, source: String) {
-    with_registry(device, |registry| {
-        let named = format!("\"{path}\"");
-        let imported = registry.linker.imports(&path);
-        if registry.linker.add_generated(path, brick, source) {
-            if imported {
-                registry.forget_pipelines();
-            } else {
-                registry.render.retain(|text, _| !text.contains(&named));
-                registry.compute.retain(|text, _| !text.contains(&named));
-            }
-        }
-    });
-}
-
 pub fn layout_of(device: &wgpu::Device, declared: &PipelineLayout) -> wgpu::PipelineLayout {
     with_registry(device, |registry| registry.layout_of(declared))
 }

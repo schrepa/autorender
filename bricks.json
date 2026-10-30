@@ -1,7 +1,10 @@
 {
   "bricks": [
     {
-      "components": [],
+      "components": [
+        "terrain",
+        "prefetch"
+      ],
       "consumers": [
         {
           "name": "tiles",
@@ -21,6 +24,7 @@
         "engine_core",
         "engine_math",
         "engine_profile",
+        "engine_scene",
         "engine_settings",
         "engine_textures"
       ],
@@ -34,7 +38,8 @@
         "detail_consumers",
         "world_solids",
         "water_bodies",
-        "terrain_layers"
+        "terrain_layers",
+        "scene_components"
       ],
       "name": "terrain",
       "needs": [],
@@ -79,7 +84,8 @@
         "detail_consumers",
         "world_solids",
         "water_bodies",
-        "terrain_layers"
+        "terrain_layers",
+        "scene_components"
       ],
       "reads": [
         "physics",
@@ -129,7 +135,7 @@
       "stats": [],
       "system_set": "terrain",
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "4830dead9ceb50bc573469cc7113f30d0ffa991157915463ab57d2588c9d0d5e"
+      "version": "9eac5e5d2f0ad1d6ddca840a615a0eff983bbe98be16e5a8a30b7712eadf39ad"
     },
     {
       "components": [],
@@ -176,7 +182,7 @@
       "stats": [],
       "system_set": "wind",
       "type": "engine_core::wind::Wind",
-      "version": "4653ac2743ef80c13eaa726d02d10f31be8682b60c72c9d9e790ceb457e7705c"
+      "version": "17996ff0b38a0f0bd50d11d9008f24e4e0fbd05137f02cd949c7e08eb794dbdf"
     },
     {
       "components": [],
@@ -236,7 +242,7 @@
       ],
       "system_set": "world_streaming",
       "type": "engine_world_streaming::WorldStreamingBrick",
-      "version": "f27eaf203be990802536c581acb560fc91e195138227e57ab2ecab5141b240d6"
+      "version": "43f48c90d07ad0c163e5607a1fd59fddf7423cebb43b7219f5be7ce732a28b3a"
     },
     {
       "components": [
@@ -309,7 +315,7 @@
       ],
       "system_set": "navigation",
       "type": "engine_navigation::agents::NavigationBrick",
-      "version": "3d8f7471a545923614795f1f01a27c3e1a3413cc6336d3b0b39799ca9c0a36e5"
+      "version": "d6d5471a8a32068ff81859fe09c654d32d61a017bd27dc647eaaa3146fa18a65"
     },
     {
       "components": [],
@@ -352,7 +358,7 @@
       "stats": [],
       "system_set": "time_of_day",
       "type": "engine_time_of_day::TimeOfDayBrick",
-      "version": "f43f587e7b4c7d72a24ec815dc314784bb1bb05b0ce0150c13b1761b0f21cc86"
+      "version": "adc829291a0fc1ca22db719084593a1dd13cb3bbe6360dfcb5dafefcdbdb7aa9"
     },
     {
       "components": [
@@ -425,7 +431,7 @@
       "stats": [],
       "system_set": "collision",
       "type": "engine_collision::Collision",
-      "version": "59e7466f7f629f023570cbc5584342408bae3254fb1c0338ba294ebad8e58240"
+      "version": "88dda6b073029a89e85cf0e46c5726181e4719bfd5d05684a25a631239ba82b3"
     },
     {
       "components": [
@@ -491,7 +497,7 @@
       ],
       "system_set": "physics",
       "type": "engine_physics::PhysicsBrick",
-      "version": "7e7e5070b187eee28f936764b2c593278838b7272856d81c9bf971e13eb971cd"
+      "version": "100281954879189f04efea4f895050a24a1de4eec0c2f8ce23fadc78adbe69f5"
     },
     {
       "components": [],
@@ -565,7 +571,7 @@
       "stats": [],
       "system_set": "sun",
       "type": "engine_sun::SunBrick",
-      "version": "e79c13eef66b098e38be77c4f92108c40dc3ad6ccacd92638299c859604731f6"
+      "version": "e9def99a5659bfc5e46bc9ab590fcf29d92d3d3a646118da1a72fbd385059257"
     },
     {
       "components": [],
@@ -684,7 +690,7 @@
       "stats": [],
       "system_set": "lighting_model",
       "type": "engine_lighting::LightingModelBrick",
-      "version": "0cc52b0c1f6de0b6f08942c3ff05eb4eef07acefdb464a132e6d4b190d3a2754"
+      "version": "cc4e13fb084d0d6d2cc796a695be15604a4557d6fdce82287577abc4e84df05c"
     },
     {
       "components": [],
@@ -758,7 +764,7 @@
       "stats": [],
       "system_set": "meshes",
       "type": "engine_meshes::MeshesBrick",
-      "version": "6406f43491317d0f4dc86f100ffdc6a570b2afbaff6f6267164bb007b16eb19b"
+      "version": "21d7113698a4b80477f5aabb876fde6384246008ac6be7c0f09ae67a3d9e1beb"
     },
     {
       "components": [],
@@ -859,7 +865,7 @@
       "stats": [],
       "system_set": "terrain_shading",
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "84fc950ef97b3a5382c646699f41a2cc6635146f8201c26dfc9de7a243509dd3"
+      "version": "a664bd8bcdb0f4762b596d6e1de2904a933e7c997fb7f2e2a160af20fc967426"
     },
     {
       "components": [],
@@ -962,7 +968,7 @@
       "stats": [],
       "system_set": "scatter",
       "type": "engine_scatter::ScatterBrick",
-      "version": "55ee7a80aaacd67446adcd91c9152e38f44a2912c8350dc71c4a19184513e341"
+      "version": "c43f1d5188abb1005607304bdd17794d2e148bc2cb86e91458448e7058e378d5"
     },
     {
       "components": [],
@@ -1057,7 +1063,7 @@
       "stats": [],
       "system_set": "shadows",
       "type": "engine_shadows::ShadowsBrick",
-      "version": "fa954306bde5249c8d0da3b09540d6dab5114c13bc5840943fca2bba57ae0930"
+      "version": "bcb11709b1fe7c61536f42993a1aa0264387d6107758c814e25e4354d9225a9a"
     },
     {
       "components": [],
@@ -1123,7 +1129,7 @@
       "stats": [],
       "system_set": "lights",
       "type": "engine_lights::LightsBrick",
-      "version": "a97d0acf6836f05ed98fd8ac70de81df99f2f894290987fce89caba1ffd39a66"
+      "version": "8f806f8755d781be18b5fb8c592e8bf79ba15bb3edd155793d4d85c8cb01be10"
     },
     {
       "components": [],
@@ -1204,7 +1210,7 @@
       "pieces": [
         {
           "name": "sky",
-          "size": 464
+          "size": 480
         }
       ],
       "places": [
@@ -1251,7 +1257,7 @@
       "stats": [],
       "system_set": "sky",
       "type": "engine_sky::SkyBrick",
-      "version": "bdf972c070a9a577c05d2d6a0fd022a43063e474ddd037fcf2380005b375dcef"
+      "version": "d1da9f13b2707a36c2fde215be3b81b94625b9a63ee13189dcbfd373d6ed0597"
     },
     {
       "components": [],
@@ -1336,7 +1342,7 @@
       "stats": [],
       "system_set": "reflection_probes",
       "type": "engine_probes::ReflectionProbesBrick",
-      "version": "96635fc38f47bff237a6a2162080e68670f0d87092da8f943a5f16bdceaf4286"
+      "version": "743793aa87befcb202f26f76b6b468ce08f19b3b13a7877b28e5a4659af1f63c"
     },
     {
       "components": [],
@@ -1438,7 +1444,7 @@
       "stats": [],
       "system_set": "ground_cover",
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "74b9e7cb9dd4905d1877f6bc8b345b4d966f55090683edcda71585b07464f724"
+      "version": "9b6e5879ccfc29d251b3580a7040a61c824154ed2dd3ee257eda0d9a80a2ae59"
     },
     {
       "components": [],
@@ -1547,7 +1553,7 @@
       "stats": [],
       "system_set": "water",
       "type": "engine_water::WaterBrick",
-      "version": "004b45f73d0567047b52e2807f3729fd4ca073b7cf6e1757d1feddde8d37f2c9"
+      "version": "789954ceeca2586b5005d563ebb8dae19f683e83ca1d5342db15b7ccae4de2ed"
     },
     {
       "components": [],
@@ -1597,7 +1603,7 @@
       "stats": [],
       "system_set": "ambient_occlusion",
       "type": "engine_ambient_occlusion::AmbientOcclusionBrick",
-      "version": "8a6fc9638763f66a927c576a34671112abd7900aa797dd267501c09e28b5a49d"
+      "version": "f2c71b46776c8d22e7d6005603871e68159fd98a2d89c7c74bfe213511428781"
     },
     {
       "components": [],
@@ -1623,6 +1629,7 @@
         "engine_core",
         "engine_faces",
         "engine_render",
+        "engine_settings",
         "engine_terrain"
       ],
       "faces": [
@@ -1684,7 +1691,7 @@
       "pieces": [
         {
           "name": "reflections",
-          "size": 32
+          "size": 48
         }
       ],
       "places": [
@@ -1693,7 +1700,7 @@
       "reads": [],
       "records": [],
       "resources": [
-        "engine_core::effects::Reflections"
+        "engine_reflections::settings::Reflections"
       ],
       "settings": [
         {
@@ -1707,7 +1714,7 @@
       "stats": [],
       "system_set": "reflections",
       "type": "engine_reflections::ReflectionsBrick",
-      "version": "925cd0e82372d0a269174595608d6a3a5d8fd14988803b3e2c3fe6ac058349d2"
+      "version": "19c23c7eeef0db1407bb5c82d1ab0dec308a05a47ef36f2eac6bdc130d141680"
     },
     {
       "components": [],
@@ -1732,7 +1739,8 @@
       "dependencies": [
         "engine_core",
         "engine_faces",
-        "engine_render"
+        "engine_render",
+        "engine_settings"
       ],
       "faces": [
         "bloom"
@@ -1761,7 +1769,7 @@
       "pieces": [
         {
           "name": "bloom",
-          "size": 16
+          "size": 32
         }
       ],
       "places": [
@@ -1770,7 +1778,7 @@
       "reads": [],
       "records": [],
       "resources": [
-        "engine_core::effects::Bloom"
+        "engine_bloom::settings::Bloom"
       ],
       "settings": [
         {
@@ -1784,7 +1792,7 @@
       "stats": [],
       "system_set": "bloom",
       "type": "engine_bloom::BloomBrick",
-      "version": "a44d07f00ffee58825e77b5758ec24b0f1c731d3a6723988b35ca9d7bd35f70b"
+      "version": "ea89d60ed1f5b1cc4dbf6fe8499c43b2d39f126a6058d2b2dba1ff6c7855b5c8"
     },
     {
       "components": [],
@@ -1854,7 +1862,7 @@
       "stats": [],
       "system_set": "dither",
       "type": "engine_dither::DitherBrick",
-      "version": "33c887216f1a9aca27aa2510f19d50a07b9193dd98fe3c1362b2136f6a6145e7"
+      "version": "c6963ed83ab55b9a5c931cc527018080390d9feff307fc6b2f3fdfe83d2ebd39"
     },
     {
       "components": [],
@@ -1955,7 +1963,7 @@
       "stats": [],
       "system_set": "particles",
       "type": "engine_particles::ParticlesBrick",
-      "version": "0a3b0075b5d4e08721ec7b77780ca8693946a26348893dd6c65858e872634e6b"
+      "version": "cb060b1555e9e77c9836cce9ac9885449afe4d86218ea1f3e4a30239fa3596fa"
     },
     {
       "components": [],
@@ -2028,7 +2036,7 @@
       "stats": [],
       "system_set": "taa",
       "type": "engine_taa::TaaBrick",
-      "version": "ed8e3dffebd38ea2d11777c6262a2fac2ef9a0cc2589bbb4f410bef4a7b4503b"
+      "version": "bd0f10ac115420d98a46d72556fff270cd15a0ee47b11f5aa2563a9b8b2ec287"
     },
     {
       "components": [],
@@ -2053,7 +2061,8 @@
       "dependencies": [
         "engine_core",
         "engine_faces",
-        "engine_render"
+        "engine_render",
+        "engine_settings"
       ],
       "faces": [
         "MeteredExposure"
@@ -2088,7 +2097,7 @@
       "reads": [],
       "records": [],
       "resources": [
-        "engine_core::effects::AutoExposure"
+        "engine_auto_exposure::settings::AutoExposure"
       ],
       "settings": [
         {
@@ -2102,7 +2111,7 @@
       "stats": [],
       "system_set": "auto_exposure",
       "type": "engine_auto_exposure::AutoExposureBrick",
-      "version": "6daee7dc17745a02a779b4ca433e5f2f27ad414c6dbacec8cc28b8a108d7766f"
+      "version": "cd05f794db2dba5843033e62133f9deb106e277b33ef4f44a897b2e6bb6f148e"
     },
     {
       "components": [],
@@ -2175,7 +2184,7 @@
       "stats": [],
       "system_set": "tonemap",
       "type": "engine_tonemap::TonemapBrick",
-      "version": "e0120c3736e244ea18ab07567297c0124ab2818bbbbc8bba9f65bb96be5d826a"
+      "version": "f6e2724a7c35d0f31865769146b3c4d299717ecc645e6ed94cd133cc94ca1dff"
     },
     {
       "components": [],
@@ -2230,7 +2239,7 @@
       "stats": [],
       "system_set": "debug_view",
       "type": "engine_debug_view::DebugViewBrick",
-      "version": "6bb6447bda9e9da1bb2d0544ec1afe4c16efcac150b37556d8a9985f58f434bf"
+      "version": "8baa1e84986fa4a2f2d1ac615610c573d45fd8fddc0c2cf490e699ef2b420b5f"
     },
     {
       "components": [],
@@ -2287,7 +2296,7 @@
       "stats": [],
       "system_set": "level_of_detail",
       "type": "engine_core::level_of_detail::LevelOfDetail",
-      "version": "4653ac2743ef80c13eaa726d02d10f31be8682b60c72c9d9e790ceb457e7705c"
+      "version": "17996ff0b38a0f0bd50d11d9008f24e4e0fbd05137f02cd949c7e08eb794dbdf"
     },
     {
       "components": [],
@@ -2348,7 +2357,7 @@
       "stats": [],
       "system_set": "culling",
       "type": "engine_core::gpu_culling::Culling",
-      "version": "4653ac2743ef80c13eaa726d02d10f31be8682b60c72c9d9e790ceb457e7705c"
+      "version": "17996ff0b38a0f0bd50d11d9008f24e4e0fbd05137f02cd949c7e08eb794dbdf"
     },
     {
       "components": [],
@@ -2401,7 +2410,7 @@
       "stats": [],
       "system_set": "resolution",
       "type": "engine_core::resolution::Resolution",
-      "version": "4653ac2743ef80c13eaa726d02d10f31be8682b60c72c9d9e790ceb457e7705c"
+      "version": "17996ff0b38a0f0bd50d11d9008f24e4e0fbd05137f02cd949c7e08eb794dbdf"
     },
     {
       "components": [],
@@ -2440,7 +2449,7 @@
       "stats": [],
       "system_set": "layer_noise",
       "type": "engine_layer_noise::LayerNoiseBrick",
-      "version": "e864830619d39a74eeff521181b808650b5bf300717034b2aa5be13df5ce4384"
+      "version": "3b74a1f4d17bcfc8562478ac1ad355cb91d54394a9bf84d09855a87e7faa9834"
     },
     {
       "components": [],
@@ -2479,7 +2488,7 @@
       "stats": [],
       "system_set": "layer_stamps",
       "type": "engine_layer_stamps::LayerStampsBrick",
-      "version": "4afafcad0ac5a7d1561f4c604cc31b9749c988a9f0aa5987ef6fd52bd463d32a"
+      "version": "838d2203211d0adc70e238ce1cca0c2e4264538d2e96ee056c98006c61166264"
     },
     {
       "components": [],
@@ -2518,7 +2527,7 @@
       "stats": [],
       "system_set": "layer_heightmap",
       "type": "engine_layer_heightmap::LayerHeightmapBrick",
-      "version": "c4d2688cee594bcdd3746104103d2ddc644a67c47bc290f588a54bcd956cb896"
+      "version": "f92ab64ee3a8c19d02d7811c6621f0df324e1911b8143a729b8825fa1a37129f"
     },
     {
       "components": [],
@@ -2557,7 +2566,7 @@
       "stats": [],
       "system_set": "layer_paths",
       "type": "engine_layer_paths::LayerPathsBrick",
-      "version": "78d1963bc466cba63f691b3cc8dfccf4341785b9df889781ce7730f6aad2e389"
+      "version": "c20faceb4a0a182801e19520d1b992821e3396f29a0bd7c3f7db44a704a7dec1"
     },
     {
       "components": [],
@@ -2596,7 +2605,7 @@
       "stats": [],
       "system_set": "layer_erosion",
       "type": "engine_layer_erosion::LayerErosionBrick",
-      "version": "b1e7047bf79525a59bab0290f899e5fbf583637eb7bb1fd3d2963980e60064ee"
+      "version": "24b16c49ce83bf20e7bd1d641248de13e0d0a14d10f8a0d254778777d423eeb9"
     },
     {
       "components": [],
@@ -2635,7 +2644,7 @@
       "stats": [],
       "system_set": "layer_hydrology",
       "type": "engine_layer_hydrology::LayerHydrologyBrick",
-      "version": "ecb515568f49e18a6954e98d1f87c03ec371ae5d6d3ff98c93f6353bf27c0dcb"
+      "version": "5530f6682db2028d8eb018d180c8032f69ab78f766af57f6c2a94235b636383f"
     },
     {
       "components": [],
@@ -2674,7 +2683,7 @@
       "stats": [],
       "system_set": "layer_relief",
       "type": "engine_layer_relief::LayerReliefBrick",
-      "version": "80ea821a9fbb6a6b7ee0e8eb71c749c2db28d7e15171625dc5764bd974ef734d"
+      "version": "6d2c6852c5b2fc1ffc2b3e09cad9ce6c79d967dc3a8679d0db5af7ed42b99859"
     },
     {
       "components": [],
@@ -2756,7 +2765,7 @@
       "stats": [],
       "system_set": "scene_views",
       "type": "engine::host::views::SceneViewsBrick",
-      "version": "60bb18e647e872c43c3923b7d7569ed160aa8ecc2edcdd808cadd7ad81d492d1"
+      "version": "54d519d695b0718ef4c3980954dc2ff63081cd72df702221bc52b351bd294ff4"
     }
   ],
   "frame": {
@@ -2795,34 +2804,34 @@
         "brick": "sky",
         "name": "sky",
         "offset": 7072,
-        "size": 464
+        "size": 480
       },
       {
         "brick": "reflections",
         "name": "reflections",
-        "offset": 7536,
-        "size": 32
+        "offset": 7552,
+        "size": 48
       },
       {
         "brick": "bloom",
         "name": "bloom",
-        "offset": 7568,
-        "size": 16
+        "offset": 7600,
+        "size": 32
       },
       {
         "brick": "dither",
         "name": "dither",
-        "offset": 7584,
+        "offset": 7632,
         "size": 16
       },
       {
         "brick": "tonemap",
         "name": "display",
-        "offset": 7600,
+        "offset": 7648,
         "size": 64
       }
     ],
-    "size": 7664
+    "size": 7712
   },
   "lists": [
     {
@@ -2865,6 +2874,7 @@
     },
     {
       "members": [
+        "terrain",
         "navigation",
         "collision",
         "physics"
@@ -3006,6 +3016,7 @@
     {
       "kind": "list",
       "members": [
+        "terrain",
         "navigation",
         "collision",
         "physics"

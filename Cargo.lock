@@ -935,6 +935,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "wgpu",
 ]
 
 [[package]]
@@ -982,10 +983,14 @@ dependencies = [
 name = "engine_auto_exposure"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "engine_settings",
+ "schemars",
+ "serde",
  "wgpu",
 ]
 
@@ -993,10 +998,14 @@ dependencies = [
 name = "engine_bloom"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "engine_settings",
+ "schemars",
+ "serde",
  "wgpu",
 ]
 
@@ -1397,11 +1406,15 @@ dependencies = [
 name = "engine_reflections"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "bytemuck",
  "engine_core",
  "engine_faces",
  "engine_render",
+ "engine_settings",
  "engine_terrain",
+ "schemars",
+ "serde",
  "wgpu",
 ]
 
@@ -1447,7 +1460,6 @@ dependencies = [
  "bevy_ecs",
  "engine_core",
  "engine_settings",
- "engine_terrain",
  "engine_world_streaming",
  "schemars",
  "serde",
@@ -1540,6 +1552,7 @@ dependencies = [
  "engine_core",
  "engine_math",
  "engine_profile",
+ "engine_scene",
  "engine_settings",
  "engine_sources",
  "engine_textures",

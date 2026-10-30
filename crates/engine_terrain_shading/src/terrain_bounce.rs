@@ -281,6 +281,36 @@ impl Bounce {
         }
     }
 
+    fn ensure_maps(
+        &mut self,
+        device: &wgpu::Device,
+        terrains: &RenderTerrains,
+        horizons: &Horizons,
+        count: usize,
+    ) -> bool {
+        let side = terrains
+            .terrains
+            .iter()
+            .zip(&self.windows)
+            .filter_map(|(terrain, window)| window.and(terrain.bounce.as_ref()))
+            .map(|bounce| bounce.texels())
+            .max();
+        let Some(side) = side.filter(|_| horizons.bounces()) else {
+            return false;
+        };
+        if self
+            .maps
+            .as_ref()
+            .is_none_or(|maps| maps.side < side || maps.slots != count)
+        {
+            self.maps = Some(maps(device, side, count));
+            self.maps_generation += 1;
+            self.held = vec![None; count];
+            self.means = vec![Vec::new(); count];
+        }
+        true
+    }
+
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -301,25 +331,8 @@ impl Bounce {
         if cooking && self.pipelines.is_none() {
             self.pipelines = Some(pipelines(device));
         }
-        let side = terrains
-            .terrains
-            .iter()
-            .zip(&self.windows)
-            .filter_map(|(terrain, window)| window.and(terrain.bounce.as_ref()))
-            .map(|bounce| bounce.texels())
-            .max();
-        let Some(side) = side.filter(|_| horizons.bounces()) else {
+        if !self.ensure_maps(device, terrains, horizons, count) {
             return;
-        };
-        if self
-            .maps
-            .as_ref()
-            .is_none_or(|maps| maps.side < side || maps.slots != count)
-        {
-            self.maps = Some(maps(device, side, count));
-            self.maps_generation += 1;
-            self.held = vec![None; count];
-            self.means = vec![Vec::new(); count];
         }
         let Some(maps) = &self.maps else {
             return;
@@ -829,7 +842,13 @@ fn growable(device: &wgpu::Device, label: &'static str, bytes: usize) -> Growabl
 
 fn terrain_buffers(device: &wgpu::Device) -> Vec<Growable> {
     (0..MOST_LEVELS)
-        .map(|_| growable(device, "engine/terrain-bounce-terrains", size_of::<BounceTerrain>()))
+        .map(|_| {
+            growable(
+                device,
+                "engine/terrain-bounce-terrains",
+                size_of::<BounceTerrain>(),
+            )
+        })
         .collect()
 }
 

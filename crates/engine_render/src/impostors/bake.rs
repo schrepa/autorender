@@ -19,7 +19,12 @@ pub(super) struct BakeTargets {
 
 impl Drop for BakeTargets {
     fn drop(&mut self) {
-        for texture in self._textures.iter().chain(&self.resolved).chain(&self.layer) {
+        for texture in self
+            ._textures
+            .iter()
+            .chain(&self.resolved)
+            .chain(&self.layer)
+        {
             crate::memory::release_any(texture);
         }
     }

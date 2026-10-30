@@ -40,7 +40,7 @@ impl SceneFiles {
         self.buffers.insert(uri.to_owned(), bytes);
     }
 
-    pub(crate) fn buffer(&self, uri: &str, path: &str) -> Result<&[u8], Error> {
+    pub fn buffer(&self, uri: &str, path: &str) -> Result<&[u8], Error> {
         self.buffers
             .get(uri)
             .map(Vec::as_slice)
