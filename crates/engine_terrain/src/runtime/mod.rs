@@ -23,6 +23,7 @@ mod rewater;
 mod settings;
 mod settled;
 mod shading;
+mod solids;
 mod stats;
 mod store;
 mod streaming;
@@ -30,11 +31,11 @@ mod surroundings;
 mod tile_map;
 mod views;
 mod water;
+mod water_body;
 mod water_sim;
 mod water_source;
 mod waterfalls;
 mod white_water;
-mod wind;
 
 use bakes::*;
 use bounce::{Bounce, bounce, bounces, waits};
@@ -75,7 +76,6 @@ pub use water::*;
 pub use water_sim::{
     LIVE_PIXELS, LONGEST_FRAME, SIM_TOUCHES, WaterRead, WaterSourceCell, WaterWindow, live_steps,
 };
-pub use wind::*;
 
 use engine_core::collections::{HashMap, HashSet};
 use std::sync::Arc;

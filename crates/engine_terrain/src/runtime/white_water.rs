@@ -4,10 +4,9 @@ use bevy_ecs::prelude::*;
 use glam::{Vec2, Vec3};
 
 use super::{Terrains, Water};
-use crate::hydraulics::GRAVITY;
 use crate::{Fall, SteadyCell, SteadyWater, TileKey};
-use engine_core::math::{clamp, max};
-use engine_core::{ParticleBlend, ParticleEmitter, RecordKey, Transform};
+use engine_core::math::{GRAVITY, clamp, max};
+use engine_core::{ParticleBlend, ParticleEmitter, RecordKey, Transform, section_in};
 
 const SPRAY_ENERGY: f32 = 200.0;
 const SPRAY_LIP: f32 = 0.2;
@@ -228,9 +227,7 @@ fn seed_of(key: TileKey, number: usize) -> u32 {
 }
 
 pub(crate) fn sync(world: &mut World) {
-    let drawn = world
-        .get_resource::<Water>()
-        .is_some_and(|water| water.enabled);
+    let drawn = section_in::<Water>(world).enabled;
     let wanted = match world.get_resource::<Terrains>() {
         Some(terrains) if drawn => held(terrains),
         _ => Vec::new(),

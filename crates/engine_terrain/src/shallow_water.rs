@@ -1,5 +1,5 @@
 use crate::Bed;
-use crate::hydraulics::GRAVITY;
+use engine_core::math::GRAVITY;
 
 pub const THETA: f32 = 1.3;
 pub const THIN: f32 = 0.01;

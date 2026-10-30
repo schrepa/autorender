@@ -67,7 +67,7 @@ fn cover(session: &mut dyn SmokeSession) -> Checked<()> {
         &json!({"blades": above(0)})
     );
     smoke_eq!(
-        &grown["ground_cover"]["dropped"],
+        &grown["ground_cover"]["blade_cut"]["cut"],
         &json!(0),
         "no_blade_dropped"
     );
@@ -148,7 +148,7 @@ fn clipmap(session: &mut dyn SmokeSession) -> Checked<()> {
     let clipmap = inspect(session, "Shadows")?;
     let (sharp, sharp_view) = shadowed(session, clipmap.clone())?;
     smoke_eq!(
-        &sharp["shadows"]["tiles_missing"],
+        &sharp["shadows"]["tile_cut"]["cut"],
         &json!(0),
         "shadow_tiles_draw"
     );
@@ -182,7 +182,7 @@ fn shadowed(session: &mut dyn SmokeSession, shadows: Value) -> Checked<(Value, V
     for frame in 0..COMPILE_FRAMES {
         rendering = present(session, 1.0)?;
         let drawn = number(&rendering["shadows"]["tiles_marked"]) > 0.0
-            && rendering["shadows"]["tiles_missing"] == 0;
+            && rendering["shadows"]["tile_cut"]["cut"] == 0;
         ready = frame > 8 && drawn && !compiling(&rendering);
         if ready {
             break;
@@ -192,7 +192,7 @@ fn shadowed(session: &mut dyn SmokeSession, shadows: Value) -> Checked<(Value, V
         ready,
         "shadow_tiles_and_pipelines_finish",
         &rendering["shadows"],
-        &json!({"tiles_marked": above(0), "tiles_missing": 0})
+        &json!({"tiles_marked": above(0), "tile_cut": {"cut": 0}})
     );
     let digest = shot(session, json!({"alpha": 1.0}))?;
     Ok((rendering, digest))

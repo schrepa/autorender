@@ -6,10 +6,9 @@ use glam::Vec3;
 
 use super::{Terrains, Water};
 use crate::Fall;
-use crate::hydraulics::GRAVITY;
 use crate::shallow_water::DENSITY;
-use engine_core::math::{clamp, max};
-use engine_core::{ParticleBlend, ParticleEmitter, Transform};
+use engine_core::math::{GRAVITY, clamp, max};
+use engine_core::{ParticleBlend, ParticleEmitter, Transform, section_in};
 
 #[derive(Resource, Default)]
 pub(crate) struct TerrainFalls {
@@ -171,9 +170,7 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
 }
 
 pub(crate) fn sync(world: &mut World) {
-    let drawn = world
-        .get_resource::<Water>()
-        .is_some_and(|water| water.enabled);
+    let drawn = section_in::<Water>(world).enabled;
     let wanted: Vec<(Entity, Arc<[Fall]>, Vec3)> = match world.get_resource::<Terrains>() {
         Some(terrains) if drawn => terrains.fall_sets().collect(),
         _ => Vec::new(),

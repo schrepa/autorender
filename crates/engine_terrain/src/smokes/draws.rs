@@ -51,6 +51,7 @@ fn streams(session: &mut dyn SmokeSession, settled: &Value) -> Checked<()> {
     environment(session, json!({ "shadows": shadows }))?;
     settle(session)?;
     smoke_eq!(&terrain["dropped_tiles"], &json!(0), "no_tile_dropped");
+    smoke_eq!(&terrain["tile_cut"]["cut"], &json!(0), "no_tile_cut");
     smoke_eq!(
         &terrain["dropped_materials"],
         &json!(0),
@@ -83,7 +84,7 @@ fn streams(session: &mut dyn SmokeSession, settled: &Value) -> Checked<()> {
         "the_ball_impostor_comes"
     );
     smoke_eq!(
-        &presented["level_of_detail"]["dropped_impostors"],
+        &presented["level_of_detail"]["impostor_cut"]["cut"],
         &json!(0),
         "no_impostor_dropped"
     );
@@ -236,10 +237,10 @@ fn budget(session: &mut dyn SmokeSession) -> Checked<()> {
     let budgeted = render(session)?;
     let terrain = &budgeted["terrain"];
     smoke_check!(
-        number(&terrain["tiles"]) <= 3.0 && number(&terrain["dropped_tiles"]) > 0.0,
+        number(&terrain["tiles"]) <= 3.0 && number(&terrain["tile_cut"]["cut"]) > 0.0,
         "the_budget_drops_tiles",
         terrain,
-        &json!({"tiles": at_most(3), "dropped_tiles": above(0)})
+        &json!({"tiles": at_most(3), "tile_cut": {"cut": above(0)}})
     );
     environment(session, json!({ "terrain": fast() }))?;
     settle(session)?;

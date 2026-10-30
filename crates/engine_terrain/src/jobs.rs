@@ -1,5 +1,5 @@
 use engine_math::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use engine_core::{ErrorCode, Expected};
 use glam::Vec2;
@@ -569,17 +569,28 @@ enum Running {
     Shading(Box<ShadingMaking>),
 }
 
+pub(crate) struct WalkedTile {
+    pub(crate) identity: Box<[u8]>,
+    pub(crate) key: TileKey,
+    pub(crate) tile: Tile,
+}
+
 #[derive(Default)]
 pub struct TerrainWorker {
     stacks: HashMap<String, Arc<Layers>>,
     recipes: HashMap<String, Recipe>,
     records: HashMap<String, Arc<[u8]>>,
     running: HashMap<u64, Running>,
+    last_walk: Mutex<Option<WalkedTile>>,
 }
 
 impl TerrainWorker {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub(crate) fn last_walk(&self) -> MutexGuard<'_, Option<WalkedTile>> {
+        self.last_walk.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn share(&mut self, key: &str, bytes: impl Into<Arc<[u8]>>) -> Result<(), String> {

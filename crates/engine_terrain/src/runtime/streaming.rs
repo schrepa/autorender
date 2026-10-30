@@ -117,7 +117,7 @@ impl Terrains {
         (eye, ahead): (Vec3, Vec3),
         viewport: Viewport,
         (focus, places): (&[Vec3], &[(Vec3, f32)]),
-        (jobs, water): (Option<&mut Jobs>, Option<&Water>),
+        (jobs, water): (Option<&mut Jobs>, &Water),
     ) {
         self.frame += 1;
         self.sync_surroundings();
@@ -255,7 +255,9 @@ impl Terrains {
             });
             state.collision = collision;
             let kept = target.len();
-            stats.dropped_tiles += (ordered - kept) as u32;
+            stats.tile_cut.asked += ordered as u32;
+            stats.tile_cut.kept += kept as u32;
+            stats.tile_cut.cut += (ordered - kept) as u32;
             remaining -= kept;
             for key in state.store.keys_where(|key| !keep.contains(key)) {
                 state.leave(&key, frame);
@@ -595,7 +597,7 @@ impl TerrainStreaming {
             .iter()
             .map(|(entity, terrain)| (*entity, self.reliefs.of(&terrain.surface.materials, assets)))
             .collect();
-        let water = world.get_resource::<Water>().copied();
+        let water = engine_core::section_in::<Water>(world);
         let mut jobs = world.remove_resource::<Jobs>();
         let mut cooking = world.remove_resource::<Cooking>();
         if let Some(mut terrains) = world.get_resource_mut::<Terrains>() {
@@ -612,10 +614,10 @@ impl TerrainStreaming {
                         (eye, ahead),
                         viewport,
                         (&self.points, &self.places),
-                        (jobs.as_mut(), water.as_ref()),
+                        (jobs.as_mut(), &water),
                     );
                     if let (Some(jobs), Some(cooking)) = (jobs.as_mut(), cooking.as_mut()) {
-                        terrains.cook(&settings, water.as_ref(), jobs, cooking);
+                        terrains.cook(&settings, &water, jobs, cooking);
                     }
                 }
                 None => terrains.stand_still(),

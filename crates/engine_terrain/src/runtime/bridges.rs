@@ -11,6 +11,7 @@ use super::Terrains;
 use crate::Bridge;
 use engine_core::{Mesh3d, SplineMesh, Transform};
 
+pub const BRIDGE_SOLIDS: u16 = u16::MAX;
 pub const DECK_RISE: f32 = 0.2;
 pub const DECK_DEPTH: f32 = 1.1;
 pub const DECK_MARGIN: f32 = 0.5;

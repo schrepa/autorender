@@ -137,7 +137,7 @@ impl TerrainsView {
             cached_bytes: stats.cached_bytes,
             restored_tiles: stats.restored_tiles,
             prefetching_tiles: stats.prefetching_tiles,
-            dropped_tiles: stats.dropped_tiles,
+            dropped_tiles: stats.tile_cut.cut,
             fallback_tiles: stats.fallback_tiles,
             baking: stats.baking,
             bridges: stats.bridges,
