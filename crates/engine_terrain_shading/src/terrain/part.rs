@@ -1,5 +1,5 @@
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{RenderSnapshot, RenderStats, TerrainBounceStats};
+use engine_core::{Cut, RenderSnapshot, RenderStats, Shadows, TerrainBounceStats};
 use engine_faces::shadows::ShadowCastersFace;
 use engine_render::cached::Bound;
 use engine_render::entries::PassKind;
@@ -8,9 +8,10 @@ use engine_render::graph::{
     Access, Clear, FrameGraph, FrameShape, GraphTable, PassId, ResourceId, TRANSPARENT,
 };
 use engine_render::parts::{
-    Begin, BeginOut, Create, DrawAt, Encode, GpuPart, OpaqueSlot, Shading, Step, View,
+    Begin, BeginOut, Create, DrawAt, Encode, GpuPart, OpaqueSlot, Prelude, Shading, Step, View,
 };
 use engine_render::renderer::{Core, DEPTH_FORMAT};
+use engine_terrain::{GroundCover, RenderTerrains, TerrainSettings, Water};
 
 use super::{FRAME_HORIZONS, TerrainPass, TerrainViews};
 use crate::terrain_bounce::SceneSources;
@@ -80,6 +81,23 @@ impl GpuPart for TerrainPass {
         }
         self.shading(cx.snapshot, &mut shading);
         self.pipelines.specialize(shading.values);
+    }
+
+    fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
+        let snapshot = cx.frame.snapshot;
+        let terrains = RenderTerrains::of(snapshot);
+        if terrains.terrains.is_empty() && self.resident() == 0 {
+            return;
+        }
+        let settings = snapshot.section::<TerrainSettings>();
+        let shadows = snapshot.section::<Shadows>().enabled;
+        let core = &*cx.core;
+        self.place_horizons(
+            (&core.device, &core.queue),
+            terrains,
+            snapshot.detail_eye,
+            (&settings, shadows),
+        );
     }
 
     fn prepare_draws(&mut self, cx: &mut Step<'_>, _encoder: &mut wgpu::CommandEncoder) {
@@ -209,17 +227,18 @@ impl GpuPart for TerrainPass {
 
     fn stats(&self, cx: &View<'_>, stats: &mut RenderStats) {
         let surface = self.surface.stats();
-        let held = engine_terrain::RenderTerrains::of(cx.frame.snapshot).stats;
+        let held = RenderTerrains::of(cx.frame.snapshot).stats;
         let terrain = &mut stats.terrain;
         terrain.leaves = surface.leaves;
         terrain.triangles = surface.triangles;
-        terrain.refused_splits = surface.refused;
+        terrain.leaf_cut = Cut::of(surface.leaves.saturating_add(surface.refused), surface.leaves);
         terrain.shallow_subdivisions = surface.shallow;
         terrain.shadow_patches = self.patches.frame.shadow_patches;
         terrain.tiles = self.resident();
         terrain.loading_tiles = held.loading_tiles;
         terrain.gpu_controls = self.atlas.controls;
-        terrain.dropped_tiles = held.dropped_tiles + self.atlas.dropped;
+        terrain.dropped_tiles = self.atlas.dropped;
+        terrain.tile_cut = held.tile_cut;
         terrain.fallback_tiles = held.fallback_tiles;
         terrain.horizons = self.horizons.count();
         terrain.sky_maps = self.sky.count();
@@ -240,21 +259,23 @@ impl GpuPart for TerrainPass {
     }
 
     fn shading(&self, snapshot: &RenderSnapshot, shading: &mut Shading) {
-        let terrain = engine_terrain::TerrainEnvironment::of(snapshot)
-            .terrain
-            .sanitized();
+        let terrain = snapshot.section::<TerrainSettings>();
         let horizons =
-            snapshot.environment.shadows.enabled && terrain.enabled && terrain.sun_shadows;
+            snapshot.section::<Shadows>().enabled && terrain.enabled && terrain.sun_shadows;
         let set = |on: bool| if on { 1.0 } else { 0.0 };
         shading.set("TERRAIN_HORIZONS", set(horizons));
         shading.set("BOUNCE", set(horizons && terrain.bounce));
+    }
+
+    fn piece(&self) -> Option<&[u8]> {
+        Some(bytemuck::bytes_of(self.horizons.piece()))
     }
 }
 
 impl TerrainPass {
     fn prepare_frame(&mut self, cx: &Step<'_>, kind: PassKind) -> bool {
         let snapshot = cx.frame.snapshot;
-        let terrains = engine_terrain::RenderTerrains::of(snapshot);
+        let terrains = RenderTerrains::of(snapshot);
         if terrains.terrains.is_empty() && self.resident() == 0 {
             self.rest();
             return false;
@@ -263,8 +284,8 @@ impl TerrainPass {
             [frame.camera.jitter[0], frame.camera.jitter[1]]
         });
         let culling = terrains.relative_view_projection;
-        let terrain_environment = engine_terrain::TerrainEnvironment::of(snapshot);
-        let cover = terrain_environment.ground_cover.sanitized();
+        let cover = snapshot.section::<GroundCover>();
+        let casts = snapshot.section::<Shadows>().enabled;
         let core = &*cx.core;
         let height = core.display.size().height as f32;
         let canopy = (cover.enabled && cover.density > 0.0)
@@ -281,11 +302,9 @@ impl TerrainPass {
                 camera: engine_render::gpu_data::jittered(culling, jitter),
                 culling,
                 eye: snapshot.camera_position,
-                detail_eye: snapshot.detail_eye,
                 regions,
-                settings: terrain_environment.terrain.sanitized(),
-                shadows: snapshot.environment.shadows.enabled,
-                water: terrain_environment.water.sanitized(),
+                settings: snapshot.section::<TerrainSettings>(),
+                water: snapshot.section::<Water>(),
                 fades: cx.frame.kind.gpu_mode,
                 now: snapshot.elapsed_seconds,
                 cover: canopy,
@@ -298,11 +317,10 @@ impl TerrainPass {
             .find_map(|(_, part)| part.views())
             .filter(|_| cx.frame.kind.gpu_mode)
             .map(|views| (views.format, views.mirrored));
-        self.warm_frame(cx, kind, views);
+        self.warm_frame(cx, (kind, casts), views);
         if !drawn {
             return false;
         }
-        let casts = snapshot.environment.shadows.enabled;
         let holes = self.has_holes();
         self.ensure_pipelines(core, (kind, holes, views), casts);
         if kind.targets().is_some() {
@@ -314,18 +332,17 @@ impl TerrainPass {
     fn warm_frame(
         &mut self,
         cx: &Step<'_>,
-        kind: PassKind,
+        (kind, casts): (PassKind, bool),
         views: Option<(wgpu::TextureFormat, bool)>,
     ) {
         let snapshot = cx.frame.snapshot;
-        let terrains = &engine_terrain::RenderTerrains::of(snapshot).terrains;
+        let terrains = &RenderTerrains::of(snapshot).terrains;
         if terrains.is_empty() {
             return;
         }
         let core = &*cx.core;
         self.warm(&core.device);
         let holes = terrains.iter().any(|terrain| terrain.may_hole) || self.has_holes();
-        let casts = snapshot.environment.shadows.enabled;
         self.ensure_pipelines(core, (kind, holes, views), casts);
     }
 

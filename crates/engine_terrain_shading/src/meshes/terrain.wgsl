@@ -1,11 +1,13 @@
+import package::face::cover::{COVER_FAR_SIDE, COVER_ROUGHNESS, CoverLaw, cover_clump_layer,
+    cover_clump_spacing, cover_clumped, cover_growth, cover_seen, cover_share, cover_shown,
+    cover_tint};
 import package::face::dither::{encoded, stored};
-import package::face::heightfield::{COVER_FAR_SIDE, COVER_ROUGHNESS, CoverLaw, SURFACE_MESHLET_LEVEL,
-    WATER_HELD, WaterCell, cover_clump_layer, cover_clump_spacing, cover_clumped, cover_growth,
-    cover_seen, cover_share, cover_shown, macro_tint, spread_slopes, surface_vertex, terrain,
-    terrain_directory, terrain_level_height, terrain_view, water_cell, water_level};
+import package::face::ground::macro_color;
+import package::face::heightfield::{WATER_HELD, WaterCell, surface_vertex, terrain,
+    terrain_level_height, terrain_view, water_cell};
 import package::face::horizons::bounce_light;
 import package::face::lighting::{finish_ground, local_light, widened};
-import package::face::shadows::{KeptLift, keep_lift, kept_texels};
+import package::face::shadows::{KeptLift, keep_lift, kept_level, kept_texels};
 import package::face::sun::sun_direction;
 import package::face::surface_point::{BODY_GROUND, SurfacePoint};
 import package::frame::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail_distance, detail_level,
@@ -14,8 +16,10 @@ import package::meshes::declarations::{DepthSceneTargets, DepthTemporalTargets, 
     TemporalTargets};
 import package::meshes::surface::{Shaded, scene_targets, temporal_targets, world_plane};
 import package::terrain::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
+import package::terrain::field::{SURFACE_MESHLET_LEVEL, spread_slopes, terrain_directory};
 import package::terrain::sky::terrain_sky_map;
 import package::terrain::surface::{surface_leaf, surface_relative, terrain_true_height};
+import package::terrain::water_blocks::water_level;
 
 @group(1) @binding(20) var<storage, read> terrain_holes: array<u32>;
 
@@ -86,7 +90,8 @@ fn terrain_tint(world: vec3<f32>, ground: TerrainGround, site: TerrainSite) -> v
         let broad = terrain_detail(world.xz + vec2<f32>(-31.7, 12.3), 60.0, resolved);
         mapped = (0.86 + 0.28 * broad) * (0.92 + 0.16 * patchy);
     }
-    return mix(plain, mapped, ground.mapped) * macro_tint(site.colors, ground.vegetated);
+    return mix(plain, mapped, ground.mapped)
+        * (macro_color(site.colors) * cover_tint(site.colors.a, ground.vegetated));
 }
 
 struct TerrainOutput {
@@ -237,8 +242,6 @@ fn terrain_pixel_shading(world: vec3<f32>) -> TerrainShadingLevel {
     return terrain_shading_level(detail_across(world));
 }
 
-const KEPT_GROUND_TEXELS: f32 = 2.0;
-
 fn terrain_kept_lift(world: vec3<f32>, local: vec2<f32>) -> KeptLift {
     let kept = kept_texels(world);
     var lift: KeptLift;
@@ -247,11 +250,7 @@ fn terrain_kept_lift(world: vec3<f32>, local: vec2<f32>) -> KeptLift {
     let levels = terrain.directory.y;
     for (var index = 0u; index < 4u && lift.first + index < count; index++) {
         let texel = kept.texels[index];
-        var level = 0u;
-        while level + 1u < levels
-            && terrain.anchor.w * f32(1u << level) < KEPT_GROUND_TEXELS * texel {
-            level++;
-        }
+        let level = kept_level(texel, terrain.anchor.w, levels);
         let held = terrain_level_height(local, level);
         if held.found {
             lift.lifts[index] = held.height + terrain.origin.y - world.y;
