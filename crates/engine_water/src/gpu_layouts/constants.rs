@@ -47,7 +47,7 @@ engine_render::gpu_consts! {
     pub(crate) const PARTICLE_DRAW: u32 = 14 => ["PARTICLE_DRAW"];
     pub(crate) const PARTICLE_ITEMS: u32 = 18 => ["PARTICLE_ITEMS"];
 
-    pub(crate) const DEBUG_GRAVITY: f32 = engine_terrain::hydraulics::GRAVITY => ["DEBUG_GRAVITY" in "water::debug"];
+    pub(crate) const DEBUG_GRAVITY: f32 = engine_core::math::GRAVITY => ["DEBUG_GRAVITY" in "water::debug"];
     pub(crate) const DEBUG_DRY: f32 = engine_terrain::shallow_water::DRY => ["DEBUG_DRY" in "water::debug"];
 
     pub(crate) const SURFACE_BEND: f32 = 7.0 => ["WATER_SURFACE_BEND"];
@@ -56,7 +56,7 @@ engine_render::gpu_consts! {
 }
 
 engine_render::gpu_mirrors! {
-    engine_terrain::hydraulics::GRAVITY => ["SIM_GRAVITY" in "water::sim", "WATER_GRAVITY"];
+    engine_core::math::GRAVITY => ["SIM_GRAVITY" in "water::sim", "WATER_GRAVITY"];
     engine_terrain::shallow_water::THETA => ["SIM_THETA" in "water::sim"];
     engine_terrain::shallow_water::THIN => ["SIM_THIN" in "water::sim", "SETUP_THIN"];
     engine_terrain::shallow_water::DRY => ["SIM_DRY" in "water::sim", "SETUP_DRY"];

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use engine_core::glam::Vec3;
 use engine_core::math::max;
-use engine_core::{RenderSnapshot, RenderStats, WaterStats};
+use engine_core::{Cut, DebugView, RenderSnapshot, RenderStats, WaterStats, Wind};
 use engine_faces::heightfield::{
     HeightfieldFace, SubdivisionUniform, SurfaceDraw, TerrainUniform, ViewUniform, WaterDraws,
 };
@@ -22,7 +22,7 @@ use engine_render::post::PostPass;
 use engine_render::profiling::Span;
 use engine_render::renderer::Core;
 use engine_render::targets::{FrameSize, ScreenTarget};
-use engine_terrain::{Fall, RenderTerrain, SettleStart, Water, Wind};
+use engine_terrain::{Fall, RenderTerrain, SettleStart, Water};
 
 use crate::bindings::{WATER, WATER_BEHIND};
 use crate::water_falls::{fall_layout, sheets};
@@ -687,13 +687,12 @@ impl WaterPass {
         if coming {
             self.ensure_pipeline(device, (targets, true), formats);
         }
-        let environment = engine_terrain::TerrainEnvironment::of(snapshot);
         let prepared = self.prepare_frame(
             device,
             &core.queue,
             (tiles, &terrains.terrains, terrain),
-            environment.water,
-            (seen, environment.wind, snapshot.presented_seconds),
+            snapshot.section::<Water>(),
+            (seen, snapshot.section::<Wind>(), snapshot.presented_seconds),
             (
                 &core.depth.texture,
                 matches!(targets, Targets::Post | Targets::Temporal),
@@ -764,7 +763,7 @@ impl GpuPart for WaterPass {
     }
 
     fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
-        let water_views = crate::debug::shows_water(cx.snapshot.environment.debug_view.view);
+        let water_views = crate::debug::shows_water(cx.snapshot.section::<DebugView>().view);
         let mut shading = Shading::default();
         for (_, part) in cx.parts.iter() {
             part.shading(cx.snapshot, &mut shading);
@@ -894,28 +893,17 @@ impl GpuPart for WaterPass {
 
     fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
         let frame = self.frame.as_ref();
-        let [
-            live_cells,
-            live_budget_cut,
-            live_cut,
-            live_steps,
-            live_behind,
-            live_setup,
-            live_waiting,
-        ] = frame.map_or([0; 7], |_| self.sim.cells());
+        let (cell_cut, [live_cut, live_steps, live_behind, live_setup, live_waiting]) =
+            frame.map_or((Cut::default(), [0; 5]), |_| self.sim.cells());
         let [touches, dropped_touches] = frame.map_or([0; 2], |_| self.sim.touches());
         let [leaves, refused] = frame.map_or([0; 2], |frame| frame.subdivided);
         let particles = frame.map_or_else(ParticleStats::default, |_| self.particles.stats());
         stats.water = WaterStats {
-            cell_cut: Default::default(),
-            foam_cut: Default::default(),
-            leaf_cut: Default::default(),
-            leaves,
-            refused,
+            cell_cut,
+            foam_cut: particles.cut,
+            leaf_cut: Cut::of(leaves.saturating_add(refused), leaves),
             blocks: frame.map_or(0, |frame| frame.blocks[0]),
             dropped_blocks: frame.map_or(0, |frame| frame.blocks[1]),
-            live_cells,
-            live_budget_cut,
             live_cut,
             live_steps,
             live_behind,
@@ -925,7 +913,6 @@ impl GpuPart for WaterPass {
             dropped_touches,
             particle_texels: particles.texels,
             foam_points: particles.points,
-            foam_points_cut: particles.cut,
             foam_reach: particles.reach,
             foam_particles: particles.foam,
             wave_particles: particles.waves,
