@@ -1,6 +1,6 @@
 use std::mem::offset_of;
 
-use engine_core::Atmosphere;
+use engine_core::{Grading, GradingValues};
 use engine_core::glam::Vec3;
 use engine_faces::display::MeteredExposure;
 use engine_render::composite::{PixelEffect, PostStage};
@@ -56,17 +56,16 @@ fn unit_luminance(tint: Vec3) -> [f32; 4] {
 }
 
 impl DisplayPiece {
-    fn new(atmosphere: &Atmosphere, metered: bool) -> Self {
-        let atmosphere = atmosphere.sanitized();
+    fn new(grading: &GradingValues, metered: bool) -> Self {
         Self {
             grade: [
-                contrast_weight(atmosphere.contrast),
-                atmosphere.vibrance,
-                atmosphere.saturation,
-                atmosphere.exposure,
+                contrast_weight(grading.contrast),
+                grading.vibrance,
+                grading.saturation,
+                grading.exposure,
             ],
-            shadow_tint: unit_luminance(atmosphere.shadow_tint),
-            highlight_tint: unit_luminance(atmosphere.highlight_tint),
+            shadow_tint: unit_luminance(grading.shadow_tint),
+            highlight_tint: unit_luminance(grading.highlight_tint),
             exposure: [0.0, if metered { 1.0 } else { 0.0 }, 0.0, 0.0],
         }
     }
@@ -84,8 +83,8 @@ impl GpuPart for TonemapPass {
             .parts
             .face::<dyn MeteredExposure>()
             .and_then(MeteredExposure::metered);
-        let atmosphere = &cx.frame.snapshot.environment.atmosphere;
-        self.piece = DisplayPiece::new(atmosphere, metered.is_some());
+        let grading = cx.frame.snapshot.section::<Grading>().values();
+        self.piece = DisplayPiece::new(&grading, metered.is_some());
         let Some((state, offset)) = metered else {
             return;
         };

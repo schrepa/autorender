@@ -3,7 +3,7 @@
     reason = "the pass binds the targets its frame made"
 )]
 
-use engine_core::{DebugView, DebugViewMode};
+use engine_core::{DebugView, DebugViewMode, Sunlight};
 use engine_render::graph::{
     Access, Clear, FrameGraph, GraphTable, PassDecl, PassId, ResourceId, Stage,
 };
@@ -193,7 +193,7 @@ impl GpuPart for DebugViewPass {
     }
 
     fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
-        self.shows = cx.snapshot.environment.debug_view.showing() && !self.view.disabled();
+        self.shows = cx.snapshot.section::<DebugView>().showing() && !self.view.disabled();
     }
 
     fn wants(&self, resource: ResourceId) -> bool {
@@ -216,9 +216,10 @@ impl GpuPart for DebugViewPass {
                 targets.terrain.clone(),
             ]
         });
+        let settings = snapshot.section::<DebugView>();
         let sun = snapshot
-            .environment
-            .atmosphere
+            .section::<Sunlight>()
+            .values()
             .sun_direction
             .normalize_or_zero()
             .to_array();
@@ -226,7 +227,7 @@ impl GpuPart for DebugViewPass {
             DebugTargets::new(device, format)
         });
         self.frame = self.view.get_mut().zip(targets).map(|(view, targets)| {
-            view.prepare(device, queue, targets, snapshot.environment.debug_view, sun)
+            view.prepare(device, queue, targets, settings, sun)
         });
     }
 

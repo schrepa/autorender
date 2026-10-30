@@ -1,3 +1,4 @@
+use engine_core::{Highlights, Sky, SurfaceLight};
 use engine_render::parts::{Begin, BeginOut, Create, GpuPart, PartDecl, PartEntry};
 use engine_render::pieces::PieceDecl;
 
@@ -41,17 +42,12 @@ fn create(_cx: &Create<'_>) -> Box<dyn GpuPart> {
 
 impl GpuPart for LightingPart {
     fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
-        let environment = &cx.snapshot.environment;
-        let atmosphere = environment.atmosphere.sanitized();
-        let sky = environment.sky.sanitized();
-        let highlights = environment.highlights.sanitized();
+        let snapshot = cx.snapshot;
+        let surface = snapshot.section::<SurfaceLight>().values();
+        let sky = snapshot.section::<Sky>();
+        let highlights = snapshot.section::<Highlights>();
         self.piece = LightingPiece {
-            model: [
-                atmosphere.rim,
-                atmosphere.emission,
-                atmosphere.specular,
-                0.0,
-            ],
+            model: [surface.rim, surface.emission, surface.specular, 0.0],
             highlights: sized_highlights(&highlights, &sky),
         };
     }

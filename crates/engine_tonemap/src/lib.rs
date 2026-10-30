@@ -20,6 +20,7 @@ impl Brick for TonemapBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .settings::<engine_core::Grading>()
             .render_part(&tonemap::PART)
             .shaders(shaders::MODULES)
             .face_defaults(engine_faces::defaults::MODULES)

@@ -10,6 +10,12 @@ use super::requests::{
 const GARDEN: &str = include_str!("../../../../web/scripts/fixtures/garden.scene.json");
 pub(crate) const PLAYER: &str = "player";
 const SETTLE_RENDERS: usize = 240;
+const LIGHT: [(&str, &str, &str); 4] = [
+    ("Sunlight", "sun", "inspects_sun"),
+    ("SkyLighting", "sky_light", "inspects_sky_light"),
+    ("SurfaceLight", "surface_light", "inspects_surface_light"),
+    ("Grading", "grading", "inspects_grading"),
+];
 
 pub(crate) fn garden() -> Asked {
     let parsed = serde_json::from_str::<Value>(GARDEN);
@@ -23,6 +29,15 @@ fn effects(rendering: &Value) -> Value {
         rendering["ambient_occlusion"]["active"],
         rendering["bloom"]["active"],
     ])
+}
+
+fn light(environment: &Value) -> Value {
+    Value::Object(
+        LIGHT
+            .iter()
+            .map(|&(_, key, _)| (key.to_owned(), environment[key].clone()))
+            .collect(),
+    )
 }
 
 pub(crate) fn agent(session: &mut dyn SmokeSession) -> SmokeResult {
@@ -232,7 +247,10 @@ fn looked(session: &mut dyn SmokeSession, after: &Value, day: &Value) -> Asked {
         .filter_map(|described| described["name"].as_str().map(str::to_owned))
         .collect();
     for name in [
-        "Atmosphere",
+        "Sunlight",
+        "SkyLighting",
+        "SurfaceLight",
+        "Grading",
         "Shadows",
         "AmbientOcclusion",
         "Bloom",
@@ -257,12 +275,10 @@ fn looked(session: &mut dyn SmokeSession, after: &Value, day: &Value) -> Asked {
         json!({ "features": ["dev"], "version": "string", "adapter": "present" })
     );
     let look = inspected(session, "Environment", "environment_inspection")?;
-    let atmosphere = inspected(session, "Atmosphere", "inspects_atmosphere")?;
-    engine_core::smoke_eq!(
-        atmosphere,
-        look["atmosphere"].clone(),
-        "atmosphere_inside_environment"
-    );
+    for (name, key, check) in LIGHT {
+        let section = inspected(session, name, check)?;
+        engine_core::smoke_eq!(section, look[key].clone(), "light_inside_environment");
+    }
     let described = accepted(
         session,
         "describe",
@@ -334,7 +350,10 @@ fn looked(session: &mut dyn SmokeSession, after: &Value, day: &Value) -> Asked {
 
 fn darkened(session: &mut dyn SmokeSession, after: &Value, day: &Value, look: &Value) -> Asked {
     let args = json!({
-        "atmosphere": { "preset": "night" },
+        "sun": { "preset": "night" },
+        "sky_light": { "preset": "night" },
+        "surface_light": { "preset": "night" },
+        "grading": { "preset": "night" },
         "bloom": { "intensity": 0 },
         "haze": { "reach": 0 },
         "reflections": {},
@@ -350,12 +369,15 @@ fn darkened(session: &mut dyn SmokeSession, after: &Value, day: &Value, look: &V
         json!([
             true,
             [
-                "atmosphere",
                 "bloom",
+                "grading",
                 "haze",
                 "highlights",
                 "reflections",
-                "sky_occlusion"
+                "sky_light",
+                "sky_occlusion",
+                "sun",
+                "surface_light"
             ]
         ]),
         "night_changes_sections"
@@ -384,10 +406,10 @@ fn darkened(session: &mut dyn SmokeSession, after: &Value, day: &Value, look: &V
     );
     let dark = inspected(session, "Environment", "inspects_night")?;
     engine_core::smoke_check!(
-        dark["atmosphere"] != look["atmosphere"] && dark["shadows"] == look["shadows"],
+        light(&dark) != light(look) && dark["shadows"] == look["shadows"],
         "night_inspected",
         dark.clone(),
-        json!({ "atmosphere": "changed", "shadows": look["shadows"] })
+        json!({ "light": "changed", "shadows": look["shadows"] })
     );
     let capture = accepted(session, "capture", json!({}), "captures_night")?;
     engine_core::smoke_check!(
@@ -413,7 +435,10 @@ fn candidate(source: &Value) -> Value {
     let mut candidate = source.clone();
     candidate["revision"] = json!(number(&source["revision"]) as u64 + 1);
     candidate["environment"] = json!({
-        "atmosphere": { "preset": "dusk" },
+        "sun": { "preset": "dusk" },
+        "sky_light": { "preset": "dusk" },
+        "surface_light": { "preset": "dusk" },
+        "grading": { "preset": "dusk" },
         "ambient_occlusion": { "intensity": 0 },
     });
     if let Some(entities) = candidate["entities"].as_array_mut() {
@@ -549,9 +574,9 @@ fn saved(session: &mut dyn SmokeSession, look: &Value, night: &Value) -> SmokeRe
         "saved_environment"
     );
     engine_core::smoke_check!(
-        saved["atmosphere"] != night["atmosphere"] && saved["atmosphere"] != look["atmosphere"],
-        "saved_atmosphere",
-        saved["atmosphere"].clone(),
+        light(&saved) != light(night) && light(&saved) != light(look),
+        "saved_light",
+        light(&saved),
         json!("dusk")
     );
     let lamp = component(session, "agent-lamp", "LocalLight", "inspects_lamp")?;

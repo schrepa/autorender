@@ -18,7 +18,7 @@ impl Brick for SunBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .resource::<engine_core::Atmosphere>()
+            .settings::<engine_core::Sunlight>()
             .render_part(&part::PART)
             .shaders(shaders::MODULES)
             .face_defaults(engine_faces::defaults::MODULES)

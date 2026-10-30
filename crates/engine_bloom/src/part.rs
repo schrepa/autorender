@@ -96,7 +96,7 @@ impl GpuPart for BloomPass {
     }
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
-        let settings = cx.frame.snapshot.environment.bloom.sanitized();
+        let settings = cx.frame.snapshot.section::<engine_core::Bloom>();
         self.piece.threshold = [settings.threshold, 0.0, 0.0, 0.0];
         self.runs = false;
         if cx.frame.kind.debug {

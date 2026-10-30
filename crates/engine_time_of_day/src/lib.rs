@@ -9,8 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use engine_core::math::{max, sin_cos};
 use engine_core::{
-    Atmosphere, Brick, Bricks, EnvironmentSection, FrameTime, Presentation, RenderSnapshot,
-    ViewSync, ViewSyncSystems,
+    Brick, Bricks, EnvironmentSection, FrameTime, Presentation, Sunlight, ViewSync, ViewSyncSystems,
 };
 use engine_settings::{InvalidSetting, settings};
 
@@ -156,25 +155,25 @@ fn advance_time_of_day(time: Res<FrameTime>, day: Option<ResMut<TimeOfDay>>) {
 }
 
 struct PlacedSun {
-    authored: Vec3,
-    placed: Vec3,
+    authored: Option<[f32; 3]>,
+    placed: [f32; 3],
 }
 
 fn place_sun(
     day: Option<Res<TimeOfDay>>,
-    atmosphere: Option<ResMut<Atmosphere>>,
+    sunlight: Option<ResMut<Sunlight>>,
     mut held: Local<Option<PlacedSun>>,
 ) {
-    let Some(mut atmosphere) = atmosphere else {
+    let Some(mut sunlight) = sunlight else {
         return;
     };
-    let sun = atmosphere.sun_direction;
-    let kept = held.take().filter(|held| held.placed == sun);
+    let sun = sunlight.sun_direction;
+    let kept = held.take().filter(|held| Some(held.placed) == sun);
     match day.filter(|day| day.enabled) {
         Some(day) => {
-            let placed = day.sanitized().sun_direction();
-            if sun != placed {
-                atmosphere.sun_direction = placed;
+            let placed = day.sanitized().sun_direction().to_array();
+            if sun != Some(placed) {
+                sunlight.sun_direction = Some(placed);
             }
             *held = Some(PlacedSun {
                 authored: kept.map_or(sun, |kept| kept.authored),
@@ -183,19 +182,10 @@ fn place_sun(
         }
         None => {
             if let Some(kept) = kept {
-                atmosphere.sun_direction = kept.authored;
+                sunlight.sun_direction = kept.authored;
             }
         }
     }
-}
-
-fn extract_time_of_day(world: &World, snapshot: &mut RenderSnapshot) {
-    snapshot.extracted.insert(
-        world
-            .get_resource::<TimeOfDay>()
-            .copied()
-            .map_or_else(TimeOfDay::off, TimeOfDay::sanitized),
-    );
 }
 
 pub struct TimeOfDayBrick;
@@ -205,7 +195,6 @@ impl Brick for TimeOfDayBrick {
         bricks
             .settings::<TimeOfDay>()
             .systems(Presentation, advance_time_of_day)
-            .systems(ViewSync, place_sun.before(ViewSyncSystems::Stream))
-            .extract(extract_time_of_day);
+            .systems(ViewSync, place_sun.before(ViewSyncSystems::Stream));
     }
 }
