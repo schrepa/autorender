@@ -3,10 +3,11 @@ use engine_render::cached::{Bound, GroupCache};
 use engine_render::composite::{PixelEffect, PostStage};
 use engine_render::graph::{
     FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
-    Targets as FrameTargets,
 };
 use engine_render::lazy::Lazy;
-use engine_render::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View};
+use engine_render::parts::{
+    Begin, BeginOut, Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View,
+};
 use engine_render::pieces::PieceDecl;
 use engine_render::pipelines::{self, Fullscreen, GroupLayout, fullscreen};
 use engine_render::profiling::GpuProfiler;
@@ -77,9 +78,37 @@ struct Ids {
     bloom: Option<ResourceId>,
 }
 
+struct Off {
+    view: wgpu::TextureView,
+    sampler: wgpu::Sampler,
+}
+
+impl Off {
+    fn new(device: &wgpu::Device) -> Self {
+        let texture = engine_render::targets::texture_2d(
+            device,
+            "engine/bloom-off",
+            (1, 1),
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        Self {
+            view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("engine/bloom-off-sampler"),
+                ..Default::default()
+            }),
+        }
+    }
+}
+
 #[derive(Default)]
 struct BloomPass {
     bloom: Lazy<Bloom>,
+    off: Option<Off>,
+    enabled: bool,
     runs: bool,
     ids: Ids,
     piece: BloomPiece,
@@ -96,42 +125,48 @@ impl GpuPart for BloomPass {
         };
     }
 
-    fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
-        let settings = cx.frame.snapshot.section::<engine_core::Bloom>();
+    fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
+        let settings = cx.snapshot.section::<crate::Bloom>();
+        self.enabled = settings.enabled();
         self.piece.threshold = [settings.threshold, 0.0, 0.0, 0.0];
+        self.piece.applied = [settings.intensity, 0.0, 0.0, 0.0];
+        if !self.enabled {
+            self.bloom.release();
+        }
+        if (!self.enabled || self.bloom.disabled()) && self.off.is_none() {
+            self.off = Some(Off::new(&cx.core.device));
+        }
+    }
+
+    fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         self.runs = false;
-        if cx.frame.kind.debug {
+        if !self.enabled || cx.frame.kind.debug {
             return;
         }
         let core = &*cx.core;
         let device = &core.device;
-        let Some(post) = cx.parts.post().filter(|post| post.active()) else {
-            if let Some(bloom) = self.bloom.get_mut() {
-                bloom.release_targets();
-            }
+        let Some(post) = cx.parts.post() else {
             return;
         };
         self.bloom
             .create(device, "engine/bloom-", || Bloom::new(device));
-        let (Some(bloom), Some((_, uniform)), Some(scene), Some(glow)) = (
+        let (Some(bloom), Some(uniform), Some(scene), Some(glow)) = (
             self.bloom.get_mut(),
-            post.resolve_inputs(),
+            post.uniform(),
             post.scene(),
             post.attachment("glow"),
         ) else {
             return;
         };
         bloom.begin(device, core.display.region, uniform, (scene, &glow));
-        self.runs = settings.enabled();
+        self.runs = true;
+        self.piece.applied[1] = 1.0;
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
-        let (true, Some(shape), Some(pass)) = (self.runs, cx.frame.shape, self.ids.pass) else {
+        let (true, Some(_), Some(pass)) = (self.runs, cx.frame.shape, self.ids.pass) else {
             return;
         };
-        if shape.targets == FrameTargets::Canvas {
-            return;
-        }
         let ids = self.ids;
         let _ = graph
             .add(cx.table, pass)
@@ -157,19 +192,24 @@ impl GpuPart for BloomPass {
         if group != COMPOSITE_BLOOM.group {
             return;
         }
-        let Some(bloom) = self.bloom.get() else {
+        if let Some(bloom) = self.bloom.get()
+            && let Some(targets) = bloom.targets.get()
+            && let Some(level) = targets.levels.first()
+        {
+            out.push(("bloom", Bound::of(targets, pipelines::view(level))));
+            out.push((
+                "bloom_sampler",
+                Bound::fixed(pipelines::sampler(&bloom.sampler)),
+            ));
+            return;
+        }
+        let Some(off) = &self.off else {
             return;
         };
-        let Some(targets) = bloom.targets.get() else {
-            return;
-        };
-        let Some(level) = targets.levels.first() else {
-            return;
-        };
-        out.push(("bloom", Bound::of(targets, pipelines::view(level))));
+        out.push(("bloom", Bound::fixed(pipelines::view(&off.view))));
         out.push((
             "bloom_sampler",
-            Bound::fixed(pipelines::sampler(&bloom.sampler)),
+            Bound::fixed(pipelines::sampler(&off.sampler)),
         ));
     }
 
@@ -205,10 +245,6 @@ impl GpuPart for BloomPass {
 
     fn piece(&self) -> Option<&[u8]> {
         Some(bytemuck::bytes_of(&self.piece))
-    }
-
-    fn produces(&self, resource: ResourceId) -> bool {
-        self.runs && self.ids.bloom == Some(resource)
     }
 }
 
@@ -302,13 +338,6 @@ impl Bloom {
             down_groups: Vec::new(),
             up_groups: Vec::new(),
         }
-    }
-
-    fn release_targets(&mut self) {
-        self.targets.release();
-        self.first_group.clear();
-        self.down_groups.clear();
-        self.up_groups.clear();
     }
 
     fn capacity_bytes(&self) -> u64 {

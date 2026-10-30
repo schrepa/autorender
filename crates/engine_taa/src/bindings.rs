@@ -18,7 +18,6 @@ pub(crate) const TAA_RESOLVE: Table = Table {
         sampler("history_sampler", Filtering, F),
         texture("occlusion", Float, D2, F),
         uniform_of("post", size_of::<PostUniform>(), F),
-        texture("reflections", Float, D2, F),
         texture("depth_texture", Depth, D2, F),
         texture("revealed", Unfilterable, D2, F),
         uniform("pieces", F),

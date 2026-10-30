@@ -5,7 +5,7 @@
 
 use engine_core::{DebugView, DebugViewMode, Sunlight};
 use engine_render::graph::{
-    Access, Clear, FrameGraph, GraphTable, PassDecl, PassId, ResourceId, Stage,
+    Access, BLACK, Clear, FrameGraph, GraphTable, PassDecl, PassId, ResourceId, Stage,
 };
 use engine_render::lazy::Lazy;
 use engine_render::parts::{
@@ -203,6 +203,7 @@ impl GpuPart for DebugViewPass {
     fn finish(&mut self, cx: &mut Step<'_>) {
         if !cx.frame.kind.debug {
             self.frame = None;
+            self.view.release();
             return;
         }
         let snapshot = cx.frame.snapshot;
@@ -234,7 +235,7 @@ impl GpuPart for DebugViewPass {
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
-        let (Some(_), Some(shape)) = (self.frame, cx.frame.shape) else {
+        let (Some(_), Some(_)) = (self.frame, cx.frame.shape) else {
             return;
         };
         let ids = self.ids;
@@ -247,7 +248,7 @@ impl GpuPart for DebugViewPass {
             .read(ids.count)
             .read(ids.terrain)
             .read(ids.depth)
-            .color(canvas, Access::Clear(Clear::Color(shape.canvas_clear)));
+            .color(canvas, Access::Clear(Clear::Color(BLACK)));
     }
 
     fn encode(

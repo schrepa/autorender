@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::mem::offset_of;
 use std::rc::Rc;
 
-use engine_core::{AutoExposure, Grading, RenderSnapshot, RenderStats, Sky, Sunlight};
+use engine_core::{Grading, RenderSnapshot, RenderStats, Sky, Sunlight};
 use engine_faces::display::MeteredExposure;
 use engine_faces::environment::{ADAPTATION_MOST, ADAPTATION_POWER, NOON_LIGHT};
 use engine_render::buffers::{ReadbackRing, storage, uniform};
@@ -14,9 +14,9 @@ use engine_render::lazy::Lazy;
 use engine_render::parts::{
     Begin, BeginOut, Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View,
 };
-use engine_render::post::PostPass;
 use engine_render::profiling::{GpuProfiler, Span};
 
+use crate::AutoExposure;
 use crate::bindings::EXPOSURE;
 use crate::gpu_layouts::{
     EXPOSURE_BINS, EXPOSURE_GRID, EXPOSURE_GROUP, ExposureState, ExposureUniform,
@@ -70,6 +70,7 @@ struct Ids {
 pub(crate) struct ExposurePass {
     meter: Lazy<Meter>,
     frame: Option<ExposureFrame>,
+    enabled: bool,
     shows: bool,
     ids: Ids,
 }
@@ -145,7 +146,7 @@ impl Meter {
         (device, queue): (&wgpu::Device, &engine_render::gpu_calls::Queue),
         snapshot: &RenderSnapshot,
         (scene, depth, drawn): (Bound<'_>, &Versioned<wgpu::TextureView>, (u32, u32)),
-        pieces: &wgpu::Buffer,
+        pieces: Bound<'_>,
     ) -> ExposureFrame {
         let settings = snapshot.section::<AutoExposure>();
         let authored = snapshot.section::<Grading>().values().exposure;
@@ -207,7 +208,7 @@ impl Meter {
                 ("scene_depth", depth.bound()),
                 ("bins", Bound::fixed(self.bins.as_entire_binding())),
                 ("state", Bound::fixed(self.state.as_entire_binding())),
-                ("pieces", Bound::fixed(pieces.as_entire_binding())),
+                ("pieces", pieces),
             ],
         );
         ExposureFrame
@@ -266,14 +267,16 @@ impl GpuPart for ExposurePass {
 
     fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
         let snapshot = cx.snapshot;
-        let enabled = snapshot.section::<AutoExposure>().enabled;
-        if enabled {
+        self.enabled = snapshot.section::<AutoExposure>().enabled;
+        if self.enabled {
             let device = &cx.core.device;
             self.meter
                 .create(device, "engine/exposure", || Meter::new(device));
+        } else {
+            self.meter.release();
         }
         let post = cx.parts.post().is_some_and(|post| !post.disabled());
-        self.shows = enabled && post && self.meter.get().is_some();
+        self.shows = self.enabled && post && self.meter.get().is_some();
         if self.shows
             && let Some(meter) = self.meter.get_mut()
         {
@@ -285,17 +288,15 @@ impl GpuPart for ExposurePass {
     }
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
-        let snapshot = cx.frame.snapshot;
-        let post = cx.parts.post();
-        let needs =
-            post.is_some_and(PostPass::active) && snapshot.section::<AutoExposure>().enabled;
-        if !needs {
+        if !self.enabled || cx.frame.kind.debug {
             self.frame = None;
             return;
         }
+        let snapshot = cx.frame.snapshot;
+        let post = cx.parts.post();
         let core = &*cx.core;
         let (device, queue) = (&core.device, &core.queue);
-        let pieces = core.pieces_buffer();
+        let pieces = core.pieces_bound();
         let drawn = core.display.region.render.pixels();
         self.frame = self.meter.get_mut().and_then(|meter| {
             let targets = (post?.scene()?, &core.depth.view, drawn);

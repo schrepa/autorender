@@ -1,9 +1,8 @@
 import package::engine::color::{decode_srgb, dithered, encode_srgb};
 import package::face::dither::dithering;
-import package::post::frame::{
-    depth_texture, effect_shade, occlusion, occlusion_at, post, reflected, reflections, scene,
-};
-import package::post::pixel::PostPixel;
+import package::generated::scene::scene_light;
+import package::post::frame::{depth_texture, effect_shade, occlusion, occlusion_at, post, scene};
+import package::post::pixel::{PostPixel, SceneLight};
 
 struct Resolve {
     texel: vec2<f32>,
@@ -83,13 +82,15 @@ fn nearest_motion(pixel: vec2<i32>, last: vec2<i32>) -> vec2<f32> {
     return textureLoad(motion, nearest, 0).xy;
 }
 
-fn reflected_at(color: vec3<f32>, position: vec2<f32>) -> vec3<f32> {
-    return reflected(color, reflections, history_sampler, position / taa.render.xy, post);
+fn taa_at(position: vec2<f32>, pixel: vec2<i32>) -> PostPixel {
+    return PostPixel(position, position / taa.render.xy, pixel, taa.options.x, 2u);
 }
 
 fn neighbor(pixel: vec2<i32>, offset: vec2<i32>, last: vec2<i32>, shade: f32) -> vec3<f32> {
     let at = clamp(pixel + offset, vec2<i32>(0), last);
-    return ycocg(reflected_at(textureLoad(scene, at, 0).rgb * shade, vec2<f32>(at) + 0.5));
+    let texel = textureLoad(scene, at, 0);
+    let light = SceneLight(texel.rgb * shade, texel.a);
+    return ycocg(scene_light(light, taa_at(vec2<f32>(at) + 0.5, pixel)).color);
 }
 
 fn upsampled(position: vec2<f32>, last: vec2<i32>) -> vec3<f32> {
@@ -111,13 +112,15 @@ fn resolve(position: vec4<f32>) -> Resolved {
     let pixel = clamp(vec2<i32>(floor(jittered)), vec2<i32>(0), last);
     let texel = textureLoad(scene, pixel, 0);
     let shade = effect_shade(texel.a, occlusion_at(occlusion, pixel, post), post);
-    let current = reflected_at(texel.rgb * shade, vec2<f32>(pixel) + 0.5);
+    let current = scene_light(SceneLight(texel.rgb * shade, texel.a),
+        taa_at(vec2<f32>(pixel) + 0.5, pixel)).color;
     let away = (vec2<f32>(pixel) + 0.5 - taa.render.zw - rendered)
         / (taa.render.xy * taa.texel);
     let near = saturate(2.0 - 2.0 * max(abs(away.x), abs(away.y)));
     var color = current;
     if near < 1.0 {
-        color = reflected_at(upsampled(jittered, last) * shade, jittered);
+        color = scene_light(SceneLight(upsampled(jittered, last) * shade, texel.a),
+            taa_at(jittered, pixel)).color;
     }
     var offset = textureLoad(motion, pixel, 0).xy;
     if taa.options.y != 0.0 {

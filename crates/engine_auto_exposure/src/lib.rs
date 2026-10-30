@@ -9,7 +9,10 @@ mod bindings;
 mod exposure;
 mod gpu_layouts;
 mod pipeline_layouts;
+mod settings;
 pub mod shaders;
+
+pub use settings::AutoExposure;
 
 use engine_core::{Brick, Bricks, Place};
 use engine_faces::slots::ExposureSlot;
@@ -22,7 +25,7 @@ impl Brick for AutoExposureBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .settings::<engine_core::AutoExposure>()
+            .settings::<AutoExposure>()
             .render_part(&exposure::PART)
             .shaders(shaders::MODULES)
             .face_defaults(engine_faces::defaults::MODULES)
