@@ -1,5 +1,5 @@
 import package::face::dither::{encoded, stored};
-import package::face::heightfield::{GroundTerrain, NOT_RESIDENT, level_tile, true_height};
+import package::face::ground::{GroundTerrain, ground_height};
 import package::face::lighting::finish;
 import package::face::surface_point::{BODY_WATER, SurfacePoint};
 import package::frame::view::{camera, stable_normalize};
@@ -51,11 +51,9 @@ fn vs_pond(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
 fn pond_ground(shape: PondShape, world: vec3<f32>) -> f32 {
     let terrain = GroundTerrain(shape.ground.x, shape.ground.y, shape.terrain.w);
     let local = world.xz - shape.terrain.xz;
-    for (var level = 0u; level < terrain.levels; level++) {
-        let tile = level_tile(terrain, level, local / (terrain.spacing * f32(1u << level)));
-        if tile.layer != NOT_RESIDENT {
-            return shape.terrain.y + true_height(terrain, local, level, tile);
-        }
+    let ground = ground_height(terrain, local);
+    if ground.found {
+        return shape.terrain.y + ground.height;
     }
     return shape.surface.x - POND_DEEP;
 }

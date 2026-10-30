@@ -30,24 +30,12 @@ impl Highlands {
         ))
     }
 
-    pub(crate) fn new(options: Options) -> Self {
+    fn new(options: Options) -> Self {
         Self {
             options,
             freeze_held: false,
             scene: None,
         }
-    }
-
-    pub(crate) fn furnish(
-        app: &mut App,
-        options: &Options,
-        rocks: &RockMaps,
-    ) -> engine::Result<SceneInstance> {
-        let instance = scene::furnish(app, options.bodies, rocks, false)?;
-        for name in APPLIED {
-            apply(app.world_mut(), options, name)?;
-        }
-        Ok(instance)
     }
 
     pub fn control(&mut self, engine: &mut Engine, name: &str, value: &str) -> engine::Result<()> {
@@ -61,6 +49,42 @@ impl Highlands {
         apply(engine.app.world_mut(), &options, name)?;
         self.options = options;
         Ok(())
+    }
+}
+
+engine::__if_dev! {
+    impl Highlands {
+        pub(crate) fn played(
+            options: Options,
+            source: Option<&str>,
+            bricks: engine::bricks::BrickList,
+        ) -> engine::Result<(Engine, Self)> {
+            let mut engine = engine::smokes::engine_of(bricks)?;
+            let scene = source
+                .map(|source| {
+                    SceneDocument::from_json(source)?.instantiate(engine.app.world_mut())
+                })
+                .transpose()?;
+            Ok((
+                engine,
+                Self {
+                    scene,
+                    ..Self::new(options)
+                },
+            ))
+        }
+
+        pub(crate) fn furnish(
+            app: &mut App,
+            options: &Options,
+            rocks: &RockMaps,
+        ) -> engine::Result<SceneInstance> {
+            let instance = scene::furnish(app, options.bodies, rocks, false)?;
+            for name in APPLIED {
+                apply(app.world_mut(), options, name)?;
+            }
+            Ok(instance)
+        }
     }
 }
 

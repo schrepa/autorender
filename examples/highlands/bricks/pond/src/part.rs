@@ -185,7 +185,7 @@ fn shapes(ponds: &[Pond], terrains: &[RenderTerrain], ground: &dyn HeightfieldFa
 
 fn under<'t>(terrains: &'t [RenderTerrain], pond: &Pond) -> Option<(usize, &'t RenderTerrain)> {
     terrains.iter().enumerate().find(|(_, terrain)| {
-        let local = pond.center - Vec2::new(terrain.origin.x, terrain.origin.z);
+        let local = Vec2::from(pond.center) - Vec2::new(terrain.origin.x, terrain.origin.z);
         let extent = terrain.pyramid.extent();
         !terrain.surroundings
             && local.x >= 0.0

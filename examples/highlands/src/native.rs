@@ -96,16 +96,8 @@ impl Native {
     fn start(&self) -> ExitCode {
         #[cfg(feature = "dev")]
         if let Some(names) = &self.host.smoke {
-            let build = |source: Option<&str>, bricks| match source {
-                None => Ok((
-                    engine::smokes::engine_of(bricks)?,
-                    Highlands::new(self.options.clone()),
-                )),
-                Some(_) => Err(engine::Error::new(
-                    engine::ErrorCode::UnsupportedCommand,
-                    "$.source",
-                )
-                .expected(engine::Expected::Absent)),
+            let build = |source: Option<&str>, bricks| {
+                Highlands::played(self.options.clone(), source, bricks)
             };
             let bricks = engine::bricks::standard();
             let mut smokes = engine::smokes::registered(&bricks);

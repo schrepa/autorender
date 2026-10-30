@@ -1,5 +1,6 @@
 use engine::smoke::{Checked, SmokeResult, SmokeSession, ask, capture, control};
 use engine::smoke_check;
+use engine::smokes::run_place;
 use engine::terrain::data::smokes::settle;
 use highlands_toon_lighting::ToonLightingBrick;
 use serde_json::{Value, json};
@@ -30,7 +31,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
         &toon,
         &json!({ "differs_from": standard })
     );
-    Ok(())
+    run_place(session, "lighting")
 }
 
 fn furnished(session: &mut dyn SmokeSession) -> Checked<()> {

@@ -5,6 +5,7 @@
 
 mod layouts;
 mod part;
+mod scene;
 mod shaders;
 
 use engine_core::bevy_ecs::{
@@ -14,7 +15,11 @@ use engine_core::bevy_ecs::{
 use engine_core::{Brick, Bricks, Ground, RenderSnapshot, WaterFace, WaterKind, WaterSample};
 use engine_faces::slots::WaterList;
 use engine_render::render_bricks::AddRenderParts;
+use engine_scene::AddSceneComponents;
 use glam::{Vec2, Vec3};
+use serde::{Deserialize, Serialize};
+
+pub use scene::POND;
 
 pub struct PondBrick;
 
@@ -23,6 +28,8 @@ impl Brick for PondBrick {
         bricks
             .list::<WaterList>()
             .component::<Pond>()
+            .component_inspector::<Pond, Pond>(|_, _, pond| *pond)
+            .scene_components(&[&POND])
             .water_body(PondWater)
             .extract(extract_ponds)
             .render_part(&part::PART)
@@ -33,20 +40,24 @@ impl Brick for PondBrick {
     }
 }
 
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Pond {
-    pub center: Vec2,
-    pub size: Vec2,
-    pub surface: f32,
+engine_settings::settings! {
+    #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[serde(deny_unknown_fields)]
+    pub struct Pond {
+        pub center: [f32; 2] = [0.0; 2] => finite,
+        pub size: [f32; 2] = [1.0; 2] => above(0.0),
+        pub surface: f32 = 0.0 => finite,
+    }
 }
 
 impl Pond {
     pub fn low(&self) -> Vec2 {
-        self.center - 0.5 * self.size
+        Vec2::from(self.center) - 0.5 * Vec2::from(self.size)
     }
 
     pub fn high(&self) -> Vec2 {
-        self.center + 0.5 * self.size
+        Vec2::from(self.center) + 0.5 * Vec2::from(self.size)
     }
 
     pub fn holds(&self, x: f32, z: f32) -> bool {

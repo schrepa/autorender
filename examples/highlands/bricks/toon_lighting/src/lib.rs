@@ -5,7 +5,7 @@
 
 mod shaders;
 
-use engine_core::{Brick, Bricks, Place};
+use engine_core::{Brick, Bricks, Place, SurfaceLight};
 use engine_faces::slots::LightingSlot;
 use engine_render::render_bricks::AddRenderParts;
 
@@ -16,6 +16,7 @@ impl Brick for ToonLightingBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .settings::<SurfaceLight>()
             .shaders(shaders::MODULES)
             .face_defaults(engine_faces::defaults::MODULES);
     }
