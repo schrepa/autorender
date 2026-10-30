@@ -117,7 +117,6 @@ fn append_moving(group: u32, slot: u32, tile: u32) {
     let start = group_start(group);
     if offset >= MOVING_PAIRS * (group_end(group) - start) {
         atomicSub(&args[draw].instance_count, 1u);
-        atomicAdd(&counters.totals[2], 1u);
         return;
     }
     ids[map_start(MOVING_MAP) + MOVING_PAIRS * start + offset] = slot | (tile << 24u);

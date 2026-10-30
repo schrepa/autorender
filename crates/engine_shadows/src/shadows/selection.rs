@@ -75,7 +75,7 @@ pub(super) struct Selection {
     select_parity: usize,
     readbacks: ReadbackRing<u64>,
     read_back: Rc<RefCell<MasksRead>>,
-    casters: Rc<Cell<Option<[u32; 3]>>>,
+    casters: Rc<Cell<Option<[u32; 2]>>>,
 }
 
 impl Selection {
@@ -131,7 +131,7 @@ impl Selection {
         SHADOW_TOTALS + 2 * self.mask_words
     }
 
-    pub(super) fn caster_counts(&self) -> Option<[u32; 3]> {
+    pub(super) fn caster_counts(&self) -> Option<[u32; 2]> {
         self.casters.get()
     }
 
@@ -406,7 +406,7 @@ impl Selection {
                 read.dirty[index] |= words.get(SHADOW_TOTALS + index);
                 read.moving[index] |= words.get(SHADOW_TOTALS + mask_words + index);
             }
-            casters.set(Some([words.get(0), words.get(1), words.get(2)]));
+            casters.set(Some([words.get(0), words.get(1)]));
         });
     }
 }

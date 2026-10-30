@@ -1,12 +1,13 @@
 import package::frame::view::camera;
-import package::shadows::sample::{level_point, light_space, shadow, shadow_level};
+import package::generated::pieces::pieces;
+import package::shadows::sample::{level_point, light_space, shadow_level};
 
 @group(0) @binding(24) var shadow_depth: texture_depth_2d;
 @group(0) @binding(25) var<storage, read_write> shadow_marks: array<atomic<u32>>;
 
 fn mark_level(level: u32, light: vec3<f32>) {
-    let side = u32(shadow.atlas.x);
-    for (var held = level; held < u32(shadow.level_state.x); held++) {
+    let side = u32(pieces.shadow.atlas.x);
+    for (var held = level; held < u32(pieces.shadow.level_state.x); held++) {
         let at = level_point(held, light);
         if !at.inside {
             continue;
@@ -23,7 +24,7 @@ fn mark_level(level: u32, light: vec3<f32>) {
 @compute @workgroup_size(8, 8)
 fn mark_shadow_tiles(@builtin(global_invocation_id) id: vec3<u32>) {
     let size = vec2<u32>(camera.region.xy);
-    if any(id.xy >= size) || shadow.state.x == 0.0 {
+    if any(id.xy >= size) || pieces.shadow.state.x == 0.0 {
         return;
     }
     let depth = textureLoad(shadow_depth, id.xy, 0);

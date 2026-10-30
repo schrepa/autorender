@@ -14,7 +14,8 @@ mod sky;
 use std::cell::Cell;
 
 use engine_core::{
-    MeshHandle, Pyramid, RenderFrame, RenderSnapshot, RenderStats, ShadowStats, glam::Vec3,
+    Foliage, LevelOfDetail, MeshHandle, Pyramid, RenderFrame, RenderSnapshot, RenderStats,
+    ShadowStats, Shadows, SkyOcclusion, Sunlight, Wind, glam::Vec3,
 };
 use engine_faces::heightfield::HeightfieldFace;
 use engine_faces::placed::PlacedFace;
@@ -34,10 +35,11 @@ use engine_render::parts::{
     Begin, BeginOut, Create, DrawAt, Encode, GpuPart, PartAssets, PartDecl, PartEntry, Prelude,
     Shading, Step, View,
 };
+use engine_render::pieces::{PieceAt, PieceDecl};
 use engine_render::profiling::GpuProfiler;
 use engine_render::renderer::{CasterDraw, FramePoses};
 
-use crate::gpu_layouts::{ComposeData, RouteData, ShadowCullUniform, ShadowUniform, SkyUniform};
+use crate::gpu_layouts::{ComposeData, RouteData, ShadowCullUniform, ShadowPiece, SkyUniform};
 use crate::shadow_fit::{ClipPlan, ClipSettings, ClipStats, Clipmap, LightBasis};
 
 use crate::gpu_layouts::MOVING_MAP;
@@ -65,11 +67,6 @@ pub(crate) const FRAME_SHADOWS: Contribution = Contribution {
     group: "frame",
     set: "shadows",
     bindings: &[
-        uniform_of(
-            "shadow",
-            size_of::<ShadowUniform>(),
-            Stages::VERTEX_FRAGMENT,
-        ),
         texture(
             "shadow_atlas",
             Sample::Depth,
@@ -145,7 +142,12 @@ pub(crate) static PART: PartEntry = PartEntry {
         lazy: false,
         faces: &[engine_render::offer_face!(ShadowPass => dyn ShadowCastersFace)],
         needs: &[],
-        piece: None,
+        piece: Some(PieceDecl {
+            name: "shadow",
+            module: "shadows::piece",
+            ty: "ShadowPiece",
+            size: size_of::<ShadowPiece>() as u64,
+        }),
     },
     create,
 };
@@ -167,6 +169,7 @@ struct ShadowInputs<'a> {
     slot_capacity: usize,
     mesh_layout: u64,
     placement: &'a dyn Fn(MeshHandle) -> CasterDraw,
+    levels: bool,
     terrain: bool,
     pixel_angle: f32,
 }
@@ -237,6 +240,7 @@ pub(crate) struct ShadowPass {
     sky: SkyMaps,
     sky_groups: u64,
     written_sky_view: Option<engine_core::glam::Mat4>,
+    piece: ShadowPiece,
     frame: Option<ShadowFrame>,
     draws: u32,
     ids: GraphIds,
@@ -273,6 +277,7 @@ impl ShadowPass {
             sky: SkyMaps::new(device),
             sky_groups: 0,
             written_sky_view: None,
+            piece: bytemuck::Zeroable::zeroed(),
             frame: None,
             draws: 0,
             ids: GraphIds::default(),
@@ -296,7 +301,7 @@ impl ShadowPass {
     }
 
     fn plan_groups(&mut self, plan: &BatchPlan, frame: RenderFrame<'_>, gpu: bool) {
-        if !frame.snapshot().environment.shadows.enabled {
+        if !frame.snapshot().section::<Shadows>().enabled {
             if !self.casters.groups().is_empty() {
                 self.groups_generation += 1;
             }
@@ -327,13 +332,13 @@ impl ShadowPass {
             ..
         } = inputs;
         self.region_views.clear();
-        let settings = snapshot.environment.shadows.sanitized();
+        let settings = snapshot.section::<Shadows>();
         if !settings.enabled || (self.casters.groups().is_empty() && !inputs.terrain) {
             if !settings.enabled {
                 self.maps.release();
             }
             self.sky.release(queue);
-            self.maps.write_uniform(queue, bytemuck::Zeroable::zeroed());
+            self.piece = bytemuck::Zeroable::zeroed();
             return None;
         }
         let source = self.casters.source();
@@ -342,7 +347,7 @@ impl ShadowPass {
             .get_or_insert_with(|| ShadowPipelines::new(device));
         let limit = device.limits().max_texture_dimension_2d;
         let (layout, made) = self.maps.ensure(device, &settings, limit);
-        let basis = LightBasis::new(snapshot.environment.atmosphere.sanitized().sun_direction);
+        let basis = LightBasis::new(snapshot.section::<Sunlight>().values().sun_direction);
         let restarted = self.clipmap.place(
             basis,
             snapshot.detail_eye,
@@ -399,11 +404,7 @@ impl ShadowPass {
             layout,
         };
         frame_regions.region_views(&mut self.region_views);
-        let draws_key = (
-            self.groups_generation,
-            inputs.mesh_layout,
-            snapshot.environment.level_of_detail.enabled,
-        );
+        let draws_key = (self.groups_generation, inputs.mesh_layout, inputs.levels);
         if self.draws_key != Some(draws_key) {
             self.draws_key = Some(draws_key);
             self.caster_draws = self
@@ -428,7 +429,7 @@ impl ShadowPass {
             inputs.mesh_layout,
         );
         let pipelines = self.pipelines.as_ref().expect("pipelines_created");
-        let wind = engine_terrain::TerrainEnvironment::of(snapshot).wind;
+        let wind = snapshot.section::<Wind>();
         let gusting = [
             wind.velocity[0],
             wind.velocity[1],
@@ -470,16 +471,16 @@ impl ShadowPass {
             },
             mask_words as u32,
         );
-        let lookup = frame_regions.lookup_uniform(
+        let lookup = frame_regions.lookup_piece(
             settings.tile_texels,
-            snapshot.environment.foliage.sanitized().crown_depth,
+            snapshot.section::<Foliage>().crown_depth,
         );
         let groups_changed = self.sky_groups != self.groups_generation;
         self.sky_groups = self.groups_generation;
         let sky = self.sky.prepare(
             device,
             queue,
-            &snapshot.environment.sky_occlusion.sanitized(),
+            &snapshot.section::<SkyOcclusion>(),
             snapshot.detail_eye,
             still_changed || groups_changed,
         );
@@ -508,7 +509,7 @@ impl ShadowPass {
             queue.write_buffer(&pipelines.cull, 0, bytemuck::bytes_of(&cull));
             self.written_cull = Some(cull);
         }
-        self.maps.write_uniform(queue, lookup);
+        self.piece = lookup;
         let (table, changed) = self.clipmap.take_table();
         self.maps.write_table(queue, table, &changed);
         self.selection.bind(
@@ -605,7 +606,7 @@ impl ShadowPass {
             &core.device,
             encoder,
             pipelines,
-            (&core.camera.buffer, self.maps.uniform()),
+            (&core.camera.buffer, core.pieces_buffer()),
             core.depth.view.bound(),
             core.render_pixels(),
             epoch,
@@ -810,7 +811,7 @@ impl GpuPart for ShadowPass {
         let gpu_mode = cx.frame.kind.gpu_mode;
         let parity = cx.frame.temporal.as_ref().map_or(0, |frame| frame.parity);
         let core = &*cx.core;
-        let levels = snapshot.environment.level_of_detail.enabled;
+        let levels = snapshot.section::<LevelOfDetail>().enabled;
         let placement = |mesh| core.caster_draw(mesh, levels);
         self.frame = self.prepare_maps(
             &core.device,
@@ -822,6 +823,7 @@ impl GpuPart for ShadowPass {
                 slot_capacity: core.instances.capacity,
                 mesh_layout: core.mesh_layout,
                 placement: &placement,
+                levels,
                 terrain: engine_terrain::RenderTerrains::of(snapshot)
                     .terrains
                     .iter()
@@ -931,28 +933,34 @@ impl GpuPart for ShadowPass {
         let tiles = frame.map(ShadowFrame::tiles).unwrap_or_default();
         let (sky_maps, sky_drawn) = self.sky_counts();
         stats.shadows = ShadowStats {
-            moving_cut: Default::default(),
-            tile_cut: Default::default(),
             active: frame.is_some(),
             draws: if frame.is_some() { self.draws } else { 0 },
             tiles_marked: tiles.marked,
             tiles_resident: tiles.resident,
             tiles_drawn: tiles.drawn,
             tiles_reclaimed: tiles.reclaimed,
-            tiles_missing: tiles.missing,
             moving_tiles: tiles.moving,
             casters: casters.map(|casters| casters[0]),
             moving_casters: casters.map(|casters| casters[1]),
-            moving_left_out: casters.map(|casters| casters[2]),
             sky_maps,
             sky_drawn,
+            tile_cut: tiles.tile_cut,
+            moving_cut: tiles.moving_cut,
         };
         engine_profile::counter("render.shadow_groups", self.casters.groups().len() as f64);
     }
 
     fn shading(&self, snapshot: &RenderSnapshot, shading: &mut Shading) {
-        let enabled = snapshot.environment.shadows.sanitized().enabled;
+        let enabled = snapshot.section::<Shadows>().enabled;
         shading.set("SHADOW_MAPS", if enabled { 1.0 } else { 0.0 });
+    }
+
+    fn place_piece(&mut self, _at: PieceAt) {
+        self.marks.unbind();
+    }
+
+    fn piece(&self) -> Option<&[u8]> {
+        Some(bytemuck::bytes_of(&self.piece))
     }
 
     fn asset_generation(&self) -> u64 {

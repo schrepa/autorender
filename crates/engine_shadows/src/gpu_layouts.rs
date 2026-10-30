@@ -27,11 +27,12 @@ engine_render::gpu_consts! {
 
 engine_render::gpu_mirrors! {
     engine_render::gpu_data::DRAW_ARGS_BYTES => ["size_of DrawArgs" in "shadows::maps"];
+    engine_faces::shadows::GROUND_TEXELS => ["KEPT_GROUND_TEXELS" in "shadows::sample"];
 }
 
 engine_render::gpu_structs! {
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct ShadowUniform as ["Shadow"] {
+    pub(crate) struct ShadowPiece as ["ShadowPiece" in "shadows::piece"] {
         pub light: [[f32; 4]; 3],
         pub state: [f32; 4],
         pub level_state: [f32; 4],

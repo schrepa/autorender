@@ -1,4 +1,5 @@
 use engine_core::{
+    Cut,
     glam::{Mat4, Vec3, Vec4},
     math,
 };
@@ -160,8 +161,9 @@ pub(crate) struct ClipStats {
     pub resident: u32,
     pub drawn: u32,
     pub reclaimed: u32,
-    pub missing: u32,
     pub moving: u32,
+    pub tile_cut: Cut,
+    pub moving_cut: Cut,
 }
 
 #[derive(Debug, Default)]
@@ -410,15 +412,19 @@ impl Clipmap {
         self.redraw(budget, region, out);
         self.draw_moving(moving_budget, out);
         let frame = self.frame;
+        let (mut slotted, mut moving) = (0, 0);
         let cells = self.levels.iter().flat_map(|level| &level.cells);
         for cell in cells {
             let marked = cell.marked_at(frame);
             self.stats.marked += u32::from(marked);
-            self.stats.missing += u32::from(marked && !cell.drawn);
+            slotted += u32::from(marked && cell.slot.is_some());
+            moving += u32::from(cell.drawn && marked && cell.moving_at(frame));
         }
         self.stats.resident = self.owners.iter().flatten().count() as u32;
         self.stats.drawn = out.composes.len() as u32;
         self.stats.moving = out.moving.len() as u32;
+        self.stats.tile_cut = Cut::of(self.stats.marked, slotted);
+        self.stats.moving_cut = Cut::of(moving, self.stats.moving);
     }
 
     fn allocate(&mut self) {

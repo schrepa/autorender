@@ -1,18 +1,9 @@
 import package::face::shadows::KeptLift;
 import package::frame::view::{DetailLevel, PI, detail_across, detail_level, fade_noise};
+import package::generated::pieces::pieces;
 
-struct Shadow {
-    light: array<vec4<f32>, 3>,
-    state: vec4<f32>,
-    level_state: vec4<f32>,
-    atlas: vec4<f32>,
-    windows: array<vec4<f32>, SHADOW_LEVELS>,
-    bands: array<vec4<f32>, SHADOW_LEVELS>,
-}
-const SHADOW_LEVELS: u32 = 20u;
 const SHADOW_APRON: u32 = 1u;
 const KEPT_GROUND_TEXELS: f32 = 2.0;
-@group(0) @binding(2) var<uniform> shadow: Shadow;
 @group(0) @binding(3) var shadow_atlas: texture_depth_2d;
 @group(0) @binding(4) var shadow_tiles: texture_2d<u32>;
 @group(0) @binding(6) var shadow_sampler: sampler_comparison;
@@ -32,7 +23,7 @@ struct MapPoint {
 var<private> crown_light: f32;
 
 fn crown_softness(per_meter: f32) -> f32 {
-    return crown_light * shadow.state.y * abs(per_meter);
+    return crown_light * pieces.shadow.state.y * abs(per_meter);
 }
 
 fn texel_slope(map_dx: vec4<f32>, map_dy: vec4<f32>, scale: vec2<f32>, limit: f32) -> vec2<f32> {
@@ -49,7 +40,7 @@ fn texel_slope(map_dx: vec4<f32>, map_dy: vec4<f32>, scale: vec2<f32>, limit: f3
 
 fn atlas_depths(point: MapPoint) -> vec4<f32> {
     let corner = floor(point.texel - vec2<f32>(0.5)) + vec2<f32>(1.0);
-    return textureGather(shadow_atlas, shadow_texels, corner * shadow.atlas.zw);
+    return textureGather(shadow_atlas, shadow_texels, corner * pieces.shadow.atlas.zw);
 }
 
 fn plane_visibility(depths: vec4<f32>, point: MapPoint) -> f32 {
@@ -66,12 +57,13 @@ fn plane_visibility(depths: vec4<f32>, point: MapPoint) -> f32 {
 }
 
 fn light_space(world: vec3<f32>) -> vec3<f32> {
-    return vec3<f32>(dot(shadow.light[0].xyz, world), dot(shadow.light[1].xyz, world),
-        dot(shadow.light[2].xyz, world));
+    return vec3<f32>(dot(pieces.shadow.light[0].xyz, world),
+        dot(pieces.shadow.light[1].xyz, world), dot(pieces.shadow.light[2].xyz, world));
 }
 
 fn shadow_level(world: vec3<f32>) -> DetailLevel {
-    return detail_level(detail_across(world), shadow.level_state.y, u32(shadow.level_state.x));
+    return detail_level(detail_across(world), pieces.shadow.level_state.y,
+        u32(pieces.shadow.level_state.x));
 }
 
 struct LevelPoint {
@@ -82,9 +74,9 @@ struct LevelPoint {
 }
 
 fn level_point(level: u32, light: vec3<f32>) -> LevelPoint {
-    let window = shadow.windows[level];
-    let band = shadow.bands[level];
-    let side = shadow.atlas.x;
+    let window = pieces.shadow.windows[level];
+    let band = pieces.shadow.bands[level];
+    let side = pieces.shadow.atlas.x;
     let tiles = (light.xy - window.xy) / window.z;
     let tile = floor(tiles);
     var point: LevelPoint;
@@ -98,16 +90,16 @@ fn level_point(level: u32, light: vec3<f32>) -> LevelPoint {
 }
 
 fn level_slots(level: u32, point: LevelPoint) -> vec2<u32> {
-    let side = u32(shadow.atlas.x);
+    let side = u32(pieces.shadow.atlas.x);
     let entry = textureLoad(shadow_tiles, vec2<u32>(point.cell.x, level * side + point.cell.y),
         0).r;
     return vec2<u32>(entry & 0xffffu, entry >> 16u);
 }
 
 fn slot_texel(slot: u32, across: vec2<f32>) -> vec2<f32> {
-    let texels = shadow.level_state.z;
+    let texels = pieces.shadow.level_state.z;
     let side = texels + 2.0 * f32(SHADOW_APRON);
-    let per_row = u32(shadow.atlas.y);
+    let per_row = u32(pieces.shadow.atlas.y);
     let corner = vec2<f32>(vec2<u32>(slot % per_row, slot / per_row)) * side;
     return corner + vec2<f32>(f32(SHADOW_APRON)) + vec2<f32>(across.x, 1.0 - across.y) * texels;
 }
@@ -127,7 +119,7 @@ const CROWN_SPIRAL_TURN: f32 = 2.39996323;
 
 fn crown_spread(level: u32, light: vec3<f32>, point: MapPoint, center: LevelPoint, slot: u32,
         visible: f32) -> f32 {
-    let depth_per_meter = max(shadow.bands[level].y, 1.0e-12);
+    let depth_per_meter = max(pieces.shadow.bands[level].y, 1.0e-12);
     let crown = point.soft / depth_per_meter;
     let turn = fade_noise(floor(point.texel) + vec2<f32>(0.5)) * 2.0 * PI;
     var way = vec2<f32>(cos(turn), sin(turn));
@@ -156,9 +148,10 @@ fn crown_spread(level: u32, light: vec3<f32>, point: MapPoint, center: LevelPoin
 
 fn level_visibility(level: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
         dy: vec3<f32>, spread: bool) -> f32 {
-    let window = shadow.windows[level];
-    let band = shadow.bands[level];
-    let up = vec3<f32>(shadow.light[0].y, shadow.light[1].y, shadow.light[2].y);
+    let window = pieces.shadow.windows[level];
+    let band = pieces.shadow.bands[level];
+    let up = vec3<f32>(pieces.shadow.light[0].y, pieces.shadow.light[1].y,
+        pieces.shadow.light[2].y);
     let light = light_space(world + normal * band.z) + up * level_lift(level);
     let at = level_point(level, light);
     if !at.inside {
@@ -189,7 +182,7 @@ fn level_visibility(level: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec3<f3
 
 fn map_lookup(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>) -> vec2<f32> {
     let pick = shadow_level(world);
-    let count = u32(shadow.level_state.x);
+    let count = u32(pieces.shadow.level_state.x);
     for (var level = pick.level; level < count; level++) {
         let visible = level_visibility(level, world, normal, dx, dy, true);
         if visible < 0.0 {
@@ -216,7 +209,7 @@ fn map_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f
 fn air_visibility(world: vec3<f32>) -> f32 {
     let pick = shadow_level(world);
     let light = light_space(world);
-    for (var level = pick.level; level < u32(shadow.level_state.x); level++) {
+    for (var level = pick.level; level < u32(pieces.shadow.level_state.x); level++) {
         let at = level_point(level, light);
         if !at.inside {
             continue;
@@ -225,10 +218,10 @@ fn air_visibility(world: vec3<f32>) -> f32 {
         if slots.x == 0u {
             continue;
         }
-        let still = slot_texel(slots.x - 1u, at.across) * shadow.atlas.zw;
+        let still = slot_texel(slots.x - 1u, at.across) * pieces.shadow.atlas.zw;
         var visible = textureSampleCompareLevel(shadow_atlas, shadow_sampler, still, at.depth);
         if slots.y != 0u {
-            let moving = slot_texel(slots.y - 1u, at.across) * shadow.atlas.zw;
+            let moving = slot_texel(slots.y - 1u, at.across) * pieces.shadow.atlas.zw;
             visible = min(visible,
                 textureSampleCompareLevel(shadow_atlas, shadow_sampler, moving, at.depth));
         }
