@@ -80,6 +80,14 @@ impl SkyMaps {
         })
     }
 
+    pub(crate) fn release(&mut self) {
+        self.uploaded = 0;
+        if self.maps.take().is_some() {
+            self.generation += 1;
+        }
+        self.held.clear();
+    }
+
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -87,14 +95,11 @@ impl SkyMaps {
         terrains: &RenderTerrains,
         settings: &TerrainSettings,
     ) {
-        self.uploaded = 0;
         if !(settings.enabled && settings.sky_visibility) || terrains.terrains.is_empty() {
-            if self.maps.take().is_some() {
-                self.generation += 1;
-            }
-            self.held.clear();
+            self.release();
             return;
         }
+        self.uploaded = 0;
         let size = settings.sky_resolution;
         let count = terrains
             .terrains

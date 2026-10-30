@@ -144,12 +144,11 @@ impl Horizons {
         (settings, shadows): (&TerrainSettings, bool),
         (windows, slots): (&[Option<BounceLevels>], u32),
     ) {
-        self.uploaded = 0;
         if !(shadows && settings.enabled && settings.sun_shadows) || terrains.terrains.is_empty() {
-            self.release();
-            self.write_count();
+            self.rest();
             return;
         }
+        self.uploaded = 0;
         let size = settings.shadow_resolution;
         let (count, _) = room(device, terrains.terrains.len());
         if self
@@ -215,10 +214,12 @@ impl Horizons {
         self.piece.records[HORIZON_RECORDS] = [count, 0.0, 0.0, 0.0];
     }
 
-    fn release(&mut self) {
+    pub(crate) fn rest(&mut self) {
+        self.uploaded = 0;
         self.maps = None;
         self.held.clear();
         self.records_written.clear();
+        self.write_count();
     }
 }
 

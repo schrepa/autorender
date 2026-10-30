@@ -5,7 +5,7 @@ use engine_render::cached::Bound;
 use engine_render::entries::PassKind;
 use engine_render::gpu_data::pixels_per_meter;
 use engine_render::graph::{
-    Access, Clear, FrameGraph, FrameShape, GraphTable, PassId, ResourceId, TRANSPARENT,
+    Access, Clear, FrameGraph, FrameShape, GraphTable, PassId, ResourceId, TRANSPARENT, Targets,
 };
 use engine_render::parts::{
     Begin, BeginOut, Create, DrawAt, Encode, GpuPart, OpaqueSlot, Prelude, Shading, Step, View,
@@ -87,6 +87,8 @@ impl GpuPart for TerrainPass {
         let snapshot = cx.frame.snapshot;
         let terrains = RenderTerrains::of(snapshot);
         if terrains.terrains.is_empty() && self.resident() == 0 {
+            self.horizons.rest();
+            self.sky.release();
             return;
         }
         let settings = snapshot.section::<TerrainSettings>();
@@ -105,10 +107,16 @@ impl GpuPart for TerrainPass {
         let Some(passes) = cx.frame.passes else {
             self.drawn = false;
             self.deferred = false;
+            self.ids.release();
             return;
         };
         self.drawn = self.prepare_frame(cx, passes.opaque_kind);
         self.deferred = self.defers_frame(passes.opaque_kind);
+        if self.deferred {
+            self.prepare_ids(cx.core);
+        } else {
+            self.ids.release();
+        }
     }
 
     fn defers(&self) -> bool {
@@ -279,7 +287,7 @@ impl TerrainPass {
         let snapshot = cx.frame.snapshot;
         let terrains = RenderTerrains::of(snapshot);
         if terrains.terrains.is_empty() && self.resident() == 0 {
-            self.rest();
+            self.rest(&cx.core.device);
             return false;
         }
         let jitter = cx.frame.temporal.as_ref().map_or([0.0; 2], |frame| {
@@ -313,6 +321,9 @@ impl TerrainPass {
             },
             (core.display.max_layers, core.materials.mips()),
         );
+        if !drawn {
+            return false;
+        }
         let views = cx
             .parts
             .iter()
@@ -320,14 +331,6 @@ impl TerrainPass {
             .filter(|_| cx.frame.kind.gpu_mode)
             .map(|views| (views.format, views.mirrored));
         self.warm_frame(cx, (kind, casts), views);
-        if !drawn {
-            return false;
-        }
-        let holes = self.has_holes();
-        self.ensure_pipelines(core, (kind, holes, views), casts);
-        if kind.targets().is_some() {
-            self.prepare_ids(core);
-        }
         true
     }
 
@@ -337,11 +340,7 @@ impl TerrainPass {
         (kind, casts): (PassKind, bool),
         views: Option<(wgpu::TextureFormat, bool)>,
     ) {
-        let snapshot = cx.frame.snapshot;
-        let terrains = &RenderTerrains::of(snapshot).terrains;
-        if terrains.is_empty() {
-            return;
-        }
+        let terrains = &RenderTerrains::of(cx.frame.snapshot).terrains;
         let core = &*cx.core;
         self.warm(&core.device);
         let holes = terrains.iter().any(|terrain| terrain.may_hole) || self.has_holes();
@@ -358,12 +357,8 @@ impl TerrainPass {
         let variants: &[bool] = if holes { &[false, true] } else { &[false] };
         for &holes in variants {
             if let Some(targets) = kind.targets() {
-                self.pipelines.ensure_pipeline(
-                    device,
-                    (targets, holes),
-                    core.canvas_format(),
-                    DEPTH_FORMAT,
-                );
+                self.pipelines
+                    .ensure_pipeline(device, (targets, holes), DEPTH_FORMAT);
             }
             if let Some((format, mirrored)) = views {
                 self.pipelines.ensure_view_pipeline(
@@ -405,7 +400,6 @@ impl TerrainPass {
 
     fn defers_frame(&self, kind: PassKind) -> bool {
         self.drawn
-            && self.ids.get().is_some()
             && kind
                 .targets()
                 .is_some_and(|targets| self.pipelines.resolves.contains_key(&targets))
@@ -450,26 +444,27 @@ impl TerrainPass {
         };
         let core = &*cx.core;
         let scene = SceneSources {
-            pieces: core.pieces_buffer(),
+            pieces: core.pieces_bound(),
             cloud_shadows,
         };
         self.encode_bounce(&core.device, encoder, &core.profiler, scene);
     }
 
     fn draw_ground(&self, cx: &View<'_>, pass: &mut wgpu::RenderPass<'_>) -> u32 {
-        let Some(kind) = cx.frame.passes.map(|passes| passes.opaque_kind) else {
+        let debug = cx
+            .frame
+            .passes
+            .is_some_and(|passes| passes.opaque_kind.targets() == Some(Targets::Debug));
+        if !(debug && self.drawn) {
             return 0;
-        };
-        let Some(targets) = kind.targets().filter(|_| self.drawn) else {
-            return 0;
-        };
+        }
         pass.set_bind_group(0, cx.core.shared_group("frame", FRAME), &[]);
         pass.set_bind_group(2, &cx.core.mesh_pipelines.empty_group, &[]);
         pass.set_bind_group(3, cx.core.shared_group("lights", &[]), &[]);
         let mut draws = 0;
         for (holes, pipeline) in [false, true]
             .into_iter()
-            .filter_map(|holes| Some((holes, self.pipelines.pipeline(targets, holes)?)))
+            .filter_map(|holes| Some((holes, self.pipelines.debug_pipeline(holes)?)))
         {
             pass.set_pipeline(pipeline);
             for terrain in &self.patches.frame.terrains {

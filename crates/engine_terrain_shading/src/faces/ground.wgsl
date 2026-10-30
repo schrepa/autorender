@@ -154,15 +154,12 @@ fn ground_tile(terrain: GroundTerrain, local: vec2<f32>, first: u32) -> GroundTi
 
 fn ground_height(terrain: GroundTerrain, local: vec2<f32>) -> GroundHeight {
     var ground: GroundHeight;
-    for (var level = 0u; level < terrain.levels; level++) {
-        let tile = level_tile(terrain, level, local / (terrain.spacing * f32(1u << level)));
-        if tile.layer != NOT_RESIDENT {
-            ground.found = true;
-            ground.level = level;
-            ground.tile = tile;
-            ground.height = true_height(terrain, local, level, tile);
-            return ground;
-        }
+    let found = ground_tile(terrain, local, 0u);
+    if found.found {
+        ground.found = true;
+        ground.level = found.level;
+        ground.tile = found.tile;
+        ground.height = true_height(terrain, local, found.level, found.tile);
     }
     return ground;
 }

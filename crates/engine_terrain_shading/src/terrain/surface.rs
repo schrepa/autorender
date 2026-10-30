@@ -19,6 +19,17 @@ const DRAW_OFFSET: u64 = SUBDIVISION_DRAW as u64 * 4;
 const SHALLOWEST: u32 = SUBDIVISION_COUNTED + 2;
 const _: () = assert!(SURFACE_MESHLET_VERTICES <= 1 << 16, "meshlet_fits_u16");
 
+type Spec = (&'static str, u64, wgpu::BufferUsages);
+
+const LEAVES: Spec = ("engine/terrain-surface-leaves", LEAF_BYTES, wgpu::BufferUsages::empty());
+const NODES: Spec = ("engine/terrain-surface-nodes", NODE_BYTES, wgpu::BufferUsages::empty());
+const COUNTERS: Spec = (
+    "engine/terrain-surface-counters",
+    ARGS_BYTES,
+    wgpu::BufferUsages::COPY_SRC,
+);
+const ARGS: Spec = ("engine/terrain-surface-args", ARGS_BYTES, wgpu::BufferUsages::INDIRECT);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Measure {
     Ground,
@@ -81,6 +92,7 @@ pub(crate) struct SurfaceTrees {
     totals: Rc<Cell<[u32; 4]>>,
     rests: Rc<Cell<u64>>,
     shallow: u32,
+    held: bool,
 }
 
 impl SurfaceTrees {
@@ -90,30 +102,10 @@ impl SurfaceTrees {
             frame: Vec::new(),
             grounds: 0,
             targets: [0.0; 2],
-            leaves: Growable::new(
-                device,
-                "engine/terrain-surface-leaves",
-                LEAF_BYTES,
-                wgpu::BufferUsages::empty(),
-            ),
-            nodes: Growable::new(
-                device,
-                "engine/terrain-surface-nodes",
-                NODE_BYTES,
-                wgpu::BufferUsages::empty(),
-            ),
-            counters: Growable::new(
-                device,
-                "engine/terrain-surface-counters",
-                ARGS_BYTES,
-                wgpu::BufferUsages::COPY_SRC,
-            ),
-            args: Growable::new(
-                device,
-                "engine/terrain-surface-args",
-                ARGS_BYTES,
-                wgpu::BufferUsages::INDIRECT,
-            ),
+            leaves: growable(device, LEAVES),
+            nodes: growable(device, NODES),
+            counters: growable(device, COUNTERS),
+            args: growable(device, ARGS),
             indices: engine_render::memory::buffer_init(
                 device,
                 &wgpu::util::BufferInitDescriptor {
@@ -122,11 +114,7 @@ impl SurfaceTrees {
                     usage: wgpu::BufferUsages::INDEX,
                 },
             ),
-            uniforms: Versioned::new(engine_render::buffers::uniform(
-                device,
-                "engine/terrain-subdivision",
-                SLOT,
-            )),
+            uniforms: Versioned::new(subdivision_uniforms(device, SLOT)),
             uniforms_written: Vec::new(),
             stand_in: engine_render::buffers::storage(
                 device,
@@ -143,6 +131,7 @@ impl SurfaceTrees {
             totals: Rc::new(Cell::new([0; 4])),
             rests: Rc::new(Cell::new(0)),
             shallow: 0,
+            held: false,
         }
     }
 
@@ -175,12 +164,33 @@ impl SurfaceTrees {
         self.frame.iter().any(Option::is_some)
     }
 
-    pub(super) fn rest(&mut self) {
+    pub(super) fn rest(&mut self, device: &wgpu::Device) {
         self.frame.clear();
         self.grounds = 0;
         self.shallow = 0;
         self.totals.set([0; 4]);
         self.rests.set(self.rests.get() + 1);
+        if !std::mem::take(&mut self.held) {
+            return;
+        }
+        for tree in self.trees.values() {
+            engine_render::memory::release_buffer(&tree.buffer);
+        }
+        self.trees.clear();
+        for (buffer, frame) in [
+            (&mut self.leaves, LEAVES),
+            (&mut self.nodes, NODES),
+            (&mut self.counters, COUNTERS),
+            (&mut self.args, ARGS),
+        ] {
+            engine_render::memory::release_buffer(buffer);
+            *buffer = growable(device, frame);
+        }
+        self.uniforms.replace(subdivision_uniforms(device, SLOT));
+        self.uniforms_written.clear();
+        self.readbacks.clear();
+        self.camera_group = None;
+        self.pipelines = None;
     }
 
     pub(super) fn draw(&self, index: usize) -> Option<SurfaceDraw> {
@@ -221,6 +231,7 @@ impl SurfaceTrees {
         self.frames += 1;
         self.shallow = 0;
         self.frame.clear();
+        self.held = true;
         let (settings, water) = (&views.settings, &views.water);
         let subdivides_water = |terrain: &RenderTerrain| water.enabled && holds_water(terrain.id);
         self.trees.retain(|&(id, measure), _| {
@@ -249,11 +260,8 @@ impl SurfaceTrees {
             self.readbacks.clear();
         }
         if slots * SLOT > self.uniforms.size() {
-            self.uniforms.replace(engine_render::buffers::uniform(
-                device,
-                "engine/terrain-subdivision",
-                (slots * SLOT).next_power_of_two(),
-            ));
+            let bytes = (slots * SLOT).next_power_of_two();
+            self.uniforms.replace(subdivision_uniforms(device, bytes));
             self.uniforms_written.clear();
         }
         self.targets = [settings.subdivision_error, water.subdivision_error];
@@ -518,6 +526,14 @@ impl SurfaceTrees {
         let [_, _, leaves, refused] = self.totals.get();
         [leaves, refused]
     }
+}
+
+fn growable(device: &wgpu::Device, (label, bytes, usage): Spec) -> Growable {
+    Growable::new(device, label, bytes, usage)
+}
+
+fn subdivision_uniforms(device: &wgpu::Device, bytes: u64) -> wgpu::Buffer {
+    engine_render::buffers::uniform(device, "engine/terrain-subdivision", bytes)
 }
 
 fn counts_words(depth: u32) -> u32 {

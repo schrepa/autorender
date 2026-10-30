@@ -19,8 +19,7 @@ struct Arrays {
     control_view: wgpu::TextureView,
     normals: wgpu::Texture,
     normals_view: wgpu::TextureView,
-    rivers: wgpu::Texture,
-    rivers_view: wgpu::TextureView,
+    rivers: Option<(wgpu::Texture, wgpu::TextureView)>,
     ground_errors: wgpu::Texture,
     ground_errors_view: wgpu::TextureView,
     water_errors: wgpu::Texture,
@@ -116,6 +115,7 @@ pub(crate) struct TileAtlas {
     normal_pass: Option<(engine_render::pipelines::GroupLayout, wgpu::ComputePipeline)>,
     control_jobs: Vec<ControlJob>,
     control_pass: Option<(engine_render::pipelines::GroupLayout, wgpu::ComputePipeline)>,
+    gpu_materials: bool,
     surfaces: HashMap<u64, (Arc<SurfaceData>, wgpu::Buffer)>,
     pub(super) sky_sampler: wgpu::Sampler,
     pub(super) control_sampler: wgpu::Sampler,
@@ -153,6 +153,7 @@ impl TileAtlas {
             normal_pass: None,
             control_jobs: Vec::new(),
             control_pass: None,
+            gpu_materials: false,
             surfaces: HashMap::default(),
             control_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("engine/terrain-control-sampler"),
@@ -195,8 +196,28 @@ impl TileAtlas {
             let peaks: u64 = (1..HEIGHT_MIPS)
                 .map(|mip| u64::from(LAYER_SIZE >> mip).pow(2) * 4)
                 .sum();
-            u64::from(arrays.layers) * (u64::from(LAYER_SIZE * LAYER_SIZE) * 20 + peaks + pyramids)
+            let texel = if arrays.rivers.is_some() { 20 } else { 12 };
+            u64::from(arrays.layers)
+                * (u64::from(LAYER_SIZE * LAYER_SIZE) * texel + peaks + pyramids)
         })
+    }
+
+    pub(super) fn follow_materials(&mut self, device: &wgpu::Device, terrains: &RenderTerrains) {
+        let gpu = (terrains.terrains.iter()).any(|terrain| terrain.gpu_surface.is_some());
+        self.gpu_materials = gpu;
+        if !gpu {
+            self.control_pass = None;
+        }
+        let Some(arrays) = &mut self.arrays else {
+            return;
+        };
+        if gpu {
+            if arrays.rivers.is_none() {
+                arrays.rivers = Some(rivers_array(device, arrays.layers));
+            }
+        } else if let Some((rivers, _)) = arrays.rivers.take() {
+            engine_render::memory::release_any(&rivers);
+        }
     }
 
     pub(super) fn layers(&self) -> u32 {
@@ -493,13 +514,8 @@ impl TileAtlas {
         });
         if gpu && (heights || rivers) {
             let texels = tile.river_texels();
-            if let Some(texels) = &texels {
-                write_layer(
-                    queue,
-                    &arrays.rivers,
-                    layer,
-                    (bytemuck::cast_slice(&texels[..]), 8),
-                );
+            if let (Some(texels), Some((target, _))) = (&texels, &arrays.rivers) {
+                write_layer(queue, target, layer, (bytemuck::cast_slice(&texels[..]), 8));
             }
             let surface = surfaces[&key.0];
             let spacing = tile.spacing();
@@ -658,7 +674,9 @@ impl TileAtlas {
 
     pub(super) fn warm(&mut self, device: &wgpu::Device) {
         self.normal_pass(device);
-        self.control_pass(device);
+        if self.gpu_materials {
+            self.control_pass(device);
+        }
     }
 
     fn control_pass(&mut self, device: &wgpu::Device) {
@@ -705,12 +723,16 @@ impl TileAtlas {
     }
 
     fn compute_controls(&mut self, device: &wgpu::Device, queue: &Queue) {
-        if self.arrays.is_none() || self.control_jobs.is_empty() {
+        let ready = (self.arrays.as_ref()).is_some_and(|arrays| arrays.rivers.is_some());
+        if !ready || self.control_jobs.is_empty() {
             self.control_jobs.clear();
             return;
         }
         self.control_pass(device);
         let (Some(arrays), Some((layout, pipeline))) = (&self.arrays, &self.control_pass) else {
+            return;
+        };
+        let Some((_, rivers)) = &arrays.rivers else {
             return;
         };
         let mut words = vec![0_u32; self.control_jobs.len() * SLOT as usize / 4];
@@ -765,10 +787,7 @@ impl TileAtlas {
                         ),
                         ("data", data.as_entire_binding()),
                         ("control", engine_render::pipelines::view(&target)),
-                        (
-                            "rivers",
-                            engine_render::pipelines::view(&arrays.rivers_view),
-                        ),
+                        ("rivers", engine_render::pipelines::view(rivers)),
                     ],
                 );
                 pass.set_bind_group(0, &group, &[]);
@@ -886,27 +905,8 @@ impl TileAtlas {
             return;
         }
         let layers = needed.next_power_of_two().max(16).min(max_layers.max(1));
-        let array = |label: &'static str, format, usage, mips| {
-            engine_render::memory::texture(
-                device,
-                &wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width: LAYER_SIZE,
-                        height: LAYER_SIZE,
-                        depth_or_array_layers: layers,
-                    },
-                    mip_level_count: mips,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::COPY_DST
-                        | wgpu::TextureUsages::COPY_SRC
-                        | usage,
-                    view_formats: &[],
-                },
-            )
+        let array = |label, format, usage, mips| {
+            layer_array(device, (label, format, usage, mips), layers)
         };
         let texture = array(
             "engine/terrain-heights",
@@ -926,12 +926,7 @@ impl TileAtlas {
             wgpu::TextureUsages::STORAGE_BINDING,
             1,
         );
-        let rivers = array(
-            "engine/terrain-rivers",
-            RIVER_FORMAT,
-            wgpu::TextureUsages::empty(),
-            1,
-        );
+        let rivers = self.gpu_materials.then(|| rivers_array(device, layers));
         let pyramid = |label: &'static str| {
             engine_render::memory::texture(
                 device,
@@ -1003,24 +998,19 @@ impl TileAtlas {
                 control.as_image_copy(),
                 extent,
             );
-            encoder.copy_texture_to_texture(
-                old.rivers.as_image_copy(),
-                rivers.as_image_copy(),
-                extent,
-            );
+            if let (Some((old_rivers, _)), Some((new_rivers, _))) = (&old.rivers, &rivers) {
+                encoder.copy_texture_to_texture(
+                    old_rivers.as_image_copy(),
+                    new_rivers.as_image_copy(),
+                    extent,
+                );
+            }
             queue.submit_now([encoder.finish()]);
         }
-        let array_view = |texture: &wgpu::Texture| {
-            texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            })
-        };
         self.arrays = Some(Arrays {
             view: array_view(&texture),
             normals_view: array_view(&normals),
             control_view: array_view(&control),
-            rivers_view: array_view(&rivers),
             ground_errors_view: array_view(&ground_errors),
             water_errors_view: array_view(&water_errors),
             texture,
@@ -1033,6 +1023,55 @@ impl TileAtlas {
         });
         self.generation += 1;
     }
+}
+
+fn layer_array(
+    device: &wgpu::Device,
+    (label, format, usage, mips): (&'static str, wgpu::TextureFormat, wgpu::TextureUsages, u32),
+    layers: u32,
+) -> wgpu::Texture {
+    engine_render::memory::texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: LAYER_SIZE,
+                height: LAYER_SIZE,
+                depth_or_array_layers: layers,
+            },
+            mip_level_count: mips,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC
+                | usage,
+            view_formats: &[],
+        },
+    )
+}
+
+fn rivers_array(device: &wgpu::Device, layers: u32) -> (wgpu::Texture, wgpu::TextureView) {
+    let rivers = layer_array(
+        device,
+        (
+            "engine/terrain-rivers",
+            RIVER_FORMAT,
+            wgpu::TextureUsages::empty(),
+            1,
+        ),
+        layers,
+    );
+    let view = array_view(&rivers);
+    (rivers, view)
+}
+
+fn array_view(texture: &wgpu::Texture) -> wgpu::TextureView {
+    texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    })
 }
 
 pub(super) fn fade_half(normals: f32, materials: f32) -> u32 {

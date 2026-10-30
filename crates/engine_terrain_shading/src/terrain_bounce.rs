@@ -27,6 +27,11 @@ const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const GROUND_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Uint;
 const GROUND_LAYERS: u32 = 2;
 const BINDINGS: usize = 17;
+const BUFFERS: [&str; 3] = [
+    "engine/terrain-bounce-blocks",
+    "engine/terrain-bounce-probes",
+    "engine/terrain-bounce-scratch",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct BounceLevels {
@@ -60,7 +65,7 @@ impl BounceLevels {
 }
 
 pub(crate) struct SceneSources<'a> {
-    pub(crate) pieces: &'a wgpu::Buffer,
+    pub(crate) pieces: Bound<'a>,
     pub(crate) cloud_shadows: (&'static str, Bound<'a>),
 }
 
@@ -74,6 +79,7 @@ pub(crate) struct TerrainSources<'a> {
 struct Maps {
     ground: wgpu::Texture,
     ground_view: wgpu::TextureView,
+    light: wgpu::Texture,
     light_view: wgpu::TextureView,
     levels: Vec<wgpu::TextureView>,
     side: u32,
@@ -130,19 +136,15 @@ impl Bounce {
                     ..Default::default()
                 })
         };
-        let buffer = |label, bytes: usize| {
-            Growable::new(device, label, bytes as u64, wgpu::BufferUsages::empty())
-        };
+        let [blocks, probes, scratch] = BUFFERS.map(|label| growable(device, label, 16));
         Self {
             layout: engine_render::pipelines::layout(device, &BOUNCE),
             pipelines: None,
             frame,
-            terrains: (0..MOST_LEVELS)
-                .map(|_| buffer("engine/terrain-bounce-terrains", size_of::<BounceTerrain>()))
-                .collect(),
-            blocks: buffer("engine/terrain-bounce-blocks", 16),
-            probes: buffer("engine/terrain-bounce-probes", 16),
-            scratch: buffer("engine/terrain-bounce-scratch", 16),
+            terrains: terrain_buffers(device),
+            blocks,
+            probes,
+            scratch,
             maps: None,
             maps_generation: 0,
             light_stand_in: stand_in(
@@ -186,7 +188,7 @@ impl Bounce {
         (&self.windows, slots as u32)
     }
 
-    pub(crate) fn rest(&mut self) {
+    pub(crate) fn rest(&mut self, device: &wgpu::Device) {
         self.slots.clear();
         self.windows.clear();
         self.widest = [0; MOST_LEVELS];
@@ -194,6 +196,36 @@ impl Bounce {
         self.relit_probes = 0;
         self.levels = 0;
         self.dropped = 0;
+        self.release(device);
+    }
+
+    fn release(&mut self, device: &wgpu::Device) {
+        if self.maps.is_none() && self.pipelines.is_none() {
+            return;
+        }
+        if let Some(maps) = self.maps.take() {
+            engine_render::memory::release_any(&maps.ground);
+            engine_render::memory::release_any(&maps.light);
+        }
+        self.pipelines = None;
+        self.held.clear();
+        self.means.clear();
+        self.bases.clear();
+        self.records.clear();
+        self.ground_group.clear();
+        self.level_groups.clear();
+        self.gather_groups.clear();
+        for buffer in &self.terrains {
+            engine_render::memory::release_buffer(buffer);
+        }
+        self.terrains = terrain_buffers(device);
+        for (buffer, label) in [&mut self.blocks, &mut self.probes, &mut self.scratch]
+            .into_iter()
+            .zip(BUFFERS)
+        {
+            engine_render::memory::release_buffer(buffer);
+            *buffer = growable(device, label, 16);
+        }
     }
 
     pub(crate) fn capacity_bytes(&self) -> u64 {
@@ -262,7 +294,11 @@ impl Bounce {
         self.relit_probes = 0;
         self.levels = 0;
         let count = self.slots.iter().flatten().count();
-        if cooking && count > 0 && self.pipelines.is_none() {
+        if count == 0 {
+            self.release(device);
+            return;
+        }
+        if cooking && self.pipelines.is_none() {
             self.pipelines = Some(pipelines(device));
         }
         let side = terrains
@@ -442,10 +478,7 @@ impl Bounce {
             sampler: Bound::fixed(engine_render::pipelines::sampler(&self.sampler)),
             horizons,
             written,
-            scene: [
-                ("pieces", Bound::fixed(scene.pieces.as_entire_binding())),
-                scene.cloud_shadows,
-            ],
+            scene: [("pieces", scene.pieces), scene.cloud_shadows],
         };
         let level = |index: usize| {
             Bound::counted(
@@ -784,9 +817,20 @@ fn maps(device: &wgpu::Device, side: u32, slots: usize) -> Maps {
         levels: (0..levels)
             .map(|level| light.create_view(&array(level, Some(1))))
             .collect(),
+        light,
         side,
         slots,
     }
+}
+
+fn growable(device: &wgpu::Device, label: &'static str, bytes: usize) -> Growable {
+    Growable::new(device, label, bytes as u64, wgpu::BufferUsages::empty())
+}
+
+fn terrain_buffers(device: &wgpu::Device) -> Vec<Growable> {
+    (0..MOST_LEVELS)
+        .map(|_| growable(device, "engine/terrain-bounce-terrains", size_of::<BounceTerrain>()))
+        .collect()
 }
 
 fn pipelines(device: &wgpu::Device) -> [wgpu::ComputePipeline; 3] {
