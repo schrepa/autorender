@@ -4,7 +4,7 @@ use engine_faces::shadows::KeptRefresh;
 use super::maps::AtlasLayout;
 use super::{COMPOSE_VIEW, MAPS, MOVING_MAP, MOVING_VIEW, SKY_MAP, SKY_VIEW, VIEW_STRIDE};
 use crate::gpu_layouts::{
-    ComposeData, MAX_LEVELS, RouteData, SHADOW_REGIONS, STILLNESS, ShadowCullUniform, ShadowUniform,
+    ComposeData, MAX_LEVELS, RouteData, SHADOW_REGIONS, STILLNESS, ShadowCullUniform, ShadowPiece,
 };
 use crate::shadow_fit::{ClipPlan, Clipmap, LightBasis, MapRegion, Region, region_tiles};
 
@@ -193,7 +193,7 @@ impl FrameRegions<'_> {
         }
     }
 
-    pub(super) fn lookup_uniform(&self, tile_texels: u32, crown_depth: f32) -> ShadowUniform {
+    pub(super) fn lookup_piece(&self, tile_texels: u32, crown_depth: f32) -> ShadowPiece {
         let (width, height) = self.layout.size();
         let levels = self.clipmap.len();
         let mut windows = [[0.0; 4]; MAX_LEVELS];
@@ -210,7 +210,7 @@ impl FrameRegions<'_> {
                 SLOPE_LIMIT_TEXELS * texel / depth,
             ];
         }
-        ShadowUniform {
+        ShadowPiece {
             light: self.basis.rows.map(|row| row.extend(0.0).to_array()),
             state: [1.0, crown_depth, 0.0, 0.0],
             level_state: [

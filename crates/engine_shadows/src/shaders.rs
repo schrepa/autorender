@@ -3,6 +3,7 @@ engine_render::shader_modules! {
     "shadows::maps" in "shadows" = "shadows.wgsl";
     "shadows::marks" in "shadows" = "shadow_marks.wgsl";
     "face::shadows" in "shadows" = "faces/shadows.wgsl";
+    "shadows::piece" in "shadows" = "piece.wgsl";
 }
 
 engine_render::entry_points! {

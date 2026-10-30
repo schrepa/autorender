@@ -2,7 +2,7 @@ use engine_faces::shadows::SHADOW_FORMAT;
 use engine_render::cached::{Bound, Versioned};
 use engine_render::pipelines::{sampler, view};
 
-use crate::gpu_layouts::{SHADOW_APRON, SHADOW_REGIONS, ShadowUniform};
+use crate::gpu_layouts::{SHADOW_APRON, SHADOW_REGIONS};
 use crate::shadow_fit::{LEVEL_TEXELS, region_tiles};
 
 const TABLE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
@@ -133,8 +133,6 @@ impl MapTextures {
 
 pub(super) struct ShadowMaps {
     textures: Versioned<Option<MapTextures>>,
-    uniform: wgpu::Buffer,
-    written: Option<ShadowUniform>,
     sampler: wgpu::Sampler,
     texel_sampler: wgpu::Sampler,
     _placeholders: [wgpu::Texture; 3],
@@ -145,11 +143,6 @@ pub(super) struct ShadowMaps {
 
 impl ShadowMaps {
     pub(super) fn new(device: &wgpu::Device) -> Self {
-        let uniform = engine_render::buffers::uniform(
-            device,
-            "engine/shadow-uniform",
-            size_of::<ShadowUniform>() as u64,
-        );
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/shadow-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -187,8 +180,6 @@ impl ShadowMaps {
         };
         Self {
             textures: Versioned::new(None),
-            uniform,
-            written: None,
             sampler,
             texel_sampler,
             placeholder_atlas: view(&atlas, wgpu::TextureViewDimension::D2),
@@ -202,23 +193,18 @@ impl ShadowMaps {
         Option::as_ref(&self.textures)
     }
 
-    pub(super) fn entries(&self) -> [(&'static str, Bound<'_>); 5] {
+    pub(super) fn entries(&self) -> [(&'static str, Bound<'_>); 4] {
         let (atlas, table) = match &*self.textures {
             Some(maps) => (&maps.atlas_view, &maps.table_view),
             None => (&self.placeholder_atlas, &self.placeholder_table),
         };
         let map = |texture| Bound::of(&self.textures, view(texture));
         [
-            ("shadow", Bound::fixed(self.uniform.as_entire_binding())),
             ("shadow_atlas", map(atlas)),
             ("shadow_tiles", map(table)),
             ("shadow_sampler", Bound::fixed(sampler(&self.sampler))),
             ("shadow_texels", Bound::fixed(sampler(&self.texel_sampler))),
         ]
-    }
-
-    pub(super) fn uniform(&self) -> &wgpu::Buffer {
-        &self.uniform
     }
 
     pub(super) fn table(&self) -> (&wgpu::TextureView, u64) {
@@ -273,17 +259,6 @@ impl ShadowMaps {
     pub(super) fn release(&mut self) {
         if self.textures.is_some() {
             self.textures.replace(None);
-        }
-    }
-
-    pub(super) fn write_uniform(
-        &mut self,
-        queue: &engine_render::gpu_calls::Queue,
-        uniform: ShadowUniform,
-    ) {
-        if self.written != Some(uniform) {
-            queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
-            self.written = Some(uniform);
         }
     }
 

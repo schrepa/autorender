@@ -55,6 +55,10 @@ impl Marks {
         self.readbacks.clear();
     }
 
+    pub(super) fn unbind(&mut self) {
+        self.group.clear();
+    }
+
     pub(super) fn take(&self, epoch: u64) -> Vec<u32> {
         let mut read = self.read_back.borrow_mut();
         let words = std::mem::take(&mut read.words);
@@ -71,7 +75,7 @@ impl Marks {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         pipelines: &ShadowPipelines,
-        (camera, lookups): (&wgpu::Buffer, &wgpu::Buffer),
+        (camera, pieces): (&wgpu::Buffer, &wgpu::Buffer),
         depth: Bound<'_>,
         size: (u32, u32),
         epoch: u64,
@@ -86,7 +90,7 @@ impl Marks {
             (&SHADOW_MARKS, &pipelines.marks_layout),
             [
                 ("camera", Bound::fixed(camera.as_entire_binding())),
-                ("shadow", Bound::fixed(lookups.as_entire_binding())),
+                ("pieces", Bound::fixed(pieces.as_entire_binding())),
                 ("shadow_depth", depth),
                 ("shadow_marks", self.buffer.bound()),
             ],

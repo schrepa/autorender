@@ -12,7 +12,7 @@ pub mod shaders;
 mod shadow_fit;
 mod shadows;
 
-use engine_core::{Brick, Bricks, Place};
+use engine_core::{Brick, Bricks, DetailConsumer, Place};
 use engine_faces::slots::ShadowsSlot;
 use engine_render::render_bricks::AddRenderParts;
 
@@ -25,6 +25,16 @@ impl Brick for ShadowsBrick {
         bricks
             .settings::<engine_core::Shadows>()
             .settings::<engine_core::SkyOcclusion>()
+            .detail_consumer(DetailConsumer {
+                name: "shadow_tiles",
+                setting: "shadows.atlas_slots",
+                stat: "shadows.tile_cut",
+            })
+            .detail_consumer(DetailConsumer {
+                name: "moving_tiles",
+                setting: "shadows.moving_tiles",
+                stat: "shadows.moving_cut",
+            })
             .render_part(&shadows::PART)
             .shaders(shaders::MODULES)
             .face_defaults(engine_faces::defaults::MODULES)
