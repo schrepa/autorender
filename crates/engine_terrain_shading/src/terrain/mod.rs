@@ -303,6 +303,7 @@ impl TerrainPass {
     ) -> bool {
         self.atlas.begin(views.now);
         self.patches.begin(views.eye);
+        self.atlas.follow_materials(device, terrains);
         if let Some(edited) = self.atlas.sync(device, queue, terrains, max_layers) {
             self.tables
                 .write_holes(device, queue, (&self.atlas, edited), max_layers);
@@ -337,7 +338,7 @@ impl TerrainPass {
         self.bounce
             .prepare(device, queue, terrains, lighting, self.cooking);
         if !terrains.terrains.iter().any(|terrain| terrain.drawn) {
-            self.surface.rest();
+            self.rest_surface(device);
             return false;
         }
         self.tables.size_uniforms(device, terrains);
@@ -501,9 +502,14 @@ impl TerrainPass {
         Some((leaves, leaves.generation()))
     }
 
-    pub(crate) fn rest(&mut self) {
-        self.bounce.rest();
-        self.surface.rest();
+    pub(crate) fn rest(&mut self, device: &wgpu::Device) {
+        self.bounce.rest(device);
+        self.rest_surface(device);
+    }
+
+    fn rest_surface(&mut self, device: &wgpu::Device) {
+        self.surface.rest(device);
+        self.pipelines.release_group();
     }
 
     pub(crate) fn subdivides(&self) -> bool {

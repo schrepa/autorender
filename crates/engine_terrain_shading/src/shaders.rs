@@ -24,16 +24,12 @@ engine_render::entry_points! {
     terrain {
         vertex: [
             vs_terrain @ "terrain::draw",
-            vs_terrain_temporal @ "terrain::draw",
             vs_fullscreen @ "engine::fullscreen",
         ],
         fragment: [
             fs_terrain_ids @ "terrain::draw",
             fs_terrain_resolve_post @ "terrain::draw",
             fs_terrain_resolve_temporal @ "terrain::draw",
-            fs_terrain @ "terrain::draw",
-            fs_terrain_post @ "terrain::draw",
-            fs_terrain_temporal @ "terrain::draw",
             fs_terrain_probe @ "terrain::draw",
             fs_debug_terrain @ "terrain::debug",
         ],

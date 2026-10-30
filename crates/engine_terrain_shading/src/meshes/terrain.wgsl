@@ -1,7 +1,7 @@
 import package::face::cover::{COVER_FAR_SIDE, COVER_ROUGHNESS, CoverLaw, cover_clump_layer,
     cover_clump_spacing, cover_clumped, cover_growth, cover_seen, cover_share, cover_shown,
     cover_tint};
-import package::face::dither::{encoded, stored};
+import package::face::dither::stored;
 import package::face::ground::macro_color;
 import package::face::heightfield::{WATER_HELD, WaterCell, surface_vertex, terrain,
     terrain_level_height, terrain_view, water_cell};
@@ -12,8 +12,7 @@ import package::face::sun::sun_direction;
 import package::face::surface_point::{BODY_GROUND, SurfacePoint};
 import package::frame::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail_distance, detail_level,
     detail_resolved, detail_span, eye_world, fade_noise, material_detail, stable_normalize};
-import package::meshes::declarations::{DepthSceneTargets, DepthTemporalTargets, SceneTargets,
-    TemporalTargets};
+import package::meshes::declarations::{DepthSceneTargets, DepthTemporalTargets};
 import package::meshes::surface::{Shaded, scene_targets, temporal_targets, world_plane};
 import package::terrain::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
 import package::terrain::field::{SURFACE_MESHLET_LEVEL, spread_slopes, terrain_directory};
@@ -100,13 +99,6 @@ struct TerrainOutput {
     @location(2) cell: vec2<f32>,
 }
 
-struct TerrainTemporalOutput {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(1) relative: vec4<f32>,
-    @location(2) cell: vec2<f32>,
-    @location(4) previous: vec3<f32>,
-}
-
 struct TerrainSurfaceVertex {
     relative: vec3<f32>,
     local: vec2<f32>,
@@ -166,19 +158,6 @@ fn terrain_holes_test(cell: vec2<f32>) {
 fn vs_terrain(@builtin(instance_index) leaf: u32, @builtin(vertex_index) vertex: u32)
         -> TerrainOutput {
     return terrain_output(leaf, vertex);
-}
-
-@vertex
-fn vs_terrain_temporal(@builtin(instance_index) leaf: u32,
-        @builtin(vertex_index) vertex: u32) -> TerrainTemporalOutput {
-    let output = terrain_output(leaf, vertex);
-    var temporal: TerrainTemporalOutput;
-    temporal.clip_position = output.clip_position;
-    temporal.relative = output.relative;
-    temporal.cell = output.cell;
-    temporal.previous = (camera.previous_view_projection
-        * vec4<f32>(eye_world(output.relative.xyz), 1.0)).xyw;
-    return temporal;
 }
 
 fn terrain_detail(p: vec2<f32>, size: f32, resolved: f32) -> f32 {
@@ -1475,32 +1454,6 @@ fn shade_terrain(input: TerrainOutput) -> Shaded {
     let point = terrain_point(input.relative.xyz);
     terrain_holes_test(input.cell);
     return finish_ground(point, local_light(point, input.clip_position.xy));
-}
-
-fn terrain_temporal_output(input: TerrainTemporalOutput) -> TerrainOutput {
-    var output: TerrainOutput;
-    output.clip_position = input.clip_position;
-    output.relative = input.relative;
-    output.cell = input.cell;
-    return output;
-}
-
-@fragment
-fn fs_terrain(input: TerrainOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade_terrain(input).color, input.clip_position.xy), 1.0);
-}
-
-@fragment
-fn fs_terrain_post(input: TerrainOutput) -> SceneTargets {
-    let shaded = shade_terrain(input);
-    return scene_targets(shaded, stored(shaded.color, input.clip_position.xy));
-}
-
-@fragment
-fn fs_terrain_temporal(input: TerrainTemporalOutput) -> TemporalTargets {
-    let shaded = shade_terrain(terrain_temporal_output(input));
-    return temporal_targets(shaded, stored(shaded.color, input.clip_position.xy),
-        input.clip_position, input.previous);
 }
 
 @fragment

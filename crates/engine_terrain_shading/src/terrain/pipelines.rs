@@ -23,7 +23,7 @@ pub(crate) struct TerrainPipelines {
     pub(super) layout: engine_render::pipelines::GroupLayout,
     group: Cached<GroupKey, wgpu::BindGroup>,
     surface_group: Cached<GroupKey, wgpu::BindGroup>,
-    pipelines: HashMap<(Targets, bool), wgpu::RenderPipeline>,
+    debug: HashMap<bool, wgpu::RenderPipeline>,
     pub(crate) deferred_ids: HashMap<bool, wgpu::RenderPipeline>,
     pub(crate) resolves: HashMap<Targets, wgpu::RenderPipeline>,
     pub(crate) resolve_layout: engine_render::pipelines::GroupLayout,
@@ -38,7 +38,7 @@ impl TerrainPipelines {
             layout: engine_render::pipelines::layout(device, &TERRAIN),
             group: Cached::default(),
             surface_group: Cached::default(),
-            pipelines: HashMap::default(),
+            debug: HashMap::default(),
             deferred_ids: HashMap::default(),
             resolves: HashMap::default(),
             resolve_layout: engine_render::pipelines::layout(
@@ -54,7 +54,7 @@ impl TerrainPipelines {
     pub(crate) fn specialize(&mut self, shading: Vec<(&'static str, f64)>) {
         if self.shading != shading {
             self.shading = shading;
-            self.pipelines.clear();
+            self.debug.clear();
             self.resolves.clear();
             self.view_pipelines.clear();
         }
@@ -66,6 +66,10 @@ impl TerrainPipelines {
 
     pub(super) fn surface_group(&self) -> Option<&wgpu::BindGroup> {
         self.surface_group.get()
+    }
+
+    pub(super) fn release_group(&mut self) {
+        self.group.clear();
     }
 
     pub(super) fn ensure_group(&mut self, device: &wgpu::Device, sources: &GroupSources<'_>) {
@@ -178,8 +182,8 @@ impl TerrainPipelines {
         }
     }
 
-    pub(crate) fn pipeline(&self, targets: Targets, holes: bool) -> Option<&wgpu::RenderPipeline> {
-        self.pipelines.get(&(targets, holes))
+    pub(crate) fn debug_pipeline(&self, holes: bool) -> Option<&wgpu::RenderPipeline> {
+        self.debug.get(&holes)
     }
 
     pub(crate) fn view_pipeline(&self, holes: bool) -> Option<&wgpu::RenderPipeline> {
@@ -194,31 +198,40 @@ impl TerrainPipelines {
         &mut self,
         device: &wgpu::Device,
         (targets, holes): (Targets, bool),
-        canvas: wgpu::TextureFormat,
         depth: wgpu::TextureFormat,
     ) {
-        if self.pipelines.contains_key(&(targets, holes)) {
+        let resolve = match targets {
+            Targets::Post => draw::fs_terrain_resolve_post,
+            Targets::Temporal => draw::fs_terrain_resolve_temporal,
+            Targets::Debug => {
+                self.ensure_debug(device, holes, depth);
+                return;
+            }
+        };
+        self.ensure_deferred(device, (targets, holes, resolve), depth);
+    }
+
+    fn ensure_debug(&mut self, device: &wgpu::Device, holes: bool, depth: wgpu::TextureFormat) {
+        if self.debug.contains_key(&holes) {
             return;
         }
         let layout = pipeline_layout(device);
-        let (vertex, fragment) = crate::entries::terrain(Some(targets));
-        let color_targets = targets.color_targets(canvas);
+        let (vertex, fragment) = crate::entries::TERRAIN_DEBUG;
         let pipeline = geometry(
             device,
             &layout,
             (vertex, fragment, holes, Some(&self.shading[..])),
-            &color_targets,
+            &engine_render::debug_targets::color_targets(),
             depth,
             wgpu::FrontFace::Ccw,
         );
-        self.pipelines.insert((targets, holes), pipeline);
-        self.ensure_deferred(device, (targets, holes), depth);
+        self.debug.insert(holes, pipeline);
     }
 
     fn ensure_deferred(
         &mut self,
         device: &wgpu::Device,
-        (targets, holes): (Targets, bool),
+        (targets, holes, fragment): (Targets, bool, engine_render::shaders::Entry),
         depth: wgpu::TextureFormat,
     ) {
         if let std::collections::hash_map::Entry::Vacant(slot) = self.deferred_ids.entry(holes) {
@@ -239,11 +252,6 @@ impl TerrainPipelines {
             );
             slot.insert(pipeline);
         }
-        let fragment = match targets {
-            Targets::Post => draw::fs_terrain_resolve_post,
-            Targets::Temporal => draw::fs_terrain_resolve_temporal,
-            Targets::Canvas | Targets::Debug => return,
-        };
         if self.resolves.contains_key(&targets) {
             return;
         }
@@ -284,7 +292,7 @@ impl TerrainPipelines {
             return;
         }
         let layout = pipeline_layout(device);
-        let (vertex, fragment) = crate::entries::terrain(None);
+        let (vertex, fragment) = crate::entries::TERRAIN_VIEW;
         let front_face = if mirrored {
             wgpu::FrontFace::Cw
         } else {
