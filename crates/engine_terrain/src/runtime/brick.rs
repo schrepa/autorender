@@ -4,11 +4,13 @@ use super::water_body::TerrainWater;
 use super::*;
 use crate::jobs::{ShadingJob, SteadiedJob, TerrainWorker};
 use crate::layer::{AddTerrainLayers, TerrainLayerKinds};
+use crate::scene::{PREFETCH, TERRAIN};
 use engine_core::{
     Brick, Bricks, DetailConsumer, EnvironmentSection, ExplainRecord, ExplainRequest,
     FixedSimulation, FixedSimulationSystems, GlobalTransforms, Ground, GroundSlot, JobWorker,
     TerrainDebug, ViewSync, ViewSyncSystems, WorldSync, WorldSyncSystems,
 };
+use engine_scene::AddSceneComponents;
 
 pub struct TerrainBrick;
 
@@ -45,6 +47,7 @@ impl Brick for TerrainBrick {
             .water_body(TerrainWater)
             .resource::<TerrainLayerKinds>()
             .terrain_layers(crate::expr::KINDS)
+            .scene_components(&[&TERRAIN, &PREFETCH])
             .systems(ViewSync, stream_terrains.in_set(ViewSyncSystems::Stream))
             .systems(
                 FixedSimulation,

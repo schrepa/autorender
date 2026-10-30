@@ -350,7 +350,7 @@ fn item_roots(entities: &[ExpandedObject], indices: &BTreeMap<&str, usize>) -> V
         .collect()
 }
 
-pub(crate) fn identifier(id: &str, path: &str) -> Result<(), Error> {
+pub fn identifier(id: &str, path: &str) -> Result<(), Error> {
     if engine_settings::is_id(id) {
         return Ok(());
     }
@@ -400,7 +400,7 @@ pub(crate) fn reference(id: &str, known: &BTreeSet<&str>, path: &str) -> Result<
     Ok(())
 }
 
-pub(crate) fn unknown<S: Into<String>>(
+pub fn unknown<S: Into<String>>(
     error: Error,
     id: &str,
     known: impl IntoIterator<Item = S>,

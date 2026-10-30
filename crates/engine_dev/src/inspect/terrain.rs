@@ -83,7 +83,7 @@ fn terrain_view(world: &World, entity: Option<Entity>, context: &Context<'_>) ->
         }
     }
     Some(json!(crate::views::TerrainView {
-        terrain: engine_scene::SceneTerrain::from_runtime(
+        terrain: engine_terrain::scene::SceneTerrain::from_runtime(
             terrain,
             |handle| {
                 scene.and_then(|scene| {

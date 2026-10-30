@@ -4,7 +4,7 @@ use serde::Serialize;
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TerrainView {
     #[cfg_attr(not(target_arch = "wasm32"), schemars(with = "serde_json::Value"))]
-    pub terrain: engine_scene::SceneTerrain,
+    pub terrain: engine_terrain::scene::SceneTerrain,
     pub levels: u32,
     pub extent: [f32; 2],
     pub resident_tiles_by_level: Vec<u32>,

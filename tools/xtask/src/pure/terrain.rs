@@ -379,7 +379,7 @@ fn load(root: &Path) -> Result<Terrain, String> {
         .find(|(_, object)| object.id == ENTITY)
         .ok_or_else(|| format!("{FIXTURE} has no entity {ENTITY}"))?;
     let path = format!("$.entities[{index}].terrain");
-    let terrain: engine_scene::SceneTerrain = engine_core::parse_value_at(
+    let terrain: engine_terrain::scene::SceneTerrain = engine_core::parse_value_at(
         object
             .component("terrain")
             .ok_or_else(|| format!("{FIXTURE}'s {ENTITY} has no terrain"))?

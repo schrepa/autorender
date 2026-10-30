@@ -101,7 +101,6 @@ pub const RULES: Rules = Rules {
             ("engine_native", "engine_layer_stamps"),
             ("engine_native", "engine_navigation"),
             ("engine_native", "engine_terrain"),
-            ("engine_scene", "engine_terrain"),
             ("engine_scene", "engine_world_streaming"),
         ],
         unsmoked: &["debug_panic"],

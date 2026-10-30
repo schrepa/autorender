@@ -181,6 +181,10 @@ pub mod terrain {
     pub use engine_layer_relief as layer_relief;
     pub use engine_layer_stamps as layer_stamps;
     pub use engine_terrain as data;
+    pub use engine_terrain::scene::{
+        SceneColliderShape, SceneSurroundings, SceneTerrain, SceneTerrainAsset, SceneTerrainLod,
+        SceneTerrainMaterial, SceneTerrainPart, SceneTerrainSurface,
+    };
     pub use engine_terrain::{
         AUTHORED_LAYER, AuthoredPlacement, BRIDGE_SOLIDS, Biome, BiomeLayer, BiomeRules, Biomes,
         Blend, Control, DECK_DEPTH, DECK_MARGIN, DECK_RISE, Expr, Facing, FarPlacement, GivenRiver,
