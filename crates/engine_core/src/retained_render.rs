@@ -192,7 +192,7 @@ impl<'a> RenderFrame<'a> {
         snapshot.wind = *wind;
         snapshot.environment = *environment;
         snapshot.lights.list.clear();
-        snapshot.lights.dropped = lights.dropped;
+        snapshot.lights.cut = lights.cut;
         snapshot.lights.invalid = lights.invalid;
         snapshot.lights.revision = lights.revision;
         for light in &lights.list {
@@ -206,7 +206,7 @@ impl<'a> RenderFrame<'a> {
                 .get(slot as usize)
                 .and_then(|&index| self.poses.prepared_matrix(index as usize));
             let Some(model) = model else {
-                snapshot.lights.dropped += 1;
+                snapshot.lights.invalid += 1;
                 continue;
             };
             snapshot.lights.list.push(light.posed(model));

@@ -6,7 +6,7 @@ pub struct ImpostorDraws {
     pub pipelines: ImpostorPipelines,
     pub contents: Contents,
     pub records: Vec<ImpostorRecord>,
-    pub dropped: u32,
+    pub cut: engine_core::Cut,
 }
 
 impl ImpostorDraws {
@@ -26,7 +26,7 @@ impl Core {
         gpu_mode: bool,
         encoder: &mut Option<wgpu::CommandEncoder>,
     ) {
-        let settings = snapshot.environment.level_of_detail;
+        let settings = snapshot.section::<engine_core::LevelOfDetail>();
         let key = |renderer: &Self| {
             (
                 renderer.structure_key(),
@@ -38,18 +38,19 @@ impl Core {
         if self.structure_keys.impostors == Some(key(self)) {
             return;
         }
-        self.prepare_impostor_records(snapshot, gpu_mode, encoder);
+        self.prepare_impostor_records(snapshot, settings, gpu_mode, encoder);
         self.structure_keys.impostors = Some(key(self));
     }
 
     fn prepare_impostor_records(
         &mut self,
         snapshot: &RenderSnapshot,
+        settings: engine_core::LevelOfDetail,
         gpu_mode: bool,
         encoder: &mut Option<wgpu::CommandEncoder>,
     ) {
         self.impostors.records.clear();
-        self.impostors.dropped = 0;
+        self.impostors.cut = engine_core::Cut::default();
         let (meshes, materials, plan) = (&self.meshes, &self.materials, &self.plan);
         self.impostors.atlas.retain(
             |(mesh, material)| {
@@ -62,7 +63,6 @@ impl Core {
             |mesh| meshes.contains_key(&mesh),
             |texture| materials.is_texture_resident(texture),
         );
-        let settings = snapshot.environment.level_of_detail;
         let Some(entries) = self.mesh_entries else {
             return;
         };
@@ -70,6 +70,7 @@ impl Core {
             return;
         }
         self.impostors.atlas.enforce_budget(settings.max_impostors);
+        let (mut asked, mut refused) = (0_u32, 0_u32);
         for batch in &self.plan.batches {
             let mesh = &self.meshes[&batch.mesh];
             let source = &snapshot.meshes[batch.source_index].mesh;
@@ -77,6 +78,7 @@ impl Core {
             let eligible = source.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES;
             let mut record = ImpostorRecord::default();
             if eligible {
+                asked += 1;
                 let material = batch
                     .material
                     .and_then(|handle| self.plan.material(snapshot, handle))
@@ -121,13 +123,14 @@ impl Core {
                             content,
                             settings.max_impostors,
                         );
-                        self.impostors.dropped += u32::from(matches!(supplied, Supplied::Refused));
+                        refused += u32::from(matches!(supplied, Supplied::Refused));
                         supplied.record()
                     }
                 };
             }
             self.impostors.records.push(record);
         }
+        self.impostors.cut = engine_core::Cut::of(asked, asked - refused);
     }
 
     pub(crate) fn prepare_impostor_draws(&mut self, kind: PassKind) -> Option<Targets> {

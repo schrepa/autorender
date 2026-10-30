@@ -66,7 +66,7 @@ pub struct RenderStats {
     pub local_lights: LightStats,
     pub haze: Applied,
     pub reflections: Applied,
-    pub particles: Drawn,
+    pub particles: ParticleStats,
     pub reflection_probes: ProbeStats,
     pub level_of_detail: DetailStats,
     pub terrain: TerrainRenderStats,
@@ -140,10 +140,10 @@ pub struct DynamicResolutionStats {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct Drawn {
+pub struct ParticleStats {
     pub drawn: u32,
-    pub dropped: u32,
     pub invalid: u32,
+    pub particle_cut: Cut,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -162,11 +162,9 @@ pub struct ShadowStats {
     pub tiles_resident: u32,
     pub tiles_drawn: u32,
     pub tiles_reclaimed: u32,
-    pub tiles_missing: u32,
     pub moving_tiles: u32,
     pub casters: Option<u32>,
     pub moving_casters: Option<u32>,
-    pub moving_left_out: Option<u32>,
     pub sky_maps: u32,
     pub sky_drawn: u32,
     pub tile_cut: Cut,
@@ -177,10 +175,10 @@ pub struct ShadowStats {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct LightStats {
     pub shaded: u32,
-    pub dropped: u32,
     pub invalid: u32,
     pub visible: Option<u32>,
-    pub cluster_overflow: Option<u32>,
+    pub light_cut: Cut,
+    pub cluster_cut: Cut,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -188,7 +186,7 @@ pub struct LightStats {
 pub struct ProbeStats {
     pub ready: u32,
     pub faces: u32,
-    pub dropped: u32,
+    pub probe_cut: Cut,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -199,7 +197,6 @@ pub struct DetailStats {
     pub lod2_instances: Option<u32>,
     pub impostor_instances: Option<u32>,
     pub impostors: u32,
-    pub dropped_impostors: u32,
     pub meshes_without_levels: u32,
     pub impostor_cut: Cut,
 }
@@ -218,7 +215,6 @@ pub struct TerrainBounceStats {
 pub struct TerrainRenderStats {
     pub leaves: u32,
     pub triangles: u32,
-    pub refused_splits: u32,
     pub shallow_subdivisions: u32,
     pub shadow_patches: u32,
     pub tiles: u32,
@@ -245,7 +241,6 @@ pub struct TerrainRenderStats {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct GroundCoverStats {
     pub blades: u32,
-    pub dropped: u32,
     pub reach: u32,
     pub tiers: u32,
     pub blade_cut: Cut,
@@ -262,11 +257,9 @@ pub struct OccupancyStats {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WaterStats {
     pub leaves: u32,
-    pub refused: u32,
     pub blocks: u32,
     pub dropped_blocks: u32,
     pub live_cells: u32,
-    pub live_budget_cut: u32,
     pub live_cut: u32,
     pub live_steps: u32,
     pub live_behind: u32,
@@ -276,7 +269,6 @@ pub struct WaterStats {
     pub dropped_touches: u32,
     pub particle_texels: u32,
     pub foam_points: u32,
-    pub foam_points_cut: u32,
     pub foam_reach: u32,
     pub foam_particles: u32,
     pub wave_particles: u32,

@@ -2,7 +2,7 @@ use super::frame::{EncodeReport, Uploaded};
 use super::*;
 use crate::gpu_presentation::{GpuPrepared, PresentationPart};
 
-use engine_core::{CullingStats, DetailStats};
+use engine_core::{CullingStats, DetailStats, LevelOfDetail, OcclusionCulling, SubpixelCulling};
 
 const RAN_ORDERS: usize = 256;
 
@@ -338,7 +338,7 @@ impl Renderer {
 
 impl Core {
     fn culling_stats(&self, snapshot: &RenderSnapshot, gpu_mode: bool, stats: &mut RenderStats) {
-        let lod_instances = if gpu_mode && snapshot.environment.level_of_detail.enabled {
+        let lod_instances = if gpu_mode && snapshot.section::<LevelOfDetail>().enabled {
             self.gpu_presentation.lod_instances()
         } else {
             None
@@ -349,17 +349,16 @@ impl Core {
             lod2_instances: lod_instances.map(|levels| levels[2]),
             impostor_instances: lod_instances.map(|levels| levels[3]),
             impostors: self.impostors.live(),
-            dropped_impostors: self.impostors.dropped,
             meshes_without_levels: self
                 .meshes
                 .values()
                 .filter(|mesh| mesh.without_levels)
                 .count() as u32,
-            impostor_cut: engine_core::Cut::default(),
+            impostor_cut: self.impostors.cut,
         };
         stats.occlusion_culling = CullingStats {
             active: gpu_mode && self.gpu_presentation.occlusion(),
-            instances: if gpu_mode && snapshot.environment.occlusion_culling.enabled {
+            instances: if gpu_mode && snapshot.section::<OcclusionCulling>().enabled {
                 self.gpu_presentation.occluded()
             } else {
                 None
@@ -367,7 +366,7 @@ impl Core {
         };
         stats.subpixel_culling = CullingStats {
             active: gpu_mode && self.gpu_presentation.culls_subpixel(),
-            instances: if gpu_mode && snapshot.environment.subpixel_culling.enabled {
+            instances: if gpu_mode && snapshot.section::<SubpixelCulling>().enabled {
                 self.gpu_presentation.subpixel()
             } else {
                 None

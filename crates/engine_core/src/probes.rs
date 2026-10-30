@@ -108,12 +108,12 @@ pub struct RenderReflectionProbe {
 #[derive(Clone, Debug, Default)]
 pub struct RenderReflectionProbes {
     pub list: Vec<RenderReflectionProbe>,
-    pub dropped: usize,
+    pub cut: usize,
 }
 
 impl RenderSnapshot {
     pub fn probe_list(&self) -> &[RenderReflectionProbe] {
-        if self.environment.reflection_probes.enabled {
+        if self.section::<ReflectionProbeSettings>().enabled {
             &self.reflection_probes.list
         } else {
             &[]
@@ -143,9 +143,9 @@ struct ProbeExtraction {
 
 impl ProbeExtraction {
     fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot) {
-        let settings = snapshot.environment.reflection_probes;
+        let settings = crate::section_in::<ReflectionProbeSettings>(world);
         snapshot.reflection_probes.list.clear();
-        snapshot.reflection_probes.dropped = 0;
+        snapshot.reflection_probes.cut = 0;
         if !settings.enabled {
             return;
         }
@@ -191,7 +191,7 @@ impl ProbeExtraction {
         let ranked = self
             .nearest
             .nearest_first(candidates.iter().map(|(distance, _)| *distance), kept);
-        snapshot.reflection_probes.dropped = candidates.len() - ranked.len();
+        snapshot.reflection_probes.cut = candidates.len() - ranked.len();
         snapshot
             .reflection_probes
             .list

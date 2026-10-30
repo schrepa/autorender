@@ -1,13 +1,20 @@
 use bevy_ecs::prelude::{Resource, World};
 use serde::{Deserialize, Serialize};
 
-use crate::bricks::{Brick, Bricks, DrawState, ExplainRecord, ExplainRequest};
+use crate::bricks::{Brick, Bricks, DetailConsumer, DrawState, ExplainRecord, ExplainRequest};
 use crate::sections::environment_section;
 use engine_settings::settings;
 
 impl Brick for LevelOfDetail {
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.settings::<LevelOfDetail>().explain(explain_level);
+        bricks
+            .settings::<LevelOfDetail>()
+            .detail_consumer(DetailConsumer {
+                name: "impostors",
+                setting: "level_of_detail.max_impostors",
+                stat: "level_of_detail.impostor_cut",
+            })
+            .explain(explain_level);
     }
 }
 
@@ -20,10 +27,7 @@ fn explain_level(world: &World, request: &ExplainRequest) -> Option<ExplainRecor
     let DrawState::Level(level) = entity.drawn else {
         return None;
     };
-    let settings = world
-        .get_resource::<LevelOfDetail>()
-        .copied()
-        .unwrap_or_default();
+    let settings = crate::section_in::<LevelOfDetail>(world);
     Some(
         ExplainRecord::new("level")
             .with("entity", &entity.id)

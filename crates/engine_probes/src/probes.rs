@@ -1,5 +1,5 @@
 use engine_core::{
-    RenderReflectionProbe, RenderSnapshot, RenderStats,
+    Cut, ProbeStats, ReflectionProbeSettings, RenderReflectionProbe, RenderSnapshot, RenderStats,
     glam::{Mat4, Vec3, Vec4},
     math,
 };
@@ -249,7 +249,7 @@ pub(crate) struct ProbePass {
     words: engine_render::buffers::Growable,
     staging: Vec<[u32; 4]>,
     pub(crate) faces: u32,
-    dropped: u32,
+    cut: Cut,
     captures: bool,
     listed: bool,
     format: Option<wgpu::TextureFormat>,
@@ -277,7 +277,7 @@ impl ProbePass {
             ),
             staging: Vec::new(),
             faces: 0,
-            dropped: 0,
+            cut: Cut::default(),
             captures: false,
             listed: false,
             format: None,
@@ -453,9 +453,11 @@ impl GpuPart for ProbePass {
             .plan(probe_list, (cubes - 1) as usize, lost, sky_changed);
         self.upload(&cx.core.device, &cx.core.queue);
         self.faces = 0;
-        self.dropped = (snapshot.reflection_probes.dropped as u64
-            + (probe_list.len() as u64).saturating_sub(u64::from(most_cubes - 1)))
-        .min(u64::from(u32::MAX)) as u32;
+        let listed = probe_list.len() as u64;
+        let kept = listed.min(u64::from(most_cubes - 1));
+        let asked = snapshot.reflection_probes.cut as u64 + listed;
+        let counted = |count: u64| count.min(u64::from(u32::MAX)) as u32;
+        self.cut = Cut::of(counted(asked), counted(kept));
         self.captures = cx.frame.kind.gpu_mode && !cx.frame.kind.debug && !probe_list.is_empty();
     }
 
@@ -496,15 +498,15 @@ impl GpuPart for ProbePass {
     }
 
     fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
-        stats.reflection_probes = engine_core::ProbeStats {
+        stats.reflection_probes = ProbeStats {
             ready: self.slots.ready(),
             faces: self.faces,
-            dropped: self.dropped,
+            probe_cut: self.cut,
         };
     }
 
     fn shading(&self, snapshot: &RenderSnapshot, shading: &mut Shading) {
-        let enabled = snapshot.environment.reflection_probes.enabled;
+        let enabled = snapshot.section::<ReflectionProbeSettings>().enabled;
         shading.set("PROBES", if enabled { 1.0 } else { 0.0 });
     }
 
