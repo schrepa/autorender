@@ -378,15 +378,17 @@ fn load(root: &Path) -> Result<Terrain, String> {
         .enumerate()
         .find(|(_, object)| object.id == ENTITY)
         .ok_or_else(|| format!("{FIXTURE} has no entity {ENTITY}"))?;
-    object
-        .terrain
-        .as_ref()
-        .ok_or_else(|| format!("{FIXTURE}'s {ENTITY} has no terrain"))?
-        .prepare_component(
-            &format!("$.entities[{index}].terrain"),
-            Some(&files),
-            (&document.materials, &document.meshes),
-        )
+    let path = format!("$.entities[{index}].terrain");
+    let terrain: engine_scene::SceneTerrain = engine_core::parse_value_at(
+        object
+            .component("terrain")
+            .ok_or_else(|| format!("{FIXTURE}'s {ENTITY} has no terrain"))?
+            .clone(),
+        &path,
+    )
+    .map_err(|error| error.to_string())?;
+    terrain
+        .prepare_component(&path, Some(&files), (&document.materials, &document.meshes))
         .map_err(|error| error.to_string())
 }
 

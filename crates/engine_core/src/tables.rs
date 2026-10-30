@@ -7,8 +7,8 @@ use engine_tables::clouds::CloudNoise;
 use engine_tables::sky::{Air, SkyTables};
 
 use crate::{
-    Clouds, Cooking, JobBudget, JobFailures, JobId, Jobs, RecordKey, Sky, URGENT_JOBS, job_priority,
-    section_in,
+    Clouds, Cooking, JobBudget, JobFailures, JobId, Jobs, RecordKey, Sky, URGENT_JOBS,
+    job_priority, section_in,
 };
 
 const RETRY_AFTER: u64 = 120;

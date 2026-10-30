@@ -34,16 +34,18 @@ fn physics(session: &mut dyn SmokeSession) -> SmokeResult {
     }
     let bricks = session.bricks();
     let rests = height(session, bricks.clone(), true)?;
+    let rested = (number(&rests) - (FLOOR_TOP + HALF)).abs() <= RESTS_WITHIN;
     crate::smoke_check!(
-        (number(&rests) - (FLOOR_TOP + HALF)).abs() <= RESTS_WITHIN,
+        rested,
         "box_rests_on_floor",
         json!({ "members": members, "height": rests }),
         json!({ "height": FLOOR_TOP + HALF, "within": RESTS_WITHIN })
     );
     let left_out = bricks.clone().without(members.iter().copied());
     let held = height(session, left_out, false)?;
+    let stayed = (number(&held) - START).abs() <= HELD_WITHIN;
     crate::smoke_check!(
-        (number(&held) - START).abs() <= HELD_WITHIN,
+        stayed,
         "box_holds_without_filler",
         json!({ "members": members, "height": held }),
         json!({ "height": START })

@@ -98,7 +98,7 @@ fn quiet(
         let still = number(&shadows["tile_cut"]["cut"]) == 0.0
             && idle("tiles_drawn")
             && idle("sky_drawn")
-            && (!previewing || idle("moving_tiles"));
+            && (!previewing || number(&shadows["moving_cut"]["kept"]) == 0.0);
         calm = if still { calm + 1 } else { 0 };
         if calm >= QUIET_FRAMES {
             return Ok(());

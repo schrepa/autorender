@@ -229,9 +229,11 @@ impl GpuPart for TerrainPass {
         let surface = self.surface.stats();
         let held = RenderTerrains::of(cx.frame.snapshot).stats;
         let terrain = &mut stats.terrain;
-        terrain.leaves = surface.leaves;
         terrain.triangles = surface.triangles;
-        terrain.leaf_cut = Cut::of(surface.leaves.saturating_add(surface.refused), surface.leaves);
+        terrain.leaf_cut = Cut::of(
+            surface.leaves.saturating_add(surface.refused),
+            surface.leaves,
+        );
         terrain.shallow_subdivisions = surface.shallow;
         terrain.shadow_patches = self.patches.frame.shadow_patches;
         terrain.tiles = self.resident();

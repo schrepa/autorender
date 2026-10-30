@@ -436,10 +436,9 @@ impl WaterSim {
     }
 
     pub(crate) fn cells(&self) -> (Cut, [u32; 5]) {
-        self.window
-            .as_ref()
-            .filter(|window| window.ready)
-            .map_or((Cut::default(), [0; 5]), |window| {
+        self.window.as_ref().filter(|window| window.ready).map_or(
+            (Cut::default(), [0; 5]),
+            |window| {
                 (
                     Cut::of(window.source.asked, window.fitted.cells),
                     [
@@ -450,7 +449,8 @@ impl WaterSim {
                         window.waiting,
                     ],
                 )
-            })
+            },
+        )
     }
 
     pub(crate) fn touches(&self) -> [u32; 2] {

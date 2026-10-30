@@ -1,14 +1,5 @@
 {
   "$defs": {
-    "AtmospherePreset": {
-      "enum": [
-        "day",
-        "golden_hour",
-        "dusk",
-        "night"
-      ],
-      "type": "string"
-    },
     "AuthoredPlacement": {
       "additionalProperties": false,
       "properties": {
@@ -740,6 +731,15 @@
         "sun"
       ],
       "type": "object"
+    },
+    "LightPreset": {
+      "enum": [
+        "day",
+        "golden_hour",
+        "dusk",
+        "night"
+      ],
+      "type": "string"
     },
     "MacroCauses": {
       "additionalProperties": false,
@@ -1488,248 +1488,6 @@
       },
       "type": "object"
     },
-    "SceneAtmosphere": {
-      "additionalProperties": false,
-      "properties": {
-        "aerial_color": {
-          "items": {
-            "format": "float",
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "aerial_density": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "aerial_falloff": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "aerial_glow": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "aerial_start": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "ambient": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "contrast": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "emission": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "exposure": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "fog_density": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "fog_falloff": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "fog_max": {
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "fog_start": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "ground": {
-          "items": {
-            "format": "float",
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "highlight_tint": {
-          "items": {
-            "format": "float",
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "horizon": {
-          "items": {
-            "format": "float",
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "preset": {
-          "$ref": "#/$defs/AtmospherePreset",
-          "default": "golden_hour"
-        },
-        "rim": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "saturation": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "shadow_tint": {
-          "items": {
-            "format": "float",
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "specular": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "sun_color": {
-          "items": {
-            "format": "float",
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "sun_direction": {
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
-        },
-        "vibrance": {
-          "format": "float",
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "zenith": {
-          "items": {
-            "format": "float",
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 3,
-          "minItems": 3,
-          "type": [
-            "array",
-            "null"
-          ]
-        }
-      },
-      "type": "object"
-    },
     "SceneAutoExposure": {
       "additionalProperties": false,
       "properties": {
@@ -2292,16 +2050,6 @@
             }
           ]
         },
-        "atmosphere": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneAtmosphere"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "auto_exposure": {
           "anyOf": [
             {
@@ -2366,6 +2114,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneFoliage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grading": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneGrading"
             },
             {
               "type": "null"
@@ -2532,6 +2290,16 @@
             }
           ]
         },
+        "sky_light": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSkyLight"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "sky_occlusion": {
           "anyOf": [
             {
@@ -2546,6 +2314,26 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSubpixelCulling"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sun": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSun"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "surface_light": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSurfaceLight"
             },
             {
               "type": "null"
@@ -2656,6 +2444,74 @@
           "maximum": 1.0,
           "minimum": 0.0,
           "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneGrading": {
+      "additionalProperties": false,
+      "properties": {
+        "contrast": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "exposure": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "highlight_tint": {
+          "items": {
+            "format": "float",
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "preset": {
+          "$ref": "#/$defs/LightPreset",
+          "default": "golden_hour"
+        },
+        "saturation": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "shadow_tint": {
+          "items": {
+            "format": "float",
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "vibrance": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "type": "object"
@@ -3447,17 +3303,21 @@
           ]
         },
         "tint": {
-          "items": {
-            "format": "float",
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "type": "number"
-          },
-          "maxItems": 4,
-          "minItems": 4,
-          "type": [
-            "array",
-            "null"
+          "anyOf": [
+            {
+              "items": {
+                "format": "float",
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "transform": {
@@ -4018,6 +3878,141 @@
       },
       "type": "object"
     },
+    "SceneSkyLight": {
+      "additionalProperties": false,
+      "properties": {
+        "aerial_color": {
+          "items": {
+            "format": "float",
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "aerial_density": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "aerial_falloff": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "aerial_glow": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "aerial_start": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ambient": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "fog_density": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "fog_falloff": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "fog_max": {
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "fog_start": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "ground": {
+          "items": {
+            "format": "float",
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "horizon": {
+          "items": {
+            "format": "float",
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "preset": {
+          "$ref": "#/$defs/LightPreset",
+          "default": "golden_hour"
+        },
+        "zenith": {
+          "items": {
+            "format": "float",
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "SceneSkyOcclusion": {
       "additionalProperties": false,
       "properties": {
@@ -4144,6 +4139,41 @@
       },
       "type": "object"
     },
+    "SceneSun": {
+      "additionalProperties": false,
+      "properties": {
+        "preset": {
+          "$ref": "#/$defs/LightPreset",
+          "default": "golden_hour"
+        },
+        "sun_color": {
+          "items": {
+            "format": "float",
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "sun_direction": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "SceneSurface": {
       "additionalProperties": false,
       "properties": {
@@ -4174,6 +4204,40 @@
           "maximum": 1.0,
           "minimum": 0.0,
           "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneSurfaceLight": {
+      "additionalProperties": false,
+      "properties": {
+        "emission": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "preset": {
+          "$ref": "#/$defs/LightPreset",
+          "default": "golden_hour"
+        },
+        "rim": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "specular": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
         }
       },
       "type": "object"

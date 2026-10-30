@@ -267,7 +267,9 @@ fn validate_light(value: &Value, path: &str) -> Result<(), Error> {
 }
 
 fn prepare_light(value: &Value, context: &ComponentContext<'_>) -> Prepared {
-    Ok(Box::new(parsed::<SceneLight>(value, context.path)?.runtime()))
+    Ok(Box::new(
+        parsed::<SceneLight>(value, context.path)?.runtime(),
+    ))
 }
 
 impl PreparedComponent for LocalLight {
@@ -298,7 +300,9 @@ fn validate_particles(value: &Value, path: &str) -> Result<(), Error> {
 }
 
 fn prepare_particles(value: &Value, context: &ComponentContext<'_>) -> Prepared {
-    Ok(Box::new(parsed::<SceneEmitter>(value, context.path)?.runtime()))
+    Ok(Box::new(
+        parsed::<SceneEmitter>(value, context.path)?.runtime(),
+    ))
 }
 
 impl PreparedComponent for ParticleEmitter {

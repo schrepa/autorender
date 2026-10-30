@@ -166,8 +166,7 @@ fn left_out(session: &mut dyn SmokeSession, members: &Members) -> Checked<()> {
         .and_then(|path| NAMED_AT.iter().find_map(|at| path.strip_prefix(at)))
         .unwrap_or_default();
     smoke_check!(
-        LEFT_OUT.iter().any(|&known| known == code)
-            && members.faces.iter().any(|&face| face == named),
+        LEFT_OUT.contains(&code) && members.faces.contains(&named),
         "left_out_renders_or_names_the_place",
         &refused,
         &json!({ "frames": FRAMES, "or_refused": { "code": LEFT_OUT, "naming": members.faces } })

@@ -150,7 +150,9 @@ fn settled(session: &mut dyn SmokeSession) -> SmokeResult {
         let reply = control(session, "render", json!({}), "renders_until_settled")?;
         shadows = reply["result"]["rendering"]["shadows"].clone();
         let idle = |field: &str| shadows[field].as_u64() == Some(0);
-        let still = idle("tiles_missing") && idle("tiles_drawn") && idle("sky_drawn");
+        let still = shadows["tile_cut"]["cut"].as_u64() == Some(0)
+            && idle("tiles_drawn")
+            && idle("sky_drawn");
         calm = if still { calm + 1 } else { 0 };
         if calm >= QUIET_FRAMES {
             return Ok(());

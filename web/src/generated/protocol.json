@@ -1,6 +1,7 @@
 {
   "bricks": [
     "terrain",
+    "wind",
     "world_streaming",
     "navigation",
     "time_of_day",

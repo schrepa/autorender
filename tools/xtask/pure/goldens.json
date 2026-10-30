@@ -4,8 +4,8 @@
     "caches entities": 2167,
     "caches mismatches": 0,
     "terrain frames": 400,
-    "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141728, restored_tiles: 12, prefetching_tiles: 0, rewatered_tiles: 0, stale_water_tiles: 0, settled_records: 0, settling_records: 0, shaded_tiles: 5, shading_records: 0, dropped_tiles: 0, fallback_tiles: 0, baking: 0, lit: 2, lighting: 0, bounced: 1, bouncing: 0, colored: 0, coloring: 2, bridges: 3, tunnels: 1, falls: 0, white_water: 0, surroundings_tiles: 31, loading: false } | terrain tiles 854854a0fbb2ae0d drawn true | surroundings tiles a2eadb7ccd455bc5 drawn true",
-    "terrain trace": "9bcba51389360725"
+    "terrain last frame": "399: TerrainStats { terrains: 1, resident_tiles: 48, loading_tiles: 0, missing_tiles: 0, waiting_tiles: 0, cached_tiles: 4, cached_bytes: 1141728, restored_tiles: 12, prefetching_tiles: 0, rewatered_tiles: 0, stale_water_tiles: 0, settled_records: 0, settling_records: 0, shaded_tiles: 5, shading_records: 0, tile_cut: Cut { asked: 46, kept: 46, cut: 0 }, fallback_tiles: 0, baking: 0, lit: 2, lighting: 0, bounced: 1, bouncing: 0, colored: 0, coloring: 2, bridges: 3, tunnels: 1, falls: 0, white_water: 0, surroundings_tiles: 31, loading: false } | terrain tiles 854854a0fbb2ae0d drawn true | surroundings tiles a2eadb7ccd455bc5 drawn true",
+    "terrain trace": "0b4336b57ecc007d"
   },
   "gltf": {
     "gltf prefab": {
@@ -317,7 +317,6 @@
       "allowed": {
         "kind": "variants",
         "values": [
-          "AtmospherePreset",
           "AuthoredPlacement",
           "Biome",
           "BiomeLayer",
@@ -336,6 +335,7 @@
           "HummocksLayer",
           "HydrologyLayer",
           "Interior",
+          "LightPreset",
           "MacroCauses",
           "MeshSource",
           "NavAgent",
@@ -351,7 +351,6 @@
           "SceneAlongStreamed",
           "SceneAlphaMode",
           "SceneAmbientOcclusion",
-          "SceneAtmosphere",
           "SceneAutoExposure",
           "SceneBloom",
           "SceneCamera",
@@ -365,6 +364,7 @@
           "SceneEnvironment",
           "SceneFilter",
           "SceneFoliage",
+          "SceneGrading",
           "SceneGroundCover",
           "SceneGrounding",
           "SceneHaze",
@@ -394,11 +394,14 @@
           "SceneRigidBody",
           "SceneShadows",
           "SceneSky",
+          "SceneSkyLight",
           "SceneSkyOcclusion",
           "SceneSpline",
           "SceneSpot",
           "SceneSubpixelCulling",
+          "SceneSun",
           "SceneSurface",
+          "SceneSurfaceLight",
           "SceneSurroundings",
           "SceneTemporalAntialiasing",
           "SceneTerrain",
@@ -455,7 +458,6 @@
         "kind": "variants",
         "values": [
           "AmbientOcclusion",
-          "Atmosphere",
           "AutoExposure",
           "Bloom",
           "Camera",
@@ -468,6 +470,7 @@
           "Environment",
           "Foliage",
           "GlobalTransform",
+          "Grading",
           "GroundCover",
           "Grounded",
           "Haze",
@@ -498,11 +501,14 @@
           "RigidBody",
           "Shadows",
           "Sky",
+          "SkyLighting",
           "SkyOcclusion",
           "SplineMesh",
           "StaticTables",
           "StreamedId",
           "SubpixelCulling",
+          "Sunlight",
+          "SurfaceLight",
           "TemporalAntialiasing",
           "Terrain",
           "TerrainDebug",
@@ -585,9 +591,9 @@
     }
   },
   "scenes": {
-    "document components": "a4f67ea820c30360",
+    "document components": "579aabf70441730d",
     "document components counts": {
-      "bytes": 9360,
+      "bytes": 8070,
       "entities": 9,
       "materials": 3,
       "meshes": 3,
@@ -595,7 +601,7 @@
       "streamed": 2,
       "textures": 1
     },
-    "document garden": "86f341fff14e03ae",
+    "document garden": "cf8d80cd6a1e3306",
     "document garden counts": {
       "bytes": 95392,
       "entities": 30,
@@ -615,9 +621,9 @@
       "streamed": 0,
       "textures": 0
     },
-    "document terrain": "eb9c89e1a8fdef0e",
+    "document terrain": "4031aa1a0e2d8a2f",
     "document terrain counts": {
-      "bytes": 24606,
+      "bytes": 23356,
       "entities": 5,
       "materials": 2,
       "meshes": 2,
@@ -1184,7 +1190,7 @@
       "steepest": 0.016481399536132812,
       "tunnels": 1
     },
-    "bakes": "aee35efbf0d80860",
+    "bakes": "7cce146d6794e5f6",
     "bounce": {
       "blocks": 1024,
       "detailed blocks": 474,
@@ -1208,7 +1214,7 @@
       ],
       "texels": 65536
     },
-    "pack": "64a65567dbc9a50b",
+    "pack": "36dbd563348ba09d",
     "pack records": 46,
     "portals 0/0/0": "fb26e1b9f5bd9fd8",
     "portals 0/0/1": "29e88506dde27d87",

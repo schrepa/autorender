@@ -28,10 +28,10 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
 fn streams(session: &mut dyn SmokeSession, settled: &Value) -> Checked<()> {
     let terrain = &settled["terrain"];
     smoke_check!(
-        number(&terrain["leaves"]) > 0.0 && number(&terrain["triangles"]) > 0.0,
+        number(&terrain["leaf_cut"]["kept"]) > 0.0 && number(&terrain["triangles"]) > 0.0,
         "terrain_draws",
         terrain,
-        &json!({"leaves": above(0), "triangles": above(0)})
+        &json!({"leaf_cut": {"kept": above(0)}, "triangles": above(0)})
     );
     let shadows = inspect(session, "Shadows")?;
     let finer = number(&shadows["finest_texel"]) / 2.0;
@@ -293,7 +293,7 @@ fn detail(session: &mut dyn SmokeSession, ground: Entity) -> Checked<()> {
     let shaded = capture(session)?;
     let off = environment(session, json!({"terrain": {"enabled": false}}))?;
     smoke_eq!(
-        &off["rendering"]["terrain"]["leaves"],
+        &off["rendering"]["terrain"]["leaf_cut"]["kept"],
         &json!(0),
         "disabled_terrain_draws_nothing"
     );
@@ -473,10 +473,11 @@ fn freeze(session: &mut dyn SmokeSession) -> Checked<()> {
     control(session, "terrain", json!({"freeze": false}))?;
     let moved = subdivided(session)?;
     smoke_check!(
-        number(&moved["terrain"]["leaves"]) < number(&afar["terrain"]["leaves"]),
+        number(&moved["terrain"]["leaf_cut"]["kept"])
+            < number(&afar["terrain"]["leaf_cut"]["kept"]),
         "unfrozen_the_subdivision_coarsens",
-        &moved["terrain"]["leaves"],
-        &below(&afar["terrain"]["leaves"])
+        &moved["terrain"]["leaf_cut"]["kept"],
+        &below(&afar["terrain"]["leaf_cut"]["kept"])
     );
     camera(session, overview())?;
     settle(session)?;

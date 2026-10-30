@@ -58,13 +58,13 @@ fn cover(session: &mut dyn SmokeSession) -> Checked<()> {
         }),
     )?;
     let (grew, grown) = renders_until(session, WAIT_FRAMES, |rendering| {
-        number(&rendering["ground_cover"]["blades"]) > 0.0
+        number(&rendering["ground_cover"]["blade_cut"]["kept"]) > 0.0
     })?;
     smoke_check!(
         grew,
         "grass_grows",
         &grown["ground_cover"],
-        &json!({"blades": above(0)})
+        &json!({"blade_cut": {"kept": above(0)}})
     );
     smoke_eq!(
         &grown["ground_cover"]["blade_cut"]["cut"],
@@ -81,7 +81,7 @@ fn cover(session: &mut dyn SmokeSession) -> Checked<()> {
         bare = render(session)?;
     }
     smoke_eq!(
-        &bare["ground_cover"]["blades"],
+        &bare["ground_cover"]["blade_cut"]["kept"],
         &json!(0),
         "no_blades_once_cover_stops"
     );

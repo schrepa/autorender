@@ -157,7 +157,7 @@ fn drawn(rendering: &Value) -> Value {
     let terrain = &rendering["terrain"];
     json!({
         "tiles": terrain["tiles"],
-        "leaves": terrain["leaves"],
+        "leaves": terrain["leaf_cut"]["kept"],
         "triangles": terrain["triangles"],
         "shadow_patches": terrain["shadow_patches"],
         "placed_objects": terrain["placed_objects"],

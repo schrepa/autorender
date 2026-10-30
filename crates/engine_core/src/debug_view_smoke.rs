@@ -321,9 +321,11 @@ fn settle(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
 }
 
 fn quiet(shadows: &Value) -> bool {
-    ["tiles_missing", "tiles_drawn", "moving_tiles", "sky_drawn"]
-        .iter()
-        .all(|field| shadows[*field].as_u64() == Some(0))
+    shadows["tile_cut"]["cut"].as_u64() == Some(0)
+        && shadows["moving_cut"]["kept"].as_u64() == Some(0)
+        && ["tiles_drawn", "sky_drawn"]
+            .iter()
+            .all(|field| shadows[*field].as_u64() == Some(0))
 }
 
 fn present(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {

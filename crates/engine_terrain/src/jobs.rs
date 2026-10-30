@@ -590,7 +590,9 @@ impl TerrainWorker {
     }
 
     pub(crate) fn last_walk(&self) -> MutexGuard<'_, Option<WalkedTile>> {
-        self.last_walk.lock().unwrap_or_else(PoisonError::into_inner)
+        self.last_walk
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn share(&mut self, key: &str, bytes: impl Into<Arc<[u8]>>) -> Result<(), String> {

@@ -17,6 +17,8 @@ use serde_json::{Value, json};
 use crate::workspace::joined;
 use crate::{Package, Repository};
 
+type Smokes = Vec<(String, bool)>;
+
 pub const FILE: &str = "bricks.json";
 
 pub struct Recorded {
@@ -24,8 +26,8 @@ pub struct Recorded {
     pub krate: String,
     pub reads: Vec<String>,
     pub paths: Vec<String>,
-    pub smokes: Vec<(String, bool)>,
-    pub place_smokes: Vec<(String, bool)>,
+    pub smokes: Smokes,
+    pub place_smokes: Smokes,
     pub parts: Vec<String>,
 }
 
@@ -47,7 +49,7 @@ pub fn recorded(repository: &Repository) -> Result<Vec<Recorded>, String> {
             .map(str::to_owned)
             .collect()
     };
-    let smokes = |value: &Value| -> Vec<(String, bool)> {
+    let smokes = |value: &Value| -> Smokes {
         value
             .as_array()
             .into_iter()
@@ -58,7 +60,7 @@ pub fn recorded(repository: &Repository) -> Result<Vec<Recorded>, String> {
             })
             .collect()
     };
-    let places: Vec<(Vec<String>, Vec<(String, bool)>)> = file["places"]
+    let places: Vec<(Vec<String>, Smokes)> = file["places"]
         .as_array()
         .into_iter()
         .flatten()
@@ -470,7 +472,15 @@ pub fn bricks_json(repository: &Repository, engine: &mut Engine) -> Result<Strin
     let bricks = registry
         .bricks()
         .iter()
-        .map(|brick| record(brick, registry, repository, accessed.get(brick.name), &kinds))
+        .map(|brick| {
+            record(
+                brick,
+                registry,
+                repository,
+                accessed.get(brick.name),
+                &kinds,
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let text = serde_json::to_string_pretty(&json!({
         "bricks": bricks,

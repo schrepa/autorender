@@ -1,13 +1,6 @@
 {
   "inspectors": [
     {
-      "inspector": "Atmosphere",
-      "kind": "resource",
-      "smokes": [
-        "agent"
-      ]
-    },
-    {
       "inspector": "Camera",
       "kind": "resource",
       "smokes": [
@@ -57,6 +50,7 @@
       "inspector": "Grounded",
       "kind": "component",
       "smokes": [
+        "list_scene_components",
         "streamed_scene"
       ]
     },
@@ -215,6 +209,7 @@
       "inspector": "Tint",
       "kind": "component",
       "smokes": [
+        "list_scene_components",
         "surfaces"
       ]
     },
@@ -230,6 +225,7 @@
         "host_parity",
         "native",
         "physics",
+        "slot_physics",
         "streamed_scene",
         "texture",
         "world_streaming"
@@ -265,8 +261,26 @@
         "host_faults",
         "host_images",
         "host_parity",
+        "list_debug_view",
+        "list_ground_cover",
+        "list_particles",
+        "list_post_effects",
+        "list_probes",
+        "list_scatter",
+        "list_terrain_layers",
+        "list_terrain_shading",
+        "list_water",
         "native",
         "physics",
+        "slot_antialiasing",
+        "slot_exposure",
+        "slot_lighting",
+        "slot_lights",
+        "slot_meshes",
+        "slot_shadows",
+        "slot_sky",
+        "slot_sun",
+        "slot_tonemap",
         "spline",
         "surfaces",
         "terrain_draws"
@@ -330,6 +344,7 @@
         "host_faults",
         "host_images",
         "host_parity",
+        "list_detail_consumers",
         "native"
       ]
     },
@@ -416,6 +431,7 @@
         "host_faults",
         "host_images",
         "host_parity",
+        "list_world_solids",
         "plugins",
         "streamed_scene"
       ]
@@ -504,10 +520,31 @@
         "host_faults",
         "host_images",
         "host_parity",
+        "list_debug_view",
+        "list_detail_consumers",
+        "list_ground_cover",
+        "list_particles",
+        "list_post_effects",
+        "list_probes",
+        "list_scatter",
+        "list_terrain_shading",
+        "list_water",
+        "list_water_bodies",
+        "list_world_solids",
         "lit_meshes_frames",
         "meshes",
         "native",
         "plugins",
+        "slot_antialiasing",
+        "slot_exposure",
+        "slot_ground",
+        "slot_lighting",
+        "slot_lights",
+        "slot_meshes",
+        "slot_shadows",
+        "slot_sky",
+        "slot_sun",
+        "slot_tonemap",
         "spline",
         "streamed_scene",
         "surfaces",
@@ -540,6 +577,7 @@
         "host_parity",
         "input_camera",
         "input_keys",
+        "list_detail_consumers",
         "lit_meshes_frames",
         "native",
         "temporal_antialiasing",
@@ -555,7 +593,24 @@
         "host_faults",
         "host_images",
         "host_parity",
+        "list_debug_view",
+        "list_ground_cover",
+        "list_particles",
+        "list_post_effects",
+        "list_probes",
+        "list_scatter",
+        "list_terrain_shading",
+        "list_water",
         "native",
+        "slot_antialiasing",
+        "slot_exposure",
+        "slot_lighting",
+        "slot_lights",
+        "slot_meshes",
+        "slot_shadows",
+        "slot_sky",
+        "slot_sun",
+        "slot_tonemap",
         "temporal_antialiasing"
       ]
     },
@@ -612,11 +667,33 @@
         "host_faults",
         "host_images",
         "host_parity",
+        "list_debug_view",
+        "list_detail_consumers",
+        "list_ground_cover",
+        "list_particles",
+        "list_post_effects",
+        "list_probes",
+        "list_scatter",
+        "list_terrain_shading",
+        "list_water",
+        "list_water_bodies",
+        "list_world_solids",
         "lit_meshes_frames",
         "meshes",
         "native",
         "physics",
         "plugins",
+        "slot_antialiasing",
+        "slot_exposure",
+        "slot_ground",
+        "slot_lighting",
+        "slot_lights",
+        "slot_meshes",
+        "slot_physics",
+        "slot_shadows",
+        "slot_sky",
+        "slot_sun",
+        "slot_tonemap",
         "spline",
         "streamed_scene",
         "surfaces",
@@ -710,8 +787,28 @@
         "highlands_jobs",
         "highlands_pond",
         "highlands_torrent",
+        "list_debug_view",
+        "list_ground_cover",
+        "list_particles",
+        "list_post_effects",
+        "list_probes",
+        "list_scatter",
+        "list_terrain_shading",
+        "list_water",
+        "list_water_bodies",
+        "list_world_solids",
         "lit_meshes_frames",
         "plugins",
+        "slot_antialiasing",
+        "slot_exposure",
+        "slot_ground",
+        "slot_lighting",
+        "slot_lights",
+        "slot_meshes",
+        "slot_shadows",
+        "slot_sky",
+        "slot_sun",
+        "slot_tonemap",
         "streamed_scene",
         "terrain_draws",
         "terrain_shapes",
@@ -771,6 +868,267 @@
       ]
     }
   ],
+  "places": [
+    {
+      "kind": "slot",
+      "members": [
+        "terrain"
+      ],
+      "place": "ground",
+      "smokes": [
+        "slot_ground"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "terrain",
+        "shadows",
+        "lights",
+        "reflection_probes",
+        "ground_cover",
+        "water",
+        "particles",
+        "level_of_detail"
+      ],
+      "place": "detail_consumers",
+      "smokes": [
+        "list_detail_consumers"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "terrain"
+      ],
+      "place": "world_solids",
+      "smokes": [
+        "list_world_solids"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "terrain"
+      ],
+      "place": "water_bodies",
+      "smokes": [
+        "list_water_bodies"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "terrain",
+        "layer_noise",
+        "layer_stamps",
+        "layer_heightmap",
+        "layer_paths",
+        "layer_erosion",
+        "layer_hydrology",
+        "layer_relief"
+      ],
+      "place": "terrain_layers",
+      "smokes": [
+        "list_terrain_layers"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "navigation",
+        "collision",
+        "physics"
+      ],
+      "place": "scene_components",
+      "smokes": [
+        "list_scene_components"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "physics"
+      ],
+      "place": "physics",
+      "smokes": [
+        "slot_physics"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "sun"
+      ],
+      "place": "sun",
+      "smokes": [
+        "slot_sun"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "lighting_model"
+      ],
+      "place": "lighting",
+      "smokes": [
+        "slot_lighting"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "meshes"
+      ],
+      "place": "meshes",
+      "smokes": [
+        "slot_meshes"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "terrain_shading"
+      ],
+      "place": "terrain_shading",
+      "smokes": [
+        "list_terrain_shading"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "scatter"
+      ],
+      "place": "scatter",
+      "smokes": [
+        "list_scatter"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "shadows"
+      ],
+      "place": "shadows",
+      "smokes": [
+        "slot_shadows"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "lights"
+      ],
+      "place": "lights",
+      "smokes": [
+        "slot_lights"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "sky"
+      ],
+      "place": "sky",
+      "smokes": [
+        "slot_sky"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "reflection_probes"
+      ],
+      "place": "probes",
+      "smokes": [
+        "list_probes"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "ground_cover"
+      ],
+      "place": "ground_cover",
+      "smokes": [
+        "list_ground_cover"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "water"
+      ],
+      "place": "water",
+      "smokes": [
+        "list_water"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "ambient_occlusion",
+        "reflections",
+        "bloom",
+        "dither"
+      ],
+      "place": "post_effects",
+      "smokes": [
+        "list_post_effects"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "particles"
+      ],
+      "place": "particles",
+      "smokes": [
+        "list_particles"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "taa"
+      ],
+      "place": "antialiasing",
+      "smokes": [
+        "slot_antialiasing"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "auto_exposure"
+      ],
+      "place": "exposure",
+      "smokes": [
+        "slot_exposure"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "tonemap"
+      ],
+      "place": "tonemap",
+      "smokes": [
+        "slot_tonemap"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "debug_view"
+      ],
+      "place": "debug_view",
+      "smokes": [
+        "list_debug_view"
+      ]
+    }
+  ],
   "sections": [
     {
       "inspector": "TerrainSettings",
@@ -782,21 +1140,33 @@
         "highlands_jobs",
         "highlands_pond",
         "highlands_torrent",
+        "list_debug_view",
+        "list_ground_cover",
+        "list_particles",
+        "list_post_effects",
+        "list_probes",
+        "list_scatter",
+        "list_terrain_shading",
+        "list_water",
+        "list_water_bodies",
+        "list_world_solids",
         "lit_meshes_frames",
         "plugins",
+        "slot_antialiasing",
+        "slot_exposure",
+        "slot_ground",
+        "slot_lighting",
+        "slot_lights",
+        "slot_meshes",
+        "slot_shadows",
+        "slot_sky",
+        "slot_sun",
+        "slot_tonemap",
         "streamed_scene",
         "terrain_draws",
         "terrain_shapes",
         "terrain_surface",
         "terrain_water_sky"
-      ],
-      "stats": true
-    },
-    {
-      "inspector": "GroundCover",
-      "section": "ground_cover",
-      "smokes": [
-        "terrain_surface"
       ],
       "stats": true
     },
@@ -808,25 +1178,6 @@
         "terrain_water_sky"
       ],
       "stats": false
-    },
-    {
-      "inspector": "Occupancy",
-      "section": "occupancy",
-      "smokes": [
-        "terrain_surface"
-      ],
-      "stats": true
-    },
-    {
-      "inspector": "Water",
-      "section": "water",
-      "smokes": [
-        "debug_view_terrain",
-        "highlands_jobs",
-        "highlands_torrent",
-        "terrain_water_sky"
-      ],
-      "stats": true
     },
     {
       "inspector": "WorldStreaming",
@@ -865,6 +1216,25 @@
       "stats": true
     },
     {
+      "inspector": "Sunlight",
+      "section": "sun",
+      "smokes": [
+        "agent",
+        "native",
+        "terrain_water_sky"
+      ],
+      "stats": false
+    },
+    {
+      "inspector": "SurfaceLight",
+      "section": "surface_light",
+      "smokes": [
+        "agent",
+        "native"
+      ],
+      "stats": false
+    },
+    {
       "inspector": "Highlights",
       "section": "highlights",
       "smokes": [
@@ -881,6 +1251,14 @@
         "temporal_antialiasing"
       ],
       "stats": false
+    },
+    {
+      "inspector": "Occupancy",
+      "section": "occupancy",
+      "smokes": [
+        "terrain_surface"
+      ],
+      "stats": true
     },
     {
       "inspector": "Shadows",
@@ -956,10 +1334,41 @@
       "stats": false
     },
     {
+      "inspector": "SkyLighting",
+      "section": "sky_light",
+      "smokes": [
+        "agent",
+        "native",
+        "terrain_water_sky"
+      ],
+      "stats": false
+    },
+    {
       "inspector": "ReflectionProbeSettings",
       "section": "reflection_probes",
       "smokes": [
         "debug_view",
+        "terrain_water_sky"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "GroundCover",
+      "section": "ground_cover",
+      "smokes": [
+        "terrain_surface"
+      ],
+      "stats": true
+    },
+    {
+      "inspector": "Water",
+      "section": "water",
+      "smokes": [
+        "debug_view_terrain",
+        "highlands_jobs",
+        "highlands_torrent",
+        "list_water_bodies",
+        "slot_ground",
         "terrain_water_sky"
       ],
       "stats": true
@@ -1028,6 +1437,15 @@
       "section": "auto_exposure",
       "smokes": [
         "terrain_water_sky"
+      ],
+      "stats": false
+    },
+    {
+      "inspector": "Grading",
+      "section": "grading",
+      "smokes": [
+        "agent",
+        "native"
       ],
       "stats": false
     },

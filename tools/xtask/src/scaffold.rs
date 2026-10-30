@@ -18,8 +18,7 @@ const TEMPLATE_GAME: &str = "#[path = \"../../engine/examples/app_template.rs\"]
 
 const TEMPLATE_IMPORTS: &str = "use engine_settings::{InvalidSetting, settings};\n";
 
-const CORE_IMPORTS: &str =
-    "use engine_core::{Brick, BrickStats, Bricks, Engine, EnvironmentSection, Error, Presentation};\n";
+const CORE_IMPORTS: &str = "use engine_core::{Brick, BrickStats, Bricks, Engine, EnvironmentSection, Error, Presentation};\n";
 
 const SLOT_IMPORTS: &str = "use engine_core::{
     Brick, BrickStats, Bricks, Engine, EnvironmentSection, Error, Place, Presentation,

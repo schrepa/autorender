@@ -58,6 +58,12 @@ export interface CullingResult {
   temporary: boolean;
 }
 
+export interface Cut {
+  asked: number;
+  cut: number;
+  kept: number;
+}
+
 export interface DebugFaultResult {
   injected: boolean;
 }
@@ -473,7 +479,6 @@ export interface TerrainStats {
   cached_tiles: number;
   colored: number;
   coloring: number;
-  dropped_tiles: number;
   fallback_tiles: number;
   falls: number;
   lighting: number;
@@ -492,6 +497,7 @@ export interface TerrainStats {
   stale_water_tiles: number;
   surroundings_tiles: number;
   terrains: number;
+  tile_cut: Cut;
   tunnels: number;
   waiting_tiles: number;
   white_water: number;

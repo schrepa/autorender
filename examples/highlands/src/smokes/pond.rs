@@ -31,8 +31,8 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     holds_water(session)?;
     floats(session, body)?;
     draws(session, pond)?;
-    run_place(session, "water")?;
-    run_place(session, "water_bodies")
+    run_place(session, "water_bodies")?;
+    run_place(session, "water")
 }
 
 fn authored() -> Pond {

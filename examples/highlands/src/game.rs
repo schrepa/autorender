@@ -54,6 +54,7 @@ impl Highlands {
 
 engine::__if_dev! {
     impl Highlands {
+        #[cfg(any(feature = "dev", target_arch = "wasm32"))]
         pub(crate) fn played(
             options: Options,
             source: Option<&str>,

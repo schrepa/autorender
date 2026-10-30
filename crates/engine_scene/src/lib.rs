@@ -34,9 +34,9 @@ pub use document::{
 };
 pub use engine_core::EnvironmentSection;
 pub use engine_core::{parse_json, parse_value};
+pub use environment::SceneEnvironment;
 #[cfg(feature = "schema")]
 pub use environment::section_schemas;
-pub use environment::SceneEnvironment;
 pub use files::{
     MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshStreams, SceneFile, SceneFileKind, SceneFiles,
     decode_mesh_buffer, encode_mesh_buffer, encode_mesh_buffer_with,

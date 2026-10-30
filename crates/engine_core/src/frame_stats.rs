@@ -162,7 +162,6 @@ pub struct ShadowStats {
     pub tiles_resident: u32,
     pub tiles_drawn: u32,
     pub tiles_reclaimed: u32,
-    pub moving_tiles: u32,
     pub casters: Option<u32>,
     pub moving_casters: Option<u32>,
     pub sky_maps: u32,
@@ -213,7 +212,6 @@ pub struct TerrainBounceStats {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TerrainRenderStats {
-    pub leaves: u32,
     pub triangles: u32,
     pub shallow_subdivisions: u32,
     pub shadow_patches: u32,
@@ -240,7 +238,6 @@ pub struct TerrainRenderStats {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct GroundCoverStats {
-    pub blades: u32,
     pub reach: u32,
     pub tiers: u32,
     pub blade_cut: Cut,
@@ -256,10 +253,8 @@ pub struct OccupancyStats {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WaterStats {
-    pub leaves: u32,
     pub blocks: u32,
     pub dropped_blocks: u32,
-    pub live_cells: u32,
     pub live_cut: u32,
     pub live_steps: u32,
     pub live_behind: u32,

@@ -296,7 +296,7 @@ impl ShadowPass {
         }
     }
 
-    fn caster_counts(&self) -> Option<[u32; 3]> {
+    fn caster_counts(&self) -> Option<[u32; 2]> {
         self.selection.caster_counts()
     }
 
@@ -939,7 +939,6 @@ impl GpuPart for ShadowPass {
             tiles_resident: tiles.resident,
             tiles_drawn: tiles.drawn,
             tiles_reclaimed: tiles.reclaimed,
-            moving_tiles: tiles.moving,
             casters: casters.map(|casters| casters[0]),
             moving_casters: casters.map(|casters| casters[1]),
             sky_maps,

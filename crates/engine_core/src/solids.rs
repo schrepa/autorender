@@ -221,7 +221,12 @@ fn answered(session: &mut dyn SmokeSession, members: &[&'static str]) -> SmokeRe
         .copied()
         .filter(|brick| !joined.contains(brick))
         .collect();
-    smoke_check!(missing.is_empty(), "members_answer_world_solids", missing, json!([]));
+    smoke_check!(
+        missing.is_empty(),
+        "members_answer_world_solids",
+        missing,
+        json!([])
+    );
     Ok(())
 }
 
@@ -229,7 +234,9 @@ fn seen(session: &mut dyn SmokeSession) -> (u64, usize) {
     let world = session.app().world();
     world
         .get_resource::<WorldSolids>()
-        .map_or((0, 0), |solids| (solids.revision(world), solids.fields(world).len()))
+        .map_or((0, 0), |solids| {
+            (solids.revision(world), solids.fields(world).len())
+        })
 }
 
 fn settled(session: &mut dyn SmokeSession) -> SmokeResult {
@@ -298,8 +305,9 @@ fn meets_ground(session: &mut dyn SmokeSession) -> SmokeResult {
         }),
     )?;
     let hit = number(&found["hit"]["point"][1]);
+    let met = (hit - f64::from(probe.height)).abs() <= HEIGHT_WITHIN;
     smoke_check!(
-        (hit - f64::from(probe.height)).abs() <= HEIGHT_WITHIN,
+        met,
         "raycast_meets_ground",
         found["hit"],
         near(probe.height, HEIGHT_WITHIN)

@@ -2,7 +2,9 @@
 
 use crate::pipeline_layouts::PARTICLE_PIPELINES;
 use crate::shaders::entry::particles;
-use engine_core::{Cut, ParticleBlend, ParticleSettings, ParticleStats, RenderEmitter, RenderStats};
+use engine_core::{
+    Cut, ParticleBlend, ParticleSettings, ParticleStats, RenderEmitter, RenderStats,
+};
 use engine_render::bindings::GroupRef;
 use engine_render::graph::{GraphTable, ResourceId, Targets};
 use engine_render::parts::{

@@ -4,8 +4,8 @@ use serde_json::{Value, json};
 
 use crate::smoke::{SmokeResult, SmokeSession, control, render};
 use crate::{
-    BrickList, BrickRegistry, Ground, GroundPoint, GroundSlot, List, Slot, TILE_QUADS,
-    WaterBodies, WaterBodiesList, WaterFace,
+    BrickList, BrickRegistry, Ground, GroundPoint, GroundSlot, List, Slot, TILE_QUADS, WaterBodies,
+    WaterBodiesList, WaterFace,
 };
 
 const TILES: u32 = 2;
@@ -176,8 +176,9 @@ fn sampled(world: &World, body: &'static str, face: &dyn WaterFace) -> SmokeResu
             continue;
         };
         let found = json!({ "body": body, "at": [x, z], "water": water, "ground": ground });
+        let dry_or_deep = water.depth >= 0.0;
         crate::smoke_check!(
-            water.depth >= 0.0,
+            dry_or_deep,
             "water_depth_is_not_negative",
             &found,
             &json!({ "depth": { "at_least": 0.0 } })

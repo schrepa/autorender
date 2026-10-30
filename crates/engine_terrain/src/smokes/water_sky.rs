@@ -120,10 +120,10 @@ fn water(session: &mut dyn SmokeSession) -> Checked<()> {
     camera(session, overview())?;
     let wet = environment(session, json!({ "water": settings }))?;
     smoke_check!(
-        number(&wet["rendering"]["water"]["leaves"]) > 0.0,
+        number(&wet["rendering"]["water"]["leaf_cut"]["kept"]) > 0.0,
         "water_draws",
         &wet["rendering"]["water"],
-        &json!({"leaves": above(0)})
+        &json!({"leaf_cut": {"kept": above(0)}})
     );
     let with_water = capture(session)?;
     environment(

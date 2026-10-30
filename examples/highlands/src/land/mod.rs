@@ -150,6 +150,7 @@ pub(crate) fn populate(
     bodies: u32,
 ) -> engine::Result<()> {
     let (path, terrain) = scene_terrain(document)?;
+    let terrain = &terrain;
     let origin = Vec2::new(terrain.origin[0], terrain.origin[2]);
     let (at, road) = scene_layer(terrain, &path, ROAD)?;
     let road = parse_value_at::<Vec<[f32; 2]>>(road["points"].clone(), &format!("{at}.points"))?;
@@ -165,16 +166,20 @@ pub(crate) fn populate(
     Ok(())
 }
 
-fn scene_terrain(document: &SceneDocument) -> engine::Result<(String, &SceneTerrain)> {
+fn scene_terrain(document: &SceneDocument) -> engine::Result<(String, SceneTerrain)> {
     document
         .entities
         .iter()
         .enumerate()
         .find_map(|(index, entity)| {
             let path = format!("$.entities[{index}].terrain");
-            entity.terrain.as_ref().map(|terrain| (path, terrain))
+            entity.component("terrain").map(|terrain| (path, terrain))
         })
         .ok_or_else(|| Error::new(ErrorCode::GameRule, "$.entities").expected(Expected::Present))
+        .and_then(|(path, terrain)| {
+            let terrain = parse_value_at(terrain.clone(), &path)?;
+            Ok((path, terrain))
+        })
 }
 
 fn scene_layer<'a>(

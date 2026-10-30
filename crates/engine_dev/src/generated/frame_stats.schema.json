@@ -182,12 +182,35 @@
       ],
       "type": "object"
     },
-    "DetailStats": {
+    "Cut": {
       "properties": {
-        "dropped_impostors": {
+        "asked": {
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "cut": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kept": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "asked",
+        "kept",
+        "cut"
+      ],
+      "type": "object"
+    },
+    "DetailStats": {
+      "properties": {
+        "impostor_cut": {
+          "$ref": "#/$defs/Cut"
         },
         "impostor_instances": {
           "format": "uint32",
@@ -234,33 +257,8 @@
       },
       "required": [
         "impostors",
-        "dropped_impostors",
-        "meshes_without_levels"
-      ],
-      "type": "object"
-    },
-    "Drawn": {
-      "properties": {
-        "drawn": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "dropped": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "invalid": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        }
-      },
-      "required": [
-        "drawn",
-        "dropped",
-        "invalid"
+        "meshes_without_levels",
+        "impostor_cut"
       ],
       "type": "object"
     },
@@ -313,15 +311,8 @@
     },
     "GroundCoverStats": {
       "properties": {
-        "blades": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "dropped": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
+        "blade_cut": {
+          "$ref": "#/$defs/Cut"
         },
         "reach": {
           "format": "uint32",
@@ -335,10 +326,9 @@
         }
       },
       "required": [
-        "blades",
-        "dropped",
         "reach",
-        "tiers"
+        "tiers",
+        "blade_cut"
       ],
       "type": "object"
     },
@@ -435,23 +425,16 @@
     },
     "LightStats": {
       "properties": {
-        "cluster_overflow": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "dropped": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
+        "cluster_cut": {
+          "$ref": "#/$defs/Cut"
         },
         "invalid": {
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "light_cut": {
+          "$ref": "#/$defs/Cut"
         },
         "shaded": {
           "format": "uint32",
@@ -469,8 +452,9 @@
       },
       "required": [
         "shaded",
-        "dropped",
-        "invalid"
+        "invalid",
+        "light_cut",
+        "cluster_cut"
       ],
       "type": "object"
     },
@@ -554,6 +538,29 @@
       ],
       "type": "object"
     },
+    "ParticleStats": {
+      "properties": {
+        "drawn": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "invalid": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "particle_cut": {
+          "$ref": "#/$defs/Cut"
+        }
+      },
+      "required": [
+        "drawn",
+        "invalid",
+        "particle_cut"
+      ],
+      "type": "object"
+    },
     "PhysicsStats": {
       "properties": {
         "awake": {
@@ -605,15 +612,13 @@
     },
     "ProbeStats": {
       "properties": {
-        "dropped": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "faces": {
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "probe_cut": {
+          "$ref": "#/$defs/Cut"
         },
         "ready": {
           "format": "uint32",
@@ -624,7 +629,7 @@
       "required": [
         "ready",
         "faces",
-        "dropped"
+        "probe_cut"
       ],
       "type": "object"
     },
@@ -698,18 +703,8 @@
             "null"
           ]
         },
-        "moving_left_out": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "moving_tiles": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
+        "moving_cut": {
+          "$ref": "#/$defs/Cut"
         },
         "sky_drawn": {
           "format": "uint32",
@@ -721,17 +716,15 @@
           "minimum": 0,
           "type": "integer"
         },
+        "tile_cut": {
+          "$ref": "#/$defs/Cut"
+        },
         "tiles_drawn": {
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "tiles_marked": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "tiles_missing": {
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -754,10 +747,10 @@
         "tiles_resident",
         "tiles_drawn",
         "tiles_reclaimed",
-        "tiles_missing",
-        "moving_tiles",
         "sky_maps",
-        "sky_drawn"
+        "sky_drawn",
+        "tile_cut",
+        "moving_cut"
       ],
       "type": "object"
     },
@@ -844,10 +837,8 @@
           "minimum": 0,
           "type": "integer"
         },
-        "leaves": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
+        "leaf_cut": {
+          "$ref": "#/$defs/Cut"
         },
         "lighting_uploads": {
           "format": "uint32",
@@ -879,11 +870,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "refused_splits": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "shadow_patches": {
           "format": "uint32",
           "minimum": 0,
@@ -898,6 +884,9 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "tile_cut": {
+          "$ref": "#/$defs/Cut"
         },
         "tiles": {
           "format": "uint32",
@@ -916,9 +905,7 @@
         }
       },
       "required": [
-        "leaves",
         "triangles",
-        "refused_splits",
         "shallow_subdivisions",
         "shadow_patches",
         "tiles",
@@ -936,7 +923,9 @@
         "placed_far_objects",
         "placed_impostors",
         "dropped_placed_objects",
-        "white_water"
+        "white_water",
+        "tile_cut",
+        "leaf_cut"
       ],
       "type": "object"
     },
@@ -946,6 +935,9 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "cell_cut": {
+          "$ref": "#/$defs/Cut"
         },
         "dropped_blocks": {
           "format": "uint32",
@@ -962,6 +954,9 @@
           "minimum": 0,
           "type": "integer"
         },
+        "foam_cut": {
+          "$ref": "#/$defs/Cut"
+        },
         "foam_particles": {
           "format": "uint32",
           "minimum": 0,
@@ -972,32 +967,15 @@
           "minimum": 0,
           "type": "integer"
         },
-        "foam_points_cut": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "foam_reach": {
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
-        "leaves": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
+        "leaf_cut": {
+          "$ref": "#/$defs/Cut"
         },
         "live_behind": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "live_budget_cut": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "live_cells": {
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
@@ -1032,11 +1010,6 @@
           "minimum": 0,
           "type": "integer"
         },
-        "refused": {
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
         "touches": {
           "format": "uint32",
           "minimum": 0,
@@ -1049,12 +1022,8 @@
         }
       },
       "required": [
-        "leaves",
-        "refused",
         "blocks",
         "dropped_blocks",
-        "live_cells",
-        "live_budget_cut",
         "live_cut",
         "live_steps",
         "live_behind",
@@ -1064,12 +1033,14 @@
         "dropped_touches",
         "particle_texels",
         "foam_points",
-        "foam_points_cut",
         "foam_reach",
         "foam_particles",
         "wave_particles",
         "particles_born",
-        "dropped_particles"
+        "dropped_particles",
+        "cell_cut",
+        "foam_cut",
+        "leaf_cut"
       ],
       "type": "object"
     }
@@ -1188,7 +1159,7 @@
       "$ref": "#/$defs/OccupancyStats"
     },
     "particles": {
-      "$ref": "#/$defs/Drawn"
+      "$ref": "#/$defs/ParticleStats"
     },
     "physics": {
       "$ref": "#/$defs/PhysicsStats"

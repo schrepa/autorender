@@ -220,11 +220,7 @@ impl Taa {
             current_weight: CURRENT_WEIGHT,
             history_valid: u32::from(history_valid),
             options: [
-                if dithered {
-                    turn
-                } else {
-                    0.0
-                },
+                if dithered { turn } else { 0.0 },
                 f32::from(u8::from(settings.nearest_motion)),
                 f32::from(u8::from(settings.rounded_clamp)),
                 settings.particle_response,

@@ -106,7 +106,11 @@ fn validate_spline(value: &Value, path: &str) -> Result<(), Error> {
 fn prepare_spline(value: &Value, context: &ComponentContext<'_>) -> Prepared {
     let spline: SceneSpline = parsed(value, context.path)?;
     let document = context.document;
-    let meshes: BTreeSet<&str> = document.meshes.iter().map(|mesh| mesh.id.as_str()).collect();
+    let meshes: BTreeSet<&str> = document
+        .meshes
+        .iter()
+        .map(|mesh| mesh.id.as_str())
+        .collect();
     let materials: BTreeSet<&str> = document
         .materials
         .iter()

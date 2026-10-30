@@ -226,9 +226,11 @@ impl GpuPart for DebugViewPass {
         self.view.create(device, "engine/debug-view", || {
             DebugTargets::new(device, format)
         });
-        self.frame = self.view.get_mut().zip(targets).map(|(view, targets)| {
-            view.prepare(device, queue, targets, settings, sun)
-        });
+        self.frame = self
+            .view
+            .get_mut()
+            .zip(targets)
+            .map(|(view, targets)| view.prepare(device, queue, targets, settings, sun));
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {

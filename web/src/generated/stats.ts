@@ -26,7 +26,7 @@ export interface FrameStats {
   navigation: NavStats;
   occlusion_culling: CullingStats;
   occupancy: OccupancyStats;
-  particles: Drawn;
+  particles: ParticleStats;
   physics: PhysicsStats;
   pipelines: number;
   pipelines_compiling: boolean;
@@ -101,20 +101,20 @@ export interface CullingStats {
   instances: number | null;
 }
 
+export interface Cut {
+  asked: number;
+  cut: number;
+  kept: number;
+}
+
 export interface DetailStats {
-  dropped_impostors: number;
+  impostor_cut: Cut;
   impostor_instances: number | null;
   impostors: number;
   lod0_instances: number | null;
   lod1_instances: number | null;
   lod2_instances: number | null;
   meshes_without_levels: number;
-}
-
-export interface Drawn {
-  drawn: number;
-  dropped: number;
-  invalid: number;
 }
 
 export interface DynamicResolutionStats {
@@ -131,8 +131,7 @@ export interface ExposureStats {
 }
 
 export interface GroundCoverStats {
-  blades: number;
-  dropped: number;
+  blade_cut: Cut;
   reach: number;
   tiers: number;
 }
@@ -155,9 +154,9 @@ export interface JobStats {
 }
 
 export interface LightStats {
-  cluster_overflow: number | null;
-  dropped: number;
+  cluster_cut: Cut;
   invalid: number;
+  light_cut: Cut;
   shaded: number;
   visible: number | null;
 }
@@ -179,6 +178,12 @@ export interface OccupancyStats {
   redraws: number;
 }
 
+export interface ParticleStats {
+  drawn: number;
+  invalid: number;
+  particle_cut: Cut;
+}
+
 export interface PhysicsStats {
   awake: number;
   bodies: number;
@@ -190,8 +195,8 @@ export interface PhysicsStats {
 }
 
 export interface ProbeStats {
-  dropped: number;
   faces: number;
+  probe_cut: Cut;
   ready: number;
 }
 
@@ -209,13 +214,12 @@ export interface ShadowStats {
   casters: number | null;
   draws: number;
   moving_casters: number | null;
-  moving_left_out: number | null;
-  moving_tiles: number;
+  moving_cut: Cut;
   sky_drawn: number;
   sky_maps: number;
+  tile_cut: Cut;
   tiles_drawn: number;
   tiles_marked: number;
-  tiles_missing: number;
   tiles_reclaimed: number;
   tiles_resident: number;
 }
@@ -240,17 +244,17 @@ export interface TerrainRenderStats {
   fallback_tiles: number;
   gpu_controls: number;
   horizons: number;
-  leaves: number;
+  leaf_cut: Cut;
   lighting_uploads: number;
   loading_tiles: number;
   macro_maps: number;
   placed_far_objects: number;
   placed_impostors: number;
   placed_objects: number;
-  refused_splits: number;
   shadow_patches: number;
   shallow_subdivisions: number;
   sky_maps: number;
+  tile_cut: Cut;
   tiles: number;
   triangles: number;
   white_water: number;
@@ -258,24 +262,22 @@ export interface TerrainRenderStats {
 
 export interface WaterStats {
   blocks: number;
+  cell_cut: Cut;
   dropped_blocks: number;
   dropped_particles: number;
   dropped_touches: number;
+  foam_cut: Cut;
   foam_particles: number;
   foam_points: number;
-  foam_points_cut: number;
   foam_reach: number;
-  leaves: number;
+  leaf_cut: Cut;
   live_behind: number;
-  live_budget_cut: number;
-  live_cells: number;
   live_cut: number;
   live_setup: number;
   live_steps: number;
   live_waiting: number;
   particle_texels: number;
   particles_born: number;
-  refused: number;
   touches: number;
   wave_particles: number;
 }

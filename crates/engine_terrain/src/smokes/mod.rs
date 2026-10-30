@@ -95,7 +95,7 @@ pub fn settle(session: &mut dyn SmokeSession) -> Checked<Value> {
 pub fn subdivided(session: &mut dyn SmokeSession) -> Checked<Value> {
     let (mut last, mut held) = (Value::Null, 0);
     let (steady, rendering) = renders_until(session, WAIT_FRAMES, |rendering| {
-        let leaves = &rendering["terrain"]["leaves"];
+        let leaves = &rendering["terrain"]["leaf_cut"]["kept"];
         held = if *leaves == last { held + 1 } else { 0 };
         last = leaves.clone();
         held >= 16
@@ -103,7 +103,7 @@ pub fn subdivided(session: &mut dyn SmokeSession) -> Checked<Value> {
     smoke_check!(
         steady,
         "the_subdivision_settles",
-        &rendering["terrain"]["leaves"],
+        &rendering["terrain"]["leaf_cut"]["kept"],
         &json!({ "steady_frames": 16 })
     );
     Ok(rendering)

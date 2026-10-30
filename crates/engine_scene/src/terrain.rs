@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 use crate::bricks::added;
 use crate::components::{
-    ComponentContext, ComponentKind, Placement, Prepared, PreparedComponent, admitted, no_files,
+    ComponentContext, ComponentKind, Placement, Prepared, PreparedComponent, no_files,
     object_example, parsed, ruled, valid_world,
 };
 use crate::instance::Lookups;
@@ -187,9 +187,7 @@ impl SceneTerrainCollider {
     pub(crate) fn runtime(self) -> PlacedCollider {
         PlacedCollider {
             shape: match self.shape {
-                SceneColliderShape::Cuboid { half_extents } => {
-                    PlacedShape::Cuboid { half_extents }
-                }
+                SceneColliderShape::Cuboid { half_extents } => PlacedShape::Cuboid { half_extents },
                 SceneColliderShape::Sphere { radius } => PlacedShape::Sphere { radius },
             },
             center: self.center,

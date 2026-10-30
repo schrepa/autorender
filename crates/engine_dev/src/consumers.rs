@@ -8,7 +8,9 @@ pub(crate) fn check(registry: &BrickRegistry, stats: &Value, problems: &mut Vec<
     for (brick, consumer) in registry.consumers() {
         let name = consumer.name;
         if names.contains(&name) {
-            problems.push(format!("detail consumer {name} ({brick}) is registered twice"));
+            problems.push(format!(
+                "detail consumer {name} ({brick}) is registered twice"
+            ));
         }
         names.push(name);
         let named = consumer

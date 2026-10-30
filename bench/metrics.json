@@ -255,17 +255,6 @@
       "direction": null
     },
     {
-      "name": "ground_cover.blades",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "ground_cover.blade_cut.asked",
       "kind": "work",
       "rule": "shown",
@@ -1333,17 +1322,6 @@
       "direction": null
     },
     {
-      "name": "shadows.moving_tiles",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "shadows.sky_drawn",
       "kind": "work",
       "rule": "shown",
@@ -1674,17 +1652,6 @@
       "direction": null
     },
     {
-      "name": "terrain.leaves",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "terrain.lighting_uploads",
       "kind": "work",
       "rule": "shown",
@@ -1993,17 +1960,6 @@
       "direction": null
     },
     {
-      "name": "water.leaves",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
-    },
-    {
       "name": "water.live_behind",
       "kind": "work",
       "rule": "not-above",
@@ -2046,17 +2002,6 @@
       ],
       "unit": "count",
       "direction": "lower"
-    },
-    {
-      "name": "water.live_cells",
-      "kind": "work",
-      "rule": "shown",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": null
     },
     {
       "name": "water.live_cut",

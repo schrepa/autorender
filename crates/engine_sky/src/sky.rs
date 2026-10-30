@@ -44,7 +44,11 @@ const DERIVED_BYTES: u64 = 7 * 16;
 
 pub(crate) const FACES: usize = 6;
 
-pub(crate) type AirBindings<'a> = (&'a wgpu::TextureView, &'a wgpu::TextureView, &'a wgpu::Sampler);
+pub(crate) type AirBindings<'a> = (
+    &'a wgpu::TextureView,
+    &'a wgpu::TextureView,
+    &'a wgpu::Sampler,
+);
 
 pub(crate) type SkyCopy<'a> = (u64, &'a wgpu::Buffer, u64, u64);
 
@@ -730,11 +734,7 @@ impl SkyPass {
         self.clouds.prepare_view(
             &core.device,
             &core.queue,
-            (
-                clouds,
-                snapshot.camera_position,
-                snapshot.presented_seconds,
-            ),
+            (clouds, snapshot.camera_position, snapshot.presented_seconds),
             snapshot.view_projection,
             core.display.region,
             ((sun, &self.piece), self.tables.bindings(), pieces),

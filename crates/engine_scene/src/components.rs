@@ -309,12 +309,7 @@ impl SceneObject {
     fn each_kind(
         &self,
         path: &str,
-        mut visit: impl FnMut(
-            &'static str,
-            &'static ComponentKind,
-            &Value,
-            &str,
-        ) -> Result<(), Error>,
+        mut visit: impl FnMut(&'static str, &'static ComponentKind, &Value, &str) -> Result<(), Error>,
     ) -> Result<(), Error> {
         for (name, value) in self.authored() {
             let at = format!("{path}.{name}");
@@ -324,12 +319,25 @@ impl SceneObject {
         Ok(())
     }
 
+    fn each_known(
+        &self,
+        path: &str,
+        mut visit: impl FnMut(&'static ComponentKind, &Value, &str) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        for (name, value) in self.authored() {
+            if let Some((_, kind)) = component_kind(name) {
+                visit(kind, value, &format!("{path}.{name}"))?;
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn validate_components(&self, path: &str) -> Result<(), Error> {
-        self.each_kind(path, |_, kind, value, at| (kind.validate)(value, at))
+        self.each_known(path, |kind, value, at| (kind.validate)(value, at))
     }
 
     pub(crate) fn validate_world_components(&self, world: Mat4, path: &str) -> Result<(), Error> {
-        self.each_kind(path, |_, kind, value, at| {
+        self.each_known(path, |kind, value, at| {
             (kind.validate_world)(value, world, at)
         })
     }
@@ -338,14 +346,14 @@ impl SceneObject {
         if self.parent.is_none() {
             return Ok(());
         }
-        self.each_kind(path, |_, kind, _, at| match kind.placement {
+        self.each_known(path, |kind, _, at| match kind.placement {
             Placement::Roots(code) => Err(Error::new(code, at).expected(Expected::Absent)),
             Placement::Anywhere | Placement::Entities(_) => Ok(()),
         })
     }
 
     pub(crate) fn check_streamed(&self, path: &str) -> Result<(), Error> {
-        self.each_kind(path, |_, kind, _, at| match kind.placement {
+        self.each_known(path, |kind, _, at| match kind.placement {
             Placement::Entities(code) => Err(Error::new(code, at).expected(Expected::Absent)),
             Placement::Anywhere | Placement::Roots(_) => Ok(()),
         })
@@ -396,12 +404,7 @@ pub(crate) fn component_schemas(
 ) -> serde_json::Map<String, Value> {
     component_kinds_in(registry)
         .into_iter()
-        .map(|(_, kind)| {
-            (
-                kind.name.to_owned(),
-                component_property(kind, definitions),
-            )
-        })
+        .map(|(_, kind)| (kind.name.to_owned(), component_property(kind, definitions)))
         .collect()
 }
 

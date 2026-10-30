@@ -167,7 +167,9 @@ mod gpu {
         rc::Rc,
     };
 
-    use engine_core::{Cut, Highlights, LightStats, LocalLightSettings, RenderSnapshot, RenderStats};
+    use engine_core::{
+        Cut, Highlights, LightStats, LocalLightSettings, RenderSnapshot, RenderStats,
+    };
     use engine_render::buffers::{ReadbackRing, entry, storage};
     use engine_render::cached::{Bound, Versioned};
     use engine_render::gpu_calls::Queue;
