@@ -4,8 +4,8 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use engine_core::{
-    Error, ErrorCode, Expected, MeshHandle, RecordKey, RenderFrame, RenderMaterial, RenderMesh,
-    RenderSnapshot, RenderStats, RenderTexture,
+    Error, ErrorCode, Expected, LinkedStats, MeshHandle, RecordKey, RenderFrame, RenderMaterial,
+    RenderMesh, RenderSnapshot, RenderStats, RenderTexture,
 };
 use glam::Mat4;
 
@@ -118,7 +118,6 @@ impl FrameInfo<'_> {
 
 pub fn scene_target(table: &GraphTable, shape: &FrameShape) -> Option<ResourceId> {
     table.resource(match shape.targets {
-        Targets::Canvas => "canvas",
         Targets::Post | Targets::Temporal => "scene",
         Targets::Debug => "debug_ids",
     })
@@ -128,7 +127,6 @@ pub fn main_targets(table: &GraphTable, shape: &FrameShape) -> Vec<(ResourceId, 
     let transparent = Clear::Color(crate::graph::TRANSPARENT);
     let scene = Clear::Color(crate::graph::SCENE_CLEAR);
     let named: Vec<(&str, Clear)> = match shape.targets {
-        Targets::Canvas => vec![("canvas", Clear::Color(shape.canvas_clear))],
         Targets::Post => vec![
             ("scene", scene),
             ("glow", transparent),
@@ -616,6 +614,7 @@ pub struct Parts {
     slots: Vec<Slot>,
     names: &'static [&'static str],
     offered: Vec<Offered>,
+    linked: LinkedStats,
 }
 
 impl Parts {
@@ -623,7 +622,9 @@ impl Parts {
         &mut self,
         entries: &[&'static PartEntry],
         core: &Core,
+        linked: LinkedStats,
     ) -> Result<GraphTable, Error> {
+        self.linked = linked;
         if entries.len() > 64 {
             return Err(Error::new(ErrorCode::RenderFailed, "$.parts")
                 .at_most(64)
@@ -823,6 +824,10 @@ impl Parts {
 
     pub fn names(&self) -> &'static [&'static str] {
         self.names
+    }
+
+    pub fn linked(&self) -> LinkedStats {
+        self.linked
     }
 
     pub fn part(&self, index: usize) -> Option<&dyn GpuPart> {

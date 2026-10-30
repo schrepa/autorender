@@ -2,7 +2,6 @@ use super::*;
 use crate::graph::FrameShape;
 use crate::memory::buffer_init;
 use crate::parts::{Begin, BeginOut, PartAssets, PreludeStage};
-use crate::post::PostPass;
 
 impl Renderer {
     pub(super) fn plan_frame(
@@ -406,7 +405,7 @@ impl Renderer {
         let gpu_mode = kind.gpu_mode;
         let shading = self.parts.shading(info.snapshot);
         self.core.specialize_shading(&shading);
-        let targets = self.frame_targets(info);
+        let targets = Self::frame_targets(info);
         let opaque_kind = PassKind::opaque(targets);
         let meshes = self.core.mesh_entries.is_some();
         if meshes {
@@ -439,13 +438,11 @@ impl Renderer {
         }
     }
 
-    fn frame_targets(&self, info: &FrameInfo<'_>) -> Targets {
-        let post = self.parts.post().is_some_and(PostPass::active);
-        match (&info.temporal, post) {
+    fn frame_targets(info: &FrameInfo<'_>) -> Targets {
+        match &info.temporal {
             _ if info.kind.debug => Targets::Debug,
-            (Some(_), true) => Targets::Temporal,
-            (_, true) => Targets::Post,
-            (_, false) => Targets::Canvas,
+            Some(_) => Targets::Temporal,
+            None => Targets::Post,
         }
     }
 
@@ -458,8 +455,7 @@ impl Renderer {
         };
         FrameShape {
             gpu: gpu_mode,
-            targets: self.frame_targets(info),
-            canvas_clear: canvas_clear(),
+            targets: Self::frame_targets(info),
             phases,
             deferred: self.parts.iter().any(|(_, part)| part.defers()),
         }
@@ -495,10 +491,4 @@ impl Core {
     pub fn warm_shading(&self) -> &[SceneShading] {
         &self.warm
     }
-}
-
-fn canvas_clear() -> [f64; 4] {
-    let encode = |linear: f64| 1.055 * linear.powf(1.0 / 2.4) - 0.055;
-    let [r, g, b, a] = crate::graph::SCENE_CLEAR;
-    [encode(r), encode(g), encode(b), a]
 }

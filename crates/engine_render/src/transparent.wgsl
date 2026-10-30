@@ -4,8 +4,6 @@ import package::post::pixel::PostPixel;
 @group(0) @binding(0) var accumulated: texture_2d<f32>;
 @group(0) @binding(1) var revealed: texture_2d<f32>;
 
-override TARGET_IS_SRGB: bool = false;
-
 struct Weighted {
     color: vec3<f32>,
     reveal: f32,
@@ -23,9 +21,7 @@ fn weighted(position: vec4<f32>) -> Weighted {
 
 fn output(drawn: Weighted, encoded: vec3<f32>, shown: vec3<f32>) -> vec4<f32> {
     var color = drawn.color;
-    if !TARGET_IS_SRGB {
-        color = shown;
-    } else if any(shown != encoded) {
+    if any(shown != encoded) {
         color = decode_srgb(shown);
     }
     return vec4<f32>(color, 1.0 - drawn.reveal);

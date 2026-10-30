@@ -1,7 +1,8 @@
+import package::generated::scene::scene_light;
 import package::post::frame::{
-    drawn_uv, effect_shade, linear, occlusion, occlusion_at, post, reflected, reflections, scene,
+    drawn_uv, effect_shade, linear, occlusion, occlusion_at, post, scene,
 };
-import package::post::pixel::PostPixel;
+import package::post::pixel::{PostPixel, SceneLight};
 
 struct Resolved {
     color: vec3<f32>,
@@ -49,8 +50,9 @@ fn resolve(position: vec4<f32>) -> Resolved {
     }
     let visible = occlusion_at(occlusion, pixel, post);
     let shaded = texel.rgb * effect_shade(texel.a, visible, post);
-    let mirrored = reflected(shaded, reflections, linear, uv, post);
-    return Resolved(mirrored, PostPixel(position.xy, uv, pixel, 0.0, 1u));
+    let at = PostPixel(position.xy, uv, pixel, 0.0, 1u);
+    let lit = scene_light(SceneLight(shaded, texel.a), at);
+    return Resolved(lit.color, at);
 }
 
 fn output(resolved: Resolved, encoded: vec3<f32>) -> Outputs {

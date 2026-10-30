@@ -140,6 +140,7 @@ impl Renderer {
             pipelines: core.pipeline_counts.created(),
             pipelines_created,
             render_passes,
+            linked: self.parts.linked(),
             ..RenderStats::default()
         };
         core.culling_stats(snapshot, gpu_mode, &mut stats);

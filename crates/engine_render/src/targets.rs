@@ -5,20 +5,22 @@ use crate::post::{GLOW_FORMAT, SCENE_FORMAT, SURFACE_FORMAT};
 use crate::renderer::MOTION_FORMAT;
 
 impl Targets {
-    pub fn formats(self, canvas: wgpu::TextureFormat) -> Vec<wgpu::TextureFormat> {
+    pub fn formats(self) -> Vec<wgpu::TextureFormat> {
         match self {
-            Self::Canvas => vec![canvas],
             Self::Post => vec![SCENE_FORMAT, GLOW_FORMAT, SURFACE_FORMAT],
             Self::Temporal => vec![SCENE_FORMAT, MOTION_FORMAT, GLOW_FORMAT, SURFACE_FORMAT],
             Self::Debug => vec![IDS_FORMAT, COUNT_FORMAT],
         }
     }
 
-    pub fn color_targets(self, canvas: wgpu::TextureFormat) -> Vec<Option<wgpu::ColorTargetState>> {
+    pub fn color_targets(
+        self,
+        _canvas: wgpu::TextureFormat,
+    ) -> Vec<Option<wgpu::ColorTargetState>> {
         if self == Self::Debug {
             return debug_color_targets();
         }
-        self.formats(canvas)
+        self.formats()
             .into_iter()
             .map(|format| Some(format.into()))
             .collect()

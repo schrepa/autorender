@@ -90,35 +90,6 @@ impl AmbientOcclusion {
 }
 
 settings! {
-    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(
-        feature = "schema",
-        derive(schemars::JsonSchema),
-        schemars(rename = "SceneBloom")
-    )]
-    #[serde(default, deny_unknown_fields)]
-    pub struct Bloom {
-        pub intensity: f32 = 0.6 => range(0.0, 4.0),
-        pub threshold: f32 = 2.0 => at_least(0.0),
-    }
-}
-
-environment_section!(Bloom, "bloom", opt_in: false);
-
-impl Bloom {
-    pub fn off() -> Self {
-        Self {
-            intensity: 0.0,
-            ..Self::default()
-        }
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.intensity > 0.0
-    }
-}
-
-settings! {
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
     #[cfg_attr(
         feature = "schema",
@@ -136,70 +107,5 @@ environment_section!(Dither, "dither", opt_in: false);
 impl Dither {
     pub fn off() -> Self {
         Self { enabled: false }
-    }
-}
-
-settings! {
-    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(
-        feature = "schema",
-        derive(schemars::JsonSchema),
-        schemars(rename = "SceneAutoExposure")
-    )]
-    #[serde(default, deny_unknown_fields)]
-    pub struct AutoExposure {
-        pub enabled: bool = true => any,
-        pub strength: f32 = 1.0 => range(0.0, 1.0),
-        pub compensation: f32 = 0.0 => range(-8.0, 8.0),
-        pub night: f32 = 1.0 => range(0.0, 16.0),
-        pub brighten: f32 = 3.0 => range(0.0, 16.0),
-        pub darken: f32 = 1.0 => range(0.0, 16.0),
-        pub to_brighter: f32 = 0.5 => range(0.0, 60.0),
-        pub to_darker: f32 = 2.0 => range(0.0, 60.0),
-        pub skip_dark: f32 = 0.3 => range(0.0, 0.45),
-        pub skip_bright: f32 = 0.05 => range(0.0, 0.45),
-        pub center: f32 = 2.0 => range(1.0, 16.0),
-        pub sky: f32 = 0.5 => range(0.0, 1.0),
-    }
-}
-
-environment_section!(AutoExposure, "auto_exposure", opt_in: true);
-
-impl AutoExposure {
-    pub fn off() -> Self {
-        Self {
-            enabled: false,
-            ..Self::default()
-        }
-    }
-}
-
-settings! {
-    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(
-        feature = "schema",
-        derive(schemars::JsonSchema),
-        schemars(rename = "SceneReflections")
-    )]
-    #[serde(default, deny_unknown_fields)]
-    pub struct Reflections {
-        pub intensity: f32 = 1.0 => range(0.0, 1.0),
-        pub max_roughness: f32 = 0.75 => range(0.05, 1.0),
-        pub distance: f32 = 120.0 => range(0.001, 100_000.0),
-    }
-}
-
-environment_section!(Reflections, "reflections", opt_in: true);
-
-impl Reflections {
-    pub fn off() -> Self {
-        Self {
-            intensity: 0.0,
-            ..Self::default()
-        }
-    }
-
-    pub fn enabled(&self) -> bool {
-        self.intensity > 0.0
     }
 }

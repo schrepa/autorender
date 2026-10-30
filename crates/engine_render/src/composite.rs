@@ -112,7 +112,7 @@ pub fn composites(effects: &[PixelEffect]) -> Result<Vec<(String, &'static str, 
         made.push((
             composite_path(resolve),
             crate::parts::CORE_BRICK,
-            composite_source(resolve, effects, None)?,
+            composite_source(resolve, effects, None),
         ));
     }
     made.push((
@@ -123,22 +123,7 @@ pub fn composites(effects: &[PixelEffect]) -> Result<Vec<(String, &'static str, 
     Ok(made)
 }
 
-pub fn composite_source(
-    resolve: &str,
-    effects: &[PixelEffect],
-    tonemap: Option<&str>,
-) -> Result<String, Error> {
-    if let Some(scene) = effects
-        .iter()
-        .find(|effect| effect.stage == PostStage::Scene)
-    {
-        return Err(Error::new(
-            ErrorCode::UnsupportedFeature,
-            format!("$.effects.{}", scene.module),
-        )
-        .expected(Expected::Supported)
-        .got("scene"));
-    }
+pub fn composite_source(resolve: &str, effects: &[PixelEffect], tonemap: Option<&str>) -> String {
     let mut imports = String::new();
     let mut body = String::new();
     let _ = writeln!(
@@ -166,9 +151,9 @@ pub fn composite_source(
     let _ = writeln!(body, "    var encoded = encode_srgb(color);");
     displays(effects, "encoded", "resolved.at", &mut imports, &mut body);
     let _ = writeln!(body, "    return output(resolved, encoded);");
-    Ok(format!(
+    format!(
         "{imports}\n@fragment\nfn {COMPOSITE_ENTRY}(@builtin(position) position: vec4<f32>) -> Outputs {{\n{body}}}\n"
-    ))
+    )
 }
 
 pub fn transparent_source(effects: &[PixelEffect]) -> String {

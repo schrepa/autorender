@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 
 use engine::bricks::{AddBrick, BrickRegistry};
 use engine_render::bindings::{GroupRef, SharedGroups, TABLES, Table};
-use engine_render::composite::PixelEffect;
 use engine_render::faces::{face_module, face_of};
 use engine_render::gpu_layouts::{Constant, Layout, constants, layouts};
 use engine_render::linker::{Linker, ShaderModule, face_imports};
@@ -125,7 +124,7 @@ impl Installed {
             }
         }
         installed.needs(registry, &parts)?;
-        installed.composites(&parts)?;
+        installed.core_generated(&parts)?;
         installed.own_tables();
         Ok(installed)
     }
@@ -160,15 +159,11 @@ impl Installed {
         Ok(())
     }
 
-    fn composites(&mut self, parts: &[&'static PartEntry]) -> Result<(), String> {
-        let effects: Vec<PixelEffect> = parts
-            .iter()
-            .flat_map(|part| part.decl.effects.iter().copied())
-            .collect();
+    fn core_generated(&mut self, parts: &[&'static PartEntry]) -> Result<(), String> {
         let made =
-            engine_render::composite::composites(&effects).map_err(|error| error.to_string())?;
-        for (path, _, source) in made {
-            let module = generated(path, source);
+            engine_render::generated::generated(parts).map_err(|error| error.to_string())?;
+        for made in made {
+            let module = generated(made.path, made.source);
             self.linker.add_generated(
                 module.path.to_owned(),
                 module.brick,
