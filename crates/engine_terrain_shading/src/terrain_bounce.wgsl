@@ -1,9 +1,11 @@
-import package::face::heightfield::{COVER_FAR_SIDE, cover_seen, macro_tint};
+import package::face::cover::{COVER_FAR_SIDE, cover_seen, cover_tint};
+import package::face::ground::macro_color;
 import package::face::horizons::terrain_visibility;
 import package::face::sky::{ambient, cloud_passing, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::frame::view::PI;
-import package::terrain::horizons::{HORIZON_LAYERS, HORIZON_RECORD_VECTORS, terrain_horizon_records,
+import package::generated::pieces::pieces;
+import package::terrain::horizons::{HORIZON_LAYERS, HORIZON_RECORD_VECTORS,
     terrain_horizon_sampler, terrain_horizons};
 
 struct BounceFrame {
@@ -85,7 +87,7 @@ fn bounce_ground(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let uv = (vec2<f32>(id.xy) + 0.5) / f32(side);
-    let shape = terrain_horizon_records[HORIZON_RECORD_VECTORS * terrain.sources.w + 1u];
+    let shape = pieces.horizons.records[HORIZON_RECORD_VECTORS * terrain.sources.w + 1u];
     let height = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, uv,
         u32(shape.x) + HORIZON_LAYERS - 1u, 0.0).r;
     let across = terrain.place.xy + uv * terrain.place.zw;
@@ -103,7 +105,7 @@ fn bounce_ground(@builtin(global_invocation_id) id: vec3<u32>) {
         let lod = max(log2(f32(textureDimensions(bounce_macro).x) / f32(side)), 0.0);
         let colors = textureSampleLevel(bounce_macro, bounce_sampler, uv,
             terrain.grid.w - 1u, lod);
-        albedo *= macro_tint(colors, vegetated);
+        albedo *= (macro_color(colors) * cover_tint(colors.a, vegetated));
     }
     var seen = 1.0;
     var turn = vec3<f32>(0.0);

@@ -1,7 +1,7 @@
-import package::face::heightfield::{SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL,
-    SurfaceTriangle, TerrainSubdivision, terrain, terrain_level_height};
+import package::face::heightfield::{TerrainSubdivision, terrain, terrain_level_height};
 import package::frame::view::detail_across;
 import package::terrain::draw::terrain_displacement;
+import package::terrain::field::{SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SurfaceTriangle};
 import package::terrain::surface::{SurfaceWater, surface_ground_error, surface_half, surface_water};
 
 @group(2) @binding(27) var<uniform> subdivision: TerrainSubdivision;

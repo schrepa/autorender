@@ -1,9 +1,8 @@
 import package::frame::view::PI;
+import package::generated::pieces::pieces;
 
 @group(0) @binding(14) var terrain_horizons: texture_2d_array<f32>;
 const HORIZON_RECORDS: u32 = 384u;
-const HORIZON_RECORD_SLOTS: u32 = 385u;
-@group(0) @binding(15) var<uniform> terrain_horizon_records: array<vec4<f32>, HORIZON_RECORD_SLOTS>;
 @group(0) @binding(16) var terrain_horizon_sampler: sampler;
 
 override TERRAIN_HORIZONS: bool = true;
@@ -13,7 +12,7 @@ const HORIZON_LAYERS: u32 = 9u;
 const HORIZON_RECORD_VECTORS: u32 = 6u;
 
 fn horizon_records() -> u32 {
-    return u32(terrain_horizon_records[HORIZON_RECORDS].x);
+    return u32(pieces.horizons.records[HORIZON_RECORDS].x);
 }
 
 struct HorizonTurn {
@@ -41,8 +40,8 @@ struct HorizonCrest {
 fn horizon_crest(at: u32, turn: HorizonTurn, world: vec3<f32>, on_terrain: bool)
         -> HorizonCrest {
     var crest: HorizonCrest;
-    let place = terrain_horizon_records[at];
-    let shape = terrain_horizon_records[at + 1u];
+    let place = pieces.horizons.records[at];
+    let shape = pieces.horizons.records[at + 1u];
     let uv = (world.xz - place.xy) * place.zw;
     if any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0)) {
         return crest;

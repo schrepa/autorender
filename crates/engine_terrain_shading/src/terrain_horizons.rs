@@ -1,10 +1,12 @@
 use std::sync::Arc;
 
+use bytemuck::Zeroable;
 use engine_terrain::lighting::HORIZON_LAYERS;
 use engine_terrain::lighting::TerrainLighting;
 use engine_terrain::{RenderTerrain, RenderTerrains, TerrainSettings};
 
 use crate::gpu_layouts::constants::{HORIZON_RECORD_VECTORS, HORIZON_RECORDS};
+use crate::gpu_layouts::terrain::HorizonsPiece;
 use crate::terrain_bounce::{BOUNCE_LAYERS, BounceLevels, MOST_LEVELS};
 use engine_render::cached::{Bound, Versioned};
 
@@ -36,9 +38,8 @@ pub(crate) struct Horizons {
     maps: Option<Maps>,
     empty: wgpu::TextureView,
     sampler: wgpu::Sampler,
-    records: wgpu::Buffer,
+    piece: Box<HorizonsPiece>,
     records_written: Vec<[f32; 4]>,
-    count_written: Option<f32>,
     held: Vec<Option<Arc<TerrainLighting>>>,
     pub(crate) uploaded: u32,
 }
@@ -68,19 +69,14 @@ impl Horizons {
             maps: None,
             empty,
             sampler,
-            records: engine_render::buffers::uniform(
-                device,
-                "engine/terrain-horizon-records",
-                crate::bindings::HORIZON_RECORDS_BYTES as u64,
-            ),
+            piece: Box::new(HorizonsPiece::zeroed()),
             records_written: Vec::new(),
-            count_written: None,
             held: Vec::new(),
             uploaded: 0,
         }
     }
 
-    pub(crate) fn entries(&self) -> [(&'static str, Bound<'_>); 3] {
+    pub(crate) fn entries(&self) -> [(&'static str, Bound<'_>); 2] {
         let maps = self.maps.as_ref().map_or_else(
             || Bound::fixed(engine_render::pipelines::view(&self.empty)),
             |maps| maps.view.bound(),
@@ -88,26 +84,18 @@ impl Horizons {
         [
             ("terrain_horizons", maps),
             (
-                "terrain_horizon_records",
-                Bound::fixed(self.records.as_entire_binding()),
-            ),
-            (
                 "terrain_horizon_sampler",
                 Bound::fixed(engine_render::pipelines::sampler(&self.sampler)),
             ),
         ]
     }
 
-    pub(crate) fn bounce_entries(&self) -> Option<([(&'static str, Bound<'_>); 3], Bound<'_>)> {
+    pub(crate) fn bounce_entries(&self) -> Option<([(&'static str, Bound<'_>); 2], Bound<'_>)> {
         let maps = self.maps.as_ref()?;
         let written = maps.bounce_view.as_ref()?.bound();
         Some((
             [
                 ("terrain_horizons", maps.horizon_view.bound()),
-                (
-                    "terrain_horizon_records",
-                    Bound::fixed(self.records.as_entire_binding()),
-                ),
                 (
                     "terrain_horizon_sampler",
                     Bound::fixed(engine_render::pipelines::sampler(&self.sampler)),
@@ -115,6 +103,10 @@ impl Horizons {
             ],
             written,
         ))
+    }
+
+    pub(crate) fn piece(&self) -> &HorizonsPiece {
+        &self.piece
     }
 
     pub(crate) fn bounces(&self) -> bool {
@@ -155,7 +147,7 @@ impl Horizons {
         self.uploaded = 0;
         if !(shadows && settings.enabled && settings.sun_shadows) || terrains.terrains.is_empty() {
             self.release();
-            self.write_count(queue);
+            self.write_count();
             return;
         }
         let size = settings.shadow_resolution;
@@ -212,23 +204,15 @@ impl Horizons {
             }
         }
         if records != self.records_written {
-            queue.write_buffer(&self.records, 0, bytemuck::cast_slice(&records));
+            self.piece.records[..records.len()].copy_from_slice(&records);
             self.records_written = records;
         }
-        self.write_count(queue);
+        self.write_count();
     }
 
-    fn write_count(&mut self, queue: &engine_render::gpu_calls::Queue) {
+    fn write_count(&mut self) {
         let count = self.record_count() as f32;
-        if self.count_written != Some(count) {
-            let offset = (HORIZON_RECORDS * size_of::<[f32; 4]>()) as u64;
-            queue.write_buffer(
-                &self.records,
-                offset,
-                bytemuck::bytes_of(&[count, 0.0, 0.0, 0.0]),
-            );
-            self.count_written = Some(count);
-        }
+        self.piece.records[HORIZON_RECORDS] = [count, 0.0, 0.0, 0.0];
     }
 
     fn release(&mut self) {

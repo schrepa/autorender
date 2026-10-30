@@ -13,14 +13,13 @@ use engine_faces::heightfield::{
     WaterDraws,
 };
 use engine_faces::shadows::KeptRefresh;
-use engine_render::bindings::{
-    Contribution, Sample, Sampling, Stages, View, sampler, texture, uniform_of,
-};
+use engine_render::bindings::{Contribution, Sample, Sampling, Stages, View, sampler, texture};
 use engine_render::cached::{Bound, Cached};
 use engine_render::gpu_calls::Queue;
 use engine_render::graph::{Lifetime, PassDecl, ResourceDecl, Stage, Targets};
 use engine_render::mipmaps::MipGenerator;
 use engine_render::parts::{Hook, OpaqueSlot, PartDecl, PartEntry};
+use engine_render::pieces::PieceDecl;
 use engine_render::targets::ScreenTarget;
 
 use crate::bindings::{TERRAIN_CONTROL, TERRAIN_NORMALS};
@@ -52,6 +51,7 @@ use pipelines::{GroupSources, TerrainPipelines};
 use surface::SurfaceTrees;
 use tables::TerrainTables;
 
+use crate::gpu_layouts::terrain::HorizonsPiece;
 pub(crate) use crate::gpu_layouts::terrain::PatchRecord;
 
 pub(crate) static FRAME_HORIZONS: Contribution = Contribution {
@@ -62,11 +62,6 @@ pub(crate) static FRAME_HORIZONS: Contribution = Contribution {
             "terrain_horizons",
             Sample::Float,
             View::D2Array,
-            Stages::FRAGMENT,
-        ),
-        uniform_of(
-            "terrain_horizon_records",
-            crate::bindings::HORIZON_RECORDS_BYTES,
             Stages::FRAGMENT,
         ),
         sampler(
@@ -124,7 +119,12 @@ pub(crate) static PART: PartEntry = PartEntry {
         lazy: false,
         faces: &[engine_render::offer_face!(TerrainPass => dyn HeightfieldFace)],
         needs: &[],
-        piece: None,
+        piece: Some(PieceDecl {
+            name: "horizons",
+            module: "terrain::piece",
+            ty: "HorizonsPiece",
+            size: size_of::<HorizonsPiece>() as u64,
+        }),
     },
     create: part::create,
 };
@@ -199,10 +199,8 @@ pub(crate) struct TerrainViews<'a> {
     pub camera: Mat4,
     pub culling: Mat4,
     pub eye: Vec3,
-    pub detail_eye: Vec3,
     pub regions: &'a [(usize, KeptRefresh)],
     pub settings: engine_terrain::TerrainSettings,
-    pub shadows: bool,
     pub water: engine_terrain::Water,
     pub fades: bool,
     pub now: f32,
@@ -282,6 +280,19 @@ impl TerrainPass {
             .is_some_and(|held| std::ptr::eq(Arc::as_ptr(held).cast::<()>(), tile))
     }
 
+    fn place_horizons(
+        &mut self,
+        (device, queue): (&wgpu::Device, &Queue),
+        terrains: &RenderTerrains,
+        eye: Vec3,
+        (settings, shadows): (&engine_terrain::TerrainSettings, bool),
+    ) {
+        let room = crate::terrain_horizons::room(device, terrains.terrains.len());
+        self.bounce.place(terrains, (eye, settings), room);
+        let windows = self.bounce.windows();
+        (self.horizons).prepare(device, queue, terrains, (settings, shadows), windows);
+    }
+
     fn prepare_terrains(
         &mut self,
         device: &wgpu::Device,
@@ -315,12 +326,6 @@ impl TerrainPass {
         );
         self.maps.prepare(device, queue, mips, terrains);
         self.tables.write_palette(queue, terrains, &self.maps);
-        let room = crate::terrain_horizons::room(device, terrains.terrains.len());
-        self.bounce
-            .place(terrains, (views.detail_eye, &views.settings), room);
-        let horizon_settings = (&views.settings, views.shadows);
-        let windows = self.bounce.windows();
-        (self.horizons).prepare(device, queue, terrains, horizon_settings, windows);
         self.sky.prepare(device, queue, terrains, &views.settings);
         self.macro_maps.prepare(device, queue, terrains);
         let lighting = (

@@ -1,5 +1,5 @@
-import package::face::heightfield::{SURFACE_MESHLET_LEVEL, SurfaceTriangle, terrain,
-    terrain_directory, terrain_level_height, terrain_surface_leaves};
+import package::face::heightfield::{terrain, terrain_level_height, terrain_surface_leaves};
+import package::terrain::field::{SURFACE_MESHLET_LEVEL, SurfaceTriangle, terrain_directory};
 
 fn surface_leaf(leaf: u32) -> SurfaceTriangle {
     return terrain_surface_leaves[terrain.surface.x + leaf];

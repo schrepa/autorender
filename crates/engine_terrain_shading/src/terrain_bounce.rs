@@ -26,7 +26,7 @@ const SCRATCH_PROBE_BYTES: u64 = (BOUNCE_LAYERS * 16) as u64;
 const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const GROUND_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Uint;
 const GROUND_LAYERS: u32 = 2;
-const BINDINGS: usize = 18;
+const BINDINGS: usize = 17;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct BounceLevels {
@@ -528,7 +528,7 @@ struct Shared<'a> {
     colors: Bound<'a>,
     palette: Bound<'a>,
     sampler: Bound<'a>,
-    horizons: [(&'static str, Bound<'a>); 3],
+    horizons: [(&'static str, Bound<'a>); 2],
     written: Bound<'a>,
     scene: [(&'static str, Bound<'a>); 2],
 }
@@ -541,11 +541,10 @@ impl<'a> Shared<'a> {
         light_out: Bound<'a>,
     ) -> [(&'static str, Bound<'a>); BINDINGS] {
         let [pieces, cloud_shadows] = self.scene.clone();
-        let [horizons, records, horizon_sampler] = self.horizons.clone();
+        let [horizons, horizon_sampler] = self.horizons.clone();
         [
             pieces,
             horizons,
-            records,
             horizon_sampler,
             cloud_shadows,
             ("bounce_frame", self.frame.clone()),

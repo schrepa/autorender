@@ -10,12 +10,9 @@ use engine_render::bindings::{
 use engine_render::gpu_layouts::scene::CameraUniform;
 
 use crate::gpu_layouts::bounce::{BounceFrame, BounceTerrain};
-use crate::gpu_layouts::constants::HORIZON_RECORD_SLOTS;
 
 const C: Stages = Stages::COMPUTE;
 const F: Stages = Stages::FRAGMENT;
-
-pub(crate) const HORIZON_RECORDS_BYTES: usize = HORIZON_RECORD_SLOTS * size_of::<[f32; 4]>();
 
 pub(crate) const TERRAIN_RESOLVE: Table = Table {
     label: "engine/terrain-resolve-layout",
@@ -63,7 +60,6 @@ pub(crate) const BOUNCE: Table = Table {
     bindings: &[
         uniform("pieces", C),
         texture("terrain_horizons", Float, D2Array, C),
-        uniform_of("terrain_horizon_records", HORIZON_RECORDS_BYTES, C),
         sampler("terrain_horizon_sampler", Filtering, C),
         read("cloud_shadows", C),
         uniform_of("bounce_frame", size_of::<BounceFrame>(), C),

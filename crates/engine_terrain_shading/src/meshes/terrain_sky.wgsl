@@ -1,4 +1,5 @@
-import package::face::heightfield::{terrain, terrain_directory};
+import package::face::heightfield::terrain;
+import package::terrain::field::terrain_directory;
 
 @group(1) @binding(22) var terrain_sky_sampler: sampler;
 @group(1) @binding(30) var terrain_sky: texture_2d_array<f32>;

@@ -1,6 +1,6 @@
 engine_render::gpu_consts! {
     pub(crate) const NOT_RESIDENT: u32 = u32::MAX => ["NOT_RESIDENT"];
-    pub(crate) const ERROR_MIPS: u32 = engine_terrain::ERROR_MIPS => ["SURFACE_ERROR_MIPS", "PEAK_MIPS" in "post::reflections"];
+    pub(crate) const ERROR_MIPS: u32 = engine_terrain::ERROR_MIPS => ["SURFACE_ERROR_MIPS", "PEAK_MIPS" in "face::ground"];
     pub(crate) const TERRAIN_GRID: u32 = engine_terrain::PATCH_QUADS + 1 => ["TERRAIN_GRID"];
     pub(crate) const TERRAIN_GRID_VERTICES: u32 = TERRAIN_GRID * TERRAIN_GRID => ["TERRAIN_GRID_VERTICES"];
 
@@ -17,7 +17,7 @@ engine_render::gpu_consts! {
 
     pub(crate) const HORIZON_RECORD_VECTORS: u32 = 4 + engine_terrain::MAX_BOUNCE_LEVELS / 4 => ["HORIZON_RECORD_VECTORS"];
     pub(crate) const HORIZON_RECORDS: usize = 64 * HORIZON_RECORD_VECTORS as usize => ["HORIZON_RECORDS"];
-    pub(crate) const HORIZON_RECORD_SLOTS: usize = HORIZON_RECORDS + 1 => ["HORIZON_RECORD_SLOTS"];
+    pub(crate) const HORIZONS_PIECE_BYTES: usize = (HORIZON_RECORDS + 1) * size_of::<[f32; 4]>() => ["size_of HorizonsPiece" in "terrain::piece"];
 
     pub(crate) const BOUNCE_RECORD_WORDS: usize = engine_terrain::bounce::PROBE_BYTES / 4 => ["BOUNCE_RECORD_WORDS" in "terrain::bounce_maps"];
 
@@ -28,7 +28,7 @@ engine_render::gpu_consts! {
     pub(crate) const WATER_TILE_PATCHES: u32 = engine_terrain::PATCHES_PER_TILE => ["WATER_TILE_PATCHES"];
     pub(crate) const WATER_TILE_WORDS: u32 = WATER_TILE_PATCHES * WATER_TILE_PATCHES => ["WATER_TILE_WORDS"];
 
-    pub(crate) const PALETTE_ENTRIES: usize = engine_faces::heightfield::PALETTE_ENTRIES => ["TERRAIN_PALETTE_ENTRIES" in "terrain::draw", "PALETTE_ENTRIES" in "cover::grow", "PALETTE_ENTRIES" in "terrain::bounce_maps", "PALETTE_ENTRIES" in "scatter::snap", "PALETTE_ENTRIES" in "post::reflections"];
+    pub(crate) const PALETTE_ENTRIES: usize = engine_faces::heightfield::PALETTE_ENTRIES => ["TERRAIN_PALETTE_ENTRIES" in "terrain::draw", "PALETTE_ENTRIES" in "face::ground", "PALETTE_ENTRIES" in "terrain::bounce_maps"];
 
     pub(crate) const CONTROL_GROUP: u32 = 8 => ["@tile_control" in "terrain::control"];
     pub(crate) const BOUNCE_GROUP: u32 = 8 => ["@bounce_ground" in "terrain::bounce_maps", "@bounce_down" in "terrain::bounce_maps", "@bounce_gather" in "terrain::bounce_maps"];
@@ -36,7 +36,8 @@ engine_render::gpu_consts! {
 }
 
 engine_render::gpu_mirrors! {
-    engine_faces::shadows::GROUND_TEXELS => ["KEPT_GROUND_TEXELS" in "terrain::draw"];
+    engine_core::TILE_QUADS => ["TILE_QUADS" in "face::ground"];
+    engine_terrain::ERROR_CELLS => ["PEAK_CELLS" in "face::ground"];
     engine_terrain::BLOCK_SIDE => ["WATER_LIVE_BLOCK" in "face::heightfield"];
     engine_terrain::lighting::DIRECTIONS => ["HORIZON_DIRECTIONS"];
     engine_terrain::lighting::HORIZON_LAYERS => ["HORIZON_LAYERS"];
