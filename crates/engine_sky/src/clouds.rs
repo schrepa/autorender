@@ -31,10 +31,6 @@ use crate::gpu_layouts::CloudUniform;
 
 pub(crate) const CLOUD_UNIFORM_BYTES: usize = size_of::<CloudUniform>();
 
-use crate::gpu_layouts::DomeUniform;
-
-pub(crate) const DOME_UNIFORM_BYTES: usize = size_of::<DomeUniform>();
-
 use crate::gpu_layouts::ViewUniform;
 
 pub(crate) const CLOUD_VIEW_BYTES: usize = size_of::<ViewUniform>();
@@ -85,7 +81,6 @@ pub(crate) struct DomeBinding<'a> {
     pub old: &'a wgpu::TextureView,
     pub new: &'a wgpu::TextureView,
     pub sampler: &'a wgpu::Sampler,
-    pub uniform: &'a wgpu::Buffer,
     pub key: (u64, [u8; 2], bool),
 }
 
@@ -207,7 +202,8 @@ pub(crate) struct CloudPass {
     sampler: wgpu::Sampler,
     noise_sampler: wgpu::Sampler,
     uniform: wgpu::Buffer,
-    dome_uniform: wgpu::Buffer,
+    dome_piece: [[f32; 4]; 6],
+    pieces: Option<wgpu::Buffer>,
     shadow_cells: wgpu::Buffer,
     march_groups: Cached<u64, [wgpu::BindGroup; 3]>,
     generation: u64,
@@ -316,7 +312,8 @@ impl CloudPass {
             sampler,
             noise_sampler,
             uniform: buffers::uniform(device, "engine/cloud-uniform", CLOUD_UNIFORM_BYTES as u64),
-            dome_uniform: buffers::uniform(device, "engine/cloud-domes", DOME_UNIFORM_BYTES as u64),
+            dome_piece: [[0.0; 4]; 6],
+            pieces: None,
             shadow_cells: buffers::storage(
                 device,
                 "engine/cloud-shadow-cells",
@@ -431,7 +428,6 @@ impl CloudPass {
                 old: &domes[self.roles[0]].1,
                 new: &domes[self.roles[1]].1,
                 sampler: &self.sampler,
-                uniform: &self.dome_uniform,
                 key: (
                     self.generation,
                     [self.roles[0] as u8, self.roles[1] as u8],
@@ -442,7 +438,6 @@ impl CloudPass {
                 old: &self.clear.1,
                 new: &self.clear.1,
                 sampler: &self.sampler,
-                uniform: &self.dome_uniform,
                 key: (self.generation, [0, 0], false),
             },
         }
@@ -512,11 +507,12 @@ impl CloudPass {
         device: &wgpu::Device,
         queue: &Queue,
         (settings, noise, (eye, surface), seconds): CloudInputs<'_>,
-        (light, air): (CloudLight<'_>, crate::sky::AirBindings<'_>),
+        (light, air, pieces): (CloudLight<'_>, crate::sky::AirBindings<'_>, &wgpu::Buffer),
         whole: bool,
     ) {
         self.rows = 0;
         self.job = None;
+        self.bind_pieces(pieces);
         let settings = settings.sanitized();
         if let Some(noise) = noise.filter(|_| settings.enabled)
             && self.noise.as_ref().is_none_or(|held| held.id != noise.id)
@@ -531,7 +527,7 @@ impl CloudPass {
             self.marched = None;
             self.cycle = None;
             self.completes = false;
-            self.write_domes(queue, eye, &settings);
+            self.write_domes(eye, &settings);
             return;
         }
         let size = [settings.resolution, settings.resolution / 4];
@@ -596,11 +592,23 @@ impl CloudPass {
         uniform.light_rows = self.plan_light(device, &uniform, whole);
         uniform.light = self.light_uniform();
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
-        self.write_domes(queue, eye, &settings);
-        self.prepare_dome_draws(device, air);
+        self.write_domes(eye, &settings);
+        self.prepare_dome_draws(device, (air, pieces));
     }
 
-    fn prepare_dome_draws(&mut self, device: &wgpu::Device, air: crate::sky::AirBindings<'_>) {
+    fn bind_pieces(&mut self, pieces: &wgpu::Buffer) {
+        if self.pieces.as_ref() != Some(pieces) {
+            self.pieces = Some(pieces.clone());
+            self.march_groups = Cached::default();
+            self.view_group = GroupCache::default();
+        }
+    }
+
+    fn prepare_dome_draws(
+        &mut self,
+        device: &wgpu::Device,
+        (air, pieces): (crate::sky::AirBindings<'_>, &wgpu::Buffer),
+    ) {
         let (Some(domes), Some(noise)) = (&self.domes, &self.noise) else {
             return;
         };
@@ -628,9 +636,9 @@ impl CloudPass {
                         ("dome", pipelines::view(&domes[index].1)),
                         ("noise_detail", pipelines::view(&noise.detail)),
                         buffers::entry("shadow_cells", cells),
-                        buffers::entry("cloud_air", air.0),
-                        ("cloud_transmittance", pipelines::view(air.2)),
-                        ("cloud_table_sampler", pipelines::sampler(air.3)),
+                        buffers::entry("pieces", pieces),
+                        ("cloud_transmittance", pipelines::view(air.1)),
+                        ("cloud_table_sampler", pipelines::sampler(air.2)),
                         buffers::entry("light_cells", light),
                     ],
                 )
@@ -646,18 +654,19 @@ impl CloudPass {
         (settings, eye, seconds): (&Clouds, glam::Vec3, f64),
         view_projection: glam::Mat4,
         region: FrameRegion,
-        (light, air): (CloudLight<'_>, crate::sky::AirBindings<'_>),
+        (light, air, pieces): (CloudLight<'_>, crate::sky::AirBindings<'_>, &wgpu::Buffer),
         depth: &Versioned<wgpu::TextureView>,
     ) {
         let settings = settings.sanitized();
         self.view_job = None;
         self.view_pixels = 0;
+        self.bind_pieces(pieces);
         let (display, render) = (region.display, region.render);
         let marches = self.active && settings.in_view && display.width > 0 && display.height > 0;
         let view_sky = marches && eye.y > settings.base;
         if view_sky != self.view_sky {
             self.view_sky = view_sky;
-            self.write_domes(queue, eye, &settings);
+            self.write_domes(eye, &settings);
         }
         if !marches {
             return;
@@ -688,7 +697,7 @@ impl CloudPass {
         );
         self.view_job = Some([render.width, render.height]);
         self.view_pixels = render.width * render.height;
-        self.prepare_view_draws(device, depth, air);
+        self.prepare_view_draws(device, depth, (air, pieces));
     }
 
     pub(crate) fn marches_view(&self) -> bool {
@@ -699,7 +708,7 @@ impl CloudPass {
         &mut self,
         device: &wgpu::Device,
         depth: &Versioned<wgpu::TextureView>,
-        air: crate::sky::AirBindings<'_>,
+        (air, pieces): (crate::sky::AirBindings<'_>, &wgpu::Buffer),
     ) {
         let (Some(targets), Some(light), Some(noise)) =
             (&self.view_targets, &self.light.cells, &self.noise)
@@ -734,11 +743,11 @@ impl CloudPass {
                     "composite_draw",
                     Bound::fixed(self.composite_args.as_entire_binding()),
                 ),
-                ("cloud_air", Bound::fixed(air.0.as_entire_binding())),
-                ("cloud_transmittance", Bound::fixed(pipelines::view(air.2))),
+                ("pieces", Bound::fixed(pieces.as_entire_binding())),
+                ("cloud_transmittance", Bound::fixed(pipelines::view(air.1))),
                 (
                     "cloud_table_sampler",
-                    Bound::fixed(pipelines::sampler(air.3)),
+                    Bound::fixed(pipelines::sampler(air.2)),
                 ),
                 ("light_cells", Bound::fixed(light.as_entire_binding())),
             ],
@@ -828,21 +837,23 @@ impl CloudPass {
         self.ready = true;
     }
 
-    fn write_domes(&self, queue: &Queue, eye: glam::Vec3, settings: &Clouds) {
+    fn write_domes(&mut self, eye: glam::Vec3, settings: &Clouds) {
         let shows = if self.active && self.ready { 1.0 } else { 0.0 };
         let [old, new, _] = self.roles;
         let (older, newer) = (self.origins[old], self.origins[new]);
-        let uniform = DomeUniform {
-            older: older.eye.extend(shows).to_array(),
-            newer: newer.eye.extend(self.blend).to_array(),
-            older_mirror: older.mirror.extend(0.0).to_array(),
-            newer_mirror: newer.mirror.extend(0.0).to_array(),
-            eye: eye
-                .extend(settings.base + 0.5 * settings.thickness)
+        self.dome_piece = [
+            older.eye.extend(shows).to_array(),
+            newer.eye.extend(self.blend).to_array(),
+            older.mirror.extend(0.0).to_array(),
+            newer.mirror.extend(0.0).to_array(),
+            eye.extend(settings.base + 0.5 * settings.thickness)
                 .to_array(),
-            view: [if self.view_sky { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
-        };
-        queue.write_buffer(&self.dome_uniform, 0, bytemuck::bytes_of(&uniform));
+            [if self.view_sky { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+        ];
+    }
+
+    pub(crate) fn dome_piece(&self) -> [[f32; 4]; 6] {
+        self.dome_piece
     }
 
     pub(crate) fn encode_dome(&self, encoder: &mut wgpu::CommandEncoder, profiler: &GpuProfiler) {

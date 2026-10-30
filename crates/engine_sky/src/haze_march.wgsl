@@ -1,5 +1,5 @@
 import package::engine::math::{pcg, unit};
-import package::face::horizons::{bounce_at, bounce_seen};
+import package::face::horizons::open_sky;
 import package::face::shadows::{air_shadow, sun_shadowed};
 import package::face::sky::cloud_passing;
 import package::face::sun::{sun_color, sun_direction};
@@ -63,11 +63,11 @@ fn haze_covered(depth: f32) -> f32 {
 }
 
 fn haze_seen(world: vec3<f32>) -> f32 {
-    let at = bounce_at(world, false);
-    if at.texel.x < 0.0 {
+    let open = open_sky(world);
+    if !open.held {
         return 1.0;
     }
-    return mix(saturate(bounce_seen(at) / HAZE_OPEN_SKY), 1.0, saturate(at.layer - 1.0));
+    return mix(saturate(open.seen / HAZE_OPEN_SKY), 1.0, open.beyond);
 }
 
 @fragment

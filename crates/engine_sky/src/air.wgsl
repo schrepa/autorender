@@ -35,20 +35,11 @@ fn cloud_dome_uv(direction: vec3<f32>) -> vec2<f32> {
     return vec2<f32>(fract(around), saturate((elevation - low) / (1.5707963 - low)));
 }
 
-struct CloudDomes {
-    older: vec4<f32>,
-    newer: vec4<f32>,
-    older_mirror: vec4<f32>,
-    newer_mirror: vec4<f32>,
-    eye: vec4<f32>,
-    view: vec4<f32>,
-}
-
 const CLOUD_PARALLAX_REACH: f32 = 60000.0;
 
-fn cloud_dome_direction(domes: CloudDomes, origin: vec3<f32>, start: vec3<f32>,
-        direction: vec3<f32>) -> vec3<f32> {
-    let rise = domes.eye.w - start.y;
+fn cloud_dome_direction(origin: vec3<f32>, start: vec3<f32>, direction: vec3<f32>)
+        -> vec3<f32> {
+    let rise = pieces.sky.domes_eye.w - start.y;
     if direction.y * rise <= 0.0 || abs(direction.y) < 1.0e-5 {
         return direction;
     }

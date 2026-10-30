@@ -27,6 +27,7 @@ impl Brick for SkyBrick {
             .settings::<engine_core::Sky>()
             .settings::<engine_core::Haze>()
             .settings::<engine_core::NightSky>()
+            .settings::<engine_core::SkyLighting>()
             .render_part(&sky::PART)
             .shaders(shaders::MODULES)
             .face_defaults(engine_faces::defaults::MODULES)

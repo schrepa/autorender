@@ -1,10 +1,13 @@
 use crate::shaders::entry::{draw, sky};
 use engine_core::table_data::sky::SkyTables;
 use engine_core::table_data::sky::{MULTIPLE_SIZE, TRANSMITTANCE_SIZE};
-use engine_core::{Applied, RenderSnapshot, RenderStats, Sky, StaticTable};
+use engine_core::{
+    Applied, Clouds, Grading, NightSky, ReflectionProbeSettings, RenderSnapshot, RenderStats, Sky,
+    SkyLighting, SkyLightingValues, StaticTable, Sunlight,
+};
 use engine_faces::environment::{EnvironmentFace, EnvironmentPlan};
 use engine_faces::sun::{Sun, SunFace};
-use engine_render::cached::Bound;
+use engine_render::cached::{Bound, Cached};
 use engine_render::composite::{PixelEffect, PostStage};
 use engine_render::gpu_calls::Queue;
 use engine_render::graph::{
@@ -41,16 +44,7 @@ const DERIVED_BYTES: u64 = 7 * 16;
 
 pub(crate) const FACES: usize = 6;
 
-use crate::gpu_layouts::SkyUniform;
-
-pub(crate) const SKY_UNIFORM_BYTES: usize = size_of::<SkyUniform>();
-
-pub(crate) type AirBindings<'a> = (
-    &'a wgpu::Buffer,
-    &'a wgpu::TextureView,
-    &'a wgpu::TextureView,
-    &'a wgpu::Sampler,
-);
+pub(crate) type AirBindings<'a> = (&'a wgpu::TextureView, &'a wgpu::TextureView, &'a wgpu::Sampler);
 
 pub(crate) type SkyCopy<'a> = (u64, &'a wgpu::Buffer, u64, u64);
 
@@ -98,12 +92,12 @@ fn table(
 struct Passes {
     view: wgpu::ComputePipeline,
     derive: wgpu::ComputePipeline,
-    groups: [wgpu::BindGroup; 2],
 }
 
 pub(crate) struct AirTables {
     layout: pipelines::GroupLayout,
     passes: Option<Passes>,
+    groups: Cached<wgpu::Buffer, [wgpu::BindGroup; 2]>,
     pass_group: wgpu::BindGroup,
     transmittance: Table,
     multiple: Table,
@@ -111,7 +105,6 @@ pub(crate) struct AirTables {
     blank: Table,
     blank_out: Table,
     sampler: wgpu::Sampler,
-    uniform: wgpu::Buffer,
     derived: wgpu::Buffer,
     tables: Option<u64>,
     view_key: Option<(u64, [u32; 20], [u32; 3], u32)>,
@@ -145,6 +138,7 @@ impl AirTables {
         Self {
             layout: pipelines::layout(device, &SKY_TABLES),
             passes: None,
+            groups: Cached::default(),
             pass_group,
             transmittance,
             multiple: table(device, "engine/sky-multiple", MULTIPLE_SIZE, uploaded),
@@ -174,7 +168,6 @@ impl AirTables {
                 min_filter: wgpu::FilterMode::Linear,
                 ..Default::default()
             }),
-            uniform: buffers::uniform(device, "engine/sky-uniform", SKY_UNIFORM_BYTES as u64),
             derived: buffers::storage(
                 device,
                 "engine/sky-derived",
@@ -196,12 +189,7 @@ impl AirTables {
     }
 
     pub(crate) fn bindings(&self) -> AirBindings<'_> {
-        (
-            &self.uniform,
-            &self.view.view,
-            &self.transmittance.view,
-            &self.sampler,
-        )
+        (&self.view.view, &self.transmittance.view, &self.sampler)
     }
 
     pub(crate) fn environment_key(&self) -> [f32; 4] {
@@ -253,7 +241,7 @@ impl AirTables {
         queue: &Queue,
         (settings, tables): (&Sky, Option<&StaticTable<SkyTables>>),
         (sun, eye, exposure, seconds, moon): (Vec3, Vec3, f32, f64, [f32; 4]),
-        copies: &[SkyCopy<'_>],
+        (pieces, piece, copies): (&wgpu::Buffer, &mut SkyPiece, &[SkyCopy<'_>]),
         profiler: &GpuProfiler,
     ) -> Option<wgpu::CommandEncoder> {
         self.built = 0;
@@ -277,48 +265,46 @@ impl AirTables {
         let elapsed = self.last_seconds.replace(seconds).map_or(0.0, |last| {
             engine_core::math::max((seconds - last) as f32, 0.0)
         });
-        let uniform = SkyUniform {
-            rayleigh: [
-                settings.rayleigh[0],
-                settings.rayleigh[1],
-                settings.rayleigh[2],
-                settings.rayleigh_height,
-            ],
-            mie: [
-                settings.mie,
-                settings.mie_absorption,
-                settings.mie_height,
-                settings.mie_g,
-            ],
-            ozone: [
-                settings.ozone[0],
-                settings.ozone[1],
-                settings.ozone[2],
-                settings.sun_intensity,
-            ],
-            ground: [
-                settings.ground_albedo[0],
-                settings.ground_albedo[1],
-                settings.ground_albedo[2],
-                settings.sun_size.to_radians(),
-            ],
-            radii: [
-                settings.planet_radius,
-                settings.planet_radius + settings.atmosphere_height,
-                settings.adaptation,
-                height * 0.001,
-            ],
-            sun: sun.extend(exposure).to_array(),
-            frame: [elapsed, 0.0, 0.0, 0.0],
-            moon,
-        };
-        queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
+        piece.air_rayleigh = [
+            settings.rayleigh[0],
+            settings.rayleigh[1],
+            settings.rayleigh[2],
+            settings.rayleigh_height,
+        ];
+        piece.air_mie = [
+            settings.mie,
+            settings.mie_absorption,
+            settings.mie_height,
+            settings.mie_g,
+        ];
+        piece.air_ozone = [
+            settings.ozone[0],
+            settings.ozone[1],
+            settings.ozone[2],
+            settings.sun_intensity,
+        ];
+        piece.air_ground = [
+            settings.ground_albedo[0],
+            settings.ground_albedo[1],
+            settings.ground_albedo[2],
+            settings.sun_size.to_radians(),
+        ];
+        piece.air_radii = [
+            settings.planet_radius,
+            settings.planet_radius + settings.atmosphere_height,
+            settings.adaptation,
+            height * 0.001,
+        ];
+        piece.air_sun = sun.extend(exposure).to_array();
+        piece.air_frame = [elapsed, 0.0, 0.0, 0.0];
+        piece.air_moon = moon;
+        let (ozone, ground, radii) = (piece.air_ozone, piece.air_ground, piece.air_radii);
         let air: [u32; 20] = bytemuck::cast([
-            uniform.rayleigh,
-            uniform.mie,
-            [uniform.ozone[0], uniform.ozone[1], uniform.ozone[2], 0.0],
-            [uniform.ground[0], uniform.ground[1], uniform.ground[2], 0.0],
-            [uniform.radii[0], uniform.radii[1], 0.0, 0.0],
+            piece.air_rayleigh,
+            piece.air_mie,
+            [ozone[0], ozone[1], ozone[2], 0.0],
+            [ground[0], ground[1], ground[2], 0.0],
+            [radii[0], radii[1], 0.0, 0.0],
         ]);
         let view_key = (
             uploaded_tables,
@@ -327,8 +313,9 @@ impl AirTables {
             height.to_bits(),
         );
         let build_view = uploaded || self.view_key != Some(view_key);
-        let passes = self.passes.get_or_insert_with(|| {
-            passes(
+        let passes = self.passes.get_or_insert_with(|| passes(device));
+        let bound = self.groups.get_or_insert_with(pieces.clone(), || {
+            table_groups(
                 device,
                 &self.layout,
                 [
@@ -339,7 +326,7 @@ impl AirTables {
                     &self.blank_out,
                 ],
                 &self.sampler,
-                &self.uniform,
+                pieces,
                 &self.derived,
             )
         });
@@ -362,13 +349,13 @@ impl AirTables {
             };
             if build_view {
                 pass.set_pipeline(&passes.view);
-                pass.set_bind_group(0, &passes.groups[0], &[]);
+                pass.set_bind_group(0, &bound[0], &[]);
                 let (x, y) = groups(VIEW_SIZE);
                 pass.dispatch_workgroups(x, y, 1);
                 self.built += 1;
             }
             pass.set_pipeline(&passes.derive);
-            pass.set_bind_group(0, &passes.groups[1], &[]);
+            pass.set_bind_group(0, &bound[1], &[]);
             pass.dispatch_workgroups(1, 1, 1);
         }
         for &(index, buffer, offset, bytes) in copies {
@@ -395,17 +382,24 @@ impl AirTables {
     }
 }
 
-fn passes(
+fn passes(device: &wgpu::Device) -> Passes {
+    let pipeline_layout =
+        pipelines::layout_of(device, &crate::pipeline_layouts::SKY_TABLE_PIPELINES);
+    let pipeline = |entry: Entry| pipelines::compute_entry(device, &pipeline_layout, entry);
+    Passes {
+        view: pipeline(sky::build_sky_view),
+        derive: pipeline(sky::derive_light),
+    }
+}
+
+fn table_groups(
     device: &wgpu::Device,
     layout: &pipelines::GroupLayout,
     [transmittance, multiple, view, blank, blank_out]: [&Table; 5],
     sampler: &wgpu::Sampler,
-    uniform: &wgpu::Buffer,
+    pieces: &wgpu::Buffer,
     derived: &wgpu::Buffer,
-) -> Passes {
-    let pipeline_layout =
-        pipelines::layout_of(device, &crate::pipeline_layouts::SKY_TABLE_PIPELINES);
-    let pipeline = |entry: Entry| pipelines::compute_entry(device, &pipeline_layout, entry);
+) -> [wgpu::BindGroup; 2] {
     let group = |reads: [&Table; 3], out: &Table| {
         pipelines::group(
             device,
@@ -413,7 +407,7 @@ fn passes(
             &SKY_TABLES,
             layout,
             &[
-                buffers::entry("air", uniform),
+                buffers::entry("pieces", pieces),
                 ("transmittance_table", pipelines::view(&reads[0].view)),
                 ("multiple_table", pipelines::view(&reads[1].view)),
                 ("view_table", pipelines::view(&reads[2].view)),
@@ -423,23 +417,42 @@ fn passes(
             ],
         )
     };
-    Passes {
-        view: pipeline(sky::build_sky_view),
-        derive: pipeline(sky::derive_light),
-        groups: [
-            group([transmittance, multiple, blank], view),
-            group([transmittance, multiple, view], blank_out),
-        ],
+    [
+        group([transmittance, multiple, blank], view),
+        group([transmittance, multiple, view], blank_out),
+    ]
+}
+
+struct Sections {
+    sky: Sky,
+    clouds: Clouds,
+    haze: engine_core::Haze,
+    night: NightSky,
+    day: TimeOfDay,
+    probes: ReflectionProbeSettings,
+    sun: Vec3,
+    light: SkyLightingValues,
+    exposure: f32,
+}
+
+impl Sections {
+    fn of(snapshot: &RenderSnapshot) -> Self {
+        Self {
+            sky: snapshot.section::<Sky>(),
+            clouds: snapshot.section::<Clouds>(),
+            haze: snapshot.section::<engine_core::Haze>(),
+            night: snapshot.section::<NightSky>(),
+            day: snapshot.section::<TimeOfDay>(),
+            probes: snapshot.section::<ReflectionProbeSettings>(),
+            sun: snapshot.section::<Sunlight>().values().sun_direction,
+            light: snapshot.section::<SkyLighting>().values(),
+            exposure: snapshot.section::<Grading>().values().exposure,
+        }
     }
 }
 
-pub(crate) fn night_lighting(snapshot: &RenderSnapshot, sun: Vec3) -> [[f32; 4]; 3] {
-    let night = snapshot.environment.night_sky.sanitized();
-    let day = snapshot
-        .extracted
-        .get::<TimeOfDay>()
-        .copied()
-        .map_or_else(TimeOfDay::off, TimeOfDay::sanitized);
+fn night_lighting(sections: &Sections) -> [[f32; 4]; 3] {
+    let (night, day, sun) = (sections.night, sections.day, sections.sun);
     let clock = if day.enabled {
         day
     } else {
@@ -459,9 +472,8 @@ pub(crate) fn night_lighting(snapshot: &RenderSnapshot, sun: Vec3) -> [[f32; 4];
     ]
 }
 
-fn sky_piece(snapshot: &RenderSnapshot) -> SkyPiece {
-    let atmosphere = snapshot.environment.atmosphere.sanitized();
-    let sky = snapshot.environment.sky.sanitized();
+fn sky_piece(sections: &Sections, kept: &SkyPiece) -> SkyPiece {
+    let (light, sky) = (sections.light, sections.sky);
     let (fog, aerial, physical) = if sky.enabled {
         let altitude = sky.altitude * 0.001;
         let rayleigh = (sky.rayleigh[0] + sky.rayleigh[1] + sky.rayleigh[2]) / 3.0
@@ -481,27 +493,27 @@ fn sky_piece(snapshot: &RenderSnapshot) -> SkyPiece {
     } else {
         (
             [
-                atmosphere.fog_start,
-                atmosphere.fog_density,
-                atmosphere.fog_falloff,
-                atmosphere.fog_max,
+                light.fog_start,
+                light.fog_density,
+                light.fog_falloff,
+                light.fog_max,
             ],
             [
-                atmosphere.aerial_start,
-                atmosphere.aerial_density,
-                atmosphere.aerial_falloff,
-                atmosphere.aerial_glow,
+                light.aerial_start,
+                light.aerial_density,
+                light.aerial_falloff,
+                light.aerial_glow,
             ],
             0.0,
         )
     };
     SkyPiece {
-        zenith: atmosphere.zenith.extend(atmosphere.ambient).to_array(),
-        horizon: atmosphere.horizon.extend(atmosphere.exposure).to_array(),
-        ground: atmosphere.ground.extend(0.0).to_array(),
+        zenith: light.zenith.extend(light.ambient).to_array(),
+        horizon: light.horizon.extend(sections.exposure).to_array(),
+        ground: light.ground.extend(0.0).to_array(),
         fog,
         aerial,
-        aerial_color: atmosphere.aerial_color.extend(0.0).to_array(),
+        aerial_color: light.aerial_color.extend(0.0).to_array(),
         cloud_shadow: [0.0; 4],
         cloud_layer: [0.0; 4],
         night: [0.0; 4],
@@ -511,13 +523,13 @@ fn sky_piece(snapshot: &RenderSnapshot) -> SkyPiece {
         haze_march: [0.0; 4],
         sun_light: [0.0; 4],
         state: [physical, 0.0, 0.0, 0.0],
+        ..*kept
     }
 }
 
-pub(crate) fn apply_night(piece: &mut SkyPiece, snapshot: &RenderSnapshot) {
-    [piece.night, piece.star_turn, piece.moon] =
-        night_lighting(snapshot, snapshot.environment.atmosphere.sun_direction);
-    let night = snapshot.environment.night_sky.sanitized();
+fn apply_night(piece: &mut SkyPiece, sections: &Sections) {
+    [piece.night, piece.star_turn, piece.moon] = night_lighting(sections);
+    let night = sections.night;
     piece.night_shape = [
         night.cirrus_height,
         night.cirrus_drift[0],
@@ -694,43 +706,57 @@ impl SkyPass {
         }
     }
 
-    fn prepare_clouds(&mut self, core: &Core, snapshot: &RenderSnapshot, gpu_mode: bool, sun: Sun) {
+    fn prepare_clouds(
+        &mut self,
+        core: &Core,
+        snapshot: &RenderSnapshot,
+        clouds: &Clouds,
+        gpu_mode: bool,
+        sun: Sun,
+    ) {
+        let pieces = core.pieces_buffer();
         self.clouds.prepare(
             &core.device,
             &core.queue,
             (
-                &snapshot.environment.clouds,
+                clouds,
                 snapshot.tables.cloud_noise.as_ref(),
                 (snapshot.camera_position, snapshot.surface_under_eye),
                 snapshot.presented_seconds,
             ),
-            ((sun, &self.piece), self.tables.bindings()),
+            ((sun, &self.piece), self.tables.bindings(), pieces),
             !gpu_mode,
         );
         self.clouds.prepare_view(
             &core.device,
             &core.queue,
             (
-                &snapshot.environment.clouds,
+                clouds,
                 snapshot.camera_position,
                 snapshot.presented_seconds,
             ),
             snapshot.view_projection,
             core.display.region,
-            ((sun, &self.piece), self.tables.bindings()),
+            ((sun, &self.piece), self.tables.bindings(), pieces),
             &core.depth.view,
         );
-        self.environment.set_sources(
-            &core.device,
-            core.pieces_buffer(),
-            self.clouds.environment_dome(),
-        );
+        self.environment
+            .set_sources(&core.device, pieces, self.clouds.environment_dome());
+        [
+            self.piece.domes_older,
+            self.piece.domes_newer,
+            self.piece.domes_older_mirror,
+            self.piece.domes_newer_mirror,
+            self.piece.domes_eye,
+            self.piece.domes_view,
+        ] = self.clouds.dome_piece();
     }
 
     fn prepare_tables(
         &mut self,
         core: &Core,
         snapshot: &RenderSnapshot,
+        sections: &Sections,
     ) -> Option<wgpu::CommandEncoder> {
         use std::mem::offset_of;
         let pieces = core.pieces_buffer();
@@ -760,20 +786,19 @@ impl SkyPass {
             ),
         ];
         copies.extend(self.clouds.sky_copies());
-        let sun = snapshot.environment.atmosphere.sun_direction;
-        let [night, _, moon] = night_lighting(snapshot, sun);
+        let [night, _, moon] = night_lighting(sections);
         self.tables.encode(
             &core.device,
             &core.queue,
-            (&snapshot.environment.sky, snapshot.tables.sky.as_ref()),
+            (&sections.sky, snapshot.tables.sky.as_ref()),
             (
-                sun,
+                sections.sun,
                 snapshot.camera_position,
-                snapshot.environment.atmosphere.exposure,
+                sections.exposure,
                 snapshot.presented_seconds,
                 [moon[0], moon[1], moon[2], night[1] * night[3]],
             ),
-            &copies,
+            (pieces, &mut self.piece, &copies),
             &core.profiler,
         )
     }
@@ -782,9 +807,8 @@ impl SkyPass {
         &mut self,
         core: &Core,
         snapshot: &RenderSnapshot,
-        sun: Sun,
+        (probe_settings, sun): (ReflectionProbeSettings, Sun),
     ) -> Option<wgpu::CommandEncoder> {
-        let probe_settings = snapshot.environment.reflection_probes;
         let probe_list = snapshot.probe_list();
         let most_cubes = (core.display.max_layers / FACES as u32).max(1);
         let wanted_cubes = 1 + (probe_list.len() as u32).min(most_cubes - 1);
@@ -881,24 +905,25 @@ impl GpuPart for SkyPass {
             .map_or(Sun::NONE, |face| face.sun());
         let post = cx.parts.post();
         let post_disabled = post.is_some_and(|post| post.disabled());
-        self.piece = sky_piece(snapshot);
-        apply_night(&mut self.piece, snapshot);
+        let sections = Sections::of(snapshot);
+        self.piece = sky_piece(&sections, &self.piece);
+        apply_night(&mut self.piece, &sections);
         apply_haze(
             &mut self.piece,
-            &snapshot.environment.haze,
+            &sections.haze,
             snapshot.view_projection,
             snapshot.camera_position,
-            !frame.kind.debug && !post_disabled && haze_runs(&snapshot.environment),
+            !frame.kind.debug && !post_disabled && haze_runs(snapshot),
         );
         (self.piece.cloud_shadow, self.piece.cloud_layer) =
-            crate::clouds::shadow_lighting(&snapshot.environment.clouds, snapshot.camera_position);
-        self.prepare_clouds(core, snapshot, frame.kind.gpu_mode, sun);
-        let derived = self.prepare_tables(core, snapshot);
+            crate::clouds::shadow_lighting(&sections.clouds, snapshot.camera_position);
+        self.prepare_clouds(core, snapshot, &sections.clouds, frame.kind.gpu_mode, sun);
+        let derived = self.prepare_tables(core, snapshot, &sections);
         self.piece.state[1] = f32::from(u8::from(derived.is_some()));
         if let Some(encoder) = derived {
             prelude.push_encoder(PreludeStage::Tables, "pre_sky", encoder);
         }
-        if let Some(encoder) = self.prepare_environment(core, snapshot, sun) {
+        if let Some(encoder) = self.prepare_environment(core, snapshot, (sections.probes, sun)) {
             prelude.push_encoder(PreludeStage::Derived, "pre_environment", encoder);
         }
         let post_active = post.is_some_and(|post| post.active());
@@ -1054,7 +1079,7 @@ impl GpuPart for SkyPass {
         if group != "frame" {
             return;
         }
-        let (air, view_table, _, table_sampler) = self.tables.bindings();
+        let (view_table, _, table_sampler) = self.tables.bindings();
         let clouds = self.clouds.dome();
         let (environment, environment_sampler) = self.environment.binding();
         out.extend([
@@ -1062,7 +1087,6 @@ impl GpuPart for SkyPass {
                 "cloud_shadows",
                 Bound::fixed(self.clouds.shadows().as_entire_binding()),
             ),
-            ("sky_air", Bound::fixed(air.as_entire_binding())),
             ("sky_view_table", Bound::fixed(pipelines::view(view_table))),
             (
                 "sky_table_sampler",
@@ -1079,10 +1103,6 @@ impl GpuPart for SkyPass {
             (
                 "sky_cloud_sampler",
                 Bound::fixed(pipelines::sampler(clouds.sampler)),
-            ),
-            (
-                "sky_domes",
-                Bound::fixed(clouds.uniform.as_entire_binding()),
             ),
             ("environment_maps", environment),
             ("environment_sampler", environment_sampler),
@@ -1111,7 +1131,7 @@ impl GpuPart for SkyPass {
     }
 
     fn shading(&self, snapshot: &RenderSnapshot, shading: &mut Shading) {
-        let clouds = snapshot.environment.clouds.sanitized();
+        let clouds = snapshot.section::<Clouds>();
         let shadows = clouds.enabled && clouds.coverage > 0.0 && clouds.shadows > 0.0;
         shading.set("CLOUD_SHADOWS", if shadows { 1.0 } else { 0.0 });
     }

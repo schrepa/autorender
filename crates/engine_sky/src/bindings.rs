@@ -4,7 +4,7 @@ use engine_render::bindings::{
 };
 use engine_render::gpu_layouts::scene::PostUniform;
 
-use crate::gpu_layouts::{CLOUD_SHADOW_BYTES, CloudUniform, DomeUniform, SkyUniform, ViewUniform};
+use crate::gpu_layouts::{CLOUD_SHADOW_BYTES, CloudUniform, ViewUniform};
 
 use Format::Rgba16Float;
 use Sample::{Depth, Float, Unfilterable};
@@ -23,7 +23,7 @@ pub(crate) const CLOUD_MARCH: Table = Table {
         bind("dome", Kind::StorageArray(Rgba16Float), C),
         texture("noise_detail", Float, D3, C),
         write("shadow_cells", C),
-        uniform_of("cloud_air", size_of::<SkyUniform>(), C),
+        uniform("pieces", C),
         texture("cloud_transmittance", Float, D2, C),
         sampler("cloud_table_sampler", Filtering, C),
         write("light_cells", C),
@@ -41,7 +41,7 @@ pub(crate) const CLOUD_VIEW: Table = Table {
         texture("view_depth", Depth, D2, C),
         bind("view_out", Kind::Storage(Rgba16Float), C),
         write("composite_draw", C),
-        uniform_of("cloud_air", size_of::<SkyUniform>(), C),
+        uniform("pieces", C),
         texture("cloud_transmittance", Float, D2, C),
         sampler("cloud_table_sampler", Filtering, C),
         write("light_cells", C),
@@ -61,7 +61,7 @@ pub(crate) const SKY_TRANSMITTANCE: Table = Table {
 pub(crate) const SKY_TABLES: Table = Table {
     label: "engine/sky-tables-layout",
     bindings: &[
-        uniform_of("air", size_of::<SkyUniform>(), C),
+        uniform("pieces", C),
         texture("transmittance_table", Float, D2, C),
         texture("multiple_table", Float, D2, C),
         texture("view_table", Float, D2, C),
@@ -93,13 +93,11 @@ pub(crate) const ENVIRONMENT_SKY: Table = Table {
     label: "engine/environment-sky-layout",
     bindings: &[
         uniform("pieces", F),
-        uniform_of("sky_air", size_of::<SkyUniform>(), F),
         texture("sky_view_table", Float, D2, F),
         sampler("sky_table_sampler", Filtering, F),
         texture("sky_clouds", Float, D2Array, F),
         texture("sky_clouds_old", Float, D2Array, F),
         sampler("sky_cloud_sampler", Filtering, F),
-        uniform_of("sky_domes", size_of::<DomeUniform>(), F),
     ],
 };
 
@@ -129,13 +127,11 @@ pub(crate) const FRAME_SKY_TABLES: Contribution = Contribution {
     group: "frame",
     set: "sky_tables",
     bindings: &[
-        uniform_of("sky_air", size_of::<SkyUniform>(), F),
         texture("sky_view_table", Float, D2, F),
         sampler("sky_table_sampler", Filtering, F),
         texture("sky_clouds", Float, D2Array, F),
         texture("sky_clouds_old", Float, D2Array, F),
         sampler("sky_cloud_sampler", Filtering, F),
-        uniform_of("sky_domes", size_of::<DomeUniform>(), F),
     ],
 };
 
