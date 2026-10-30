@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::World;
 use engine_core::math::clamp;
-use engine_core::{Ground, WaterSample};
-use engine_terrain::Wind;
+use engine_core::{WaterBodies, WaterSample, Wind};
 use glam::{Quat, Vec3};
 
 use crate::body::BodyWater;
@@ -118,7 +117,7 @@ impl Along {
             let at = station * reach;
             let point = motion.translation + motion.rotation * (axis * at);
             *samples += 1;
-            along.stations[along.count] = (at, Ground::water_in(world, point));
+            along.stations[along.count] = (at, WaterBodies::water_in(world, point));
             along.count += 1;
         }
         along

@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_collision::{Collider, CollisionWorld};
-use engine_core::{FixedTime, Ground, InterpolateTransform, Parent, Transform};
-use engine_terrain::Wind;
+use engine_core::{FixedTime, Ground, InterpolateTransform, Parent, Transform, Wind, section_in};
 use glam::{Quat, Vec3};
 use rapier3d::prelude as rp;
 
@@ -205,11 +204,7 @@ impl PhysicsWorld {
 
     fn tick(&mut self, world: &mut World, mut wanted: Vec<Wanted>) {
         wanted.sort_unstable_by_key(|wanted| wanted.entity);
-        let settings = world
-            .get_resource::<Physics>()
-            .copied()
-            .unwrap_or_else(Physics::off)
-            .sanitized();
+        let settings = section_in::<Physics>(world);
         let Some(time) = world.get_resource::<FixedTime>().copied() else {
             return;
         };
@@ -385,7 +380,9 @@ fn push(
     time: FixedTime,
 ) -> u32 {
     let _profile = engine_profile::span("physics", "push");
-    let wind = world.get_resource::<Wind>();
+    let wind = world
+        .contains_resource::<Wind>()
+        .then(|| section_in::<Wind>(world));
     let mut samples = 0;
     for body in bodies {
         let Some(rigid) = solver.bodies.get_mut(body.handle) else {
@@ -408,7 +405,7 @@ fn push(
         let pushed = coupling::push(
             world,
             settings,
-            wind,
+            wind.as_ref(),
             time.elapsed_seconds as f32,
             time.delta_seconds,
             &body.form,

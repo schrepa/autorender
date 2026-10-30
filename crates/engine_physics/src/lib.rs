@@ -6,6 +6,7 @@
 mod body;
 mod coupling;
 mod obstacles;
+mod scene;
 mod settings;
 mod shapes;
 mod smoke;
@@ -15,12 +16,16 @@ mod views;
 mod world;
 
 pub use body::{BodyMotion, BodyProblem, BodyStatus, BodyWater, RigidBody};
+pub use scene::RIGID_BODY;
 pub use settings::{Physics, PhysicsStats};
 pub use views::{PhysicsWorldView, RigidBodyView, rigid_body_view};
 pub use world::PhysicsWorld;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, FixedSimulation, FixedSimulationSystems};
+use engine_core::{
+    Brick, Bricks, FixedSimulation, FixedSimulationSystems, PhysicsSlot, Place, WaterObstacles,
+};
+use engine_scene::AddSceneComponents;
 
 pub struct PhysicsBrick;
 
@@ -31,11 +36,14 @@ pub enum PhysicsSystems {
 }
 
 impl Brick for PhysicsBrick {
+    const SLOT: Option<Place> = Some(Place::slot::<PhysicsSlot>());
+
     fn register(bricks: &mut Bricks) {
         bricks
             .settings::<Physics>()
             .stats::<PhysicsStats>()
             .resource::<PhysicsWorld>()
+            .resource::<WaterObstacles>()
             .configure_sets(
                 FixedSimulation,
                 (PhysicsSystems::Step, PhysicsSystems::Obstruct)
@@ -50,6 +58,7 @@ impl Brick for PhysicsBrick {
                 ),
             )
             .inspector::<PhysicsWorld, PhysicsWorldView>(|_, world| PhysicsWorldView::of(world))
+            .scene_components(&[&RIGID_BODY])
             .smoke("physics", false, smoke::run);
     }
 }
