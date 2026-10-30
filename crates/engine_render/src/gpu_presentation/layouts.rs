@@ -101,6 +101,11 @@ impl Shaders {
         )
     }
 
+    pub(super) fn release_views(&mut self) {
+        self.pipelines.count_still = OnceCell::new();
+        self.pipelines.probe_cull = OnceCell::new();
+    }
+
     pub(super) fn group(
         &self,
         device: &wgpu::Device,

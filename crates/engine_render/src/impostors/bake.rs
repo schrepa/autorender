@@ -17,6 +17,14 @@ pub(super) struct BakeTargets {
     _textures: [wgpu::Texture; 6],
 }
 
+impl Drop for BakeTargets {
+    fn drop(&mut self) {
+        for texture in self._textures.iter().chain(&self.resolved).chain(&self.layer) {
+            crate::memory::release_any(texture);
+        }
+    }
+}
+
 fn tile_frames(shape: AtlasShape) -> u32 {
     (TILE_TEXELS / shape.texels).clamp(1, shape.frames)
 }

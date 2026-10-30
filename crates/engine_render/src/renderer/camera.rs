@@ -171,6 +171,12 @@ impl CameraBindings {
         }
     }
 
+    pub(crate) fn release_views(&mut self) {
+        for view in &mut self.views {
+            view.views.clear();
+        }
+    }
+
     pub(crate) fn group(&self, group: &str, without: &[&str]) -> &wgpu::BindGroup {
         self.built(group, without).expect("shared_group_built")
     }

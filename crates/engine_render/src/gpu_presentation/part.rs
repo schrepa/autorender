@@ -141,6 +141,7 @@ fn prepare_presentation(
     let occlusion_enabled = snapshot.section::<OcclusionCulling>().enabled && culls;
     if !occlusion_enabled {
         core.culling.pyramid = None;
+        core.gpu_presentation.release_occlusion();
     }
     let region = core.display.region;
     let occlusion = if gpu_mode && occlusion_enabled {

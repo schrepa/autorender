@@ -23,7 +23,7 @@ use crate::gpu_layouts::constants::PARENT_GROUP;
 use crate::gpu_layouts::constants::PRESENTATION_GROUP as GROUP;
 use crate::gpu_layouts::constants::SCAN_GROUP;
 use fades::Fades;
-use groups::{DrawGroups, PHASE_ONE, PHASE_TWO};
+use groups::{DrawGroups, Kept, PHASE_ONE, PHASE_TWO};
 use inputs::NodeInputs;
 pub(crate) use inputs::Staging;
 use layouts::Shaders;
@@ -252,6 +252,12 @@ impl GpuPresentationPass {
         self.occlusion
     }
 
+    pub(crate) fn release_occlusion(&mut self) {
+        for group in &mut self.occlusion_groups {
+            group.clear();
+        }
+    }
+
     pub(crate) fn culls_subpixel(&self) -> bool {
         self.subpixel
     }
@@ -294,8 +300,15 @@ impl GpuPresentationPass {
             gpu.info.len(),
             if held { 0 } else { gpu.parents.len() },
         );
-        self.groups
-            .ensure(device, plan.ordered_instances.len(), plan.batches.len());
+        self.groups.ensure(
+            device,
+            (plan.ordered_instances.len(), plan.batches.len()),
+            Kept {
+                phase_two: view.occlusion.is_some(),
+                probe_faces: view.stillness.is_some(),
+                impostors: view.impostors && view.lod_error > 0.0,
+            },
+        );
         self.stillness
             .ensure(device, view.stillness, poses.current());
         self.fades

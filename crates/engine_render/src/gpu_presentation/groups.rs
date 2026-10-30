@@ -8,7 +8,39 @@ pub(super) const PHASE_ONE: usize = 0;
 pub(super) const PHASE_TWO: usize = 1;
 pub(super) const PROBE_FACES: usize = 2;
 
+const VISIBLE_IDS: [&str; 3] = [
+    "engine/presentation-visible-ids",
+    "engine/presentation-visible-ids2",
+    "engine/presentation-visible-ids-probe",
+];
+const IMPOSTOR_IDS: [&str; 2] = [
+    "engine/presentation-impostor-ids",
+    "engine/presentation-impostor-ids2",
+];
+const DRAWS: [&str; 3] = [
+    "engine/presentation-draws",
+    "engine/presentation-draws2",
+    "engine/presentation-draws-probe",
+];
+
 type GroupsKey = (u64, u64, u64, u64, RecordsKey);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct Kept {
+    pub(super) phase_two: bool,
+    pub(super) probe_faces: bool,
+    pub(super) impostors: bool,
+}
+
+impl Kept {
+    fn compactions(self) -> [bool; 3] {
+        [true, self.phase_two, self.probe_faces]
+    }
+
+    fn impostor_ids(self) -> [bool; 2] {
+        [self.impostors, self.impostors && self.phase_two]
+    }
+}
 
 pub(super) struct DrawGroups {
     capacity: usize,
@@ -23,6 +55,7 @@ pub(super) struct DrawGroups {
     pub(super) impostor_ids: [wgpu::Buffer; 2],
     count: u32,
     batch_count: u32,
+    kept: Kept,
     key: Option<GroupsKey>,
     first_instance: bool,
     candidate_staging: Vec<CandidateData>,
@@ -45,22 +78,12 @@ impl DrawGroups {
             batch_capacity: 0,
             batches: empty("engine/presentation-batches", none),
             batch_bases: empty("engine/presentation-batch-bases", none),
-            draws: [
-                empty("engine/presentation-draws", indirect),
-                empty("engine/presentation-draws2", indirect),
-                empty("engine/presentation-draws-probe", indirect),
-            ],
-            visible_ids: [
-                empty("engine/presentation-visible-ids", vertex),
-                empty("engine/presentation-visible-ids2", vertex),
-                empty("engine/presentation-visible-ids-probe", vertex),
-            ],
-            impostor_ids: [
-                empty("engine/presentation-impostor-ids", vertex),
-                empty("engine/presentation-impostor-ids2", vertex),
-            ],
+            draws: DRAWS.map(|label| empty(label, indirect)),
+            visible_ids: VISIBLE_IDS.map(|label| empty(label, vertex)),
+            impostor_ids: IMPOSTOR_IDS.map(|label| empty(label, vertex)),
             count: 0,
             batch_count: 0,
+            kept: Kept::default(),
             key: None,
             first_instance: device
                 .features()
@@ -105,8 +128,14 @@ impl DrawGroups {
         .sum()
     }
 
-    pub(super) fn ensure(&mut self, device: &wgpu::Device, candidates: usize, batches: usize) {
-        if candidates > self.capacity {
+    pub(super) fn ensure(
+        &mut self,
+        device: &wgpu::Device,
+        (candidates, batches): (usize, usize),
+        kept: Kept,
+    ) {
+        let grown = candidates > self.capacity;
+        if grown {
             self.capacity = grow(candidates);
             let capacity = self.capacity as u64;
             let groups = capacity.div_ceil(u64::from(SCAN_GROUP));
@@ -131,29 +160,10 @@ impl DrawGroups {
                 (capacity + 4 * (groups + 1) + 1) * 4,
                 wgpu::BufferUsages::COPY_SRC,
             );
-            let planes = LOD_LEVELS as u64;
-            self.visible_ids = [
-                "engine/presentation-visible-ids",
-                "engine/presentation-visible-ids2",
-                "engine/presentation-visible-ids-probe",
-            ]
-            .map(|label| {
-                storage(
-                    device,
-                    label,
-                    planes * capacity * 4,
-                    wgpu::BufferUsages::VERTEX,
-                )
-            });
-            self.impostor_ids = [
-                "engine/presentation-impostor-ids",
-                "engine/presentation-impostor-ids2",
-            ]
-            .map(|label| storage(device, label, capacity * 8, wgpu::BufferUsages::VERTEX));
             self.key = None;
-            self.generation += 1;
         }
-        if batches > self.batch_capacity {
+        let batches_grown = batches > self.batch_capacity;
+        if batches_grown {
             self.batch_capacity = batches.max(64).next_power_of_two();
             let capacity = self.batch_capacity as u64;
             crate::memory::release_buffer(&self.batches);
@@ -170,14 +180,39 @@ impl DrawGroups {
                 capacity * 16,
                 wgpu::BufferUsages::empty(),
             );
-            let args = (LOD_LEVELS as u64 * capacity + 1) * DRAW_ARGS_BYTES;
-            self.draws = [
-                "engine/presentation-draws",
-                "engine/presentation-draws2",
-                "engine/presentation-draws-probe",
-            ]
-            .map(|label| storage(device, label, args, wgpu::BufferUsages::INDIRECT));
             self.key = None;
+        }
+        let planes = LOD_LEVELS as u64;
+        let capacity = self.capacity as u64;
+        let args = (planes * self.batch_capacity as u64 + 1) * DRAW_ARGS_BYTES;
+        let mut changed = grown || batches_grown;
+        let compactions = kept.compactions().into_iter().zip(self.kept.compactions());
+        for (index, (wanted, held)) in compactions.enumerate() {
+            if wanted != held || (grown && wanted) {
+                let bytes = if wanted { planes * capacity * 4 } else { 0 };
+                let usage = wgpu::BufferUsages::VERTEX;
+                sized(device, &mut self.visible_ids[index], VISIBLE_IDS[index], bytes, usage);
+                changed = true;
+            }
+            if wanted != held || (batches_grown && wanted) {
+                let bytes = if wanted { args } else { 0 };
+                let usage = wgpu::BufferUsages::INDIRECT;
+                sized(device, &mut self.draws[index], DRAWS[index], bytes, usage);
+                changed = true;
+            }
+        }
+        let impostors = kept.impostor_ids().into_iter().zip(self.kept.impostor_ids());
+        for (index, (wanted, held)) in impostors.enumerate() {
+            if wanted != held || (grown && wanted) {
+                let bytes = if wanted { capacity * 8 } else { 0 };
+                let usage = wgpu::BufferUsages::VERTEX;
+                let label = IMPOSTOR_IDS[index];
+                sized(device, &mut self.impostor_ids[index], label, bytes, usage);
+                changed = true;
+            }
+        }
+        self.kept = kept;
+        if changed {
             self.generation += 1;
         }
     }
@@ -326,6 +361,17 @@ impl DrawGroups {
             Ids::Region(ids.slice(start..end))
         }
     }
+}
+
+fn sized(
+    device: &wgpu::Device,
+    buffer: &mut wgpu::Buffer,
+    label: &str,
+    bytes: u64,
+    usage: wgpu::BufferUsages,
+) {
+    crate::memory::release_buffer(buffer);
+    *buffer = storage(device, label, bytes, usage);
 }
 
 fn batch_record(

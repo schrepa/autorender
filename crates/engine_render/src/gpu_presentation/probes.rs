@@ -210,6 +210,14 @@ impl GpuPresentationPass {
         }
     }
 
+    pub(crate) fn release_views(&mut self) {
+        for uniform in &self.probes.uniforms {
+            crate::memory::release_buffer(uniform);
+        }
+        self.probes = ViewFaces::default();
+        self.shaders.release_views();
+    }
+
     pub(crate) fn view_draw_source<'a>(
         &'a self,
         batch: &DrawBatch,

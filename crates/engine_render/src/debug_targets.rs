@@ -238,6 +238,10 @@ impl DebugFrame {
         );
     }
 
+    pub(crate) fn release(&mut self) {
+        self.targets.release();
+    }
+
     pub(crate) fn attachment(&self, resource: &str) -> Option<wgpu::TextureView> {
         self.targets.get()?.view(resource).cloned()
     }

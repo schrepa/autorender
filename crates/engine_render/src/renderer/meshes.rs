@@ -110,6 +110,12 @@ impl MeshPipelines {
                 .retain(|(kind, _), _| kind.targets() != targets);
         }
     }
+
+    pub(crate) fn release_view(&mut self) {
+        if self.view.take().is_some() {
+            self.forget(None);
+        }
+    }
 }
 
 #[derive(Default)]

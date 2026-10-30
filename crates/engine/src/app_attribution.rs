@@ -143,10 +143,16 @@ mod measured {
                     brick,
                     cpu_ms: spent[slot],
                     gpu_ms: gpu.as_ref().map(|gpu| {
+                        let preludes = gpu
+                            .preludes
+                            .iter()
+                            .filter(|&&(_, noted, _)| noted == brick)
+                            .map(|&(.., ms)| ms);
                         gpu.passes
                             .iter()
                             .filter(|&&(pass, _)| owner(Some(pass)) == brick)
                             .map(|&(_, ms)| ms)
+                            .chain(preludes)
                             .sum()
                     }),
                     heap_live_bytes: heap.live_bytes,
