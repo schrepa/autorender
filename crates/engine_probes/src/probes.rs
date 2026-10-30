@@ -459,6 +459,9 @@ impl GpuPart for ProbePass {
         let counted = |count: u64| count.min(u64::from(u32::MAX)) as u32;
         self.cut = Cut::of(counted(asked), counted(kept));
         self.captures = cx.frame.kind.gpu_mode && !cx.frame.kind.debug && !probe_list.is_empty();
+        if probe_list.is_empty() {
+            self.depth.clear();
+        }
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
