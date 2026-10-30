@@ -3,7 +3,7 @@ use std::cell::Cell;
 use bevy_ecs::prelude::{Entity, World};
 use std::sync::Arc;
 
-use engine_core::{Ground, GroundSamples, TILE_QUADS, TILE_SAMPLES, TileKey};
+use engine_core::{FieldSamples, TILE_QUADS, TILE_SAMPLES, TileKey, WorldSolids};
 use glam::Vec3;
 use parry3d::{
     bounding_volume::Aabb,
@@ -26,7 +26,7 @@ use crate::{
 struct Field {
     entity: Entity,
     key: TileKey,
-    samples: Arc<dyn GroundSamples>,
+    samples: Arc<dyn FieldSamples>,
     center: Vec3,
     shape: Arc<HeightField>,
     bounds: Bounds,
@@ -66,19 +66,19 @@ impl TerrainFields {
     }
 
     pub(crate) fn sync(&mut self, world: &World) -> bool {
-        let Some(ground) = world.get_resource::<Ground>() else {
+        let Some(solids) = world.get_resource::<WorldSolids>() else {
             let changed = !self.fields.is_empty();
             self.fields.clear();
             self.revision = None;
             return changed;
         };
-        let revision = ground.face().revision(world);
-        let wanted = ground.face().patches(world);
+        let revision = solids.revision(world);
+        let wanted = solids.fields(world);
         let same = self.revision == Some(revision)
             && wanted.len() == self.fields.len()
             && wanted.iter().all(|patch| {
                 self.fields.iter().any(|field| {
-                    field.entity == patch.ground
+                    field.entity == patch.owner
                         && field.key == patch.key
                         && Arc::ptr_eq(&field.samples, &patch.samples)
                 })
@@ -89,7 +89,7 @@ impl TerrainFields {
         self.revision = Some(revision);
         let mut kept = std::mem::take(&mut self.fields);
         for patch in wanted {
-            let (entity, key, origin) = (patch.ground, patch.key, patch.origin);
+            let (entity, key, origin) = (patch.owner, patch.key, patch.origin);
             if let Some(position) = kept.iter().position(|field| {
                 field.entity == entity
                     && field.key == key
