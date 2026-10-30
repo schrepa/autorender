@@ -8,6 +8,7 @@ engine_render::gpu_structs! {
     pub(crate) struct ReflectionsPiece as ["ReflectionsPiece" in "reflections::piece"] {
         pub surface: [f32; 4],
         pub trace: [f32; 4],
+        pub applied: [f32; 4],
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
