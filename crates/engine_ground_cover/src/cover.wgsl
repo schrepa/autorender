@@ -1,6 +1,6 @@
+import package::cover::laws::{COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION};
+import package::face::cover::{COVER_FAR_SIDE, COVER_ROUGHNESS};
 import package::face::dither::{encoded, stored};
-import package::face::heightfield::{COVER_FAR_SIDE, COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION,
-    COVER_ROUGHNESS};
 import package::face::lighting::{finish, local_light, widened};
 import package::face::occupancy::foliage;
 import package::face::sun::sun_direction;

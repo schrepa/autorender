@@ -4,7 +4,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{RenderSnapshot, RenderStats};
+use engine_core::{Cut, Foliage, RenderSnapshot, RenderStats, Wind};
 use engine_terrain::GroundCover;
 
 use crate::bindings::{COVER_DRAW, COVER_GROW};
@@ -87,7 +87,7 @@ pub(crate) struct GroundCoverPass {
     grow_bytes: Vec<u8>,
     previous_time: Option<f32>,
     readbacks: ReadbackRing<u32>,
-    totals: Rc<Cell<Option<[u32; 2]>>>,
+    blade_cut: Rc<Cell<Option<Cut>>>,
     reach: f32,
     tiers: u32,
     drawn: bool,
@@ -138,7 +138,7 @@ impl GroundCoverPass {
             grow_bytes: Vec::new(),
             previous_time: None,
             readbacks: ReadbackRing::new("engine/cover-readback"),
-            totals: Rc::new(Cell::new(None)),
+            blade_cut: Rc::new(Cell::new(None)),
             reach: 0.0,
             tiers: 0,
             drawn: false,
@@ -152,8 +152,8 @@ impl GroundCoverPass {
         (self.reach, self.tiers)
     }
 
-    fn totals(&self) -> [u32; 2] {
-        self.totals.get().unwrap_or([0; 2])
+    fn blade_cut(&self) -> Cut {
+        self.blade_cut.get().unwrap_or_default()
     }
 
     fn prepare_growth(
@@ -178,7 +178,7 @@ impl GroundCoverPass {
             (culling, eye, time, previous, height),
         );
         if !grows {
-            self.totals.set(Some([0; 2]));
+            self.blade_cut.set(Some(Cut::default()));
         }
         grows
     }
@@ -406,13 +406,17 @@ impl GroundCoverPass {
         }
     }
 
-    fn warm_cover(&mut self, core: &Core, snapshot: &RenderSnapshot, targets: Option<Targets>) {
+    fn warm_cover(
+        &mut self,
+        core: &Core,
+        snapshot: &RenderSnapshot,
+        cover: GroundCover,
+        targets: Option<Targets>,
+    ) {
         let terrains = &engine_terrain::RenderTerrains::of(snapshot).terrains;
         if terrains.is_empty() {
             return;
         }
-        let terrain_environment = engine_terrain::TerrainEnvironment::of(snapshot);
-        let cover = terrain_environment.ground_cover.sanitized();
         let grows = cover.enabled
             && cover.density > 0.0
             && terrains.iter().any(|terrain| {
@@ -615,29 +619,29 @@ impl GpuPart for GroundCoverPass {
         let core = &*cx.core;
         let snapshot = cx.frame.snapshot;
         let targets = passes.opaque_kind.targets();
+        let cover = snapshot.section::<GroundCover>();
         self.specialize(core.shading().constants());
-        self.warm_cover(core, snapshot, targets);
+        self.warm_cover(core, snapshot, cover, targets);
         if !terrain.drawn() {
             return;
         }
         self.drawn = true;
         let terrains = engine_terrain::RenderTerrains::of(snapshot);
-        let terrain_environment = engine_terrain::TerrainEnvironment::of(snapshot);
         let covered = self.prepare_growth(
             &core.device,
             &core.queue,
             terrain,
             terrains,
             (
-                &terrain_environment.ground_cover,
-                terrain_environment.wind.velocity,
+                &cover,
+                snapshot.section::<Wind>().velocity,
                 snapshot.view_projection,
                 snapshot.detail_eye,
                 snapshot.elapsed_seconds,
             ),
             (
                 core.display.size().height as f32,
-                snapshot.environment.foliage.sanitized().ground_blend > 0.0,
+                snapshot.section::<Foliage>().ground_blend > 0.0,
             ),
         );
         if let (true, Some(targets)) = (covered, targets) {
@@ -676,10 +680,9 @@ impl GpuPart for GroundCoverPass {
     }
 
     fn after_submit(&mut self) {
-        let totals = Rc::clone(&self.totals);
+        let blade_cut = Rc::clone(&self.blade_cut);
         self.readbacks.after_submit(move |words, capacity| {
-            let grown = words.get(0);
-            totals.set(Some([grown.min(capacity), grown.saturating_sub(capacity)]));
+            blade_cut.set(Some(Cut::of(words.get(0), capacity)));
         });
     }
 
@@ -688,11 +691,9 @@ impl GpuPart for GroundCoverPass {
     }
 
     fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
-        let (totals, (reach, tiers)) = (self.totals(), self.reach());
+        let (blade_cut, (reach, tiers)) = (self.blade_cut(), self.reach());
         stats.ground_cover = engine_core::GroundCoverStats {
-            blade_cut: Default::default(),
-            blades: totals[0],
-            dropped: totals[1],
+            blade_cut,
             reach: reach.round() as u32,
             tiers,
         };

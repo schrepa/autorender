@@ -1,8 +1,10 @@
+import package::cover::laws::{COVER_CLUMP_HEIGHT, COVER_LEAF_STEPS, COVER_LEAVES, cover_clump,
+    cover_clump_lean, cover_tuft};
 import package::engine::math::unit;
-import package::face::heightfield::{COVER_CLUMP_HEIGHT, COVER_LEAF_STEPS, COVER_LEAVES, CoverLaw,
-    GroundTerrain, LevelTile, NOT_RESIDENT, cover_clump, cover_clump_lean, cover_clumped,
-    cover_growth, cover_share, cover_tuft, directory, level_tile, macro_tint, tile_height,
-    true_height};
+import package::face::cover::{CoverLaw, cover_clumped, cover_growth, cover_share, cover_tint};
+import package::face::ground::{GroundMaterial, GroundTerrain, NOT_RESIDENT, ground_colors,
+    ground_extent, ground_height, level_tile, macro_color, material_cover, material_look,
+    tile_gradient, tile_height, tile_material};
 
 struct Grow {
     origin: vec4<f32>,
@@ -14,23 +16,6 @@ struct Grow {
     planes: array<vec4<f32>, 6>,
     foliage: vec4<f32>,
     view: vec4<f32>,
-}
-
-struct CoverSpec {
-    shape: vec4<f32>,
-    color: vec4<f32>,
-}
-
-struct PaletteEntry {
-    color: vec4<f32>,
-    params: vec4<f32>,
-    maps: vec4<f32>,
-    far: vec4<f32>,
-    relief: vec4<f32>,
-    canopy: vec4<f32>,
-    placed: vec4<f32>,
-    placed_size: vec4<f32>,
-    heights: vec4<f32>,
 }
 
 struct CoverBlade {
@@ -48,15 +33,9 @@ struct Counts {
     straight: atomic<u32>,
 }
 
-@group(0) @binding(1) var control: texture_2d_array<u32>;
-const PALETTE_ENTRIES: u32 = 113u;
-@group(0) @binding(3) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
-@group(0) @binding(4) var<storage, read> covers: array<CoverSpec>;
 @group(0) @binding(5) var<uniform> grow: Grow;
 @group(0) @binding(6) var<storage, read_write> blades: array<CoverBlade>;
 @group(0) @binding(7) var<storage, read_write> counts: Counts;
-@group(0) @binding(10) var macro_maps: texture_2d_array<f32>;
-@group(0) @binding(11) var normals: texture_2d_array<u32>;
 
 fn hash(value: u32) -> u32 {
     var h = value * 0x9e3779b1u;
@@ -71,45 +50,32 @@ fn grown() -> GroundTerrain {
 
 struct Ground {
     height: f32,
-    control: u32,
+    material: GroundMaterial,
     found: bool,
     level: u32,
 }
 
 fn true_ground(local: vec2<f32>) -> Ground {
     var ground: Ground;
-    let base = grow.counts.x;
-    let levels = grow.counts.y;
-    let extent = vec2<f32>(f32(directory[base + 1u]), f32(directory[base + 2u])) * 256.0 * grow.origin.w;
+    let extent = ground_extent(grown());
     if any(local > extent) {
         return ground;
     }
-    var level = 0u;
-    var tile: LevelTile;
-    tile.layer = NOT_RESIDENT;
-    for (; level < levels; level++) {
-        tile = level_tile(grown(), level, local / (grow.origin.w * f32(1u << level)));
-        if tile.layer != NOT_RESIDENT {
-            break;
-        }
-    }
-    if tile.layer == NOT_RESIDENT {
+    let found = ground_height(grown(), local);
+    if !found.found {
         return ground;
     }
-    let finest = max(local / (grow.origin.w * f32(1u << level)), vec2<f32>(0.0));
-    ground.control = textureLoad(control,
-        min(vec2<u32>(round(finest)) - tile.first, vec2<u32>(256u)) + vec2<u32>(1u),
-        tile.layer, 0).x;
+    let finest = max(local / (grow.origin.w * f32(1u << found.level)), vec2<f32>(0.0));
+    ground.material = tile_material(found.tile, vec2<u32>(round(finest)));
     ground.found = true;
-    ground.height = true_height(grown(), local, level, tile);
+    ground.height = found.height;
     return ground;
 }
 
 fn ground_at(local: vec2<f32>) -> Ground {
     var ground: Ground;
-    let base = grow.counts.x;
     let levels = grow.counts.y;
-    let extent = vec2<f32>(f32(directory[base + 1u]), f32(directory[base + 2u])) * 256.0 * grow.origin.w;
+    let extent = ground_extent(grown());
     if any(local > extent) {
         return ground;
     }
@@ -190,11 +156,10 @@ fn ground_normal(local: vec2<f32>) -> vec3<f32> {
         }
         let corner = min(vec2<u32>(samples), tile.first + vec2<u32>(255u));
         let f = saturate(samples - vec2<f32>(corner));
-        let texel = corner - tile.first + vec2<u32>(1u);
-        let a = unpack2x16float(textureLoad(normals, texel, tile.layer, 0).x);
-        let b = unpack2x16float(textureLoad(normals, texel + vec2<u32>(1u, 0u), tile.layer, 0).x);
-        let c = unpack2x16float(textureLoad(normals, texel + vec2<u32>(0u, 1u), tile.layer, 0).x);
-        let d = unpack2x16float(textureLoad(normals, texel + vec2<u32>(1u, 1u), tile.layer, 0).x);
+        let a = tile_gradient(tile, corner);
+        let b = tile_gradient(tile, corner + vec2<u32>(1u, 0u));
+        let c = tile_gradient(tile, corner + vec2<u32>(0u, 1u));
+        let d = tile_gradient(tile, corner + vec2<u32>(1u, 1u));
         let gradient = mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
         return normalize(vec3<f32>(-gradient.x, 1.0, -gradient.y));
     }
@@ -209,29 +174,6 @@ fn grounded_tilt(normal: vec3<f32>) -> u32 {
 
 fn pack_color(color: vec3<f32>, w: f32) -> u32 {
     return pack4x8unorm(vec4<f32>(sqrt(saturate(color)), saturate(w)));
-}
-
-fn colors_at(local: vec2<f32>) -> vec4<f32> {
-    let layer = u32(grow.scale.z);
-    if layer == 0u {
-        return vec4<f32>(0.5);
-    }
-    let base = grow.counts.x;
-    let extent = vec2<f32>(f32(directory[base + 1u]), f32(directory[base + 2u])) * 256.0
-        * grow.origin.w;
-    let size = vec2<i32>(textureDimensions(macro_maps));
-    let at = local / extent * vec2<f32>(size) - 0.5;
-    let first = vec2<i32>(floor(at));
-    let f = at - floor(at);
-    let last = size - vec2<i32>(1);
-    let a = textureLoad(macro_maps, clamp(first, vec2<i32>(0), last), layer - 1u, 0);
-    let b = textureLoad(macro_maps, clamp(first + vec2<i32>(1, 0), vec2<i32>(0), last),
-        layer - 1u, 0);
-    let c = textureLoad(macro_maps, clamp(first + vec2<i32>(0, 1), vec2<i32>(0), last),
-        layer - 1u, 0);
-    let d = textureLoad(macro_maps, clamp(first + vec2<i32>(1, 1), vec2<i32>(0), last),
-        layer - 1u, 0);
-    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
 var<workgroup> cell_height: f32;
@@ -361,18 +303,17 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
             continue;
         }
         let pick = unit(hash(seed ^ 0x27d4eb2fu));
-        let share = f32((ground.control >> 16u) & 0xffu) * (1.0 / 255.0);
+        let share = f32(ground.material.share) * (1.0 / 255.0);
         let second = pick < share;
-        let material = select(ground.control & 0xffu, (ground.control >> 8u) & 0xffu, second);
+        let material = select(ground.material.first, ground.material.second, second);
         let edge = smoothstep(0.0, 0.5, select(1.0 - share, share, second));
-        let entry = min(grow.counts.z + material, PALETTE_ENTRIES - 1u);
-        let spec = covers[entry];
+        let spec = material_cover(grow.counts.z, material);
         let falloff = cover_share(away, law);
         let own = spec.shape.x * grow.scale.x * area * falloff;
         if rank >= own * lushest {
             continue;
         }
-        let colors = colors_at(local);
+        let colors = ground_colors(grown(), u32(grow.scale.z), local, 0u);
         let growth = cover_growth(colors.a);
         let keep = own * growth.density;
         if rank >= keep {
@@ -388,7 +329,8 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         if !in_view(root + vec3<f32>(0.0, 0.5 * height, 0.0), height) {
             continue;
         }
-        let variation = (0.85 + 0.3 * unit(hash(seed ^ 0x9e3779b9u))) * macro_tint(colors, 1.0);
+        let variation = (0.85 + 0.3 * unit(hash(seed ^ 0x9e3779b9u)))
+            * (macro_color(colors) * cover_tint(colors.a, 1.0));
         var blade: CoverBlade;
         blade.root = root;
         let tuft = cover_tuft(away, height, spec.shape.w, law);
@@ -400,7 +342,8 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         let lean = cover_clump_lean(world_xz);
         blade.leaves = u32(round(tuft.y * f32(COVER_LEAF_STEPS)))
             | (pack4x8unorm(vec4<f32>(0.0, lean * 0.5 + 0.5, 0.0)) & 0xffff00u);
-        blade.root_color = pack_color(palette[entry].far.rgb * variation, 0.0);
+        blade.root_color = pack_color(material_look(grow.counts.z, material).far.rgb * variation,
+            0.0);
         blade.tip_color = pack_color(spec.color.rgb * variation * clumped.tint, spec.color.w);
         if atomicAdd(&counts.appended, 1u) < grow.counts.w {
             if height * grow.view.x < STRAIGHT_PIXELS * away {
