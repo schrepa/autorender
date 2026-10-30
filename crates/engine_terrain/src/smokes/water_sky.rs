@@ -22,9 +22,9 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     exposure(session, &starry)?;
     sky_rules(session)?;
     settle(session)?;
-    let (current, atmosphere) = horizons(session)?;
+    let current = horizons(session)?;
     bounce(session)?;
-    aerial(session, &current, &atmosphere)?;
+    aerial(session, &current)?;
     captures(session)
 }
 
@@ -460,20 +460,14 @@ fn sky_rules(session: &mut dyn SmokeSession) -> Checked<()> {
     Ok(())
 }
 
-fn horizons(session: &mut dyn SmokeSession) -> Checked<(Value, Value)> {
+fn horizons(session: &mut dyn SmokeSession) -> Checked<Value> {
     let current = inspect(session, "Environment")?;
-    let atmosphere = with(
-        &current["atmosphere"],
-        json!({"sun_direction": [1.0, 0.22, 1.0]}),
-    );
+    let sun = with(&current["sun"], json!({"sun_direction": [1.0, 0.22, 1.0]}));
     let shadows = with(
         &current["shadows"],
         json!({"levels": 1, "finest_texel": 0.005}),
     );
-    let moved = environment(
-        session,
-        json!({"atmosphere": atmosphere, "shadows": shadows}),
-    )?;
+    let moved = environment(session, json!({"sun": sun, "shadows": shadows}))?;
     smoke_eq!(
         &moved["rendering"]["terrain"]["horizons"],
         &json!(2),
@@ -504,7 +498,7 @@ fn horizons(session: &mut dyn SmokeSession) -> Checked<(Value, Value)> {
         &short,
         &not(&long)
     );
-    Ok((current, atmosphere))
+    Ok(current)
 }
 
 fn bounce(session: &mut dyn SmokeSession) -> Checked<()> {
@@ -549,26 +543,28 @@ fn bounce(session: &mut dyn SmokeSession) -> Checked<()> {
     Ok(())
 }
 
-fn aerial(session: &mut dyn SmokeSession, current: &Value, atmosphere: &Value) -> Checked<()> {
+fn aerial(session: &mut dyn SmokeSession, current: &Value) -> Checked<()> {
     let clear_air = with(
-        atmosphere,
+        &current["sky_light"],
         json!({"aerial_start": 0.0, "aerial_density": 0.0}),
     );
-    environment(session, json!({"terrain": fast(), "atmosphere": clear_air}))?;
+    environment(session, json!({"terrain": fast(), "sky_light": clear_air}))?;
     settle(session)?;
     let clear = capture(session)?;
     let thick_air = with(
-        atmosphere,
+        &current["sky_light"],
         json!({"aerial_start": 0.0, "aerial_density": 0.004}),
     );
-    environment(session, json!({ "atmosphere": thick_air }))?;
+    environment(session, json!({ "sky_light": thick_air }))?;
     settle(session)?;
     let hazed = capture(session)?;
     smoke_check!(clear != hazed, "air_hazes_the_view", &hazed, &not(&clear));
-    environment(
-        session,
-        json!({"atmosphere": current["atmosphere"], "shadows": current["shadows"]}),
-    )?;
+    let restored = json!({
+        "sun": current["sun"],
+        "sky_light": current["sky_light"],
+        "shadows": current["shadows"],
+    });
+    environment(session, restored)?;
     camera(session, overview())?;
     settle(session)?;
     Ok(())

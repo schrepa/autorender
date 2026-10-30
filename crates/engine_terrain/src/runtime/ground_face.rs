@@ -1,21 +1,18 @@
-use std::any::Any;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::{Entity, Resource, World};
-use engine_core::collections::HashMap;
 use engine_core::math::max;
 use engine_core::{
-    BRIDGE_SOLIDS, Error, ErrorCode, Expected, Ground, GroundBridge, GroundFace, GroundGrid,
-    GroundObstacle, GroundPatch, GroundPoint, GroundRead, GroundRecord, GroundRegions,
-    GroundSamples, GroundShape, GroundSolid, GroundSource, GroundWorker, Pyramid, RecordKey,
-    TileKey, WaterSample,
+    Error, ErrorCode, Expected, Ground, GroundBridge, GroundFace, GroundGrid, GroundObstacle,
+    GroundPoint, GroundRead, GroundRecord, GroundRegions, GroundSource, GroundWorker, Pyramid,
+    RecordKey, TileKey, section_in,
 };
-use glam::{Mat4, Quat, Vec2, Vec3};
+use glam::Vec2;
 
 use super::residency::{TerrainState, reaches};
-use super::{DECK_DEPTH, DECK_MARGIN, DECK_RISE, PlacedShape, Terrains, Water};
+use super::{PlacedShape, Terrains, Water};
 use crate::codec::{self, record};
-use crate::jobs::{TerrainWorker, TileJob, stamped, tile_output};
+use crate::jobs::{TerrainWorker, TileJob, WalkedTile, stamped, tile_output};
 use crate::layer::{Below, Row, maps};
 use crate::tile::RiverInputs;
 use crate::{
@@ -62,40 +59,10 @@ impl GroundFace for TerrainGround {
             .flatten()
     }
 
-    fn water(&self, world: &World, point: Vec3) -> Option<WaterSample> {
-        world.get_resource::<Terrains>()?.water_at(point)
-    }
-
     fn revision(&self, world: &World) -> u64 {
         world
             .get_resource::<Terrains>()
             .map_or(0, Terrains::revision)
-    }
-
-    fn patches(&self, world: &World) -> Vec<GroundPatch> {
-        world
-            .get_resource::<Terrains>()
-            .map_or_else(Vec::new, |terrains| {
-                collision_tiles(terrains)
-                    .map(|(ground, origin, tile)| {
-                        let samples: Arc<dyn GroundSamples> = tile.clone();
-                        GroundPatch {
-                            ground,
-                            key: tile.key(),
-                            origin,
-                            spacing: tile.spacing(),
-                            bounds: tile.bounds(),
-                            samples,
-                        }
-                    })
-                    .collect()
-            })
-    }
-
-    fn solids(&self, world: &World) -> Vec<GroundSolid> {
-        world
-            .get_resource::<Terrains>()
-            .map_or_else(Vec::new, solids)
     }
 
     fn obstacles(&self, world: &World, ground: Entity) -> Vec<GroundObstacle> {
@@ -157,26 +124,6 @@ impl GroundFace for TerrainGround {
     }
 }
 
-impl GroundSamples for Tile {
-    fn height(&self, x: i32, z: i32) -> f32 {
-        Tile::height(self, x, z)
-    }
-
-    fn hole(&self, x: u32, z: u32) -> bool {
-        self.is_hole(x, z)
-    }
-
-    fn same(&self, other: &dyn GroundSamples) -> bool {
-        other.as_any().downcast_ref::<Tile>().is_some_and(|other| {
-            self.heights() == other.heights() && self.hole_bits() == other.hole_bits()
-        })
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
 #[derive(Resource)]
 pub(crate) struct LiveWaterChecked;
 
@@ -185,9 +132,7 @@ pub(crate) fn check_live_water(world: &mut World) {
         return;
     }
     world.insert_resource(LiveWaterChecked);
-    let live = world
-        .get_resource::<Water>()
-        .is_some_and(|water| water.enabled);
+    let live = section_in::<Water>(world).enabled;
     let heightfield = world
         .get_resource::<Ground>()
         .is_some_and(|ground| ground.face().heightfield());
@@ -239,14 +184,7 @@ impl GroundRegions for TerrainRegions {
     }
 
     fn grid(&self, key: TileKey, output: &[u8]) -> Result<GroundGrid, Error> {
-        let tile = tile_output(output)?;
-        if tile.key() != key {
-            return Err(codec::invalid("$.key").got([
-                u16::from(tile.key().level),
-                tile.key().x,
-                tile.key().z,
-            ]));
-        }
+        let tile = keyed_tile(key, output)?;
         Ok(ground_grid(
             &tile,
             &self.layers,
@@ -258,36 +196,72 @@ impl GroundRegions for TerrainRegions {
 
 impl GroundWorker for TerrainWorker {
     fn grid(&self, identity: &[u8], key: TileKey) -> Result<GroundGrid, Error> {
-        let GroundIdentity {
-            stack,
-            pyramid,
-            edits,
-        } = codec::decode(identity)?;
-        if !pyramid.contains(key) {
-            return Err(Error::new(ErrorCode::OutOfRange, "$.key").got([
-                u16::from(key.level),
-                key.x,
-                key.z,
-            ]));
-        }
-        let layers = self
-            .stack(&stack)
-            .ok_or_else(|| Error::new(ErrorCode::UnknownReference, "$.stack").got(&stack))?;
-        let layers = stamped(layers, &reaching(&edits, &pyramid, key))?;
-        let mut whole = u64::MAX;
-        let tile = Generator::new(layers.clone(), &pyramid, key)
-            .advance(&mut whole)
-            .ok_or_else(|| {
-                Error::new(ErrorCode::InvalidTerrain, "$.heights").expected(Expected::Finite)
-            })?;
-        let tile: Tile = codec::decode(&codec::encode(&tile))?;
-        Ok(ground_grid(
-            &tile,
-            &layers,
-            &pyramid,
-            ground_bridges(&layers),
-        ))
+        let (tile, layers, pyramid) = walked_tile(self, identity, key)?;
+        let grid = ground_grid(&tile, &layers, &pyramid, ground_bridges(&layers));
+        *self.last_walk() = Some(WalkedTile {
+            identity: identity.into(),
+            key,
+            tile,
+        });
+        Ok(grid)
     }
+}
+
+pub(super) fn keyed_tile(key: TileKey, output: &[u8]) -> Result<Tile, Error> {
+    let tile = tile_output(output)?;
+    if tile.key() != key {
+        return Err(codec::invalid("$.key").got([
+            u16::from(tile.key().level),
+            tile.key().x,
+            tile.key().z,
+        ]));
+    }
+    Ok(tile)
+}
+
+pub(super) fn walked_tile(
+    worker: &TerrainWorker,
+    identity: &[u8],
+    key: TileKey,
+) -> Result<(Tile, Arc<Layers>, Pyramid), Error> {
+    let GroundIdentity {
+        stack,
+        pyramid,
+        edits,
+    } = codec::decode(identity)?;
+    if !pyramid.contains(key) {
+        return Err(Error::new(ErrorCode::OutOfRange, "$.key").got([
+            u16::from(key.level),
+            key.x,
+            key.z,
+        ]));
+    }
+    let layers = worker
+        .stack(&stack)
+        .ok_or_else(|| Error::new(ErrorCode::UnknownReference, "$.stack").got(&stack))?;
+    let layers = stamped(layers, &reaching(&edits, &pyramid, key))?;
+    let mut whole = u64::MAX;
+    let tile = Generator::new(layers.clone(), &pyramid, key)
+        .advance(&mut whole)
+        .ok_or_else(|| {
+            Error::new(ErrorCode::InvalidTerrain, "$.heights").expected(Expected::Finite)
+        })?;
+    let tile: Tile = codec::decode(&codec::encode(&tile))?;
+    Ok((tile, layers, pyramid))
+}
+
+pub(super) fn tile_surfaces(tile: &Tile) -> Option<Box<[f32]>> {
+    let side = TILE_SAMPLES as usize;
+    let stride = TILE_STRIDE as usize;
+    let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
+    let surfaces = tile.water().map(TileWater::surfaces)?;
+    let mut water = vec![f32::NAN; side * side].into_boxed_slice();
+    for z in 0..side {
+        for x in 0..side {
+            water[z * side + x] = surfaces[stored(x, z)];
+        }
+    }
+    Some(water)
 }
 
 fn reaching(edits: &[Stamp], pyramid: &Pyramid, key: TileKey) -> Vec<Stamp> {
@@ -322,14 +296,9 @@ fn ground_grid(
     let stride = TILE_STRIDE as usize;
     let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
     let mut heights = vec![0.0; side * side].into_boxed_slice();
-    let surfaces = tile.water().map(TileWater::surfaces);
-    let mut water = surfaces.map(|_| vec![f32::NAN; side * side].into_boxed_slice());
     for z in 0..side {
         for x in 0..side {
             heights[z * side + x] = tile.heights()[stored(x, z)];
-            if let (Some(water), Some(surfaces)) = (water.as_mut(), surfaces) {
-                water[z * side + x] = surfaces[stored(x, z)];
-            }
         }
     }
     let first = pyramid.first_sample(key);
@@ -337,7 +306,6 @@ fn ground_grid(
         key,
         spacing,
         heights,
-        water,
         holes: holes(layers, first, spacing),
         bridges,
     }
@@ -491,19 +459,6 @@ fn user_map(
         .then_some(out[0])
 }
 
-fn collision_tiles(terrains: &Terrains) -> impl Iterator<Item = (Entity, Vec3, &Arc<Tile>)> {
-    terrains
-        .entries
-        .iter()
-        .filter(|state| state.terrain.collision)
-        .flat_map(|state| {
-            state.collision.iter().filter_map(move |key| {
-                let tile = state.store.get(key)?;
-                Some((state.entity, state.terrain.origin, tile))
-            })
-        })
-}
-
 fn walked(terrains: &Terrains, from: Vec2, to: Vec2) -> Option<&TerrainState> {
     terrains.entries.iter().find(|state| {
         if state.around.is_some() {
@@ -538,148 +493,4 @@ fn obstacles(state: &TerrainState) -> Vec<GroundObstacle> {
             })
         })
         .collect()
-}
-
-struct Field<'a> {
-    origin: Vec3,
-    size: f32,
-    tiles: HashMap<(u16, u16), &'a Arc<Tile>>,
-}
-
-fn solids(terrains: &Terrains) -> Vec<GroundSolid> {
-    let mut solids = Vec::new();
-    bridge_solids(terrains, &mut solids);
-    placed_solids(terrains, &mut solids);
-    solids
-}
-
-fn bridge_solids(terrains: &Terrains, solids: &mut Vec<GroundSolid>) {
-    let bridged = terrains
-        .entries
-        .iter()
-        .filter(|state| state.terrain.collision && !state.bridges.is_empty())
-        .map(|state| (state.entity, state.terrain.origin, &*state.bridges));
-    for (entity, origin, bridges) in bridged {
-        for (index, bridge) in bridges.iter().enumerate() {
-            for pair in bridge.deck.windows(2) {
-                let (a, b) = (origin + pair[0], origin + pair[1]);
-                let along = b - a;
-                let length = along.length();
-                if length < 1.0e-3 {
-                    continue;
-                }
-                let center = 0.5 * (a + b) + Vec3::Y * (0.5 * (DECK_RISE - DECK_DEPTH));
-                let model = Mat4::from_rotation_translation(
-                    Quat::from_rotation_arc(Vec3::X, along / length),
-                    center,
-                );
-                solids.push(GroundSolid {
-                    ground: entity,
-                    layer: BRIDGE_SOLIDS,
-                    asset: index.min(usize::from(u16::MAX)) as u16,
-                    shape: GroundShape::Cuboid {
-                        half_extents: Vec3::new(
-                            0.5 * length,
-                            0.5 * (DECK_RISE + DECK_DEPTH),
-                            0.5 * bridge.width + DECK_MARGIN,
-                        ),
-                    },
-                    model,
-                    memberships: 1,
-                    filter: u32::MAX,
-                });
-            }
-        }
-    }
-}
-
-fn placed_solids(terrains: &Terrains, solids: &mut Vec<GroundSolid>) {
-    let mut fields: HashMap<Entity, Field<'_>> = HashMap::default();
-    for (entity, origin, tile) in collision_tiles(terrains) {
-        let key = tile.key();
-        fields
-            .entry(entity)
-            .or_insert_with(|| Field {
-                origin,
-                size: TILE_QUADS as f32 * tile.spacing(),
-                tiles: HashMap::default(),
-            })
-            .tiles
-            .insert((key.x, key.z), tile);
-    }
-    for (
-        entity,
-        Field {
-            origin,
-            size,
-            tiles,
-        },
-    ) in fields
-    {
-        let Some(terrain) = terrains.terrain(entity) else {
-            continue;
-        };
-        let assets = &terrain.surface.assets;
-        if assets.iter().all(|asset| asset.collider.is_none()) {
-            continue;
-        }
-        let (low, high) = tiles.keys().fold(
-            (Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)),
-            |(low, high), &(x, z)| {
-                let corner = Vec2::new(f32::from(x), f32::from(z)) * size;
-                (low.min(corner), high.max(corner + size))
-            },
-        );
-        for tile in terrains.tiles(entity) {
-            let key = tile.key();
-            let reach = TILE_QUADS as f32 * tile.spacing();
-            let corner = Vec2::new(f32::from(key.x), f32::from(key.z)) * reach;
-            if tile.placed().is_empty()
-                || (corner + reach).cmplt(low).any()
-                || corner.cmpgt(high).any()
-            {
-                continue;
-            }
-            for placed in tile.placed() {
-                if placed.near_level.is_some() {
-                    continue;
-                }
-                let Some(collider) = assets
-                    .get(usize::from(placed.asset))
-                    .and_then(|asset| asset.collider)
-                else {
-                    continue;
-                };
-                let [x, _, z] = placed.position;
-                let (column, row) = ((x / size).floor(), (z / size).floor());
-                if !(0.0..65536.0).contains(&column) || !(0.0..65536.0).contains(&row) {
-                    continue;
-                }
-                let Some(ground) = tiles.get(&(column as u16, row as u16)) else {
-                    continue;
-                };
-                let local = Vec2::new(x - column * size, z - row * size);
-                let Some(sample) = ground.sample(local).filter(|sample| !sample.hole) else {
-                    continue;
-                };
-                let model = placed.model(origin, sample.height - placed.sink)
-                    * Mat4::from_translation(Vec3::from_array(collider.center));
-                let shape = match collider.shape {
-                    PlacedShape::Cuboid { half_extents } => GroundShape::Cuboid {
-                        half_extents: Vec3::from_array(half_extents),
-                    },
-                    PlacedShape::Sphere { radius } => GroundShape::Sphere { radius },
-                };
-                solids.push(GroundSolid {
-                    ground: entity,
-                    layer: placed.layer,
-                    asset: placed.asset,
-                    shape,
-                    model,
-                    memberships: collider.memberships,
-                    filter: collider.filter,
-                });
-            }
-        }
-    }
 }

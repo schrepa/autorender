@@ -1,9 +1,8 @@
 use glam::{Vec2, Vec3};
 
 use super::Terrains;
-use crate::hydraulics::GRAVITY;
 use crate::{Fall, Layers};
-use engine_core::math::{max, min};
+use engine_core::math::{GRAVITY, max, min};
 use engine_core::{WaterKind, WaterSample};
 
 const SHEET: f32 = 1.0;

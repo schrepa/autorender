@@ -1,4 +1,5 @@
 use super::*;
+use engine_core::Cut;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -18,7 +19,7 @@ pub struct TerrainStats {
     pub settling_records: u32,
     pub shaded_tiles: u32,
     pub shading_records: u32,
-    pub dropped_tiles: u32,
+    pub tile_cut: Cut,
     pub fallback_tiles: u32,
     pub baking: u32,
     pub lit: u32,

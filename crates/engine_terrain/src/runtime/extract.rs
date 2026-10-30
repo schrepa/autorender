@@ -1,6 +1,6 @@
 use super::*;
 use crate::Reach;
-use engine_core::{EnvironmentSection, WaterReach};
+use engine_core::{WaterReach, section_in};
 use std::sync::LazyLock;
 
 #[derive(Clone, Debug)]
@@ -183,55 +183,6 @@ impl RenderTerrains {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TerrainEnvironment {
-    pub terrain: TerrainSettings,
-    pub ground_cover: GroundCover,
-    pub wind: Wind,
-    pub occupancy: Occupancy,
-    pub water: Water,
-}
-
-impl TerrainEnvironment {
-    pub fn current(world: &World) -> Self {
-        fn section<T: EnvironmentSection>(world: &World) -> T {
-            world
-                .get_resource::<T>()
-                .copied()
-                .unwrap_or_else(T::section_off)
-                .section_sanitized()
-        }
-        Self {
-            terrain: section(world),
-            ground_cover: section(world),
-            wind: section(world),
-            occupancy: section(world),
-            water: section(world),
-        }
-    }
-
-    pub fn off() -> Self {
-        fn off<T: EnvironmentSection>() -> T {
-            T::section_off().section_sanitized()
-        }
-        Self {
-            terrain: off(),
-            ground_cover: off(),
-            wind: off(),
-            occupancy: off(),
-            water: off(),
-        }
-    }
-
-    pub fn of(snapshot: &RenderSnapshot) -> Self {
-        snapshot
-            .extracted
-            .get::<Self>()
-            .copied()
-            .unwrap_or_else(Self::off)
-    }
-}
-
 impl From<Reach> for WaterReach {
     fn from(reach: Reach) -> Self {
         match reach {
@@ -244,15 +195,7 @@ impl From<Reach> for WaterReach {
     }
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
 pub(crate) fn extract_terrains(world: &World, snapshot: &mut RenderSnapshot) {
-    let environment = TerrainEnvironment::current(world);
-    let wind = environment.wind;
-    snapshot.wind = [wind.velocity[0], wind.velocity[1], wind.gusts, 0.0];
-    snapshot.extracted.insert(environment);
     if snapshot.extracted.get::<RenderTerrains>().is_none() {
         snapshot.extracted.insert(RenderTerrains::default());
     }
@@ -274,9 +217,7 @@ pub(crate) fn extract_terrains(world: &World, snapshot: &mut RenderSnapshot) {
     let aspect = viewport.width.max(1) as f32 / viewport.height.max(1) as f32;
     listing.relative_view_projection = camera.relative_view_projection(aspect);
     listing.stats = terrains.stats;
-    let enabled = world
-        .get_resource::<TerrainSettings>()
-        .is_some_and(|settings| settings.enabled);
+    let enabled = section_in::<TerrainSettings>(world).enabled;
     listing.terrains.truncate(terrains.entries.len());
     for (index, state) in terrains.entries.iter().enumerate() {
         if index == listing.terrains.len() {

@@ -46,7 +46,7 @@ impl Terrains {
     pub(crate) fn cook(
         &mut self,
         settings: &TerrainSettings,
-        water: Option<&Water>,
+        water: &Water,
         jobs: &mut Jobs,
         cooking: &mut Cooking,
     ) {
@@ -110,7 +110,7 @@ impl Terrains {
                 state.shading.cooking = true;
                 left += state.shading.left();
             }
-            let watering = water.is_some_and(|water| water.enabled) && state.around.is_none();
+            let watering = water.enabled && state.around.is_none();
             if watering {
                 state.settled.cooking = true;
                 water_left += state.settled.left();

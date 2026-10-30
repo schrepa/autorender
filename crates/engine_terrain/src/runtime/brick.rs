@@ -1,11 +1,13 @@
 use super::ground_face::{TerrainGround, check_live_water};
+use super::solids::{TerrainDecks, TerrainFields, TerrainPlaced};
+use super::water_body::TerrainWater;
 use super::*;
 use crate::jobs::{ShadingJob, SteadiedJob, TerrainWorker};
 use crate::layer::{AddTerrainLayers, TerrainLayerKinds};
 use engine_core::{
-    Brick, Bricks, EnvironmentSection, ExplainRecord, ExplainRequest, FixedSimulation,
-    FixedSimulationSystems, GlobalTransforms, Ground, GroundSlot, JobWorker, TerrainDebug,
-    ViewSync, ViewSyncSystems, WorldSync, WorldSyncSystems,
+    Brick, Bricks, DetailConsumer, EnvironmentSection, ExplainRecord, ExplainRequest,
+    FixedSimulation, FixedSimulationSystems, GlobalTransforms, Ground, GroundSlot, JobWorker,
+    TerrainDebug, ViewSync, ViewSyncSystems, WorldSync, WorldSyncSystems,
 };
 
 pub struct TerrainBrick;
@@ -16,10 +18,16 @@ impl Brick for TerrainBrick {
     fn register(bricks: &mut Bricks) {
         bricks
             .settings::<TerrainSettings>()
-            .settings::<GroundCover>()
-            .settings::<Wind>()
-            .settings::<Occupancy>()
-            .settings::<Water>()
+            .detail_consumer(DetailConsumer {
+                name: "tiles",
+                setting: "terrain.max_tiles",
+                stat: "terrain.tile_cut",
+            })
+            .detail_consumer(DetailConsumer {
+                name: "terrain_leaves",
+                setting: "terrain.subdivision_leaves",
+                stat: "terrain.leaf_cut",
+            })
             .records(&[
                 TileJob::KIND.name(),
                 BakeJob::KIND.name(),
@@ -31,6 +39,10 @@ impl Brick for TerrainBrick {
             ])
             .resource::<Terrains>()
             .insert_resource(Ground::new("terrain", TerrainGround))
+            .world_solids("ground", TerrainFields)
+            .world_solids("decks", TerrainDecks)
+            .world_solids("placed", TerrainPlaced)
+            .water_body(TerrainWater)
             .resource::<TerrainLayerKinds>()
             .terrain_layers(crate::expr::KINDS)
             .systems(ViewSync, stream_terrains.in_set(ViewSyncSystems::Stream))
@@ -49,7 +61,6 @@ impl Brick for TerrainBrick {
                     .chain()
                     .in_set(WorldSyncSystems::Spawn),
             )
-            .resource::<engine_core::WaterObstacles>()
             .extract(extract_terrains)
             .operation::<TerrainControl>()
             .operation::<TerrainEditControl>()
@@ -152,7 +163,6 @@ macro_rules! sections {
 sections! {
     TerrainSettings: "terrain",
     GroundCover: "ground_cover",
-    Wind: "wind",
     Occupancy: "occupancy",
     Water: "water",
 }

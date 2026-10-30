@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use glam::{IVec2, Vec2};
 
+use engine_core::math::GRAVITY;
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max, min};
 
 use crate::codec::{self, Error, Reader, Writer, record};
-use crate::hydraulics::GRAVITY;
 use crate::shading::gradient_word;
 use crate::shallow_water::{self, CELL_MEANS, DRY, UNHELD, WET_MOST, resistance, velocity};
 use crate::surface::smooth_gradient;

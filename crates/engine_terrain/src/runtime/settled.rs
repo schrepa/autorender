@@ -401,7 +401,7 @@ fn cancel_all(state: &TerrainState, slots: &mut JobBudget<'_>) {
 
 pub(super) fn follow(
     state: &mut TerrainState,
-    water: Option<&Water>,
+    water: &Water,
     (slots, work): (&mut JobBudget<'_>, &Work),
     (queue, released): (&mut SettleQueue, &mut Vec<String>),
     (eye, frame): (Vec2, u64),
@@ -495,12 +495,12 @@ fn beside(pyramid: &Pyramid, near: &[TileKey], watered: &[TileKey]) -> Vec<TileK
 
 fn refresh(
     state: &mut TerrainState,
-    water: Option<&Water>,
+    water: &Water,
     slots: &mut JobBudget<'_>,
     queue: &SettleQueue,
     released: &mut Vec<String>,
 ) -> Option<(String, Arc<[TileKey]>)> {
-    let asking = water.filter(|water| water.enabled && state.around.is_none());
+    let asking = (water.enabled && state.around.is_none()).then_some(water);
     let baked = state.baked.clone();
     let recipe = state
         .recipe

@@ -1,8 +1,9 @@
+use engine_core::math::GRAVITY;
 use engine_math::collections::HashMap;
 use engine_math::{max, min};
 use glam::Vec2;
 
-use crate::hydraulics::{FLOODS, GRAVITY, distances};
+use crate::hydraulics::{FLOODS, distances};
 use crate::rivers::River;
 use crate::{Bed, Hydrology, Layers, Pool, RiverFlow, Rivers};
 

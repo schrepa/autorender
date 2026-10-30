@@ -1,8 +1,8 @@
 use std::ops::Range;
 
+use engine_core::math::GRAVITY;
 use glam::Vec2;
 
-use crate::hydraulics::GRAVITY;
 use crate::hydrology::WaterGrid;
 use crate::noise::smooth;
 use crate::rivers::{RiverRaster, RiverWater, Rivers};

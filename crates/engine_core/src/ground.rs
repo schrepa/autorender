@@ -1,12 +1,11 @@
-use std::any::Any;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_settings::Error;
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Vec2, Vec3};
 
 use crate::smoke::SmokeEntry;
-use crate::{Pyramid, RecordKey, Slot, TileKey, WaterBodies, WaterSample};
+use crate::{Pyramid, RecordKey, Slot, TileKey};
 
 pub struct GroundSlot;
 
@@ -19,8 +18,6 @@ impl Slot for GroundSlot {
         run: crate::place_smokes::ground,
     }];
 }
-
-pub const BRIDGE_SOLIDS: u16 = u16::MAX;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GroundPoint {
@@ -36,56 +33,13 @@ pub trait GroundFace: Send + Sync + 'static {
 
     fn map(&self, world: &World, name: &str, x: f32, z: f32) -> Option<f32>;
 
-    fn water(&self, world: &World, point: Vec3) -> Option<WaterSample>;
-
     fn revision(&self, world: &World) -> u64;
-
-    fn patches(&self, world: &World) -> Vec<GroundPatch>;
-
-    fn solids(&self, world: &World) -> Vec<GroundSolid>;
 
     fn obstacles(&self, world: &World, ground: Entity) -> Vec<GroundObstacle>;
 
     fn source(&self, world: &World, from: Vec2, to: Vec2) -> GroundRead<GroundSource>;
 
     fn heightfield(&self) -> bool;
-}
-
-pub trait GroundSamples: Send + Sync + 'static {
-    fn height(&self, x: i32, z: i32) -> f32;
-
-    fn hole(&self, x: u32, z: u32) -> bool;
-
-    fn same(&self, other: &dyn GroundSamples) -> bool;
-
-    fn as_any(&self) -> &dyn Any;
-}
-
-#[derive(Clone)]
-pub struct GroundPatch {
-    pub ground: Entity,
-    pub key: TileKey,
-    pub origin: Vec3,
-    pub spacing: f32,
-    pub bounds: [f32; 2],
-    pub samples: Arc<dyn GroundSamples>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum GroundShape {
-    Cuboid { half_extents: Vec3 },
-    Sphere { radius: f32 },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct GroundSolid {
-    pub ground: Entity,
-    pub layer: u16,
-    pub asset: u16,
-    pub shape: GroundShape,
-    pub model: Mat4,
-    pub memberships: u32,
-    pub filter: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -149,7 +103,6 @@ pub struct GroundGrid {
     pub key: TileKey,
     pub spacing: f32,
     pub heights: Box<[f32]>,
-    pub water: Option<Box<[f32]>>,
     pub holes: Option<Box<[u64]>>,
     pub bridges: Arc<[GroundBridge]>,
 }
@@ -199,13 +152,6 @@ impl Ground {
         world
             .get_resource::<Self>()
             .map_or(0, |ground| ground.face.revision(world))
-    }
-
-    pub fn water_in(world: &World, point: Vec3) -> Option<WaterSample> {
-        world
-            .get_resource::<Self>()
-            .and_then(|ground| ground.face.water(world, point))
-            .or_else(|| WaterBodies::water_in(world, point))
     }
 
     pub fn map_in(world: &World, name: &str, x: f32, z: f32) -> Option<f32> {
