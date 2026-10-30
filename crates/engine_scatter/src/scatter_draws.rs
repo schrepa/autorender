@@ -271,7 +271,7 @@ impl ScatterDraws {
         for variant in variants {
             core.ensure_opaque_variant(passes.opaque_kind, variant);
         }
-        let level_of_detail = snapshot.environment.level_of_detail;
+        let level_of_detail = snapshot.section::<engine_core::LevelOfDetail>();
         let pixel_error = level_of_detail
             .enabled
             .then_some(level_of_detail.pixel_error);
@@ -305,7 +305,7 @@ impl ScatterDraws {
         placed: &mut PlacedImpostors,
     ) -> bool {
         let snapshot = cx.frame.snapshot;
-        let settings = snapshot.environment.level_of_detail;
+        let settings = snapshot.section::<engine_core::LevelOfDetail>();
         let enabled = cx.frame.kind.gpu_mode && settings.enabled && settings.impostors;
         let core = &*cx.core;
         let Some(entries) = core.mesh_entries else {

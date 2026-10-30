@@ -1,3 +1,5 @@
+import package::face::placed::{Pose, Record, placed_shown};
+
 struct Splat {
     area: vec4<f32>,
     counts: vec4<u32>,
@@ -5,23 +7,6 @@ struct Splat {
     dirty: array<vec4<u32>, 2>,
     finer: vec4<i32>,
     means: array<vec4<u32>, 2>,
-}
-
-struct Record {
-    center: vec3<f32>,
-    radius: f32,
-    group: u32,
-    scale: f32,
-    terrain: u32,
-    sink: f32,
-    state: u32,
-    pad: array<u32, 3>,
-}
-
-struct Pose {
-    r0: vec4<f32>,
-    r1: vec4<f32>,
-    r2: vec4<f32>,
 }
 
 struct Cover {
@@ -38,8 +23,6 @@ struct ListedDraw {
     first_instance: u32,
 }
 
-const DEAD: u32 = 0xffffffffu;
-const HIDDEN: u32 = 0x80000000u;
 const CELLS: u32 = 16u;
 const QUAD: u32 = 6u;
 const NOTHING: f32 = -1.0e4;
@@ -74,8 +57,7 @@ fn footprint_of(slot: u32) -> Footprint {
         return found;
     }
     let record = records[slot];
-    if record.group == DEAD || (record.terrain & HIDDEN) != 0u
-        || record.group >= splat.counts.y {
+    if !placed_shown(record) || record.group >= splat.counts.y {
         return found;
     }
     let cover = covers[record.group];

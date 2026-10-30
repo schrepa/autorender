@@ -23,6 +23,7 @@ impl Brick for ScatterBrick {
         bricks
             .list::<ScatterList>()
             .settings::<engine_core::Foliage>()
+            .settings::<engine_terrain::Occupancy>()
             .smoke(
                 "foliage_settings",
                 true,

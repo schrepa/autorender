@@ -792,14 +792,14 @@ impl GpuPart for OccupancyPass {
     }
 
     fn shading(&self, snapshot: &RenderSnapshot, shading: &mut Shading) {
-        let occupancy = engine_terrain::TerrainEnvironment::of(snapshot).occupancy;
+        let occupancy = snapshot.section::<Occupancy>();
         let on = occupancy.enabled && occupancy.strength > 0.0;
         shading.set("OCCUPANCY", if on { 1.0 } else { 0.0 });
     }
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         let snapshot = cx.frame.snapshot;
-        let settings = engine_terrain::TerrainEnvironment::of(snapshot).occupancy;
+        let settings = snapshot.section::<Occupancy>();
         let scatter = cx.parts.face::<dyn PlacedCovers>();
         let placed = (
             scatter.map_or(&[][..], |scatter| scatter.covers()),
@@ -814,7 +814,8 @@ impl GpuPart for OccupancyPass {
             placed,
         );
         self.share = texel_share(&settings);
-        self.canopy = canopy(lit, &snapshot.environment.foliage, cx.frame.kind.temporal);
+        let foliage = snapshot.section::<engine_core::Foliage>();
+        self.canopy = canopy(lit, &foliage, cx.frame.kind.temporal);
     }
 
     fn piece(&self) -> Option<&[u8]> {
@@ -826,9 +827,7 @@ impl GpuPart for OccupancyPass {
         let device = &cx.core.device;
         let terrains = &engine_terrain::RenderTerrains::of(snapshot).terrains;
         if terrains.iter().any(|terrain| !terrain.assets.is_empty())
-            && engine_terrain::TerrainEnvironment::of(snapshot)
-                .occupancy
-                .enabled
+            && snapshot.section::<Occupancy>().enabled
         {
             self.warm(device);
         }
