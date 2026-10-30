@@ -210,14 +210,16 @@ impl GpuPart for PostPass {
         }
         let snapshot = cx.frame.snapshot;
         let region = core.display.region;
-        let needs = cx.frame.temporal.is_some() || targets_read(snapshot) || region.upscales();
+        let effects = Effects::of(snapshot);
+        let needs =
+            cx.frame.temporal.is_some() || targets_read(snapshot, effects) || region.upscales();
         self.frame = if needs {
             let format = core.canvas_format();
             self.post
                 .create(device, "engine/post-", || Post::new(device, format));
             self.post.get_mut().map(|post| {
                 post.begin(device, region.display);
-                Effects::of(snapshot)
+                effects
             })
         } else {
             None

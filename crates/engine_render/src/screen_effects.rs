@@ -12,8 +12,8 @@ pub fn haze_runs(snapshot: &RenderSnapshot) -> bool {
     haze.enabled && haze.reach > 0.0 && (haze.strength > 0.0 || fog)
 }
 
-pub(crate) fn targets_read(snapshot: &RenderSnapshot) -> bool {
-    Effects::of(snapshot).any() || snapshot.section::<AutoExposure>().enabled
+pub(crate) fn targets_read(snapshot: &RenderSnapshot, effects: Effects) -> bool {
+    effects.any() || snapshot.section::<AutoExposure>().enabled
 }
 
 macro_rules! screen_effects {
