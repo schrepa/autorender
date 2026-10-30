@@ -209,12 +209,12 @@ impl GpuPart for DebugViewPass {
         let core = &*cx.core;
         let (device, queue) = (&core.device, &core.queue);
         let format = core.canvas_format();
-        let targets = cx.parts.post().and_then(|post| {
-            Some([
-                post.attachment("debug_ids")?,
-                post.attachment("debug_count")?,
-                post.attachment("debug_terrain")?,
-            ])
+        let targets = core.debug_targets().map(|targets| {
+            [
+                targets.ids.clone(),
+                targets.count.clone(),
+                targets.terrain.clone(),
+            ]
         });
         let sun = snapshot
             .environment

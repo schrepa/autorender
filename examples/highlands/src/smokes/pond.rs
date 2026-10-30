@@ -42,6 +42,9 @@ fn scene() -> Value {
             "near": 0.1,
             "far": 1000,
         },
+        "textures": [],
+        "materials": [],
+        "meshes": [],
         "entities": [{
             "id": "ground",
             "terrain": {

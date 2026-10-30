@@ -35,7 +35,7 @@ use engine_render::parts::{
     Shading, Step, View,
 };
 use engine_render::profiling::GpuProfiler;
-use engine_render::renderer::{CasterDraw, Core, FramePoses};
+use engine_render::renderer::{CasterDraw, FramePoses};
 
 use crate::gpu_layouts::{ComposeData, RouteData, ShadowCullUniform, ShadowUniform, SkyUniform};
 use crate::shadow_fit::{ClipPlan, ClipSettings, ClipStats, Clipmap, LightBasis};
