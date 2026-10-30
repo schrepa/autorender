@@ -77,8 +77,8 @@ impl Selection {
                 .iter()
                 .any(|pattern| map::matches(pattern, path))
             {
-                self.smokes
-                    .extend(brick.smokes.iter().map(|(smoke, _)| smoke.clone()));
+                let smokes = brick.smokes.iter().chain(&brick.place_smokes);
+                self.smokes.extend(smokes.map(|(smoke, _)| smoke.clone()));
             }
         }
         let Some(checks) = map::checks_of(path) else {

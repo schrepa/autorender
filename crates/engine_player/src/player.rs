@@ -44,7 +44,7 @@ impl ScenePlayer {
                 .got(players.len()));
         }
         if let Some(player) = players.first()
-            && (player.parent.is_some() || player.collider.is_none())
+            && (player.parent.is_some() || !player.components.contains_key("collider"))
         {
             let expected = if player.parent.is_some() {
                 Expected::Absent

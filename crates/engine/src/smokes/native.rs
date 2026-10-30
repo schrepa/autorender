@@ -138,7 +138,12 @@ fn lit(session: &mut dyn SmokeSession) -> SmokeResult {
         artifact.clone(),
         json!({ "mime_type": "image/png", "bytes": "> 1000" })
     );
-    let night = json!({ "atmosphere": { "preset": "night" } });
+    let night = json!({
+        "sun": { "preset": "night" },
+        "sky_light": { "preset": "night" },
+        "surface_light": { "preset": "night" },
+        "grading": { "preset": "night" },
+    });
     environment(session, night, "night_falls")?;
     let dark = accepted(session, "capture", json!({}), "captures_night")?;
     if let (Some(light), Some(darker)) = (pixels(&day)?, pixels(&dark)?) {

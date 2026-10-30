@@ -252,6 +252,14 @@ pub(crate) const MAP: &[Rule] = &[
         ],
     },
     Rule {
+        paths: &[
+            "crates/engine_collision/src/**/scene*",
+            "crates/engine_physics/src/**/scene*",
+            "crates/engine_navigation/src/**/scene*",
+        ],
+        checks: &[Pure("scenes"), Pure("requests")],
+    },
+    Rule {
         paths: &["crates/engine_dev/**"],
         checks: &[CoreSmokes, Pure("requests"), Equivalence],
     },

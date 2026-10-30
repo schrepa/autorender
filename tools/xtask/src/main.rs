@@ -67,6 +67,7 @@ fn main() -> ExitCode {
 
 fn execute() -> Result<(), Failure> {
     engine_worker::register_standard_layers();
+    bricks::register_standard_kinds();
     let mut arguments = env::args().skip(1);
     let task = arguments.next().unwrap_or_else(|| "help".to_owned());
     let options: Vec<_> = arguments.collect();

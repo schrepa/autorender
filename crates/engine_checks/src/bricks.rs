@@ -6,7 +6,8 @@ use engine::bevy_ecs::prelude::World;
 use engine::bevy_ecs::schedule::graph::Direction;
 use engine::bevy_ecs::schedule::{NodeId, Schedules, SystemSet};
 use engine::bevy_ecs::system::System;
-use engine::bricks::{BrickRecord, BrickRegistry, BrickSet};
+use engine::bricks::{BrickRecord, BrickRegistry, BrickSet, PlaceKind};
+use engine::scene::SceneComponents;
 use engine_render::faces::face_of;
 use engine_render::linker::face_imports;
 use engine_render::pieces::{PieceDecl, place};
@@ -24,6 +25,7 @@ pub struct Recorded {
     pub reads: Vec<String>,
     pub paths: Vec<String>,
     pub smokes: Vec<(String, bool)>,
+    pub place_smokes: Vec<(String, bool)>,
     pub parts: Vec<String>,
 }
 
@@ -45,25 +47,43 @@ pub fn recorded(repository: &Repository) -> Result<Vec<Recorded>, String> {
             .map(str::to_owned)
             .collect()
     };
+    let smokes = |value: &Value| -> Vec<(String, bool)> {
+        value
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|smoke| {
+                let name = smoke["name"].as_str()?.to_owned();
+                Some((name, smoke["gpu"] == true))
+            })
+            .collect()
+    };
+    let places: Vec<(Vec<String>, Vec<(String, bool)>)> = file["places"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|place| (strings(&place["members"]), smokes(&place["smokes"])))
+        .collect();
     Ok(file["bricks"]
         .as_array()
         .into_iter()
         .flatten()
-        .map(|brick| Recorded {
-            name: brick["name"].as_str().unwrap_or_default().to_owned(),
-            krate: brick["crate"].as_str().unwrap_or_default().to_owned(),
-            reads: strings(&brick["reads"]),
-            paths: strings(&brick["paths"]),
-            smokes: brick["smokes"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|smoke| {
-                    let name = smoke["name"].as_str()?.to_owned();
-                    Some((name, smoke["gpu"] == true))
-                })
-                .collect(),
-            parts: strings(&brick["parts"]),
+        .map(|brick| {
+            let name = brick["name"].as_str().unwrap_or_default().to_owned();
+            let place_smokes = places
+                .iter()
+                .filter(|(members, _)| members.contains(&name))
+                .flat_map(|(_, held)| held.iter().cloned())
+                .collect();
+            Recorded {
+                krate: brick["crate"].as_str().unwrap_or_default().to_owned(),
+                reads: strings(&brick["reads"]),
+                paths: strings(&brick["paths"]),
+                smokes: smokes(&brick["smokes"]),
+                place_smokes,
+                parts: strings(&brick["parts"]),
+                name,
+            }
         })
         .collect())
 }
@@ -314,11 +334,35 @@ pub fn installed_passes(registry: &BrickRegistry) -> Vec<&'static str> {
         .collect()
 }
 
+fn places(registry: &BrickRegistry) -> Vec<Value> {
+    registry
+        .places()
+        .into_iter()
+        .map(|place| {
+            let kind = match place.kind {
+                PlaceKind::Slot => "slot",
+                PlaceKind::List => "list",
+            };
+            json!({
+                "name": place.name,
+                "kind": kind,
+                "members": registry.members(place.name),
+                "smokes": place
+                    .smokes
+                    .iter()
+                    .map(|smoke| json!({ "name": smoke.name, "gpu": smoke.gpu }))
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect()
+}
+
 fn record(
     brick: &BrickRecord,
     registry: &BrickRegistry,
     repository: &Repository,
     types: Option<&BTreeSet<TypeId>>,
+    kinds: &[(&'static str, &'static str)],
 ) -> Result<Value, String> {
     let package = repository.of_crate(brick.crate_name).ok_or_else(|| {
         format!(
@@ -345,6 +389,16 @@ fn record(
         "version": version,
         "slot": brick.slot,
         "lists": brick.lists,
+        "places": brick.places.iter().map(|place| place.name).collect::<Vec<_>>(),
+        "consumers": brick
+            .consumers
+            .iter()
+            .map(|consumer| json!({
+                "name": consumer.name,
+                "setting": consumer.setting,
+                "stat": consumer.stat,
+            }))
+            .collect::<Vec<_>>(),
         "records": brick.records,
         "settings": brick
             .settings
@@ -379,7 +433,11 @@ fn record(
         "paths": paths(brick, package),
         "system_set": brick.name,
         "resources": brick.resources.iter().map(|owned| owned.name).collect::<Vec<_>>(),
-        "components": brick.components.iter().map(|owned| owned.name).collect::<Vec<_>>(),
+        "components": kinds
+            .iter()
+            .filter(|&&(owner, _)| owner == brick.name)
+            .map(|&(_, kind)| kind)
+            .collect::<Vec<_>>(),
         "reads": reads,
         "dependencies": dependencies(repository, package),
     }))
@@ -400,15 +458,25 @@ pub fn bricks_json(repository: &Repository, engine: &mut Engine) -> Result<Strin
     registry
         .check_passes(&installed_passes(registry))
         .map_err(|error| error.to_string())?;
+    let kinds: Vec<(&'static str, &'static str)> = world
+        .get_resource::<SceneComponents>()
+        .map(|held| {
+            held.kinds()
+                .iter()
+                .map(|&(brick, kind)| (brick, kind.name))
+                .collect()
+        })
+        .unwrap_or_default();
     let bricks = registry
         .bricks()
         .iter()
-        .map(|brick| record(brick, registry, repository, accessed.get(brick.name)))
+        .map(|brick| record(brick, registry, repository, accessed.get(brick.name), &kinds))
         .collect::<Result<Vec<_>, _>>()?;
     let text = serde_json::to_string_pretty(&json!({
         "bricks": bricks,
         "slots": slots(registry),
         "lists": lists(registry),
+        "places": places(registry),
         "frame": frame(registry)?,
     }))
     .map_err(|error| format!("cannot write {FILE}: {error}"))?;

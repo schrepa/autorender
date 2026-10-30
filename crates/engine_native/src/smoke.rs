@@ -209,7 +209,6 @@ impl<G: Game> SmokeSession for Native<'_, '_, G> {
                 self.clock = 0.0;
             }
             Err(error) => {
-                self.faults.push(fault("restart", &error));
                 self.backend = Backend::Closed(
                     Box::new(App::new()),
                     serde_json::to_value(&error).unwrap_or(Value::Null),
