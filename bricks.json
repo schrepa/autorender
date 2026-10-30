@@ -1792,7 +1792,7 @@
       "stats": [],
       "system_set": "bloom",
       "type": "engine_bloom::BloomBrick",
-      "version": "ea89d60ed1f5b1cc4dbf6fe8499c43b2d39f126a6058d2b2dba1ff6c7855b5c8"
+      "version": "31c70f7c2eb42f0dde1b34c59c9859ec5a504cec43b0ef086c29824bcd6e28c6"
     },
     {
       "components": [],
@@ -2765,7 +2765,7 @@
       "stats": [],
       "system_set": "scene_views",
       "type": "engine::host::views::SceneViewsBrick",
-      "version": "54d519d695b0718ef4c3980954dc2ff63081cd72df702221bc52b351bd294ff4"
+      "version": "debe5b819f014d01f4507162282cab8ffe78aa5c8b6d0f49ec66ee743fa443bc"
     }
   ],
   "frame": {

@@ -54,8 +54,15 @@ pub static PART: PartEntry = PartEntry {
     create,
 };
 
-fn create(_: &Create<'_>) -> Box<dyn GpuPart> {
-    Box::new(BloomPass::default())
+fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
+    Box::new(BloomPass {
+        bloom: Lazy::default(),
+        off: Off::new(&cx.core.device),
+        enabled: false,
+        runs: false,
+        ids: Ids::default(),
+        piece: BloomPiece::default(),
+    })
 }
 
 fn bloom_format(device: &wgpu::Device) -> wgpu::TextureFormat {
@@ -104,10 +111,9 @@ impl Off {
     }
 }
 
-#[derive(Default)]
 struct BloomPass {
     bloom: Lazy<Bloom>,
-    off: Option<Off>,
+    off: Off,
     enabled: bool,
     runs: bool,
     ids: Ids,
@@ -132,9 +138,6 @@ impl GpuPart for BloomPass {
         self.piece.applied = [settings.intensity, 0.0, 0.0, 0.0];
         if !self.enabled {
             self.bloom.release();
-        }
-        if (!self.enabled || self.bloom.disabled()) && self.off.is_none() {
-            self.off = Some(Off::new(&cx.core.device));
         }
     }
 
@@ -203,13 +206,10 @@ impl GpuPart for BloomPass {
             ));
             return;
         }
-        let Some(off) = &self.off else {
-            return;
-        };
-        out.push(("bloom", Bound::fixed(pipelines::view(&off.view))));
+        out.push(("bloom", Bound::fixed(pipelines::view(&self.off.view))));
         out.push((
             "bloom_sampler",
-            Bound::fixed(pipelines::sampler(&off.sampler)),
+            Bound::fixed(pipelines::sampler(&self.off.sampler)),
         ));
     }
 
