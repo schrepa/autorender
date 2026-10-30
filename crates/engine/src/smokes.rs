@@ -1,6 +1,7 @@
 mod agent;
 mod agent_lifecycle;
 mod engine_frames;
+mod flat;
 mod frame_loop;
 mod gpu_presentation;
 mod hierarchy;
@@ -69,6 +70,7 @@ pub fn core() -> Vec<SmokeEntry> {
         core_smoke("debug_view_terrain", true, terrain_views::run),
         core_smoke("core_only_frames", true, engine_frames::core_only_frames),
         core_smoke("lit_meshes_frames", true, engine_frames::lit_meshes_frames),
+        core_smoke("flat_sprites", true, flat::flat_sprites),
     ]
 }
 
