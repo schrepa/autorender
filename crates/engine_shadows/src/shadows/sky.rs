@@ -62,6 +62,7 @@ struct SkyTextures {
 
 impl Drop for SkyTextures {
     fn drop(&mut self) {
+        engine_render::memory::release_any(&self.texture);
         self.texture.destroy();
     }
 }

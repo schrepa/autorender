@@ -67,6 +67,7 @@ pub(super) struct MapTextures {
 impl Drop for MapTextures {
     fn drop(&mut self) {
         for texture in [&self.atlas, &self.regions, &self.table] {
+            engine_render::memory::release_any(texture);
             texture.destroy();
         }
     }

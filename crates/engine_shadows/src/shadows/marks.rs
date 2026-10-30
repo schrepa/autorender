@@ -55,8 +55,10 @@ impl Marks {
         self.readbacks.clear();
     }
 
-    pub(super) fn unbind(&mut self) {
-        self.group.clear();
+    pub(super) fn release(&mut self, device: &wgpu::Device) {
+        engine_render::memory::release_buffer(&self.buffer);
+        self.readbacks.clear();
+        *self = Self::new(device);
     }
 
     pub(super) fn take(&self, epoch: u64) -> Vec<u32> {
@@ -75,7 +77,7 @@ impl Marks {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         pipelines: &ShadowPipelines,
-        (camera, pieces): (&wgpu::Buffer, &wgpu::Buffer),
+        (camera, pieces): (&wgpu::Buffer, Bound<'_>),
         depth: Bound<'_>,
         size: (u32, u32),
         epoch: u64,
@@ -90,7 +92,7 @@ impl Marks {
             (&SHADOW_MARKS, &pipelines.marks_layout),
             [
                 ("camera", Bound::fixed(camera.as_entire_binding())),
-                ("pieces", Bound::fixed(pieces.as_entire_binding())),
+                ("pieces", pieces),
                 ("shadow_depth", depth),
                 ("shadow_marks", self.buffer.bound()),
             ],

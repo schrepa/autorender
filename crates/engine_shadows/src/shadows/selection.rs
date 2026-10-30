@@ -127,6 +127,23 @@ impl Selection {
         .sum()
     }
 
+    pub(super) fn release(&mut self, device: &wgpu::Device) {
+        for buffer in [
+            &self.stillness,
+            &self.ids,
+            &self.args,
+            &self.args_template,
+            &self.counters,
+            &self.no_flags,
+            &self.listed,
+            &self.listed_groups,
+        ] {
+            engine_render::memory::release_buffer(buffer);
+        }
+        self.readbacks.clear();
+        *self = Self::new(device);
+    }
+
     fn readback_words(&self) -> usize {
         SHADOW_TOTALS + 2 * self.mask_words
     }

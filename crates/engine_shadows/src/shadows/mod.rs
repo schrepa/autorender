@@ -35,7 +35,7 @@ use engine_render::parts::{
     Begin, BeginOut, Create, DrawAt, Encode, GpuPart, PartAssets, PartDecl, PartEntry, Prelude,
     Shading, Step, View,
 };
-use engine_render::pieces::{PieceAt, PieceDecl};
+use engine_render::pieces::PieceDecl;
 use engine_render::profiling::GpuProfiler;
 use engine_render::renderer::{CasterDraw, FramePoses};
 
@@ -181,6 +181,15 @@ struct Caster<'m> {
     index: usize,
 }
 
+fn compose_buffer(device: &wgpu::Device) -> engine_render::buffers::Growable {
+    engine_render::buffers::Growable::new(
+        device,
+        "engine/shadow-composes",
+        size_of::<ComposeData>() as u64,
+        wgpu::BufferUsages::VERTEX,
+    )
+}
+
 fn recycle<T, U>(mut storage: Vec<T>) -> Vec<U> {
     storage.clear();
     storage.into_iter().filter_map(|_| None).collect()
@@ -267,12 +276,7 @@ impl ShadowPass {
             written_cull: None,
             written_routes: None,
             composes: Vec::new(),
-            compose_buffer: engine_render::buffers::Growable::new(
-                device,
-                "engine/shadow-composes",
-                size_of::<ComposeData>() as u64,
-                wgpu::BufferUsages::VERTEX,
-            ),
+            compose_buffer: compose_buffer(device),
             caster_storage: Cell::default(),
             sky: SkyMaps::new(device),
             sky_groups: 0,
@@ -282,6 +286,38 @@ impl ShadowPass {
             draws: 0,
             ids: GraphIds::default(),
         }
+    }
+
+    fn rest(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &engine_render::gpu_calls::Queue,
+        enabled: bool,
+    ) {
+        self.maps.release();
+        self.sky.release(queue);
+        self.piece = bytemuck::Zeroable::zeroed();
+        if enabled {
+            return;
+        }
+        let Some(pipelines) = self.pipelines.take() else {
+            return;
+        };
+        for buffer in [&pipelines.view_buffer, &pipelines.routes, &pipelines.cull] {
+            engine_render::memory::release_buffer(buffer);
+        }
+        self.selection.release(device);
+        self.marks.release(device);
+        engine_render::memory::release_buffer(&self.compose_buffer);
+        self.compose_buffer = compose_buffer(device);
+        self.composes = Vec::new();
+        for group in self.pose_groups.iter_mut().chain(&mut self.compose_groups) {
+            group.clear();
+        }
+        self.written_views = None;
+        self.written_cull = None;
+        self.written_routes = None;
+        self.written_sky_view = None;
     }
 
     fn sky_counts(&self) -> (u32, u32) {
@@ -334,11 +370,7 @@ impl ShadowPass {
         self.region_views.clear();
         let settings = snapshot.section::<Shadows>();
         if !settings.enabled || (self.casters.groups().is_empty() && !inputs.terrain) {
-            if !settings.enabled {
-                self.maps.release();
-            }
-            self.sky.release(queue);
-            self.piece = bytemuck::Zeroable::zeroed();
+            self.rest(device, queue, settings.enabled);
             return None;
         }
         let source = self.casters.source();
@@ -606,7 +638,7 @@ impl ShadowPass {
             &core.device,
             encoder,
             pipelines,
-            (&core.camera.buffer, core.pieces_buffer()),
+            (&core.camera.buffer, core.pieces_bound()),
             core.depth.view.bound(),
             core.render_pixels(),
             epoch,
@@ -865,7 +897,9 @@ impl GpuPart for ShadowPass {
             return;
         }
         let ids = self.ids;
-        if let Some(pass) = ids.select {
+        if let Some(pass) = ids.select
+            && !self.casters.groups().is_empty()
+        {
             let _ = graph
                 .add(cx.table, pass)
                 .read(ids.poses)
@@ -876,7 +910,7 @@ impl GpuPart for ShadowPass {
             let _ = graph
                 .add(cx.table, pass)
                 .read(ids.poses)
-                .read(ids.casters)
+                .read_written(ids.casters)
                 .read_written(ids.placed)
                 .read_written(ids.leaves)
                 .write(ids.shadow_maps);
@@ -952,10 +986,6 @@ impl GpuPart for ShadowPass {
     fn shading(&self, snapshot: &RenderSnapshot, shading: &mut Shading) {
         let enabled = snapshot.section::<Shadows>().enabled;
         shading.set("SHADOW_MAPS", if enabled { 1.0 } else { 0.0 });
-    }
-
-    fn place_piece(&mut self, _at: PieceAt) {
-        self.marks.unbind();
     }
 
     fn piece(&self) -> Option<&[u8]> {
