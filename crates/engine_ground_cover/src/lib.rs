@@ -3,9 +3,10 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-use engine_core::{Brick, Bricks};
+use engine_core::{Brick, Bricks, DetailConsumer};
 use engine_faces::slots::GroundCoverList;
 use engine_render::render_bricks::AddRenderParts;
+use engine_terrain::GroundCover;
 
 mod bindings;
 pub mod gpu_layouts;
@@ -19,6 +20,12 @@ impl Brick for GroundCoverBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .list::<GroundCoverList>()
+            .settings::<GroundCover>()
+            .detail_consumer(DetailConsumer {
+                name: "blades",
+                setting: "ground_cover.max_blades",
+                stat: "ground_cover.blade_cut",
+            })
             .render_part(&ground_cover::PART)
             .shaders(shaders::MODULES)
             .face_defaults(engine_faces::defaults::MODULES)
