@@ -85,7 +85,7 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, inverse);
     }
     let direction = ray / ray_length;
-    let jitter = fract(pixel_noise(position.xy) + post.haze.x);
+    let jitter = fract(pixel_noise(position.xy) + pieces.sky.haze.x);
     let fog_most = -log(max(1.0 - pieces.sky.fog.w, 1.0e-6));
     let shadowed = sun_shadowed();
     var through = 1.0;

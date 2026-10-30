@@ -19,9 +19,7 @@ engine_render::entry_points! {
     draw {
         vertex: [vs_sky @ "sky::draw"],
         fragment: [
-            fs_sky @ "sky::draw",
             fs_probe_sky @ "sky::draw",
-            fs_view_clouds @ "sky::draw",
             fs_view_clouds_post @ "sky::draw",
             fs_sky_post @ "sky::draw",
             fs_sky_temporal @ "sky::draw",

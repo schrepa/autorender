@@ -59,6 +59,7 @@ engine_render::gpu_structs! {
         pub domes_newer_mirror: [f32; 4],
         pub domes_eye: [f32; 4],
         pub domes_view: [f32; 4],
+        pub haze: [f32; 4],
     }
 }
 

@@ -1,6 +1,6 @@
 import package::engine::color::{dither_hash, luminance};
 import package::face::bloom::glow_weight;
-import package::face::dither::{dithering, encoded, stored};
+import package::face::dither::{dithering, stored};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::tonemap::{exposure, tonemap};
 import package::frame::view::{camera, stable_normalize};
@@ -380,12 +380,6 @@ fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
 }
 
 @fragment
-fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(tonemap(clouded_sky(sky_ray(input.ndc))), input.clip_position.xy),
-        1.0);
-}
-
-@fragment
 fn fs_probe_sky(input: SkyOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(sky_along(pieces.sky.domes_eye.xyz, sky_ray(input.ndc)), 1.0);
 }
@@ -401,16 +395,6 @@ fn view_cloud_layer(position: vec2<f32>) -> vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, 1.0);
     }
     return vec4<f32>(tonemap(cloud.rgb / covering) * covering, cloud.a);
-}
-
-@fragment
-fn fs_view_clouds(input: SkyOutput) -> @location(0) vec4<f32> {
-    let layer = view_cloud_layer(input.clip_position.xy);
-    let covering = 1.0 - layer.a;
-    if covering <= 1.0e-4 {
-        discard;
-    }
-    return vec4<f32>(encoded(layer.rgb / covering, input.clip_position.xy) * covering, layer.a);
 }
 
 @fragment
