@@ -1,13 +1,15 @@
-use engine_collision::{Collider, ColliderShape, CollisionLayers, validate_collider_transform};
-use engine_core::Error;
 use engine_core::bevy_ecs::world::EntityWorldMut;
 use engine_core::glam::Mat4;
+use engine_core::{Error, parse_value_at};
+use engine_scene::{
+    ComponentContext, ComponentKind, Lookups, Placement, Prepared, PreparedComponent, admitted,
+    component_schema, no_files,
+};
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
-use crate::components::{Placement, SceneComponent};
-use crate::instance::Lookups;
-use crate::{SceneDocument, SceneFiles};
+use crate::{Collider, ColliderShape, CollisionLayers, validate_collider_transform};
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -16,14 +18,14 @@ pub enum SceneColliderShape {
     Cuboid {
         #[cfg_attr(
             feature = "schema",
-            schemars(inner(range(min = engine_collision::MIN_COLLIDER_EXTENT, max = engine_collision::MAX_COLLIDER_EXTENT)))
+            schemars(inner(range(min = crate::MIN_COLLIDER_EXTENT, max = crate::MAX_COLLIDER_EXTENT)))
         )]
         half_extents: [f32; 3],
     },
     Sphere {
         #[cfg_attr(
             feature = "schema",
-            schemars(range(min = engine_collision::MIN_COLLIDER_EXTENT, max = engine_collision::MAX_COLLIDER_EXTENT))
+            schemars(range(min = crate::MIN_COLLIDER_EXTENT, max = crate::MAX_COLLIDER_EXTENT))
         )]
         radius: f32,
     },
@@ -41,8 +43,6 @@ pub struct SceneCollider {
     #[serde(default)]
     pub sensor: bool,
 }
-
-impl engine_settings::Setting for SceneCollider {}
 
 fn default_memberships() -> u32 {
     1
@@ -86,21 +86,42 @@ impl SceneCollider {
     }
 }
 
-impl SceneComponent for SceneCollider {
-    type Prepared = Collider;
+pub static COLLIDER: ComponentKind = ComponentKind {
+    name: "collider",
+    shows: "Collider",
+    placement: Placement::Anywhere,
+    schema: component_schema!(SceneCollider),
+    example,
+    validate: checked,
+    validate_world: checked_world,
+    prepare: prepared,
+    files: no_files,
+    admit: admitted,
+};
 
-    const PLACEMENT: Placement = Placement::Anywhere;
+fn authored(value: &Value, path: &str) -> Result<SceneCollider, Error> {
+    parse_value_at(value.clone(), path)
+}
 
-    fn prepare(
-        &self,
-        path: &str,
-        _: &SceneDocument,
-        _: Option<&SceneFiles>,
-    ) -> Result<Collider, Error> {
-        self.runtime(path)
-    }
+fn example() -> Value {
+    json!({ "shape": { "kind": "cuboid", "half_extents": [0.5, 0.5, 0.5] } })
+}
 
-    fn spawn(prepared: &Collider, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
-        entity.insert(*prepared);
+fn checked(value: &Value, path: &str) -> Result<(), Error> {
+    authored(value, path)?.runtime(path).map(|_| ())
+}
+
+fn checked_world(value: &Value, matrix: Mat4, path: &str) -> Result<(), Error> {
+    authored(value, path)?.validate_world(matrix, path)
+}
+
+fn prepared(value: &Value, context: &ComponentContext<'_>) -> Prepared {
+    let collider = authored(value, context.path)?.runtime(context.path)?;
+    Ok(Box::new(collider))
+}
+
+impl PreparedComponent for Collider {
+    fn spawn(&self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
+        entity.insert(*self);
     }
 }

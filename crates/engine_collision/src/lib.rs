@@ -8,6 +8,7 @@ mod geometry;
 mod placed;
 mod queries;
 pub mod results;
+mod scene;
 mod smoke;
 mod solids;
 mod terrain;
@@ -20,6 +21,7 @@ pub use queries::{
     CollisionEventsQuery, CollisionFilterRequest, CollisionSensorFilter, CollisionShapeRequest,
     OverlapQuery, RaycastQuery, ShapeCastQuery,
 };
+pub use scene::{COLLIDER, SceneCollider, SceneColliderShape};
 pub use solids::{ColliderSolid, GroundSolid, PlacedSolid, Solid};
 pub use terrain_sweep::TerrainSweepQuery;
 pub use types::*;
@@ -30,6 +32,7 @@ pub use world::{CollisionWorld, SensorEvents, refresh_collision_world};
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, FixedPostSimulation, FixedPreSimulation};
+use engine_scene::AddSceneComponents;
 
 pub struct Collision;
 
@@ -45,6 +48,7 @@ impl Brick for Collision {
             .resource::<CollisionConfig>()
             .resource::<CollisionWorld>()
             .resource::<SensorEvents>()
+            .scene_components(&[&COLLIDER])
             .systems(
                 FixedPreSimulation,
                 (world::sync_ground, world::sync)

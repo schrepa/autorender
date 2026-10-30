@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Entity, World};
-use engine_core::{Ground, GroundShape, GroundSolid as FaceSolid};
+use engine_core::{SolidShape, WorldSolid, WorldSolids};
 use glam::Vec3;
 
 use crate::bvh::Bvh;
@@ -48,16 +48,16 @@ impl PlacedShapes {
     }
 
     pub(crate) fn sync(&mut self, world: &World) -> bool {
-        let ground = world.get_resource::<Ground>();
-        let revision = ground.map(|ground| ground.face().revision(world));
+        let solids = world.get_resource::<WorldSolids>();
+        let revision = solids.map(|solids| solids.revision(world));
         if revision == self.revision {
             return false;
         }
         self.revision = revision;
         let had = !self.objects.is_empty();
         self.objects.clear();
-        if let Some(ground) = ground {
-            self.collect(ground.face().solids(world));
+        if let Some(solids) = solids {
+            self.collect(solids.solids(world));
         }
         self.bounds.clear();
         self.bounds
@@ -66,17 +66,17 @@ impl PlacedShapes {
         had || !self.objects.is_empty()
     }
 
-    fn collect(&mut self, solids: Vec<FaceSolid>) {
+    fn collect(&mut self, solids: Vec<WorldSolid>) {
         for solid in solids {
             let shape = match solid.shape {
-                GroundShape::Cuboid { half_extents } => ColliderShape::Cuboid { half_extents },
-                GroundShape::Sphere { radius } => ColliderShape::Sphere { radius },
+                SolidShape::Cuboid { half_extents } => ColliderShape::Cuboid { half_extents },
+                SolidShape::Sphere { radius } => ColliderShape::Sphere { radius },
             };
             let Ok(affine) = AffineShape::new(shape, solid.model) else {
                 continue;
             };
             self.objects.push(Object {
-                entity: solid.ground,
+                entity: solid.owner,
                 part: PlacedPart {
                     layer: solid.layer,
                     asset: solid.asset,
