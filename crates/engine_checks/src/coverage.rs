@@ -3,7 +3,31 @@ use std::path::Path;
 
 use engine::Engine;
 use engine::bricks::BrickRegistry;
+use engine_core::PlaceKind;
 use serde_json::{Value, json};
+
+fn places(engine: &Engine) -> Vec<Value> {
+    let Some(registry) = engine.app.world().get_resource::<BrickRegistry>() else {
+        return Vec::new();
+    };
+    registry
+        .places()
+        .into_iter()
+        .map(|place| {
+            let kind = match place.kind {
+                PlaceKind::Slot => "slot",
+                PlaceKind::List => "list",
+            };
+            let smokes: Vec<&str> = place.smokes.iter().map(|smoke| smoke.name).collect();
+            json!({
+                "place": place.name,
+                "kind": kind,
+                "members": registry.members(place.name),
+                "smokes": smokes,
+            })
+        })
+        .collect()
+}
 
 pub fn coverage(
     engine: &mut Engine,
@@ -88,6 +112,7 @@ pub fn coverage(
         "sections": features,
         "inspectors": inspectors,
         "ops": ops,
+        "places": places(engine),
     }))
     .expect("coverage_serializes")
         + "\n")
@@ -101,6 +126,7 @@ pub fn check(coverage: &str, unsmoked: &[&str]) -> Result<(), String> {
         ("inspectors", "inspector"),
         ("sections", "section"),
         ("ops", "op"),
+        ("places", "place"),
     ] {
         for entry in coverage[list].as_array().into_iter().flatten() {
             let name = entry[key].as_str().unwrap_or_default();

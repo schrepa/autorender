@@ -18,6 +18,14 @@ const TEMPLATE_GAME: &str = "#[path = \"../../engine/examples/app_template.rs\"]
 
 const TEMPLATE_IMPORTS: &str = "use engine_settings::{InvalidSetting, settings};\n";
 
+const CORE_IMPORTS: &str =
+    "use engine_core::{Brick, BrickStats, Bricks, Engine, EnvironmentSection, Error, Presentation};\n";
+
+const SLOT_IMPORTS: &str = "use engine_core::{
+    Brick, BrickStats, Bricks, Engine, EnvironmentSection, Error, Place, Presentation,
+};
+";
+
 const GPU_IMPORTS: &str = "use engine_render::linker::ShaderModule;
 use engine_render::parts::{Create, GpuPart, PartDecl, PartEntry};
 use engine_render::render_bricks::AddRenderParts;
@@ -295,13 +303,7 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
     let mut metadata = String::new();
     match &claim {
         Some(claim) if claim.kind == "slot" => {
-            source = source.replace(
-                &format!("impl Brick for {pascal}Brick {{\n"),
-                &format!(
-                    "impl Brick for {pascal}Brick {{\n    const SLOT: Option<&'static str> = Some(<{} as engine_core::Slot>::NAME);\n\n",
-                    claim.path
-                ),
-            );
+            source = slot_source(&source, &pascal, &claim.path)?;
             if claim.gpu {
                 source = gpu_source(&source, &pascal, name, &stats);
             }
@@ -384,6 +386,21 @@ workspace = true
         })
     );
     Ok(())
+}
+
+fn slot_source(source: &str, pascal: &str, slot: &str) -> Result<String, String> {
+    if !source.contains(CORE_IMPORTS) {
+        return Err(format!(
+            "{BRICK_TEMPLATE} no longer imports engine_core as `{}`",
+            CORE_IMPORTS.trim_end()
+        ));
+    }
+    Ok(source.replace(CORE_IMPORTS, SLOT_IMPORTS).replace(
+        &format!("impl Brick for {pascal}Brick {{\n"),
+        &format!(
+            "impl Brick for {pascal}Brick {{\n    const SLOT: Option<Place> = Some(Place::slot::<{slot}>());\n\n"
+        ),
+    ))
 }
 
 struct Claim {
