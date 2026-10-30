@@ -1,4 +1,4 @@
-import package::face::dither::{encoded, stored};
+import package::face::dither::stored;
 import package::meshes::declarations::{SceneTargets, TemporalOutput, TemporalTargets, VertexOutput};
 import package::meshes::shade::{extended_fragment, extended_temporal_output, fragment,
     masked_depth, shade, temporal_output};
@@ -21,11 +21,6 @@ fn fs_masked_depth_temporal_extended(input: ExtendedTemporalOutput) {
 }
 
 @fragment
-fn fs_main(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade(fragment(input), front).color, input.clip_position.xy), 1.0);
-}
-
-@fragment
 fn fs_post(input: VertexOutput, @builtin(front_facing) front: bool) -> SceneTargets {
     let shaded = shade(fragment(input), front);
     return scene_targets(shaded, stored(shaded.color, input.clip_position.xy));
@@ -41,13 +36,6 @@ fn fs_temporal(input: TemporalOutput, @builtin(front_facing) front: bool) -> Tem
 @fragment
 fn fs_probe(input: VertexOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     return vec4<f32>(shade(fragment(input), front).linear, 1.0);
-}
-
-@fragment
-fn fs_main_extended(input: ExtendedOutput, @builtin(front_facing) front: bool)
-        -> @location(0) vec4<f32> {
-    return vec4<f32>(encoded(shade(extended_fragment(input), front).color,
-        input.clip_position.xy), 1.0);
 }
 
 @fragment

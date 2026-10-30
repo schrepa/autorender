@@ -179,6 +179,8 @@ impl ScatterDraws {
         let terrains = &engine_terrain::RenderTerrains::of(snapshot).terrains;
         if terrains.iter().any(|terrain| !terrain.assets.is_empty()) {
             scatter.warm(&cx.core.device);
+        } else {
+            scatter.release(&cx.core.device);
         }
         let key = scatter_key(cx.core, terrains);
         if self.key.as_ref() != Some(&key) || self.pool.fragmented() {
