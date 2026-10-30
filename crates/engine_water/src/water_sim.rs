@@ -2,8 +2,8 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use bytemuck::Zeroable;
-use engine_core::WaterObstacle;
 use engine_core::glam::{Mat3, Vec2, Vec3};
+use engine_core::{Cut, WaterObstacle};
 use engine_faces::heightfield::HeightfieldFace;
 use engine_render::bindings::EMPTY;
 use engine_render::pipelines::GroupLayout;
@@ -435,20 +435,21 @@ impl WaterSim {
         (drawn, self.generation)
     }
 
-    pub(crate) fn cells(&self) -> [u32; 7] {
+    pub(crate) fn cells(&self) -> (Cut, [u32; 5]) {
         self.window
             .as_ref()
             .filter(|window| window.ready)
-            .map_or([0; 7], |window| {
-                [
-                    window.fitted.cells,
-                    window.source.asked.saturating_sub(window.source.cells),
-                    window.source.cells - window.fitted.cells,
-                    self.steps,
-                    self.behind,
-                    window.listed.as_ref().map_or(0, |listed| listed.whole),
-                    window.waiting,
-                ]
+            .map_or((Cut::default(), [0; 5]), |window| {
+                (
+                    Cut::of(window.source.asked, window.fitted.cells),
+                    [
+                        window.source.cells - window.fitted.cells,
+                        self.steps,
+                        self.behind,
+                        window.listed.as_ref().map_or(0, |listed| listed.whole),
+                        window.waiting,
+                    ],
+                )
             })
     }
 

@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
+use engine_core::Cut;
 use engine_core::glam::{Vec2, Vec3};
 use engine_core::math::{clamp, max};
 use engine_faces::heightfield::WaterDraws;
@@ -68,7 +69,7 @@ struct ParticleGrid {
     texels: u32,
     texel: f32,
     square: u32,
-    cut: u32,
+    cut: Cut,
     points: u32,
     pools: [u32; 2],
     pixels: f32,
@@ -100,7 +101,7 @@ pub(crate) struct ParticleView {
 pub(crate) struct ParticleStats {
     pub(crate) texels: u32,
     pub(crate) points: u32,
-    pub(crate) cut: u32,
+    pub(crate) cut: Cut,
     pub(crate) reach: u32,
     pub(crate) foam: u32,
     pub(crate) waves: u32,
@@ -550,7 +551,7 @@ impl ParticleGrid {
             texels,
             texel,
             square,
-            cut: 0,
+            cut: Cut::default(),
             points,
             pools,
             pixels: HANDOVER_PIXELS,
@@ -598,7 +599,7 @@ fn sized(
     device: &wgpu::Device,
     (texels, display): (u32, FrameSize),
     asked: u32,
-) -> (ParticleSizes, u32) {
+) -> (ParticleSizes, Cut) {
     let limits = device.limits();
     let binding = limits
         .max_storage_buffer_binding_size
@@ -620,7 +621,7 @@ fn sized(
         square,
         pools: [foam as u32, waves as u32],
     };
-    (sizes, asked.saturating_sub(square))
+    (sizes, Cut::of(asked, square))
 }
 
 fn lattice_points(square: u32) -> u32 {

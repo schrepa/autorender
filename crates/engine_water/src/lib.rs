@@ -5,9 +5,10 @@
     clippy::expect_used
 )]
 
-use engine_core::{Brick, Bricks};
+use engine_core::{Brick, Bricks, DetailConsumer};
 use engine_faces::slots::WaterList;
 use engine_render::render_bricks::AddRenderParts;
+use engine_terrain::Water;
 
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
@@ -30,6 +31,22 @@ impl Brick for WaterBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .list::<WaterList>()
+            .settings::<Water>()
+            .detail_consumer(DetailConsumer {
+                name: "live_cells",
+                setting: "water.live_budget",
+                stat: "water.cell_cut",
+            })
+            .detail_consumer(DetailConsumer {
+                name: "foam_points",
+                setting: "water.foam_points",
+                stat: "water.foam_cut",
+            })
+            .detail_consumer(DetailConsumer {
+                name: "water_leaves",
+                setting: "water.subdivision_leaves",
+                stat: "water.leaf_cut",
+            })
             .render_part(&water::PART)
             .shaders(shaders::MODULES)
             .face_defaults(engine_faces::defaults::MODULES)
