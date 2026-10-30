@@ -71,6 +71,10 @@ impl Kernels {
     pub(crate) fn created(&self) -> Option<&Pipelines> {
         self.pipelines.as_ref()
     }
+
+    pub(crate) fn release(&mut self) {
+        self.pipelines = None;
+    }
 }
 
 pub(crate) fn grid(groups: u32) -> [u32; 2] {

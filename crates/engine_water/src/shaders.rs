@@ -22,11 +22,9 @@ engine_render::entry_points! {
             vs_fall_temporal @ "water::falls",
         ],
         fragment: [
-            fs_water @ "water::surface",
             fs_water_post @ "water::surface",
             fs_water_temporal @ "water::surface",
             fs_foam @ "water::particles",
-            fs_fall @ "water::falls",
             fs_fall_post @ "water::falls",
             fs_fall_temporal @ "water::falls",
             fs_debug_water @ "water::debug",

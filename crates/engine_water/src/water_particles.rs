@@ -150,6 +150,7 @@ impl WaterParticles {
             if self.grid.take().is_some() {
                 self.generation += 1;
             }
+            self.readbacks.clear();
             self.last = None;
             self.step = None;
             return;
@@ -248,6 +249,10 @@ impl WaterParticles {
             look: entry(meshes::particles_look),
             down: entry(meshes::particles_down),
         });
+    }
+
+    pub(crate) fn release_pipelines(&mut self) {
+        self.pipelines = None;
     }
 
     pub(crate) fn encode(
