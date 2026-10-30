@@ -6,7 +6,9 @@
 use crate::shaders::entry::temporal;
 use engine_core::{Applied, Dither, RenderSnapshot, RenderStats, TemporalAntialiasing};
 use engine_render::cached::{Bound, GroupCache, Versioned};
-use engine_render::composite::{PixelEffect, PostStage, composite_entry};
+use engine_render::composite::{
+    PixelEffect, PostStage, composite_entry, effect_reads, pixel_effects,
+};
 use engine_render::graph::{
     Access, BLACK, Clear, FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl,
     ResourceId, Stage,
@@ -101,9 +103,6 @@ struct Ids {
     history: Option<ResourceId>,
     revealed: Option<ResourceId>,
     occlusion: Option<ResourceId>,
-    reflections: Option<ResourceId>,
-    haze: Option<ResourceId>,
-    bloom: Option<ResourceId>,
 }
 
 #[derive(Default)]
@@ -111,6 +110,7 @@ pub(crate) struct TemporalPass {
     taa: Lazy<Taa>,
     resolve: Option<ResolveFrame>,
     ids: Ids,
+    reads: Option<Vec<ResourceId>>,
 }
 
 struct Taa {
@@ -121,7 +121,7 @@ struct Taa {
     written: Option<ResolveUniform>,
     targets: ScreenTarget<Targets>,
     no_particles: wgpu::TextureView,
-    resolve_groups: [GroupCache<11>; 2],
+    resolve_groups: [GroupCache<10>; 2],
     frame: u32,
 }
 
@@ -249,9 +249,9 @@ impl Taa {
     fn prepare_resolve(
         &mut self,
         device: &wgpu::Device,
-        ([scene, occlusion, reflections, motion], settings): ([Bound<'_>; 4], Bound<'_>),
+        ([scene, occlusion, motion], settings): ([Bound<'_>; 3], Bound<'_>),
         parity: usize,
-        (depth, pieces): (&Versioned<wgpu::TextureView>, &wgpu::Buffer),
+        (depth, pieces): (&Versioned<wgpu::TextureView>, Bound<'_>),
         revealed: Option<Bound<'_>>,
     ) -> ResolveFrame {
         let resolve = ResolveFrame {
@@ -278,10 +278,9 @@ impl Taa {
                     ("history_sampler", sampler()),
                     ("occlusion", occlusion.clone()),
                     ("post", settings.clone()),
-                    ("reflections", reflections.clone()),
                     ("depth_texture", depth.bound()),
                     ("revealed", revealed.clone()),
-                    ("pieces", Bound::fixed(pieces.as_entire_binding())),
+                    ("pieces", pieces.clone()),
                 ],
             );
         }
@@ -357,10 +356,8 @@ impl GpuPart for TemporalPass {
             history: table.resource("history"),
             revealed: table.resource("revealed"),
             occlusion: table.resource("occlusion"),
-            reflections: table.resource("reflections"),
-            haze: table.resource("haze"),
-            bloom: table.resource("bloom"),
         };
+        self.reads = None;
         if let Some(taa) = self.taa.get_mut() {
             taa.forget_groups();
         }
@@ -395,13 +392,24 @@ impl GpuPart for TemporalPass {
     }
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
+        if self.reads.is_none() {
+            let effects = pixel_effects(cx.parts);
+            self.reads = Some(
+                effect_reads(&effects)
+                    .filter_map(|read| cx.table.resource(read))
+                    .collect(),
+            );
+        }
         if cx.frame.kind.debug {
             self.resolve = None;
             return;
         }
-        let (Some(frame), Some(([scene, occlusion, reflections], settings)), Some(motion)) = (
+        let post = cx.parts.post();
+        let (Some(frame), Some(scene), Some(occlusion), Some(settings), Some(motion)) = (
             cx.frame.temporal.as_ref(),
-            cx.parts.post().and_then(PostPass::resolve_inputs),
+            post.and_then(PostPass::scene),
+            post.and_then(|post| post.target("occlusion")),
+            post.and_then(PostPass::uniform),
             cx.core.motion(),
         ) else {
             self.resolve = None;
@@ -419,9 +427,9 @@ impl GpuPart for TemporalPass {
             );
             taa.prepare_resolve(
                 &core.device,
-                ([scene, occlusion, reflections, motion], settings),
+                ([scene, occlusion, motion], settings),
                 frame.parity,
-                (&core.depth.view, core.pieces_buffer()),
+                (&core.depth.view, core.pieces_bound()),
                 revealed,
             )
         });
@@ -438,17 +446,18 @@ impl GpuPart for TemporalPass {
         let (Some(pass), Some(canvas), Some(history)) = (ids.pass, ids.canvas, ids.history) else {
             return;
         };
-        let _ = graph
+        let mut node = graph
             .add(cx.table, pass)
             .read(ids.scene)
             .read(ids.motion)
             .read(ids.depth)
             .read(history)
             .read_if(frame.revealed, ids.revealed)
-            .read_written(ids.occlusion)
-            .read_written(ids.reflections)
-            .read_written(ids.haze)
-            .read_written(ids.bloom)
+            .read_written(ids.occlusion);
+        for &read in self.reads.iter().flatten() {
+            node = node.read_written(read);
+        }
+        let _ = node
             .color(canvas, Access::Clear(Clear::Color(BLACK)))
             .color(history, Access::Clear(Clear::Color(BLACK)));
     }

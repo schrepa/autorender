@@ -2,14 +2,13 @@ use engine_core::{AmbientOcclusion, Applied, RenderStats, Shadows, SkyOcclusion}
 use engine_faces::occupancy::OccupancyFace;
 use engine_render::cached::{Bound, GroupCache, Versioned};
 use engine_render::graph::{
-    Access, Clear, FrameGraph, GraphTable, PassDecl, PassId, ResourceId, Stage,
-    Targets as FrameTargets, WHITE,
+    Access, Clear, FrameGraph, GraphTable, PassDecl, PassId, ResourceId, Stage, WHITE,
 };
 use engine_render::lazy::Lazy;
 use engine_render::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View};
 use engine_render::pipeline_layouts::PipelineLayout;
 use engine_render::pipelines::{self, Fullscreen, GroupLayout, fullscreen};
-use engine_render::post::OCCLUSION_FORMAT;
+use engine_render::post::{OCCLUSION_FORMAT, PostPass};
 use engine_render::profiling::Span;
 use engine_render::targets::{FrameRegion, ScreenTarget, fullscreen_pass};
 
@@ -82,12 +81,20 @@ impl GpuPart for OcclusionPass {
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         self.frame = None;
+        let snapshot = cx.frame.snapshot;
+        let ambient = snapshot.section::<AmbientOcclusion>().enabled();
+        let sky =
+            snapshot.section::<SkyOcclusion>().darkens() && snapshot.section::<Shadows>().enabled;
+        if !ambient && !sky {
+            self.occlusion.release();
+            return;
+        }
         if cx.frame.kind.debug {
             return;
         }
         let core = &*cx.core;
         let device = &core.device;
-        let Some(post) = cx.parts.post().filter(|post| post.active()) else {
+        let Some(uniform) = cx.parts.post().and_then(PostPass::uniform) else {
             if let Some(occlusion) = self.occlusion.get_mut() {
                 occlusion.release_targets();
             }
@@ -100,9 +107,7 @@ impl GpuPart for OcclusionPass {
             .create(device, "engine/ambient-occlusion-", || {
                 Occlusion::new(device)
             });
-        let (Some(occlusion), Some((_, uniform))) =
-            (self.occlusion.get_mut(), post.resolve_inputs())
-        else {
+        let Some(occlusion) = self.occlusion.get_mut() else {
             return;
         };
         occlusion.size(device, core.display.region);
@@ -111,18 +116,12 @@ impl GpuPart for OcclusionPass {
             .face::<dyn OccupancyFace>()
             .map_or(0.0, OccupancyFace::texel_share);
         occlusion.write_canopy(&core.queue, share);
-        let snapshot = cx.frame.snapshot;
-        let ambient = snapshot.section::<AmbientOcclusion>().enabled();
-        let sky =
-            snapshot.section::<SkyOcclusion>().darkens() && snapshot.section::<Shadows>().enabled;
-        if ambient || sky {
-            occlusion.bind(device, uniform, &core.depth.view);
-            self.frame = Some(Frame { occlusion: ambient });
-        }
+        occlusion.bind(device, uniform, &core.depth.view);
+        self.frame = Some(Frame { occlusion: ambient });
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
-        let (Some(_), Some(shape), Some(pass), Some(occlusion)) = (
+        let (Some(_), Some(_), Some(pass), Some(occlusion)) = (
             self.frame,
             cx.frame.shape,
             self.ids.pass,
@@ -130,9 +129,6 @@ impl GpuPart for OcclusionPass {
         ) else {
             return;
         };
-        if shape.targets == FrameTargets::Canvas {
-            return;
-        }
         let _ = graph
             .add(cx.table, pass)
             .read(self.ids.depth)
