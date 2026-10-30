@@ -27,6 +27,7 @@ mod placement;
 mod pyramid;
 pub mod rivers;
 mod runtime;
+pub mod scene;
 mod select;
 mod shading;
 pub mod shallow_water;

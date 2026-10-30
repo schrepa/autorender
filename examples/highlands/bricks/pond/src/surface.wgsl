@@ -1,4 +1,4 @@
-import package::face::dither::{encoded, stored};
+import package::face::dither::stored;
 import package::face::ground::{GroundTerrain, ground_height};
 import package::face::lighting::finish;
 import package::face::surface_point::{BODY_WATER, SurfacePoint};
@@ -99,13 +99,6 @@ fn shade_pond(input: PondOutput) -> PondShade {
     shade.shaded.reflect *= shade.cover;
     shade.shaded.mirrored *= shade.cover;
     return shade;
-}
-
-@fragment
-fn fs_pond(input: PondOutput) -> @location(0) vec4<f32> {
-    let shade = shade_pond(input);
-    return vec4<f32>(encoded(shade.shaded.color, input.clip_position.xy) * shade.cover,
-        shade.cover);
 }
 
 @fragment

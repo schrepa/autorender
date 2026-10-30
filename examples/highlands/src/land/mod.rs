@@ -10,7 +10,7 @@ use engine::host::Image;
 
 use engine::bricks::parse_value_at;
 use engine::prelude::*;
-use engine::scene::SceneTerrain;
+use engine::terrain::SceneTerrain;
 use engine::{Error, ErrorCode, Expected};
 use serde_json::Value;
 

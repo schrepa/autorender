@@ -3,7 +3,7 @@ use engine_core::{BrickRegistry, Error, missing_brick};
 
 use crate::SceneDocument;
 
-pub(crate) fn added(world: &World, name: &str) -> bool {
+pub fn added(world: &World, name: &str) -> bool {
     world
         .get_resource::<BrickRegistry>()
         .is_some_and(|registry| registry.has(name))

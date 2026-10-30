@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-schema = ["dep:schemars", "engine_core/schema", "engine_settings/schema", "engine_world_streaming/schema", "engine_terrain/schema"]
+schema = ["dep:schemars", "engine_core/schema", "engine_settings/schema", "engine_world_streaming/schema"]
 
 [dependencies]
 bevy_ecs.workspace = true
@@ -15,7 +15,6 @@ base64.workspace = true
 engine_core.workspace = true
 engine_settings.workspace = true
 engine_world_streaming.workspace = true
-engine_terrain.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars = { workspace = true, optional = true }

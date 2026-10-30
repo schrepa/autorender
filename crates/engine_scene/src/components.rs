@@ -138,11 +138,11 @@ macro_rules! component_schema {
     }};
 }
 
-pub(crate) fn parsed<T: DeserializeOwned>(value: &Value, path: &str) -> Result<T, Error> {
+pub fn parsed<T: DeserializeOwned>(value: &Value, path: &str) -> Result<T, Error> {
     engine_core::parse_value_at(value.clone(), path)
 }
 
-pub(crate) fn ruled<T: DeserializeOwned + Setting>(
+pub fn ruled<T: DeserializeOwned + Setting>(
     value: &Value,
     path: &str,
     name: &'static str,
@@ -160,7 +160,7 @@ pub(crate) fn ruled<T: DeserializeOwned + Setting>(
     Ok(parsed)
 }
 
-pub(crate) fn object_example() -> Value {
+pub fn object_example() -> Value {
     json!({})
 }
 
@@ -245,8 +245,6 @@ pub static CORE_COMPONENTS: &[&ComponentKind] = &[
     &GROUNDED,
     &crate::spline::SPLINE,
     &crate::probe::REFLECTION_PROBE,
-    &crate::terrain::TERRAIN,
-    &crate::terrain::PREFETCH,
 ];
 
 static KINDS: RwLock<Vec<(&'static str, &'static ComponentKind)>> = RwLock::new(Vec::new());
@@ -393,6 +391,15 @@ impl SceneObject {
             Ok(())
         })?;
         Ok(prepared)
+    }
+
+    pub(crate) fn component_paths(&self, path: &str) -> Result<Vec<ComponentPath>, Error> {
+        let mut paths = Vec::new();
+        self.each_known(path, |kind, value, at| {
+            paths.extend((kind.paths)(value, at)?);
+            Ok(())
+        })?;
+        Ok(paths)
     }
 
     pub(crate) fn component_files(&self) -> impl Iterator<Item = String> {

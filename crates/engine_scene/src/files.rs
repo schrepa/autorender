@@ -73,7 +73,7 @@ fn missing(uri: &str, path: &str) -> Error {
 
 const MAX_URI_BYTES: usize = 256;
 
-pub(crate) fn valid_uri(uri: &str, path: &str) -> Result<(), Error> {
+pub fn valid_uri(uri: &str, path: &str) -> Result<(), Error> {
     let valid = !uri.is_empty()
         && uri.len() <= MAX_URI_BYTES
         && uri

@@ -2,28 +2,27 @@ use engine_settings::ErrorCode;
 use std::sync::Arc;
 
 use engine_core::bevy_ecs::world::{EntityWorldMut, World};
-use engine_core::glam::Vec3;
+use engine_core::glam::{Vec2, Vec3};
 use engine_core::{Error, Expected, MaterialHandle, MeshHandle, missing_brick};
+use engine_scene::{
+    ComponentContext, ComponentKind, ComponentPath, Lookups, Placement, Prepared, PreparedComponent,
+    SceneFiles, SceneMaterial, SceneMesh, added, identifier, no_files, no_paths, object_example,
+    parsed, ruled, unknown, valid_uri, valid_world,
+};
 use engine_settings::{Rule, Setting};
-use engine_terrain::layer::{self, LayerFiles, TerrainLayer, TerrainLayerKinds};
-use engine_terrain::{
+use serde::{Deserialize, Serialize};
+use serde_json::{Number, Value, json};
+
+use crate::layer::{self, LayerFiles, TerrainLayer, TerrainLayerKinds};
+use crate::{
     Biome, Biomes, Cover, Layers, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
     PlacementLod, PlacementPart, Pyramid, SurfaceMaterial, SurfaceProjection, Surroundings,
     Terrain, TerrainPrefetch, TerrainSurface,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-
-use crate::bricks::added;
-use crate::components::{
-    ComponentContext, ComponentKind, Placement, Prepared, PreparedComponent, no_files, no_paths,
-    object_example, parsed, ruled, valid_world,
-};
-use crate::instance::Lookups;
-use crate::validation::{identifier, unknown};
-use crate::{SceneFiles, SceneMaterial, SceneMesh, files::valid_uri};
 
 const TERRAIN_BRICK: &str = "terrain";
+
+pub const GROUND_HEIGHT: &str = "ground_height";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -33,13 +32,13 @@ pub struct SceneTerrain {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
-        schemars(inner(range(min = 1, max = engine_terrain::Pyramid::MAX_TILES)))
+        schemars(inner(range(min = 1, max = crate::Pyramid::MAX_TILES)))
     )]
     pub tiles: Option<[u32; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
-        schemars(range(min = engine_terrain::Pyramid::MIN_SPACING, max = engine_terrain::Pyramid::MAX_SPACING))
+        schemars(range(min = crate::Pyramid::MIN_SPACING, max = crate::Pyramid::MAX_SPACING))
     )]
     pub spacing: Option<f32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -89,7 +88,7 @@ pub struct SceneTerrainSurface {
     pub materials: Vec<SceneTerrainMaterial>,
     pub biomes: Vec<Biome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub steep: Option<engine_terrain::SteepLayer>,
+    pub steep: Option<crate::SteepLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bridge: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -97,13 +96,13 @@ pub struct SceneTerrainSurface {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub placements: Vec<PlacementLayer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub placed: Vec<engine_terrain::AuthoredPlacement>,
+    pub placed: Vec<crate::AuthoredPlacement>,
     #[serde(default, skip_serializing_if = "is_default_causes")]
-    pub macro_colors: engine_terrain::MacroCauses,
+    pub macro_colors: crate::MacroCauses,
 }
 
-fn is_default_causes(causes: &engine_terrain::MacroCauses) -> bool {
-    *causes == engine_terrain::MacroCauses::default()
+fn is_default_causes(causes: &crate::MacroCauses) -> bool {
+    *causes == crate::MacroCauses::default()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -145,14 +144,14 @@ pub enum SceneColliderShape {
     Cuboid {
         #[cfg_attr(
             feature = "schema",
-            schemars(inner(range(min = engine_terrain::MIN_COLLIDER_EXTENT, max = engine_terrain::MAX_COLLIDER_EXTENT)))
+            schemars(inner(range(min = crate::MIN_COLLIDER_EXTENT, max = crate::MAX_COLLIDER_EXTENT)))
         )]
         half_extents: [f32; 3],
     },
     Sphere {
         #[cfg_attr(
             feature = "schema",
-            schemars(range(min = engine_terrain::MIN_COLLIDER_EXTENT, max = engine_terrain::MAX_COLLIDER_EXTENT))
+            schemars(range(min = crate::MIN_COLLIDER_EXTENT, max = crate::MAX_COLLIDER_EXTENT))
         )]
         radius: f32,
     },
@@ -441,21 +440,24 @@ impl LayerFiles for LayerBuffers<'_> {
     }
 }
 
-fn layer_files(item: &Value) -> Vec<String> {
-    let Some(object) = item.as_object() else {
-        return Vec::new();
-    };
-    let Some(kind) = object
+fn kind_settings(item: &Value) -> Option<(&'static layer::LayerKind, Value)> {
+    let object = item.as_object()?;
+    let kind = object
         .get(layer::TYPE_KEY)
         .and_then(Value::as_str)
-        .and_then(layer::layer_kind)
-    else {
-        return Vec::new();
-    };
+        .and_then(layer::layer_kind)?;
     let mut settings = object.clone();
     settings.remove(layer::TYPE_KEY);
     settings.remove(layer::ID_KEY);
-    (kind.files)(&Value::Object(settings))
+    Some((kind, Value::Object(settings)))
+}
+
+fn layer_files(item: &Value) -> Vec<String> {
+    kind_settings(item).map_or_else(Vec::new, |(kind, settings)| (kind.files)(&settings))
+}
+
+fn layer_points(item: &Value) -> Option<Vec<[f32; 2]>> {
+    kind_settings(item).and_then(|(kind, settings)| (kind.points)(&settings))
 }
 
 fn file_field(item: &Value, uri: &str, at: &str) -> String {
@@ -488,6 +490,87 @@ fn check_layers(terrain: &Value, world: &World, path: &str) -> Result<(), Error>
         }
     }
     Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GroundHeight {
+    through: String,
+    at: [f32; 2],
+}
+
+pub fn resolve_values(
+    value: &mut Value,
+    named: &[(String, Arc<Layers>)],
+    pyramid: &Pyramid,
+    path: &str,
+) -> Result<(), Error> {
+    let rule = match value {
+        Value::Object(fields) if fields.len() == 1 => fields.get(GROUND_HEIGHT).cloned(),
+        Value::Null
+        | Value::Bool(_)
+        | Value::Number(_)
+        | Value::String(_)
+        | Value::Array(_)
+        | Value::Object(_) => None,
+    };
+    if let Some(rule) = rule {
+        *value = ground_height(rule, named, pyramid, &format!("{path}.{GROUND_HEIGHT}"))?;
+        return Ok(());
+    }
+    match value {
+        Value::Object(fields) => {
+            for (key, field) in fields.iter_mut().filter(|(_, field)| nested(field)) {
+                resolve_values(field, named, pyramid, &format!("{path}.{key}"))?;
+            }
+        }
+        Value::Array(items) => {
+            for (index, item) in items
+                .iter_mut()
+                .enumerate()
+                .filter(|(_, item)| nested(item))
+            {
+                resolve_values(item, named, pyramid, &format!("{path}[{index}]"))?;
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+    Ok(())
+}
+
+fn nested(value: &Value) -> bool {
+    value.is_object() || value.is_array()
+}
+
+fn ground_height(
+    rule: Value,
+    named: &[(String, Arc<Layers>)],
+    pyramid: &Pyramid,
+    path: &str,
+) -> Result<Value, Error> {
+    let GroundHeight { through, at }: GroundHeight = engine_core::parse_value_at(rule, path)?;
+    let Some((_, layers)) = named.iter().find(|(id, _)| *id == through) else {
+        return Err(
+            Error::new(ErrorCode::UnknownReference, format!("{path}.through"))
+                .got(&through)
+                .variants(named.iter().map(|(id, _)| id.clone())),
+        );
+    };
+    for (index, coordinate) in at.into_iter().enumerate() {
+        if !coordinate.is_finite() || coordinate.abs() > Layers::MAX_COORDINATE {
+            let bound = f64::from(Layers::MAX_COORDINATE);
+            return Err(
+                Error::new(ErrorCode::InvalidNumber, format!("{path}.at[{index}]"))
+                    .expected(Expected::Finite)
+                    .range(-bound, bound)
+                    .got(coordinate),
+            );
+        }
+    }
+    let height = layers.height_at(pyramid, Vec2::from(at));
+    Number::from_f64(f64::from(height))
+        .map(Value::Number)
+        .ok_or_else(|| Error::new(ErrorCode::InvalidNumber, path).expected(Expected::Finite))
 }
 
 impl SceneTerrain {
@@ -740,7 +823,7 @@ impl SceneTerrain {
         for (index, authored) in self.layers.iter().enumerate() {
             let at = format!("{path}.layers[{index}]");
             let mut item = authored.clone();
-            crate::rules::resolve_values(&mut item, &named, pyramid, &at)?;
+            resolve_values(&mut item, &named, pyramid, &at)?;
             for uri in layer_files(&item) {
                 valid_uri(&uri, &file_field(&item, &uri, &at))?;
             }
@@ -856,14 +939,14 @@ pub(crate) static TERRAIN: ComponentKind = ComponentKind {
     name: "terrain",
     shows: "Terrain.terrain",
     placement: Placement::Entities(ErrorCode::InvalidStreamed),
-    schema: crate::component_schema!(SceneTerrain),
+    schema: engine_scene::component_schema!(SceneTerrain),
     example: terrain_example,
     validate: validate_terrain,
     validate_world: valid_world,
     prepare: prepare_terrain,
     files: terrain_files,
     admit: admit_terrain,
-    paths: no_paths,
+    paths: terrain_paths,
 };
 
 fn terrain_example() -> Value {
@@ -900,6 +983,24 @@ fn admit_terrain(value: &Value, world: &World, path: &str) -> Result<(), Error> 
     check_layers(value, world, path)
 }
 
+fn terrain_paths(value: &Value, path: &str) -> Result<Vec<ComponentPath>, Error> {
+    let terrain: SceneTerrain = parsed(value, path)?;
+    Ok(terrain
+        .layers
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            let id = item.get(layer::ID_KEY).and_then(Value::as_str)?;
+            Some(ComponentPath {
+                id: id.to_owned(),
+                origin: terrain.origin,
+                points: layer_points(item)?,
+                at: format!("{path}.layers[{index}].points"),
+            })
+        })
+        .collect())
+}
+
 impl PreparedComponent for PreparedTerrain {
     fn spawn(&self, entity: &mut EntityWorldMut<'_>, lookups: &Lookups) {
         entity.insert(self.runtime(&lookups.owned_materials, &lookups.owned_meshes));
@@ -910,7 +1011,7 @@ pub(crate) static PREFETCH: ComponentKind = ComponentKind {
     name: "prefetch",
     shows: "TerrainPrefetch",
     placement: Placement::Anywhere,
-    schema: crate::component_schema!(TerrainPrefetch),
+    schema: engine_scene::component_schema!(TerrainPrefetch),
     example: object_example,
     validate: validate_prefetch,
     validate_world: valid_world,

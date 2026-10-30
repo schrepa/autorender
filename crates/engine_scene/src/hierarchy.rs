@@ -1,5 +1,4 @@
 use engine_settings::ErrorCode;
-use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine_core::{
@@ -8,11 +7,9 @@ use engine_core::{
     valid_global_matrix,
 };
 
-use crate::components::GROUNDED;
-use crate::rules::PATH_LAYER;
-use crate::terrain::TERRAIN;
+use crate::components::{ComponentPath, GROUNDED};
 use crate::validation::{display_name, identifier, reference, unique_ids, unknown};
-use crate::{SceneAlong, SceneDocument, SceneObject, ScenePrefab, SceneTerrain, SceneTransform};
+use crate::{SceneAlong, SceneDocument, SceneObject, ScenePrefab, SceneTransform};
 
 pub(crate) struct ExpandedObject {
     pub source: SceneObject,
@@ -167,7 +164,7 @@ impl SceneDocument {
             along
                 .validate()
                 .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, &path))?;
-            let (origin, points) = self.along_path(along, &path)?;
+            let ComponentPath { origin, points, .. } = self.along_path(along, &path)?;
             let origin = Vec3::from_array(origin);
             for (number, (point, yaw)) in along.spots(&points, &path)?.into_iter().enumerate() {
                 placed.push(Placed {
@@ -199,62 +196,44 @@ impl SceneDocument {
         Ok(placed)
     }
 
-    fn along_path(
-        &self,
-        along: &SceneAlong,
-        path: &str,
-    ) -> Result<([f32; 3], Vec<[f32; 2]>), Error> {
-        let Some((at, terrain)) = self
-            .entities
-            .iter()
-            .enumerate()
-            .find_map(|(index, entity)| {
-                entity
-                    .component(TERRAIN.name)
-                    .filter(|_| entity.id == along.terrain)
-                    .map(|terrain| (index, terrain))
-            })
-        else {
+    fn along_path(&self, along: &SceneAlong, path: &str) -> Result<ComponentPath, Error> {
+        let answered = |index: usize, entity: &SceneObject| {
+            entity.component_paths(&format!("$.entities[{index}]"))
+        };
+        let mut found = None;
+        for (index, entity) in self.entities.iter().enumerate() {
+            if entity.id != along.terrain {
+                continue;
+            }
+            let paths = answered(index, entity)?;
+            if !paths.is_empty() {
+                found = Some(paths);
+                break;
+            }
+        }
+        let Some(mut paths) = found else {
             return Err(
                 Error::new(ErrorCode::UnknownReference, format!("{path}.terrain"))
                     .got(&along.terrain)
                     .variants(
                         self.entities
                             .iter()
-                            .filter(|entity| entity.component(TERRAIN.name).is_some())
-                            .map(|entity| entity.id.clone()),
+                            .enumerate()
+                            .filter(|&(index, entity)| {
+                                answered(index, entity).is_ok_and(|paths| !paths.is_empty())
+                            })
+                            .map(|(_, entity)| entity.id.clone()),
                     ),
             );
         };
-        let terrain: SceneTerrain = engine_core::parse_value_at(
-            terrain.clone(),
-            &format!("$.entities[{at}].{}", TERRAIN.name),
-        )?;
-        let paths = || {
-            terrain
-                .layers
-                .iter()
-                .enumerate()
-                .filter(|(_, layer)| layer.get("type").and_then(Value::as_str) == Some(PATH_LAYER))
-                .filter_map(|(index, layer)| {
-                    layer
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .map(|id| (index, id, layer))
-                })
-        };
-        let Some((index, _, layer)) = paths().find(|&(_, id, _)| id == along.layer) else {
+        let Some(chosen) = paths.iter().position(|answer| answer.id == along.layer) else {
             return Err(
                 Error::new(ErrorCode::UnknownReference, format!("{path}.layer"))
                     .got(&along.layer)
-                    .variants(paths().map(|(_, id, _)| id.to_owned())),
+                    .variants(paths.iter().map(|answer| answer.id.clone())),
             );
         };
-        let points = engine_core::parse_value_at(
-            layer.get("points").cloned().unwrap_or(Value::Null),
-            &format!("$.entities[{at}].terrain.layers[{index}].points"),
-        )?;
-        Ok((terrain.origin, points))
+        Ok(paths.swap_remove(chosen))
     }
 }
 

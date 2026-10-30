@@ -42,7 +42,7 @@ pub static PATH_KIND: LayerKind = LayerKind {
     read,
     files: layer::no_files,
     schema: engine_terrain::layer_schema!(schema),
-    points: engine_terrain::layer::no_points,
+    points,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -60,6 +60,12 @@ fn read(input: &mut Reader<'_>) -> Made {
     let settings = input.get()?;
     let profile = input.get()?;
     made(settings, profile)
+}
+
+fn points(settings: &Value) -> Option<Vec<[f32; 2]>> {
+    settings
+        .get("points")
+        .and_then(|points| parse_value(points.clone()).ok())
 }
 
 fn made(settings: Arc<PathLayer>, profile: Option<Arc<PathProfile>>) -> Made {

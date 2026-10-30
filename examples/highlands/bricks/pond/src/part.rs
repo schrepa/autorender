@@ -90,7 +90,6 @@ impl PondPass {
             return;
         }
         let fragment = match targets {
-            Targets::Canvas => pond::fs_pond,
             Targets::Post => pond::fs_pond_post,
             Targets::Temporal => pond::fs_pond_temporal,
             Targets::Debug => return,
