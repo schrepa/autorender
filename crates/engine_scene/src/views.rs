@@ -196,7 +196,6 @@ impl SceneDocument {
         for (index, look) in self.looks.iter().enumerate() {
             let path = format!("$.looks[{index}]");
             unique_name(&look.name, &format!("{path}.name"), &mut names)?;
-            look.environment.validate(&format!("{path}.environment"))?;
         }
         Ok(())
     }

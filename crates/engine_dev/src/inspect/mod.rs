@@ -1,5 +1,4 @@
 mod components;
-mod environment;
 mod poses;
 mod terrain;
 
@@ -10,15 +9,15 @@ use std::{collections::BTreeMap, io::Write};
 
 use engine_collision::{CollisionWorld, refresh_collision_world};
 use engine_core::{
-    ActionId, ActionInput, AssetLibrary, Atmosphere, BrickRegistry, Camera, Engine, FixedTime,
-    FrameTime, GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle,
-    Mesh3d, MeshHandle, OperationScene, Parent, ParticleEmitter, PresentationMode,
-    PresentationState, ReflectionProbe, TextureHandle, Tint, Transform,
+    ActionId, ActionInput, AssetLibrary, BrickRegistry, Camera, Engine, FixedTime, FrameTime,
+    GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle, Mesh3d,
+    MeshHandle, OperationScene, Parent, ParticleEmitter, PresentationMode, PresentationState,
+    ReflectionProbe, TextureHandle, Tint, Transform,
     bevy_ecs::prelude::{Component, Entity, Resource, World},
 };
 use engine_scene::{
-    SceneAtmosphere, SceneEmitter, SceneEntity, SceneEnvironment, SceneInstance, SceneLight,
-    SceneMaterial, SceneReflectionProbe, TextureOrigin,
+    SceneEmitter, SceneEntity, SceneEnvironment, SceneInstance, SceneLight, SceneMaterial,
+    SceneReflectionProbe, TextureOrigin,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -164,7 +163,6 @@ impl DevTools {
         tools.register_poses(schemas);
         tools.register_components(schemas);
         tools.register_terrain(schemas);
-        tools.register_environment(schemas);
         tools.builtins = Some(tools.inspectors.len());
         tools.schemas = schemas.clone();
         tools.standard = StandardBricks::of(schemas);

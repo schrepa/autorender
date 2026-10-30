@@ -235,18 +235,14 @@ impl DevTools {
 }
 
 pub(crate) fn sections_schema(registry: &BrickRegistry) -> Value {
-    let properties: serde_json::Map<String, Value> = std::iter::once(("atmosphere", "Atmosphere"))
-        .chain(
-            registry
-                .sections()
-                .map(|section| (section.key, section.name)),
-        )
-        .map(|(field, inspector)| {
+    let properties: serde_json::Map<String, Value> = registry
+        .sections()
+        .map(|section| {
             (
-                field.to_owned(),
+                section.key.to_owned(),
                 json!({
                     "type": ["object", "null"],
-                    "title": inspector,
+                    "title": section.name,
                 }),
             )
         })

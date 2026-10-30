@@ -104,7 +104,7 @@ impl Renderer {
         self.core.switch_fades.advance(
             kind,
             snapshot.elapsed_seconds,
-            snapshot.environment.level_of_detail.fade_seconds,
+            snapshot.section::<engine_core::LevelOfDetail>().fade_seconds,
         );
         let core = &mut self.core;
         let Some(surface) = core.display.acquire(&core.device, &mut core.depth)? else {

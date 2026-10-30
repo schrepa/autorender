@@ -135,9 +135,6 @@ impl SceneDocument {
             materials,
         } = self.prepare_assets(files)?;
         let streamed = self.streamed_items(streamed, streamed_components, &meshes);
-        if let Some(environment) = &self.environment {
-            environment.validate("$.environment")?;
-        }
         Ok(PreparedScene {
             environment: self.environment.clone(),
             components,

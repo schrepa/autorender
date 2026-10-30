@@ -4,7 +4,6 @@
 )]
 
 mod antialiasing;
-mod atmosphere;
 pub mod bounds;
 pub mod brick_smokes;
 mod bricks;
@@ -17,7 +16,6 @@ pub mod debug_view_smoke;
 mod detail_eye;
 mod effects;
 mod entity_indices;
-mod environment;
 mod extraction;
 mod foliage;
 mod frame_stats;
@@ -60,7 +58,6 @@ mod water;
 mod wind;
 
 pub use antialiasing::*;
-pub use atmosphere::*;
 pub use bevy_app::{App, Plugin, PluginGroup, PluginGroupBuilder};
 pub use bevy_ecs;
 pub use bricks::*;
@@ -76,9 +73,8 @@ pub use engine_assets::{
     MeshHandle, MeshLods, MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureHandle,
     TextureRef, TopLayer, UvTransform, Wrap, lod_input, trim_cards,
 };
-pub use engine_settings::ErrorCode;
+pub use engine_settings::{ErrorCode, InvalidSetting};
 pub use engine_tables as table_data;
-pub use environment::*;
 pub use foliage::*;
 pub use frame_stats::*;
 pub use glam;

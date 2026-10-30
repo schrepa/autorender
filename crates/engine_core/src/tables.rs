@@ -7,7 +7,8 @@ use engine_tables::clouds::CloudNoise;
 use engine_tables::sky::{Air, SkyTables};
 
 use crate::{
-    Cooking, Environment, JobBudget, JobFailures, JobId, Jobs, RecordKey, URGENT_JOBS, job_priority,
+    Clouds, Cooking, JobBudget, JobFailures, JobId, Jobs, RecordKey, Sky, URGENT_JOBS, job_priority,
+    section_in,
 };
 
 const RETRY_AFTER: u64 = 120;
@@ -217,8 +218,7 @@ struct Wants {
 }
 
 impl Wants {
-    fn of(environment: &Environment) -> Self {
-        let (clouds, sky) = (environment.clouds, environment.sky);
+    fn of(clouds: Clouds, sky: Sky) -> Self {
         Self {
             clouds: clouds.enabled && clouds.coverage > 0.0,
             sky: sky.enabled.then_some(Air {
@@ -252,8 +252,7 @@ pub(crate) fn update_tables(world: &mut World) {
     if !world.get_resource::<Jobs>().is_some_and(Jobs::hosted) {
         return;
     }
-    let environment = Environment::current(world).sanitized();
-    let wants = Wants::of(&environment);
+    let wants = Wants::of(section_in::<Clouds>(world), section_in::<Sky>(world));
     world.resource_scope(|world, mut tables: Mut<StaticTables>| {
         let tables = tables.as_mut();
         if let Some(mut jobs) = world.get_resource_mut::<Jobs>() {

@@ -10,6 +10,7 @@ use crate::parts::{
     CORE_BRICK, Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, PreludeStage, Step, View,
 };
 use crate::pieces::PIECES_BINDING;
+use engine_core::{LevelOfDetail, OcclusionCulling, SubpixelCulling};
 
 use super::{BatchMeta, CullingView, GpuPrepared, PresentationInputs, RecordsKey, Staging};
 
@@ -137,7 +138,7 @@ fn prepare_presentation(
     let culls = parts.culling().is_some();
     let core = &mut *cx.core;
 
-    let occlusion_enabled = snapshot.environment.occlusion_culling.enabled && culls;
+    let occlusion_enabled = snapshot.section::<OcclusionCulling>().enabled && culls;
     if !occlusion_enabled {
         core.culling.pyramid = None;
     }
@@ -176,10 +177,11 @@ fn prepare_presentation(
                 .map_or(0.0, ImpostorRecord::error),
         }
     };
+    let level_of_detail = snapshot.section::<LevelOfDetail>();
     let records = RecordsKey {
         groups: batch_groups(parts, core.plan.batches.len()),
         meshes: core.mesh_layout,
-        impostors: if snapshot.environment.level_of_detail.impostors {
+        impostors: if level_of_detail.impostors {
             core.impostors.atlas.generation() + 1
         } else {
             0
@@ -195,13 +197,13 @@ fn prepare_presentation(
             .as_ref()
             .is_some_and(|temporal| temporal.motion_valid),
         occlusion,
-        subpixel: snapshot.environment.subpixel_culling.enabled,
-        lod_error: if snapshot.environment.level_of_detail.enabled {
-            snapshot.environment.level_of_detail.pixel_error * region.share()[1]
+        subpixel: snapshot.section::<SubpixelCulling>().enabled,
+        lod_error: if level_of_detail.enabled {
+            level_of_detail.pixel_error * region.share()[1]
         } else {
             0.0
         },
-        impostors: snapshot.environment.level_of_detail.impostors,
+        impostors: level_of_detail.impostors,
         stillness: parts.views().map(|views| views.still),
         fade: core.switch_fades.share,
     };

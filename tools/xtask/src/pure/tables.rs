@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use engine_core::Environment;
+use engine_core::Sky;
 use engine_core::table_data::{TableKind, TableWorker, clouds, f16_value, sky};
 use serde_json::json;
 
@@ -11,10 +11,9 @@ pub const JOBS: &str = "target/pure/tables-jobs.json";
 const SLICE: u64 = 4096;
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
-    let environment = Environment::default();
     let mut worker = Worker::default();
 
-    let settings = environment.sky;
+    let settings = Sky::default();
     let air = sky::Air {
         rayleigh: settings.rayleigh,
         rayleigh_height: settings.rayleigh_height,

@@ -1,23 +1,26 @@
-use engine_core::Environment;
+use engine_core::{
+    AmbientOcclusion, AutoExposure, Bloom, Haze, Reflections, RenderSnapshot, Shadows, Sky,
+    SkyLighting, SkyOcclusion,
+};
 
-pub fn haze_runs(environment: &Environment) -> bool {
-    let haze = environment.haze.sanitized();
-    let atmosphere = environment.atmosphere.sanitized();
-    let fog = !environment.sky.sanitized().enabled
-        && atmosphere.fog_density > 0.0
-        && atmosphere.fog_max > 0.0;
+pub fn haze_runs(snapshot: &RenderSnapshot) -> bool {
+    let haze = snapshot.section::<Haze>();
+    let sky_light = snapshot.section::<SkyLighting>().values();
+    let fog = !snapshot.section::<Sky>().enabled
+        && sky_light.fog_density > 0.0
+        && sky_light.fog_max > 0.0;
     haze.enabled && haze.reach > 0.0 && (haze.strength > 0.0 || fog)
 }
 
-pub(crate) fn targets_read(environment: &Environment) -> bool {
-    Effects::of(environment).any() || environment.auto_exposure.enabled
+pub(crate) fn targets_read(snapshot: &RenderSnapshot) -> bool {
+    Effects::of(snapshot).any() || snapshot.section::<AutoExposure>().enabled
 }
 
 macro_rules! screen_effects {
     ($(
         $(#[$doc:meta])*
         $effect:ident {
-            gate: |$environment:ident| $gate:expr,
+            gate: |$snapshot:ident| $gate:expr,
             uniform: |$settings:ident, $on:ident| $uniform:expr,
         },
     )*) => {
@@ -31,10 +34,10 @@ macro_rules! screen_effects {
         }
 
         impl Effects {
-            pub(crate) fn of(environment: &Environment) -> Self {
+            pub(crate) fn of(snapshot: &RenderSnapshot) -> Self {
                 Self {
                     $($effect: {
-                        let $environment = environment;
+                        let $snapshot = snapshot;
                         $gate
                     },)*
                 }
@@ -44,11 +47,11 @@ macro_rules! screen_effects {
                 false $(|| self.$effect)*
             }
 
-            pub(crate) fn uniforms(self, environment: &Environment) -> EffectUniforms {
+            pub(crate) fn uniforms(self, snapshot: &RenderSnapshot) -> EffectUniforms {
                 EffectUniforms {
                     $($effect: {
                         let ($settings, $on) = (
-                            environment,
+                            snapshot,
                             if self.$effect { 1.0 } else { 0.0 },
                         );
                         $uniform
@@ -61,33 +64,33 @@ macro_rules! screen_effects {
 
 screen_effects! {
     occlusion {
-        gate: |environment| environment.ambient_occlusion.sanitized().enabled(),
-        uniform: |settings, on| {
-            let occlusion = settings.ambient_occlusion.sanitized();
+        gate: |snapshot| snapshot.section::<AmbientOcclusion>().enabled(),
+        uniform: |snapshot, on| {
+            let occlusion = snapshot.section::<AmbientOcclusion>();
             [occlusion.radius, occlusion.intensity, 0.0, on]
         },
     },
     bloom {
-        gate: |environment| environment.bloom.sanitized().enabled(),
-        uniform: |settings, on| [settings.bloom.sanitized().intensity, on, 0.0, 0.0],
+        gate: |snapshot| snapshot.section::<Bloom>().enabled(),
+        uniform: |snapshot, on| [snapshot.section::<Bloom>().intensity, on, 0.0, 0.0],
     },
     reflections {
-        gate: |environment| environment.reflections.sanitized().enabled(),
-        uniform: |settings, on| {
-            let reflections = settings.reflections.sanitized();
+        gate: |snapshot| snapshot.section::<Reflections>().enabled(),
+        uniform: |snapshot, on| {
+            let reflections = snapshot.section::<Reflections>();
             [reflections.distance, reflections.intensity, on, 0.0]
         },
     },
     haze {
-        gate: |environment| haze_runs(environment),
-        uniform: |_settings, on| [0.0, 0.0, 0.0, on],
+        gate: |snapshot| haze_runs(snapshot),
+        uniform: |_snapshot, on| [0.0, 0.0, 0.0, on],
     },
     sky {
-        gate: |environment| {
-            environment.sky_occlusion.sanitized().darkens() && environment.shadows.enabled
+        gate: |snapshot| {
+            snapshot.section::<SkyOcclusion>().darkens() && snapshot.section::<Shadows>().enabled
         },
-        uniform: |settings, on| {
-            let sky = settings.sky_occlusion.sanitized();
+        uniform: |snapshot, on| {
+            let sky = snapshot.section::<SkyOcclusion>();
             [sky.strength, sky.floor, 0.0, on]
         },
     },
