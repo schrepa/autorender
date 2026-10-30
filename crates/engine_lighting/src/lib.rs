@@ -3,7 +3,7 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-use engine_core::{Brick, Bricks, Slot};
+use engine_core::{Brick, Bricks, Place};
 use engine_faces::slots::LightingSlot;
 use engine_render::render_bricks::AddRenderParts;
 
@@ -14,7 +14,7 @@ mod shaders;
 pub struct LightingModelBrick;
 
 impl Brick for LightingModelBrick {
-    const SLOT: Option<&'static str> = Some(LightingSlot::NAME);
+    const SLOT: Option<Place> = Some(Place::slot::<LightingSlot>());
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

@@ -8,9 +8,9 @@ use engine_terrain::{Pyramid, RenderTerrain, RenderTerrains, TileKey};
 use std::sync::Arc;
 
 use engine_faces::heightfield::{
-    CoverEntry, CoverSources, CoverTerms, GroundChange, HEIGHT_FORMAT, HeightfieldFace,
-    LiveGround, PALETTE_BYTES, PaletteEntry, TERRAIN, TerrainInfo, TerrainUniform, TraceSources,
-    ViewUniform, WaterDraws,
+    CoverEntry, CoverSources, CoverTerms, GroundChange, HEIGHT_FORMAT, HeightfieldFace, LiveGround,
+    PALETTE_BYTES, PaletteEntry, TERRAIN, TerrainInfo, TerrainUniform, TraceSources, ViewUniform,
+    WaterDraws,
 };
 use engine_faces::shadows::KeptRefresh;
 use engine_render::bindings::{

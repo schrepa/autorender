@@ -60,6 +60,10 @@ fn detail_level(span: f32, base: f32, levels: u32) -> DetailLevel {
     return chosen;
 }
 
+fn seen_share(pixels: f32) -> f32 {
+    return saturate(1.0 + log2(max(pixels, 1.0e-6)));
+}
+
 fn material_bias() -> f32 {
     return camera.options.w;
 }

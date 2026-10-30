@@ -610,26 +610,7 @@ fn frame_stats(registry: &BrickRegistry, problems: &mut Vec<String>) -> Value {
     schema["$defs"] = Value::Object(definitions);
     schema["properties"] = Value::Object(properties);
     schema["required"] = Value::Array(required);
-    let objects = std::iter::once(("FrameStats", &schema)).chain(
-        schema["$defs"]
-            .as_object()
-            .into_iter()
-            .flatten()
-            .map(|(name, definition)| (name.as_str(), definition)),
-    );
-    for (name, object) in objects {
-        for field in object["properties"]
-            .as_object()
-            .into_iter()
-            .flat_map(Map::keys)
-        {
-            if field.contains("dropped") && field != "dropped" && !field.starts_with("dropped_") {
-                problems.push(format!(
-                    "{name}.{field}: name what budgets drop `dropped` or `dropped_*`"
-                ));
-            }
-        }
-    }
+    crate::consumers::check(registry, &schema, problems);
     let render = serialized(schemars::schema_for!(engine_core::RenderStats));
     for (field, property) in render["properties"].as_object().into_iter().flatten() {
         if property.get("$ref").is_some() && registry.section(field).is_none() {

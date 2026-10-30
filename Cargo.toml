@@ -84,7 +84,7 @@ bevy_ecs = { version = "=0.19.1", default-features = false, features = ["std"] }
 glam = "=0.30.9"
 libm = { version = "=0.2.16", default-features = false }
 foldhash = { version = "=0.2.0", default-features = false }
-bytemuck = { version = "=1.25.2", features = ["derive"] }
+bytemuck = { version = "=1.25.2", features = ["derive", "min_const_generics"] }
 cc = "=1.5.1"
 wgpu = { version = "=30.0.1", default-features = false, features = ["std", "wgsl", "webgpu"] }
 wgpu-types = { version = "=30.0.1", default-features = false, features = ["serde"] }

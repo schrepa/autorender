@@ -19,6 +19,8 @@ mod watch;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod authoring;
 #[cfg(not(target_arch = "wasm32"))]
+mod consumers;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod schemas;
 
 pub use bricks::operation_names;

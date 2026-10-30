@@ -5,9 +5,8 @@ mod toon_lighting;
 mod torrent;
 
 use engine::host::Jobs;
-use engine::smoke::{SmokeEntry, SmokeSession};
+use engine::smoke::{Checked, SmokeEntry, SmokeSession, control};
 use engine::smoke_check;
-use engine::terrain::data::smokes::{Checked, control};
 use serde_json::{Value, json};
 
 use crate::{Highlands, Options, RockMaps};

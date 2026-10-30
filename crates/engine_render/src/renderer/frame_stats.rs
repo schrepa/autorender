@@ -355,6 +355,7 @@ impl Core {
                 .values()
                 .filter(|mesh| mesh.without_levels)
                 .count() as u32,
+            impostor_cut: engine_core::Cut::default(),
         };
         stats.occlusion_culling = CullingStats {
             active: gpu_mode && self.gpu_presentation.occlusion(),

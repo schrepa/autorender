@@ -12,14 +12,14 @@ mod pipeline_layouts;
 pub mod shaders;
 mod sky;
 
-use engine_core::{Brick, Bricks, Slot};
+use engine_core::{Brick, Bricks, Place};
 use engine_faces::slots::SkySlot;
 use engine_render::render_bricks::AddRenderParts;
 
 pub struct SkyBrick;
 
 impl Brick for SkyBrick {
-    const SLOT: Option<&'static str> = Some(SkySlot::NAME);
+    const SLOT: Option<Place> = Some(Place::slot::<SkySlot>());
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

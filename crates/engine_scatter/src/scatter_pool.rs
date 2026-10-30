@@ -9,7 +9,12 @@ use engine_terrain::{Tile, TileKey};
 
 use crate::scatter::{DEAD, NEAR_LEVEL_MASK, NEAR_LEVEL_SHIFT, STATE_ADOPT, STATE_FRESH};
 
-pub(super) type TileObjects = (Vec<PoseData>, Vec<ColorData>, Vec<PlacedRecord>, Vec<GroundData>);
+pub(super) type TileObjects = (
+    Vec<PoseData>,
+    Vec<ColorData>,
+    Vec<PlacedRecord>,
+    Vec<GroundData>,
+);
 
 #[derive(Default)]
 pub(super) struct ScatterPool {

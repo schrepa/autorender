@@ -1,4 +1,5 @@
 engine_render::shader_modules! {
+    "face::ground" in "terrain_shading" = "faces/ground.wgsl";
     "face::heightfield" in "terrain_shading" = "faces/heightfield.wgsl";
     "face::horizons" in "terrain_shading" = "faces/horizons.wgsl";
     "terrain::horizons" in "terrain_shading" = "terrain/horizons.wgsl";

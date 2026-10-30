@@ -75,14 +75,31 @@ pub fn core() -> Vec<SmokeEntry> {
 pub fn registered(bricks: &BrickList) -> Vec<SmokeEntry> {
     let mut engine = Engine::default();
     engine.app.add_bricks(bricks.clone());
-    engine
-        .app
+    let Some(registry) = engine.app.world().get_resource::<BrickRegistry>() else {
+        return Vec::new();
+    };
+    let mut smokes: Vec<SmokeEntry> = registry.smokes().copied().collect();
+    smokes.extend(registry.place_smokes());
+    smokes
+}
+
+pub fn run_place(session: &mut dyn SmokeSession, place: &str) -> SmokeResult {
+    let smokes: Vec<SmokeEntry> = session
+        .app()
         .world()
         .get_resource::<BrickRegistry>()
-        .into_iter()
-        .flat_map(BrickRegistry::smokes)
-        .copied()
-        .collect()
+        .map(|registry| {
+            registry
+                .place_smokes()
+                .into_iter()
+                .filter(|smoke| smoke.brick == place)
+                .collect()
+        })
+        .unwrap_or_default();
+    for smoke in smokes {
+        smoke.run_in(session)?;
+    }
+    Ok(())
 }
 
 pub fn standard() -> Vec<SmokeEntry> {

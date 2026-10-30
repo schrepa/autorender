@@ -907,6 +907,9 @@ impl GpuPart for WaterPass {
         let [leaves, refused] = frame.map_or([0; 2], |frame| frame.subdivided);
         let particles = frame.map_or_else(ParticleStats::default, |_| self.particles.stats());
         stats.water = WaterStats {
+            cell_cut: Default::default(),
+            foam_cut: Default::default(),
+            leaf_cut: Default::default(),
             leaves,
             refused,
             blocks: frame.map_or(0, |frame| frame.blocks[0]),

@@ -1,7 +1,5 @@
-use engine::smoke::{SmokeResult, SmokeSession};
-use engine::terrain::data::smokes::{
-    Checked, above, camera, height_at, heights, inspect, number, render,
-};
+use engine::smoke::{Checked, SmokeResult, SmokeSession, above, camera, inspect, number, render};
+use engine::terrain::data::smokes::{height_at, heights};
 use engine::{smoke_check, smoke_eq};
 use serde_json::{Value, json};
 

@@ -1,5 +1,5 @@
-import package::shadows::sample::{SHADOW_MAPS, air_visibility, crown_light, kept_lift, map_lookup,
-    map_visibility, shadow, shadow_level};
+import package::shadows::sample::{KEPT_GROUND_TEXELS, SHADOW_MAPS, air_visibility, crown_light,
+    kept_lift, map_lookup, map_visibility, shadow, shadow_level};
 
 struct KeptTexels {
     first: u32,
@@ -45,4 +45,12 @@ fn kept_texels(world: vec3<f32>) -> KeptTexels {
 
 fn keep_lift(lift: KeptLift) {
     kept_lift = lift;
+}
+
+fn kept_level(texel: f32, spacing: f32, levels: u32) -> u32 {
+    var level = 0u;
+    while level + 1u < levels && spacing * f32(1u << level) < KEPT_GROUND_TEXELS * texel {
+        level++;
+    }
+    return level;
 }

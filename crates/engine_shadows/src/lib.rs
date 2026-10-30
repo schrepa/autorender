@@ -12,14 +12,14 @@ pub mod shaders;
 mod shadow_fit;
 mod shadows;
 
-use engine_core::{Brick, Bricks, Slot};
+use engine_core::{Brick, Bricks, Place};
 use engine_faces::slots::ShadowsSlot;
 use engine_render::render_bricks::AddRenderParts;
 
 pub struct ShadowsBrick;
 
 impl Brick for ShadowsBrick {
-    const SLOT: Option<&'static str> = Some(ShadowsSlot::NAME);
+    const SLOT: Option<Place> = Some(Place::slot::<ShadowsSlot>());
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

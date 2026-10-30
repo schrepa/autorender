@@ -11,14 +11,14 @@ mod gpu_layouts;
 mod pipeline_layouts;
 pub mod shaders;
 
-use engine_core::{Brick, Bricks, Slot};
+use engine_core::{Brick, Bricks, Place};
 use engine_faces::slots::ExposureSlot;
 use engine_render::render_bricks::AddRenderParts;
 
 pub struct AutoExposureBrick;
 
 impl Brick for AutoExposureBrick {
-    const SLOT: Option<&'static str> = Some(ExposureSlot::NAME);
+    const SLOT: Option<Place> = Some(Place::slot::<ExposureSlot>());
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

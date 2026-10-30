@@ -10,6 +10,7 @@ default = []
 schema = ["dep:schemars", "engine_core/schema", "engine_settings/schema", "engine_collision/schema", "engine_physics/schema", "engine_world_streaming/schema", "engine_navigation/schema", "engine_terrain/schema"]
 
 [dependencies]
+bevy_ecs.workspace = true
 base64.workspace = true
 engine_core.workspace = true
 engine_settings.workspace = true

@@ -48,7 +48,6 @@ use crate::gpu_layouts::ViewData;
 pub(crate) const NEAR_LEVEL_MASK: u32 = 0x1f;
 pub(crate) const RANK_MAX: f32 = 1023.0;
 
-
 pub(crate) struct SnapSources<'a> {
     pub heights: &'a wgpu::TextureView,
     pub control: &'a wgpu::TextureView,

@@ -690,6 +690,7 @@ impl GpuPart for GroundCoverPass {
     fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
         let (totals, (reach, tiers)) = (self.totals(), self.reach());
         stats.ground_cover = engine_core::GroundCoverStats {
+            blade_cut: Default::default(),
             blades: totals[0],
             dropped: totals[1],
             reach: reach.round() as u32,

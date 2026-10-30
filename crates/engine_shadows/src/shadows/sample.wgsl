@@ -11,6 +11,7 @@ struct Shadow {
 }
 const SHADOW_LEVELS: u32 = 20u;
 const SHADOW_APRON: u32 = 1u;
+const KEPT_GROUND_TEXELS: f32 = 2.0;
 @group(0) @binding(2) var<uniform> shadow: Shadow;
 @group(0) @binding(3) var shadow_atlas: texture_depth_2d;
 @group(0) @binding(4) var shadow_tiles: texture_2d<u32>;

@@ -9,9 +9,9 @@ use engine_settings::ErrorCode;
 use serde_json::Value;
 
 use super::{
-    Brick, BrickSet, BrickStats, CORE_PASSES, CORE_ROW, EnvironmentSection, Error, Expected,
-    ExplainEntry, ExplainRecord, ExplainRequest, Operation, crate_of, parse_value, parse_value_at,
-    short_type_name,
+    Brick, BrickSet, BrickStats, CORE_PASSES, CORE_ROW, DetailConsumer, EnvironmentSection, Error,
+    Expected, ExplainEntry, ExplainRecord, ExplainRequest, Operation, Place, crate_of, parse_value,
+    parse_value_at, short_type_name,
 };
 use crate::RenderSnapshot;
 use crate::smoke::SmokeEntry;
@@ -37,6 +37,8 @@ pub struct BrickRecord {
     pub crate_name: &'static str,
     pub slot: Option<&'static str>,
     pub lists: Vec<&'static str>,
+    pub places: Vec<Place>,
+    pub consumers: Vec<DetailConsumer>,
     pub records: Vec<&'static str>,
     pub settings: Vec<SettingsEntry>,
     pub stats: Vec<StatsEntry>,
@@ -72,8 +74,10 @@ impl BrickRecord {
             name,
             type_path: std::any::type_name::<B>(),
             crate_name: crate_of::<B>(),
-            slot: B::SLOT,
+            slot: B::SLOT.map(|place| place.name),
             lists: Vec::new(),
+            places: B::SLOT.into_iter().collect(),
+            consumers: Vec::new(),
             records: Vec::new(),
             settings: Vec::new(),
             stats: Vec::new(),
@@ -222,6 +226,49 @@ impl BrickRegistry {
 
     pub fn smoke(&self, name: &str) -> Option<&SmokeEntry> {
         self.smokes().find(|smoke| smoke.name == name)
+    }
+
+    pub fn places(&self) -> Vec<Place> {
+        let mut places: Vec<Place> = Vec::new();
+        for place in self.bricks.iter().flat_map(|brick| &brick.places) {
+            if !places.iter().any(|known| known.name == place.name) {
+                places.push(*place);
+            }
+        }
+        places
+    }
+
+    pub fn members(&self, place: &str) -> Vec<&'static str> {
+        self.bricks
+            .iter()
+            .filter(|brick| brick.places.iter().any(|known| known.name == place))
+            .map(|brick| brick.name)
+            .collect()
+    }
+
+    pub fn place_smokes(&self) -> Vec<SmokeEntry> {
+        let mut smokes: Vec<SmokeEntry> = Vec::new();
+        for place in self.places() {
+            for smoke in place.smokes {
+                if !smokes.iter().any(|known| known.name == smoke.name) {
+                    smokes.push(*smoke);
+                }
+            }
+        }
+        smokes
+    }
+
+    pub fn consumers(&self) -> impl Iterator<Item = (&'static str, &DetailConsumer)> + '_ {
+        self.bricks.iter().flat_map(|brick| {
+            brick
+                .consumers
+                .iter()
+                .map(move |consumer| (brick.name, consumer))
+        })
+    }
+
+    pub fn consumer(&self, name: &str) -> Option<(&'static str, &DetailConsumer)> {
+        self.consumers().find(|(_, consumer)| consumer.name == name)
     }
 
     pub fn pass_owner(&self, pass: &str) -> Option<&'static str> {
@@ -398,6 +445,23 @@ impl BrickRegistry {
         for smoke in &record.smokes {
             if let Some(known) = self.smoke(smoke.name) {
                 return Err(taken("smokes", smoke.name, known.brick));
+            }
+            if let Some(known) = self
+                .place_smokes()
+                .into_iter()
+                .find(|known| known.name == smoke.name)
+            {
+                return Err(taken("smokes", smoke.name, known.brick));
+            }
+        }
+        for smoke in record.places.iter().flat_map(|place| place.smokes) {
+            if let Some(known) = self.smoke(smoke.name) {
+                return Err(taken("smokes", smoke.name, known.brick));
+            }
+        }
+        for consumer in &record.consumers {
+            if let Some((known, _)) = self.consumer(consumer.name) {
+                return Err(taken("consumers", consumer.name, known));
             }
         }
         let mut record = record;

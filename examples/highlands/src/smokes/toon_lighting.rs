@@ -1,6 +1,6 @@
-use engine::smoke::{SmokeResult, SmokeSession};
+use engine::smoke::{Checked, SmokeResult, SmokeSession, ask, capture, control};
 use engine::smoke_check;
-use engine::terrain::data::smokes::{Checked, ask, capture, control, settle};
+use engine::terrain::data::smokes::settle;
 use highlands_toon_lighting::ToonLightingBrick;
 use serde_json::{Value, json};
 

@@ -466,7 +466,7 @@ impl SceneDocument {
     }
 }
 
-pub(crate) struct Lookups {
+pub struct Lookups {
     scene_id: String,
     pub(crate) meshes: BTreeMap<String, MeshHandle>,
     pub(crate) materials: BTreeMap<String, MaterialHandle>,

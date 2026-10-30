@@ -1,11 +1,11 @@
 use bevy_ecs::prelude::Entity;
-use engine_core::smoke::{SmokeResult, SmokeSession};
+use engine_core::smoke::{
+    Checked, SmokeResult, SmokeSession, above, component, control, inspect, near, number, query,
+    refuse, render,
+};
 use engine_core::{Bricks, Mesh3d, Transform, smoke_check, smoke_eq};
 use engine_terrain::Terrain;
-use engine_terrain::smokes::{
-    Checked, Fixture, SETTLE_FRAMES, above, component, control, height_at, inspect, name, near,
-    number, open, query, refuse, render,
-};
+use engine_terrain::smokes::{Fixture, SETTLE_FRAMES, height_at, name, open};
 use glam::Vec3;
 use serde_json::{Value, json};
 

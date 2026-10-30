@@ -1097,6 +1097,7 @@ dependencies = [
  "engine_core",
  "engine_render",
  "glam 0.30.9",
+ "serde_json",
  "wgpu",
 ]
 
@@ -1441,6 +1442,7 @@ name = "engine_scene"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "bevy_ecs",
  "engine_collision",
  "engine_core",
  "engine_navigation",

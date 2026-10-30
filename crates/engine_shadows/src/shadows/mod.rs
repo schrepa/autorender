@@ -931,6 +931,8 @@ impl GpuPart for ShadowPass {
         let tiles = frame.map(ShadowFrame::tiles).unwrap_or_default();
         let (sky_maps, sky_drawn) = self.sky_counts();
         stats.shadows = ShadowStats {
+            moving_cut: Default::default(),
+            tile_cut: Default::default(),
             active: frame.is_some(),
             draws: if frame.is_some() { self.draws } else { 0 },
             tiles_marked: tiles.marked,

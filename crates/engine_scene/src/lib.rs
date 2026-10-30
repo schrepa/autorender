@@ -24,7 +24,12 @@ mod views;
 mod writer;
 
 pub use collider::{SceneCollider, SceneColliderShape};
-pub use components::COMPONENT_SHOWS;
+pub use components::{
+    AddSceneComponents, COMPONENT_SHOWS, CORE_COMPONENTS, ComponentContext, ComponentKind,
+    Placement, Prepared, PreparedComponent, Reach, SceneComponents, SceneComponentsList, admitted,
+    component_kind, component_kinds, component_names, no_files, register_components, valid,
+    valid_world,
+};
 pub use document::{
     MAX_SOURCE_BYTES, MeshSource, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
     SceneSurface, SceneTransform, SceneVertex,
@@ -38,7 +43,7 @@ pub use files::{
     MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshStreams, SceneFile, SceneFileKind, SceneFiles,
     decode_mesh_buffer, encode_mesh_buffer, encode_mesh_buffer_with,
 };
-pub use instance::{MeshOrigin, SceneEntity, SceneInstance, TextureOrigin, authored_id};
+pub use instance::{Lookups, MeshOrigin, SceneEntity, SceneInstance, TextureOrigin, authored_id};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
 pub use material::{
     SceneAlphaMode, SceneFilter, SceneGrounding, SceneMap, SceneMaterial, SceneMipmapFilter,

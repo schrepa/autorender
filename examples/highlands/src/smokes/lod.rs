@@ -1,5 +1,4 @@
-use engine::smoke::{SmokeResult, SmokeSession};
-use engine::terrain::data::smokes::{Checked, ask, refuse};
+use engine::smoke::{Checked, SmokeResult, SmokeSession, ask, refuse};
 use engine::{smoke_check, smoke_eq};
 use serde_json::json;
 

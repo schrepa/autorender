@@ -11,7 +11,7 @@ use engine_core::{
 pub struct TerrainBrick;
 
 impl Brick for TerrainBrick {
-    const SLOT: Option<&'static str> = Some(<GroundSlot as engine_core::Slot>::NAME);
+    const SLOT: Option<engine_core::Place> = Some(engine_core::Place::slot::<GroundSlot>());
 
     fn register(bricks: &mut Bricks) {
         bricks

@@ -12,4 +12,5 @@ pub mod occupancy;
 pub mod placed;
 pub mod shadows;
 pub mod slots;
+pub mod smokes;
 pub mod sun;

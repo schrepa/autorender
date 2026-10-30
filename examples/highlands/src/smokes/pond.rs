@@ -1,7 +1,7 @@
 use engine::prelude::*;
-use engine::smoke::{SmokeFailure, SmokeResult, SmokeSession};
+use engine::smoke::{Checked, SmokeFailure, SmokeResult, SmokeSession, compiled, control, render};
 use engine::smoke_check;
-use engine::terrain::data::smokes::{Checked, compiled, control, render, settle};
+use engine::terrain::data::smokes::settle;
 use highlands_pond::{Pond, PondBrick};
 use serde_json::{Value, json};
 

@@ -34,3 +34,7 @@ fn kept_texels(world: vec3<f32>) -> KeptTexels {
 
 fn keep_lift(lift: KeptLift) {
 }
+
+fn kept_level(texel: f32, spacing: f32, levels: u32) -> u32 {
+    return 0u;
+}

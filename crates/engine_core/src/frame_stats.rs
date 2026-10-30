@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::{Serialize, Serializer};
 
+use crate::Cut;
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct FrameStats {
@@ -167,6 +169,8 @@ pub struct ShadowStats {
     pub moving_left_out: Option<u32>,
     pub sky_maps: u32,
     pub sky_drawn: u32,
+    pub tile_cut: Cut,
+    pub moving_cut: Cut,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -197,6 +201,7 @@ pub struct DetailStats {
     pub impostors: u32,
     pub dropped_impostors: u32,
     pub meshes_without_levels: u32,
+    pub impostor_cut: Cut,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -232,6 +237,8 @@ pub struct TerrainRenderStats {
     pub placed_impostors: u32,
     pub dropped_placed_objects: u32,
     pub white_water: u32,
+    pub tile_cut: Cut,
+    pub leaf_cut: Cut,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -241,6 +248,7 @@ pub struct GroundCoverStats {
     pub dropped: u32,
     pub reach: u32,
     pub tiers: u32,
+    pub blade_cut: Cut,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -274,6 +282,9 @@ pub struct WaterStats {
     pub wave_particles: u32,
     pub particles_born: u32,
     pub dropped_particles: u32,
+    pub cell_cut: Cut,
+    pub foam_cut: Cut,
+    pub leaf_cut: Cut,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]

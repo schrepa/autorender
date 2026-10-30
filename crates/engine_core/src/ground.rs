@@ -5,12 +5,19 @@ use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_settings::Error;
 use glam::{Mat4, Vec2, Vec3};
 
+use crate::smoke::SmokeEntry;
 use crate::{Pyramid, RecordKey, Slot, TileKey, WaterBodies, WaterSample};
 
 pub struct GroundSlot;
 
 impl Slot for GroundSlot {
     const NAME: &'static str = "ground";
+    const SMOKES: &'static [SmokeEntry] = &[SmokeEntry {
+        name: "slot_ground",
+        brick: Self::NAME,
+        gpu: false,
+        run: crate::place_smokes::ground,
+    }];
 }
 
 pub const BRIDGE_SOLIDS: u16 = u16::MAX;

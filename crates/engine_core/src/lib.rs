@@ -31,11 +31,14 @@ mod input;
 mod interpolation;
 mod jobs;
 mod level_of_detail;
+mod light;
 mod lights;
 pub mod math;
 mod mesh_lods;
 pub use engine_math::collections;
 mod particles;
+mod physics;
+mod place_smokes;
 pub mod presentation_bounds;
 mod probes;
 mod provided;
@@ -47,12 +50,14 @@ mod sections;
 mod sky;
 mod sky_occlusion;
 pub mod smoke;
+mod solids;
 mod spline_mesh;
 mod statistics;
 mod tables;
 mod ticks;
 mod transform_edits;
 mod water;
+mod wind;
 
 pub use antialiasing::*;
 pub use atmosphere::*;
@@ -87,8 +92,10 @@ pub use input::*;
 pub use interpolation::*;
 pub use jobs::*;
 pub use level_of_detail::*;
+pub use light::*;
 pub use lights::*;
 pub use particles::*;
+pub use physics::*;
 pub use probes::*;
 pub use provided::*;
 pub use records::*;
@@ -97,11 +104,16 @@ pub use retained_render::*;
 pub use scene::*;
 pub use sky::*;
 pub use sky_occlusion::*;
+pub use solids::*;
 pub use spline_mesh::*;
 pub use statistics::{Distribution, median};
 pub use tables::*;
 pub use transform_edits::*;
-pub use water::{WaterBodies, WaterFace, WaterKind, WaterObstacle, WaterObstacles, WaterSample};
+pub use water::{
+    WaterBodies, WaterBodiesList, WaterFace, WaterKind, WaterObstacle, WaterObstacles, WaterSample,
+    WaterSurfaces, WaterWorker,
+};
+pub use wind::*;
 
 use bevy_app::PluginsState;
 use bevy_ecs::{

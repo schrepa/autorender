@@ -74,6 +74,18 @@ pub const SURFACE_POINT: ShaderModule = ShaderModule {
     source: include_str!("defaults/surface_point.wgsl"),
 };
 
+pub const COVER: ShaderModule = ShaderModule {
+    path: "face::cover",
+    brick: BRICK,
+    source: include_str!("defaults/cover.wgsl"),
+};
+
+pub const PLACED: ShaderModule = ShaderModule {
+    path: "face::placed",
+    brick: BRICK,
+    source: include_str!("defaults/placed.wgsl"),
+};
+
 pub static MODULES: &[ShaderModule] = &[
     SHADOWS,
     SKY,
@@ -87,4 +99,6 @@ pub static MODULES: &[ShaderModule] = &[
     REFLECTIONS,
     DITHER,
     SURFACE_POINT,
+    COVER,
+    PLACED,
 ];

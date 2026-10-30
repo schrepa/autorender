@@ -4,16 +4,18 @@ use crate::gpu_layouts::constants::WATER_TILE_WORDS;
 use engine_terrain::{Cover, Pyramid};
 
 fn densest_cover<'a>(covers: impl IntoIterator<Item = &'a Cover>) -> CoverTerms {
-    covers.into_iter().fold(CoverTerms::default(), |terms, cover| {
-        if cover.density > terms.densest {
-            CoverTerms {
-                densest: cover.density,
-                width: cover.width,
+    covers
+        .into_iter()
+        .fold(CoverTerms::default(), |terms, cover| {
+            if cover.density > terms.densest {
+                CoverTerms {
+                    densest: cover.density,
+                    width: cover.width,
+                }
+            } else {
+                terms
             }
-        } else {
-            terms
-        }
-    })
+        })
 }
 
 pub(crate) struct TerrainTables {

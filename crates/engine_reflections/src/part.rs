@@ -18,7 +18,9 @@ use engine_render::post::PostPass;
 use engine_render::profiling::GpuProfiler;
 use engine_render::renderer::Core;
 use engine_render::shaders::Entry;
-use engine_render::targets::{FrameRegion, FrameSize, RENDER_TARGET, ScreenTarget, fullscreen_pass};
+use engine_render::targets::{
+    FrameRegion, FrameSize, RENDER_TARGET, ScreenTarget, fullscreen_pass,
+};
 use engine_terrain::{RenderTerrains, TerrainEnvironment};
 
 use crate::gpu_layouts::ReflectionsPiece;

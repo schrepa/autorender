@@ -11,14 +11,14 @@ mod pipeline_layouts;
 pub mod shaders;
 mod temporal;
 
-use engine_core::{Brick, Bricks, Slot};
+use engine_core::{Brick, Bricks, Place};
 use engine_faces::slots::AntialiasingSlot;
 use engine_render::render_bricks::AddRenderParts;
 
 pub struct TaaBrick;
 
 impl Brick for TaaBrick {
-    const SLOT: Option<&'static str> = Some(AntialiasingSlot::NAME);
+    const SLOT: Option<Place> = Some(Place::slot::<AntialiasingSlot>());
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

@@ -462,6 +462,12 @@ pub struct TerrainLayersList;
 
 impl List for TerrainLayersList {
     const NAME: &'static str = "terrain_layers";
+    const SMOKES: &'static [engine_core::smoke::SmokeEntry] = &[engine_core::smoke::SmokeEntry {
+        name: "list_terrain_layers",
+        brick: Self::NAME,
+        gpu: false,
+        run: crate::smokes::layers,
+    }];
 }
 
 #[derive(Resource, Clone, Debug, Default)]

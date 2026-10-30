@@ -9,14 +9,14 @@ mod gpu_layouts;
 pub mod shaders;
 mod tonemap;
 
-use engine_core::{Brick, Bricks, Slot};
+use engine_core::{Brick, Bricks, Place};
 use engine_faces::slots::TonemapSlot;
 use engine_render::render_bricks::AddRenderParts;
 
 pub struct TonemapBrick;
 
 impl Brick for TonemapBrick {
-    const SLOT: Option<&'static str> = Some(TonemapSlot::NAME);
+    const SLOT: Option<Place> = Some(Place::slot::<TonemapSlot>());
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

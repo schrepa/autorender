@@ -1,4 +1,5 @@
 mod attribution;
+mod consumers;
 mod explain;
 mod extracted;
 mod registry;
@@ -9,6 +10,7 @@ pub use attribution::{
     BrickCost, BrickCosts, BrickRow, BrickTable, CORE_PASSES, CORE_ROW, GPU_IDLE_ROW,
     UNATTRIBUTED_ROW, WARMUP_FRAMES,
 };
+pub use consumers::{Cut, DetailConsumer, DetailConsumersList};
 pub use engine_settings::{
     Allowed, Detail, Error, Expected, parse_json, parse_value, parse_value_at,
 };
@@ -38,7 +40,7 @@ use crate::RenderSnapshot;
 use crate::smoke::{SmokeEntry, SmokeResult, SmokeSession};
 
 pub trait Brick: Send + Sync + 'static {
-    const SLOT: Option<&'static str> = None;
+    const SLOT: Option<Place> = None;
 
     fn register(bricks: &mut Bricks<'_>);
 }
@@ -94,10 +96,43 @@ pub trait Operation: Send + Sync + 'static {
 
 pub trait Slot: 'static {
     const NAME: &'static str;
+    const SMOKES: &'static [SmokeEntry] = &[];
 }
 
 pub trait List: 'static {
     const NAME: &'static str;
+    const SMOKES: &'static [SmokeEntry] = &[];
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlaceKind {
+    Slot,
+    List,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Place {
+    pub name: &'static str,
+    pub kind: PlaceKind,
+    pub smokes: &'static [SmokeEntry],
+}
+
+impl Place {
+    pub const fn slot<S: Slot>() -> Self {
+        Self {
+            name: S::NAME,
+            kind: PlaceKind::Slot,
+            smokes: S::SMOKES,
+        }
+    }
+
+    pub const fn list<L: List>() -> Self {
+        Self {
+            name: L::NAME,
+            kind: PlaceKind::List,
+            smokes: L::SMOKES,
+        }
+    }
 }
 
 pub struct Bricks<'a> {
@@ -177,6 +212,7 @@ impl Bricks<'_> {
         self.record
             .settings
             .push(SettingsEntry::of::<T>(self.record.name, at));
+        self.record.extractions.push(extract_section::<T>);
         self
     }
 
@@ -275,8 +311,21 @@ impl Bricks<'_> {
     pub fn list<L: List>(&mut self) -> &mut Self {
         if !self.record.lists.contains(&L::NAME) {
             self.record.lists.push(L::NAME);
+            self.record.places.push(Place::list::<L>());
         }
         self
+    }
+
+    pub fn detail_consumer(&mut self, consumer: DetailConsumer) -> &mut Self {
+        if !self
+            .record
+            .consumers
+            .iter()
+            .any(|known| known.name == consumer.name)
+        {
+            self.record.consumers.push(consumer);
+        }
+        self.list::<DetailConsumersList>()
     }
 
     pub fn smoke(
@@ -357,7 +406,7 @@ impl Listed {
     fn of<B: Brick>() -> Self {
         Self {
             name: brick_name::<B>(),
-            slot: B::SLOT,
+            slot: B::SLOT.map(|place| place.name),
             add: add_one::<B>,
         }
     }
@@ -518,6 +567,18 @@ impl BrickList {
 
 fn add_one<B: Brick>(app: &mut App) {
     app.add_brick::<B>();
+}
+
+fn extract_section<T: EnvironmentSection>(world: &World, snapshot: &mut RenderSnapshot) {
+    let Some(&section) = world.get_resource::<T>() else {
+        snapshot.extracted.remove::<T>();
+        return;
+    };
+    let section = section.section_sanitized();
+    match snapshot.extracted.get_mut::<T>() {
+        Some(held) => *held = section,
+        None => snapshot.extracted.insert(section),
+    }
 }
 
 pub fn brick_name<B: Brick>() -> &'static str {

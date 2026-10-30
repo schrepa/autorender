@@ -348,3 +348,20 @@ pub struct RenderSnapshot {
     pub invalid_transforms: usize,
     pub extracted: crate::Extracted,
 }
+
+impl RenderSnapshot {
+    pub fn section<T: crate::EnvironmentSection>(&self) -> T {
+        self.extracted
+            .get::<T>()
+            .copied()
+            .unwrap_or_else(|| T::section_off().section_sanitized())
+    }
+}
+
+pub fn section_in<T: crate::EnvironmentSection>(world: &bevy_ecs::world::World) -> T {
+    world
+        .get_resource::<T>()
+        .copied()
+        .unwrap_or_else(T::section_off)
+        .section_sanitized()
+}

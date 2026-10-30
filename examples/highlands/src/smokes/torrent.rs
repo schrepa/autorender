@@ -1,5 +1,6 @@
-use engine::smoke::{SmokeResult, SmokeSession};
-use engine::terrain::data::smokes::{Checked, above, control, environment, number, render};
+use engine::smoke::{
+    Checked, SmokeResult, SmokeSession, above, control, environment, number, render,
+};
 use engine::{smoke_check, smoke_eq};
 use serde_json::{Value, json};
 

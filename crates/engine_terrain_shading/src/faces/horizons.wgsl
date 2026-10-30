@@ -19,6 +19,12 @@ struct BounceAt {
     layer: f32,
 }
 
+struct OpenSky {
+    held: bool,
+    seen: f32,
+    beyond: f32,
+}
+
 fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
     if !TERRAIN_HORIZONS {
         return 1.0;
@@ -128,4 +134,16 @@ fn bounce_seen(at: BounceAt) -> f32 {
             at.next, at.first + 4u, 0.0).a, at.blend);
     }
     return mix(lower, upper, saturate(at.layer));
+}
+
+fn open_sky(world: vec3<f32>) -> OpenSky {
+    var open: OpenSky;
+    let at = bounce_at(world, false);
+    if at.texel.x < 0.0 {
+        return open;
+    }
+    open.held = true;
+    open.seen = bounce_seen(at);
+    open.beyond = saturate(at.layer - 1.0);
+    return open;
 }
