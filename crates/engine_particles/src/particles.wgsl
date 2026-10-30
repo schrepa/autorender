@@ -1,4 +1,3 @@
-import package::engine::color::encode_srgb;
 import package::engine::math::{TAU, pcg, unit};
 import package::face::bloom::glow_weight;
 import package::face::horizons::terrain_visibility;
@@ -256,14 +255,6 @@ fn added(input: ParticleOutput) -> vec3<f32> {
     let eye = camera.position.xyz;
     let light = input.color.rgb * (input.color.a * coverage(input));
     return light * (1.0 - atmospheric_cover(eye, input.world));
-}
-
-@fragment
-fn fs_particle_add(input: ParticleOutput) -> @location(0) vec4<f32> {
-    if outside(input) {
-        discard;
-    }
-    return vec4<f32>(encode_srgb(tonemap(added(input))), 0.0);
 }
 
 struct AddedTargets {

@@ -6,11 +6,10 @@ use engine_core::{
     Cut, ParticleBlend, ParticleSettings, ParticleStats, RenderEmitter, RenderStats,
 };
 use engine_render::bindings::GroupRef;
-use engine_render::graph::{GraphTable, ResourceId, Targets};
+use engine_render::graph::{GraphTable, ResourceId};
 use engine_render::parts::{
-    Create, DrawAt, GpuPart, Hook, PartDecl, PartEntry, Prelude, Step, View,
+    Begin, BeginOut, Create, DrawAt, GpuPart, Hook, PartDecl, PartEntry, Prelude, Step, View,
 };
-use engine_render::post::PostPass;
 use engine_render::transparent::accumulation_targets;
 
 pub(crate) use crate::gpu_layouts::EmitterData;
@@ -135,8 +134,7 @@ mod gpu {
         alpha: wgpu::RenderPipeline,
         mist: Option<wgpu::RenderPipeline>,
         transparent_targets: Vec<Option<wgpu::ColorTargetState>>,
-        additive: [Option<wgpu::RenderPipeline>; 2],
-        surface_format: wgpu::TextureFormat,
+        additive: Option<wgpu::RenderPipeline>,
         depth_format: wgpu::TextureFormat,
         uniform: wgpu::Buffer,
         written: Option<ParticleUniform>,
@@ -153,7 +151,6 @@ mod gpu {
     impl ParticlePass {
         pub(crate) fn new(
             device: &wgpu::Device,
-            surface_format: wgpu::TextureFormat,
             depth_format: wgpu::TextureFormat,
             transparent_targets: &[Option<wgpu::ColorTargetState>],
         ) -> Self {
@@ -173,8 +170,7 @@ mod gpu {
                 alpha,
                 mist: None,
                 transparent_targets: transparent_targets.to_vec(),
-                additive: [None, None],
-                surface_format,
+                additive: None,
                 depth_format,
                 uniform: engine_render::buffers::uniform(
                     device,
@@ -289,9 +285,8 @@ mod gpu {
             }
         }
 
-        pub(crate) fn ensure_additive(&mut self, device: &wgpu::Device, post: bool) {
-            let index = usize::from(post);
-            if self.additive[index].is_some() {
+        pub(crate) fn ensure_additive(&mut self, device: &wgpu::Device) {
+            if self.additive.is_some() {
                 return;
             }
             let add = wgpu::BlendState {
@@ -321,29 +316,17 @@ mod gpu {
                     write_mask: wgpu::ColorWrites::ALL,
                 })
             };
-            let pipeline = if post {
-                pipeline(
-                    device,
-                    &self.pipeline_layout,
-                    particles::fs_particle_add_post,
-                    &[
-                        target(engine_render::post::SCENE_FORMAT, add),
-                        target(engine_render::post::GLOW_FORMAT, brightest),
-                    ],
-                    self.depth_format,
-                    &[],
-                )
-            } else {
-                pipeline(
-                    device,
-                    &self.pipeline_layout,
-                    particles::fs_particle_add,
-                    &[target(self.surface_format, add)],
-                    self.depth_format,
-                    &[],
-                )
-            };
-            self.additive[index] = Some(pipeline);
+            self.additive = Some(pipeline(
+                device,
+                &self.pipeline_layout,
+                particles::fs_particle_add_post,
+                &[
+                    target(engine_render::post::SCENE_FORMAT, add),
+                    target(engine_render::post::GLOW_FORMAT, brightest),
+                ],
+                self.depth_format,
+                &[],
+            ));
         }
 
         pub(crate) fn draw_alpha(
@@ -372,12 +355,11 @@ mod gpu {
             pass: &mut wgpu::RenderPass<'_>,
             camera: &wgpu::BindGroup,
             frame: &ParticleFrame,
-            post: bool,
         ) {
             if frame.total == frame.mist {
                 return;
             }
-            pass.set_pipeline(self.additive[usize::from(post)].as_ref().expect("ensured"));
+            pass.set_pipeline(self.additive.as_ref().expect("ensured"));
             pass.set_bind_group(0, camera, &[]);
             pass.set_bind_group(1, self.group.get().expect("prepared_this_frame"), &[]);
             pass.draw(0..4, frame.mist..frame.total);
@@ -455,11 +437,12 @@ struct Ids {
 struct Particles {
     particles: Option<ParticlePass>,
     frame: Option<ParticleFrame>,
+    emits: bool,
     ids: Ids,
 }
 
 impl Particles {
-    fn prepare_frame(&mut self, cx: &Step<'_>, post: bool) -> Option<ParticleFrame> {
+    fn prepare_frame(&mut self, cx: &Step<'_>) -> Option<ParticleFrame> {
         let (device, queue) = (&cx.core.device, &cx.core.queue);
         let snapshot = cx.frame.snapshot;
         let emitters = (
@@ -467,26 +450,15 @@ impl Particles {
             cx.frame.frame.emitters_revision(),
         );
         let (region, depth) = (cx.core.display.region, &cx.core.depth.view);
-        let (surface_format, depth_format) =
-            (cx.core.canvas_format(), cx.core.depth.texture.format());
-        if snapshot.section::<ParticleSettings>().enabled && !snapshot.particles.list.is_empty() {
-            let particles = self.particles.get_or_insert_with(|| {
-                ParticlePass::new(
-                    device,
-                    surface_format,
-                    depth_format,
-                    &accumulation_targets(),
-                )
-            });
-            let prepared =
-                particles.prepare(device, queue, snapshot, emitters, region.render, depth);
-            if prepared.is_some() {
-                particles.ensure_additive(device, post);
-            }
-            prepared
-        } else {
-            None
+        let depth_format = cx.core.depth.texture.format();
+        let particles = self
+            .particles
+            .get_or_insert_with(|| ParticlePass::new(device, depth_format, &accumulation_targets()));
+        let prepared = particles.prepare(device, queue, snapshot, emitters, region.render, depth);
+        if prepared.is_some() {
+            particles.ensure_additive(device);
         }
+        prepared
     }
 }
 
@@ -498,13 +470,25 @@ impl GpuPart for Particles {
         };
     }
 
+    fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
+        let snapshot = cx.snapshot;
+        self.emits = snapshot.section::<ParticleSettings>().enabled
+            && !snapshot.particles.list.is_empty();
+        if !self.emits {
+            self.particles = None;
+        }
+    }
+
+    fn wants(&self, resource: ResourceId) -> bool {
+        self.emits && self.ids.accumulated == Some(resource)
+    }
+
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
-        if cx.frame.kind.debug {
-            self.frame = None;
+        self.frame = None;
+        if cx.frame.kind.debug || !self.emits {
             return;
         }
-        let post = cx.parts.post().is_some_and(PostPass::active);
-        self.frame = self.prepare_frame(cx, post);
+        self.frame = self.prepare_frame(cx);
     }
 
     fn produces(&self, resource: ResourceId) -> bool {
@@ -513,14 +497,8 @@ impl GpuPart for Particles {
     }
 
     fn draw(&self, at: DrawAt<'_>, cx: &View<'_>, pass: &mut wgpu::RenderPass<'_>) -> u32 {
-        let (
-            DrawAt::Transparent {
-                targets,
-                accumulated,
-            },
-            Some(frame),
-            Some(particles),
-        ) = (at, &self.frame, &self.particles)
+        let (DrawAt::Transparent { accumulated, .. }, Some(frame), Some(particles)) =
+            (at, &self.frame, &self.particles)
         else {
             return 0;
         };
@@ -531,7 +509,7 @@ impl GpuPart for Particles {
         if accumulated {
             particles.draw_alpha(pass, camera, frame);
         } else {
-            particles.draw_additive(pass, camera, frame, targets != Targets::Canvas);
+            particles.draw_additive(pass, camera, frame);
         }
         0
     }

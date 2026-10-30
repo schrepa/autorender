@@ -8,7 +8,6 @@ engine_render::entry_points! {
         fragment: [
             fs_particle @ "particles::draw",
             fs_particle_mist @ "particles::draw",
-            fs_particle_add @ "particles::draw",
             fs_particle_add_post @ "particles::draw",
         ],
     }

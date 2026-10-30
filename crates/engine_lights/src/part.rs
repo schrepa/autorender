@@ -680,6 +680,7 @@ mod gpu {
             let settings = snapshot.section::<LocalLightSettings>();
             let needs = settings.active() && !snapshot.lights.list.is_empty();
             if !needs {
+                self.bins.release();
                 return;
             }
             let shaped = snapshot.section::<Highlights>().enabled;
