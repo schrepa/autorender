@@ -86,6 +86,7 @@ pub(crate) const HAZE_FILTER: Table = Table {
         texture("depth_texture", Depth, D2, F),
         texture("marched", Unfilterable, D2, F),
         texture("haze", Float, D2, F),
+        uniform("pieces", F),
     ],
 };
 

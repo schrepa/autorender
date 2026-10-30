@@ -1,4 +1,5 @@
 import package::engine::screen_points::world_at;
+import package::generated::pieces::pieces;
 import package::post::frame::post;
 import package::sky::haze::haze;
 
@@ -9,7 +10,7 @@ const HAZE_CURRENT: f32 = 0.1;
 const HAZE_PLANE: f32 = 0.1;
 
 fn reprojected_haze(pixel: vec2<i32>, own: f32) -> vec4<f32> {
-    let drawn = post.haze.yz;
+    let drawn = pieces.sky.haze.yz;
     if drawn.x <= 0.0 {
         return vec4<f32>(0.0);
     }

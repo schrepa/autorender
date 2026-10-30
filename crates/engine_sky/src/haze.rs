@@ -1,12 +1,11 @@
 use bytemuck::Zeroable;
-use engine_core::{RenderSnapshot, glam::Mat4};
+use engine_core::{RenderSnapshot, Sky, SkyLightingValues, glam::Mat4};
 use engine_render::cached::{Bound, GroupCache};
 use engine_render::gpu_layouts::scene::PostUniform;
 use engine_render::pipelines::{self, Fullscreen, fullscreen};
 use engine_render::post::inverse_or_identity;
 use engine_render::profiling::GpuProfiler;
 use engine_render::renderer::Core;
-use engine_render::screen_effects::haze_runs;
 use engine_render::targets::{
     FrameRegion, FrameSize, RENDER_TARGET, ScreenTarget, fullscreen_pass, texture_2d,
 };
@@ -16,6 +15,15 @@ use crate::pipeline_layouts::{HAZE_FILTER_PIPELINES, HAZE_PIPELINES};
 use crate::shaders::entry::haze;
 
 const HAZE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+pub(crate) fn haze_runs(
+    haze: &engine_core::Haze,
+    sky: &Sky,
+    sky_light: &SkyLightingValues,
+) -> bool {
+    let fog = !sky.enabled && sky_light.fog_density > 0.0 && sky_light.fog_max > 0.0;
+    haze.enabled && haze.reach > 0.0 && (haze.strength > 0.0 || fog)
+}
 
 struct Targets {
     textures: [wgpu::Texture; 3],
@@ -109,22 +117,47 @@ struct History {
     drawn: (u32, u32),
 }
 
-#[derive(Default)]
 pub(crate) struct Haze {
     passes: Option<Passes>,
     targets: ScreenTarget<Targets>,
+    off: (wgpu::Texture, wgpu::TextureView),
     region: FrameRegion,
     history: Option<History>,
     kept: Option<History>,
     frames: u32,
     written: Option<PostUniform>,
     march_group: GroupCache<2>,
-    filter_group: GroupCache<4>,
-    active: bool,
+    filter_group: GroupCache<5>,
     runs: bool,
 }
 
 impl Haze {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let off = texture_2d(
+            device,
+            "engine/post-haze-off",
+            (1, 1),
+            1,
+            1,
+            HAZE_FORMAT,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let off_view = off.create_view(&Default::default());
+        Self {
+            passes: None,
+            targets: ScreenTarget::default(),
+            off: (off, off_view),
+            region: FrameRegion::default(),
+            history: None,
+            kept: None,
+            frames: 0,
+            written: None,
+            march_group: GroupCache::default(),
+            filter_group: GroupCache::default(),
+            runs: false,
+        }
+    }
+
     pub(crate) fn runs(&self) -> bool {
         self.runs
     }
@@ -133,16 +166,12 @@ impl Haze {
         &mut self,
         core: &Core,
         snapshot: &RenderSnapshot,
-        (active, display, debug): (bool, bool, bool),
-    ) {
-        self.active = active && !debug;
+        (runs, display): (bool, bool),
+    ) -> [f32; 4] {
         self.runs = false;
-        if debug {
-            return;
-        }
-        if !active {
+        if !runs {
             self.release();
-            return;
+            return [0.0; 4];
         }
         let device = &core.device;
         let region = core.display.region;
@@ -155,32 +184,30 @@ impl Haze {
         }
         self.region = region;
         let Some(targets) = self.targets.get() else {
-            return;
+            return [0.0; 4];
         };
-        let runs = haze_runs(snapshot);
-        if runs {
-            let post = || Bound::fixed(passes.uniform.as_entire_binding());
-            let target = |view| Bound::of(targets, pipelines::view(view));
-            let depth = &core.depth.view;
-            self.march_group.bind(
-                device,
-                "engine/post-haze-group",
-                (&HAZE, &passes.march_layout),
-                [("post", post()), ("depth_texture", depth.bound())],
-            );
-            self.filter_group.bind(
-                device,
-                "engine/post-haze-filter-group",
-                (&HAZE_FILTER, &passes.filter_layout),
-                [
-                    ("post", post()),
-                    ("depth_texture", depth.bound()),
-                    ("marched", target(&targets.marched)),
-                    ("haze", target(&targets.history)),
-                ],
-            );
-        }
-        self.kept = (display && runs).then_some(History {
+        let post = || Bound::fixed(passes.uniform.as_entire_binding());
+        let target = |view| Bound::of(targets, pipelines::view(view));
+        let depth = &core.depth.view;
+        self.march_group.bind(
+            device,
+            "engine/post-haze-group",
+            (&HAZE, &passes.march_layout),
+            [("post", post()), ("depth_texture", depth.bound())],
+        );
+        self.filter_group.bind(
+            device,
+            "engine/post-haze-filter-group",
+            (&HAZE_FILTER, &passes.filter_layout),
+            [
+                ("post", post()),
+                ("depth_texture", depth.bound()),
+                ("marched", target(&targets.marched)),
+                ("haze", target(&targets.history)),
+                ("pieces", core.pieces_bound()),
+            ],
+        );
+        self.kept = display.then_some(History {
             view_projection: snapshot.view_projection,
             eye: snapshot.camera_position,
             drawn: self.region.render.pixels(),
@@ -201,9 +228,6 @@ impl Haze {
                 .extend(focal * height * 0.5)
                 .to_array(),
             size: [width, height, 1.0 / width, 1.0 / height],
-            haze: history.map_or([turn, 0.0, 0.0, 1.0], |last| {
-                [turn, last.drawn.0 as f32, last.drawn.1 as f32, 1.0]
-            }),
             previous_view_projection: history
                 .map_or(view_projection, |last| last.view_projection)
                 .to_cols_array_2d(),
@@ -213,18 +237,24 @@ impl Haze {
                 .to_array(),
             ..PostUniform::zeroed()
         };
-        if runs && self.written != Some(uniform) {
+        if self.written != Some(uniform) {
             core.queue
                 .write_buffer(&passes.uniform, 0, bytemuck::bytes_of(&uniform));
             self.written = Some(uniform);
         }
-        self.runs = runs;
+        self.runs = true;
+        history.map_or([turn, 0.0, 0.0, 1.0], |last| {
+            [turn, last.drawn.0 as f32, last.drawn.1 as f32, 1.0]
+        })
     }
 
     fn release(&mut self) {
+        self.passes = None;
         self.targets.release();
+        self.march_group.clear();
         self.filter_group.clear();
         self.history = None;
+        self.written = None;
     }
 
     pub(crate) fn encode(
@@ -280,14 +310,15 @@ impl Haze {
         );
     }
 
-    pub(crate) fn binding(&self) -> Option<Bound<'_>> {
-        let targets = self.targets.get()?;
-        Some(Bound::of(targets, pipelines::view(&targets.haze)))
+    pub(crate) fn binding(&self) -> Bound<'_> {
+        match self.targets.get() {
+            Some(targets) => Bound::of(targets, pipelines::view(&targets.haze)),
+            None => Bound::fixed(pipelines::view(&self.off.1)),
+        }
     }
 
     pub(crate) fn after_submit(&mut self) {
-        let kept = self.kept.take();
-        self.history = if self.active { kept } else { None };
+        self.history = self.kept.take();
         if self.history.is_some() {
             self.frames = self.frames.wrapping_add(1);
         }

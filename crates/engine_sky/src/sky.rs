@@ -22,7 +22,6 @@ use engine_render::pieces::{PieceAt, PieceDecl};
 use engine_render::post::inverse_or_identity;
 use engine_render::profiling::GpuProfiler;
 use engine_render::renderer::Core;
-use engine_render::screen_effects::haze_runs;
 use engine_render::shaders::Entry;
 use engine_render::{buffers, memory, pipelines};
 use engine_time_of_day::TimeOfDay;
@@ -35,7 +34,7 @@ use crate::bindings::{
 use crate::clouds::{CloudFrame, CloudPass};
 use crate::environment::{ENVIRONMENT_FORMAT, Environment, SkyLight};
 use crate::gpu_layouts::{SKY_TABLE_GROUP, SkyPiece};
-use crate::haze::Haze;
+use crate::haze::{Haze, haze_runs};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const VIEW_SIZE: (u32, u32) = (192, 108);
@@ -262,6 +261,8 @@ impl AirTables {
         self.active = settings.enabled && self.tables.is_some();
         let Some(uploaded_tables) = self.tables.filter(|_| self.active) else {
             self.view_key = None;
+            self.passes = None;
+            self.groups.clear();
             return None;
         };
         let sun = sun.normalize_or(Vec3::Y);
@@ -663,11 +664,10 @@ enum SkyTargets {
 impl SkyTargets {
     fn index(self) -> usize {
         match self {
-            Self::Frame(Targets::Canvas) => 0,
-            Self::Frame(Targets::Post) => 1,
-            Self::Frame(Targets::Temporal) => 2,
-            Self::Frame(Targets::Debug) => 3,
-            Self::Probe => 4,
+            Self::Frame(Targets::Post) => 0,
+            Self::Frame(Targets::Temporal) => 1,
+            Self::Frame(Targets::Debug) => 2,
+            Self::Probe => 3,
         }
     }
 }
@@ -677,7 +677,7 @@ pub(crate) struct SkyPass {
     clouds: CloudPass,
     environment: Environment,
     haze: Haze,
-    pipelines: [Option<wgpu::RenderPipeline>; 5],
+    pipelines: [Option<wgpu::RenderPipeline>; 4],
     ids: Ids,
     frame: Option<CloudFrame>,
     plan: EnvironmentPlan,
@@ -701,7 +701,7 @@ impl SkyPass {
             tables,
             clouds,
             environment,
-            haze: Haze::default(),
+            haze: Haze::new(device),
             pipelines: Default::default(),
             ids: Ids::default(),
             frame: None,
@@ -904,9 +904,8 @@ impl GpuPart for SkyPass {
             .parts
             .face::<dyn SunFace>()
             .map_or(Sun::NONE, |face| face.sun());
-        let post = cx.parts.post();
-        let post_disabled = post.is_some_and(|post| post.disabled());
         let sections = Sections::of(snapshot);
+        let hazes = !frame.kind.debug && haze_runs(&sections.haze, &sections.sky, &sections.light);
         self.piece = sky_piece(&sections, &self.piece);
         apply_night(&mut self.piece, &sections);
         apply_haze(
@@ -914,7 +913,7 @@ impl GpuPart for SkyPass {
             &sections.haze,
             snapshot.view_projection,
             snapshot.camera_position,
-            !frame.kind.debug && !post_disabled && haze_runs(snapshot),
+            hazes,
         );
         (self.piece.cloud_shadow, self.piece.cloud_layer) =
             crate::clouds::shadow_lighting(&sections.clouds, snapshot.camera_position);
@@ -927,12 +926,9 @@ impl GpuPart for SkyPass {
         if let Some(encoder) = self.prepare_environment(core, snapshot, (sections.probes, sun)) {
             prelude.push_encoder(PreludeStage::Derived, "pre_environment", encoder);
         }
-        let post_active = post.is_some_and(|post| post.active());
-        self.haze.prepare(
-            core,
-            snapshot,
-            (post_active, frame.kind.display, frame.kind.debug),
-        );
+        self.piece.haze = self
+            .haze
+            .prepare(core, snapshot, (hazes, frame.kind.display));
     }
 
     fn finish(&mut self, cx: &mut Step<'_>) {
@@ -950,23 +946,16 @@ impl GpuPart for SkyPass {
         if shape.targets == Targets::Debug {
             return;
         }
-        let target = if shape.targets == Targets::Canvas {
-            (canvas, true)
-        } else {
-            (engine_render::post::SCENE_FORMAT, false)
-        };
         if self.clouds.marches_view() {
-            self.clouds.prepare_composite(&core.device, target);
+            self.clouds.prepare_composite(&core.device);
         }
-        self.frame = self.clouds.frame(target);
+        self.frame = self.clouds.frame();
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
         let table = cx.table;
         let ids = self.ids;
-        let shape = cx.frame.shape;
         if self.haze.runs()
-            && shape.is_some_and(|shape| shape.targets != Targets::Canvas)
             && let Some(haze) = ids.passes[HAZE_PASS]
         {
             let _ = graph
@@ -985,7 +974,7 @@ impl GpuPart for SkyPass {
         if let Some(dome) = dome.filter(|_| frame.dome()) {
             let _ = graph.add(table, dome).write(ids.cloud_dome);
         }
-        if frame.view().is_none() {
+        if !frame.view() {
             return;
         }
         if let Some(march) = march {
@@ -1023,7 +1012,7 @@ impl GpuPart for SkyPass {
                 self.haze.encode(encoder, camera, profiler);
             }
             COMPOSITE_PASS => {
-                if let Some(target) = self.frame.and_then(|frame| frame.view()) {
+                if self.frame.is_some_and(|frame| frame.view()) {
                     let mut render = cx.render_pass(
                         encoder,
                         "engine/cloud-composite",
@@ -1031,11 +1020,8 @@ impl GpuPart for SkyPass {
                             .span("cloud_composite")
                             .map(engine_render::profiling::Span::render),
                     );
-                    self.clouds.draw_composite(
-                        &mut render,
-                        cx.core.shared_group("frame", CAMERA_VIEW),
-                        target,
-                    );
+                    self.clouds
+                        .draw_composite(&mut render, cx.core.shared_group("frame", CAMERA_VIEW));
                 }
             }
             _ => {}
@@ -1074,7 +1060,7 @@ impl GpuPart for SkyPass {
 
     fn contribute<'s>(&'s self, group: &str, out: &mut Vec<(&'static str, Bound<'s>)>) {
         if group == "composite" {
-            out.extend(self.haze.binding().map(|haze| ("haze", haze)));
+            out.push(("haze", self.haze.binding()));
             return;
         }
         if group != "frame" {
@@ -1176,7 +1162,6 @@ pub(crate) const SKY_VERTEX: Entry = draw::vs_sky;
 
 fn sky_fragment(targets: Option<Targets>) -> Entry {
     match targets {
-        Some(Targets::Canvas) => draw::fs_sky,
         Some(Targets::Post) => draw::fs_sky_post,
         Some(Targets::Temporal) => draw::fs_sky_temporal,
         Some(Targets::Debug) => draw::fs_debug_sky,

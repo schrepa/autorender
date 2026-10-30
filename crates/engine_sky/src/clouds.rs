@@ -1,5 +1,4 @@
 use crate::shaders::entry::{clouds, draw};
-use engine_core::collections::HashMap;
 
 use engine_core::Clouds;
 use engine_core::StaticTable;
@@ -218,6 +217,7 @@ pub(crate) struct CloudPass {
     shadow_stride: u32,
     frame: u64,
     active: bool,
+    shadowing: bool,
     pub(crate) rows: u32,
     view_layout: pipelines::GroupLayout,
     composite_layout: pipelines::GroupLayout,
@@ -229,7 +229,7 @@ pub(crate) struct CloudPass {
     composite_group: GroupCache<1>,
     view_pipeline: Option<wgpu::ComputePipeline>,
     composite_pipeline_layout: Option<wgpu::PipelineLayout>,
-    composite_pipelines: HashMap<(wgpu::TextureFormat, bool), wgpu::RenderPipeline>,
+    composite_pipeline: Option<wgpu::RenderPipeline>,
     view_job: Option<[u32; 2]>,
     view_sky: bool,
     pub(crate) view_pixels: u32,
@@ -333,6 +333,7 @@ impl CloudPass {
             shadow_stride: 1,
             frame: 0,
             active: false,
+            shadowing: false,
             rows: 0,
             view_layout: pipelines::layout(device, &CLOUD_VIEW),
             composite_layout: pipelines::layout(device, &CLOUD_COMPOSITE),
@@ -353,7 +354,7 @@ impl CloudPass {
             composite_group: GroupCache::default(),
             view_pipeline: None,
             composite_pipeline_layout: None,
-            composite_pipelines: HashMap::default(),
+            composite_pipeline: None,
             view_job: None,
             view_sky: false,
             view_pixels: 0,
@@ -514,7 +515,8 @@ impl CloudPass {
         self.job = None;
         self.bind_pieces(pieces);
         let settings = settings.sanitized();
-        if let Some(noise) = noise.filter(|_| settings.enabled)
+        let wanted = settings.enabled && settings.coverage > 0.0;
+        if let Some(noise) = noise.filter(|_| wanted)
             && self.noise.as_ref().is_none_or(|held| held.id != noise.id)
         {
             self.noise = Some(NoiseVolumes::new(device, queue, noise));
@@ -522,11 +524,13 @@ impl CloudPass {
             self.march_groups = Cached::default();
             self.view_group = GroupCache::default();
         }
-        self.active = settings.enabled && settings.coverage > 0.0 && self.noise.is_some();
+        self.active = wanted && self.noise.is_some();
+        self.shadowing = settings.shadows > 0.0;
         if !self.active {
             self.marched = None;
             self.cycle = None;
             self.completes = false;
+            self.release();
             self.write_domes(eye, &settings);
             return;
         }
@@ -594,6 +598,24 @@ impl CloudPass {
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
         self.write_domes(eye, &settings);
         self.prepare_dome_draws(device, (air, pieces));
+    }
+
+    fn release(&mut self) {
+        self.domes = None;
+        self.noise = None;
+        self.light = LightMap::default();
+        self.pipelines = None;
+        self.march_groups.clear();
+        self.release_view();
+        self.view_pipeline = None;
+        self.composite_pipeline = None;
+        self.composite_pipeline_layout = None;
+    }
+
+    fn release_view(&mut self) {
+        self.view_targets = None;
+        self.view_group.clear();
+        self.composite_group.clear();
     }
 
     fn bind_pieces(&mut self, pieces: &wgpu::Buffer) {
@@ -669,6 +691,7 @@ impl CloudPass {
             self.write_domes(eye, &settings);
         }
         if !marches {
+            self.release_view();
             return;
         }
         let size = [display.width, display.height];
@@ -773,11 +796,7 @@ impl CloudPass {
         );
     }
 
-    pub(crate) fn prepare_composite(
-        &mut self,
-        device: &wgpu::Device,
-        (format, canvas): (wgpu::TextureFormat, bool),
-    ) {
+    pub(crate) fn prepare_composite(&mut self, device: &wgpu::Device) {
         let Some(targets) = self
             .view_targets
             .as_ref()
@@ -788,9 +807,8 @@ impl CloudPass {
         let layout = self.composite_pipeline_layout.get_or_insert_with(|| {
             pipelines::layout_of(device, &crate::pipeline_layouts::CLOUD_COMPOSITE_PIPELINES)
         });
-        self.composite_pipelines
-            .entry((format, canvas))
-            .or_insert_with(|| composite_pipeline(device, layout, format, canvas));
+        self.composite_pipeline
+            .get_or_insert_with(|| composite_pipeline(device, layout));
         self.composite_group.bind(
             device,
             "engine/cloud-composite",
@@ -802,22 +820,15 @@ impl CloudPass {
         );
     }
 
-    pub(crate) fn frame(&self, target: (wgpu::TextureFormat, bool)) -> Option<CloudFrame> {
+    pub(crate) fn frame(&self) -> Option<CloudFrame> {
         let dome = self.job.is_some() && self.domes.is_some();
-        let view = self.view_job.map(|_| target);
-        (dome || view.is_some()).then_some(CloudFrame { dome, view })
+        let view = self.view_job.is_some();
+        (dome || view).then_some(CloudFrame { dome, view })
     }
 
-    pub(crate) fn draw_composite(
-        &self,
-        pass: &mut wgpu::RenderPass<'_>,
-        camera: &wgpu::BindGroup,
-        (format, canvas): (wgpu::TextureFormat, bool),
-    ) {
-        let (Some(pipeline), Some(group)) = (
-            self.composite_pipelines.get(&(format, canvas)),
-            self.composite_group.get(),
-        ) else {
+    pub(crate) fn draw_composite(&self, pass: &mut wgpu::RenderPass<'_>, camera: &wgpu::BindGroup) {
+        let (Some(pipeline), Some(group)) = (&self.composite_pipeline, self.composite_group.get())
+        else {
             return;
         };
         pass.set_pipeline(pipeline);
@@ -892,6 +903,9 @@ impl CloudPass {
                 count.div_ceil(CLOUD_GROUP),
                 DOME_LAYERS,
             );
+        }
+        if !self.shadowing {
+            return;
         }
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -1020,8 +1034,6 @@ fn view_pipeline(device: &wgpu::Device) -> wgpu::ComputePipeline {
 fn composite_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
-    format: wgpu::TextureFormat,
-    canvas: bool,
 ) -> wgpu::RenderPipeline {
     pipelines::geometry(
         device,
@@ -1034,14 +1046,10 @@ fn composite_pipeline(
             primitive: wgpu::PrimitiveState::default(),
             depth: None,
             fragment: Some(pipelines::Fragment {
-                entry: if canvas {
-                    draw::fs_view_clouds
-                } else {
-                    draw::fs_view_clouds_post
-                },
+                entry: draw::fs_view_clouds_post,
                 constants: &[],
                 targets: &[Some(wgpu::ColorTargetState {
-                    format,
+                    format: engine_render::post::SCENE_FORMAT,
                     blend: Some(wgpu::BlendState {
                         color: wgpu::BlendComponent {
                             src_factor: wgpu::BlendFactor::One,
@@ -1131,7 +1139,7 @@ fn pipelines(device: &wgpu::Device) -> [wgpu::ComputePipeline; 3] {
 #[derive(Clone, Copy)]
 pub(crate) struct CloudFrame {
     dome: bool,
-    view: Option<(wgpu::TextureFormat, bool)>,
+    view: bool,
 }
 
 impl CloudFrame {
@@ -1139,7 +1147,7 @@ impl CloudFrame {
         self.dome
     }
 
-    pub(crate) fn view(&self) -> Option<(wgpu::TextureFormat, bool)> {
+    pub(crate) fn view(&self) -> bool {
         self.view
     }
 }

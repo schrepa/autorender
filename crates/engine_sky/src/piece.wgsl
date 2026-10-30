@@ -28,4 +28,5 @@ struct SkyPiece {
     domes_newer_mirror: vec4<f32>,
     domes_eye: vec4<f32>,
     domes_view: vec4<f32>,
+    haze: vec4<f32>,
 }
