@@ -190,7 +190,7 @@ impl<'a> RenderFrame<'a> {
         snapshot.presented_seconds = *presented_seconds;
         snapshot.wind = *wind;
         snapshot.lights.list.clear();
-        snapshot.lights.dropped = lights.dropped;
+        snapshot.lights.cut = lights.cut;
         snapshot.lights.invalid = lights.invalid;
         snapshot.lights.revision = lights.revision;
         for light in &lights.list {

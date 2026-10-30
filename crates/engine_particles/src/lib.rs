@@ -10,7 +10,9 @@ pub mod particles;
 pub mod pipeline_layouts;
 pub mod shaders;
 
-use engine_core::{Brick, Bricks, ParticleExtractor, ParticleSettings, extract_particles};
+use engine_core::{
+    Brick, Bricks, DetailConsumer, ParticleExtractor, ParticleSettings, extract_particles,
+};
 use engine_faces::slots::ParticlesList;
 use engine_render::render_bricks::AddRenderParts;
 
@@ -21,6 +23,11 @@ impl Brick for ParticlesBrick {
         bricks
             .list::<ParticlesList>()
             .settings::<ParticleSettings>()
+            .detail_consumer(DetailConsumer {
+                name: "particles",
+                setting: "particles.max_particles",
+                stat: "particles.particle_cut",
+            })
             .resource::<ParticleExtractor>()
             .extract(extract_particles)
             .render_part(&particles::PART)

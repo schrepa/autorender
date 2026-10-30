@@ -266,7 +266,29 @@
       "direction": null
     },
     {
-      "name": "ground_cover.dropped",
+      "name": "ground_cover.blade_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "ground_cover.blade_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "ground_cover.blade_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -486,7 +508,29 @@
       "direction": null
     },
     {
-      "name": "level_of_detail.dropped_impostors",
+      "name": "level_of_detail.impostor_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "level_of_detail.impostor_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "level_of_detail.impostor_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -574,18 +618,29 @@
       "direction": null
     },
     {
-      "name": "local_lights.cluster_overflow",
+      "name": "local_lights.cluster_cut.asked",
       "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame_or_absent",
+      "rule": "shown",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
       "unit": "count",
-      "direction": "lower"
+      "direction": null
     },
     {
-      "name": "local_lights.dropped",
+      "name": "local_lights.cluster_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_lights.cluster_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -597,6 +652,39 @@
     },
     {
       "name": "local_lights.invalid",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
+      "name": "local_lights.light_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_lights.light_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "local_lights.light_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -805,7 +893,7 @@
       "direction": null
     },
     {
-      "name": "particles.dropped",
+      "name": "particles.invalid",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -816,7 +904,29 @@
       "direction": "lower"
     },
     {
-      "name": "particles.invalid",
+      "name": "particles.particle_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "particles.particle_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "particles.particle_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -959,17 +1069,6 @@
       "direction": "lower"
     },
     {
-      "name": "reflection_probes.dropped",
-      "kind": "work",
-      "rule": "not-above",
-      "statistic": "last_frame",
-      "runtimes": [
-        "native"
-      ],
-      "unit": "count",
-      "direction": "lower"
-    },
-    {
       "name": "reflection_probes.faces",
       "kind": "work",
       "rule": "shown",
@@ -979,6 +1078,39 @@
       ],
       "unit": "count",
       "direction": null
+    },
+    {
+      "name": "reflection_probes.probe_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "reflection_probes.probe_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "reflection_probes.probe_cut.cut",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
     },
     {
       "name": "reflection_probes.ready",
@@ -1168,10 +1300,32 @@
       "direction": null
     },
     {
-      "name": "shadows.moving_left_out",
+      "name": "shadows.moving_cut.asked",
       "kind": "work",
       "rule": "shown",
-      "statistic": "last_frame_or_absent",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadows.moving_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadows.moving_cut.cut",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
       "runtimes": [
         "native"
       ],
@@ -1234,7 +1388,29 @@
       "direction": null
     },
     {
-      "name": "shadows.tiles_missing",
+      "name": "shadows.tile_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadows.tile_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "shadows.tile_cut.cut",
       "kind": "work",
       "rule": "shown",
       "statistic": "last_frame",
@@ -1432,6 +1608,39 @@
       "direction": "lower"
     },
     {
+      "name": "terrain.tile_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain.tile_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain.tile_cut.cut",
+      "kind": "work",
+      "rule": "not-above",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": "lower"
+    },
+    {
       "name": "terrain.fallback_tiles",
       "kind": "work",
       "rule": "not-above",
@@ -1542,7 +1751,29 @@
       "direction": null
     },
     {
-      "name": "terrain.refused_splits",
+      "name": "terrain.leaf_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain.leaf_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "terrain.leaf_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -1718,7 +1949,29 @@
       "direction": null
     },
     {
-      "name": "water.foam_points_cut",
+      "name": "water.foam_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water.foam_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water.foam_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -1762,7 +2015,29 @@
       "direction": "lower"
     },
     {
-      "name": "water.live_budget_cut",
+      "name": "water.cell_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water.cell_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water.cell_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",
@@ -1861,7 +2136,29 @@
       "direction": "lower"
     },
     {
-      "name": "water.refused",
+      "name": "water.leaf_cut.asked",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water.leaf_cut.kept",
+      "kind": "work",
+      "rule": "shown",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "water.leaf_cut.cut",
       "kind": "work",
       "rule": "not-above",
       "statistic": "last_frame",

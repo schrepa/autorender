@@ -10,7 +10,9 @@ pub mod gpu_layouts;
 pub mod probes;
 pub mod shaders;
 
-use engine_core::{Brick, Bricks, ProbeExtractor, ReflectionProbeSettings, extract_probes};
+use engine_core::{
+    Brick, Bricks, DetailConsumer, ProbeExtractor, ReflectionProbeSettings, extract_probes,
+};
 use engine_faces::slots::ProbesList;
 use engine_render::render_bricks::AddRenderParts;
 
@@ -21,6 +23,11 @@ impl Brick for ReflectionProbesBrick {
         bricks
             .list::<ProbesList>()
             .settings::<ReflectionProbeSettings>()
+            .detail_consumer(DetailConsumer {
+                name: "probes",
+                setting: "reflection_probes.max_probes",
+                stat: "reflection_probes.probe_cut",
+            })
             .resource::<ProbeExtractor>()
             .extract(extract_probes)
             .render_part(&probes::PART)

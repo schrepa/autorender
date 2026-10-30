@@ -2,7 +2,7 @@
 
 use crate::pipeline_layouts::PARTICLE_PIPELINES;
 use crate::shaders::entry::particles;
-use engine_core::{Drawn, ParticleBlend, RenderEmitter, RenderStats};
+use engine_core::{Cut, ParticleBlend, ParticleSettings, ParticleStats, RenderEmitter, RenderStats};
 use engine_render::bindings::GroupRef;
 use engine_render::graph::{GraphTable, ResourceId, Targets};
 use engine_render::parts::{
@@ -72,7 +72,7 @@ pub(crate) fn pack_emitters(
     records.clear();
     let mut first = 0_u32;
     let (mut alpha, mut mist) = (0, 0);
-    let mut dropped = 0;
+    let mut cut = 0;
     for blend in [
         ParticleBlend::Alpha,
         ParticleBlend::Mist,
@@ -83,7 +83,7 @@ pub(crate) fn pack_emitters(
             .filter(|emitter| emitter.emitter.blend == blend)
         {
             if u64::from(first) + u64::from(emitter.count) > room {
-                dropped += u64::from(emitter.count);
+                cut += u64::from(emitter.count);
                 continue;
             }
             records.push(EmitterData::new(emitter, first));
@@ -95,7 +95,7 @@ pub(crate) fn pack_emitters(
             ParticleBlend::Additive => {}
         }
     }
-    (alpha, mist, first, dropped)
+    (alpha, mist, first, cut)
 }
 
 fn pack_owners(records: &[EmitterData], owners: &mut Vec<u32>) {
@@ -124,7 +124,7 @@ mod gpu {
         pub alpha: u32,
         pub mist: u32,
         pub total: u32,
-        pub dropped: u64,
+        pub cut: u64,
     }
 
     pub(crate) struct ParticlePass {
@@ -214,14 +214,14 @@ mod gpu {
             size: engine_render::targets::FrameSize,
             depth: &Versioned<wgpu::TextureView>,
         ) -> Option<ParticleFrame> {
-            if !snapshot.environment.particles.enabled || snapshot.particles.list.is_empty() {
+            if snapshot.particles.list.is_empty() {
                 return None;
             }
             if self.packed != Some(emitters) {
                 self.pack(device, queue, snapshot);
                 self.packed = Some(emitters);
             }
-            let (alpha, mist, total, dropped) = self.counts;
+            let (alpha, mist, total, cut) = self.counts;
             if total == 0 {
                 return None;
             }
@@ -255,7 +255,7 @@ mod gpu {
                 alpha,
                 mist,
                 total,
-                dropped,
+                cut,
             })
         }
 
@@ -467,7 +467,7 @@ impl Particles {
         let (region, depth) = (cx.core.display.region, &cx.core.depth.view);
         let (surface_format, depth_format) =
             (cx.core.canvas_format(), cx.core.depth.texture.format());
-        if snapshot.environment.particles.enabled && !snapshot.particles.list.is_empty() {
+        if snapshot.section::<ParticleSettings>().enabled && !snapshot.particles.list.is_empty() {
             let particles = self.particles.get_or_insert_with(|| {
                 ParticlePass::new(
                     device,
@@ -543,12 +543,13 @@ impl GpuPart for Particles {
     fn stats(&self, cx: &View<'_>, stats: &mut RenderStats) {
         let snapshot = cx.frame.snapshot;
         let particles = self.frame.as_ref();
-        stats.particles = Drawn {
-            drawn: particles.map_or(0, |frame| frame.total),
+        let drawn = particles.map_or(0, |frame| frame.total);
+        let cut = (snapshot.particles.cut as u64 + particles.map_or(0, |frame| frame.cut))
+            .min(u64::from(u32::MAX)) as u32;
+        stats.particles = ParticleStats {
+            drawn,
             invalid: snapshot.particles.invalid.min(u32::MAX as usize) as u32,
-            dropped: (snapshot.particles.dropped as u64
-                + particles.map_or(0, |frame| frame.dropped))
-            .min(u64::from(u32::MAX)) as u32,
+            particle_cut: Cut::of(drawn.saturating_add(cut), drawn),
         };
     }
 }

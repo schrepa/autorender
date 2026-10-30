@@ -154,7 +154,7 @@ impl Renderer {
                 pipelines: impostor_pipelines,
                 contents: Contents::default(),
                 records: Vec::new(),
-                dropped: 0,
+                cut: engine_core::Cut::default(),
             },
             switch_fades: frame::SwitchFades::default(),
             last_seconds: None,

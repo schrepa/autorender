@@ -226,7 +226,7 @@ impl RenderLight {
 #[derive(Clone, Debug, Default)]
 pub struct RenderLights {
     pub list: Vec<RenderLight>,
-    pub dropped: usize,
+    pub cut: usize,
     pub invalid: usize,
     pub revision: u64,
 }
@@ -259,8 +259,8 @@ struct LightExtraction {
 
 impl LightExtraction {
     fn extract(&mut self, world: &World, snapshot: &mut RenderSnapshot) {
-        let settings = snapshot.environment.local_lights;
-        snapshot.lights.dropped = 0;
+        let settings = crate::section_in::<LocalLightSettings>(world);
+        snapshot.lights.cut = 0;
         snapshot.lights.invalid = 0;
         if !settings.active() {
             snapshot.lights.list.clear();
@@ -335,14 +335,18 @@ impl LightExtraction {
             let kept = self
                 .nearest
                 .kept_in_order(self.ranked.iter().map(|&(distance, _)| distance), budget);
-            snapshot.lights.dropped = self.lights.len() - kept.len();
+            snapshot.lights.cut = self.ranked.len() - kept.len();
+            snapshot.lights.invalid += self.lights.len() - self.ranked.len();
             for position in kept {
                 let (entity, light, slot) = &self.lights[self.ranked[position].1];
                 let model = match slot {
                     Some(_) => None,
                     None => match poses.model(*entity) {
                         Some(model) => Some(model),
-                        None => continue,
+                        None => {
+                            snapshot.lights.invalid += 1;
+                            continue;
+                        }
                     },
                 };
                 snapshot.lights.list.push(RenderLight::new(
@@ -360,7 +364,7 @@ impl LightExtraction {
                 None => match poses.model(*entity) {
                     Some(model) => Some(model),
                     None => {
-                        snapshot.lights.dropped += 1;
+                        snapshot.lights.invalid += 1;
                         continue;
                     }
                 },

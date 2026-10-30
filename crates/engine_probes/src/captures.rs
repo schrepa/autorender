@@ -30,7 +30,9 @@ impl ProbePass {
         let parts = cx.parts;
         let snapshot = cx.frame.snapshot;
         let probes = snapshot.probe_list();
-        let faces = snapshot.environment.reflection_probes.faces_per_frame;
+        let faces = snapshot
+            .section::<engine_core::ReflectionProbeSettings>()
+            .faces_per_frame;
         let seconds = snapshot.elapsed_seconds;
         let Some(environment) = parts.face::<dyn EnvironmentFace>() else {
             return 0;

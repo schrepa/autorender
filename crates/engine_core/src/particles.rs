@@ -117,7 +117,7 @@ pub struct RenderEmitter {
 #[derive(Clone, Debug, Default)]
 pub struct RenderParticles {
     pub list: Vec<RenderEmitter>,
-    pub dropped: usize,
+    pub cut: usize,
     pub invalid: usize,
     pub revision: u64,
 }
@@ -155,9 +155,9 @@ impl ParticleExtraction {
     }
 
     fn fill(&mut self, world: &World, snapshot: &mut RenderSnapshot) {
-        let settings = snapshot.environment.particles;
+        let settings = crate::section_in::<ParticleSettings>(world);
         snapshot.particles.list.clear();
-        snapshot.particles.dropped = 0;
+        snapshot.particles.cut = 0;
         snapshot.particles.invalid = 0;
         if !settings.enabled {
             self.motion.clear();
@@ -198,7 +198,7 @@ impl ParticleExtraction {
             let (_, entity, model, emitter) = candidates[position];
             let count = emitter.capacity();
             if budget.is_some_and(|budget| total + u64::from(count) > budget) {
-                snapshot.particles.dropped += count as usize;
+                snapshot.particles.cut += count as usize;
                 return;
             }
             total += u64::from(count);

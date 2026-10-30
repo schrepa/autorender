@@ -145,42 +145,36 @@ fn cuts(world: &World, registry: &BrickRegistry, stats: &Value) -> Vec<ExplainRe
                 .with("cut", cut),
         );
     }
-    for section in registry.sections() {
-        let Some(group) = stats.get(section.key).and_then(Value::as_object) else {
+    for (brick, consumer) in registry.consumers() {
+        let reported = consumer
+            .stat
+            .split('.')
+            .try_fold(stats, |value, field| value.get(field));
+        let Some(reported) = reported else {
             continue;
         };
-        let settings = section.current(world);
-        for (field, value) in group {
-            let Some(cut) = value.as_u64().filter(|&cut| cut > 0) else {
-                continue;
-            };
-            let limited = match field.as_str() {
-                "dropped" => None,
-                other => match other.strip_prefix("dropped_") {
-                    Some(limited) => Some(limited),
-                    None => continue,
-                },
-            };
-            let setting = settings.as_object().and_then(|settings| {
-                settings
-                    .iter()
-                    .filter(|(name, _)| name.starts_with("max_"))
-                    .find(|(name, _)| limited.is_none_or(|limited| name[4..] == *limited))
-            });
-            let kept = setting.and_then(|(_, limit)| limit.as_u64());
-            records.push(
-                ExplainRecord::new("cut")
-                    .of(section.brick)
-                    .with("stat", format!("{}.{field}", section.key))
-                    .with(
-                        "setting",
-                        setting.map(|(name, _)| format!("{}.{name}", section.key)),
-                    )
-                    .with("asked", kept.map(|kept| kept + cut))
-                    .with("kept", kept)
-                    .with("cut", cut),
-            );
-        }
+        let Some(cut) = reported["cut"].as_u64().filter(|&cut| cut > 0) else {
+            continue;
+        };
+        let limit = consumer
+            .setting
+            .split_once('.')
+            .and_then(|(key, field)| {
+                registry
+                    .section(key)
+                    .map(|section| section.current(world)[field].clone())
+            })
+            .unwrap_or(Value::Null);
+        records.push(
+            ExplainRecord::new("cut")
+                .of(brick)
+                .with("consumer", consumer.name)
+                .with("setting", consumer.setting)
+                .with("limit", limit)
+                .with("asked", reported["asked"].as_u64())
+                .with("kept", reported["kept"].as_u64())
+                .with("cut", cut),
+        );
     }
     records
 }

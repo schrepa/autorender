@@ -129,9 +129,9 @@ impl ClusterUniform {
 
 pub(crate) use crate::gpu_layouts::LightInput;
 
-fn shading_flags(snapshot: &engine_core::RenderSnapshot, regions: bool) -> u32 {
+fn shading_flags(shaped: bool, regions: bool) -> u32 {
     let mut flags = 0;
-    if snapshot.environment.highlights.enabled {
+    if shaped {
         flags |= SHAPED_LIGHTS;
     }
     if regions {
@@ -167,7 +167,7 @@ mod gpu {
         rc::Rc,
     };
 
-    use engine_core::{LightStats, RenderSnapshot, RenderStats};
+    use engine_core::{Cut, Highlights, LightStats, LocalLightSettings, RenderSnapshot, RenderStats};
     use engine_render::buffers::{ReadbackRing, entry, storage};
     use engine_render::cached::{Bound, Versioned};
     use engine_render::gpu_calls::Queue;
@@ -222,8 +222,8 @@ mod gpu {
         compute_groups: Vec<((u64, usize, u64), wgpu::BindGroup)>,
         probes: RefCell<ProbeLights>,
         no_still: wgpu::Buffer,
-        readbacks: ReadbackRing<()>,
-        totals_read: Rc<Cell<Option<[u32; 3]>>>,
+        readbacks: ReadbackRing<u32>,
+        totals_read: Rc<Cell<Option<[u32; 4]>>>,
     }
 
     impl LightBins {
@@ -287,10 +287,13 @@ mod gpu {
             }
         }
 
-        fn totals(&self) -> Option<[u32; 2]> {
+        fn totals(&self) -> Option<(u32, Cut)> {
             self.totals_read
                 .get()
-                .map(|[reached, lost, _]| [reached, lost])
+                .map(|[reached, lost, needed, capacity]| {
+                    let stored = needed.min(capacity);
+                    (reached, Cut::of(stored.saturating_add(lost), stored))
+                })
         }
 
         fn capacity_bytes(&self) -> u64 {
@@ -340,13 +343,13 @@ mod gpu {
         fn prepare(
             &mut self,
             (device, queue): (&wgpu::Device, &Queue),
-            snapshot: &RenderSnapshot,
+            (snapshot, settings, shaped): (&RenderSnapshot, LocalLightSettings, bool),
             (width, height): (u32, u32),
             (poses, poses_generation, parity): (&wgpu::Buffer, u64, usize),
             still: (&wgpu::Buffer, u64),
             revision: (u64, u64),
         ) -> Option<LightFrame> {
-            if !snapshot.environment.local_lights.active() || snapshot.lights.list.is_empty() {
+            if !settings.active() || snapshot.lights.list.is_empty() {
                 return None;
             }
             let count = snapshot.lights.list.len();
@@ -374,7 +377,7 @@ mod gpu {
             let needed = self
                 .totals_read
                 .get()
-                .map_or(0, |[_, _, needed]| u64::from(needed))
+                .map_or(0, |[_, _, needed, _]| u64::from(needed))
                 .max(count as u64 * 32);
             if self.grow_indices(needed * 4) || grown {
                 self.data.replace(storage(
@@ -388,12 +391,12 @@ mod gpu {
                 snapshot.view_projection,
                 width,
                 height,
-                snapshot.environment.local_lights.distance,
+                settings.distance,
                 count as u32,
-                snapshot.environment.local_lights.lights_per_cluster,
+                settings.lights_per_cluster,
                 self.index_capacity(),
             );
-            uniform.lights[1] = shading_flags(snapshot, self.regions);
+            uniform.lights[1] = shading_flags(shaped, self.regions);
             uniform.offsets = self.offsets();
             if self.written != Some(uniform) {
                 queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
@@ -436,10 +439,7 @@ mod gpu {
                 count: count as u32,
                 group,
                 flags: uniform.lights[1],
-                settings: (
-                    snapshot.environment.local_lights.distance,
-                    snapshot.environment.local_lights.lights_per_cluster,
-                ),
+                settings: (settings.distance, settings.lights_per_cluster),
                 poses: (poses.clone(), poses_generation, parity),
                 still: (still.0.clone(), still.1),
             })
@@ -480,8 +480,9 @@ mod gpu {
                 pass.set_pipeline(&self.fill);
                 pass.dispatch_workgroups(columns, rows, 1);
             }
+            let capacity = self.index_capacity();
             self.readbacks
-                .record(device, encoder, &self.totals, TOTALS_BYTES, ());
+                .record(device, encoder, &self.totals, TOTALS_BYTES, capacity);
         }
 
         fn encode_probe_face(
@@ -674,11 +675,12 @@ mod gpu {
             }
             let frame = cx.frame.frame;
             let snapshot = cx.frame.snapshot;
-            let needs =
-                snapshot.environment.local_lights.active() && !snapshot.lights.list.is_empty();
+            let settings = snapshot.section::<LocalLightSettings>();
+            let needs = settings.active() && !snapshot.lights.list.is_empty();
             if !needs {
                 return;
             }
+            let shaped = snapshot.section::<Highlights>().enabled;
             let core = &*cx.core;
             let device = &core.device;
             self.bins
@@ -690,7 +692,7 @@ mod gpu {
             let poses = core.frame_poses(parity);
             self.frame = bins.prepare(
                 (device, &core.queue),
-                snapshot,
+                (snapshot, settings, shaped),
                 core.render_pixels(),
                 (poses.current(), poses.generation(), poses.parity),
                 core.gpu_presentation.still_frames(),
@@ -749,8 +751,8 @@ mod gpu {
         fn after_submit(&mut self) {
             if let Some(bins) = self.bins.get_mut() {
                 let totals = Rc::clone(&bins.totals_read);
-                bins.readbacks.after_submit(move |words, ()| {
-                    totals.set(Some([words.get(0), words.get(1), words.get(2)]));
+                bins.readbacks.after_submit(move |words, capacity| {
+                    totals.set(Some([words.get(0), words.get(1), words.get(2), capacity]));
                 });
             }
         }
@@ -764,20 +766,18 @@ mod gpu {
             let lit = self.frame.is_some();
             let bins = self.bins.get();
             let totals = self.frame.as_ref().and(bins.and_then(LightBins::totals));
+            let kept = snapshot.lights.list.len().min(u32::MAX as usize) as u32;
+            let cut = snapshot.lights.cut.min(u32::MAX as usize) as u32;
             stats.local_lights = LightStats {
                 shaded: if lit {
                     snapshot.lights.list.len() as u32
                 } else {
                     0
                 },
-                dropped: if lit {
-                    snapshot.lights.dropped.min(u32::MAX as usize) as u32
-                } else {
-                    0
-                },
                 invalid: snapshot.lights.invalid.min(u32::MAX as usize) as u32,
-                visible: totals.map(|totals| totals[0]),
-                cluster_overflow: totals.map(|totals| totals[1]),
+                visible: totals.map(|(reached, _)| reached),
+                light_cut: Cut::of(kept.saturating_add(cut), kept),
+                cluster_cut: totals.map_or_else(Cut::default, |(_, cut)| cut),
             };
         }
 
