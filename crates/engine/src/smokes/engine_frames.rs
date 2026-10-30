@@ -9,12 +9,12 @@ use super::requests::{
 
 const FRAMES: u32 = 30;
 
-struct Rendered {
-    bricks: Vec<&'static str>,
+pub(super) struct Rendered {
+    pub(super) bricks: Vec<&'static str>,
     passes: Vec<&'static str>,
 }
 
-fn rendered(session: &mut dyn SmokeSession) -> Rendered {
+pub(super) fn rendered(session: &mut dyn SmokeSession) -> Rendered {
     let mut found = Rendered {
         bricks: Vec::new(),
         passes: Vec::new(),
@@ -44,7 +44,7 @@ fn lit() -> [&'static str; 2] {
     ]
 }
 
-fn core_only(base: &BrickList, found: &Rendered) -> BrickList {
+pub(super) fn core_only(base: &BrickList, found: &Rendered) -> BrickList {
     base.clone().without(found.bricks.iter().copied())
 }
 
@@ -134,6 +134,12 @@ pub(crate) fn core_only_frames(session: &mut dyn SmokeSession) -> SmokeResult {
         "only_core_passes_run",
         json!(bricks),
         json!([])
+    );
+    smoke_check!(
+        passes.iter().any(|pass| pass == "composite"),
+        "composite_writes_the_screen",
+        json!(passes),
+        json!("composite")
     );
     Ok(())
 }

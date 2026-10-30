@@ -3,7 +3,8 @@ use engine_scene::SceneDocument;
 use serde_json::{Value, json};
 
 use super::requests::{
-    FRAME_MS, accepted, control, frames, named, number, query, refused_with, reply, serve, status,
+    FRAME_MS, accepted, control, frames, named, names, number, query, refused_with, reply, serve,
+    status,
 };
 use crate::host::SceneLoad;
 
@@ -279,15 +280,22 @@ pub(crate) fn host_faults(session: &mut dyn SmokeSession) -> SmokeResult {
     control(
         session,
         "debug_fault",
-        json!({ "feature": "post" }),
+        json!({ "feature": "bloom" }),
         "debug_fault_taken",
     )?;
-    frames(session, 30, "frames_after_the_fault")?;
+    let shown = frames(session, 30, "frames_after_the_fault")?;
+    let passes = names(&shown["result"]["rendering"]["render_passes"]);
+    engine_core::smoke_check!(
+        passes.iter().any(|pass| pass == "composite"),
+        "frames_composite_after_the_fault",
+        json!(passes),
+        json!("composite")
+    );
     let faulted = status(session, "status_after_the_fault")?;
     engine_core::smoke_eq!(
         faulted["result"]["rendering"]["disabled_features"].clone(),
-        json!(["post"]),
-        "fault_disables_post"
+        json!(["bloom"]),
+        "fault_disables_bloom"
     );
     answered(
         session,
