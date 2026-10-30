@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_collision::{ColliderShape, CollisionWorld};
-use engine_core::{WaterObstacle, WaterObstacles};
-use engine_terrain::Terrains;
+use engine_core::{WaterBodies, WaterObstacle, WaterObstacles};
 use glam::Vec3;
 
 use crate::PhysicsWorld;
@@ -13,72 +12,49 @@ pub(crate) struct Standing {
     colliders: Vec<WaterObstacle>,
 }
 
-pub(crate) fn obstruct(
-    physics: Res<PhysicsWorld>,
-    collision: Option<Res<CollisionWorld>>,
-    terrains: Option<Res<Terrains>>,
-    obstacles: Option<ResMut<WaterObstacles>>,
-    mut standing: Local<Standing>,
-) {
-    let Some(mut obstacles) = obstacles else {
-        return;
-    };
-    let rivers = terrains
-        .iter()
-        .flat_map(|terrains| terrains.waters())
-        .filter_map(|(_, origin, layers)| {
-            let rivers = layers.hydrology()?.rivers();
-            (!rivers.is_empty()).then(|| {
-                let (low, high) = rivers.bounds();
-                (
-                    origin + Vec3::new(low.x, -1.0e5, low.y),
-                    origin + Vec3::new(high.x, 1.0e5, high.y),
-                )
-            })
-        });
-    let live = terrains
-        .iter()
-        .flat_map(|terrains| terrains.water_windows())
-        .map(|(low, high)| {
-            (
-                Vec3::new(low.x, -1.0e5, low.y),
-                Vec3::new(high.x, 1.0e5, high.y),
-            )
-        });
-    let reaches: Vec<(Vec3, Vec3)> = rivers.chain(live).collect();
-    if reaches.is_empty() {
-        if !obstacles.obstacles.is_empty() {
-            obstacles.obstacles.clear();
-        }
+pub(crate) fn obstruct(world: &mut World, mut standing: Local<Standing>) {
+    if !world.contains_resource::<WaterObstacles>() {
         return;
     }
-    let revision = collision
-        .as_ref()
-        .map(|collision| collision.report().revision);
-    if revision != standing.revision || reaches != standing.reaches {
-        standing.revision = revision;
-        standing.colliders.clear();
-        if let Some(collision) = &collision {
-            let mut seen = Vec::new();
-            for &(low, high) in &reaches {
-                for found in collision.collider_solids_in(low, high) {
-                    if physics.holds(found.entity) || seen.contains(&found.entity) {
-                        continue;
+    let reaches = match world.get_resource::<WaterBodies>() {
+        Some(bodies) => bodies.reaches(world),
+        None => Vec::new(),
+    };
+    world.resource_scope(|world, mut obstacles: Mut<WaterObstacles>| {
+        if reaches.is_empty() {
+            if !obstacles.obstacles.is_empty() {
+                obstacles.obstacles.clear();
+            }
+            return;
+        }
+        let physics = world.resource::<PhysicsWorld>();
+        let collision = world.get_resource::<CollisionWorld>();
+        let revision = collision.map(|collision| collision.report().revision);
+        if revision != standing.revision || reaches != standing.reaches {
+            standing.revision = revision;
+            standing.colliders.clear();
+            if let Some(collision) = collision {
+                let mut seen = Vec::new();
+                for &(low, high) in &reaches {
+                    for found in collision.collider_solids_in(low, high) {
+                        if physics.holds(found.entity) || seen.contains(&found.entity) {
+                            continue;
+                        }
+                        seen.push(found.entity);
+                        standing.colliders.push(WaterObstacle {
+                            center: found.solid.center,
+                            axes: found.solid.axes,
+                            round: matches!(found.solid.shape, ColliderShape::Sphere { .. }),
+                            velocity: Vec3::ZERO,
+                        });
                     }
-                    seen.push(found.entity);
-                    standing.colliders.push(WaterObstacle {
-                        center: found.solid.center,
-                        axes: found.solid.axes,
-                        round: matches!(found.solid.shape, ColliderShape::Sphere { .. }),
-                        velocity: Vec3::ZERO,
-                    });
                 }
             }
+            standing.reaches = reaches;
         }
-        standing.reaches = reaches;
-    }
-    let listed = &mut obstacles.obstacles;
-    listed.clear();
-    listed.extend_from_slice(&standing.colliders);
-    listed.extend(physics.solids());
+        let listed = &mut obstacles.obstacles;
+        listed.clear();
+        listed.extend_from_slice(&standing.colliders);
+        listed.extend(physics.solids());
+    });
 }

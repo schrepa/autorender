@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::Resource;
+use engine_core::math::GRAVITY;
 use engine_core::{BrickStats, EnvironmentSection};
 use engine_settings::{InvalidSetting, settings};
-use engine_terrain::hydraulics::GRAVITY;
 use serde::{Deserialize, Serialize};
 
 settings! {
