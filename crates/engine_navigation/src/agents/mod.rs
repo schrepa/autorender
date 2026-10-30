@@ -7,17 +7,20 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::math::{clamp, max};
 use engine_core::{
-    Brick, BrickStats, Bricks, Cooking, EnvironmentSection, FixedSimulation,
+    Brick, BrickStats, Bricks, Cooking, EnvironmentSection, Error, FixedSimulation,
     FixedSimulationSystems, FixedTime, GAMEPLAY_JOBS, Ground, GroundObstacle, GroundRead,
     GroundRecord, GroundSource, HeightHeld, IDLE_JOBS, JobBudget, JobFailures, JobId, Jobs, Parent,
-    RecordKey, TileKey, Transform, job_output, job_priority,
+    RecordKey, TileKey, Transform, WaterBodies, WaterSurfaces, job_output, job_priority,
+    section_in,
 };
+use engine_scene::AddSceneComponents;
 use engine_settings::{InvalidSetting, settings};
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::dev::{self, NavAgentView, NavAgentsView, NavGoControl, NavPathQuery};
 use crate::jobs::{PortalsJob, portals_output};
+use crate::scene::NAV_AGENT;
 use crate::{Gait, NavOptions, NavPath, TilePortals, WalkData, WalkGround, WalkSearch, Want};
 use cook::CookGraph;
 use records::{Resolved, WalkRecords};
@@ -132,6 +135,7 @@ enum Search {
 
 struct Running {
     source: GroundSource,
+    surfaces: Surfaces,
     search: WalkSearch,
     held: Held,
     asked_ahead: usize,
@@ -189,6 +193,7 @@ impl Search {
                 options,
             );
             *self = Self::Running(Box::new(Running {
+                surfaces: water_surfaces(world, &source),
                 source,
                 search,
                 held: Held::default(),
@@ -324,6 +329,15 @@ fn ground_source(world: &World, from: Vec2, to: Vec2) -> GroundRead<GroundSource
         })
 }
 
+type Surfaces = Arc<[Arc<dyn WaterSurfaces>]>;
+
+fn water_surfaces(world: &World, source: &GroundSource) -> Surfaces {
+    world
+        .get_resource::<WaterBodies>()
+        .map_or_else(Vec::new, |bodies| bodies.surfaces(world, source))
+        .into()
+}
+
 fn ground_obstacles(world: &World, entity: Entity) -> Vec<GroundObstacle> {
     world
         .get_resource::<Ground>()
@@ -343,9 +357,7 @@ fn scoped<R: Resource, T>(
 
 pub(crate) fn walk_agents(world: &mut World, agents: &mut Agents) {
     let time = *world.resource::<FixedTime>();
-    let settings = world
-        .get_resource::<Navigation>()
-        .map_or(Navigation::off(), |settings| settings.sanitized());
+    let settings = section_in::<Navigation>(world);
     let stats = world.resource_scope(|world, mut navigation: Mut<NavAgents>| {
         scoped::<Jobs, _>(world, |world, jobs| {
             scoped::<Cooking, _>(world, |world, cooking| {
@@ -651,7 +663,8 @@ impl Brick for NavigationBrick {
             .operation::<NavGoControl>()
             .operation::<NavPathQuery>()
             .component_inspector::<NavAgent, NavAgentView>(dev::agent_view)
-            .inspector::<NavAgents, Option<NavAgentsView>>(|world, _| dev::agents_view(world));
+            .inspector::<NavAgents, Option<NavAgentsView>>(|world, _| dev::agents_view(world))
+            .scene_components(&[&NAV_AGENT]);
         crate::smokes::register(bricks);
     }
 }

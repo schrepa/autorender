@@ -10,7 +10,7 @@ pub struct WalkGround {
 }
 
 impl WalkGround {
-    pub fn new(grid: &GroundGrid, pyramid: &Pyramid) -> Self {
+    pub fn new(grid: &GroundGrid, water: Option<Box<[f32]>>, pyramid: &Pyramid) -> Self {
         let key = grid.key;
         let spacing = pyramid.spacing(u32::from(key.level));
         let mut heights = grid.heights.clone();
@@ -20,7 +20,7 @@ impl WalkGround {
             key,
             spacing,
             heights,
-            water: grid.water.clone(),
+            water,
             holes: grid.holes.clone(),
         }
     }

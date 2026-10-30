@@ -568,7 +568,7 @@ fn portals(
         gait: *gait,
     };
     let bytes = worker.run(PortalsJob::KIND, &job.identity())?;
-    let ground = WalkGround::new(&walk_grid(tile, layers, pyramid), pyramid);
+    let ground = WalkGround::new(&walk_grid(tile, layers, pyramid), walk_water(tile), pyramid);
     observed.check(
         codec::encode(&TilePortals::new(&ground, pyramid, gait)) == bytes,
         || {
@@ -588,15 +588,10 @@ fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> engine_core::Gr
     let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
     let key = tile.key();
     let spacing = pyramid.spacing(u32::from(key.level));
-    let surfaces = tile.water().map(engine_terrain::TileWater::surfaces);
     let mut heights = vec![0.0; side * side].into_boxed_slice();
-    let mut water = surfaces.map(|_| vec![f32::NAN; side * side].into_boxed_slice());
     for z in 0..side {
         for x in 0..side {
             heights[z * side + x] = tile.heights()[stored(x, z)];
-            if let (Some(water), Some(surfaces)) = (water.as_mut(), surfaces) {
-                water[z * side + x] = surfaces[stored(x, z)];
-            }
         }
     }
     let first = pyramid.first_sample(key);
@@ -623,7 +618,6 @@ fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> engine_core::Gr
         key,
         spacing,
         heights,
-        water,
         holes,
         bridges: layers
             .bridges()
@@ -635,6 +629,20 @@ fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> engine_core::Gr
             })
             .collect(),
     }
+}
+
+fn walk_water(tile: &Tile) -> Option<Box<[f32]>> {
+    let side = engine_terrain::TILE_SAMPLES as usize;
+    let stride = engine_terrain::TILE_STRIDE as usize;
+    let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
+    let surfaces = tile.water().map(engine_terrain::TileWater::surfaces)?;
+    let mut water = vec![f32::NAN; side * side].into_boxed_slice();
+    for z in 0..side {
+        for x in 0..side {
+            water[z * side + x] = surfaces[stored(x, z)];
+        }
+    }
+    Some(water)
 }
 
 #[derive(Default)]
