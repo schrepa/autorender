@@ -105,12 +105,7 @@ impl GroundCoverPass {
             pipelines: HashMap::default(),
             shadings: Vec::new(),
             shading: 0,
-            blades: engine_render::buffers::Growable::new(
-                device,
-                "engine/cover-blades",
-                BLADE_BYTES,
-                wgpu::BufferUsages::empty(),
-            ),
+            blades: blades(device),
             capacity: 0,
             blades_generation: 0,
             counts: engine_render::buffers::storage(
@@ -125,7 +120,7 @@ impl GroundCoverPass {
                 2 * DRAW_ARGS,
                 wgpu::BufferUsages::INDIRECT,
             ),
-            uniforms: engine_render::buffers::uniform(device, "engine/cover-grow", SLOT),
+            uniforms: grow_uniforms(device, SLOT),
             frame: engine_render::buffers::uniform(
                 device,
                 "engine/cover-frame",
@@ -282,11 +277,7 @@ impl GroundCoverPass {
             bytes[at..at + size_of::<GrowUniform>()].copy_from_slice(bytemuck::bytes_of(uniform));
         }
         if bytes.len() as u64 > self.uniforms.size() {
-            self.uniforms = engine_render::buffers::uniform(
-                device,
-                "engine/cover-grow",
-                (bytes.len() as u64).next_power_of_two(),
-            );
+            self.uniforms = grow_uniforms(device, (bytes.len() as u64).next_power_of_two());
             self.blades_generation += 1;
         }
         queue.write_buffer(&self.uniforms, 0, &bytes);
@@ -392,6 +383,24 @@ impl GroundCoverPass {
         self.compute.get_or_insert_with(|| compute(device));
     }
 
+    fn release(&mut self, device: &wgpu::Device) {
+        self.compute = None;
+        self.pipelines.clear();
+        self.grow_group.clear();
+        self.draw_group.clear();
+        self.capacity = 0;
+        if self.blades.size() > BLADE_BYTES {
+            engine_render::memory::release_buffer(&self.blades);
+            self.blades = blades(device);
+            self.blades_generation += 1;
+        }
+        if self.uniforms.size() > SLOT {
+            engine_render::memory::release_buffer(&self.uniforms);
+            self.uniforms = grow_uniforms(device, SLOT);
+            self.blades_generation += 1;
+        }
+    }
+
     fn specialize(&mut self, shading: &[(&'static str, f64)]) {
         match self
             .shadings
@@ -406,22 +415,11 @@ impl GroundCoverPass {
         }
     }
 
-    fn warm_cover(
-        &mut self,
-        core: &Core,
-        snapshot: &RenderSnapshot,
-        cover: GroundCover,
-        targets: Option<Targets>,
-    ) {
+    fn warm_cover(&mut self, core: &Core, snapshot: &RenderSnapshot, targets: Option<Targets>) {
         let terrains = &engine_terrain::RenderTerrains::of(snapshot).terrains;
-        if terrains.is_empty() {
-            return;
-        }
-        let grows = cover.enabled
-            && cover.density > 0.0
-            && terrains.iter().any(|terrain| {
-                !terrain.surroundings && terrain.surface.iter().any(|look| look.cover.is_some())
-            });
+        let grows = terrains.iter().any(|terrain| {
+            !terrain.surroundings && terrain.surface.iter().any(|look| look.cover.is_some())
+        });
         if grows {
             self.warm(&core.device);
             if let Some(targets) = targets {
@@ -529,6 +527,19 @@ fn lushest() -> f32 {
     COVER_LUSH_RATIO.sqrt()
 }
 
+fn blades(device: &wgpu::Device) -> engine_render::buffers::Growable {
+    engine_render::buffers::Growable::new(
+        device,
+        "engine/cover-blades",
+        BLADE_BYTES,
+        wgpu::BufferUsages::empty(),
+    )
+}
+
+fn grow_uniforms(device: &wgpu::Device, bytes: u64) -> wgpu::Buffer {
+    engine_render::buffers::uniform(device, "engine/cover-grow", bytes)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CoverLaw {
     pub(crate) span: f32,
@@ -621,7 +632,12 @@ impl GpuPart for GroundCoverPass {
         let targets = passes.opaque_kind.targets();
         let cover = snapshot.section::<GroundCover>();
         self.specialize(core.shading().constants());
-        self.warm_cover(core, snapshot, cover, targets);
+        let sanitized = cover.sanitized();
+        if sanitized.enabled && sanitized.density > 0.0 {
+            self.warm_cover(core, snapshot, targets);
+        } else {
+            self.release(&core.device);
+        }
         if !terrain.drawn() {
             return;
         }

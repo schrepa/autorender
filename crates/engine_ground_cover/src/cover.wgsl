@@ -1,6 +1,6 @@
 import package::cover::laws::{COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION};
 import package::face::cover::{COVER_FAR_SIDE, COVER_ROUGHNESS};
-import package::face::dither::{encoded, stored};
+import package::face::dither::stored;
 import package::face::lighting::{finish, local_light, widened};
 import package::face::occupancy::foliage;
 import package::face::sun::sun_direction;
@@ -252,13 +252,6 @@ fn cover_temporal_output(input: CoverTemporalOutput) -> CoverOutput {
     output.along = input.along;
     output.ground = input.ground;
     return output;
-}
-
-@fragment
-fn fs_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    let point = cover_surface(input, front);
-    return vec4<f32>(encoded(finish(point, local_light(point, input.clip_position.xy)).color,
-        input.clip_position.xy), 1.0);
 }
 
 @fragment

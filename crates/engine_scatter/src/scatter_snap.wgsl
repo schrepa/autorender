@@ -1,7 +1,7 @@
 import package::face::cover::cover_tint;
 import package::face::ground::{
-    GroundTerrain, LevelTile, NOT_RESIDENT, TerrainInfo, ground_colors, ground_extent, ground_of,
-    level_tile, macro_color, material_look, tile_height, tile_material, true_height
+    GroundTerrain, LevelTile, TerrainInfo, ground_colors, ground_extent, ground_of, ground_tile,
+    macro_color, material_look, tile_height, tile_material, true_height
 };
 import package::face::placed::{DEAD, HIDDEN, Pose, Record};
 
@@ -32,26 +32,24 @@ fn finest_ground(info: TerrainInfo, terrain: GroundTerrain, local: vec2<f32>) ->
     if any(local < vec2<f32>(0.0)) || any(local > extent) {
         return ground;
     }
-    for (var index = 0u; index < info.levels.y; index++) {
-        let samples = local / (info.origin.w * f32(1u << index));
-        let tile = level_tile(terrain, index, samples);
-        if tile.layer == NOT_RESIDENT {
-            continue;
-        }
-        let within = clamp(samples - vec2<f32>(tile.first), vec2<f32>(0.0), vec2<f32>(256.0));
-        let cell = min(vec2<u32>(within), vec2<u32>(255u));
-        let f = within - vec2<f32>(cell);
-        let corner = tile.first + cell;
-        let a = tile_height(tile, corner);
-        let b = tile_height(tile, corner + vec2<u32>(1u, 0u));
-        let c = tile_height(tile, corner + vec2<u32>(0u, 1u));
-        let d = tile_height(tile, corner + vec2<u32>(1u, 1u));
-        ground.height = mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-        ground.found = true;
-        ground.level = index;
-        ground.tile = tile;
+    let finest = ground_tile(terrain, local, 0u);
+    if !finest.found {
         return ground;
     }
+    let tile = finest.tile;
+    let samples = local / (info.origin.w * f32(1u << finest.level));
+    let within = clamp(samples - vec2<f32>(tile.first), vec2<f32>(0.0), vec2<f32>(256.0));
+    let cell = min(vec2<u32>(within), vec2<u32>(255u));
+    let f = within - vec2<f32>(cell);
+    let corner = tile.first + cell;
+    let a = tile_height(tile, corner);
+    let b = tile_height(tile, corner + vec2<u32>(1u, 0u));
+    let c = tile_height(tile, corner + vec2<u32>(0u, 1u));
+    let d = tile_height(tile, corner + vec2<u32>(1u, 1u));
+    ground.height = mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+    ground.found = true;
+    ground.level = finest.level;
+    ground.tile = tile;
     return ground;
 }
 

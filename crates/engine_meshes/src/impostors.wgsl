@@ -1,6 +1,6 @@
 import package::engine::math::maximum_abs;
 import package::engine::wind::slot_sway;
-import package::face::dither::{encoded, stored};
+import package::face::dither::stored;
 import package::face::lighting::{finish, local_light, widened};
 import package::face::sun::sun_direction;
 import package::face::surface_point::{BODY_SOLID, BODY_THIN, SurfacePoint};
@@ -555,16 +555,6 @@ fn shade_impostor(input: ImpostorOutput) -> ImpostorShaded {
     return impostor_shaded(input, point, local_light(point, input.clip_position.xy));
 }
 
-struct ImpostorColor {
-    @location(0) color: vec4<f32>,
-    @builtin(frag_depth) depth: f32,
-}
-
-fn impostor_color(shaded: ImpostorShaded, input: ImpostorOutput) -> ImpostorColor {
-    return ImpostorColor(vec4<f32>(encoded(shaded.shaded.color, input.clip_position.xy), 1.0),
-        shaded.depth);
-}
-
 fn impostor_scene_targets(shaded: ImpostorShaded, input: ImpostorOutput)
         -> DepthSceneTargets {
     let targets = scene_targets(shaded.shaded,
@@ -578,11 +568,6 @@ fn impostor_temporal_targets(shaded: ImpostorShaded, input: ImpostorTemporalOutp
         stored(shaded.shaded.color, input.clip_position.xy), input.clip_position, input.previous);
     return DepthTemporalTargets(targets.color, targets.motion, targets.glow, targets.surface,
         shaded.depth);
-}
-
-@fragment
-fn fs_impostor(input: ImpostorOutput) -> ImpostorColor {
-    return impostor_color(shade_impostor(input), input);
 }
 
 @fragment

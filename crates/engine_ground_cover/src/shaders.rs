@@ -13,7 +13,6 @@ engine_render::entry_points! {
     cover {
         vertex: [vs_cover @ "cover::draw", vs_cover_temporal @ "cover::draw"],
         fragment: [
-            fs_cover @ "cover::draw",
             fs_cover_post @ "cover::draw",
             fs_cover_temporal @ "cover::draw",
             fs_debug_cover @ "cover::debug",
@@ -26,7 +25,6 @@ engine_render::entry_points! {
 
 pub(crate) fn cover(targets: Targets) -> (Entry, Entry) {
     match targets {
-        Targets::Canvas => (entry::cover::vs_cover, entry::cover::fs_cover),
         Targets::Post => (entry::cover::vs_cover, entry::cover::fs_cover_post),
         Targets::Temporal => (
             entry::cover::vs_cover_temporal,

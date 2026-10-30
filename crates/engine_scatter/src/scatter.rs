@@ -172,11 +172,64 @@ struct LeftOut {
     readback: ReadbackRing<()>,
 }
 
+const BUFFERS: [(&str, u64, wgpu::BufferUsages); 11] = [
+    (
+        "engine/scatter-terrains",
+        size_of::<TerrainInfo>() as u64,
+        wgpu::BufferUsages::empty(),
+    ),
+    (
+        "engine/scatter-views",
+        size_of::<ViewData>() as u64,
+        wgpu::BufferUsages::empty(),
+    ),
+    ("engine/scatter-records", 32, wgpu::BufferUsages::empty()),
+    ("engine/scatter-groups", 32, wgpu::BufferUsages::empty()),
+    ("engine/scatter-ids", 16, wgpu::BufferUsages::VERTEX),
+    ("engine/scatter-draws", 20, wgpu::BufferUsages::INDIRECT),
+    (
+        "engine/scatter-poses",
+        size_of::<PoseData>() as u64,
+        wgpu::BufferUsages::empty(),
+    ),
+    (
+        "engine/scatter-colors",
+        size_of::<ColorData>() as u64,
+        wgpu::BufferUsages::empty(),
+    ),
+    (
+        "engine/scatter-grounds",
+        size_of::<GroundData>() as u64,
+        wgpu::BufferUsages::empty(),
+    ),
+    ("engine/scatter-cards", 8, wgpu::BufferUsages::VERTEX),
+    (
+        "engine/scatter-card-args",
+        16,
+        wgpu::BufferUsages::INDIRECT.union(wgpu::BufferUsages::COPY_SRC),
+    ),
+];
+
+fn buffers(device: &wgpu::Device) -> [Growable; 11] {
+    BUFFERS.map(|(label, bytes, extra)| Growable::new(device, label, bytes, extra))
+}
+
 impl ScatterPass {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
         let _owner = engine_render::memory::owned(PART.decl.brick);
-        let growable =
-            |label, bytes| Growable::new(device, label, bytes, wgpu::BufferUsages::empty());
+        let [
+            terrains,
+            views,
+            records,
+            groups,
+            ids,
+            draws,
+            poses,
+            colors,
+            grounds,
+            cards,
+            card_args,
+        ] = buffers(device);
         let regions_placeholder = engine_render::targets::texture_2d(
             device,
             "engine/scatter-regions-placeholder",
@@ -201,7 +254,7 @@ impl ScatterPass {
                 "engine/scatter-snap",
                 size_of::<crate::gpu_layouts::SnapUniform>() as u64,
             ),
-            terrains: growable("engine/scatter-terrains", size_of::<TerrainInfo>() as u64),
+            terrains,
             snap_group: Cached::default(),
             snapping: false,
             snapped: None,
@@ -212,31 +265,16 @@ impl ScatterPass {
                 "engine/scatter-frame",
                 size_of::<FrameUniform>() as u64,
             ),
-            views: growable("engine/scatter-views", size_of::<ViewData>() as u64),
-            records: growable("engine/scatter-records", 32),
-            groups: growable("engine/scatter-groups", 32),
-            ids: Growable::new(device, "engine/scatter-ids", 16, wgpu::BufferUsages::VERTEX),
-            draws: Growable::new(
-                device,
-                "engine/scatter-draws",
-                20,
-                wgpu::BufferUsages::INDIRECT,
-            ),
-            poses: growable("engine/scatter-poses", size_of::<PoseData>() as u64),
-            colors: growable("engine/scatter-colors", size_of::<ColorData>() as u64),
-            grounds: growable("engine/scatter-grounds", size_of::<GroundData>() as u64),
-            cards: Growable::new(
-                device,
-                "engine/scatter-cards",
-                8,
-                wgpu::BufferUsages::VERTEX,
-            ),
-            card_args: Growable::new(
-                device,
-                "engine/scatter-card-args",
-                16,
-                wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_SRC,
-            ),
+            views,
+            records,
+            groups,
+            ids,
+            draws,
+            poses,
+            colors,
+            grounds,
+            cards,
+            card_args,
             generation: 0,
             cull_group: Cached::default(),
             pose_groups: Cached::default(),
@@ -441,6 +479,43 @@ impl ScatterPass {
         self.pipeline.get_or_insert_with(|| pipeline(device));
         self.snap_pipeline
             .get_or_insert_with(|| snap_pipeline(device));
+    }
+
+    pub(crate) fn release(&mut self, device: &wgpu::Device) {
+        if matches!(
+            (self.pipeline.take(), self.snap_pipeline.take()),
+            (None, None)
+        ) {
+            return;
+        }
+        self.cull_group.clear();
+        self.pose_groups.clear();
+        self.shadow_group.clear();
+        self.snap_group.clear();
+        self.snapped = None;
+        self.snapping = false;
+        for (held, fresh) in self.buffers_mut().into_iter().zip(buffers(device)) {
+            engine_render::memory::release_buffer(held);
+            *held = fresh;
+        }
+        self.generation += 1;
+        self.terrains_generation += 1;
+    }
+
+    fn buffers_mut(&mut self) -> [&mut Growable; 11] {
+        [
+            &mut self.terrains,
+            &mut self.views,
+            &mut self.records,
+            &mut self.groups,
+            &mut self.ids,
+            &mut self.draws,
+            &mut self.poses,
+            &mut self.colors,
+            &mut self.grounds,
+            &mut self.cards,
+            &mut self.card_args,
+        ]
     }
 
     pub(crate) fn prepare(

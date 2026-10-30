@@ -324,6 +324,7 @@ pub(crate) struct OccupancyPass {
     sampler: wgpu::Sampler,
     share: f32,
     canopy: CanopyPiece,
+    on: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -355,19 +356,9 @@ impl OccupancyPass {
             pipelines: None,
             uniforms: Vec::new(),
             draws: Vec::new(),
-            covers: Growable::new(
-                device,
-                "engine/occupancy-covers",
-                size_of::<Cover>() as u64,
-                wgpu::BufferUsages::empty(),
-            ),
+            covers: cover_buffer(device),
             covers_written: Vec::new(),
-            listed: Growable::new(
-                device,
-                "engine/occupancy-listed",
-                size_of::<u32>() as u64,
-                wgpu::BufferUsages::empty(),
-            ),
+            listed: listed_buffer(device),
             targets,
             views,
             layers,
@@ -395,6 +386,7 @@ impl OccupancyPass {
             }),
             share: 0.0,
             canopy: CanopyPiece::default(),
+            on: false,
         }
     }
 
@@ -416,7 +408,11 @@ impl OccupancyPass {
     ) -> Option<Lit> {
         self.pending.fill(false);
         self.averaging.fill(false);
-        if !settings.enabled || settings.strength <= 0.0 || slots == 0 || covers.is_empty() {
+        if !runs(settings) {
+            self.release(device);
+            return None;
+        }
+        if slots == 0 || covers.is_empty() {
             self.windows.clear();
             return None;
         }
@@ -603,6 +599,32 @@ impl OccupancyPass {
         }
     }
 
+    fn release(&mut self, device: &wgpu::Device) {
+        self.windows.clear();
+        self.pipelines = None;
+        if self.uniforms.is_empty() {
+            return;
+        }
+        for buffer in self.uniforms.drain(..).chain(self.draws.drain(..)) {
+            engine_render::memory::release_buffer(&buffer);
+        }
+        self.groups.clear();
+        self.select_groups.clear();
+        self.dirty.clear();
+        self.pending.clear();
+        self.averaging.clear();
+        self.covers_written.clear();
+        for target in &self.targets {
+            engine_render::memory::release_any(target);
+        }
+        (self.targets, self.views, self.layers) = targets(device, 1, 1);
+        for buffer in [&self.covers, &self.listed] {
+            engine_render::memory::release_buffer(buffer);
+        }
+        self.covers = cover_buffer(device);
+        self.listed = listed_buffer(device);
+    }
+
     fn prepare_maps(
         &mut self,
         device: &wgpu::Device,
@@ -739,6 +761,28 @@ impl OccupancyPass {
     }
 }
 
+fn runs(settings: &Occupancy) -> bool {
+    settings.enabled && settings.strength > 0.0
+}
+
+fn cover_buffer(device: &wgpu::Device) -> Growable {
+    Growable::new(
+        device,
+        "engine/occupancy-covers",
+        size_of::<Cover>() as u64,
+        wgpu::BufferUsages::empty(),
+    )
+}
+
+fn listed_buffer(device: &wgpu::Device) -> Growable {
+    Growable::new(
+        device,
+        "engine/occupancy-listed",
+        size_of::<u32>() as u64,
+        wgpu::BufferUsages::empty(),
+    )
+}
+
 fn cells(window: Window) -> impl Iterator<Item = [i32; 2]> {
     (0..SIDE).flat_map(move |row| {
         (0..SIDE).map(move |column| [window.origin[0] + column, window.origin[1] + row])
@@ -793,13 +837,13 @@ impl GpuPart for OccupancyPass {
 
     fn shading(&self, snapshot: &RenderSnapshot, shading: &mut Shading) {
         let occupancy = snapshot.section::<Occupancy>();
-        let on = occupancy.enabled && occupancy.strength > 0.0;
-        shading.set("OCCUPANCY", if on { 1.0 } else { 0.0 });
+        shading.set("OCCUPANCY", if runs(&occupancy) { 1.0 } else { 0.0 });
     }
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         let snapshot = cx.frame.snapshot;
         let settings = snapshot.section::<Occupancy>();
+        self.on = runs(&settings);
         let scatter = cx.parts.face::<dyn PlacedCovers>();
         let placed = (
             scatter.map_or(&[][..], |scatter| scatter.covers()),
@@ -826,9 +870,7 @@ impl GpuPart for OccupancyPass {
         let snapshot = cx.frame.snapshot;
         let device = &cx.core.device;
         let terrains = &engine_terrain::RenderTerrains::of(snapshot).terrains;
-        if terrains.iter().any(|terrain| !terrain.assets.is_empty())
-            && snapshot.section::<Occupancy>().enabled
-        {
+        if self.on && terrains.iter().any(|terrain| !terrain.assets.is_empty()) {
             self.warm(device);
         }
         let Some(scatter) = cx.parts.face::<dyn PlacedFace>() else {

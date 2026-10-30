@@ -14,8 +14,6 @@ pub(crate) static ENTRIES: MeshEntries = MeshEntries {
 
 fn fragment(kind: PassKind, extended: bool) -> Entry {
     match (kind.pass, extended) {
-        (MeshPass::Opaque(Targets::Canvas), false) => meshes::fs_main,
-        (MeshPass::Opaque(Targets::Canvas), true) => meshes::fs_main_extended,
         (MeshPass::Opaque(Targets::Post), false) => meshes::fs_post,
         (MeshPass::Opaque(Targets::Post), true) => meshes::fs_post_extended,
         (MeshPass::Opaque(Targets::Temporal), false) => meshes::fs_temporal,
@@ -28,19 +26,17 @@ fn fragment(kind: PassKind, extended: bool) -> Entry {
 
 fn prepass(kind: PassKind, extended: bool) -> Entry {
     match (kind.targets(), extended) {
-        (Some(Targets::Debug), _) | (Some(Targets::Canvas | Targets::Post) | None, true) => {
+        (Some(Targets::Debug), _) | (Some(Targets::Post) | None, true) => {
             meshes::fs_masked_depth_extended
         }
         (Some(Targets::Temporal), true) => meshes::fs_masked_depth_temporal_extended,
-        (Some(Targets::Canvas | Targets::Post | Targets::Temporal) | None, false) => {
-            meshes::fs_masked_depth
-        }
+        (Some(Targets::Post | Targets::Temporal) | None, false) => meshes::fs_masked_depth,
     }
 }
 
 fn card_vertex(targets: Targets) -> Entry {
     match targets {
-        Targets::Canvas | Targets::Post => meshes::vs_impostor,
+        Targets::Post => meshes::vs_impostor,
         Targets::Temporal => meshes::vs_impostor_temporal,
         Targets::Debug => meshes::vs_debug_impostor,
     }
@@ -48,7 +44,6 @@ fn card_vertex(targets: Targets) -> Entry {
 
 fn card_fragment(targets: Targets) -> Entry {
     match targets {
-        Targets::Canvas => meshes::fs_impostor,
         Targets::Post => meshes::fs_impostor_post,
         Targets::Temporal => meshes::fs_impostor_temporal,
         Targets::Debug => meshes::fs_debug_impostor,
