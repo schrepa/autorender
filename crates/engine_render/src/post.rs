@@ -8,7 +8,7 @@ use engine_core::{RenderSnapshot, glam::Mat4};
 
 use crate::bindings::{GroupRef, POST};
 use crate::cached::Bound;
-use crate::composite::{PLAIN_RESOLVE, composite_entry, composites, pixel_effects};
+use crate::composite::{PLAIN_RESOLVE, composite_entry, effect_reads, pixel_effects};
 use crate::gpu_data::PostUniform;
 use crate::graph::{
     Access, BLACK, Clear, FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl,
@@ -22,16 +22,15 @@ use crate::pipeline_layouts::{POST_PIPELINES, PipelineLayout};
 use crate::pipelines::{self, Fullscreen, fullscreen};
 use crate::profiling::Span;
 use crate::renderer::Core;
-use crate::screen_effects::{Effects, targets_read};
+use crate::screen_effects::Effects;
 use crate::targets::{FrameRegion, FrameSize, ScreenTarget};
 
 pub const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 pub const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
 pub const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Uint;
 pub const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
-pub const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
-const COMPOSITED: [&str; 5] = ["scene", "glow", "occlusion", "reflections", "surface"];
+const COMPOSITED: [&str; 4] = ["scene", "glow", "occlusion", "surface"];
 const fn per_frame(name: &'static str) -> ResourceDecl {
     ResourceDecl {
         name,
@@ -52,7 +51,6 @@ pub static PART: PartEntry = PartEntry {
             per_frame("glow"),
             per_frame("surface"),
             per_frame("occlusion"),
-            per_frame("reflections"),
             per_frame("motion"),
             per_frame("debug_ids"),
             per_frame("debug_count"),
@@ -80,9 +78,6 @@ struct Ids {
     canvas: Option<ResourceId>,
     scene: Option<ResourceId>,
     occlusion: Option<ResourceId>,
-    reflections: Option<ResourceId>,
-    haze: Option<ResourceId>,
-    bloom: Option<ResourceId>,
 }
 
 #[derive(Default)]
@@ -90,6 +85,7 @@ pub struct PostPass {
     post: Lazy<Post>,
     frame: Option<Effects>,
     ids: Ids,
+    reads: Vec<&'static str>,
     linked: bool,
 }
 
@@ -118,18 +114,6 @@ impl PostPass {
     pub fn uniform(&self) -> Option<Bound<'_>> {
         let post = self.post.get()?;
         Some(Bound::fixed(post.uniform.as_entire_binding()))
-    }
-
-    pub fn resolve_inputs(&self) -> Option<([Bound<'_>; 3], Bound<'_>)> {
-        let post = self.post.get()?;
-        Some((
-            [
-                self.target("scene")?,
-                self.target("occlusion")?,
-                self.target("reflections")?,
-            ],
-            Bound::fixed(post.uniform.as_entire_binding()),
-        ))
     }
 
     fn found(&self, resource: &str) -> Option<(u64, &wgpu::TextureView)> {
@@ -183,9 +167,6 @@ impl GpuPart for PostPass {
             canvas: table.resource("canvas"),
             scene: table.resource("scene"),
             occlusion: table.resource("occlusion"),
-            reflections: table.resource("reflections"),
-            haze: table.resource("haze"),
-            bloom: table.resource("bloom"),
         };
         self.linked = false;
     }
@@ -195,14 +176,9 @@ impl GpuPart for PostPass {
             return;
         }
         self.linked = true;
-        let device = &cx.core.device;
-        if let Ok(made) = composites(&pixel_effects(cx.parts)) {
-            for (path, brick, source) in made {
-                pipelines::add_generated(device, path, brick, source);
-            }
-        }
+        self.reads = effect_reads(&pixel_effects(cx.parts)).collect();
         if let Some(post) = self.post.get_mut() {
-            post.composite = composite_pipeline(device, cx.core.canvas_format());
+            post.composite = composite_pipeline(&cx.core.device, cx.core.canvas_format());
         }
     }
 
@@ -213,38 +189,24 @@ impl GpuPart for PostPass {
             self.frame = None;
             return;
         }
-        let snapshot = cx.frame.snapshot;
+        let effects = Effects::of(cx.frame.snapshot);
         let region = core.display.region;
-        let effects = Effects::of(snapshot);
-        let needs =
-            cx.frame.temporal.is_some() || targets_read(snapshot, effects) || region.upscales();
-        self.frame = if needs {
-            let format = core.canvas_format();
-            self.post
-                .create(device, "engine/post-", || Post::new(device, format));
-            self.post.get_mut().map(|post| {
-                post.begin(device, region.display);
-                effects
-            })
-        } else {
-            None
-        };
-        if !needs && let Some(post) = self.post.get_mut() {
-            post.release_targets();
-        }
+        let format = core.canvas_format();
+        self.post
+            .create(device, "engine/post-", || Post::new(device, format));
+        self.frame = self.post.get_mut().map(|post| {
+            post.begin(device, region.display);
+            effects
+        });
     }
 
     fn finish(&mut self, cx: &mut Step<'_>) {
         let (Some(gates), Some(post)) = (self.frame, self.post.get_mut()) else {
             return;
         };
-        let ids = self.ids;
-        let occluded = cx.parts.produces(ids.occlusion);
+        let occluded = cx.parts.produces(self.ids.occlusion);
         let shown = Effects {
             occlusion: gates.occlusion && occluded,
-            bloom: gates.bloom && cx.parts.produces(ids.bloom),
-            reflections: gates.reflections && cx.parts.produces(ids.reflections),
-            haze: gates.haze && cx.parts.produces(ids.haze),
             sky: gates.sky && occluded,
         };
         post.write_uniform(
@@ -263,14 +225,14 @@ impl GpuPart for PostPass {
         if shape.targets == crate::graph::Targets::Post
             && let (Some(pass), Some(canvas)) = (ids.composite_pass, ids.canvas)
         {
-            let _ = graph
+            let mut composite = graph
                 .add(cx.table, pass)
                 .read(ids.scene)
-                .read_written(ids.occlusion)
-                .read_written(ids.reflections)
-                .read_written(ids.haze)
-                .read_written(ids.bloom)
-                .color(canvas, Access::Clear(Clear::Color(BLACK)));
+                .read_written(ids.occlusion);
+            for &name in &self.reads {
+                composite = composite.read_written(cx.table.resource(name));
+            }
+            let _ = composite.color(canvas, Access::Clear(Clear::Color(BLACK)));
         }
     }
 
@@ -345,7 +307,7 @@ impl<const N: usize> Drop for Made<N> {
 }
 
 struct Targets {
-    made: Made<5>,
+    made: Made<4>,
     composite: wgpu::BindGroup,
 }
 
@@ -384,14 +346,10 @@ impl Post {
         }
     }
 
-    fn release_targets(&mut self) {
-        self.targets.release();
-    }
-
     fn capacity_bytes(&self) -> u64 {
         self.targets.size().map_or(0, |size| {
             let pixels = u64::from(size.width) * u64::from(size.height);
-            pixels * 20
+            pixels * 16
         })
     }
 
@@ -425,9 +383,6 @@ impl Post {
             size: [width, height, 1.0 / width, 1.0 / height],
             extent: [wide, tall, 1.0 / wide, 1.0 / tall],
             occlusion: effects.occlusion,
-            bloom: effects.bloom,
-            reflections: effects.reflections,
-            haze: effects.haze,
             previous_view_projection: view_projection.to_cols_array_2d(),
             previous_eye: snapshot.camera_position.extend(0.0).to_array(),
             sky: effects.sky,
@@ -478,10 +433,9 @@ impl Post {
             ),
             texture("engine/post-glow", GLOW_FORMAT),
             texture("engine/post-occlusion", OCCLUSION_FORMAT),
-            texture("engine/post-reflections", REFLECTION_FORMAT),
             texture("engine/post-surface", SURFACE_FORMAT),
         ];
-        let [scene, glow, occlusion, reflections, surface] = &textures;
+        let [scene, glow, occlusion, surface] = &textures;
         let whole = wgpu::TextureViewDescriptor::default();
         let views = [
             scene.create_view(&wgpu::TextureViewDescriptor {
@@ -491,7 +445,6 @@ impl Post {
             }),
             glow.create_view(&whole),
             occlusion.create_view(&whole),
-            reflections.create_view(&whole),
             surface.create_view(&whole),
         ];
         let made = Made {
@@ -510,7 +463,6 @@ impl Post {
                 ("scene", view("scene")),
                 ("occlusion", view("occlusion")),
                 ("linear", pipelines::sampler(&self.sampler)),
-                ("reflections", view("reflections")),
             ],
         );
         Targets { made, composite }

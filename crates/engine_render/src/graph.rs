@@ -175,7 +175,6 @@ pub struct Ops {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Targets {
-    Canvas,
     Post,
     Temporal,
     Debug,
@@ -185,7 +184,6 @@ pub enum Targets {
 pub struct FrameShape {
     pub gpu: bool,
     pub targets: Targets,
-    pub canvas_clear: [f64; 4],
     pub phases: u8,
     pub deferred: bool,
 }

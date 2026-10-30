@@ -1,20 +1,4 @@
-use engine_core::{
-    AmbientOcclusion, AutoExposure, Bloom, Haze, Reflections, RenderSnapshot, Shadows, Sky,
-    SkyLighting, SkyOcclusion,
-};
-
-pub fn haze_runs(snapshot: &RenderSnapshot) -> bool {
-    let haze = snapshot.section::<Haze>();
-    let sky_light = snapshot.section::<SkyLighting>().values();
-    let fog = !snapshot.section::<Sky>().enabled
-        && sky_light.fog_density > 0.0
-        && sky_light.fog_max > 0.0;
-    haze.enabled && haze.reach > 0.0 && (haze.strength > 0.0 || fog)
-}
-
-pub(crate) fn targets_read(snapshot: &RenderSnapshot, effects: Effects) -> bool {
-    effects.any() || snapshot.section::<AutoExposure>().enabled
-}
+use engine_core::{AmbientOcclusion, RenderSnapshot, Shadows, SkyOcclusion};
 
 macro_rules! screen_effects {
     ($(
@@ -43,10 +27,6 @@ macro_rules! screen_effects {
                 }
             }
 
-            pub(crate) fn any(self) -> bool {
-                false $(|| self.$effect)*
-            }
-
             pub(crate) fn uniforms(self, snapshot: &RenderSnapshot) -> EffectUniforms {
                 EffectUniforms {
                     $($effect: {
@@ -69,21 +49,6 @@ screen_effects! {
             let occlusion = snapshot.section::<AmbientOcclusion>();
             [occlusion.radius, occlusion.intensity, 0.0, on]
         },
-    },
-    bloom {
-        gate: |snapshot| snapshot.section::<Bloom>().enabled(),
-        uniform: |snapshot, on| [snapshot.section::<Bloom>().intensity, on, 0.0, 0.0],
-    },
-    reflections {
-        gate: |snapshot| snapshot.section::<Reflections>().enabled(),
-        uniform: |snapshot, on| {
-            let reflections = snapshot.section::<Reflections>();
-            [reflections.distance, reflections.intensity, on, 0.0]
-        },
-    },
-    haze {
-        gate: |snapshot| haze_runs(snapshot),
-        uniform: |_snapshot, on| [0.0, 0.0, 0.0, on],
     },
     sky {
         gate: |snapshot| {

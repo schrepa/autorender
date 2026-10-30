@@ -192,7 +192,6 @@ tables! {
             texture("scene", Float, D2, F),
             texture("occlusion", Float, D2, F),
             sampler("linear", Filtering, F),
-            texture("reflections", Float, D2, F),
         ],
     };
 

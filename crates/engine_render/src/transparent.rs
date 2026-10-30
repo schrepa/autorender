@@ -14,7 +14,7 @@ use crate::parts::{
     CORE_BRICK, Create, DrawAt, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View,
 };
 use crate::pipeline_layouts::TRANSPARENT_COMPOSITE_PIPELINES;
-use crate::post::{PostPass, shared_groups};
+use crate::post::shared_groups;
 use crate::profiling::Span;
 use crate::shaders::entry::transparent;
 use crate::targets::{FrameSize, ScreenTarget};
@@ -112,23 +112,17 @@ impl Drop for Targets {
 
 struct TransparentPass {
     layout: crate::pipelines::GroupLayout,
-    composite: [Option<wgpu::RenderPipeline>; 2],
-    surface_format: wgpu::TextureFormat,
+    composite: Option<wgpu::RenderPipeline>,
     depth_format: wgpu::TextureFormat,
     targets: ScreenTarget<Targets>,
 }
 
 impl TransparentPass {
-    fn new(
-        device: &wgpu::Device,
-        surface_format: wgpu::TextureFormat,
-        depth_format: wgpu::TextureFormat,
-    ) -> Self {
+    fn new(device: &wgpu::Device, depth_format: wgpu::TextureFormat) -> Self {
         let layout = crate::pipelines::layout(device, &TRANSPARENT_COMPOSITE);
         Self {
             layout,
-            composite: Default::default(),
-            surface_format,
+            composite: None,
             depth_format,
             targets: ScreenTarget::default(),
         }
@@ -192,9 +186,8 @@ impl TransparentPass {
         Some([&targets.accumulated, &targets.revealed])
     }
 
-    fn ensure_composite(&mut self, device: &wgpu::Device, post: bool) {
-        let index = usize::from(post);
-        if self.composite[index].is_some() {
+    fn ensure_composite(&mut self, device: &wgpu::Device) {
+        if self.composite.is_some() {
             return;
         }
         let over = wgpu::BlendState {
@@ -209,33 +202,27 @@ impl TransparentPass {
                 operation: wgpu::BlendOperation::Add,
             },
         };
-        let format = if post {
-            crate::post::SCENE_FORMAT
-        } else {
-            self.surface_format
-        };
-        let mut targets = vec![Some(wgpu::ColorTargetState {
-            format,
-            blend: Some(over),
-            write_mask: wgpu::ColorWrites::ALL,
-        })];
-        if post {
-            targets.push(Some(wgpu::ColorTargetState {
+        let targets = [
+            Some(wgpu::ColorTargetState {
+                format: crate::post::SCENE_FORMAT,
+                blend: Some(over),
+                write_mask: wgpu::ColorWrites::ALL,
+            }),
+            Some(wgpu::ColorTargetState {
                 format: crate::post::GLOW_FORMAT,
                 blend: None,
                 write_mask: wgpu::ColorWrites::empty(),
-            }));
-        }
-        let constants = [("TARGET_IS_SRGB", if format.is_srgb() { 1.0 } else { 0.0 })];
+            }),
+        ];
         let pipeline_layout = crate::pipelines::layout_of(device, &TRANSPARENT_COMPOSITE_PIPELINES);
-        self.composite[index] = Some(crate::pipelines::fullscreen(
+        self.composite = Some(crate::pipelines::fullscreen(
             device,
             &crate::pipelines::Fullscreen {
                 label: "engine/transparent-composite",
                 layout: &pipeline_layout,
                 vertex: transparent::vs_fullscreen,
                 fragment: composite_entry(COMPOSITE_MODULE),
-                constants: &constants,
+                constants: &[],
                 targets: &targets,
                 depth: Some(wgpu::DepthStencilState {
                     format: self.depth_format,
@@ -248,14 +235,9 @@ impl TransparentPass {
         ));
     }
 
-    fn composite(
-        &self,
-        pass: &mut wgpu::RenderPass<'_>,
-        post: bool,
-        shared: &[(u32, &wgpu::BindGroup)],
-    ) {
+    fn composite(&self, pass: &mut wgpu::RenderPass<'_>, shared: &[(u32, &wgpu::BindGroup)]) {
         let targets = self.targets.get().expect("sized_in_begin");
-        pass.set_pipeline(self.composite[usize::from(post)].as_ref().expect("ensured"));
+        pass.set_pipeline(self.composite.as_ref().expect("ensured"));
         pass.set_bind_group(0, &targets.group, &[]);
         for &(index, group) in shared {
             pass.set_bind_group(index, group, &[]);
@@ -313,7 +295,7 @@ impl GpuPart for Transparency {
             glow: table.resource("glow"),
         };
         if let Some(surfaces) = self.surfaces.as_mut() {
-            surfaces.composite = Default::default();
+            surfaces.composite = None;
         }
     }
 
@@ -332,19 +314,18 @@ impl GpuPart for Transparency {
             }
             return;
         }
-        let post = cx.parts.post().is_some_and(PostPass::active);
         let core = &*cx.core;
         let device = &core.device;
-        let (surface_format, depth_format) = (core.canvas_format(), core.depth.texture.format());
+        let depth_format = core.depth.texture.format();
         let surfaces = self
             .surfaces
-            .get_or_insert_with(|| TransparentPass::new(device, surface_format, depth_format));
+            .get_or_insert_with(|| TransparentPass::new(device, depth_format));
         surfaces.begin(device, core.display.region.display);
-        surfaces.ensure_composite(device, post);
+        surfaces.ensure_composite(device);
     }
 
     fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
-        let (true, Some(shape)) = (self.drawn, cx.frame.shape) else {
+        let (true, Some(_)) = (self.drawn, cx.frame.shape) else {
             return;
         };
         let ids = self.ids;
@@ -362,20 +343,16 @@ impl GpuPart for Transparency {
             .color(accumulated, Access::Clear(Clear::Color(TRANSPARENT)))
             .color(revealed, Access::Clear(Clear::Color(WHITE)))
             .depth(depth, Access::ReadOnly);
-        let Some(scene) = crate::parts::scene_target(cx.table, &shape) else {
+        let (Some(scene), Some(glow)) = (ids.scene, ids.glow) else {
             return;
         };
-        let mut node = graph
+        let _ = graph
             .add(cx.table, composite)
             .read(accumulated)
             .read(revealed)
-            .color(scene, Access::Load);
-        if Some(scene) == ids.scene
-            && let Some(glow) = ids.glow
-        {
-            node = node.color(glow, Access::Load);
-        }
-        let _ = node.depth(depth, Access::ReadOnly);
+            .color(scene, Access::Load)
+            .color(glow, Access::Load)
+            .depth(depth, Access::ReadOnly);
     }
 
     fn encode(
@@ -389,7 +366,6 @@ impl GpuPart for Transparency {
         };
         let targets = shape.targets;
         if pass == COMPOSITE_PASS {
-            let post = targets != crate::graph::Targets::Canvas;
             let mut render = cx.render_pass(
                 encoder,
                 "engine/transparent-composite",
@@ -400,7 +376,6 @@ impl GpuPart for Transparency {
             );
             self.surfaces().composite(
                 &mut render,
-                post,
                 &shared_groups(cx.core, &TRANSPARENT_COMPOSITE_PIPELINES),
             );
             let _ = cx.draw_hook(

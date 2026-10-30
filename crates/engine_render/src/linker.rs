@@ -184,6 +184,16 @@ impl Linker {
         }
     }
 
+    pub fn answered(&self) -> BTreeMap<String, &'static str> {
+        self.face_needs()
+            .into_iter()
+            .filter_map(|need| {
+                let brick = self.module_brick(&crate::faces::face_module(&need.face))?;
+                Some((need.face, brick))
+            })
+            .collect()
+    }
+
     pub fn add_generated(&mut self, path: String, brick: &'static str, source: String) -> bool {
         if self
             .sources
