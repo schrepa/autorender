@@ -1236,7 +1236,10 @@ fn scene(
         heightmap["attribution"] = json!(attribution);
     }
     let environment = json!({
-        "atmosphere": {"preset": "golden_hour"},
+        "sun": {"preset": "golden_hour"},
+        "sky_light": {"preset": "golden_hour"},
+        "surface_light": {"preset": "golden_hour"},
+        "grading": {"preset": "golden_hour"},
     });
     let tiles = (size / 256.0) as u32;
     let mut layers = vec![heightmap];

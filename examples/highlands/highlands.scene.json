@@ -3664,7 +3664,6 @@
     }
   ],
   "environment": {
-    "atmosphere": {},
     "auto_exposure": {},
     "clouds": {
       "base": 1500.0,
@@ -3712,55 +3711,83 @@
   "looks": [
     {
       "environment": {
-        "atmosphere": {},
+        "grading": {},
         "local_lights": {
           "distance": 220.0,
           "intensity": 0.35
-        }
+        },
+        "sky_light": {},
+        "sun": {},
+        "surface_light": {}
       },
       "name": "golden"
     },
     {
       "environment": {
-        "atmosphere": {
+        "grading": {
           "preset": "dusk"
         },
         "local_lights": {
           "distance": 220.0,
           "intensity": 0.8
+        },
+        "sky_light": {
+          "preset": "dusk"
+        },
+        "sun": {
+          "preset": "dusk"
+        },
+        "surface_light": {
+          "preset": "dusk"
         }
       },
       "name": "dusk"
     },
     {
       "environment": {
-        "atmosphere": {
+        "grading": {
           "preset": "night"
         },
         "local_lights": {
           "distance": 220.0
+        },
+        "sky_light": {
+          "preset": "night"
+        },
+        "sun": {
+          "preset": "night"
+        },
+        "surface_light": {
+          "preset": "night"
         }
       },
       "name": "night"
     },
     {
       "environment": {
-        "atmosphere": {
+        "grading": {
           "preset": "day"
         },
         "local_lights": {
           "distance": 220.0,
           "intensity": 0.0
+        },
+        "sky_light": {
+          "preset": "day"
+        },
+        "sun": {
+          "preset": "day"
+        },
+        "surface_light": {
+          "preset": "day"
         }
       },
       "name": "day"
     },
     {
       "environment": {
-        "atmosphere": {
-          "ambient": 1.0,
+        "grading": {
           "contrast": 1.1,
-          "emission": 0.5,
           "exposure": 1.0,
           "highlight_tint": [
             1.04,
@@ -3768,7 +3795,6 @@
             0.96
           ],
           "preset": "day",
-          "rim": 0.2,
           "saturation": 1.05,
           "shadow_tint": [
             0.95,
@@ -3782,6 +3808,18 @@
           "intensity": 0.5
         },
         "sky": {},
+        "sky_light": {
+          "ambient": 1.0,
+          "preset": "day"
+        },
+        "sun": {
+          "preset": "day"
+        },
+        "surface_light": {
+          "emission": 0.5,
+          "preset": "day",
+          "rim": 0.2
+        },
         "time_of_day": {
           "hours": 16.5,
           "latitude": 42.0,

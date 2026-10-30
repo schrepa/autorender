@@ -18,6 +18,7 @@ impl Brick for LightingModelBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .settings::<engine_core::SurfaceLight>()
             .settings::<engine_core::Highlights>()
             .render_part(&part::PART)
             .shaders(shaders::MODULES)

@@ -36,7 +36,22 @@ pub fn build() -> engine::Result<(Engine, Template)> {
         .app
         .add_bricks(engine::bricks::standard())
         .add_plugins((FlyCameraPlugin, TemplatePlugin))
-        .insert_resource(Atmosphere::day());
+        .insert_resource(Sunlight {
+            preset: LightPreset::Day,
+            ..Sunlight::default()
+        })
+        .insert_resource(SkyLighting {
+            preset: LightPreset::Day,
+            ..SkyLighting::default()
+        })
+        .insert_resource(SurfaceLight {
+            preset: LightPreset::Day,
+            ..SurfaceLight::default()
+        })
+        .insert_resource(Grading {
+            preset: LightPreset::Day,
+            ..Grading::default()
+        });
     let world = engine.app.world_mut();
     world.spawn((
         Transform {

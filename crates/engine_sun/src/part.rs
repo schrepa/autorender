@@ -1,3 +1,4 @@
+use engine_core::Sunlight;
 use engine_faces::sun::{Sun, SunFace};
 use engine_render::parts::{Begin, BeginOut, Create, GpuPart, PartDecl, PartEntry};
 use engine_render::pieces::PieceDecl;
@@ -51,10 +52,10 @@ impl SunFace for SunPart {
 
 impl GpuPart for SunPart {
     fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
-        let atmosphere = cx.snapshot.environment.atmosphere.sanitized();
+        let sun = cx.snapshot.section::<Sunlight>().values();
         self.piece = SunPiece {
-            direction: atmosphere.sun_direction.normalize().extend(0.0).to_array(),
-            color: atmosphere.sun_color.extend(0.0).to_array(),
+            direction: sun.sun_direction.normalize().extend(0.0).to_array(),
+            color: sun.sun_color.extend(0.0).to_array(),
         };
     }
 

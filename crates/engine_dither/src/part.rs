@@ -41,7 +41,7 @@ struct DitherPart {
 
 impl GpuPart for DitherPart {
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
-        let enabled = cx.frame.snapshot.environment.dither.enabled;
+        let enabled = cx.frame.snapshot.section::<engine_core::Dither>().enabled;
         self.piece.flags = [f32::from(u8::from(enabled)), 0.0, 0.0, 0.0];
     }
 

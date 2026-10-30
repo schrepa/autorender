@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::mem::offset_of;
 use std::rc::Rc;
 
-use engine_core::{AutoExposure, RenderSnapshot, RenderStats};
+use engine_core::{AutoExposure, Grading, RenderSnapshot, RenderStats, Sky, Sunlight};
 use engine_faces::display::MeteredExposure;
 use engine_faces::environment::{ADAPTATION_MOST, ADAPTATION_POWER, NOON_LIGHT};
 use engine_render::buffers::{ReadbackRing, storage, uniform};
@@ -147,8 +147,8 @@ impl Meter {
         (scene, depth, drawn): (Bound<'_>, &Versioned<wgpu::TextureView>, (u32, u32)),
         pieces: &wgpu::Buffer,
     ) -> ExposureFrame {
-        let settings: &AutoExposure = &snapshot.environment.auto_exposure;
-        let authored = snapshot.environment.atmosphere.exposure;
+        let settings = snapshot.section::<AutoExposure>();
+        let authored = snapshot.section::<Grading>().values().exposure;
         let seconds = snapshot.presented_seconds;
         let camera = snapshot.view_projection.to_cols_array().map(f32::to_bits);
         let moved = std::mem::replace(&mut self.last_camera, camera) != camera;
@@ -160,15 +160,15 @@ impl Meter {
         } else {
             elapsed
         };
-        let sky = snapshot.environment.sky.sanitized();
+        let sky = snapshot.section::<Sky>();
         let noon = if sky.enabled {
             sky.sun_intensity * NOON_LIGHT
         } else {
             0.0
         };
         let below = -snapshot
-            .environment
-            .atmosphere
+            .section::<Sunlight>()
+            .values()
             .sun_direction
             .normalize_or_zero()
             .y;
@@ -265,8 +265,8 @@ impl GpuPart for ExposurePass {
     }
 
     fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
-        let environment = &cx.snapshot.environment;
-        let enabled = environment.auto_exposure.enabled;
+        let snapshot = cx.snapshot;
+        let enabled = snapshot.section::<AutoExposure>().enabled;
         if enabled {
             let device = &cx.core.device;
             self.meter
@@ -277,7 +277,10 @@ impl GpuPart for ExposurePass {
         if self.shows
             && let Some(meter) = self.meter.get_mut()
         {
-            meter.start(&cx.core.queue, environment.atmosphere.exposure);
+            meter.start(
+                &cx.core.queue,
+                snapshot.section::<Grading>().values().exposure,
+            );
         }
     }
 
@@ -285,7 +288,7 @@ impl GpuPart for ExposurePass {
         let snapshot = cx.frame.snapshot;
         let post = cx.parts.post();
         let needs =
-            post.is_some_and(PostPass::active) && snapshot.environment.auto_exposure.enabled;
+            post.is_some_and(PostPass::active) && snapshot.section::<AutoExposure>().enabled;
         if !needs {
             self.frame = None;
             return;

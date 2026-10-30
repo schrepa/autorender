@@ -1,4 +1,4 @@
-use engine_core::{Applied, RenderStats};
+use engine_core::{AmbientOcclusion, Applied, RenderStats, Shadows, SkyOcclusion};
 use engine_faces::occupancy::OccupancyFace;
 use engine_render::cached::{Bound, GroupCache, Versioned};
 use engine_render::graph::{
@@ -111,9 +111,10 @@ impl GpuPart for OcclusionPass {
             .face::<dyn OccupancyFace>()
             .map_or(0.0, OccupancyFace::texel_share);
         occlusion.write_canopy(&core.queue, share);
-        let environment = &cx.frame.snapshot.environment;
-        let ambient = environment.ambient_occlusion.sanitized().enabled();
-        let sky = environment.sky_occlusion.sanitized().darkens() && environment.shadows.enabled;
+        let snapshot = cx.frame.snapshot;
+        let ambient = snapshot.section::<AmbientOcclusion>().enabled();
+        let sky =
+            snapshot.section::<SkyOcclusion>().darkens() && snapshot.section::<Shadows>().enabled;
         if ambient || sky {
             occlusion.bind(device, uniform, &core.depth.view);
             self.frame = Some(Frame { occlusion: ambient });

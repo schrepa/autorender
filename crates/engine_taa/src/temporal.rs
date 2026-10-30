@@ -4,7 +4,7 @@
 )]
 
 use crate::shaders::entry::temporal;
-use engine_core::{Applied, Environment, RenderStats};
+use engine_core::{Applied, Dither, RenderSnapshot, RenderStats, TemporalAntialiasing};
 use engine_render::cached::{Bound, GroupCache, Versioned};
 use engine_render::composite::{PixelEffect, PostStage, composite_entry};
 use engine_render::graph::{
@@ -205,7 +205,7 @@ impl Taa {
         (device, queue): (&wgpu::Device, &engine_render::gpu_calls::Queue),
         region: FrameRegion,
         history_valid: bool,
-        (environment, turn): (&Environment, f32),
+        (snapshot, turn): (&RenderSnapshot, f32),
     ) {
         let (size, render) = (region.display, region.render);
         if self.targets.resizes(size) {
@@ -213,13 +213,14 @@ impl Taa {
             self.targets.set(size, targets);
         }
         let offset = jitter_offset(self.frame);
-        let settings = environment.temporal_antialiasing.sanitized();
+        let settings = snapshot.section::<TemporalAntialiasing>();
+        let dithered = snapshot.section::<Dither>().enabled;
         let uniform = ResolveUniform {
             texel: [1.0 / size.width as f32, 1.0 / size.height as f32],
             current_weight: CURRENT_WEIGHT,
             history_valid: u32::from(history_valid),
             options: [
-                if environment.dither.enabled {
+                if dithered {
                     turn
                 } else {
                     0.0
@@ -369,7 +370,7 @@ impl GpuPart for TemporalPass {
     }
 
     fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
-        let enabled = cx.snapshot.environment.temporal_antialiasing.enabled;
+        let enabled = cx.snapshot.section::<TemporalAntialiasing>().enabled;
         if enabled == self.taa.get().is_some() {
             return;
         }
@@ -411,13 +412,13 @@ impl GpuPart for TemporalPass {
         };
         let revealed = cx.parts.transparency().and_then(Transparency::revealed);
         let core = &*cx.core;
-        let environment = &cx.frame.snapshot.environment;
+        let snapshot = cx.frame.snapshot;
         self.resolve = self.taa.get_mut().map(|taa| {
             taa.begin(
                 (&core.device, &core.queue),
                 core.display.region,
                 frame.history_valid,
-                (environment, frame.camera.options[2]),
+                (snapshot, frame.camera.options[2]),
             );
             taa.prepare_resolve(
                 &core.device,
