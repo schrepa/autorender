@@ -622,6 +622,7 @@ pub(crate) static PART: PartEntry = PartEntry {
         effects: &[PixelEffect {
             stage: PostStage::Light,
             module: "sky::haze",
+            reads: &["haze"],
         }],
         labels: &[],
         lazy: false,

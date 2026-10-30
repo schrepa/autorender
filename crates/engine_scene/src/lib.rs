@@ -23,10 +23,10 @@ mod views;
 mod writer;
 
 pub use components::{
-    AddSceneComponents, CORE_COMPONENTS, ComponentContext, ComponentKind, Placement, Prepared,
-    PreparedComponent, Reach, SceneComponents, SceneComponentsList, admitted, component_kind,
-    component_kinds, component_kinds_in, component_names, no_files, register_components, valid,
-    valid_world,
+    AddSceneComponents, CORE_COMPONENTS, ComponentContext, ComponentKind, ComponentPath, Placement,
+    Prepared, PreparedComponent, Reach, SceneComponents, SceneComponentsList, admitted,
+    component_kind, component_kinds, component_kinds_in, component_names, no_files, no_paths,
+    register_components, valid, valid_world,
 };
 pub use document::{
     MAX_SOURCE_BYTES, MeshSource, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,

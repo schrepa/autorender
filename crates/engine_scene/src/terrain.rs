@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 use crate::bricks::added;
 use crate::components::{
-    ComponentContext, ComponentKind, Placement, Prepared, PreparedComponent, no_files,
+    ComponentContext, ComponentKind, Placement, Prepared, PreparedComponent, no_files, no_paths,
     object_example, parsed, ruled, valid_world,
 };
 use crate::instance::Lookups;
@@ -863,6 +863,7 @@ pub(crate) static TERRAIN: ComponentKind = ComponentKind {
     prepare: prepare_terrain,
     files: terrain_files,
     admit: admit_terrain,
+    paths: no_paths,
 };
 
 fn terrain_example() -> Value {
@@ -916,6 +917,7 @@ pub(crate) static PREFETCH: ComponentKind = ComponentKind {
     prepare: prepare_prefetch,
     files: no_files,
     admit: admit_prefetch,
+    paths: no_paths,
 };
 
 fn validate_prefetch(value: &Value, path: &str) -> Result<(), Error> {

@@ -26,6 +26,7 @@ pub static EXPRESSION: LayerKind = LayerKind {
     read,
     files: no_files,
     schema: crate::layer_schema!(schema),
+    points: crate::layer::no_points,
 };
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

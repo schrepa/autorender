@@ -3,7 +3,7 @@ use engine_core::glam::Mat4;
 use engine_core::{Error, parse_value_at};
 use engine_scene::{
     ComponentContext, ComponentKind, Lookups, Placement, Prepared, PreparedComponent, admitted,
-    component_schema, no_files,
+    component_schema, no_files, no_paths,
 };
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
@@ -97,6 +97,7 @@ pub static COLLIDER: ComponentKind = ComponentKind {
     prepare: prepared,
     files: no_files,
     admit: admitted,
+    paths: no_paths,
 };
 
 fn authored(value: &Value, path: &str) -> Result<SceneCollider, Error> {

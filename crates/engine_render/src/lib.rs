@@ -21,6 +21,7 @@ pub mod debug_targets;
 pub mod depth_pyramid;
 pub mod entries;
 pub mod faces;
+pub mod generated;
 pub mod gpu_layouts;
 pub mod gpu_uploads;
 pub mod graph;

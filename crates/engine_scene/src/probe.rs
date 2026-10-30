@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::components::{
     ComponentContext, ComponentKind, Placement, Prepared, PreparedComponent, Reach, admitted,
-    no_files, parsed, ruled, valid_world,
+    no_files, no_paths, parsed, ruled, valid_world,
 };
 use crate::instance::Lookups;
 
@@ -65,6 +65,7 @@ pub(crate) static REFLECTION_PROBE: ComponentKind = ComponentKind {
     prepare: prepare_probe,
     files: no_files,
     admit: admitted,
+    paths: no_paths,
 };
 
 fn probe_example() -> Value {

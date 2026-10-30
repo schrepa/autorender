@@ -38,6 +38,7 @@ pub static EROSION: LayerKind = LayerKind {
     read,
     files: no_files,
     schema: engine_terrain::layer_schema!(schema),
+    points: engine_terrain::layer::no_points,
 };
 
 pub static KINDS: &[&LayerKind] = &[&EROSION];

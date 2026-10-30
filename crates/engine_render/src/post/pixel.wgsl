@@ -5,3 +5,8 @@ struct PostPixel {
     turn: f32,
     salt: u32,
 }
+
+struct SceneLight {
+    color: vec3<f32>,
+    ambient: f32,
+}

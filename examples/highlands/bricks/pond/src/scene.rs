@@ -2,7 +2,7 @@ use engine_core::bevy_ecs::world::EntityWorldMut;
 use engine_core::{Error, ErrorCode, parse_value_at};
 use engine_scene::{
     ComponentContext, ComponentKind, Lookups, Placement, Prepared, PreparedComponent, admitted,
-    no_files, valid_world,
+    no_files, no_paths, valid_world,
 };
 use serde_json::{Value, json};
 
@@ -19,6 +19,7 @@ pub static POND: ComponentKind = ComponentKind {
     prepare,
     files: no_files,
     admit: admitted,
+    paths: no_paths,
 };
 
 fn example() -> Value {

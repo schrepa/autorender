@@ -1,7 +1,7 @@
 use bevy_ecs::world::EntityWorldMut;
 use engine_scene::{
     ComponentContext, ComponentKind, Lookups, Placement, Prepared, PreparedComponent, admitted,
-    no_files, valid_world,
+    no_files, no_paths, valid_world,
 };
 use engine_settings::{Error, ErrorCode, parse_value_at};
 use serde_json::{Value, json};
@@ -19,6 +19,7 @@ pub static RIGID_BODY: ComponentKind = ComponentKind {
     prepare,
     files: no_files,
     admit: admitted,
+    paths: no_paths,
 };
 
 struct PreparedBody(RigidBody);

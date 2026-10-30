@@ -115,6 +115,11 @@ impl PostPass {
         Some(self.found(resource)?.1)
     }
 
+    pub fn uniform(&self) -> Option<Bound<'_>> {
+        let post = self.post.get()?;
+        Some(Bound::fixed(post.uniform.as_entire_binding()))
+    }
+
     pub fn resolve_inputs(&self) -> Option<([Bound<'_>; 3], Bound<'_>)> {
         let post = self.post.get()?;
         Some((

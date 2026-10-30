@@ -65,6 +65,7 @@ pub static STEPS: LayerKind = LayerKind {
     read: read_steps,
     files: no_files,
     schema: engine_terrain::layer_schema!(steps_schema),
+    points: engine_terrain::layer::no_points,
 };
 
 pub static HUMMOCKS: LayerKind = LayerKind {
@@ -74,6 +75,7 @@ pub static HUMMOCKS: LayerKind = LayerKind {
     read: read_hummocks,
     files: no_files,
     schema: engine_terrain::layer_schema!(hummocks_schema),
+    points: engine_terrain::layer::no_points,
 };
 
 fn repose() -> f32 {

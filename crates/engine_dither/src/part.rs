@@ -15,6 +15,7 @@ pub static PART: PartEntry = PartEntry {
         effects: &[PixelEffect {
             stage: PostStage::Display,
             module: "dither::apply",
+            reads: &[],
         }],
         labels: &[],
         lazy: false,

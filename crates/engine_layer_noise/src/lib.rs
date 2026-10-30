@@ -29,6 +29,7 @@ pub static NOISE_KIND: LayerKind = LayerKind {
     read: layer::read,
     files: no_files,
     schema: engine_terrain::layer_schema!(layer::schema),
+    points: engine_terrain::layer::no_points,
 };
 
 pub static KINDS: &[&LayerKind] = &[&NOISE_KIND];

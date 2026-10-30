@@ -78,6 +78,58 @@ pub struct RenderStats {
     pub occlusion_culling: CullingStats,
     pub subpixel_culling: CullingStats,
     pub temporal_antialiasing: Applied,
+    pub linked: LinkedStats,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LinkedStats {
+    pub faces: &'static [(&'static str, &'static str)],
+    pub defaulted: &'static [&'static str],
+}
+
+struct FaceBricks(&'static [(&'static str, &'static str)]);
+
+impl Serialize for FaceBricks {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(self.0.iter().copied())
+    }
+}
+
+#[derive(Serialize)]
+struct LinkedJson {
+    faces: FaceBricks,
+    defaulted: &'static [&'static str],
+}
+
+impl Serialize for LinkedStats {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        LinkedJson {
+            faces: FaceBricks(self.faces),
+            defaulted: self.defaulted,
+        }
+        .serialize(serializer)
+    }
+}
+
+#[cfg(feature = "schema")]
+impl schemars::JsonSchema for LinkedStats {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "LinkedStats".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let faces = generator.subschema_for::<BTreeMap<String, String>>();
+        let defaulted = generator.subschema_for::<Vec<String>>();
+        schemars::json_schema!({
+            "type": "object",
+            "properties": { "faces": faces, "defaulted": defaulted },
+            "required": ["faces", "defaulted"],
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

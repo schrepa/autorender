@@ -23,6 +23,7 @@ pub(crate) static PART: PartEntry = PartEntry {
         effects: &[PixelEffect {
             stage: PostStage::Tonemap,
             module: TONEMAP,
+            reads: &[],
         }],
         labels: &[],
         lazy: false,

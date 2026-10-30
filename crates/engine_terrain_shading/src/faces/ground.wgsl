@@ -53,6 +53,12 @@ struct GroundHeight {
     height: f32,
 }
 
+struct GroundTile {
+    found: bool,
+    level: u32,
+    tile: LevelTile,
+}
+
 struct GroundMaterial {
     first: u32,
     second: u32,
@@ -129,6 +135,21 @@ fn true_height(terrain: GroundTerrain, local: vec2<f32>, level: u32, tile: Level
     return triangle_height(tile_height(tile, corner), tile_height(tile, corner + vec2<u32>(1u, 0u)),
         tile_height(tile, corner + vec2<u32>(0u, 1u)), tile_height(tile, corner + vec2<u32>(1u, 1u)),
         within - vec2<f32>(cell));
+}
+
+fn ground_tile(terrain: GroundTerrain, local: vec2<f32>, first: u32) -> GroundTile {
+    var found: GroundTile;
+    found.tile.layer = NOT_RESIDENT;
+    for (var level = first; level < terrain.levels; level++) {
+        let tile = level_tile(terrain, level, local / (terrain.spacing * f32(1u << level)));
+        if tile.layer != NOT_RESIDENT {
+            found.found = true;
+            found.level = level;
+            found.tile = tile;
+            return found;
+        }
+    }
+    return found;
 }
 
 fn ground_height(terrain: GroundTerrain, local: vec2<f32>) -> GroundHeight {

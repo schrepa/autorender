@@ -35,6 +35,7 @@ pub static STAMP: LayerKind = LayerKind {
     read,
     files: no_files,
     schema: engine_terrain::layer_schema!(schema),
+    points: engine_terrain::layer::no_points,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]

@@ -607,6 +607,28 @@
       "direction": null
     },
     {
+      "name": "linked.defaulted",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
+      "name": "linked.faces",
+      "kind": "work",
+      "rule": "equal",
+      "statistic": "last_frame",
+      "runtimes": [
+        "native"
+      ],
+      "unit": "count",
+      "direction": null
+    },
+    {
       "name": "local_lights.cluster_cut.asked",
       "kind": "work",
       "rule": "shown",

@@ -80,6 +80,15 @@ pub struct ComponentKind {
     pub prepare: fn(&Value, &ComponentContext<'_>) -> Prepared,
     pub files: fn(&Value) -> Vec<String>,
     pub admit: fn(&Value, &World, &str) -> Result<(), Error>,
+    pub paths: fn(&Value, &str) -> Result<Vec<ComponentPath>, Error>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComponentPath {
+    pub id: String,
+    pub origin: [f32; 3],
+    pub points: Vec<[f32; 2]>,
+    pub at: String,
 }
 
 impl std::fmt::Debug for ComponentKind {
@@ -107,6 +116,10 @@ pub fn no_files(_value: &Value) -> Vec<String> {
 
 pub fn admitted(_value: &Value, _world: &World, _path: &str) -> Result<(), Error> {
     Ok(())
+}
+
+pub fn no_paths(_value: &Value, _path: &str) -> Result<Vec<ComponentPath>, Error> {
+    Ok(Vec::new())
 }
 
 #[macro_export]
@@ -164,6 +177,7 @@ static TINT: ComponentKind = ComponentKind {
     prepare: prepare_tint,
     files: no_files,
     admit: admitted,
+    paths: no_paths,
 };
 
 #[cfg(feature = "schema")]
@@ -207,6 +221,7 @@ pub(crate) static GROUNDED: ComponentKind = ComponentKind {
     prepare: prepare_grounded,
     files: no_files,
     admit: admitted,
+    paths: no_paths,
 };
 
 fn validate_grounded(value: &Value, path: &str) -> Result<(), Error> {

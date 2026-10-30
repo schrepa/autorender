@@ -236,4 +236,8 @@ impl Core {
     pub fn pieces_buffer(&self) -> &wgpu::Buffer {
         self.camera.pieces()
     }
+
+    pub fn pieces_bound(&self) -> Bound<'_> {
+        self.camera.pieces.bound()
+    }
 }

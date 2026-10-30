@@ -217,8 +217,9 @@ pub mod render {
 pub mod stats {
     pub use engine_core::{
         Applied, CloudStats, CullingStats, Cut, DetailStats, ExposureStats, FrameStats,
-        GroundCoverStats, JobStats, LightStats, Names, OccupancyStats, ParticleStats, ProbeStats,
-        RenderStats, ShadowStats, SkyStats, TerrainBounceStats, TerrainRenderStats, WaterStats,
+        GroundCoverStats, JobStats, LightStats, LinkedStats, Names, OccupancyStats, ParticleStats,
+        ProbeStats, RenderStats, ShadowStats, SkyStats, TerrainBounceStats, TerrainRenderStats,
+        WaterStats,
     };
     pub use engine_layer_erosion::ErosionStats;
     pub use engine_layer_paths::PathStats;

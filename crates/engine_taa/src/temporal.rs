@@ -47,6 +47,7 @@ pub(crate) static PART: PartEntry = PartEntry {
         effects: &[PixelEffect {
             stage: PostStage::Resolve,
             module: RESOLVE,
+            reads: &[],
         }],
         labels: &["engine/taa-", "engine/temporal"],
         lazy: true,

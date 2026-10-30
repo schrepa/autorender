@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 use crate::components::{
     ComponentContext, ComponentKind, Placement, Prepared, PreparedComponent, Reach, admitted,
-    no_files, parsed, valid_world,
+    no_files, no_paths, parsed, valid_world,
 };
 use crate::instance::Lookups;
 use crate::validation::reference;
@@ -89,6 +89,7 @@ pub(crate) static SPLINE: ComponentKind = ComponentKind {
     prepare: prepare_spline,
     files: no_files,
     admit: admitted,
+    paths: no_paths,
 };
 
 fn spline_example() -> Value {

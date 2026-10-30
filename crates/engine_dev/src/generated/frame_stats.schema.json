@@ -1133,6 +1133,27 @@
     "level_of_detail": {
       "$ref": "#/$defs/DetailStats"
     },
+    "linked": {
+      "properties": {
+        "defaulted": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "faces": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "faces",
+        "defaulted"
+      ],
+      "type": "object"
+    },
     "loading": {
       "type": "boolean"
     },
@@ -1346,6 +1367,7 @@
     "occlusion_culling",
     "subpixel_culling",
     "temporal_antialiasing",
+    "linked",
     "world_streaming",
     "navigation",
     "physics"

@@ -45,6 +45,7 @@ pub struct LayerKind {
     pub read: fn(&mut Reader<'_>) -> Made,
     pub files: fn(&Value) -> Vec<String>,
     pub schema: fn() -> Value,
+    pub points: fn(&Value) -> Option<Vec<[f32; 2]>>,
 }
 
 #[macro_export]
@@ -85,6 +86,10 @@ impl LayerFiles for NoFiles {
 
 pub fn no_files(_settings: &Value) -> Vec<String> {
     Vec::new()
+}
+
+pub fn no_points(_settings: &Value) -> Option<Vec<[f32; 2]>> {
+    None
 }
 
 pub trait TerrainLayer: Send + Sync + Debug + 'static {

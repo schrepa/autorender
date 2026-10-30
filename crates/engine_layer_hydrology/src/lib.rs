@@ -44,6 +44,7 @@ pub static HYDROLOGY: LayerKind = LayerKind {
     read: hydrology_read,
     files: no_files,
     schema: engine_terrain::layer_schema!(hydrology_schema),
+    points: engine_terrain::layer::no_points,
 };
 
 pub static RIVERS: LayerKind = LayerKind {
@@ -53,6 +54,7 @@ pub static RIVERS: LayerKind = LayerKind {
     read: rivers_read,
     files: no_files,
     schema: engine_terrain::layer_schema!(rivers_schema),
+    points: engine_terrain::layer::no_points,
 };
 
 pub static KINDS: &[&LayerKind] = &[&HYDROLOGY, &RIVERS];

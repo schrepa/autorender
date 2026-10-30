@@ -37,6 +37,7 @@ pub static PART: PartEntry = PartEntry {
         effects: &[PixelEffect {
             stage: PostStage::Light,
             module: "bloom::apply",
+            reads: &["bloom"],
         }],
         labels: &["engine/bloom"],
         lazy: true,

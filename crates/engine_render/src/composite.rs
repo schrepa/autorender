@@ -15,12 +15,16 @@ pub enum PostStage {
 pub struct PixelEffect {
     pub stage: PostStage,
     pub module: &'static str,
+    pub reads: &'static [&'static str],
 }
 
 pub const COLOR_MODULE: &str = "engine::color";
 pub const COMPOSITE_ENTRY: &str = "fs_composite";
 pub const PLAIN_RESOLVE: &str = "post::resolve_plain";
 pub const TRANSPARENT_COMPOSITE: &str = "transparent::composite";
+pub const SCENE_MODULE: &str = "generated::scene";
+pub const SCENE_FUNCTION: &str = "scene_light";
+pub const PIXEL_MODULE: &str = "post::pixel";
 
 pub fn composite_path(resolve: &str) -> String {
     format!("generated::composite::{}", resolve.replace("::", "_"))
@@ -45,6 +49,37 @@ pub fn effects_of(registry: &BrickRegistry) -> Vec<PixelEffect> {
         .flat_map(|(_, brick)| brick.parts.iter())
         .flat_map(|part| part.decl.effects.iter().copied())
         .collect()
+}
+
+pub fn effect_reads(effects: &[PixelEffect]) -> impl Iterator<Item = &'static str> + '_ {
+    effects
+        .iter()
+        .flat_map(|effect| effect.reads.iter().copied())
+}
+
+pub fn scene_source(effects: &[PixelEffect]) -> String {
+    let mut imports = String::new();
+    let mut body = String::new();
+    let _ = writeln!(
+        imports,
+        "import package::{PIXEL_MODULE}::{{PostPixel, SceneLight}};"
+    );
+    let _ = writeln!(body, "    var lit = light;");
+    let scenes = effects
+        .iter()
+        .filter(|effect| effect.stage == PostStage::Scene);
+    for (index, effect) in scenes.enumerate() {
+        let _ = writeln!(
+            imports,
+            "import package::{}::apply as scene_{index};",
+            effect.module
+        );
+        let _ = writeln!(body, "    lit = scene_{index}(lit, at);");
+    }
+    let _ = writeln!(body, "    return lit;");
+    format!(
+        "{imports}\nfn {SCENE_FUNCTION}(light: SceneLight, at: PostPixel) -> SceneLight {{\n{body}}}\n"
+    )
 }
 
 pub fn resolves(effects: &[PixelEffect]) -> impl Iterator<Item = &'static str> + '_ {
