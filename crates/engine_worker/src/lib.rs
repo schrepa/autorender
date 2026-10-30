@@ -170,7 +170,9 @@ impl Worker {
                 match runner {
                     Runner::Tables => tables.start(id, &job.kind, &job.input)?,
                     Runner::Textures => textures.start(id, &job.kind, &job.input)?,
-                    Runner::Navigation => navigation.start(id, &job.kind, &job.input, terrain)?,
+                    Runner::Navigation => {
+                        navigation.start(id, &job.kind, &job.input, &*terrain, &*terrain)?
+                    }
                     Runner::Terrain => terrain.start(id, &job.kind, &job.input)?,
                 }
                 job.started = true;
@@ -215,7 +217,9 @@ impl Worker {
         }
         match engine_tables::run(kind, input).or_else(|| engine_textures::run(kind, input)) {
             Some(output) => output,
-            None if NavigationWorker::runs(kind) => self.navigation.run(kind, input, &self.terrain),
+            None if NavigationWorker::runs(kind) => self
+                .navigation
+                .run(kind, input, &self.terrain, &self.terrain),
             None => self.terrain.run(kind, input),
         }
     }
@@ -224,7 +228,9 @@ impl Worker {
         match Runner::of(kind) {
             Runner::Tables => self.tables.start(id, kind, input),
             Runner::Textures => self.textures.start(id, kind, input),
-            Runner::Navigation => self.navigation.start(id, kind, input, &self.terrain),
+            Runner::Navigation => self
+                .navigation
+                .start(id, kind, input, &self.terrain, &self.terrain),
             Runner::Terrain => self.terrain.start(id, kind, input),
         }
     }

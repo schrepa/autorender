@@ -19,6 +19,7 @@ struct Asked {
 
 struct AskedGround {
     source: GroundSource,
+    surfaces: Surfaces,
     key: TileKey,
     kind: &'static str,
 }
@@ -56,10 +57,11 @@ impl WalkRecords {
             match &asked.ground {
                 Some(ground) => {
                     grounds += 1;
-                    let made = job_output(ground.kind, output, |bytes| {
-                        ground.source.regions.grid(ground.key, bytes)
-                    })
-                    .map(|grid| WalkGround::new(&grid, &ground.source.pyramid));
+                    let made = job_output(ground.kind, output, |bytes| -> Result<_, Error> {
+                        let grid = ground.source.regions.grid(ground.key, bytes)?;
+                        let water = surface_water(&ground.surfaces, ground.key, bytes)?;
+                        Ok(WalkGround::new(&grid, water, &ground.source.pyramid))
+                    });
                     let kept = kept(made, (tick, &mut self.reads), failures);
                     self.grounds.insert(asked.record, kept);
                 }
@@ -95,6 +97,7 @@ impl WalkRecords {
                     if let Found::Missing = found {
                         let ground = Some(AskedGround {
                             source: running.source.clone(),
+                            surfaces: running.surfaces.clone(),
                             key,
                             kind,
                         });
@@ -236,6 +239,19 @@ fn kept<T>(
             Kept::Failed(tick)
         }
     }
+}
+
+fn surface_water(
+    surfaces: &[Arc<dyn WaterSurfaces>],
+    key: TileKey,
+    ground: &[u8],
+) -> Result<Option<Box<[f32]>>, Error> {
+    for surface in surfaces {
+        if let Some(water) = surface.decode(key, ground)? {
+            return Ok(Some(water));
+        }
+    }
+    Ok(None)
 }
 
 fn forget<T>(records: &mut BTreeMap<RecordKey, Kept<T>>, most: usize, tick: u64) {

@@ -9,6 +9,7 @@ mod agents;
 mod dev;
 pub mod jobs;
 mod nav;
+mod scene;
 mod smokes;
 
 pub use agents::{
@@ -24,3 +25,4 @@ pub use nav::{
     Gait, NavOptions, NavPath, PORTAL_RUN, Portal, Side, TilePortals, WalkData, WalkGround,
     WalkSearch, Want,
 };
+pub use scene::NAV_AGENT;
