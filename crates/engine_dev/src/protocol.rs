@@ -740,14 +740,11 @@ impl schemars::JsonSchema for EnvironmentControl {
         "EnvironmentControl".into()
     }
 
-    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let mut atmosphere = generator.subschema_for::<Option<engine_scene::SceneAtmosphere>>();
-        atmosphere.insert("default".to_owned(), serde_json::Value::Null);
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         schemars::json_schema!({
             "type": "object",
             "properties": {
                 "merge": { "type": "boolean", "default": false },
-                "atmosphere": atmosphere,
             },
             "additionalProperties": false,
         })

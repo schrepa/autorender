@@ -210,15 +210,16 @@ impl GpuPart for PostPass {
         }
         let snapshot = cx.frame.snapshot;
         let region = core.display.region;
+        let effects = Effects::of(snapshot);
         let needs =
-            cx.frame.temporal.is_some() || targets_read(&snapshot.environment) || region.upscales();
+            cx.frame.temporal.is_some() || targets_read(snapshot, effects) || region.upscales();
         self.frame = if needs {
             let format = core.canvas_format();
             self.post
                 .create(device, "engine/post-", || Post::new(device, format));
             self.post.get_mut().map(|post| {
                 post.begin(device, region.display);
-                Effects::of(&snapshot.environment)
+                effects
             })
         } else {
             None
@@ -408,7 +409,7 @@ impl Post {
         let (wide, tall) = (size.width as f32, size.height as f32);
         let view_projection = snapshot.view_projection;
         let focal = view_projection.row(1).truncate().length();
-        let effects = shown.uniforms(&snapshot.environment);
+        let effects = shown.uniforms(snapshot);
         let uniform = PostUniform {
             inverse_view_projection: inverse_or_identity(view_projection).to_cols_array_2d(),
             view_projection: view_projection.to_cols_array_2d(),

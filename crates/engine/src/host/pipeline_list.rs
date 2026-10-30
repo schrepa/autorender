@@ -1,5 +1,5 @@
 use engine_core::{
-    Cooking, Engine, Environment, JobId, Jobs, MISSING_RECORD, RecordKey, URGENT_JOBS, job_priority,
+    Cooking, Engine, JobId, Jobs, MISSING_RECORD, RecordKey, URGENT_JOBS, job_priority,
 };
 use engine_render::Renderer;
 
@@ -44,7 +44,6 @@ impl PipelineList {
             return;
         };
         let world = engine.app.world_mut();
-        identity.extend(format!("{:?}", Environment::current(world).sanitized()).bytes());
         if let Some(registry) = world.get_resource::<engine_core::BrickRegistry>() {
             for brick in registry.names() {
                 identity.extend(brick.bytes());

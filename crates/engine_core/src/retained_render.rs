@@ -166,7 +166,6 @@ impl<'a> RenderFrame<'a> {
             elapsed_seconds,
             presented_seconds,
             wind,
-            environment,
             lights,
             particles,
             reflection_probes,
@@ -190,7 +189,6 @@ impl<'a> RenderFrame<'a> {
         snapshot.elapsed_seconds = *elapsed_seconds;
         snapshot.presented_seconds = *presented_seconds;
         snapshot.wind = *wind;
-        snapshot.environment = *environment;
         snapshot.lights.list.clear();
         snapshot.lights.dropped = lights.dropped;
         snapshot.lights.invalid = lights.invalid;
@@ -206,7 +204,7 @@ impl<'a> RenderFrame<'a> {
                 .get(slot as usize)
                 .and_then(|&index| self.poses.prepared_matrix(index as usize));
             let Some(model) = model else {
-                snapshot.lights.dropped += 1;
+                snapshot.lights.invalid += 1;
                 continue;
             };
             snapshot.lights.list.push(light.posed(model));

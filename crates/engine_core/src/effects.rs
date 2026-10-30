@@ -2,7 +2,7 @@ use bevy_ecs::prelude::{Resource, World};
 use serde::{Deserialize, Serialize};
 
 use crate::sections::environment_section;
-use crate::{Camera, Environment, FrameTime, RenderSnapshot};
+use crate::{Camera, FrameTime, RenderSnapshot, WaterBodies};
 use engine_settings::settings;
 
 pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
@@ -16,11 +16,10 @@ pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
     snapshot.presented_seconds = world
         .get_resource::<crate::PresentedTime>()
         .map_or(0.0, |time| time.seconds);
-    snapshot.environment = Environment::current(world).sanitized();
 }
 
 fn surface_under(world: &World, eye: glam::Vec3) -> Option<f32> {
-    let water = crate::Ground::water_in(world, eye);
+    let water = WaterBodies::water_in(world, eye);
     if let Some(water) = water.filter(|water| water.depth > 0.0) {
         return Some(water.surface);
     }
