@@ -4,7 +4,7 @@ use engine_render::cached::{Bound, Versioned};
 use engine_render::gpu_data::mip_levels;
 use engine_render::pipeline_layouts::PipelineLayout;
 use engine_render::shaders::Entry;
-use engine_render::{buffers, pipelines, targets};
+use engine_render::{pipelines, targets};
 
 use crate::bindings::{ENVIRONMENT_DOWN, ENVIRONMENT_PREFILTER, ENVIRONMENT_SKY};
 use crate::shaders::entry::environment;
@@ -45,12 +45,7 @@ pub(crate) struct Environment {
     sampler: wgpu::Sampler,
     pieces: wgpu::Buffer,
     clouds: (u64, [u8; 2], bool),
-    air: (
-        wgpu::Buffer,
-        wgpu::TextureView,
-        wgpu::TextureView,
-        wgpu::Sampler,
-    ),
+    air: (wgpu::TextureView, wgpu::TextureView, wgpu::Sampler),
     drawn: Option<[[f32; 4]; 7]>,
 }
 
@@ -119,7 +114,7 @@ impl Environment {
             sampler,
             pieces: pieces.clone(),
             clouds: clouds_key,
-            air: (air.0.clone(), air.1.clone(), air.2.clone(), air.3.clone()),
+            air: (air.0.clone(), air.1.clone(), air.2.clone()),
             drawn: None,
         }
     }
@@ -131,7 +126,7 @@ impl Environment {
         clouds: crate::clouds::DomeBinding<'_>,
     ) {
         if self.clouds != clouds.key || self.pieces != *pieces {
-            let air = (&self.air.0, &self.air.1, &self.air.2, &self.air.3);
+            let air = (&self.air.0, &self.air.1, &self.air.2);
             self.clouds = clouds.key;
             self.pieces = pieces.clone();
             self.sky_group = sky_group(device, &self.layouts.sky, &self.pieces, clouds, air);
@@ -440,13 +435,11 @@ fn sky_group(
         layout,
         &[
             ("pieces", pieces.as_entire_binding()),
-            buffers::entry("sky_air", air.0),
-            ("sky_view_table", pipelines::view(air.1)),
-            ("sky_table_sampler", pipelines::sampler(air.3)),
+            ("sky_view_table", pipelines::view(air.0)),
+            ("sky_table_sampler", pipelines::sampler(air.2)),
             ("sky_clouds", pipelines::view(clouds.new)),
             ("sky_clouds_old", pipelines::view(clouds.old)),
             ("sky_cloud_sampler", pipelines::sampler(clouds.sampler)),
-            buffers::entry("sky_domes", clouds.uniform),
         ],
     )
 }

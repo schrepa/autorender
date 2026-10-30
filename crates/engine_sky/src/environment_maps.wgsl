@@ -1,6 +1,7 @@
 import package::face::lighting::distribution;
 import package::frame::view::PI;
-import package::sky::light::{sky_along, sky_domes};
+import package::generated::pieces::pieces;
+import package::sky::light::sky_along;
 
 @group(0) @binding(20) var level_source: texture_cube<f32>;
 @group(0) @binding(21) var radiance: texture_cube<f32>;
@@ -47,7 +48,7 @@ fn face_direction(face: u32, ndc: vec2<f32>) -> vec3<f32> {
 }
 
 fn face_sky(face: u32, ndc: vec2<f32>) -> vec4<f32> {
-    return vec4<f32>(sky_along(sky_domes.eye.xyz, face_direction(face, ndc)), 1.0);
+    return vec4<f32>(sky_along(pieces.sky.domes_eye.xyz, face_direction(face, ndc)), 1.0);
 }
 
 @fragment

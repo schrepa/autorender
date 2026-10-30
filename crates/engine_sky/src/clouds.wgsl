@@ -1,5 +1,6 @@
 import package::engine::math::TAU;
-import package::sky::common::{SkyUniform, sunlight_over};
+import package::generated::pieces::pieces;
+import package::sky::common::sunlight_over;
 
 struct CloudUniform {
     eye: vec4<f32>,
@@ -32,7 +33,6 @@ struct CloudView {
 @group(0) @binding(7) var view_depth: texture_depth_2d;
 @group(0) @binding(8) var view_out: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(10) var<storage, read_write> composite_draw: array<atomic<u32>, 4>;
-@group(0) @binding(11) var<uniform> cloud_air: SkyUniform;
 @group(0) @binding(12) var cloud_transmittance: texture_2d<f32>;
 @group(0) @binding(13) var cloud_table_sampler: sampler;
 @group(0) @binding(14) var<storage, read_write> light_cells: array<u32>;
@@ -157,8 +157,8 @@ fn sunlight_at(p: vec3<f32>) -> vec3<f32> {
     if clouds.eye.w < 0.5 {
         return clouds.sun_color.rgb;
     }
-    let height = cloud_air.radii.w + (p.y - clouds.eye.y) * 0.001;
-    return sunlight_over(cloud_transmittance, cloud_table_sampler, cloud_air,
+    let height = pieces.sky.air_radii.w + (p.y - clouds.eye.y) * 0.001;
+    return sunlight_over(cloud_transmittance, cloud_table_sampler,
         (p.xz - clouds.eye.xz) * 0.001, height, clouds.sun.xyz);
 }
 

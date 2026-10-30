@@ -9,7 +9,7 @@ import package::meshes::declarations::{SceneTargets, TemporalTargets};
 import package::sky::air::sun_disc;
 import package::sky::common::{air_disc, air_radius, air_transmittance, sunlight_over};
 import package::sky::light::{
-    clouded, physical_sky, sky_air, sky_air_light, sky_along, sky_domes, sky_table_sampler
+    clouded, physical_sky, sky_air_light, sky_along, sky_table_sampler
 };
 
 struct SkyOutput {
@@ -30,17 +30,17 @@ fn vs_sky(@builtin(vertex_index) index: u32) -> SkyOutput {
 
 fn sky_disc(ray: vec3<f32>) -> vec3<f32> {
     if physical_sky() {
-        return air_disc(sky_transmittance_table, sky_table_sampler, sky_air, ray);
+        return air_disc(sky_transmittance_table, sky_table_sampler, ray);
     }
     return sun_disc(ray);
 }
 
 fn clouded_sky(ray: vec3<f32>) -> vec3<f32> {
     let light = with_night_sky(sky_air_light(ray) + sky_disc(ray), ray);
-    if sky_domes.view.x > 0.5 {
+    if pieces.sky.domes_view.x > 0.5 {
         return light;
     }
-    return clouded(light, sky_domes.eye.xyz, ray);
+    return clouded(light, pieces.sky.domes_eye.xyz, ray);
 }
 
 const STAR_CELLS: f32 = 160.0;
@@ -281,10 +281,9 @@ fn moon_glow(ray: vec3<f32>, moon: vec3<f32>, lit: f32) -> vec3<f32> {
 
 fn beyond_air(ray: vec3<f32>) -> vec3<f32> {
     if physical_sky() {
-        let r = air_radius(sky_air);
-        let up = air_transmittance(sky_transmittance_table, sky_table_sampler, sky_air, r, 1.0);
-        let along = air_transmittance(sky_transmittance_table, sky_table_sampler, sky_air, r,
-            ray.y);
+        let r = air_radius();
+        let up = air_transmittance(sky_transmittance_table, sky_table_sampler, r, 1.0);
+        let along = air_transmittance(sky_transmittance_table, sky_table_sampler, r, ray.y);
         return along / max(up, vec3<f32>(1.0e-4));
     }
     let elevation = degrees(asin(clamp(ray.y, 0.0, 1.0)));
@@ -317,8 +316,8 @@ fn cirrus_light(ray: vec3<f32>) -> vec3<f32> {
     if physical_sky() {
         let height = pieces.sky.night_shape.x;
         let along = height / max(ray.y, 0.02);
-        sunlight = sunlight_over(sky_transmittance_table, sky_table_sampler, sky_air,
-            ray.xz * (along * 0.001), sky_air.radii.w + height * 0.001, sun);
+        sunlight = sunlight_over(sky_transmittance_table, sky_table_sampler,
+            ray.xz * (along * 0.001), pieces.sky.air_radii.w + height * 0.001, sun);
     }
     let toward = max(dot(ray, sun), 0.0);
     let forward = 0.25 + 1.4 * pow(toward, 6.0);
@@ -388,7 +387,7 @@ fn fs_sky(input: SkyOutput) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_probe_sky(input: SkyOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(sky_along(sky_domes.eye.xyz, sky_ray(input.ndc)), 1.0);
+    return vec4<f32>(sky_along(pieces.sky.domes_eye.xyz, sky_ray(input.ndc)), 1.0);
 }
 
 const SKY_SURFACE = vec4<u32>(32768u, 32768u, 65535u, 0u);

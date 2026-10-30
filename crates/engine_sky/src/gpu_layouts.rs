@@ -5,18 +5,6 @@ pub(crate) const CLOUD_LIGHT_BYTES: usize =
     (LIGHT_TEXELS * LIGHT_TEXELS * (LIGHT_HEIGHTS - 1) * 4) as usize;
 
 engine_render::gpu_structs! {
-    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub(crate) struct SkyUniform as ["SkyUniform"] {
-        pub rayleigh: [f32; 4],
-        pub mie: [f32; 4],
-        pub ozone: [f32; 4],
-        pub ground: [f32; 4],
-        pub radii: [f32; 4],
-        pub sun: [f32; 4],
-        pub frame: [f32; 4],
-        pub moon: [f32; 4],
-    }
-
     #[derive(Clone, Copy, Debug, Pod, Zeroable)]
     pub(crate) struct CloudUniform as ["CloudUniform"] {
         pub eye: [f32; 4],
@@ -32,16 +20,6 @@ engine_render::gpu_structs! {
         pub shadow_rows: [u32; 4],
         pub light: [f32; 4],
         pub light_rows: [u32; 4],
-    }
-
-    #[derive(Clone, Copy, Debug, Pod, Zeroable)]
-    pub(crate) struct DomeUniform as ["CloudDomes"] {
-        pub older: [f32; 4],
-        pub newer: [f32; 4],
-        pub older_mirror: [f32; 4],
-        pub newer_mirror: [f32; 4],
-        pub eye: [f32; 4],
-        pub view: [f32; 4],
     }
 
     #[derive(Clone, Copy, Debug, Pod, Zeroable)]
@@ -67,6 +45,20 @@ engine_render::gpu_structs! {
         pub haze_march: [f32; 4],
         pub sun_light: [f32; 4],
         pub state: [f32; 4],
+        pub air_rayleigh: [f32; 4],
+        pub air_mie: [f32; 4],
+        pub air_ozone: [f32; 4],
+        pub air_ground: [f32; 4],
+        pub air_radii: [f32; 4],
+        pub air_sun: [f32; 4],
+        pub air_frame: [f32; 4],
+        pub air_moon: [f32; 4],
+        pub domes_older: [f32; 4],
+        pub domes_newer: [f32; 4],
+        pub domes_older_mirror: [f32; 4],
+        pub domes_newer_mirror: [f32; 4],
+        pub domes_eye: [f32; 4],
+        pub domes_view: [f32; 4],
     }
 }
 

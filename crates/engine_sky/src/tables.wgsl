@@ -1,10 +1,10 @@
 import package::engine::color::luminance;
+import package::generated::pieces::pieces;
 import package::sky::common::{
-    SKY_MULTIPLE_SIZE, SKY_PI, SkyUniform, air_radius, air_sky, air_transmittance,
+    SKY_MULTIPLE_SIZE, SKY_PI, air_radius, air_sky, air_transmittance,
     sky_view_parameters, sphere_hit, to_sub_uv, transmittance_uv
 };
 
-@group(0) @binding(0) var<uniform> air: SkyUniform;
 @group(0) @binding(1) var transmittance_table: texture_2d<f32>;
 @group(0) @binding(2) var multiple_table: texture_2d<f32>;
 @group(0) @binding(3) var view_table: texture_2d<f32>;
@@ -28,16 +28,16 @@ struct Medium {
 
 fn medium_at(height: f32) -> Medium {
     let above = max(height, 0.0);
-    let rayleigh_density = exp(-above / air.rayleigh.w);
-    let mie_density = exp(-above / air.mie.z);
+    let rayleigh_density = exp(-above / pieces.sky.air_rayleigh.w);
+    let mie_density = exp(-above / pieces.sky.air_mie.z);
     let ozone_density = max(0.0, 1.0 - abs(height - 25.0) / 15.0);
     var medium: Medium;
-    medium.rayleigh = air.rayleigh.xyz * rayleigh_density;
-    medium.mie = vec3<f32>(air.mie.x * mie_density);
+    medium.rayleigh = pieces.sky.air_rayleigh.xyz * rayleigh_density;
+    medium.mie = vec3<f32>(pieces.sky.air_mie.x * mie_density);
     medium.scattering = medium.rayleigh + medium.mie;
     medium.extinction = medium.scattering
-        + vec3<f32>(air.mie.y * mie_density)
-        + air.ozone.xyz * ozone_density;
+        + vec3<f32>(pieces.sky.air_mie.y * mie_density)
+        + pieces.sky.air_ozone.xyz * ozone_density;
     return medium;
 }
 
@@ -46,17 +46,18 @@ fn rayleigh_phase(cosine: f32) -> f32 {
 }
 
 fn mie_phase(cosine: f32) -> f32 {
-    let g = air.mie.w;
+    let g = pieces.sky.air_mie.w;
     let k = 3.0 / (8.0 * SKY_PI) * (1.0 - g * g) / (2.0 + g * g);
     return k * (1.0 + cosine * cosine) / pow(max(1.0 + g * g - 2.0 * g * cosine, 1e-4), 1.5);
 }
 
 fn sun_transmittance(r: f32, mu: f32) -> vec3<f32> {
-    return air_transmittance(transmittance_table, table_sampler, air, r, mu);
+    return air_transmittance(transmittance_table, table_sampler, r, mu);
 }
 
 fn multiple_light(r: f32, mu: f32) -> vec3<f32> {
-    let height = (r - air.radii.x) / max(air.radii.y - air.radii.x, 1e-6);
+    let height = (r - pieces.sky.air_radii.x)
+        / max(pieces.sky.air_radii.y - pieces.sky.air_radii.x, 1e-6);
     let uv = vec2<f32>(
         to_sub_uv(clamp(mu * 0.5 + 0.5, 0.0, 1.0), SKY_MULTIPLE_SIZE),
         to_sub_uv(clamp(height, 0.0, 1.0), SKY_MULTIPLE_SIZE),
@@ -66,8 +67,8 @@ fn multiple_light(r: f32, mu: f32) -> vec3<f32> {
 
 fn scattered(origin: vec3<f32>, direction: vec3<f32>, sun: vec3<f32>, steps: u32) -> vec3<f32> {
     var light = vec3<f32>(0.0);
-    let bottom = air.radii.x;
-    let top_hit = sphere_hit(origin, direction, air.radii.y);
+    let bottom = pieces.sky.air_radii.x;
+    let top_hit = sphere_hit(origin, direction, pieces.sky.air_radii.y);
     if top_hit < 0.0 {
         return light;
     }
@@ -106,8 +107,8 @@ fn scattered(origin: vec3<f32>, direction: vec3<f32>, sun: vec3<f32>, steps: u32
         let sun_cos = dot(sun, up);
         if sun_cos > 0.0 {
             let through = textureSampleLevel(transmittance_table, table_sampler,
-                transmittance_uv(air, bottom, sun_cos), 0.0).rgb;
-            light += throughput * through * sun_cos * air.ground.rgb / SKY_PI;
+                transmittance_uv(bottom, sun_cos), 0.0).rgb;
+            light += throughput * through * sun_cos * pieces.sky.air_ground.rgb / SKY_PI;
         }
     }
     return light;
@@ -120,11 +121,11 @@ fn build_sky_view(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let uv = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(size);
-    let r = air_radius(air);
-    let parameters = sky_view_parameters(air, uv, r);
+    let r = air_radius();
+    let parameters = sky_view_parameters(uv, r);
     let view_cos = parameters.x;
     let light_cos = parameters.y;
-    let sun_cos = clamp(normalize(air.sun.xyz).y, -1.0, 1.0);
+    let sun_cos = clamp(normalize(pieces.sky.air_sun.xyz).y, -1.0, 1.0);
     let sun = vec3<f32>(sqrt(max(1.0 - sun_cos * sun_cos, 0.0)), sun_cos, 0.0);
     let view_sin = sqrt(max(1.0 - view_cos * view_cos, 0.0));
     let direction = vec3<f32>(
@@ -133,11 +134,11 @@ fn build_sky_view(@builtin(global_invocation_id) id: vec3<u32>) {
         view_sin * sqrt(max(1.0 - light_cos * light_cos, 0.0)),
     );
     let light = scattered(vec3<f32>(0.0, r, 0.0), direction, sun, VIEW_STEPS);
-    textureStore(table_out, id.xy, vec4<f32>((light + NIGHT) * air.ozone.w, 1.0));
+    textureStore(table_out, id.xy, vec4<f32>((light + NIGHT) * pieces.sky.air_ozone.w, 1.0));
 }
 
 fn view_light(direction: vec3<f32>) -> vec3<f32> {
-    return air_sky(view_table, table_sampler, air, direction);
+    return air_sky(view_table, table_sampler, direction);
 }
 
 fn around(azimuth: f32, elevation: f32) -> vec3<f32> {
@@ -146,9 +147,9 @@ fn around(azimuth: f32, elevation: f32) -> vec3<f32> {
 
 @compute @workgroup_size(1)
 fn derive_light() {
-    let r = air_radius(air);
-    let sun = normalize(air.sun.xyz);
-    let sun_color = air.ozone.w * sun_transmittance(r, sun.y);
+    let r = air_radius();
+    let sun = normalize(pieces.sky.air_sun.xyz);
+    let sun_color = pieces.sky.air_ozone.w * sun_transmittance(r, sun.y);
     let zenith = view_light(vec3<f32>(0.0, 1.0, 0.0));
     var horizon = vec3<f32>(0.0);
     for (var index = 0u; index < 8u; index++) {
@@ -158,20 +159,21 @@ fn derive_light() {
     let azimuth = atan2(sun.z, sun.x);
     let toward = view_light(around(azimuth, 0.035));
     let away = view_light(around(azimuth + SKY_PI, 0.035));
-    let night = (NIGHT + MOON_NIGHT * (air.moon.w * max(air.moon.y, 0.0))) * air.ozone.w;
-    let ground = air.ground.rgb
+    let night = (NIGHT + MOON_NIGHT * (pieces.sky.air_moon.w * max(pieces.sky.air_moon.y, 0.0)))
+        * pieces.sky.air_ozone.w;
+    let ground = pieces.sky.air_ground.rgb
         * (sun_color * max(sun.y, 0.0) / SKY_PI + 0.5 * (zenith + horizon)) + night * 0.3;
     let glow = max(luminance(toward - away), 0.0) / max(luminance(sun_color), 1e-4);
     let falling = luminance(sun_color) * max(sun.y, 0.0)
         + SKY_PI * luminance(0.5 * (zenith + horizon));
-    let noon = air.ozone.w * NOON_LIGHT;
-    let adapted = clamp(pow(noon / max(falling, 1e-5), air.radii.z * ADAPTATION_POWER), 1.0,
-        ADAPTATION_MOST);
-    let wanted = air.sun.w * adapted;
+    let noon = pieces.sky.air_ozone.w * NOON_LIGHT;
+    let adapted = clamp(pow(noon / max(falling, 1e-5), pieces.sky.air_radii.z * ADAPTATION_POWER),
+        1.0, ADAPTATION_MOST);
+    let wanted = pieces.sky.air_sun.w * adapted;
     let previous = derived[6].x;
     var exposure = wanted;
-    if air.frame.x > 0.0 && previous > 0.0 {
-        exposure = mix(previous, wanted, 1.0 - exp(-air.frame.x / 0.8));
+    if pieces.sky.air_frame.x > 0.0 && previous > 0.0 {
+        exposure = mix(previous, wanted, 1.0 - exp(-pieces.sky.air_frame.x / 0.8));
     }
     derived[0] = vec4<f32>(sun_color, 0.0);
     derived[1] = vec4<f32>(max(zenith, night), 0.0);

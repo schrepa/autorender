@@ -157,7 +157,7 @@ impl Haze {
         let Some(targets) = self.targets.get() else {
             return;
         };
-        let runs = haze_runs(&snapshot.environment);
+        let runs = haze_runs(snapshot);
         if runs {
             let post = || Bound::fixed(passes.uniform.as_entire_binding());
             let target = |view| Bound::of(targets, pipelines::view(view));
