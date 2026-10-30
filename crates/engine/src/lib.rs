@@ -31,9 +31,15 @@ pub use engine_core::{bevy_ecs, glam, smoke, smoke_check, smoke_eq};
 
 pub mod ground {
     pub use engine_core::{
-        BRIDGE_SOLIDS, GroundBridge, GroundGrid, GroundObstacle, GroundPatch, GroundRead,
-        GroundRecord, GroundRegions, GroundSamples, GroundShape, GroundSlot, GroundSolid,
-        GroundSource, GroundWorker, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey,
+        GroundBridge, GroundGrid, GroundObstacle, GroundRead, GroundRecord, GroundRegions,
+        GroundSlot, GroundSource, GroundWorker, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey,
+    };
+}
+
+pub mod solids {
+    pub use engine_core::{
+        FieldSamples, SolidField, SolidShape, SolidsFace, SolidsMember, WorldSolid, WorldSolids,
+        WorldSolidsList,
     };
 }
 
@@ -44,23 +50,24 @@ mod games {
     pub use engine_core::Culling;
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AmbientOcclusion, App, AssetBudget,
-        AssetLibrary, Atmosphere, AutoExposure, Bloom, Camera, Clouds, Cube, DebugView,
-        DebugViewMode, Dither, DynamicResolution, DynamicResolutionStats, Engine, EngineConfig,
-        EngineEntityCommands, Environment, Filter, FixedPostSimulation, FixedPreSimulation,
-        FixedSimulation, FixedSimulationSystems, FixedTime, Foliage, FrameReport, FrameTime,
-        GlobalTransform, GlobalTransforms, Ground, GroundFace, GroundPoint, Grounded, Grounding,
-        Haze, HeightHeld, Highlights, InputState, Interior, InterpolateTransform, LevelOfDetail,
-        LightRegion, LocalLight, LocalLightSettings, MakeSources, MakeTextures, Material,
-        MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, NightSky, OcclusionCulling, Parent,
-        ParticleBlend, ParticleEmitter, ParticleSettings, Plugin, PluginGroup, Presentation,
-        PresentationState, PresentedTime, PresentedTransform, PresentedTransforms, ProvidedAssets,
-        Records, ReflectionProbe, ReflectionProbeSettings, Reflections, Resolution,
-        ResolutionStats, Sampler, Shadows, Sky, SkyOcclusion, SplineMesh, Spot, StreamingFocus,
-        SubpixelCulling, Surface, TemporalAntialiasing, Texture, TextureHandle, TextureRef,
-        TextureSet, TextureSource, TextureUsage, Tint, TopLayer, Transform, UvTransform, ViewSync,
-        ViewSyncSystems, WaterBodies, WaterFace, WaterKind, WaterObstacle, WaterObstacles,
-        WaterSample, WorldSync, WorldSyncSystems, Wrap, edit_transform, math,
-        reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
+        AssetLibrary, AutoExposure, Bloom, Camera, Clouds, Cube, DebugView, DebugViewMode, Dither,
+        DynamicResolution, DynamicResolutionStats, Engine, EngineConfig, EngineEntityCommands,
+        Filter, FixedPostSimulation, FixedPreSimulation, FixedSimulation, FixedSimulationSystems,
+        FixedTime, Foliage, FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Grading,
+        Ground, GroundFace, GroundPoint, Grounded, Grounding, Haze, HeightHeld, Highlights,
+        InputState, Interior, InterpolateTransform, LevelOfDetail, LightPreset, LightRegion,
+        LocalLight, LocalLightSettings, MakeSources, MakeTextures, Material, MaterialHandle, Mesh,
+        Mesh3d, MeshHandle, MeshVertex, NightSky, OcclusionCulling, Parent, ParticleBlend,
+        ParticleEmitter, ParticleSettings, Plugin, PluginGroup, Presentation, PresentationState,
+        PresentedTime, PresentedTransform, PresentedTransforms, ProvidedAssets, Records,
+        ReflectionProbe, ReflectionProbeSettings, Reflections, Resolution, ResolutionStats,
+        Sampler, Shadows, Sky, SkyLighting, SkyOcclusion, SplineMesh, Spot, StreamingFocus,
+        SubpixelCulling, Sunlight, Surface, SurfaceLight, TemporalAntialiasing, Texture,
+        TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage, Tint, TopLayer,
+        Transform, UvTransform, ViewSync, ViewSyncSystems, WaterBodies, WaterBodiesList, WaterFace,
+        WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSurfaces, WaterWorker, Wind,
+        WorldSync, WorldSyncSystems, Wrap, edit_transform, math, reset_all_interpolation,
+        reset_interpolation, set_parent, set_parents, trim_cards,
     };
     pub use engine_debug_view::DebugViewBrick;
     pub use engine_dither::DitherBrick;
@@ -82,7 +89,7 @@ mod games {
     pub use engine_taa::TaaBrick;
     pub use engine_terrain::{
         Cover, GroundCover, Occupancy, Terrain, TerrainBrick, TerrainSample, TerrainSettings,
-        Terrains, Water, Wind,
+        Terrains, Water,
     };
     pub use engine_terrain_shading::TerrainShadingBrick;
     pub use engine_time_of_day::{TimeOfDay, TimeOfDayBrick};
@@ -102,23 +109,26 @@ pub use engine_core::{
     MAX_TEXTURE_DIMENSION, MAX_TRANSFORM_NODES, MIN_SPOT_DEGREES, MaterialShare, MeshLods,
     PixelProbe, PluginGroupBuilder, SplineChunks, SunLookup, TerrainProbe, TextureFamily,
     TextureFormat, TextureSampling, TransformNodeLimit, Viewport, WaterProbe, WaterReach,
+    section_in,
 };
 pub use engine_terrain::{MAX_BOUNCE_LEVELS, MAX_OCCUPANCY_LEVELS};
 
 pub mod bricks {
     pub use engine_core::{
         AddBrick, AuthoredId, Brick, BrickCost, BrickCosts, BrickList, BrickRecord, BrickRegistry,
-        BrickRow, BrickSet, BrickStats, BrickTable, Bricks, CORE_PASSES, CORE_ROW, DrawState,
-        ExplainEntry, ExplainRecord, ExplainRequest, ExplainedEntity, Explainer, Extracted,
-        GPU_IDLE_ROW, InspectedKind, InspectorEntry, List, Operation, OperationEntry,
-        OperationScene, Owned, SettingsEntry, Slot, StatsEntry, UNATTRIBUTED_ROW, WARMUP_FRAMES,
-        authored_entity, authored_id, bounds, brick_name, missing_brick, parse_json, parse_value,
-        parse_value_at, source_line,
+        BrickRow, BrickSet, BrickStats, BrickTable, Bricks, CORE_PASSES, CORE_ROW, DetailConsumer,
+        DetailConsumersList, DrawState, ExplainEntry, ExplainRecord, ExplainRequest,
+        ExplainedEntity, Explainer, Extracted, GPU_IDLE_ROW, InspectedKind, InspectorEntry, List,
+        Operation, OperationEntry, OperationScene, Owned, PhysicsSlot, Place, PlaceKind,
+        SettingsEntry, Slot, StatsEntry, UNATTRIBUTED_ROW, WARMUP_FRAMES, authored_entity,
+        authored_id, bounds, brick_name, missing_brick, parse_json, parse_value, parse_value_at,
+        source_line,
     };
 
     pub fn standard() -> BrickList {
         BrickList::default()
             .with::<engine_terrain::TerrainBrick>()
+            .with::<engine_core::Wind>()
             .with::<engine_world_streaming::WorldStreamingBrick>()
             .with::<engine_navigation::NavigationBrick>()
             .with::<engine_time_of_day::TimeOfDayBrick>()
@@ -172,42 +182,43 @@ pub mod terrain {
     pub use engine_layer_stamps as layer_stamps;
     pub use engine_terrain as data;
     pub use engine_terrain::{
-        AUTHORED_LAYER, AuthoredPlacement, Biome, BiomeLayer, BiomeRules, Biomes, Blend, Control,
-        DECK_DEPTH, DECK_MARGIN, DECK_RISE, Expr, Facing, FarPlacement, GivenRiver, HeightImage,
-        Hydrology, HydrologySample, LayerKind, Layers, MAX_COLLIDER_EXTENT, MAX_PLACEMENT_LODS,
-        MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, MotionDetail, NoiseMask, Placed, PlacedCollider,
-        PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer, PlacementLod, PlacementPart,
-        Pyramid, Route, RouteOptions, Stamp, StampOp, SurfaceMaterial, SurfaceProjection,
-        Surroundings, SurroundingsStatus, TerrainBakes, TerrainEdit, TerrainLayer,
-        TerrainLayerKinds, TerrainPrefetch, TerrainRiver, TerrainSurface, Tile, TileKey, expr,
-        layer,
+        AUTHORED_LAYER, AuthoredPlacement, BRIDGE_SOLIDS, Biome, BiomeLayer, BiomeRules, Biomes,
+        Blend, Control, DECK_DEPTH, DECK_MARGIN, DECK_RISE, Expr, Facing, FarPlacement, GivenRiver,
+        HeightImage, Hydrology, HydrologySample, LayerKind, Layers, MAX_COLLIDER_EXTENT,
+        MAX_PLACEMENT_LODS, MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, MotionDetail, NoiseMask,
+        Placed, PlacedCollider, PlacedShape, PlacementAsset, PlacementChoice, PlacementLayer,
+        PlacementLod, PlacementPart, Pyramid, Route, RouteOptions, Stamp, StampOp, SurfaceMaterial,
+        SurfaceProjection, Surroundings, SurroundingsStatus, TerrainBakes, TerrainEdit,
+        TerrainLayer, TerrainLayerKinds, TerrainPrefetch, TerrainRiver, TerrainSurface, Tile,
+        TileKey, expr, layer,
     };
 }
 
 pub mod render {
     pub use engine_core::{
-        GpuCurrent, GpuPresentation, MAX_NORMAL_INVERSE_NORM, MaterialBinding, NO_PARENT,
-        NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NodeInfo, NodePose, PoseRows,
-        PresentationMode, RenderEmitter, RenderFrame, RenderInstance, RenderLight, RenderLights,
-        RenderMaterial, RenderMesh, RenderParticles, RenderReflectionProbe, RenderReflectionProbes,
-        RenderSnapshot, RenderTexture, TransformIndex, TransformPropagation, presentation_bounds,
-        propagate_transforms, valid_global_matrix,
+        GUST_QUICK_ACROSS, GUST_QUICK_RATE, GUST_QUICK_SHARE, GUST_QUICK_TRAVEL, GUST_SLOW_RATE,
+        GUST_SLOW_SHARE, GUST_SLOW_TRAVEL, GpuCurrent, GpuPresentation, GradingValues,
+        MAX_NORMAL_INVERSE_NORM, MaterialBinding, NO_PARENT, NODE_ACTIVE, NODE_BLEND,
+        NODE_PARENT_ACTIVE, NODE_VALID, NodeInfo, NodePose, PoseRows, PresentationMode,
+        RenderEmitter, RenderFrame, RenderInstance, RenderLight, RenderLights, RenderMaterial,
+        RenderMesh, RenderParticles, RenderReflectionProbe, RenderReflectionProbes, RenderSnapshot,
+        RenderTexture, SkyLightingValues, SunValues, SurfaceLightValues, TransformIndex,
+        TransformPropagation, presentation_bounds, propagate_transforms, valid_global_matrix,
     };
     pub use engine_terrain::bounce::TerrainBounce;
     pub use engine_terrain::lighting::TerrainLighting;
     pub use engine_terrain::{
-        GUST_QUICK_ACROSS, GUST_QUICK_RATE, GUST_QUICK_SHARE, GUST_QUICK_TRAVEL, GUST_SLOW_RATE,
-        GUST_SLOW_SHARE, GUST_SLOW_TRAVEL, MacroMap, RenderPlacementAsset, RenderPlacementLayer,
-        RenderPlacementPart, RenderSurfaceMaps, RenderTerrain, RenderTerrains, TerrainEnvironment,
+        MacroMap, RenderPlacementAsset, RenderPlacementLayer, RenderPlacementPart,
+        RenderSurfaceMaps, RenderTerrain, RenderTerrains,
     };
     pub use engine_world_streaming::{CellView, STREAMING_GRIDS, StreamingGrid};
 }
 
 pub mod stats {
     pub use engine_core::{
-        Applied, CloudStats, CullingStats, DetailStats, Drawn, ExposureStats, FrameStats,
-        GroundCoverStats, JobStats, LightStats, Names, OccupancyStats, ProbeStats, RenderStats,
-        ShadowStats, SkyStats, TerrainBounceStats, TerrainRenderStats, WaterStats,
+        Applied, CloudStats, CullingStats, Cut, DetailStats, ExposureStats, FrameStats,
+        GroundCoverStats, JobStats, LightStats, Names, OccupancyStats, ParticleStats, ProbeStats,
+        RenderStats, ShadowStats, SkyStats, TerrainBounceStats, TerrainRenderStats, WaterStats,
     };
     pub use engine_layer_erosion::ErosionStats;
     pub use engine_layer_paths::PathStats;

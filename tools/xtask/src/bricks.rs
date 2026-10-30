@@ -5,3 +5,7 @@ pub fn standard_engine() -> engine::Engine {
     engine.app.add_bricks(engine::bricks::standard());
     engine
 }
+
+pub fn register_standard_kinds() {
+    drop(standard_engine());
+}

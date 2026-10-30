@@ -468,6 +468,7 @@ pub mod page {
         paused: bool,
         clock: f64,
         faults: Vec<SmokeFailure>,
+        refused: Option<Value>,
     }
 
     pub async fn run<G: Game>(
@@ -521,6 +522,7 @@ pub mod page {
             paused: true,
             clock: 0.0,
             faults: Vec::new(),
+            refused: None,
         };
         let outcome = entry.run_in(&mut page);
         let ms = crate::host::now_ms() - started;
@@ -608,6 +610,9 @@ pub mod page {
         }
 
         fn send(&mut self, line: &str) -> Value {
+            if let Some(error) = &self.refused {
+                return serde_json::json!({ "ok": false, "error": error });
+            }
             let context = self.context();
             match &mut self.backend {
                 Backend::Headless(headless) => headless.request(line),
@@ -668,6 +673,9 @@ pub mod page {
         }
 
         fn frame(&mut self) -> bool {
+            if self.refused.is_some() {
+                return false;
+            }
             let Backend::Gpu(host) = &mut self.backend else {
                 return false;
             };
@@ -692,10 +700,11 @@ pub mod page {
             let (engine, game) = match (self.build)(self.source.as_deref(), bricks) {
                 Ok(built) => built,
                 Err(error) => {
-                    self.faults.push(fault("restart", &error));
+                    self.refused = Some(json(&error));
                     return;
                 }
             };
+            self.refused = None;
             match &mut self.backend {
                 Backend::Gpu(host) => {
                     host.replace_engine(engine);

@@ -95,7 +95,7 @@ fn quiet(
         let reply = control(session, name, args.clone(), check)?;
         shadows = reply["result"]["rendering"]["shadows"].clone();
         let idle = |field: &str| number(&shadows[field]) == 0.0;
-        let still = idle("tiles_missing")
+        let still = number(&shadows["tile_cut"]["cut"]) == 0.0
             && idle("tiles_drawn")
             && idle("sky_drawn")
             && (!previewing || idle("moving_tiles"));
@@ -160,15 +160,15 @@ fn settled(session: &mut dyn SmokeSession) -> SmokeResult {
     let mut shadows = Value::Null;
     for _ in 0..120 {
         shadows = frames(session, 2, "settles")?["result"]["rendering"]["shadows"].clone();
-        if number(&shadows["tiles_missing"]) == 0.0 && number(&shadows["tiles_drawn"]) == 0.0 {
+        if number(&shadows["tile_cut"]["cut"]) == 0.0 && number(&shadows["tiles_drawn"]) == 0.0 {
             break;
         }
     }
     engine_core::smoke_check!(
-        number(&shadows["tiles_missing"]) == 0.0 && number(&shadows["tiles_drawn"]) == 0.0,
+        number(&shadows["tile_cut"]["cut"]) == 0.0 && number(&shadows["tiles_drawn"]) == 0.0,
         "shadows_settle",
         shadows.clone(),
-        json!({ "tiles_missing": 0, "tiles_drawn": 0 })
+        json!({ "tile_cut": { "cut": 0 }, "tiles_drawn": 0 })
     );
     Ok(())
 }
