@@ -1,5 +1,5 @@
 import package::engine::color::luminance;
-import package::face::dither::{encoded, stored};
+import package::face::dither::stored;
 import package::face::heightfield::{NO_WATER_BLOCK, NO_WATER_SURFACE, TerrainSubdivision,
     WATER_HELD, WATER_LIVE_BLOCK, WaterAt, surface_vertex, terrain, terrain_level_height,
     terrain_surface_leaves, terrain_view, water_at_level, water_cell, water_info, water_read,
@@ -648,21 +648,14 @@ fn water_mirroring(shade: WaterShade) -> WaterShade {
     return result;
 }
 
-fn shade_mesh(mesh: vec3<f32>, pixel: vec2<f32>, refracts: bool) -> WaterShade {
+fn shade_mesh(mesh: vec3<f32>, pixel: vec2<f32>) -> WaterShade {
     let at = water_drawn(mesh);
-    return shade_water(water_on_surface(mesh, at), pixel, at, refracts);
-}
-
-@fragment
-fn fs_water(input: WaterOutput) -> @location(0) vec4<f32> {
-    let shade = shade_mesh(input.relative, input.clip_position.xy, false);
-    return vec4<f32>(encoded(shade.shaded.color, input.clip_position.xy) * shade.coverage,
-        shade.coverage);
+    return shade_water(water_on_surface(mesh, at), pixel, at, true);
 }
 
 @fragment
 fn fs_water_post(input: WaterOutput) -> SceneTargets {
-    let shade = shade_mesh(input.relative, input.clip_position.xy, true);
+    let shade = shade_mesh(input.relative, input.clip_position.xy);
     var targets = scene_targets(shade.shaded, stored(shade.shaded.color, input.clip_position.xy));
     targets.color = water_covering(shade, input.clip_position.xy);
     return targets;
@@ -670,7 +663,7 @@ fn fs_water_post(input: WaterOutput) -> SceneTargets {
 
 @fragment
 fn fs_water_temporal(input: WaterOutput) -> TemporalTargets {
-    let shade = shade_mesh(input.relative, input.clip_position.xy, true);
+    let shade = shade_mesh(input.relative, input.clip_position.xy);
     var targets = temporal_targets(shade.shaded,
         stored(shade.shaded.color, input.clip_position.xy), input.clip_position,
         water_previous(input.relative, shade.flow, saturate(shade.coverage)));

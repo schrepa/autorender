@@ -106,6 +106,10 @@ impl Setup {
         self.pipelines.is_some() && self.ground.is_some()
     }
 
+    fn release(&mut self) {
+        self.pipelines = None;
+    }
+
     fn bind<'a>(
         &'a self,
         pass: &mut wgpu::ComputePass<'_>,
@@ -459,6 +463,11 @@ impl WaterSim {
 
     pub(crate) fn ensure_setup(&mut self, device: &wgpu::Device) {
         self.setup.ensure(device);
+    }
+
+    pub(crate) fn release_pipelines(&mut self) {
+        self.kernels.release();
+        self.setup.release();
     }
 
     pub(crate) fn capacity_bytes(&self) -> u64 {

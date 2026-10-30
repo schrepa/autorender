@@ -277,7 +277,10 @@ impl WaterPass {
         let subdivided = tiles.as_ref().map_or([0; 2], |tiles| tiles.subdivided);
         let tiles = tiles.filter(|tiles| settings.enabled && !tiles.terrains.is_empty());
         self.prepare_falls(device, if settings.enabled { terrains } else { &[] });
-        let tiles = tiles?;
+        let Some(tiles) = tiles else {
+            self.rest((device, queue), seen, (&settings, wind.velocity, seconds));
+            return None;
+        };
         let live = terrains.iter().find_map(|terrain| {
             let window = terrain.water_window.as_ref()?;
             let ground = tiles
@@ -360,6 +363,30 @@ impl WaterPass {
             self.behind.set(size, copies);
         }
         Some(WaterFrame { blocks, subdivided })
+    }
+
+    fn rest(
+        &mut self,
+        (device, queue): (&wgpu::Device, &engine_render::gpu_calls::Queue),
+        seen: ParticleView,
+        (settings, wind, seconds): (&Water, [f32; 2], f64),
+    ) {
+        self.sim.prepare(device, queue, None, seconds);
+        self.particles.prepare(
+            (device, queue),
+            None,
+            seen,
+            (settings, settings.simulation_cell, wind, seconds),
+        );
+        self.behind.release();
+        self.group = None;
+        if !settings.enabled {
+            self.pipelines.clear();
+            self.fall_pipelines.clear();
+            self.foam_pipeline = None;
+            self.particles.release_pipelines();
+            self.sim.release_pipelines();
+        }
     }
 
     fn prepare_tiles(
@@ -684,14 +711,15 @@ impl WaterPass {
             ),
             display,
         };
-        if coming {
+        let settings = snapshot.section::<Water>();
+        if coming && settings.enabled {
             self.ensure_pipeline(device, (targets, true), formats);
         }
         let prepared = self.prepare_frame(
             device,
             &core.queue,
             (tiles, &terrains.terrains, terrain),
-            snapshot.section::<Water>(),
+            settings,
             (seen, snapshot.section::<Wind>(), snapshot.presented_seconds),
             (
                 &core.depth.texture,

@@ -1,5 +1,5 @@
 import package::engine::color::luminance;
-import package::face::dither::{encoded, stored};
+import package::face::dither::stored;
 import package::face::heightfield::{WATER_HELD, terrain};
 import package::face::lighting::{environment_brdf, finish, sun_visibility};
 import package::face::sun::{sun_color, sun_direction};
@@ -191,13 +191,6 @@ fn fall_mirroring(shade: FallShade, pixel: vec2<f32>) -> FallShade {
     result.shaded.mirrored *= own / max(own + behind, 1.0e-6);
     result.shaded.reflect *= shade.shown;
     return result;
-}
-
-@fragment
-fn fs_fall(input: FallOutput) -> @location(0) vec4<f32> {
-    let shade = shade_fall(input);
-    return vec4<f32>(encoded(shade.shaded.color, input.clip_position.xy) * shade.shown,
-        shade.coverage);
 }
 
 @fragment
