@@ -3,21 +3,27 @@ use std::sync::Arc;
 
 use engine_core::bevy_ecs::world::{EntityWorldMut, World};
 use engine_core::glam::Vec3;
-use engine_core::{Error, Expected, MaterialHandle, MeshHandle};
+use engine_core::{Error, Expected, MaterialHandle, MeshHandle, missing_brick};
 use engine_settings::{Rule, Setting};
 use engine_terrain::layer::{self, LayerFiles, TerrainLayer, TerrainLayerKinds};
 use engine_terrain::{
     Biome, Biomes, Cover, Layers, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
     PlacementLod, PlacementPart, Pyramid, SurfaceMaterial, SurfaceProjection, Surroundings,
-    Terrain, TerrainSurface,
+    Terrain, TerrainPrefetch, TerrainSurface,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use crate::components::{Placement, SceneComponent};
+use crate::bricks::added;
+use crate::components::{
+    ComponentContext, ComponentKind, Placement, Prepared, PreparedComponent, admitted, no_files,
+    object_example, parsed, ruled, valid_world,
+};
 use crate::instance::Lookups;
 use crate::validation::{identifier, unknown};
-use crate::{SceneDocument, SceneFiles, SceneMaterial, SceneMesh, files::valid_uri};
+use crate::{SceneFiles, SceneMaterial, SceneMesh, files::valid_uri};
+
+const TERRAIN_BRICK: &str = "terrain";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -134,9 +140,29 @@ fn is_zero(value: &f32) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SceneColliderShape {
+    Cuboid {
+        #[cfg_attr(
+            feature = "schema",
+            schemars(inner(range(min = engine_terrain::MIN_COLLIDER_EXTENT, max = engine_terrain::MAX_COLLIDER_EXTENT)))
+        )]
+        half_extents: [f32; 3],
+    },
+    Sphere {
+        #[cfg_attr(
+            feature = "schema",
+            schemars(range(min = engine_terrain::MIN_COLLIDER_EXTENT, max = engine_terrain::MAX_COLLIDER_EXTENT))
+        )]
+        radius: f32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrainCollider {
-    pub shape: crate::SceneColliderShape,
+    pub shape: SceneColliderShape,
     #[serde(default, skip_serializing_if = "is_origin")]
     pub center: [f32; 3],
     #[serde(default = "first_layer")]
@@ -161,10 +187,10 @@ impl SceneTerrainCollider {
     pub(crate) fn runtime(self) -> PlacedCollider {
         PlacedCollider {
             shape: match self.shape {
-                crate::SceneColliderShape::Cuboid { half_extents } => {
+                SceneColliderShape::Cuboid { half_extents } => {
                     PlacedShape::Cuboid { half_extents }
                 }
-                crate::SceneColliderShape::Sphere { radius } => PlacedShape::Sphere { radius },
+                SceneColliderShape::Sphere { radius } => PlacedShape::Sphere { radius },
             },
             center: self.center,
             memberships: self.memberships,
@@ -175,10 +201,8 @@ impl SceneTerrainCollider {
     pub(crate) fn authored(collider: PlacedCollider) -> Self {
         Self {
             shape: match collider.shape {
-                PlacedShape::Cuboid { half_extents } => {
-                    crate::SceneColliderShape::Cuboid { half_extents }
-                }
-                PlacedShape::Sphere { radius } => crate::SceneColliderShape::Sphere { radius },
+                PlacedShape::Cuboid { half_extents } => SceneColliderShape::Cuboid { half_extents },
+                PlacedShape::Sphere { radius } => SceneColliderShape::Sphere { radius },
             },
             center: collider.center,
             memberships: collider.memberships,
@@ -442,29 +466,33 @@ fn file_field(item: &Value, uri: &str, at: &str) -> String {
         .map_or_else(|| at.to_owned(), |(field, _)| format!("{at}.{field}"))
 }
 
-impl SceneTerrain {
-    pub(crate) fn files(&self) -> Vec<String> {
-        self.layers.iter().flat_map(layer_files).collect()
-    }
+fn authored_layers(terrain: &Value) -> impl Iterator<Item = &Value> {
+    terrain
+        .get("layers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+}
 
-    pub(crate) fn check_layers(&self, world: &World, path: &str) -> Result<(), Error> {
-        let offered = world.get_resource::<TerrainLayerKinds>();
-        for (index, item) in self.layers.iter().enumerate() {
-            let Some(name) = item.get(layer::TYPE_KEY).and_then(Value::as_str) else {
-                continue;
-            };
-            if offered.is_none_or(|kinds| kinds.get(name).is_none()) {
-                return Err(Error::new(
-                    ErrorCode::MissingPlugin,
-                    format!("{path}.layers[{index}].{}", layer::TYPE_KEY),
-                )
-                .expected(Expected::Present)
-                .got(name));
-            }
+fn check_layers(terrain: &Value, world: &World, path: &str) -> Result<(), Error> {
+    let offered = world.get_resource::<TerrainLayerKinds>();
+    for (index, item) in authored_layers(terrain).enumerate() {
+        let Some(name) = item.get(layer::TYPE_KEY).and_then(Value::as_str) else {
+            continue;
+        };
+        if offered.is_none_or(|kinds| kinds.get(name).is_none()) {
+            return Err(Error::new(
+                ErrorCode::MissingPlugin,
+                format!("{path}.layers[{index}].{}", layer::TYPE_KEY),
+            )
+            .expected(Expected::Present)
+            .got(name));
         }
-        Ok(())
     }
+    Ok(())
+}
 
+impl SceneTerrain {
     #[expect(clippy::type_complexity, reason = "the surface and its indices")]
     #[expect(
         clippy::too_many_lines,
@@ -826,23 +854,90 @@ impl SceneTerrain {
     }
 }
 
-impl engine_settings::Setting for SceneTerrain {}
+pub(crate) static TERRAIN: ComponentKind = ComponentKind {
+    name: "terrain",
+    shows: "Terrain.terrain",
+    placement: Placement::Entities(ErrorCode::InvalidStreamed),
+    schema: crate::component_schema!(SceneTerrain),
+    example: terrain_example,
+    validate: validate_terrain,
+    validate_world: valid_world,
+    prepare: prepare_terrain,
+    files: terrain_files,
+    admit: admit_terrain,
+};
 
-impl SceneComponent for SceneTerrain {
-    type Prepared = PreparedTerrain;
+fn terrain_example() -> Value {
+    json!({
+        "origin": [-128.0, 0.0, -128.0],
+        "tiles": [2, 2],
+        "spacing": 1.0,
+        "layers": [{ "type": "noise", "seed": 3, "height": 8.0, "wavelength": 120.0 }]
+    })
+}
 
-    const PLACEMENT: Placement = Placement::Entities(ErrorCode::InvalidStreamed);
+fn validate_terrain(value: &Value, path: &str) -> Result<(), Error> {
+    parsed::<SceneTerrain>(value, path).map(drop)
+}
 
-    fn prepare(
-        &self,
-        path: &str,
-        document: &SceneDocument,
-        files: Option<&SceneFiles>,
-    ) -> Result<PreparedTerrain, Error> {
-        SceneTerrain::prepare(self, path, files, (&document.materials, &document.meshes))
+fn prepare_terrain(value: &Value, context: &ComponentContext<'_>) -> Prepared {
+    let terrain: SceneTerrain = parsed(value, context.path)?;
+    let document = context.document;
+    Ok(Box::new(terrain.prepare(
+        context.path,
+        context.files,
+        (&document.materials, &document.meshes),
+    )?))
+}
+
+fn terrain_files(value: &Value) -> Vec<String> {
+    authored_layers(value).flat_map(layer_files).collect()
+}
+
+fn admit_terrain(value: &Value, world: &World, path: &str) -> Result<(), Error> {
+    if !added(world, TERRAIN_BRICK) {
+        return Err(missing_brick(TERRAIN_BRICK, path));
     }
+    check_layers(value, world, path)
+}
 
-    fn spawn(prepared: &PreparedTerrain, entity: &mut EntityWorldMut<'_>, lookups: &Lookups) {
-        entity.insert(prepared.runtime(&lookups.owned_materials, &lookups.owned_meshes));
+impl PreparedComponent for PreparedTerrain {
+    fn spawn(&self, entity: &mut EntityWorldMut<'_>, lookups: &Lookups) {
+        entity.insert(self.runtime(&lookups.owned_materials, &lookups.owned_meshes));
+    }
+}
+
+pub(crate) static PREFETCH: ComponentKind = ComponentKind {
+    name: "prefetch",
+    shows: "TerrainPrefetch",
+    placement: Placement::Anywhere,
+    schema: crate::component_schema!(TerrainPrefetch),
+    example: object_example,
+    validate: validate_prefetch,
+    validate_world: valid_world,
+    prepare: prepare_prefetch,
+    files: no_files,
+    admit: admit_prefetch,
+};
+
+fn validate_prefetch(value: &Value, path: &str) -> Result<(), Error> {
+    ruled::<TerrainPrefetch>(value, path, PREFETCH.name, Rule::Any).map(drop)
+}
+
+fn prepare_prefetch(value: &Value, context: &ComponentContext<'_>) -> Prepared {
+    Ok(Box::new(parsed::<TerrainPrefetch>(value, context.path)?))
+}
+
+fn admit_prefetch(_value: &Value, world: &World, path: &str) -> Result<(), Error> {
+    if added(world, TERRAIN_BRICK) {
+        Ok(())
+    } else {
+        Err(missing_brick(TERRAIN_BRICK, path))
+    }
+}
+
+impl PreparedComponent for TerrainPrefetch {
+    fn spawn(&self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
+        entity.insert(*self);
     }
 }

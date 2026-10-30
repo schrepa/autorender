@@ -13,6 +13,10 @@ use engine_dev::authoring;
 use engine_scene::SceneDocument;
 use serde_json::{Value, json};
 
+const COLLIDER: &str = "collider";
+
+const TINT: &str = "tint";
+
 pub fn asset(arguments: &[String]) -> Result<(), String> {
     let result = command(arguments);
     let succeeded = result.is_ok();
@@ -52,6 +56,7 @@ fn command(arguments: &[String]) -> Result<Value, Error> {
     } else {
         let target = options.into.as_ref().expect("target_validated");
         let original = authoring::read_scene_source(target)?;
+        drop(crate::bricks::standard_engine());
         let current = SceneDocument::from_json(&original)?;
         let revision = options.revision.expect("revision_validated");
         if current.revision != revision {
@@ -274,8 +279,13 @@ fn merge(
                 }
                 entity.name.clone_from(&old.name);
                 entity.tags.clone_from(&old.tags);
-                entity.collider = old.collider;
-                entity.tint = old.tint;
+                for kept in [COLLIDER, TINT] {
+                    if let Some(value) = old.component(kept) {
+                        entity.components.insert(kept.to_owned(), value.clone());
+                    } else {
+                        entity.components.remove(kept);
+                    }
+                }
             }
             current.entities.push(entity);
         }
@@ -303,7 +313,7 @@ fn preserve_colliders(
         .map(|entity| (entity.id.clone(), entity))
         .collect();
     for old in previous {
-        let Some(collider) = old.collider else {
+        let Some(collider) = old.component(COLLIDER) else {
             continue;
         };
         let Some(replacement) = replacements.get_mut(&old.id) else {
@@ -311,7 +321,9 @@ fn preserve_colliders(
                 .expected(Expected::Present)
                 .got(&old.id));
         };
-        replacement.collider = Some(collider);
+        replacement
+            .components
+            .insert(COLLIDER.to_owned(), collider.clone());
     }
     Ok(())
 }

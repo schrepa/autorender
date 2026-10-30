@@ -1,10 +1,13 @@
 use engine_core::{Error, Interior, ReflectionProbe, bevy_ecs::world::EntityWorldMut, glam::Vec3};
-use engine_settings::settings;
+use engine_settings::{Rule, settings};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
-use crate::components::{Placement, Reach, SceneComponent};
+use crate::components::{
+    ComponentContext, ComponentKind, Placement, Prepared, PreparedComponent, Reach, admitted,
+    no_files, parsed, ruled, valid_world,
+};
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneFiles};
 
 settings! {
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -51,25 +54,39 @@ impl From<&ReflectionProbe> for SceneReflectionProbe {
     }
 }
 
-impl SceneComponent for SceneReflectionProbe {
-    type Prepared = ReflectionProbe;
+pub(crate) static REFLECTION_PROBE: ComponentKind = ComponentKind {
+    name: "reflection_probe",
+    shows: "ReflectionProbe",
+    placement: Placement::Anywhere,
+    schema: crate::component_schema!(SceneReflectionProbe),
+    example: probe_example,
+    validate: validate_probe,
+    validate_world: valid_world,
+    prepare: prepare_probe,
+    files: no_files,
+    admit: admitted,
+};
 
-    const PLACEMENT: Placement = Placement::Anywhere;
+fn probe_example() -> Value {
+    json!({ "extent": [1.0, 1.0, 1.0] })
+}
 
-    fn prepare(
-        &self,
-        _: &str,
-        _: &SceneDocument,
-        _: Option<&SceneFiles>,
-    ) -> Result<ReflectionProbe, Error> {
-        Ok(self.runtime())
+fn validate_probe(value: &Value, path: &str) -> Result<(), Error> {
+    ruled::<SceneReflectionProbe>(value, path, REFLECTION_PROBE.name, Rule::Any).map(drop)
+}
+
+fn prepare_probe(value: &Value, context: &ComponentContext<'_>) -> Prepared {
+    Ok(Box::new(
+        parsed::<SceneReflectionProbe>(value, context.path)?.runtime(),
+    ))
+}
+
+impl PreparedComponent for ReflectionProbe {
+    fn spawn(&self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
+        entity.insert(*self);
     }
 
-    fn spawn(prepared: &ReflectionProbe, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
-        entity.insert(*prepared);
-    }
-
-    fn reach(prepared: &ReflectionProbe, reach: &Reach<'_>, extend: &mut impl FnMut(f32)) {
-        extend(reach.from + prepared.extent.length());
+    fn reach(&self, reach: &Reach<'_>, extend: &mut dyn FnMut(f32)) {
+        extend(reach.from + self.extent.length());
     }
 }
