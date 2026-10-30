@@ -294,6 +294,12 @@ struct Arrays {
     layers: u32,
 }
 
+impl Drop for Arrays {
+    fn drop(&mut self) {
+        crate::memory::release_any(&self.texture);
+    }
+}
+
 struct Baked {
     record: ImpostorRecord,
     material: Option<Material>,
@@ -690,6 +696,34 @@ impl ImpostorAtlas {
 
     pub fn release_targets(&mut self) {
         self.targets = None;
+    }
+
+    pub fn release(&mut self, device: &wgpu::Device) {
+        if self.arrays.is_none()
+            && self.targets.is_none()
+            && self.baked.is_empty()
+            && self.supplies.is_empty()
+            && self.readbacks.is_empty()
+            && self.uploaded.is_empty()
+        {
+            return;
+        }
+        self.arrays = None;
+        self.targets = None;
+        self.group = Cached::default();
+        self.layers = Layers::default();
+        self.baked.clear();
+        self.supplies.clear();
+        self.supplied.clear();
+        self.wants.clear();
+        self.answers.clear();
+        self.readbacks.clear();
+        self.uploaded.clear();
+        crate::memory::release_buffer(&self.records);
+        self.records = record_buffer(device, 1);
+        self.records_generation += 1;
+        self.arrays_generation += 1;
+        self.generation += 1;
     }
 
     fn ensure_layers(&mut self, device: &wgpu::Device, encoder: &mut dyn MipEncoder, layers: u32) {

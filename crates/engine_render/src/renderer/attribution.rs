@@ -6,6 +6,7 @@ pub struct GpuPassTimes {
     pub frame_ms: f64,
     pub idle_ms: f64,
     pub passes: Vec<(&'static str, f64)>,
+    pub preludes: Vec<(&'static str, &'static str, f64)>,
 }
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
@@ -22,25 +23,32 @@ impl Renderer {
     pub fn gpu_pass_times(&self) -> Option<GpuPassTimes> {
         let latest = self.core.profiler.latest()?;
         let mut passes: Vec<(&'static str, f64)> = Vec::new();
+        let mut preludes: Vec<(&'static str, &'static str, f64)> = Vec::new();
         for &(span, ms) in &latest.spans {
-            let pass = span.strip_prefix("stage_").or_else(|| {
-                self.prelude_owners
-                    .iter()
-                    .find(|&&(prelude, _)| prelude == span)
-                    .map(|&(_, pass)| pass)
-            });
-            let Some(pass) = pass else {
+            if let Some(pass) = span.strip_prefix("stage_") {
+                match passes.iter_mut().find(|(known, _)| *known == pass) {
+                    Some((_, total)) => *total += ms,
+                    None => passes.push((pass, ms)),
+                }
+                continue;
+            }
+            let Some(&(prelude, brick)) = self
+                .prelude_owners
+                .iter()
+                .find(|&&(known, _)| known == span)
+            else {
                 continue;
             };
-            match passes.iter_mut().find(|(known, _)| *known == pass) {
-                Some((_, total)) => *total += ms,
-                None => passes.push((pass, ms)),
+            match preludes.iter_mut().find(|(known, ..)| *known == prelude) {
+                Some((.., total)) => *total += ms,
+                None => preludes.push((prelude, brick, ms)),
             }
         }
         Some(GpuPassTimes {
             frame_ms: latest.frame_ms,
             idle_ms: latest.idle_ms,
             passes,
+            preludes,
         })
     }
 

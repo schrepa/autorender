@@ -74,6 +74,19 @@ impl Core {
         self.display.format()
     }
 
+    pub(crate) fn frame_resources(&mut self, kind: FrameKind, views: bool) {
+        if kind.debug {
+            self.debug.prepare(&self.device, self.display.size());
+        } else {
+            self.debug.release();
+        }
+        if !views {
+            self.mesh_pipelines.release_view();
+            self.camera.release_views();
+            self.gpu_presentation.release_views();
+        }
+    }
+
     pub(crate) fn forget_temporal(&mut self) {
         self.mesh_pipelines.forget(Some(Targets::Temporal));
         self.impostors.pipelines.forget_pipelines(Targets::Temporal);

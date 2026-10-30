@@ -129,6 +129,13 @@ struct Levels {
     drawn: FrameSize,
 }
 
+impl Drop for Levels {
+    fn drop(&mut self) {
+        crate::memory::release_any(&self.texture);
+        crate::memory::release_buffer(&self.extents);
+    }
+}
+
 struct Level {
     group: wgpu::BindGroup,
     written: (u32, u32),

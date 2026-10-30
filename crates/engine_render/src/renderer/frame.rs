@@ -112,10 +112,8 @@ impl Renderer {
         let Some(surface) = core.display.acquire(&core.device, &mut core.depth)? else {
             return Ok(self.core.residency_stats());
         };
-        if kind.debug {
-            let core = &mut self.core;
-            core.debug.prepare(&core.device, core.display.size());
-        }
+        let views = self.parts.views().is_some();
+        self.core.frame_resources(kind, views);
         let mut info = FrameInfo {
             snapshot,
             frame,
@@ -193,7 +191,7 @@ impl Renderer {
         for index in 0..parts.len() {
             let decl = parts.decl(index);
             let _owner = crate::memory::owned(decl.brick);
-            prelude.attribute(decl.passes.first().map_or(decl.name, |pass| pass.name));
+            prelude.attribute(decl.brick);
             parts.with_part(index, |part, parts| {
                 part.prepare(
                     &mut Step {

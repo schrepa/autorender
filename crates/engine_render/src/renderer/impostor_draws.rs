@@ -66,7 +66,11 @@ impl Core {
         let Some(entries) = self.mesh_entries else {
             return;
         };
-        if !(gpu_mode && settings.enabled && settings.impostors) {
+        if !(settings.enabled && settings.impostors) {
+            self.impostors.atlas.release(&self.device);
+            return;
+        }
+        if !gpu_mode {
             return;
         }
         self.impostors.atlas.enforce_budget(settings.max_impostors);
