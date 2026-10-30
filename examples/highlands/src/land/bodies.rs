@@ -109,7 +109,7 @@ pub(super) fn place(world: &mut World) {
     let [x, z] = site.points[site.point];
     let bed = site.bed[site.point];
     let at = site.origin + Vec3::new(x, bed + 0.05, z);
-    let Some(sample) = Ground::water_in(world, at) else {
+    let Some(sample) = WaterBodies::water_in(world, at) else {
         return;
     };
     let water = sample.surface - site.origin.y;

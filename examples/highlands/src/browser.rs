@@ -75,15 +75,8 @@ engine::__if_dev! {
             query: String,
         ) -> Result<bool, JsValue> {
             let options = page_options(&query)?;
-            let build = move |source: Option<&str>, bricks| match source {
-                None => Ok((
-                    engine::smokes::engine_of(bricks)?,
-                    Highlands::new(options.clone()),
-                )),
-                Some(_) => Err(
-                    Error::new(ErrorCode::UnsupportedCommand, "$.source")
-                        .expected(engine::Expected::Absent),
-                ),
+            let build = move |source: Option<&str>, bricks| {
+                Highlands::played(options.clone(), source, bricks)
             };
             let bricks = engine::bricks::standard();
             let mut smokes = engine::smokes::registered(&bricks);

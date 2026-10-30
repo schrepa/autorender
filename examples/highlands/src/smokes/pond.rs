@@ -1,6 +1,7 @@
 use engine::prelude::*;
 use engine::smoke::{Checked, SmokeFailure, SmokeResult, SmokeSession, compiled, control, render};
 use engine::smoke_check;
+use engine::smokes::run_place;
 use engine::terrain::data::smokes::settle;
 use highlands_pond::{Pond, PondBrick};
 use serde_json::{Value, json};
@@ -24,11 +25,22 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
             concat!(file!(), ":", line!()),
         )
     })?;
+    let pond = spawned(session.app().world(), pond)?;
     control(session, "pause", json!({}))?;
     settle(session)?;
     holds_water(session)?;
     floats(session, body)?;
-    draws(session, pond)
+    draws(session, pond)?;
+    run_place(session, "water")?;
+    run_place(session, "water_bodies")
+}
+
+fn authored() -> Pond {
+    Pond {
+        center: [0.0; 2],
+        size: [POND_SIZE; 2],
+        surface: SURFACE,
+    }
 }
 
 fn scene() -> Value {
@@ -45,28 +57,24 @@ fn scene() -> Value {
         "textures": [],
         "materials": [],
         "meshes": [],
-        "entities": [{
-            "id": "ground",
-            "terrain": {
-                "origin": [-128, 0, -128],
-                "tiles": [1, 1],
-                "spacing": 1,
-                "layers": [{ "type": "noise", "seed": 3, "height": 0, "wavelength": 120 }],
+        "entities": [
+            {
+                "id": "ground",
+                "terrain": {
+                    "origin": [-128, 0, -128],
+                    "tiles": [1, 1],
+                    "spacing": 1,
+                    "layers": [{ "type": "noise", "seed": 3, "height": 0, "wavelength": 120 }],
+                },
             },
-        }],
+            { "id": "pond", "pond": authored() },
+        ],
     })
 }
 
-fn build(world: &mut World) -> engine::Result<(Entity, Entity)> {
+fn build(world: &mut World) -> engine::Result<(Option<Entity>, Entity)> {
     let document: SceneDocument = engine::scene::parse_json(&scene().to_string())?;
-    let _scene = document.instantiate(world)?;
-    let pond = world
-        .spawn(Pond {
-            center: Vec2::ZERO,
-            size: Vec2::splat(POND_SIZE),
-            surface: SURFACE,
-        })
-        .id();
+    let pond = document.instantiate(world)?.entity("pond");
     let body = world
         .spawn((
             Transform::from_xyz(0.0, DROP, 0.0),
@@ -77,10 +85,23 @@ fn build(world: &mut World) -> engine::Result<(Entity, Entity)> {
     Ok((pond, body))
 }
 
+fn spawned(world: &World, pond: Option<Entity>) -> Checked<Entity> {
+    let held = pond.and_then(|pond| world.get::<Pond>(pond).copied());
+    match pond {
+        Some(pond) if held == Some(authored()) => Ok(pond),
+        Some(_) | None => Err(SmokeFailure::new(
+            "the_pond_spawns_from_the_scene",
+            &held,
+            &authored(),
+            concat!(file!(), ":", line!()),
+        )),
+    }
+}
+
 fn holds_water(session: &mut dyn SmokeSession) -> Checked<()> {
     let world = session.app().world();
     let ground = Ground::sample_in(world, 0.0, 0.0).map(|point| point.height);
-    let water = Ground::water_in(world, Vec3::new(0.0, SURFACE, 0.0));
+    let water = WaterBodies::water_in(world, Vec3::new(0.0, SURFACE, 0.0));
     let expected = ground.map(|height| SURFACE - height);
     let held = water.is_some_and(|water| {
         water.kind == WaterKind::Lake

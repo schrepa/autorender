@@ -27,7 +27,7 @@ engine_sources.workspace = true
 
 [dependencies]
 engine.workspace = true
-highlands_pond.workspace = true
+highlands_pond = { workspace = true, features = ["schema"] }
 highlands_toon_lighting.workspace = true
 serde_json.workspace = true
 

@@ -8,7 +8,6 @@ mod options;
 mod random;
 mod records;
 mod scene;
-mod smokes;
 mod views;
 
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
@@ -16,4 +15,9 @@ include!(concat!(env!("OUT_DIR"), "/source.rs"));
 pub use game::Highlands;
 pub use land::RockMaps;
 pub use options::{Options, controls, parameters};
-pub use smokes::smokes;
+
+engine::__if_dev! {
+    mod smokes;
+
+    pub use smokes::smokes;
+}
