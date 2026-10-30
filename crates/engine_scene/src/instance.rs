@@ -523,7 +523,9 @@ fn spawn_entity(
             material: lookups.materials[material.as_str()],
         });
     }
-    component.components.spawn(&mut entity, lookups);
+    for prepared in &component.components {
+        prepared.spawn(&mut entity, lookups);
+    }
     entity.id()
 }
 

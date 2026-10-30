@@ -109,7 +109,6 @@ pub fn generated(world: &World) -> Result<Generated, String> {
         "Hierarchy": schemars::schema_for!(views::HierarchyView),
         "Camera": schemars::schema_for!(views::CameraView),
         "Mesh3d": schemars::schema_for!(views::Mesh3dView),
-        "Atmosphere": schemars::schema_for!(engine_scene::SceneAtmosphere),
         "SplineMesh": schemars::schema_for!(views::SplineMeshView),
         "ReflectionProbe": schemars::schema_for!(engine_scene::SceneReflectionProbe),
         "Input": schemars::schema_for!(views::InputView),
@@ -188,7 +187,7 @@ pub fn generated(world: &World) -> Result<Generated, String> {
     control_state(registry, &controls, &schemas, &mut problems);
     typed_results(registry, &queries, &controls, &mut problems);
     match serde_json::from_str::<Value>(&scene_schema) {
-        Ok(scene) => authored_parity(&scene, &schemas, &mut problems),
+        Ok(scene) => authored_parity(registry, &scene, &schemas, &mut problems),
         Err(error) => problems.push(format!("the scene schema is not JSON: {error}")),
     }
     if !problems.is_empty() {
@@ -474,7 +473,7 @@ fn control_schema(registry: &BrickRegistry) -> Value {
         Verb::Control,
         schemars::schema_for!(protocol::BrowserControl),
     );
-    let mut titles = vec![("SceneAtmosphere".to_owned(), "Atmosphere")];
+    let mut titles = Vec::new();
     let mut sections = Map::new();
     for section in registry.sections() {
         let title = serialized(section.schema())["title"]
@@ -709,13 +708,22 @@ const RENAMED: &[(&str, &str)] = &[
     ("SceneTexture.rgba8", "inline"),
 ];
 
-fn authored_parity(scene: &Value, schemas: &Value, problems: &mut Vec<String>) {
+fn authored_parity(
+    registry: &BrickRegistry,
+    scene: &Value,
+    schemas: &Value,
+    problems: &mut Vec<String>,
+) {
     let definitions = &scene["$defs"];
     let object = definitions["SceneObject"]["properties"]
         .as_object()
         .cloned()
         .unwrap_or_default();
-    let authored = || AUTHORED.iter().chain(engine_scene::COMPONENT_SHOWS);
+    let kinds: Vec<(&str, &str)> = engine_scene::component_kinds_in(registry)
+        .into_iter()
+        .map(|(_, kind)| (kind.name, kind.shows))
+        .collect();
+    let authored = || AUTHORED.iter().chain(&kinds);
     for (property, schema) in &object {
         match authored().find(|(authored, _)| authored == property) {
             Some(&(_, shows)) => shown(

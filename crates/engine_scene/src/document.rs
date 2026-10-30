@@ -1,6 +1,9 @@
+use std::collections::BTreeMap;
+
 use engine_core::{Camera, Error, Expected, Mesh, MeshVertex, Surface, Transform, glam};
-use engine_settings::ErrorCode;
+use engine_settings::{ErrorCode, InvalidSetting, Rule, Setting};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{SceneEnvironment, SceneFiles, SceneMaterial, SceneTexture, files::valid_uri};
 
@@ -82,6 +85,19 @@ impl SceneDocument {
                 .and_then(serde_json::Value::as_object_mut)
             {
                 properties.extend(sections);
+            }
+            let components = crate::components::component_schemas(registry, definitions);
+            if let Some(object) = definitions
+                .get_mut("SceneObject")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                if let Some(properties) = object
+                    .get_mut("properties")
+                    .and_then(serde_json::Value::as_object_mut)
+                {
+                    properties.extend(components);
+                }
+                object.insert("additionalProperties".to_owned(), Value::Bool(false));
             }
         }
         let mut source = serde_json::to_string_pretty(&schema).expect("schema_serializes");
@@ -360,71 +376,76 @@ engine_settings::settings! {
     }
 }
 
-macro_rules! scene_object {
-    ($(
-        $(#[$doc:meta])*
-        $field:ident: $type:ty {
-            brick: $brick:expr,
-            shows: $shows:literal,
-            rule: $rule:ident $(($($arg:expr),*))?,
-            $kind:ident
-        },
-    )*) => {
-        engine_settings::settings! {
-            #[derive(Debug, Clone, Serialize, Deserialize)]
-            #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-            #[serde(deny_unknown_fields)]
-            pub struct SceneObject {
-                #[cfg_attr(
-                    feature = "schema",
-                    schemars(transform = engine_settings::stated(engine_settings::rule::id()))
-                )]
-                pub id: String = String::new() => any,
-                #[serde(default)]
-                #[cfg_attr(
-                    feature = "schema",
-                    schemars(length(max = crate::validation::MAX_NAME_BYTES))
-                )]
-                pub name: String = String::new() => any,
-                #[cfg_attr(
-                    feature = "schema",
-                    schemars(transform = engine_settings::stated(engine_settings::rule::id()))
-                )]
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub mesh: Option<String> = None => any,
-                #[cfg_attr(
-                    feature = "schema",
-                    schemars(transform = engine_settings::stated(engine_settings::rule::id()))
-                )]
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                pub material: Option<String> = None => any,
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                #[cfg_attr(
-                    feature = "schema",
-                    schemars(transform = engine_settings::stated(engine_settings::rule::id()))
-                )]
-                pub parent: Option<String> = None => any,
-                #[serde(default, skip_serializing_if = "Option::is_none")]
-                #[cfg_attr(
-                    feature = "schema",
-                    schemars(transform = engine_settings::stated(engine_settings::rule::id()))
-                )]
-                pub prefab: Option<String> = None => any,
-                $(
-                    $(#[$doc])*
-                    #[serde(default, skip_serializing_if = "Option::is_none")]
-                    pub $field: Option<$type> = None => $rule $(($($arg),*))?,
-                )*
-                #[serde(default)]
-                pub transform: SceneTransform = SceneTransform::default() => any,
-                #[serde(default)]
-                pub tags: Vec<String> = Vec::new() => count(0, 16),
-            }
-        }
-    };
+const TAGS: Rule = Rule::count(0.0, 16.0);
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(
+    feature = "schema",
+    derive(schemars::JsonSchema),
+    schemars(transform = state_object_rules)
+)]
+pub struct SceneObject {
+    #[cfg_attr(
+        feature = "schema",
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+    )]
+    pub id: String,
+    #[serde(default)]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(length(max = crate::validation::MAX_NAME_BYTES))
+    )]
+    pub name: String,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh: Option<String>,
+    #[cfg_attr(
+        feature = "schema",
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+    )]
+    pub parent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(
+        feature = "schema",
+        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+    )]
+    pub prefab: Option<String>,
+    #[serde(flatten)]
+    #[cfg_attr(feature = "schema", schemars(skip))]
+    pub components: BTreeMap<String, Value>,
+    #[serde(default)]
+    pub transform: SceneTransform,
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
-crate::components::entity_components!(scene_object);
+#[cfg(feature = "schema")]
+fn state_object_rules(schema: &mut schemars::Schema) {
+    engine_settings::state(schema, "tags", TAGS);
+}
+
+impl SceneObject {
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        Setting::check(&self.transform, "transform", Rule::Any)?;
+        Setting::check(&self.tags, "tags", TAGS)
+    }
+}
+
+impl Setting for SceneObject {
+    fn check(&self, field: &'static str, _: Rule) -> Result<(), InvalidSetting> {
+        self.validate().map_err(|invalid| invalid.within(field))
+    }
+}
 
 engine_settings::settings! {
     #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

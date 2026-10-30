@@ -8,7 +8,9 @@ use engine_core::{
     valid_global_matrix,
 };
 
+use crate::components::GROUNDED;
 use crate::rules::PATH_LAYER;
+use crate::terrain::TERRAIN;
 use crate::validation::{display_name, identifier, reference, unique_ids, unknown};
 use crate::{SceneAlong, SceneDocument, SceneObject, ScenePrefab, SceneTerrain, SceneTransform};
 
@@ -165,14 +167,23 @@ impl SceneDocument {
             along
                 .validate()
                 .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, &path))?;
-            let (terrain, points) = self.along_path(along, &path)?;
-            let origin = Vec3::from_array(terrain.origin);
+            let (origin, points) = self.along_path(along, &path)?;
+            let origin = Vec3::from_array(origin);
             for (number, (point, yaw)) in along.spots(&points, &path)?.into_iter().enumerate() {
                 placed.push(Placed {
                     object: SceneObject {
                         id: format!("{}{number}", along.id),
                         prefab: Some(along.prefab.clone()),
-                        grounded: along.grounded,
+                        components: along
+                            .grounded
+                            .iter()
+                            .map(|grounded| {
+                                (
+                                    GROUNDED.name.to_owned(),
+                                    serde_json::to_value(grounded).expect("grounded_serializes"),
+                                )
+                            })
+                            .collect(),
                         transform: SceneTransform {
                             translation: (origin + Vec3::new(point.x, 0.0, point.y)).to_array(),
                             rotation_degrees: [0.0, yaw.to_degrees(), 0.0],
@@ -192,15 +203,14 @@ impl SceneDocument {
         &self,
         along: &SceneAlong,
         path: &str,
-    ) -> Result<(&SceneTerrain, Vec<[f32; 2]>), Error> {
+    ) -> Result<([f32; 3], Vec<[f32; 2]>), Error> {
         let Some((at, terrain)) = self
             .entities
             .iter()
             .enumerate()
             .find_map(|(index, entity)| {
                 entity
-                    .terrain
-                    .as_ref()
+                    .component(TERRAIN.name)
                     .filter(|_| entity.id == along.terrain)
                     .map(|terrain| (index, terrain))
             })
@@ -211,11 +221,15 @@ impl SceneDocument {
                     .variants(
                         self.entities
                             .iter()
-                            .filter(|entity| entity.terrain.is_some())
+                            .filter(|entity| entity.component(TERRAIN.name).is_some())
                             .map(|entity| entity.id.clone()),
                     ),
             );
         };
+        let terrain: SceneTerrain = engine_core::parse_value_at(
+            terrain.clone(),
+            &format!("$.entities[{at}].{}", TERRAIN.name),
+        )?;
         let paths = || {
             terrain
                 .layers
@@ -240,7 +254,7 @@ impl SceneDocument {
             layer.get("points").cloned().unwrap_or(Value::Null),
             &format!("$.entities[{at}].terrain.layers[{index}].points"),
         )?;
-        Ok((terrain, points))
+        Ok((terrain.origin, points))
     }
 }
 
@@ -340,9 +354,7 @@ fn validate_object(
     material_ids: &BTreeSet<&str>,
     prefab_ids: &BTreeSet<&str>,
 ) -> Result<Transform, Error> {
-    if let Some(collider) = entity.collider {
-        collider.runtime(&format!("{path}.collider"))?;
-    }
+    entity.validate_components(path)?;
     match (&entity.mesh, &entity.material) {
         (Some(mesh), Some(material)) if entity.prefab.is_none() => {
             reference(mesh, mesh_ids, &format!("{path}.mesh"))?;
@@ -374,15 +386,6 @@ fn validate_object(
     entity
         .validate()
         .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, path))?;
-    if let Some(spline) = &entity.spline {
-        spline.validate(&format!("{path}.spline"))?;
-        reference(&spline.mesh, mesh_ids, &format!("{path}.spline.mesh"))?;
-        reference(
-            &spline.material,
-            material_ids,
-            &format!("{path}.spline.material"),
-        )?;
-    }
     if let Some(parent) = &entity.parent {
         identifier(parent, &format!("{path}.parent"))?;
     }
@@ -490,9 +493,9 @@ fn validate_graph<'a>(
                 .expected(Expected::Invertible)
                 .got(entries[index].0.transform));
             }
-            if let Some(collider) = entries[index].0.collider {
-                collider.validate_world(matrix, &format!("{}.collider", entries[index].1))?;
-            }
+            entries[index]
+                .0
+                .validate_world_components(matrix, &entries[index].1)?;
             worlds[index] = Some(matrix);
             depths[index] = depth;
         }

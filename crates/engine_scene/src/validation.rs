@@ -9,7 +9,7 @@ use engine_core::{
 
 use crate::{
     MeshSource, SceneDocument, SceneFile, SceneFileKind, SceneFiles,
-    components::{PreparedComponents, Reach},
+    components::{PreparedComponent, Reach},
     hierarchy::{ExpandedObject, ExpandedScene},
     material::PreparedMaterial,
 };
@@ -41,7 +41,7 @@ pub(crate) struct PreparedItem {
 }
 
 pub(crate) struct PreparedEntity {
-    pub components: PreparedComponents,
+    pub components: Vec<Box<dyn PreparedComponent>>,
 }
 
 struct CpuAssets {
@@ -89,10 +89,8 @@ impl SceneDocument {
             .iter()
             .chain(self.prefabs.iter().flat_map(|prefab| &prefab.entities));
         for entity in entities {
-            if let Some(terrain) = &entity.terrain {
-                for uri in terrain.files() {
-                    add(&uri, SceneFileKind::Buffer);
-                }
+            for uri in entity.component_files() {
+                add(&uri, SceneFileKind::Buffer);
             }
         }
         files
@@ -248,7 +246,9 @@ impl SceneDocument {
                 let bounds = meshes[*mesh].bounds();
                 extend(standing.of_box(bounds.min(), bounds.max()));
             }
-            component.components.reach(&standing, &mut extend);
+            for prepared in &component.components {
+                prepared.reach(&standing, &mut extend);
+            }
             if reach.is_finite() {
                 items[item].reach = engine_core::math::max(items[item].reach, reach);
             }

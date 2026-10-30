@@ -2,12 +2,15 @@ use engine_core::{
     Error, LightRegion, LocalLight, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MIN_SPOT_DEGREES,
     ParticleBlend, ParticleEmitter, Spot, bevy_ecs::world::EntityWorldMut, glam::Vec3,
 };
-use engine_settings::{ExtraRules, InvalidSetting, Setting, settings};
+use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::components::{Placement, Reach, SceneComponent};
+use crate::components::{
+    ComponentContext, ComponentKind, Placement, Prepared, PreparedComponent, Reach, admitted,
+    no_files, object_example, parsed, ruled, valid_world,
+};
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneFiles};
 
 settings! {
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -246,54 +249,70 @@ impl SceneEmitter {
     }
 }
 
-impl SceneComponent for SceneLight {
-    type Prepared = LocalLight;
+pub(crate) static LIGHT: ComponentKind = ComponentKind {
+    name: "light",
+    shows: "LocalLight",
+    placement: Placement::Anywhere,
+    schema: crate::component_schema!(SceneLight),
+    example: object_example,
+    validate: validate_light,
+    validate_world: valid_world,
+    prepare: prepare_light,
+    files: no_files,
+    admit: admitted,
+};
 
-    const PLACEMENT: Placement = Placement::Anywhere;
+fn validate_light(value: &Value, path: &str) -> Result<(), Error> {
+    ruled::<SceneLight>(value, path, LIGHT.name, Rule::Any).map(drop)
+}
 
-    fn prepare(
-        &self,
-        _: &str,
-        _: &SceneDocument,
-        _: Option<&SceneFiles>,
-    ) -> Result<LocalLight, Error> {
-        Ok(self.runtime())
+fn prepare_light(value: &Value, context: &ComponentContext<'_>) -> Prepared {
+    Ok(Box::new(parsed::<SceneLight>(value, context.path)?.runtime()))
+}
+
+impl PreparedComponent for LocalLight {
+    fn spawn(&self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
+        entity.insert(*self);
     }
 
-    fn spawn(prepared: &LocalLight, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
-        entity.insert(*prepared);
-    }
-
-    fn reach(prepared: &LocalLight, reach: &Reach<'_>, extend: &mut impl FnMut(f32)) {
-        extend(reach.from + prepared.range);
+    fn reach(&self, reach: &Reach<'_>, extend: &mut dyn FnMut(f32)) {
+        extend(reach.from + self.range);
     }
 }
 
-impl SceneComponent for SceneEmitter {
-    type Prepared = ParticleEmitter;
+pub(crate) static PARTICLES: ComponentKind = ComponentKind {
+    name: "particles",
+    shows: "ParticleEmitter",
+    placement: Placement::Anywhere,
+    schema: crate::component_schema!(SceneEmitter),
+    example: object_example,
+    validate: validate_particles,
+    validate_world: valid_world,
+    prepare: prepare_particles,
+    files: no_files,
+    admit: admitted,
+};
 
-    const PLACEMENT: Placement = Placement::Anywhere;
+fn validate_particles(value: &Value, path: &str) -> Result<(), Error> {
+    ruled::<SceneEmitter>(value, path, PARTICLES.name, Rule::Any).map(drop)
+}
 
-    fn prepare(
-        &self,
-        _: &str,
-        _: &SceneDocument,
-        _: Option<&SceneFiles>,
-    ) -> Result<ParticleEmitter, Error> {
-        Ok(self.runtime())
+fn prepare_particles(value: &Value, context: &ComponentContext<'_>) -> Prepared {
+    Ok(Box::new(parsed::<SceneEmitter>(value, context.path)?.runtime()))
+}
+
+impl PreparedComponent for ParticleEmitter {
+    fn spawn(&self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
+        entity.insert(*self);
     }
 
-    fn spawn(prepared: &ParticleEmitter, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
-        entity.insert(*prepared);
-    }
-
-    fn reach(emitter: &ParticleEmitter, reach: &Reach<'_>, extend: &mut impl FnMut(f32)) {
+    fn reach(&self, reach: &Reach<'_>, extend: &mut dyn FnMut(f32)) {
         extend(
             reach.from
-                + emitter.offset.length()
-                + emitter.radius
-                + emitter.speed * emitter.lifetime
-                + 0.5 * emitter.acceleration.length() * emitter.lifetime * emitter.lifetime,
+                + self.offset.length()
+                + self.radius
+                + self.speed * self.lifetime
+                + 0.5 * self.acceleration.length() * self.lifetime * self.lifetime,
         );
     }
 }

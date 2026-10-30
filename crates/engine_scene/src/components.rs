@@ -4,75 +4,16 @@ use std::sync::{PoisonError, RwLock};
 use engine_core::bevy_ecs::prelude::Resource;
 use engine_core::bevy_ecs::world::{EntityWorldMut, World};
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::smoke::{SmokeEntry, SmokeResult, SmokeSession};
-use engine_core::{Bricks, Error, Expected, Grounded, InterpolateTransform, List, Mesh, Tint};
-use engine_navigation::NavAgent;
-use engine_settings::ErrorCode;
-use engine_terrain::TerrainPrefetch;
-use serde_json::Value;
+use engine_core::smoke::{SmokeEntry, SmokeFailure, SmokeResult, SmokeSession, component};
+use engine_core::{
+    BrickRegistry, Bricks, CORE_ROW, Error, Expected, Grounded, List, Mesh, Tint, missing_brick,
+};
+use engine_settings::{ErrorCode, Rule, Setting};
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneFiles};
-
-macro_rules! entity_components {
-    ($then:ident) => {
-        $then! {
-            collider: crate::SceneCollider {
-                brick: Some("collision"),
-                shows: "Collider",
-                rule: any,
-                mirror
-            },
-            light: crate::SceneLight { brick: None, shows: "LocalLight", rule: any, mirror },
-            particles: crate::SceneEmitter {
-                brick: None,
-                shows: "ParticleEmitter",
-                rule: any,
-                mirror
-            },
-            tint: [f32; 4] { brick: None, shows: "Tint", rule: range(0.0, 1.0), mirror },
-            prefetch: engine_terrain::TerrainPrefetch {
-                brick: Some("terrain"),
-                shows: "TerrainPrefetch",
-                rule: any,
-                direct
-            },
-            grounded: engine_core::Grounded {
-                brick: None,
-                shows: "Grounded",
-                rule: any,
-                direct
-            },
-            rigid_body: engine_physics::RigidBody {
-                brick: Some("physics"),
-                shows: "RigidBody.body",
-                rule: any,
-                direct
-            },
-            nav_agent: engine_navigation::NavAgent {
-                brick: Some("navigation"),
-                shows: "NavAgent.agent",
-                rule: any,
-                direct
-            },
-            spline: crate::SceneSpline { brick: None, shows: "SplineMesh", rule: any, mirror },
-            reflection_probe: crate::SceneReflectionProbe {
-                brick: None,
-                shows: "ReflectionProbe",
-                rule: any,
-                mirror
-            },
-            terrain: crate::SceneTerrain {
-                brick: Some("terrain"),
-                shows: "Terrain.terrain",
-                rule: any,
-                mirror
-            },
-        }
-    };
-}
-
-pub(crate) use entity_components;
+use crate::{SceneDocument, SceneFiles, SceneObject};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Placement {
@@ -113,180 +54,6 @@ impl Reach<'_> {
             .fold(0.0, engine_core::math::max)
     }
 }
-
-pub(crate) trait SceneComponent {
-    type Prepared;
-
-    const PLACEMENT: Placement;
-
-    fn prepare(
-        &self,
-        path: &str,
-        document: &SceneDocument,
-        files: Option<&SceneFiles>,
-    ) -> Result<Self::Prepared, Error>;
-
-    fn spawn(prepared: &Self::Prepared, entity: &mut EntityWorldMut<'_>, lookups: &Lookups);
-
-    fn reach(_prepared: &Self::Prepared, _reach: &Reach<'_>, _extend: &mut impl FnMut(f32)) {}
-}
-
-impl SceneComponent for [f32; 4] {
-    type Prepared = Tint;
-
-    const PLACEMENT: Placement = Placement::Anywhere;
-
-    fn prepare(&self, _: &str, _: &SceneDocument, _: Option<&SceneFiles>) -> Result<Tint, Error> {
-        Ok(Tint(*self))
-    }
-
-    fn spawn(prepared: &Tint, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
-        entity.insert(*prepared);
-    }
-}
-
-impl SceneComponent for TerrainPrefetch {
-    type Prepared = Self;
-
-    const PLACEMENT: Placement = Placement::Anywhere;
-
-    fn prepare(&self, _: &str, _: &SceneDocument, _: Option<&SceneFiles>) -> Result<Self, Error> {
-        Ok(*self)
-    }
-
-    fn spawn(prepared: &Self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
-        entity.insert(*prepared);
-    }
-}
-
-impl SceneComponent for Grounded {
-    type Prepared = Self;
-
-    const PLACEMENT: Placement = Placement::Roots(ErrorCode::InvalidGrounded);
-
-    fn prepare(&self, _: &str, _: &SceneDocument, _: Option<&SceneFiles>) -> Result<Self, Error> {
-        Ok(*self)
-    }
-
-    fn spawn(prepared: &Self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
-        entity.insert(*prepared);
-    }
-}
-
-impl SceneComponent for engine_physics::RigidBody {
-    type Prepared = Self;
-
-    const PLACEMENT: Placement = Placement::Roots(ErrorCode::InvalidRigidBody);
-
-    fn prepare(&self, _: &str, _: &SceneDocument, _: Option<&SceneFiles>) -> Result<Self, Error> {
-        Ok(*self)
-    }
-
-    fn spawn(prepared: &Self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
-        entity.insert(*prepared);
-    }
-}
-
-impl SceneComponent for NavAgent {
-    type Prepared = Self;
-
-    const PLACEMENT: Placement = Placement::Roots(ErrorCode::InvalidNavAgent);
-
-    fn prepare(&self, _: &str, _: &SceneDocument, _: Option<&SceneFiles>) -> Result<Self, Error> {
-        Ok(*self)
-    }
-
-    fn spawn(prepared: &Self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
-        entity.insert((*prepared, InterpolateTransform));
-    }
-}
-
-macro_rules! components {
-    ($(
-        $(#[$doc:meta])*
-        $field:ident: $type:ty {
-            brick: $brick:expr,
-            shows: $shows:literal,
-            rule: $rule:ident $(($($arg:expr),*))?,
-            $kind:ident
-        },
-    )*) => {
-        impl crate::SceneObject {
-            pub(crate) fn check_placement(&self, path: &str) -> Result<(), Error> {
-                $(
-                    if self.$field.is_some()
-                        && self.parent.is_some()
-                        && let Placement::Roots(code) = <$type as SceneComponent>::PLACEMENT
-                    {
-                        return Err(Error::new(code, format!("{path}.{}", stringify!($field)))
-                            .expected(Expected::Absent));
-                    }
-                )*
-                Ok(())
-            }
-
-            pub(crate) fn check_streamed(&self, path: &str) -> Result<(), Error> {
-                $(
-                    if self.$field.is_some()
-                        && let Placement::Entities(code) = <$type as SceneComponent>::PLACEMENT
-                    {
-                        return Err(Error::new(code, format!("{path}.{}", stringify!($field)))
-                            .expected(Expected::Absent));
-                    }
-                )*
-                Ok(())
-            }
-
-            pub(crate) fn prepare_components(
-                &self,
-                path: &str,
-                document: &SceneDocument,
-                files: Option<&SceneFiles>,
-            ) -> Result<PreparedComponents, Error> {
-                Ok(PreparedComponents {
-                    $($field: self
-                        .$field
-                        .as_ref()
-                        .map(|component| {
-                            <$type as SceneComponent>::prepare(
-                                component,
-                                &format!("{path}.{}", stringify!($field)),
-                                document,
-                                files,
-                            )
-                        })
-                        .transpose()?,)*
-                })
-            }
-        }
-
-        pub(crate) struct PreparedComponents {
-            $($field: Option<<$type as SceneComponent>::Prepared>,)*
-        }
-
-        impl PreparedComponents {
-            pub(crate) fn spawn(&self, entity: &mut EntityWorldMut<'_>, lookups: &Lookups) {
-                $(
-                    if let Some(prepared) = &self.$field {
-                        <$type as SceneComponent>::spawn(prepared, entity, lookups);
-                    }
-                )*
-            }
-
-            pub(crate) fn reach(&self, reach: &Reach<'_>, extend: &mut impl FnMut(f32)) {
-                $(
-                    if let Some(prepared) = &self.$field {
-                        <$type as SceneComponent>::reach(prepared, reach, extend);
-                    }
-                )*
-            }
-        }
-
-        pub const COMPONENT_SHOWS: &[(&str, &str)] = &[$((stringify!($field), $shows),)*];
-    };
-}
-
-entity_components!(components);
 
 pub struct ComponentContext<'a> {
     pub path: &'a str,
@@ -358,7 +125,114 @@ macro_rules! component_schema {
     }};
 }
 
-pub static CORE_COMPONENTS: &[&ComponentKind] = &[];
+pub(crate) fn parsed<T: DeserializeOwned>(value: &Value, path: &str) -> Result<T, Error> {
+    engine_core::parse_value_at(value.clone(), path)
+}
+
+pub(crate) fn ruled<T: DeserializeOwned + Setting>(
+    value: &Value,
+    path: &str,
+    name: &'static str,
+    rule: Rule,
+) -> Result<T, Error> {
+    let parsed: T = parsed(value, path)?;
+    Setting::check(&parsed, name, rule).map_err(|invalid| Error {
+        code: ErrorCode::InvalidValue,
+        path: format!(
+            "{path}{}",
+            invalid.field.strip_prefix(name).unwrap_or_default()
+        ),
+        detail: Box::new(invalid.detail),
+    })?;
+    Ok(parsed)
+}
+
+pub(crate) fn object_example() -> Value {
+    json!({})
+}
+
+const TINT_RULE: Rule = Rule::range(0.0, 1.0);
+
+static TINT: ComponentKind = ComponentKind {
+    name: "tint",
+    shows: "Tint",
+    placement: Placement::Anywhere,
+    schema: tint_schema,
+    example: tint_example,
+    validate: validate_tint,
+    validate_world: valid_world,
+    prepare: prepare_tint,
+    files: no_files,
+    admit: admitted,
+};
+
+#[cfg(feature = "schema")]
+fn tint_schema() -> Value {
+    let mut schema = schemars::schema_for!([f32; 4]);
+    engine_settings::stated(TINT_RULE)(&mut schema);
+    serde_json::to_value(schema).unwrap_or(Value::Null)
+}
+
+#[cfg(not(feature = "schema"))]
+fn tint_schema() -> Value {
+    Value::Null
+}
+
+fn tint_example() -> Value {
+    json!([1.0, 1.0, 1.0, 1.0])
+}
+
+fn validate_tint(value: &Value, path: &str) -> Result<(), Error> {
+    ruled::<[f32; 4]>(value, path, TINT.name, TINT_RULE).map(drop)
+}
+
+fn prepare_tint(value: &Value, context: &ComponentContext<'_>) -> Prepared {
+    Ok(Box::new(Tint(parsed(value, context.path)?)))
+}
+
+impl PreparedComponent for Tint {
+    fn spawn(&self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
+        entity.insert(*self);
+    }
+}
+
+pub(crate) static GROUNDED: ComponentKind = ComponentKind {
+    name: "grounded",
+    shows: "Grounded",
+    placement: Placement::Roots(ErrorCode::InvalidGrounded),
+    schema: crate::component_schema!(Grounded),
+    example: object_example,
+    validate: validate_grounded,
+    validate_world: valid_world,
+    prepare: prepare_grounded,
+    files: no_files,
+    admit: admitted,
+};
+
+fn validate_grounded(value: &Value, path: &str) -> Result<(), Error> {
+    ruled::<Grounded>(value, path, GROUNDED.name, Rule::Any).map(drop)
+}
+
+fn prepare_grounded(value: &Value, context: &ComponentContext<'_>) -> Prepared {
+    Ok(Box::new(parsed::<Grounded>(value, context.path)?))
+}
+
+impl PreparedComponent for Grounded {
+    fn spawn(&self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
+        entity.insert(*self);
+    }
+}
+
+pub static CORE_COMPONENTS: &[&ComponentKind] = &[
+    &crate::lighting::LIGHT,
+    &crate::lighting::PARTICLES,
+    &TINT,
+    &GROUNDED,
+    &crate::spline::SPLINE,
+    &crate::probe::REFLECTION_PROBE,
+    &crate::terrain::TERRAIN,
+    &crate::terrain::PREFETCH,
+];
 
 static KINDS: RwLock<Vec<(&'static str, &'static ComponentKind)>> = RwLock::new(Vec::new());
 
@@ -373,15 +247,21 @@ pub fn register_components(brick: &'static str, kinds: &[&'static ComponentKind]
 }
 
 pub fn component_kind(name: &str) -> Option<(&'static str, &'static ComponentKind)> {
-    component_kinds()
-        .into_iter()
+    if let Some(&kind) = CORE_COMPONENTS.iter().find(|kind| kind.name == name) {
+        return Some((CORE_ROW, kind));
+    }
+    KINDS
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+        .copied()
         .find(|(_, kind)| kind.name == name)
 }
 
 pub fn component_kinds() -> Vec<(&'static str, &'static ComponentKind)> {
     let mut kinds: Vec<(&'static str, &'static ComponentKind)> = CORE_COMPONENTS
         .iter()
-        .map(|&kind| (engine_core::CORE_ROW, kind))
+        .map(|&kind| (CORE_ROW, kind))
         .collect();
     kinds.extend(
         KINDS
@@ -393,11 +273,165 @@ pub fn component_kinds() -> Vec<(&'static str, &'static ComponentKind)> {
     kinds
 }
 
+pub fn component_kinds_in(registry: &BrickRegistry) -> Vec<(&'static str, &'static ComponentKind)> {
+    component_kinds()
+        .into_iter()
+        .filter(|&(brick, _)| brick == CORE_ROW || registry.has(brick))
+        .collect()
+}
+
 pub fn component_names() -> Vec<&'static str> {
     component_kinds()
         .into_iter()
         .map(|(_, kind)| kind.name)
         .collect()
+}
+
+fn unknown_component(name: &str, path: &str) -> Error {
+    Error::new(ErrorCode::UnknownField, path)
+        .expected(Expected::Absent)
+        .got(name)
+        .variants(component_names())
+}
+
+impl SceneObject {
+    pub fn component(&self, name: &str) -> Option<&Value> {
+        self.components.get(name).filter(|value| !value.is_null())
+    }
+
+    fn authored(&self) -> impl Iterator<Item = (&str, &Value)> {
+        self.components
+            .iter()
+            .filter(|(_, value)| !value.is_null())
+            .map(|(name, value)| (name.as_str(), value))
+    }
+
+    fn each_kind(
+        &self,
+        path: &str,
+        mut visit: impl FnMut(
+            &'static str,
+            &'static ComponentKind,
+            &Value,
+            &str,
+        ) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        for (name, value) in self.authored() {
+            let at = format!("{path}.{name}");
+            let (brick, kind) = component_kind(name).ok_or_else(|| unknown_component(name, &at))?;
+            visit(brick, kind, value, &at)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn validate_components(&self, path: &str) -> Result<(), Error> {
+        self.each_kind(path, |_, kind, value, at| (kind.validate)(value, at))
+    }
+
+    pub(crate) fn validate_world_components(&self, world: Mat4, path: &str) -> Result<(), Error> {
+        self.each_kind(path, |_, kind, value, at| {
+            (kind.validate_world)(value, world, at)
+        })
+    }
+
+    pub(crate) fn check_placement(&self, path: &str) -> Result<(), Error> {
+        if self.parent.is_none() {
+            return Ok(());
+        }
+        self.each_kind(path, |_, kind, _, at| match kind.placement {
+            Placement::Roots(code) => Err(Error::new(code, at).expected(Expected::Absent)),
+            Placement::Anywhere | Placement::Entities(_) => Ok(()),
+        })
+    }
+
+    pub(crate) fn check_streamed(&self, path: &str) -> Result<(), Error> {
+        self.each_kind(path, |_, kind, _, at| match kind.placement {
+            Placement::Entities(code) => Err(Error::new(code, at).expected(Expected::Absent)),
+            Placement::Anywhere | Placement::Roots(_) => Ok(()),
+        })
+    }
+
+    pub(crate) fn prepare_components(
+        &self,
+        path: &str,
+        document: &SceneDocument,
+        files: Option<&SceneFiles>,
+    ) -> Result<Vec<Box<dyn PreparedComponent>>, Error> {
+        let mut prepared = Vec::new();
+        self.each_kind(path, |_, kind, value, at| {
+            prepared.push((kind.prepare)(
+                value,
+                &ComponentContext {
+                    path: at,
+                    document,
+                    files,
+                },
+            )?);
+            Ok(())
+        })?;
+        Ok(prepared)
+    }
+
+    pub(crate) fn component_files(&self) -> impl Iterator<Item = String> {
+        self.authored()
+            .filter_map(|(name, value)| component_kind(name).map(|(_, kind)| (kind.files)(value)))
+            .flatten()
+    }
+
+    pub(crate) fn admit_components(&self, world: &World, path: &str) -> Result<(), Error> {
+        let offered = world.get_resource::<SceneComponents>();
+        self.each_kind(path, |brick, kind, value, at| {
+            if brick != CORE_ROW && offered.and_then(|offered| offered.get(kind.name)).is_none() {
+                return Err(missing_brick(brick, at));
+            }
+            (kind.admit)(value, world, at)
+        })
+    }
+}
+
+#[cfg(feature = "schema")]
+pub(crate) fn component_schemas(
+    registry: &BrickRegistry,
+    definitions: &mut serde_json::Map<String, Value>,
+) -> serde_json::Map<String, Value> {
+    component_kinds_in(registry)
+        .into_iter()
+        .map(|(_, kind)| {
+            (
+                kind.name.to_owned(),
+                component_property(kind, definitions),
+            )
+        })
+        .collect()
+}
+
+#[cfg(feature = "schema")]
+fn component_property(
+    kind: &ComponentKind,
+    definitions: &mut serde_json::Map<String, Value>,
+) -> Value {
+    let mut schema = (kind.schema)();
+    let Some(fields) = schema.as_object_mut() else {
+        return Value::Bool(true);
+    };
+    fields.remove("$schema");
+    if let Some(Value::Object(nested)) = fields.remove("$defs") {
+        for (name, definition) in nested {
+            definitions.entry(name).or_insert(definition);
+        }
+    }
+    let listed = fields.get("type").and_then(Value::as_str) == Some("array");
+    let title = fields
+        .remove("title")
+        .and_then(|title| title.as_str().map(str::to_owned));
+    let shape = match title {
+        Some(title) if !listed => {
+            definitions.insert(title.clone(), schema);
+            json!({ "$ref": format!("#/$defs/{title}") })
+        }
+        Some(_) | None => schema,
+    };
+    json!({ "anyOf": [shape, { "type": "null" }] })
 }
 
 #[derive(Resource, Default)]
@@ -460,6 +494,150 @@ impl AddSceneComponents for Bricks<'_> {
     }
 }
 
-fn scene_components(_session: &mut dyn SmokeSession) -> SmokeResult {
+const EXAMPLE: &str = "example";
+
+fn scene_components(session: &mut dyn SmokeSession) -> SmokeResult {
+    let kinds = offered(session.app().world());
+    #[cfg(feature = "schema")]
+    listed(session.app().world(), &kinds)?;
+    for kind in kinds {
+        example_shows(session, kind)?;
+    }
+    Ok(())
+}
+
+fn offered(world: &World) -> Vec<&'static ComponentKind> {
+    CORE_COMPONENTS
+        .iter()
+        .copied()
+        .chain(
+            world
+                .get_resource::<SceneComponents>()
+                .into_iter()
+                .flat_map(|components| components.kinds().iter().map(|&(_, kind)| kind)),
+        )
+        .collect()
+}
+
+#[cfg(feature = "schema")]
+fn listed(world: &World, kinds: &[&'static ComponentKind]) -> SmokeResult {
+    let scene: Value = world
+        .get_resource::<BrickRegistry>()
+        .map(SceneDocument::schema_json)
+        .and_then(|source| serde_json::from_str(&source).ok())
+        .unwrap_or_default();
+    for kind in kinds {
+        let schema = !(kind.schema)().is_null();
+        let property = !scene["$defs"]["SceneObject"]["properties"][kind.name].is_null();
+        engine_core::smoke_eq!(
+            json!({ "kind": kind.name, "schema": schema, "listed": property }),
+            json!({ "kind": kind.name, "schema": true, "listed": true }),
+            "kind_schema_listed"
+        );
+    }
+    Ok(())
+}
+
+fn example_scene(entities: Value, streamed: Value) -> Value {
+    json!({
+        "id": "scene-components",
+        "revision": 1,
+        "materials": [{ "id": EXAMPLE, "color": [0.7, 0.6, 0.5, 1.0] }],
+        "meshes": [{ "id": EXAMPLE, "source": { "kind": "cube" } }],
+        "entities": entities,
+        "streamed": streamed,
+    })
+}
+
+fn holding(kind: &ComponentKind, mut entity: Value) -> Value {
+    entity[kind.name] = (kind.example)();
+    entity
+}
+
+fn example_shows(session: &mut dyn SmokeSession, kind: &'static ComponentKind) -> SmokeResult {
+    let admitted = (kind.admit)(
+        &(kind.example)(),
+        session.app().world(),
+        &format!("$.entities[0].{}", kind.name),
+    );
+    if admitted
+        .as_ref()
+        .is_err_and(|error| error.code == ErrorCode::MissingPlugin)
+    {
+        return Ok(());
+    }
+    engine_core::smoke_eq!(
+        json!({ "kind": kind.name, "error": admitted.err() }),
+        json!({ "kind": kind.name, "error": null }),
+        "example_admitted"
+    );
+    placement_kept(kind)?;
+    let scene = example_scene(json!([holding(kind, json!({ "id": EXAMPLE }))]), json!([]));
+    let instance = SceneDocument::from_json(&scene.to_string())
+        .and_then(|document| document.instantiate(session.app().world_mut()));
+    let instance = match instance {
+        Ok(instance) => instance,
+        Err(error) => {
+            return Err(SmokeFailure::new(
+                "example_instantiates",
+                &json!({ "kind": kind.name, "error": error }),
+                &json!({ "kind": kind.name, "error": null }),
+                concat!(file!(), ":", line!()),
+            ));
+        }
+    };
+    session.step(1);
+    let inspector = kind
+        .shows
+        .split_once('.')
+        .map_or(kind.shows, |(inspector, _)| inspector);
+    let shown = component(session, EXAMPLE, inspector)?;
+    instance.despawn(session.app().world_mut());
+    engine_core::smoke_check!(
+        !shown.is_null(),
+        "example_shows",
+        json!({ "kind": kind.name, "inspector": inspector, "shown": shown }),
+        json!({ "kind": kind.name, "inspector": inspector })
+    );
+    Ok(())
+}
+
+fn placement_kept(kind: &'static ComponentKind) -> SmokeResult {
+    let alone = example_scene(json!([holding(kind, json!({ "id": EXAMPLE }))]), json!([]));
+    let validated = SceneDocument::from_json(&alone.to_string()).err();
+    engine_core::smoke_eq!(
+        json!({ "kind": kind.name, "error": validated }),
+        json!({ "kind": kind.name, "error": null }),
+        "example_validates"
+    );
+    let (scene, path, code) = match kind.placement {
+        Placement::Anywhere => return Ok(()),
+        Placement::Roots(code) => (
+            example_scene(
+                json!([
+                    { "id": "holder" },
+                    holding(kind, json!({ "id": EXAMPLE, "parent": "holder" }))
+                ]),
+                json!([]),
+            ),
+            format!("$.entities[1].{}", kind.name),
+            code,
+        ),
+        Placement::Entities(code) => (
+            example_scene(json!([]), json!([holding(kind, json!({ "id": EXAMPLE }))])),
+            format!("$.streamed[0].{}", kind.name),
+            code,
+        ),
+    };
+    let refused = SceneDocument::from_json(&scene.to_string()).err();
+    engine_core::smoke_eq!(
+        json!({
+            "kind": kind.name,
+            "code": refused.as_ref().map(|error| error.code),
+            "path": refused.as_ref().map(|error| error.path.as_str())
+        }),
+        json!({ "kind": kind.name, "code": code, "path": path }),
+        "placement_refused"
+    );
     Ok(())
 }

@@ -4,10 +4,15 @@ use engine_core::{
 };
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::collections::BTreeSet;
 
-use crate::components::{Placement, Reach, SceneComponent};
+use crate::components::{
+    ComponentContext, ComponentKind, Placement, Prepared, PreparedComponent, Reach, admitted,
+    no_files, parsed, valid_world,
+};
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneFiles};
+use crate::validation::reference;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -73,27 +78,60 @@ impl SceneSpline {
     }
 }
 
-impl engine_settings::Setting for SceneSpline {}
+pub(crate) static SPLINE: ComponentKind = ComponentKind {
+    name: "spline",
+    shows: "SplineMesh",
+    placement: Placement::Anywhere,
+    schema: crate::component_schema!(SceneSpline),
+    example: spline_example,
+    validate: validate_spline,
+    validate_world: valid_world,
+    prepare: prepare_spline,
+    files: no_files,
+    admit: admitted,
+};
 
-impl SceneComponent for SceneSpline {
-    type Prepared = Self;
+fn spline_example() -> Value {
+    json!({
+        "points": [[0.0, 0.0, 0.0], [0.0, 0.0, 4.0]],
+        "mesh": "example",
+        "material": "example",
+    })
+}
 
-    const PLACEMENT: Placement = Placement::Anywhere;
+fn validate_spline(value: &Value, path: &str) -> Result<(), Error> {
+    parsed::<SceneSpline>(value, path)?.validate(path)
+}
 
-    fn prepare(&self, _: &str, _: &SceneDocument, _: Option<&SceneFiles>) -> Result<Self, Error> {
-        Ok(self.clone())
-    }
+fn prepare_spline(value: &Value, context: &ComponentContext<'_>) -> Prepared {
+    let spline: SceneSpline = parsed(value, context.path)?;
+    let document = context.document;
+    let meshes: BTreeSet<&str> = document.meshes.iter().map(|mesh| mesh.id.as_str()).collect();
+    let materials: BTreeSet<&str> = document
+        .materials
+        .iter()
+        .map(|material| material.id.as_str())
+        .collect();
+    reference(&spline.mesh, &meshes, &format!("{}.mesh", context.path))?;
+    reference(
+        &spline.material,
+        &materials,
+        &format!("{}.material", context.path),
+    )?;
+    Ok(Box::new(spline))
+}
 
-    fn spawn(prepared: &Self, entity: &mut EntityWorldMut<'_>, lookups: &Lookups) {
-        entity.insert(prepared.runtime(
-            lookups.meshes[prepared.mesh.as_str()],
-            lookups.materials[prepared.material.as_str()],
+impl PreparedComponent for SceneSpline {
+    fn spawn(&self, entity: &mut EntityWorldMut<'_>, lookups: &Lookups) {
+        entity.insert(self.runtime(
+            lookups.meshes[self.mesh.as_str()],
+            lookups.materials[self.material.as_str()],
         ));
     }
 
-    fn reach(prepared: &Self, reach: &Reach<'_>, extend: &mut impl FnMut(f32)) {
-        let size = reach.mesh_size(&prepared.mesh);
-        for point in &prepared.points {
+    fn reach(&self, reach: &Reach<'_>, extend: &mut dyn FnMut(f32)) {
+        let size = reach.mesh_size(&self.mesh);
+        for point in &self.points {
             extend(
                 reach
                     .world
