@@ -544,9 +544,7 @@ impl ScatterDraws {
         let kind = passes.opaque_kind;
         let temporal = cx.frame.temporal.is_some();
         pass.set_bind_group(0, cx.core.shared_group("frame", &["refraction"]), &[]);
-        if !prepass {
-            pass.set_bind_group(3, cx.core.shared_group("lights", &[]), &[]);
-        }
+        pass.set_bind_group(3, cx.core.shared_group("lights", &[]), &[]);
         pass.set_bind_group(2, &groups[usize::from(temporal)], &[]);
         let debug = cx
             .frame
