@@ -29,7 +29,4 @@ engine_render::gpu_structs! {
 engine_render::gpu_consts! {
     pub(crate) const NO_PLACED: u32 = u32::MAX => ["NO_PLACED" in "post::reflections"];
     pub(crate) const IMPOSTOR_KINDS: u32 = engine_render::gpu_layouts::constants::IMPOSTOR_KINDS => ["IMPOSTOR_KINDS" in "post::reflections"];
-    pub(crate) const PEAK_MIPS: u32 = engine_terrain::ERROR_MIPS => ["PEAK_MIPS" in "post::reflections"];
-    pub(crate) const PEAK_CELLS: u32 = engine_terrain::ERROR_CELLS => ["PEAK_CELLS" in "post::reflections"];
-    pub(crate) const TILE_QUADS: u32 = engine_terrain::TILE_QUADS => ["TILE_QUADS" in "post::reflections"];
 }

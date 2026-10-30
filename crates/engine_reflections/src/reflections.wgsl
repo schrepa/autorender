@@ -1,10 +1,14 @@
 import package::engine::color::decode_srgb;
 import package::engine::screen_points::{depth_normal, world_at};
-import package::face::heightfield::{
-    GroundTerrain, LevelTile, NOT_RESIDENT, cover_growth, cover_seen, directory, heights,
-    level_tile, macro_tint, tile_height, triangle_height,
+import package::face::cover::{cover_growth, cover_seen, cover_tint};
+import package::face::ground::{
+    GroundTerrain, LevelTile, NOT_RESIDENT, PEAK_CELLS, PEAK_MIPS, TILE_QUADS, TerrainInfo,
+    ground_colors, ground_colors_mip, ground_extent, ground_of, level_tile, level_tiles,
+    macro_color, material_look, tile_height, tile_layer, tile_material, tile_peak,
+    triangle_height,
 };
 import package::face::horizons::{bounce_light, terrain_visibility};
+import package::face::placed::{Pose, Record, placed_shown};
 import package::face::shadows::sun_shadowed;
 import package::face::sky::{
     ambient as sky_ambient, atmospheric, cloud_passing, sky_above, sky_average,
@@ -26,10 +30,6 @@ import package::post::frame::{depth_texture, drawn_uv, glow, linear, post};
 @group(1) @binding(10) var nearest_depth: texture_2d<f32>;
 @group(1) @binding(13) var surface_texture: texture_2d<u32>;
 @group(1) @binding(14) var scene_levels: texture_2d<f32>;
-@group(1) @binding(23) var control: texture_2d_array<u32>;
-const PALETTE_ENTRIES: u32 = 113u;
-@group(1) @binding(24) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
-@group(1) @binding(25) var macro_maps: texture_2d_array<f32>;
 @group(1) @binding(26) var terrain_sky: texture_2d_array<f32>;
 @group(1) @binding(27) var<storage, read> world_terrains: array<TraceTerrain>;
 @group(1) @binding(28) var<storage, read> world_placed: array<u32>;
@@ -38,45 +38,11 @@ const PALETTE_ENTRIES: u32 = 113u;
 @group(1) @binding(31) var<storage, read> placed_groups: array<PlacedGroup>;
 @group(1) @binding(32) var placed_frames: texture_2d_array<f32>;
 
-struct PaletteEntry {
-    color: vec4<f32>,
-    params: vec4<f32>,
-    maps: vec4<f32>,
-    far: vec4<f32>,
-    relief: vec4<f32>,
-    canopy: vec4<f32>,
-    placed: vec4<f32>,
-    placed_size: vec4<f32>,
-    heights: vec4<f32>,
-}
-
-struct TerrainInfo {
-    origin: vec4<f32>,
-    levels: vec4<u32>,
-}
-
 struct TraceTerrain {
     info: TerrainInfo,
     cutout: vec4<f32>,
     maps: vec4<u32>,
     reach: vec4<f32>,
-}
-
-struct Record {
-    center: vec3<f32>,
-    radius: f32,
-    group: u32,
-    scale: f32,
-    terrain: u32,
-    sink: f32,
-    state: u32,
-    pad: array<u32, 3>,
-}
-
-struct Pose {
-    r0: vec4<f32>,
-    r1: vec4<f32>,
-    r2: vec4<f32>,
 }
 
 struct PlacedGroup {
@@ -85,12 +51,7 @@ struct PlacedGroup {
     pad: vec2<u32>,
 }
 
-const DEAD: u32 = 0xffffffffu;
-const HIDDEN: u32 = 0x80000000u;
 const NO_PLACED: u32 = 0xffffffffu;
-const TILE_QUADS: u32 = 256u;
-const PEAK_MIPS: u32 = 8u;
-const PEAK_CELLS: u32 = 128u;
 const IMPOSTOR_KINDS: u32 = 4u;
 
 const REFLECTION_STEPS: u32 = 96u;
@@ -237,7 +198,7 @@ fn unposed_offset(unposed: Unposed, offset: vec3<f32>) -> vec3<f32> {
 
 fn object_holds(slot: u32, front: vec3<f32>, back: vec3<f32>) -> bool {
     let record = placed_records[slot];
-    if record.group == DEAD || (record.terrain & HIDDEN) != 0u
+    if !placed_shown(record)
         || distance(front, record.center) > record.radius
         || distance(back, record.center) > record.radius {
         return false;
@@ -279,6 +240,7 @@ fn crown_holds(front: vec3<f32>, back: vec3<f32>) -> bool {
         let terrain = world_terrains[index];
         let held = terrain.maps.y;
         let info = terrain.info;
+        let ground = ground_of(info);
         let local = front.xz - info.origin.xz;
         let apron = terrain.reach.x;
         for (var level = 0u; level < info.levels.y; level++) {
@@ -286,13 +248,12 @@ fn crown_holds(front: vec3<f32>, back: vec3<f32>) -> bool {
                 continue;
             }
             let size = f32(TILE_QUADS) * info.origin.w * f32(1u << level);
-            let header = info.levels.x + 4u * level;
-            let tiles = vec2<i32>(i32(directory[header + 1u]), i32(directory[header + 2u]));
+            let tiles = vec2<i32>(level_tiles(ground, level));
             let low = max(vec2<i32>(floor((local - apron) / size)), vec2<i32>(0));
             let high = min(vec2<i32>(floor((local + apron) / size)), tiles - 1);
             for (var z = low.y; z <= high.y; z++) {
                 for (var x = low.x; x <= high.x; x++) {
-                    let layer = directory[directory[header] + u32(z) * u32(tiles.x) + u32(x)];
+                    let layer = tile_layer(ground, level, vec2<u32>(u32(x), u32(z)));
                     if layer != NOT_RESIDENT && world_placed[layer] != NO_PLACED
                         && block_holds(world_placed[layer], vec2<f32>(f32(x), f32(z)) * size,
                             size, local, front, back) {
@@ -429,11 +390,6 @@ fn square_exit(start: vec2<f32>, rate: vec2<f32>, first: vec2<f32>, width: f32) 
     return min(exits.x, exits.y);
 }
 
-fn terrain_extent(info: TerrainInfo) -> vec2<f32> {
-    return vec2<f32>(f32(directory[info.levels.x + 1u]), f32(directory[info.levels.x + 2u]))
-        * (f32(TILE_QUADS) * info.origin.w);
-}
-
 fn in_cutout(local: vec2<f32>, cutout: vec4<f32>) -> bool {
     return cutout.z > cutout.x && all(local >= cutout.xy) && all(local <= cutout.zw);
 }
@@ -533,9 +489,9 @@ fn trace_ground(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32
         hit: ptr<function, WorldHit>) {
     let terrain = world_terrains[index];
     let info = terrain.info;
-    let ground = GroundTerrain(info.levels.x, info.levels.y, info.origin.w);
+    let ground = ground_of(info);
     let o = p - info.origin.xyz;
-    let span = box_span(o.xz, direction.xz, vec2<f32>(0.0), terrain_extent(info), bounds.x,
+    let span = box_span(o.xz, direction.xz, vec2<f32>(0.0), ground_extent(ground), bounds.x,
         min(bounds.y, (*hit).s));
     var s = span.x;
     var steps = 0u;
@@ -571,8 +527,7 @@ fn trace_ground(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32
             let cell = min(vec2<u32>(max(floor((start + rate * s) / width), vec2<f32>(0.0))),
                 vec2<u32>(cells - 1u));
             let first = vec2<f32>(cell) * width;
-            let peak = textureLoad(heights, offset / (2u << mip) + cell, found.tile.layer,
-                mip + 1u).r;
+            let peak = tile_peak(found.tile, offset / (2u << mip) + cell, mip);
             let exit = min(square_exit(start, rate, first, width), leaves);
             if min(o.y + direction.y * s, o.y + direction.y * exit) > peak {
                 s = exit;
@@ -618,7 +573,7 @@ fn cube_span(start: vec3<f32>, rate: vec3<f32>, half: vec3<f32>, nearest: f32, f
 fn test_placed(slot: u32, p: vec3<f32>, direction: vec3<f32>, nearest: f32, spread: vec2<f32>,
         hit: ptr<function, WorldHit>, index: u32) {
     let record = placed_records[slot];
-    if record.group == DEAD || (record.terrain & HIDDEN) != 0u {
+    if !placed_shown(record) {
         return;
     }
     let impostor = placed_groups[record.group].impostor;
@@ -749,9 +704,10 @@ fn trace_placed(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32
         return;
     }
     let info = terrain.info;
+    let ground = ground_of(info);
     let o = p - info.origin.xyz;
     let apron = terrain.reach.x;
-    let span = box_span(o.xz, direction.xz, vec2<f32>(-apron), terrain_extent(info) + apron,
+    let span = box_span(o.xz, direction.xz, vec2<f32>(-apron), ground_extent(ground) + apron,
         bounds.x, min(bounds.y, (*hit).s));
     if span.x >= span.y {
         return;
@@ -765,8 +721,7 @@ fn trace_placed(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32
         }
         var steps = 0u;
         let size = f32(TILE_QUADS) * info.origin.w * f32(1u << level);
-        let header = info.levels.x + 4u * level;
-        let tiles = vec2<u32>(directory[header + 1u], directory[header + 2u]);
+        let tiles = level_tiles(ground, level);
         let rate = direction.xz / size;
         for (var line = 0u; line < 3u; line++) {
             let start = (o.xz + side * (apron * line_shift(line))) / size;
@@ -785,8 +740,7 @@ fn trace_placed(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32
                     fresh = fresh && entered.x >= entered.y;
                 }
                 if fresh {
-                    let layer = directory[directory[header] + u32(tile.y) * tiles.x
-                        + u32(tile.x)];
+                    let layer = tile_layer(ground, level, vec2<u32>(tile));
                     if layer != NOT_RESIDENT && world_placed[layer] != NO_PLACED {
                         walk_block(world_placed[layer], tile * size, size, o, p, direction,
                             span, spread, hit, index, &steps);
@@ -816,44 +770,19 @@ fn world_trace(p: vec3<f32>, direction: vec3<f32>, nearest: f32, farthest: f32,
     return hit;
 }
 
-fn ground_macro(terrain: TraceTerrain, local: vec2<f32>, footprint: f32) -> vec4<f32> {
-    let layer = terrain.info.levels.w;
-    if layer == 0u {
-        return vec4<f32>(0.5);
-    }
-    let extent = terrain_extent(terrain.info);
-    let finest = vec2<f32>(textureDimensions(macro_maps, 0));
-    let texel = max(extent.x / finest.x, extent.y / finest.y);
-    let coarsest = f32(textureNumLevels(macro_maps) - 1u);
-    let mip = u32(clamp(floor(log2(max(footprint / texel, 1.0))), 0.0, coarsest));
-    let size = vec2<i32>(textureDimensions(macro_maps, mip));
-    let at = local / extent * vec2<f32>(size) - 0.5;
-    let corner = vec2<i32>(floor(at));
-    let f = at - floor(at);
-    let last = size - vec2<i32>(1);
-    let a = textureLoad(macro_maps, clamp(corner, vec2<i32>(0), last), layer - 1u, mip);
-    let b = textureLoad(macro_maps, clamp(corner + vec2<i32>(1, 0), vec2<i32>(0), last),
-        layer - 1u, mip);
-    let c = textureLoad(macro_maps, clamp(corner + vec2<i32>(0, 1), vec2<i32>(0), last),
-        layer - 1u, mip);
-    let d = textureLoad(macro_maps, clamp(corner + vec2<i32>(1, 1), vec2<i32>(0), last),
-        layer - 1u, mip);
-    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-
 fn ground_sky(terrain: TraceTerrain, local: vec2<f32>) -> vec4<f32> {
     let layer = terrain.maps.x;
     if layer == 0u {
         return vec4<f32>(1.0, 0.5, 0.5, 0.5);
     }
-    return textureSampleLevel(terrain_sky, linear, local / terrain_extent(terrain.info), layer - 1u,
-        0.0);
+    return textureSampleLevel(terrain_sky, linear, local / ground_extent(ground_of(terrain.info)),
+        layer - 1u, 0.0);
 }
 
 fn ground_albedo(terrain: TraceTerrain, local: vec2<f32>, normal: vec3<f32>, toward: vec3<f32>,
         footprint: f32, finest: u32) -> vec3<f32> {
     let info = terrain.info;
-    let ground = GroundTerrain(info.levels.x, info.levels.y, info.origin.w);
+    let ground = ground_of(info);
     let asked = u32(clamp(floor(log2(max(footprint / ground.spacing, 1.0))), 0.0,
         f32(ground.levels - 1u)));
     var found = finest_tile(ground, local, max(finest, asked));
@@ -861,19 +790,17 @@ fn ground_albedo(terrain: TraceTerrain, local: vec2<f32>, normal: vec3<f32>, tow
         found = finest_tile(ground, local, finest);
     }
     let samples = local / (ground.spacing * f32(1u << found.level));
-    let texel = min(vec2<u32>(round(max(samples, vec2<f32>(0.0)))) - found.tile.first,
-        vec2<u32>(TILE_QUADS)) + vec2<u32>(1u);
-    let value = textureLoad(control, texel, found.tile.layer, 0).x;
-    let share = f32((value >> 16u) & 0xffu) / 255.0;
-    let colors = ground_macro(terrain, local, footprint);
+    let material = tile_material(found.tile, vec2<u32>(round(max(samples, vec2<f32>(0.0)))));
+    let share = f32(material.share) / 255.0;
+    let colors = ground_colors(ground, info.levels.w, local, ground_colors_mip(ground, footprint));
     let growth = cover_growth(colors.a);
     let sine = max(abs(dot(toward, normal)), 0.03);
     var albedo = vec3<f32>(0.0);
     var vegetated = 0.0;
     for (var slot = 0u; slot < 2u; slot++) {
         let weight = select(share, 1.0 - share, slot == 0u);
-        let material = info.levels.z + ((value >> (8u * slot)) & 0xffu);
-        let entry = palette[min(material, PALETTE_ENTRIES - 1u)];
+        let entry = material_look(info.levels.z,
+            select(material.first, material.second, slot == 1u));
         var color = entry.far.rgb;
         if entry.canopy.w > 0.0 {
             let depth = 0.5 * entry.canopy.w * growth.height * growth.density * terrain.reach.y
@@ -886,7 +813,7 @@ fn ground_albedo(terrain: TraceTerrain, local: vec2<f32>, normal: vec3<f32>, tow
         }
         albedo += weight * color;
     }
-    return albedo * macro_tint(colors, vegetated);
+    return albedo * (macro_color(colors) * cover_tint(colors.a, vegetated));
 }
 
 struct PlacedSurface {

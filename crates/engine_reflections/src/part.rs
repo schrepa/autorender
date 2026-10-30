@@ -21,7 +21,7 @@ use engine_render::shaders::Entry;
 use engine_render::targets::{
     FrameRegion, FrameSize, RENDER_TARGET, ScreenTarget, fullscreen_pass,
 };
-use engine_terrain::{RenderTerrains, TerrainEnvironment};
+use engine_terrain::{GroundCover, RenderTerrains};
 
 use crate::gpu_layouts::ReflectionsPiece;
 use crate::layouts::{
@@ -104,7 +104,7 @@ impl GpuPart for ReflectionsPass {
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         let snapshot = cx.frame.snapshot;
-        let settings = snapshot.environment.reflections.sanitized();
+        let settings = snapshot.section::<engine_core::Reflections>();
         self.piece = ReflectionsPiece {
             surface: [
                 settings.max_roughness,
@@ -181,7 +181,7 @@ impl GpuPart for ReflectionsPass {
                 terrain.terrain_info(index, rendered.origin, &rendered.pyramid)
             })
             .collect();
-        let cover = TerrainEnvironment::of(snapshot).ground_cover.sanitized();
+        let cover = snapshot.section::<GroundCover>();
         let trace = TraceFrame {
             terrains,
             infos: &infos,
