@@ -4,12 +4,11 @@ import package::face::lights::{cluster_light, light_cluster, lights_on};
 import package::face::shadows::{shadow_lookup, sun_shadow, sun_shadowed};
 import package::face::sky::{ambient, atmospheric, sky_average};
 import package::face::sun::{sun_color, sun_direction};
-import package::face::surface_point::SurfacePoint;
 import package::face::tonemap::tonemap;
 import package::frame::view::{PI, camera};
 import package::meshes::debug::{DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_LEVEL,
     DEBUG_SUN_NONE};
-import package::meshes::surface::Shaded;
+import package::meshes::surface::{Shaded, SurfacePoint};
 import package::toon::bands::{TOON_DARK, TOON_HIGHLIGHTS, TOON_NEAREST, TOON_RIM,
     TOON_SHADOW_EDGE, TOON_SHARPEST, TOON_SPECULAR, TOON_UP, TOON_VISIBILITY, TOON_WIDEST,
     banded};

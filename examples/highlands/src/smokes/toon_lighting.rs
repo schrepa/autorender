@@ -56,7 +56,7 @@ fn filled(session: &mut dyn SmokeSession) -> Checked<()> {
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|brick| brick["slot"] == "lighting")
+        .filter(|brick| fills_lighting(&brick["fills"]))
         .filter_map(|brick| brick["name"].as_str())
         .collect();
     smoke_check!(
@@ -66,6 +66,14 @@ fn filled(session: &mut dyn SmokeSession) -> Checked<()> {
         &json!(["toon_lighting"])
     );
     Ok(())
+}
+
+fn fills_lighting(fills: &Value) -> bool {
+    fills
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|filled| filled == "lighting" || filled["place"] == "lighting")
 }
 
 fn looked(session: &mut dyn SmokeSession) -> Checked<Value> {

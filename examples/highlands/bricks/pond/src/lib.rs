@@ -12,10 +12,11 @@ use engine_core::bevy_ecs::{
     self,
     prelude::{Component, World},
 };
-use engine_core::{Brick, Bricks, Ground, RenderSnapshot, WaterFace, WaterKind, WaterSample};
-use engine_faces::slots::WaterList;
+use engine_core::{Brick, Bricks, Join, RenderSnapshot};
+use engine_faces::places::WaterList;
+use engine_places::{Ground, WaterBodiesList, WaterFace, WaterKind, WaterSample};
 use engine_render::render_bricks::AddRenderParts;
-use engine_scene::AddSceneComponents;
+use engine_scene::SceneComponentsList;
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -26,15 +27,15 @@ pub struct PondBrick;
 impl Brick for PondBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .list::<WaterList>()
+            .join(Join::<WaterList>::new())
             .component::<Pond>()
             .component_inspector::<Pond, Pond>(|_, _, pond| *pond)
-            .scene_components(&[&POND])
-            .water_body(PondWater)
+            .join(Join::<SceneComponentsList>::new().cpu(&POND))
+            .join(Join::<WaterBodiesList>::new().cpu(Box::new(PondWater)))
             .extract(extract_ponds)
             .render_part(&part::PART)
             .shaders(shaders::MODULES)
-            .face_defaults(engine_faces::defaults::MODULES)
+            .places(engine_faces::places::PLACES)
             .pipeline_layouts(layouts::PIPELINE_LAYOUTS)
             .mirrors(layouts::LAYOUTS, layouts::DECLARED);
     }
