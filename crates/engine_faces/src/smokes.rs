@@ -1,6 +1,5 @@
 use engine_core::smoke::{Checked, SmokeResult, SmokeSession, ask, control};
-use engine_core::{BrickRegistry, PlaceKind, smoke_check};
-use engine_render::render_bricks::render_bricks;
+use engine_core::{Absent, BrickRegistry, PlaceKind, smoke_check};
 use serde_json::{Value, json};
 
 const FRAMES: u32 = 8;
@@ -23,32 +22,30 @@ const NAMED_AT: [&str; 2] = ["$.slots.", "$.faces."];
 struct Members {
     kind: PlaceKind,
     bricks: Vec<&'static str>,
-    faces: Vec<&'static str>,
+    required: Vec<&'static str>,
 }
 
 fn members_of(session: &mut dyn SmokeSession, place: &'static str) -> Option<Members> {
     let registry = session.app().world().get_resource::<BrickRegistry>()?;
-    let kind = registry
-        .places()
-        .into_iter()
-        .find(|known| known.name == place)?
-        .kind;
+    let kind = registry.place(place)?.kind;
     let bricks = registry.members(place);
-    let mut faces = vec![place];
-    for (name, render) in render_bricks(registry) {
-        if !bricks.contains(&name) {
-            continue;
-        }
-        for face in render.faces() {
-            if !faces.contains(&face) {
-                faces.push(face);
-            }
+    let mut required: Vec<&'static str> = Vec::new();
+    for filled in bricks
+        .iter()
+        .filter_map(|&name| registry.brick(name))
+        .flat_map(|brick| &brick.fills)
+    {
+        let unanswered = registry
+            .place(filled.place)
+            .is_some_and(|known| known.face.absent == Absent::Required);
+        if unanswered && !required.contains(&filled.place) {
+            required.push(filled.place);
         }
     }
     Some(Members {
         kind,
         bricks,
-        faces,
+        required,
     })
 }
 
@@ -87,11 +84,14 @@ fn described(
             .into_iter()
             .flatten()
             .find(|brick| brick["name"] == name);
-        let placed = described.is_some_and(|brick| match members.kind {
-            PlaceKind::Slot => brick["slot"] == place,
-            PlaceKind::List => brick["lists"]
+        let placed = described.is_some_and(|brick| {
+            let entries = match members.kind {
+                PlaceKind::Slot => &brick["fills"],
+                PlaceKind::List => &brick["joins"],
+            };
+            entries
                 .as_array()
-                .is_some_and(|lists| lists.iter().any(|listed| listed.as_str() == Some(place))),
+                .is_some_and(|entries| entries.iter().any(|entry| names(entry, place)))
         });
         smoke_check!(
             placed,
@@ -101,6 +101,10 @@ fn described(
         );
     }
     Ok(())
+}
+
+fn names(entry: &Value, place: &str) -> bool {
+    entry.as_str() == Some(place) || entry["place"] == place
 }
 
 fn healthy(rendering: &Value) -> Checked<()> {
@@ -166,10 +170,10 @@ fn left_out(session: &mut dyn SmokeSession, members: &Members) -> Checked<()> {
         .and_then(|path| NAMED_AT.iter().find_map(|at| path.strip_prefix(at)))
         .unwrap_or_default();
     smoke_check!(
-        LEFT_OUT.contains(&code) && members.faces.contains(&named),
+        LEFT_OUT.contains(&code) && members.required.contains(&named),
         "left_out_renders_or_names_the_place",
         &refused,
-        &json!({ "frames": FRAMES, "or_refused": { "code": LEFT_OUT, "naming": members.faces } })
+        &json!({ "frames": FRAMES, "or_refused": { "code": LEFT_OUT, "naming": members.required } })
     );
     Ok(())
 }
@@ -226,6 +230,46 @@ pub fn exposure(session: &mut dyn SmokeSession) -> SmokeResult {
 
 pub fn tonemap(session: &mut dyn SmokeSession) -> SmokeResult {
     frames(session, "tonemap")
+}
+
+pub fn bloom(session: &mut dyn SmokeSession) -> SmokeResult {
+    frames(session, "bloom")
+}
+
+pub fn dither(session: &mut dyn SmokeSession) -> SmokeResult {
+    frames(session, "dither")
+}
+
+pub fn reflections(session: &mut dyn SmokeSession) -> SmokeResult {
+    frames(session, "reflections")
+}
+
+pub fn probe_light(session: &mut dyn SmokeSession) -> SmokeResult {
+    frames(session, "probe_light")
+}
+
+pub fn occupancy(session: &mut dyn SmokeSession) -> SmokeResult {
+    frames(session, "occupancy")
+}
+
+pub fn placed(session: &mut dyn SmokeSession) -> SmokeResult {
+    frames(session, "placed")
+}
+
+pub fn cover(session: &mut dyn SmokeSession) -> SmokeResult {
+    frames(session, "cover")
+}
+
+pub fn horizons(session: &mut dyn SmokeSession) -> SmokeResult {
+    frames(session, "horizons")
+}
+
+pub fn heightfield(session: &mut dyn SmokeSession) -> SmokeResult {
+    frames(session, "heightfield")
+}
+
+pub fn ground_tiles(session: &mut dyn SmokeSession) -> SmokeResult {
+    frames(session, "ground_tiles")
 }
 
 pub fn water(session: &mut dyn SmokeSession) -> SmokeResult {
