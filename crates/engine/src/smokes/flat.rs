@@ -1,5 +1,7 @@
 use engine_core::smoke::{SmokeFailure, SmokeResult, SmokeSession, compiled};
-use engine_core::{Brick, Bricks, smoke_check};
+use engine_core::{Brick, BrickRegistry, Bricks, CpuSlot, Slot, brick_name, smoke_check};
+use engine_grounding::GroundingBrick;
+use engine_places::GroundSlot;
 use engine_render::bindings::{self, Sample, Sampling, Stages, Table};
 use engine_render::graph::{GraphTable, SCENE_CLEAR, Targets};
 use engine_render::parts::{
@@ -84,10 +86,9 @@ static PART: PartEntry = PartEntry {
         resources: &[],
         hooks: &[Hook::Opaque(OpaqueSlot::Objects)],
         contributes: &[],
-        effects: &[],
+        resolve: None,
         labels: &[],
         lazy: false,
-        faces: &[],
         needs: &[],
         piece: None,
     },
@@ -222,8 +223,14 @@ pub(crate) fn flat_sprites(session: &mut dyn SmokeSession) -> SmokeResult {
         json!(found.bricks),
         json!("the render bricks of the list")
     );
-    session.restart(core_only(&base, &found).with::<SpriteBrick>());
+    let left_out = grounds(session);
+    session.restart(
+        core_only(&base, &found)
+            .without(left_out)
+            .with::<SpriteBrick>(),
+    );
     let rendering = presented(session)?;
+    groundless(session)?;
     linked(&rendering)?;
     compiled(session)?;
     let reply = accepted(session, "capture", json!({}), "captures_sprite")?;
@@ -261,14 +268,58 @@ fn presented(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
         .unwrap_or_default())
 }
 
+fn grounds(session: &mut dyn SmokeSession) -> Vec<&'static str> {
+    let filler = session
+        .app()
+        .world()
+        .get_resource::<BrickRegistry>()
+        .and_then(|registry| registry.filled(GroundSlot::NAME))
+        .map(|(brick, _)| brick);
+    filler
+        .into_iter()
+        .chain([brick_name::<GroundingBrick>()])
+        .collect()
+}
+
+fn groundless(session: &mut dyn SmokeSession) -> SmokeResult {
+    let world = session.app().world();
+    let registry = world.get_resource::<BrickRegistry>();
+    let ground = registry
+        .and_then(|registry| registry.filled(GroundSlot::NAME))
+        .map(|(brick, _)| brick);
+    let grounding = brick_name::<GroundingBrick>();
+    let grounded = registry.is_some_and(|registry| registry.names().any(|name| name == grounding));
+    let held = world.contains_resource::<<GroundSlot as CpuSlot>::Cpu>();
+    smoke_check!(
+        ground.is_none() && !grounded && !held,
+        "installs_no_ground",
+        json!({ "ground": ground, "grounding": grounded, "resource": held }),
+        json!({ "ground": null, "grounding": false, "resource": false })
+    );
+    Ok(())
+}
+
+fn members(lists: &Value) -> usize {
+    lists
+        .as_object()
+        .into_iter()
+        .flat_map(Map::values)
+        .filter_map(Value::as_array)
+        .map(Vec::len)
+        .sum()
+}
+
 fn linked(rendering: &Value) -> SmokeResult {
     let linked = &rendering["linked"];
+    let lists = &linked["lists"];
     smoke_check!(
         linked["faces"].as_object().is_some_and(Map::is_empty)
-            && linked["defaulted"].as_array().is_some_and(Vec::is_empty),
+            && linked["nobody"].as_array().is_some_and(Vec::is_empty)
+            && lists.is_object()
+            && members(lists) == 0,
         "links_no_face",
         linked,
-        json!({ "faces": {}, "defaulted": [] })
+        json!({ "faces": {}, "nobody": [], "lists": "no members" })
     );
     Ok(())
 }

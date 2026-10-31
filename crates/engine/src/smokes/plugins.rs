@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use engine_core::BrickList;
 use engine_core::smoke::{SmokeResult, SmokeSession};
+use engine_core::{BrickList, Slot};
+use engine_places::GroundSlot;
 use serde_json::{Value, json};
 
 use super::requests::{accepted, control, names, spawn, spawned, status};
@@ -34,7 +35,13 @@ fn grounds() -> BTreeSet<String> {
         .as_array()
         .into_iter()
         .flatten()
-        .filter(|brick| brick["slot"] == "ground")
+        .filter(|brick| {
+            brick["fills"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|filled| filled["place"] == GroundSlot::NAME)
+        })
         .filter_map(|brick| Some(brick["name"].as_str()?.to_owned()))
         .collect()
 }
