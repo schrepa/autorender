@@ -4,8 +4,7 @@ use std::path::{Path, PathBuf};
 
 use engine::Engine;
 use engine::bricks::BrickRegistry;
-use engine_core::{Error, ErrorCode};
-use engine_render::render_bricks::RenderBrick;
+use engine_core::{Error, ErrorCode, Place};
 use serde_json::json;
 
 use crate::bricks::Recorded;
@@ -25,15 +24,14 @@ pub fn check(
         recorded.iter().map(|brick| brick.krate.as_str()),
     );
     let registry = engine.app.world().get_resource::<BrickRegistry>();
-    let faces: BTreeSet<String> = registry
-        .map(face_crates)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|name| !bricks.contains(name))
-        .collect();
+    let places: Vec<Place> = registry.map(BrickRegistry::places).unwrap_or_default();
+    let faces = face_crates(repository, &places, &bricks, |_| true);
+    let gpu_faces = face_crates(repository, &places, &bricks, |face| {
+        face.gpu.is_some() || face.wgsl.is_some()
+    });
     let gpu = gpu_crates(repository, &recorded);
     let mut problems = Vec::new();
-    let reached: BTreeSet<String> = bricks.union(&faces).cloned().collect();
+    let reached: BTreeSet<String> = bricks.union(&gpu_faces).cloned().collect();
     let used = core_uses(repository, &reached, exceptions, &mut problems)?;
     for &(from, to) in exceptions.core_uses_brick {
         let Some(package) = repository.package(from).filter(|package| package.own()) else {
@@ -68,23 +66,23 @@ pub fn check(
     crate::report(&problems)
 }
 
-fn face_crates(registry: &BrickRegistry) -> BTreeSet<String> {
-    let mut crates = BTreeSet::new();
-    for brick in registry.bricks() {
-        let Some(render) = brick.extension::<RenderBrick>() else {
-            continue;
-        };
-        for offer in render.parts.iter().flat_map(|part| part.decl.faces) {
-            let name = (offer.type_name)();
-            let plain = name.strip_prefix("dyn ").unwrap_or(name);
-            if let Some((krate, _)) = plain.split_once("::")
-                && krate != brick.crate_name
-            {
-                crates.insert(krate.to_owned());
-            }
-        }
-    }
-    crates
+fn face_crates(
+    repository: &Repository,
+    places: &[Place],
+    bricks: &BTreeSet<String>,
+    sided: fn(&engine_core::Face) -> bool,
+) -> BTreeSet<String> {
+    places
+        .iter()
+        .filter(|place| sided(&place.face))
+        .map(|place| place.declared_in().to_owned())
+        .filter(|name| !bricks.contains(name))
+        .filter(|name| {
+            repository
+                .of_crate(name)
+                .is_some_and(|package| !package.core())
+        })
+        .collect()
 }
 
 fn gpu_crates(repository: &Repository, recorded: &[Recorded]) -> BTreeSet<String> {
@@ -315,7 +313,7 @@ fn internal_paths(
     Ok(())
 }
 
-fn rust_files(folder: &Path, files: &mut Vec<PathBuf>) {
+pub(crate) fn rust_files(folder: &Path, files: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(folder).into_iter().flatten().flatten() {
         let path = entry.path();
         if path.is_dir() {

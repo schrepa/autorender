@@ -4,10 +4,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use engine_core::{Error, ErrorCode};
+use engine::bricks::{AddBrick, BrickRegistry};
+use engine_core::{Error, ErrorCode, Expected};
+use engine_render::linker::ShaderModule;
+use engine_render::places::{Answer, Contract, contract, place_module};
+use engine_render::render_bricks::RenderBrick;
 use serde_json::json;
 
 use crate::Repository;
+use crate::policy::rust;
 use parse::{Impl, Item, Kind, Parsed, joined};
 
 pub const FILE: &str = "faces.json";
@@ -16,9 +21,9 @@ const DEPTH: usize = 16;
 
 const FACES: &str = "faces";
 
-const DEFAULTS: &str = "defaults";
-
 const BRICK_TRAIT: &str = "Brick";
+
+const SIDES: [&str; 3] = ["cpu", "gpu", "wgsl"];
 
 const ITEM_WORDS: [&str; 17] = [
     "pub", "const", "unsafe", "async", "extern", "fn", "struct", "enum", "union", "trait", "type",
@@ -30,7 +35,6 @@ pub struct Face {
     pub items: BTreeSet<String>,
     pub wgsl: BTreeSet<String>,
     pub faces: BTreeMap<String, Vec<String>>,
-    pub defaults: BTreeMap<String, Vec<String>>,
     modules: BTreeSet<String>,
     names: BTreeSet<String>,
 }
@@ -105,7 +109,6 @@ pub fn face(folder: &Path) -> Result<Face, String> {
     }
     face.wgsl = wgsl(folder)?;
     face.faces = signatures_in(&folder.join("src").join(FACES))?;
-    face.defaults = signatures_in(&folder.join("src").join(DEFAULTS))?;
     Ok(face)
 }
 
@@ -548,18 +551,6 @@ pub fn faces(
     Ok(faces)
 }
 
-fn default_crates(repository: &Repository, crates: &BTreeSet<String>) -> BTreeSet<String> {
-    crates
-        .iter()
-        .filter_map(|name| repository.of_crate(name))
-        .flat_map(|package| &package.dependencies)
-        .filter(|dependency| dependency.kind == crate::DependencyKind::Normal)
-        .filter_map(|dependency| repository.package(&dependency.package))
-        .filter(|package| package.own() && package.folder.join("src").join(DEFAULTS).is_dir())
-        .map(crate::Package::crate_name)
-        .collect()
-}
-
 pub fn files(
     repository: &Repository,
     registered: &[&str],
@@ -573,7 +564,6 @@ pub fn files(
                     .is_some_and(|package| package.own())
             })
             .collect();
-    crates.extend(default_crates(repository, &crates));
     let declared = crate::gpu::contracts::catalog();
     crates.extend(
         declared
@@ -594,9 +584,6 @@ pub fn files(
                 "wgsl": face.wgsl,
                 "faces": face.faces,
             });
-            if !face.defaults.is_empty() {
-                listed["defaults"] = json!(face.defaults);
-            }
             let places: serde_json::Map<String, serde_json::Value> = declared
                 .iter()
                 .filter(|place| place.declared_in() == name)
@@ -613,20 +600,241 @@ pub fn files(
     Ok(vec![(FILE.to_owned(), text + "\n")])
 }
 
-fn missing_signatures(
-    wanted: &BTreeMap<String, Vec<String>>,
-    offered: &BTreeMap<String, Vec<String>>,
-) -> Vec<String> {
-    wanted
+struct Registered {
+    kind: &'static str,
+    place: String,
+    sides: BTreeSet<&'static str>,
+}
+
+fn after_space(code: &[char], mut at: usize) -> usize {
+    while code.get(at).is_some_and(|character| character.is_whitespace()) {
+        at += 1;
+    }
+    at
+}
+
+fn angle_close(code: &[char], open: usize) -> usize {
+    let mut depth = 0_usize;
+    for (at, &character) in code.iter().enumerate().skip(open) {
+        match character {
+            '<' => depth += 1,
+            '>' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return at;
+                }
+            }
+            _ => {}
+        }
+    }
+    code.len()
+}
+
+fn chained(code: &[char], mut at: usize) -> (Vec<String>, usize) {
+    let mut calls = Vec::new();
+    loop {
+        let mut next = after_space(code, at);
+        if code.get(next) == Some(&'.') {
+            next += 1;
+        } else if code.get(next) == Some(&':') && code.get(next + 1) == Some(&':') {
+            next += 2;
+        } else {
+            return (calls, at);
+        }
+        let name: String = code[next..]
+            .iter()
+            .take_while(|&&character| parse::identifier(character))
+            .collect();
+        let open = after_space(code, next + name.chars().count());
+        if name.is_empty() || code.get(open) != Some(&'(') {
+            return (calls, at);
+        }
+        calls.push(name);
+        at = parse::closing(code, open);
+    }
+}
+
+fn registered_in(code: &[char]) -> Vec<Registered> {
+    let mut found = Vec::new();
+    for (kind, word) in [("fill", "Fill::<"), ("join", "Join::<")] {
+        let needle: Vec<char> = word.chars().collect();
+        let mut at = 0;
+        while at + needle.len() <= code.len() {
+            let starts = code[at..at + needle.len()] == needle[..]
+                && (at == 0 || !parse::identifier(code[at - 1]));
+            if !starts {
+                at += 1;
+                continue;
+            }
+            let open = at + needle.len() - 1;
+            let close = angle_close(code, open);
+            let named: String = code[open + 1..close].iter().collect();
+            let place = named.rsplit("::").next().unwrap_or_default().trim();
+            let (calls, end) = chained(code, close + 1);
+            found.push(Registered {
+                kind,
+                place: place.to_owned(),
+                sides: SIDES
+                    .into_iter()
+                    .filter(|side| calls.iter().any(|call| call == side))
+                    .collect(),
+            });
+            at = end.max(at + 1);
+        }
+    }
+    found
+}
+
+fn registrations(folder: &Path) -> Result<Vec<Registered>, String> {
+    let mut files = Vec::new();
+    crate::dependencies::rust_files(&folder.join("src"), &mut files);
+    files.sort();
+    let mut found = Vec::new();
+    for file in files {
+        found.extend(registered_in(&parse::code(&read(&file)?)));
+    }
+    Ok(found)
+}
+
+fn missing_places(wanted: &[Registered], offered: &[Registered]) -> Vec<String> {
+    let mut missing = Vec::new();
+    for registered in wanted {
+        let shown = format!("{} {}", registered.kind, registered.place);
+        let found = offered
+            .iter()
+            .find(|other| other.kind == registered.kind && other.place == registered.place);
+        match found {
+            None => missing.push(shown),
+            Some(other) => missing.extend(
+                registered
+                    .sides
+                    .difference(&other.sides)
+                    .map(|side| format!("{shown} {side}")),
+            ),
+        }
+    }
+    missing
+}
+
+fn imported_from(module: &Contract, place: &str) -> BTreeSet<String> {
+    let from = format!("package::{}::", place_module(place));
+    module
+        .imports
         .iter()
-        .flat_map(|(name, signatures)| {
-            let offered = offered.get(name);
-            signatures
-                .iter()
-                .filter(move |signature| offered.is_none_or(|found| !found.contains(*signature)))
-                .map(move |signature| format!("wgsl face::{name} {signature}"))
-        })
+        .filter_map(|import| import.split_once("import ").map(|(_, rest)| rest))
+        .flat_map(|rest| parse::expand(rest.trim_end().trim_end_matches(';')))
+        .filter_map(|(path, _)| path.strip_prefix(from.as_str()).map(str::to_owned))
         .collect()
+}
+
+fn same(wanted: &Answer, found: &Answer) -> bool {
+    wanted.constant == found.constant
+        && wanted.returns == found.returns
+        && wanted.parameters.len() == found.parameters.len()
+        && wanted
+            .parameters
+            .iter()
+            .zip(&found.parameters)
+            .all(|((_, wanted), (_, found))| wanted == found)
+}
+
+fn unanswered(
+    place: &str,
+    wanted: &Contract,
+    source: &str,
+    functions: Option<&[&str]>,
+) -> Vec<String> {
+    let found = match contract(source) {
+        Ok(found) => found,
+        Err(error) => return vec![error],
+    };
+    let mut problems = Vec::new();
+    let imported = imported_from(&found, place);
+    let code = uncommented(source);
+    let defined = found.names();
+    let types = wanted
+        .types
+        .iter()
+        .map(String::as_str)
+        .chain(wanted.shared.iter().map(|answer| answer.name.as_str()));
+    for ty in types {
+        if defined.contains(&ty) {
+            problems.push(format!(
+                "defines {ty}, a type of place::{place}, where it imports it from there"
+            ));
+        } else if !imported.contains(ty) && rust::has_word(&code, ty) {
+            problems.push(format!("uses {ty} without importing it from place::{place}"));
+        }
+    }
+    let asked: Vec<&Answer> = match functions {
+        None => wanted.answers.iter().collect(),
+        Some(functions) => {
+            for function in functions {
+                let declared = wanted
+                    .answers
+                    .iter()
+                    .any(|answer| !answer.constant && answer.name == *function);
+                if !declared {
+                    problems.push(format!(
+                        "names {function}, which place::{place} does not declare"
+                    ));
+                }
+            }
+            wanted
+                .answers
+                .iter()
+                .filter(|answer| functions.contains(&answer.name.as_str()))
+                .collect()
+        }
+    };
+    for answer in asked {
+        let defines = found
+            .shared
+            .iter()
+            .chain(&found.answers)
+            .find(|other| other.name == answer.name);
+        match defines {
+            None => problems.push(format!("does not define {}", answer.signature())),
+            Some(other) if !same(answer, other) => problems.push(format!(
+                "defines {} where place::{place} declares {}",
+                other.signature(),
+                answer.signature()
+            )),
+            Some(_) => {}
+        }
+    }
+    problems
+}
+
+fn answered_files(folder: &Path, offered: &[Registered]) -> Result<Vec<String>, String> {
+    let declared = crate::gpu::contracts::catalog();
+    let mut missing = Vec::new();
+    for registered in offered
+        .iter()
+        .filter(|registered| registered.kind == "fill" && registered.sides.contains("wgsl"))
+    {
+        let found = declared.iter().find_map(|place| {
+            let source = place.face.wgsl?;
+            let named = (place.declared)();
+            let short = named.rsplit("::").next().unwrap_or(named);
+            (short == registered.place).then_some((place.name, source))
+        });
+        let Some((place, source)) = found else {
+            continue;
+        };
+        let file = folder.join(format!("src/{FACES}/{place}.wgsl"));
+        if !file.is_file() {
+            missing.push(format!("wgsl src/{FACES}/{place}.wgsl"));
+            continue;
+        }
+        let wanted = contract(source).map_err(|error| format!("place {place}: {error}"))?;
+        missing.extend(
+            unanswered(place, &wanted, &read(&file)?, None)
+                .into_iter()
+                .map(|problem| format!("wgsl {place}: {problem}")),
+        );
+    }
+    Ok(missing)
 }
 
 fn replacements(repository: &Repository, problems: &mut Vec<Error>) -> Result<usize, String> {
@@ -645,12 +853,15 @@ fn replacements(repository: &Repository, problems: &mut Vec<Error>) -> Result<us
         };
         let offered = face(&package.folder)?;
         let wanted = face(&original.folder)?;
-        let mut missing: Vec<String> = without_bricks(&wanted.items)
-            .into_iter()
-            .filter(|line| !offered.items.contains(*line))
-            .cloned()
-            .collect();
-        missing.extend(missing_signatures(&wanted.faces, &offered.faces));
+        let filled = registrations(&package.folder)?;
+        let mut missing = missing_places(&registrations(&original.folder)?, &filled);
+        missing.extend(answered_files(&package.folder, &filled)?);
+        missing.extend(
+            without_bricks(&wanted.items)
+                .into_iter()
+                .filter(|line| !offered.items.contains(*line))
+                .cloned(),
+        );
         compared += 1;
         if !missing.is_empty() {
             problems.push(
@@ -663,36 +874,60 @@ fn replacements(repository: &Repository, problems: &mut Vec<Error>) -> Result<us
     Ok(compared)
 }
 
-fn defaults_offered(repository: &Repository, problems: &mut Vec<Error>) -> Result<usize, String> {
-    let mut defaults: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
-    let mut providers = Vec::new();
-    for package in repository.own() {
-        let found = face(&package.folder)?;
-        for (name, signatures) in found.defaults {
-            let file = package.file(&format!("src/{DEFAULTS}/{name}.wgsl"));
-            defaults.insert(name, (file.unwrap_or_default(), signatures));
-        }
-        for (name, signatures) in found.faces {
-            let file = package.file(&format!("src/{FACES}/{name}.wgsl"));
-            providers.push((file.unwrap_or_default(), name, signatures));
-        }
-    }
+fn answers(problems: &mut Vec<Error>) -> Result<usize, String> {
+    let mut engine = engine::Engine::default();
+    engine.app.add_bricks(engine::bricks::standard());
+    let registry = engine
+        .app
+        .world()
+        .get_resource::<BrickRegistry>()
+        .ok_or("the standard engine registers no brick")?;
     let mut compared = 0;
-    for (file, name, signatures) in providers {
-        let Some((default, wanted)) = defaults.get(&name) else {
-            continue;
-        };
-        compared += 1;
-        let missing: Vec<&String> = wanted
-            .iter()
-            .filter(|signature| !signatures.contains(*signature))
+    for brick in registry.bricks() {
+        let modules: Vec<&ShaderModule> = brick
+            .extension::<RenderBrick>()
+            .into_iter()
+            .flat_map(RenderBrick::modules)
             .collect();
-        if !missing.is_empty() {
-            problems.push(
-                Error::new(ErrorCode::FaceMissing, file)
-                    .got(missing)
-                    .nearest(default.as_str()),
-            );
+        let mut answering: Vec<(&str, &str, Option<&[&str]>)> = Vec::new();
+        for filled in &brick.fills {
+            if let Some(module) = filled.wgsl {
+                answering.push((filled.place, module, None));
+            }
+        }
+        for joined in &brick.joins {
+            if let Some(member) = joined.wgsl {
+                answering.push((joined.place, member.module, Some(member.functions)));
+            }
+        }
+        for (place, module, functions) in answering {
+            compared += 1;
+            let wanted = registry.place(place).and_then(|known| known.face.wgsl);
+            let source = modules
+                .iter()
+                .find(|known| known.path == module)
+                .map(|known| known.source);
+            let missing = match (wanted, source) {
+                (None, _) => vec![format!("place {place} has no WGSL side")],
+                (_, None) => vec![format!("the brick registers no shader module {module}")],
+                (Some(wanted), Some(source)) => match contract(wanted) {
+                    Ok(wanted) => unanswered(place, &wanted, source, functions),
+                    Err(error) => vec![error],
+                },
+            };
+            if !missing.is_empty() {
+                let got = json!({
+                    "brick": brick.name,
+                    "module": module,
+                    "unanswered": missing,
+                });
+                problems.push(
+                    Error::new(ErrorCode::FaceMissing, format!("$.places.{place}"))
+                        .expected(Expected::Matching)
+                        .got(got)
+                        .nearest(place_module(place)),
+                );
+            }
         }
     }
     Ok(compared)
@@ -701,11 +936,11 @@ fn defaults_offered(repository: &Repository, problems: &mut Vec<Error>) -> Resul
 pub fn check(repository: &Repository) -> Result<(), String> {
     let mut problems = Vec::new();
     let compared = replacements(repository, &mut problems)?;
-    let defaulted = defaults_offered(repository, &mut problems)?;
+    let answered = answers(&mut problems)?;
     if problems.is_empty() {
         println!(
             "{}",
-            json!({"event": "faces_offered", "replacements": compared, "defaulted": defaulted})
+            json!({"event": "faces_offered", "replacements": compared, "answered": answered})
         );
         return Ok(());
     }

@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 
+use engine::bricks::{AddBrick, BrickRegistry};
 use engine_core::{Place, PlaceKind};
 use engine_render::faces::face_module;
 use engine_render::linker::Linker;
@@ -12,16 +13,26 @@ use engine_render::shaders::MODULES;
 const PROBE_ROOT: &str = "generated::probe";
 
 pub fn catalog() -> Vec<Place> {
+    let mut engine = engine::Engine::default();
+    engine.app.add_bricks(engine::bricks::standard());
+    let registered = engine
+        .app
+        .world()
+        .get_resource::<BrickRegistry>()
+        .map(BrickRegistry::places)
+        .unwrap_or_default();
     let mut places: Vec<Place> = Vec::new();
-    for declared in [
+    for place in [
         engine_render::composite::POST_PLACES,
         engine_faces::places::PLACES,
         engine_places::PLACES,
-    ] {
-        for place in declared {
-            if !places.iter().any(|known| known.name == place.name) {
-                places.push(*place);
-            }
+    ]
+    .into_iter()
+    .flatten()
+    .chain(&registered)
+    {
+        if !places.iter().any(|known| known.name == place.name) {
+            places.push(*place);
         }
     }
     places

@@ -6,9 +6,8 @@ use engine::bevy_ecs::prelude::World;
 use engine::bevy_ecs::schedule::graph::Direction;
 use engine::bevy_ecs::schedule::{NodeId, Schedules, SystemSet};
 use engine::bevy_ecs::system::System;
-use engine::bricks::{BrickRecord, BrickRegistry, BrickSet, PlaceKind};
+use engine::bricks::{Absent, BrickRecord, BrickRegistry, BrickSet, PlaceKind};
 use engine::scene::SceneComponents;
-use engine_render::faces::face_of;
 use engine_render::linker::face_imports;
 use engine_render::pieces::{PieceDecl, place};
 use engine_render::places::{Answer, contract, place_module};
@@ -206,105 +205,68 @@ fn paths(brick: &BrickRecord, package: &Package) -> Vec<String> {
 }
 
 struct Rendered {
-    faces: Vec<&'static str>,
     needs: Vec<Value>,
-    defaults: Vec<&'static str>,
     pieces: Vec<Value>,
     parts: Vec<&'static str>,
 }
 
 impl Rendered {
-    fn of(render: Option<&RenderBrick>) -> Self {
-        let mut faces: Vec<&'static str> = Vec::new();
-        for face in render.into_iter().flat_map(RenderBrick::faces) {
-            if !faces.contains(&face) {
-                faces.push(face);
-            }
-        }
+    fn of(brick: &BrickRecord, registry: &BrickRegistry) -> Self {
+        let render = brick.extension::<RenderBrick>();
         let parts = render.map_or(&[][..], |render| render.parts.as_slice());
         Self {
-            needs: needs(render, &faces),
-            defaults: render
-                .into_iter()
-                .flat_map(RenderBrick::defaults)
-                .filter_map(|module| face_of(module.path))
-                .collect(),
+            needs: needs(brick, registry, render),
             pieces: parts
                 .iter()
                 .filter_map(|part| part.decl.piece)
                 .map(|piece| json!({ "name": piece.name, "size": piece.size }))
                 .collect(),
             parts: parts.iter().map(|part| part.decl.name).collect(),
-            faces,
         }
     }
 }
 
-fn needs(render: Option<&RenderBrick>, offered: &[&str]) -> Vec<Value> {
+fn answers_empty(registry: &BrickRegistry, name: &str) -> bool {
+    registry.place(name).is_some_and(|place| match place.kind {
+        PlaceKind::Slot => place.face.absent == Absent::Nobody,
+        PlaceKind::List => true,
+    })
+}
+
+fn needs(
+    brick: &BrickRecord,
+    registry: &BrickRegistry,
+    render: Option<&RenderBrick>,
+) -> Vec<Value> {
     let Some(render) = render else {
         return Vec::new();
     };
-    let mut needs: Vec<(String, bool)> = Vec::new();
+    let held: Vec<&str> = brick
+        .fills
+        .iter()
+        .map(|filled| filled.place)
+        .chain(brick.joins.iter().map(|joined| joined.place))
+        .collect();
+    let mut needs: Vec<String> = Vec::new();
     for module in render.modules() {
         for face in face_imports(module.source) {
-            if offered.contains(&face.as_str()) || needs.iter().any(|(known, _)| *known == face) {
-                continue;
+            if !held.contains(&face.as_str()) && !needs.contains(&face) {
+                needs.push(face);
             }
-            let default = render
-                .defaults()
-                .any(|default| face_of(default.path) == Some(face.as_str()));
-            needs.push((face, default));
         }
     }
     for part in &render.parts {
         for &name in part.decl.needs {
-            if !needs.iter().any(|(known, _)| known == name) {
-                needs.push((name.to_owned(), false));
+            if !needs.iter().any(|known| known == name) {
+                needs.push(name.to_owned());
             }
         }
     }
     needs
         .into_iter()
-        .map(|(face, default)| json!({ "face": face, "default": default }))
-        .collect()
-}
-
-fn slots(registry: &BrickRegistry) -> Vec<Value> {
-    let mut names: Vec<&'static str> = Vec::new();
-    for slot in registry.bricks().iter().filter_map(|brick| brick.slot) {
-        if !names.contains(&slot) {
-            names.push(slot);
-        }
-    }
-    names
-        .into_iter()
-        .map(|slot| {
-            json!({
-                "name": slot,
-                "filler": registry.filler(slot).map(|brick| brick.name),
-                "fillers": registry.fillers(slot),
-            })
-        })
-        .collect()
-}
-
-fn lists(registry: &BrickRegistry) -> Vec<Value> {
-    let mut names: Vec<&'static str> = Vec::new();
-    for &list in registry.bricks().iter().flat_map(|brick| &brick.lists) {
-        if !names.contains(&list) {
-            names.push(list);
-        }
-    }
-    names
-        .into_iter()
-        .map(|list| {
-            let members: Vec<&str> = registry
-                .bricks()
-                .iter()
-                .filter(|brick| brick.lists.contains(&list))
-                .map(|brick| brick.name)
-                .collect();
-            json!({ "name": list, "members": members })
+        .map(|face| {
+            let default = answers_empty(registry, &face);
+            json!({ "face": face, "default": default })
         })
         .collect()
 }
@@ -408,15 +370,12 @@ fn record(
         .map(|owner| owner.name)
         .filter(|&owner| owner != brick.name)
         .collect();
-    let rendered = Rendered::of(brick.extension::<RenderBrick>());
+    let rendered = Rendered::of(brick, registry);
     Ok(json!({
         "name": brick.name,
         "type": brick.type_path,
         "crate": brick.crate_name,
         "version": version,
-        "slot": brick.slot,
-        "lists": brick.lists,
-        "places": brick.places.iter().map(|place| place.name).collect::<Vec<_>>(),
         "fills": brick
             .fills
             .iter()
@@ -469,9 +428,7 @@ fn record(
             }))
             .collect::<Vec<_>>(),
         "inspectors": brick.inspectors.iter().map(|inspector| inspector.name).collect::<Vec<_>>(),
-        "faces": rendered.faces,
         "needs": rendered.needs,
-        "defaults": rendered.defaults,
         "pieces": rendered.pieces,
         "parts": rendered.parts,
         "passes": brick.passes,
@@ -532,8 +489,6 @@ pub fn bricks_json(repository: &Repository, engine: &mut Engine) -> Result<Strin
         .collect::<Result<Vec<_>, _>>()?;
     let text = serde_json::to_string_pretty(&json!({
         "bricks": bricks,
-        "slots": slots(registry),
-        "lists": lists(registry),
         "places": places(registry),
         "frame": frame(registry)?,
     }))
