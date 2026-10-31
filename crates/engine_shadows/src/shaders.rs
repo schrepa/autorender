@@ -2,7 +2,7 @@ engine_render::shader_modules! {
     "shadows::sample" in "shadows" = "shadows/sample.wgsl";
     "shadows::maps" in "shadows" = "shadows.wgsl";
     "shadows::marks" in "shadows" = "shadow_marks.wgsl";
-    "face::shadows" in "shadows" = "faces/shadows.wgsl";
+    "shadows::faces::shadows" in "shadows" = "faces/shadows.wgsl";
     "shadows::piece" in "shadows" = "piece.wgsl";
 }
 

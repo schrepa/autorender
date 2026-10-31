@@ -137,10 +137,9 @@ pub(crate) static PART: PartEntry = PartEntry {
         ],
         hooks: &[],
         contributes: &[FRAME_SHADOWS, AMBIENT_SKY_OCCLUSION],
-        effects: &[],
+        resolve: None,
         labels: &[],
         lazy: false,
-        faces: &[engine_render::offer_face!(ShadowPass => dyn ShadowCastersFace)],
         needs: &[],
         piece: Some(PieceDecl {
             name: "shadow",
@@ -151,6 +150,9 @@ pub(crate) static PART: PartEntry = PartEntry {
     },
     create,
 };
+
+pub(crate) const SHADOW_CASTERS: engine_core::FaceOffer =
+    engine_render::offer_face!(ShadowPass => dyn ShadowCastersFace);
 
 fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
     Box::new(ShadowPass::new(&cx.core.device))

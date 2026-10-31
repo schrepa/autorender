@@ -1,6 +1,6 @@
-import package::face::shadows::KeptLift;
 import package::frame::view::{DetailLevel, PI, detail_across, detail_level, fade_noise};
 import package::generated::pieces::pieces;
+import package::place::shadows::KeptLift;
 
 const SHADOW_APRON: u32 = 1u;
 const KEPT_GROUND_TEXELS: f32 = 2.0;

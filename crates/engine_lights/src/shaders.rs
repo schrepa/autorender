@@ -1,7 +1,7 @@
 engine_render::shader_modules! {
     "lights::clusters" in "lights" = "clusters.wgsl";
     "lights::binning" in "lights" = "binning.wgsl";
-    "face::lights" in "lights" = "faces/lights.wgsl";
+    "lights::faces::lights" in "lights" = "faces/lights.wgsl";
 }
 
 engine_render::entry_points! {

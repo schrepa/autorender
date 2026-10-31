@@ -3,8 +3,8 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-use engine_core::{Brick, Bricks, Place};
-use engine_faces::slots::LightingSlot;
+use engine_core::{Brick, Bricks, Fill};
+use engine_faces::places::LightingSlot;
 use engine_render::render_bricks::AddRenderParts;
 
 mod gpu_layouts;
@@ -14,15 +14,14 @@ mod shaders;
 pub struct LightingModelBrick;
 
 impl Brick for LightingModelBrick {
-    const SLOT: Option<Place> = Some(Place::slot::<LightingSlot>());
-
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<engine_core::SurfaceLight>()
             .settings::<engine_core::Highlights>()
             .render_part(&part::PART)
             .shaders(shaders::MODULES)
-            .face_defaults(engine_faces::defaults::MODULES)
+            .fill(Fill::<LightingSlot>::new().wgsl("lighting::faces::lighting"))
+            .places(engine_faces::places::PLACES)
             .mirrors(gpu_layouts::LAYOUTS, &[]);
     }
 }
