@@ -1,6 +1,5 @@
-use engine_core::{Applied, RenderStats};
+use engine_core::{Applied, Member, RenderStats};
 use engine_render::cached::{Bound, GroupCache};
-use engine_render::composite::{PixelEffect, PostStage};
 use engine_render::graph::{
     FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
 };
@@ -21,6 +20,12 @@ use crate::shaders::entry::bloom;
 
 const BLOOM_LEVELS: u32 = 6;
 
+pub(crate) const MEMBER: Member = Member {
+    module: "bloom::apply",
+    functions: &["apply"],
+    reads: &["bloom"],
+};
+
 pub static PART: PartEntry = PartEntry {
     decl: PartDecl {
         name: "bloom",
@@ -35,14 +40,9 @@ pub static PART: PartEntry = PartEntry {
         }],
         hooks: &[],
         contributes: &[COMPOSITE_BLOOM],
-        effects: &[PixelEffect {
-            stage: PostStage::Light,
-            module: "bloom::apply",
-            reads: &["bloom"],
-        }],
+        resolve: None,
         labels: &["engine/bloom"],
         lazy: true,
-        faces: &[],
         needs: &[],
         piece: Some(PieceDecl {
             name: "bloom",

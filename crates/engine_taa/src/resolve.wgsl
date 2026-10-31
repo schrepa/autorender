@@ -1,6 +1,6 @@
 import package::engine::color::{decode_srgb, dithered, encode_srgb};
 import package::face::dither::dithering;
-import package::generated::scene::scene_light;
+import package::face::post_scene::apply as scene_light;
 import package::post::frame::{depth_texture, effect_shade, occlusion, occlusion_at, post, scene};
 import package::post::pixel::{PostPixel, SceneLight};
 

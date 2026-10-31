@@ -10,8 +10,8 @@ pub mod gpu_layouts;
 pub mod pipeline_layouts;
 pub mod shaders;
 
-use engine_core::{Brick, Bricks, DebugView};
-use engine_faces::slots::DebugViewList;
+use engine_core::{Brick, Bricks, DebugView, Join};
+use engine_faces::places::DebugViewList;
 use engine_render::render_bricks::AddRenderParts;
 
 pub struct DebugViewBrick;
@@ -19,7 +19,7 @@ pub struct DebugViewBrick;
 impl Brick for DebugViewBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .list::<DebugViewList>()
+            .join(Join::<DebugViewList>::new())
             .settings::<DebugView>()
             .smoke("debug_view", true, engine_core::debug_view_smoke::run)
             .render_part(&debug_view::PART)
