@@ -268,8 +268,8 @@ pub struct DescribedBrick {
     pub name: &'static str,
     #[serde(rename = "crate")]
     pub crate_name: &'static str,
-    pub slot: Option<&'static str>,
-    pub lists: Vec<&'static str>,
+    pub fills: Vec<&'static str>,
+    pub joins: Vec<&'static str>,
     pub settings: Vec<DescribedEntry>,
     pub stats: Vec<DescribedEntry>,
     pub operations: Vec<DescribedEntry>,

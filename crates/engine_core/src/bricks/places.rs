@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use bevy_ecs::prelude::{Resource, World};
 
-use super::{Bricks, List, Place, Slot};
+use super::{BrickRecord, Bricks, List, Place, Slot};
 
 #[derive(Clone, Copy, Debug)]
 pub struct FaceType {
@@ -104,6 +104,7 @@ type Insert = Box<dyn FnOnce(&mut World, &'static str) + Send>;
 
 pub struct Fill<S: Slot> {
     cpu: Option<Insert>,
+    owns: Option<fn(&mut BrickRecord)>,
     gpu: Option<FaceOffer>,
     wgsl: Option<&'static str>,
     _place: PhantomData<fn() -> S>,
@@ -113,6 +114,7 @@ impl<S: Slot> Default for Fill<S> {
     fn default() -> Self {
         Self {
             cpu: None,
+            owns: None,
             gpu: None,
             wgsl: None,
             _place: PhantomData,
@@ -144,6 +146,7 @@ impl<S: CpuSlot> Fill<S> {
         self.cpu = Some(Box::new(move |world: &mut World, _: &'static str| {
             world.insert_resource(value);
         }));
+        self.owns = Some(BrickRecord::own_resource::<S::Cpu>);
         self
     }
 }
@@ -206,7 +209,13 @@ pub struct Joined {
 
 impl Bricks<'_> {
     pub fn fill<S: Slot>(&mut self, fill: Fill<S>) -> &mut Self {
-        let Fill { cpu, gpu, wgsl, .. } = fill;
+        let Fill {
+            cpu,
+            owns,
+            gpu,
+            wgsl,
+            ..
+        } = fill;
         let filled = Filled {
             place: S::NAME,
             cpu: cpu.is_some(),
@@ -215,6 +224,9 @@ impl Bricks<'_> {
         };
         if let Some(insert) = cpu {
             insert(self.app.world_mut(), self.record.name);
+        }
+        if let Some(owns) = owns {
+            owns(&mut self.record);
         }
         self.record.fill(Place::slot::<S>(), filled);
         self

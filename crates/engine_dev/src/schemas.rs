@@ -122,7 +122,7 @@ pub fn generated(world: &World) -> Result<Generated, String> {
         "Jobs": schemars::schema_for!(views::JobsView),
         "StaticTables": schemars::schema_for!(views::StaticTablesView),
         "StreamedId": schemars::schema_for!(views::StreamedIdView),
-        "FrameStats": frame_stats(registry, &mut problems),
+        "FrameStats": frame_stats(world, registry, &mut problems),
     });
     if let Some(all) = schemas.as_object_mut() {
         for verb in Verb::ALL {
@@ -578,7 +578,7 @@ fn references(value: &Value, names: &mut Vec<String>) {
     }
 }
 
-fn frame_stats(registry: &BrickRegistry, problems: &mut Vec<String>) -> Value {
+fn frame_stats(world: &World, registry: &BrickRegistry, problems: &mut Vec<String>) -> Value {
     let mut schema = serialized(schemars::schema_for!(engine_core::FrameStats));
     let mut definitions = schema["$defs"].as_object().cloned().unwrap_or_default();
     let mut properties = schema["properties"]
@@ -609,7 +609,7 @@ fn frame_stats(registry: &BrickRegistry, problems: &mut Vec<String>) -> Value {
     schema["$defs"] = Value::Object(definitions);
     schema["properties"] = Value::Object(properties);
     schema["required"] = Value::Array(required);
-    crate::consumers::check(registry, &schema, problems);
+    crate::consumers::check(world, registry, &schema, problems);
     let render = serialized(schemars::schema_for!(engine_core::RenderStats));
     for (field, property) in render["properties"].as_object().into_iter().flatten() {
         if property.get("$ref").is_some() && registry.section(field).is_none() {

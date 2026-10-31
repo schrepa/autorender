@@ -1023,8 +1023,8 @@ fn described_brick(brick: &engine_core::BrickRecord, full: bool) -> DescribedBri
     DescribedBrick {
         name: brick.name,
         crate_name: brick.crate_name,
-        slot: brick.slot,
-        lists: brick.lists.clone(),
+        fills: brick.fills.iter().map(|filled| filled.place).collect(),
+        joins: brick.joins.iter().map(|joined| joined.place).collect(),
         settings: brick
             .settings
             .iter()

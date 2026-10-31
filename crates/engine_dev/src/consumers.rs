@@ -1,11 +1,21 @@
-use engine_core::BrickRegistry;
+use engine_core::bevy_ecs::prelude::World;
+use engine_core::{BrickRegistry, DetailConsumers};
 use serde_json::Value;
 
 const CUT_FIELDS: [&str; 3] = ["asked", "kept", "cut"];
 
-pub(crate) fn check(registry: &BrickRegistry, stats: &Value, problems: &mut Vec<String>) {
+pub(crate) fn check(
+    world: &World,
+    registry: &BrickRegistry,
+    stats: &Value,
+    problems: &mut Vec<String>,
+) {
     let mut names: Vec<&str> = Vec::new();
-    for (brick, consumer) in registry.consumers() {
+    let consumers = world
+        .get_resource::<DetailConsumers>()
+        .into_iter()
+        .flat_map(DetailConsumers::consumers);
+    for (brick, consumer) in consumers {
         let name = consumer.name;
         if names.contains(&name) {
             problems.push(format!(

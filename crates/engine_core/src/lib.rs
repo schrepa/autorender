@@ -21,8 +21,6 @@ mod foliage;
 mod frame_stats;
 mod gpu_culling;
 mod grid;
-mod ground;
-mod grounded;
 mod hierarchy;
 mod highlights;
 mod input;
@@ -35,8 +33,6 @@ pub mod math;
 mod mesh_lods;
 pub use engine_math::collections;
 mod particles;
-mod physics;
-mod place_smokes;
 pub mod presentation_bounds;
 mod probes;
 mod provided;
@@ -48,13 +44,11 @@ mod sections;
 mod sky;
 mod sky_occlusion;
 pub mod smoke;
-mod solids;
 mod spline_mesh;
 mod statistics;
 mod tables;
 mod ticks;
 mod transform_edits;
-mod water;
 mod wind;
 
 pub use antialiasing::*;
@@ -80,8 +74,6 @@ pub use frame_stats::*;
 pub use glam;
 pub use gpu_culling::*;
 pub use grid::*;
-pub use ground::*;
-pub use grounded::*;
 pub use hierarchy::*;
 pub use highlights::*;
 pub use input::*;
@@ -91,7 +83,6 @@ pub use level_of_detail::*;
 pub use light::*;
 pub use lights::*;
 pub use particles::*;
-pub use physics::*;
 pub use probes::*;
 pub use provided::*;
 pub use records::*;
@@ -100,15 +91,10 @@ pub use retained_render::*;
 pub use scene::*;
 pub use sky::*;
 pub use sky_occlusion::*;
-pub use solids::*;
 pub use spline_mesh::*;
 pub use statistics::{Distribution, median};
 pub use tables::*;
 pub use transform_edits::*;
-pub use water::{
-    WaterBodies, WaterBodiesList, WaterFace, WaterKind, WaterObstacle, WaterObstacles, WaterSample,
-    WaterSurfaces, WaterWorker,
-};
 pub use wind::*;
 
 use bevy_app::PluginsState;
@@ -171,6 +157,9 @@ pub enum WorldSyncSystems {
 pub enum ViewSyncSystems {
     Stream,
 }
+
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StreamingFocus;
 
 pub const MAX_DEV_TICKS: u32 = 120;
 
@@ -241,10 +230,7 @@ impl Engine {
             .init_schedule(ViewSync)
             .add_systems(
                 WorldSync,
-                (
-                    grounded::settle.in_set(WorldSyncSystems::Ground),
-                    spline_mesh::build.in_set(WorldSyncSystems::Build),
-                ),
+                spline_mesh::build.in_set(WorldSyncSystems::Build),
             )
             .configure_sets(
                 WorldSync,

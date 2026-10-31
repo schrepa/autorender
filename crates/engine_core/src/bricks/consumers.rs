@@ -1,20 +1,68 @@
-use bevy_ecs::prelude::World;
+use bevy_ecs::prelude::{Resource, World};
+use engine_settings::ErrorCode;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use super::{BrickRegistry, List};
+use super::{Absent, BrickRegistry, CpuList, Error, Expected, Face, FaceType, List, Members};
 use crate::smoke::{SmokeEntry, SmokeResult, SmokeSession, control, render};
 
 pub struct DetailConsumersList;
 
 impl List for DetailConsumersList {
     const NAME: &'static str = "detail_consumers";
+    const FACE: Face = Face {
+        cpu: Some(FaceType::of::<DetailConsumers>()),
+        gpu: None,
+        wgsl: None,
+        absent: Absent::Required,
+    };
     const SMOKES: &'static [SmokeEntry] = &[SmokeEntry {
         name: "list_detail_consumers",
         brick: Self::NAME,
         gpu: true,
         run: detail_consumers,
     }];
+}
+
+impl CpuList for DetailConsumersList {
+    type Cpu = DetailConsumers;
+}
+
+#[derive(Resource, Default)]
+pub struct DetailConsumers {
+    consumers: Vec<(&'static str, DetailConsumer)>,
+}
+
+impl Members for DetailConsumers {
+    type Member = DetailConsumer;
+
+    fn add(&mut self, brick: &'static str, member: DetailConsumer) {
+        match self.consumer(member.name).map(|(owner, _)| owner) {
+            Some(owner) if owner != brick => panic!(
+                "{}",
+                Error::new(
+                    ErrorCode::DuplicateBrick,
+                    format!("$.bricks.{brick}.consumers.{}", member.name),
+                )
+                .expected(Expected::Unique)
+                .got(owner)
+            ),
+            Some(_) => {}
+            None => self.consumers.push((brick, member)),
+        }
+    }
+}
+
+impl DetailConsumers {
+    pub fn consumers(&self) -> impl ExactSizeIterator<Item = (&'static str, &DetailConsumer)> + '_ {
+        self.consumers
+            .iter()
+            .map(|(brick, consumer)| (*brick, consumer))
+    }
+
+    pub fn consumer(&self, name: &str) -> Option<(&'static str, &DetailConsumer)> {
+        self.consumers().find(|(_, consumer)| consumer.name == name)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -61,9 +109,9 @@ fn scene() -> Value {
 
 fn registered(world: &World) -> Vec<(&'static str, DetailConsumer)> {
     world
-        .get_resource::<BrickRegistry>()
-        .map(|registry| {
-            registry
+        .get_resource::<DetailConsumers>()
+        .map(|consumers| {
+            consumers
                 .consumers()
                 .map(|(brick, consumer)| (brick, *consumer))
                 .collect()
