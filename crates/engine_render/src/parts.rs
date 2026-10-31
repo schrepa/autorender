@@ -4,8 +4,8 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use engine_core::{
-    Error, ErrorCode, Expected, LinkedStats, MeshHandle, RecordKey, RenderFrame, RenderMaterial,
-    RenderMesh, RenderSnapshot, RenderStats, RenderTexture,
+    Error, ErrorCode, Expected, FaceOffer, LinkedStats, MeshHandle, RecordKey, RenderFrame,
+    RenderMaterial, RenderMesh, RenderSnapshot, RenderStats, RenderTexture,
 };
 use glam::Mat4;
 
@@ -13,7 +13,7 @@ use crate::bindings::SharedGroups;
 use crate::cached::Bound;
 use crate::depth_pyramid::CullingPart;
 use crate::entries::{MeshEntries, PassKind};
-use crate::faces::{FaceCast, FaceOffer};
+use crate::faces::FaceCast;
 use crate::gpu_calls::Recorded;
 use crate::gpu_data::CameraUniform;
 use crate::gpu_presentation::PresentationPart;

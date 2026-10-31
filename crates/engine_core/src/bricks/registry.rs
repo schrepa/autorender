@@ -10,8 +10,8 @@ use serde_json::Value;
 
 use super::{
     Brick, BrickSet, BrickStats, CORE_PASSES, CORE_ROW, DetailConsumer, EnvironmentSection, Error,
-    Expected, ExplainEntry, ExplainRecord, ExplainRequest, Operation, Place, crate_of, parse_value,
-    parse_value_at, short_type_name,
+    Expected, ExplainEntry, ExplainRecord, ExplainRequest, Filled, Joined, Operation, Place,
+    crate_of, parse_value, parse_value_at, short_type_name,
 };
 use crate::RenderSnapshot;
 use crate::smoke::SmokeEntry;
@@ -38,6 +38,9 @@ pub struct BrickRecord {
     pub slot: Option<&'static str>,
     pub lists: Vec<&'static str>,
     pub places: Vec<Place>,
+    pub fills: Vec<Filled>,
+    pub joins: Vec<Joined>,
+    pub knows: Vec<Place>,
     pub consumers: Vec<DetailConsumer>,
     pub records: Vec<&'static str>,
     pub settings: Vec<SettingsEntry>,
@@ -77,6 +80,9 @@ impl BrickRecord {
             slot: B::SLOT.map(|place| place.name),
             lists: Vec::new(),
             places: B::SLOT.into_iter().collect(),
+            fills: Vec::new(),
+            joins: Vec::new(),
+            knows: Vec::new(),
             consumers: Vec::new(),
             records: Vec::new(),
             settings: Vec::new(),
@@ -108,6 +114,43 @@ impl BrickRecord {
         let owned = Owned::of::<R>();
         if !self.resources.contains(&owned) {
             self.resources.push(owned);
+        }
+    }
+
+    pub(super) fn fill(&mut self, place: Place, filled: Filled) {
+        if !self.places.iter().any(|known| known.name == place.name) {
+            self.places.push(place);
+        }
+        match self
+            .fills
+            .iter_mut()
+            .find(|known| known.place == filled.place)
+        {
+            Some(known) => *known = filled,
+            None => self.fills.push(filled),
+        }
+    }
+
+    pub(super) fn join(&mut self, place: Place, joined: Joined) {
+        if !self.lists.contains(&place.name) {
+            self.lists.push(place.name);
+        }
+        if !self.places.iter().any(|known| known.name == place.name) {
+            self.places.push(place);
+        }
+        match self
+            .joins
+            .iter_mut()
+            .find(|known| known.place == joined.place)
+        {
+            Some(known) => *known = joined,
+            None => self.joins.push(joined),
+        }
+    }
+
+    pub(super) fn know(&mut self, place: Place) {
+        if !self.knows.iter().any(|known| known.name == place.name) {
+            self.knows.push(place);
         }
     }
 
@@ -230,12 +273,43 @@ impl BrickRegistry {
 
     pub fn places(&self) -> Vec<Place> {
         let mut places: Vec<Place> = Vec::new();
-        for place in self.bricks.iter().flat_map(|brick| &brick.places) {
+        for place in self
+            .bricks
+            .iter()
+            .flat_map(|brick| brick.places.iter().chain(&brick.knows))
+        {
             if !places.iter().any(|known| known.name == place.name) {
                 places.push(*place);
             }
         }
         places
+    }
+
+    pub fn place(&self, name: &str) -> Option<Place> {
+        self.places().into_iter().find(|place| place.name == name)
+    }
+
+    pub fn filled(&self, slot: &str) -> Option<(&'static str, Filled)> {
+        self.bricks.iter().find_map(|brick| {
+            brick
+                .fills
+                .iter()
+                .find(|filled| filled.place == slot)
+                .map(|filled| (brick.name, *filled))
+        })
+    }
+
+    pub fn joined(&self, list: &str) -> Vec<(&'static str, Joined)> {
+        self.bricks
+            .iter()
+            .flat_map(|brick| {
+                brick
+                    .joins
+                    .iter()
+                    .filter(move |joined| joined.place == list)
+                    .map(move |joined| (brick.name, *joined))
+            })
+            .collect()
     }
 
     pub fn members(&self, place: &str) -> Vec<&'static str> {
@@ -393,6 +467,18 @@ impl BrickRegistry {
     pub(super) fn add(&mut self, record: BrickRecord) -> Result<(), Error> {
         self.admits(record.name)?;
         let name = record.name;
+        let refilled = record
+            .fills
+            .iter()
+            .find_map(|filled| Some((filled.place, self.filled(filled.place)?.0)));
+        if let Some((place, first)) = refilled {
+            return Err(
+                Error::new(ErrorCode::SlotFilledTwice, format!("$.slots.{place}"))
+                    .expected(Expected::Unique)
+                    .got(name)
+                    .nearest(first),
+            );
+        }
         if let Some(slot) = record.slot
             && let Some(first) = self.filler(slot)
         {

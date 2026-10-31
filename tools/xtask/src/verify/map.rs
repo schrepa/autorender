@@ -242,7 +242,11 @@ pub(crate) const MAP: &[Rule] = &[
         checks: &[Pure("caches"), Equivalence],
     },
     Rule {
-        paths: &["crates/engine_scene/**", "crates/engine_settings/**"],
+        paths: &[
+            "crates/engine_scene/**",
+            "crates/engine_settings/**",
+            "crates/engine_places/**",
+        ],
         checks: &[
             CoreSmokes,
             Pure("scenes"),

@@ -1146,11 +1146,28 @@
             "type": "string"
           },
           "type": "object"
+        },
+        "lists": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object"
+        },
+        "nobody": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
         }
       },
       "required": [
         "faces",
-        "defaulted"
+        "defaulted",
+        "nobody",
+        "lists"
       ],
       "type": "object"
     },

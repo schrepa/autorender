@@ -9,6 +9,7 @@ use engine_render::shaders::{ENTRIES, MODULES, Stage};
 use naga::valid::{Capabilities, ModuleInfo, ValidationFlags, Validator};
 
 mod bindings;
+pub(crate) mod contracts;
 mod eye_reads;
 mod fades;
 mod handovers;
@@ -885,6 +886,7 @@ pub fn check(repository: &crate::Repository) -> Result<(), String> {
     let mirrors = check_layouts(&modules, &installed.mirrors);
     let pieces = check_pieces(&installed, &modules);
     let defaults = check_defaults(&installed);
+    let places = contracts::check();
     let entry_points = bindings::check(&modules, &resolved, &installed);
     let entries = check_entries(&modules);
     let inter_stage = inter_stage::check(&modules);
@@ -900,6 +902,7 @@ pub fn check(repository: &crate::Repository) -> Result<(), String> {
         imports.as_ref().err(),
         pieces.as_ref().err(),
         defaults.as_ref().err(),
+        places.as_ref().err(),
         mirrors.as_ref().err(),
         entry_points.as_ref().err(),
         entries.as_ref().err(),
@@ -925,6 +928,7 @@ pub fn check(repository: &crate::Repository) -> Result<(), String> {
         "modules": modules.len(),
         "defaulted": installed.defaulted,
         "defaults": defaults?,
+        "places": places?,
         "pieces": pieces?,
         "mirrors": mirrors?,
         "upload_structs": installed.mirrors.len(),

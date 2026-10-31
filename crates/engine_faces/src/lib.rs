@@ -10,6 +10,7 @@ pub mod heightfield;
 pub mod lights;
 pub mod occupancy;
 pub mod placed;
+pub mod places;
 pub mod shadows;
 pub mod slots;
 pub mod smokes;

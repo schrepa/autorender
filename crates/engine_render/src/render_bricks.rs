@@ -27,7 +27,7 @@ impl RenderBrick {
     pub fn faces(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.parts
             .iter()
-            .flat_map(|part| part.decl.faces.iter().map(crate::faces::FaceOffer::name))
+            .flat_map(|part| part.decl.faces.iter().map(engine_core::FaceOffer::name))
             .chain(
                 self.modules()
                     .filter_map(|module| crate::faces::face_of(module.path)),

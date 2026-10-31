@@ -1017,6 +1017,8 @@ dependencies = [
  "engine",
  "engine_core",
  "engine_dev",
+ "engine_faces",
+ "engine_places",
  "engine_render",
  "engine_sources",
  "naga",
@@ -1351,6 +1353,13 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "engine_places"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
 ]
 
 [[package]]

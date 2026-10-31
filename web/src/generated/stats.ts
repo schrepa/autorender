@@ -19,7 +19,7 @@ export interface FrameStats {
   invalid_transforms: number;
   jobs: JobStats;
   level_of_detail: DetailStats;
-  linked: { defaulted: string[]; faces: Record<string, string> };
+  linked: { defaulted: string[]; faces: Record<string, string>; lists: Record<string, string[]>; nobody: string[] };
   loading: boolean;
   local_lights: LightStats;
   mesh_upload_bytes: number;

@@ -6,6 +6,7 @@ use crate::linker::Linker;
 use crate::parts::{CORE_BRICK, CULLING_BRICK, core_head, shared_of};
 use crate::pieces::{PIECES_MODULE, PieceAt, PieceDecl, pieces_source, place};
 use crate::pipeline_layouts::PipelineLayout;
+use crate::places::{Answered, LinkedPlace, places_of};
 use crate::render_bricks::render_bricks;
 
 type Layouts = Vec<(&'static str, &'static PipelineLayout)>;
@@ -109,11 +110,12 @@ fn link(
     let defaulted = linker
         .resolve_faces()
         .map_err(|need| bricks.face_unanswered(&need.face, need.brick))?;
-    let linked = linked_stats(&linker, defaulted);
+    let places = places_of(bricks)?;
+    let linked = linked_stats(&linker, defaulted, &places);
     Ok((linker, linked))
 }
 
-fn linked_stats(linker: &Linker, defaulted: Vec<String>) -> LinkedStats {
+fn linked_stats(linker: &Linker, defaulted: Vec<String>, places: &[LinkedPlace]) -> LinkedStats {
     let faces: Vec<(&'static str, &'static str)> = linker
         .answered()
         .into_iter()
@@ -121,9 +123,23 @@ fn linked_stats(linker: &Linker, defaulted: Vec<String>) -> LinkedStats {
         .collect();
     let mut defaulted: Vec<&'static str> = defaulted.into_iter().map(leaked).collect();
     defaulted.sort_unstable();
+    let mut nobody: Vec<&'static str> = Vec::new();
+    let mut lists: Vec<(&'static str, &'static [&'static str])> = Vec::new();
+    for linked in places {
+        match &linked.answered {
+            Some(Answered::Nobody) => nobody.push(linked.place.name),
+            Some(Answered::Members(members)) => {
+                let bricks: Vec<&'static str> = members.iter().map(|&(brick, _)| brick).collect();
+                lists.push((linked.place.name, Box::leak(bricks.into_boxed_slice())));
+            }
+            Some(Answered::Filler { .. }) | None => {}
+        }
+    }
     LinkedStats {
         faces: Box::leak(faces.into_boxed_slice()),
         defaulted: Box::leak(defaulted.into_boxed_slice()),
+        nobody: Box::leak(nobody.into_boxed_slice()),
+        lists: Box::leak(lists.into_boxed_slice()),
     }
 }
 

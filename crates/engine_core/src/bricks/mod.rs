@@ -2,6 +2,7 @@ mod attribution;
 mod consumers;
 mod explain;
 mod extracted;
+mod places;
 mod registry;
 mod scene;
 
@@ -18,6 +19,10 @@ pub use explain::{
     DrawState, ExplainEntry, ExplainRecord, ExplainRequest, ExplainedEntity, Explainer, source_line,
 };
 pub use extracted::Extracted;
+pub use places::{
+    Absent, CpuList, CpuSlot, Face, FaceOffer, FaceType, Fill, Filled, Join, Joined, Member,
+    Members, face_name,
+};
 pub use registry::{
     BrickRecord, BrickRegistry, InspectedKind, InspectorEntry, OperationEntry, Owned,
     SettingsEntry, StatsEntry,
@@ -96,11 +101,13 @@ pub trait Operation: Send + Sync + 'static {
 
 pub trait Slot: 'static {
     const NAME: &'static str;
+    const FACE: Face = Face::NONE;
     const SMOKES: &'static [SmokeEntry] = &[];
 }
 
 pub trait List: 'static {
     const NAME: &'static str;
+    const FACE: Face = Face::NONE;
     const SMOKES: &'static [SmokeEntry] = &[];
 }
 
@@ -114,6 +121,8 @@ pub enum PlaceKind {
 pub struct Place {
     pub name: &'static str,
     pub kind: PlaceKind,
+    pub face: Face,
+    pub declared: fn() -> &'static str,
     pub smokes: &'static [SmokeEntry],
 }
 
@@ -122,6 +131,8 @@ impl Place {
         Self {
             name: S::NAME,
             kind: PlaceKind::Slot,
+            face: S::FACE,
+            declared: std::any::type_name::<S>,
             smokes: S::SMOKES,
         }
     }
@@ -130,8 +141,15 @@ impl Place {
         Self {
             name: L::NAME,
             kind: PlaceKind::List,
+            face: L::FACE,
+            declared: std::any::type_name::<L>,
             smokes: L::SMOKES,
         }
+    }
+
+    pub fn declared_in(&self) -> &'static str {
+        let path = (self.declared)();
+        path.split("::").next().unwrap_or(path)
     }
 }
 

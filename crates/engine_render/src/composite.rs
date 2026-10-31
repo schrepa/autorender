@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use engine_core::{BrickRegistry, Error, ErrorCode, Expected};
+use engine_core::{Absent, BrickRegistry, Error, ErrorCode, Expected, Face, List, Place};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PostStage {
@@ -25,6 +25,56 @@ pub const TRANSPARENT_COMPOSITE: &str = "transparent::composite";
 pub const SCENE_MODULE: &str = "generated::scene";
 pub const SCENE_FUNCTION: &str = "scene_light";
 pub const PIXEL_MODULE: &str = "post::pixel";
+
+const fn post_list(contract: &'static str) -> Face {
+    Face {
+        cpu: None,
+        gpu: None,
+        wgsl: Some(contract),
+        absent: Absent::Nobody,
+    }
+}
+
+pub struct PostScene;
+
+impl List for PostScene {
+    const NAME: &'static str = "post_scene";
+    const FACE: Face = post_list(include_str!("places/post_scene.wgsl"));
+}
+
+pub struct PostLight;
+
+impl List for PostLight {
+    const NAME: &'static str = "post_light";
+    const FACE: Face = post_list(include_str!("places/post_light.wgsl"));
+}
+
+pub struct PostDisplay;
+
+impl List for PostDisplay {
+    const NAME: &'static str = "post_display";
+    const FACE: Face = post_list(include_str!("places/post_display.wgsl"));
+}
+
+pub static POST_PLACES: &[Place] = &[
+    Place::list::<PostScene>(),
+    Place::list::<PostLight>(),
+    Place::list::<PostDisplay>(),
+];
+
+pub fn list_reads(registry: &BrickRegistry, lists: &[&str]) -> Vec<&'static str> {
+    let mut reads: Vec<&'static str> = Vec::new();
+    for list in lists {
+        for (_, joined) in registry.joined(list) {
+            for &read in joined.wgsl.iter().flat_map(|member| member.reads) {
+                if !reads.contains(&read) {
+                    reads.push(read);
+                }
+            }
+        }
+    }
+    reads
+}
 
 pub fn composite_path(resolve: &str) -> String {
     format!("generated::composite::{}", resolve.replace("::", "_"))

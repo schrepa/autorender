@@ -11,6 +11,7 @@ use engine::scene::SceneComponents;
 use engine_render::faces::face_of;
 use engine_render::linker::face_imports;
 use engine_render::pieces::{PieceDecl, place};
+use engine_render::places::{Answer, contract, place_module};
 use engine_render::render_bricks::{RenderBrick, render_bricks};
 use serde_json::{Value, json};
 
@@ -336,6 +337,29 @@ pub fn installed_passes(registry: &BrickRegistry) -> Vec<&'static str> {
         .collect()
 }
 
+pub(crate) fn place_face(place: &engine_core::Place) -> Value {
+    let face = &place.face;
+    let wgsl = face.wgsl.map(|source| match contract(source) {
+        Ok(found) => json!({
+            "module": place_module(place.name),
+            "types": found.types,
+            "answers": found
+                .shared
+                .iter()
+                .chain(&found.answers)
+                .map(Answer::signature)
+                .collect::<Vec<_>>(),
+            "absent": face.absent.name(),
+        }),
+        Err(error) => json!({ "error": error }),
+    });
+    json!({
+        "cpu": face.cpu.map(|side| (side.name)()),
+        "gpu": face.gpu.map(|side| (side.name)()),
+        "wgsl": wgsl,
+    })
+}
+
 fn places(registry: &BrickRegistry) -> Vec<Value> {
     registry
         .places()
@@ -349,6 +373,7 @@ fn places(registry: &BrickRegistry) -> Vec<Value> {
                 "name": place.name,
                 "kind": kind,
                 "members": registry.members(place.name),
+                "face": place_face(&place),
                 "smokes": place
                     .smokes
                     .iter()
@@ -392,6 +417,29 @@ fn record(
         "slot": brick.slot,
         "lists": brick.lists,
         "places": brick.places.iter().map(|place| place.name).collect::<Vec<_>>(),
+        "fills": brick
+            .fills
+            .iter()
+            .map(|filled| json!({
+                "place": filled.place,
+                "cpu": filled.cpu,
+                "gpu": filled.gpu.map(|offer| offer.name()),
+                "wgsl": filled.wgsl,
+            }))
+            .collect::<Vec<_>>(),
+        "joins": brick
+            .joins
+            .iter()
+            .map(|joined| json!({
+                "place": joined.place,
+                "cpu": joined.cpu,
+                "wgsl": joined.wgsl.map(|member| json!({
+                    "module": member.module,
+                    "functions": member.functions,
+                    "reads": member.reads,
+                })),
+            }))
+            .collect::<Vec<_>>(),
         "consumers": brick
             .consumers
             .iter()

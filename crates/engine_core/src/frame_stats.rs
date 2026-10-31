@@ -85,6 +85,8 @@ pub struct RenderStats {
 pub struct LinkedStats {
     pub faces: &'static [(&'static str, &'static str)],
     pub defaulted: &'static [&'static str],
+    pub nobody: &'static [&'static str],
+    pub lists: &'static [(&'static str, &'static [&'static str])],
 }
 
 struct FaceBricks(&'static [(&'static str, &'static str)]);
@@ -95,10 +97,20 @@ impl Serialize for FaceBricks {
     }
 }
 
+struct ListBricks(&'static [(&'static str, &'static [&'static str])]);
+
+impl Serialize for ListBricks {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_map(self.0.iter().copied())
+    }
+}
+
 #[derive(Serialize)]
 struct LinkedJson {
     faces: FaceBricks,
     defaulted: &'static [&'static str],
+    nobody: &'static [&'static str],
+    lists: ListBricks,
 }
 
 impl Serialize for LinkedStats {
@@ -106,6 +118,8 @@ impl Serialize for LinkedStats {
         LinkedJson {
             faces: FaceBricks(self.faces),
             defaulted: self.defaulted,
+            nobody: self.nobody,
+            lists: ListBricks(self.lists),
         }
         .serialize(serializer)
     }
@@ -124,10 +138,17 @@ impl schemars::JsonSchema for LinkedStats {
     fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         let faces = generator.subschema_for::<BTreeMap<String, String>>();
         let defaulted = generator.subschema_for::<Vec<String>>();
+        let nobody = generator.subschema_for::<Vec<String>>();
+        let lists = generator.subschema_for::<BTreeMap<String, Vec<String>>>();
         schemars::json_schema!({
             "type": "object",
-            "properties": { "faces": faces, "defaulted": defaulted },
-            "required": ["faces", "defaulted"],
+            "properties": {
+                "faces": faces,
+                "defaulted": defaulted,
+                "nobody": nobody,
+                "lists": lists,
+            },
+            "required": ["faces", "defaulted", "nobody", "lists"],
         })
     }
 }

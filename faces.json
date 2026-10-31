@@ -966,6 +966,23 @@
         "const heightfield::TERRAIN: Table",
         "const placed::DEAD: u32",
         "const placed::HIDDEN: u32",
+        "const places::BLOOM: Face",
+        "const places::COVER: Face",
+        "const places::DITHER: Face",
+        "const places::EXPOSURE: Face",
+        "const places::GROUND_TILES: Face",
+        "const places::HEIGHTFIELD: Face",
+        "const places::HORIZONS: Face",
+        "const places::LIGHTING: Face",
+        "const places::LIGHTS: Face",
+        "const places::OCCUPANCY: Face",
+        "const places::PLACED: Face",
+        "const places::PROBE_LIGHT: Face",
+        "const places::REFLECTIONS: Face",
+        "const places::SHADOWS: Face",
+        "const places::SKY: Face",
+        "const places::SUN: Face",
+        "const places::TONEMAP: Face",
         "const shadows::GROUND_TEXELS: f32",
         "const shadows::ROUTES_BYTES: usize",
         "const shadows::SHADOW_FORMAT: wgpu::TextureFormat",
@@ -1182,6 +1199,16 @@
         "impl Pod for heightfield::TerrainUniform",
         "impl Pod for heightfield::ViewUniform",
         "impl Pod for placed::PlacedRecord",
+        "impl Slot for places::BloomSlot",
+        "impl Slot for places::CoverSlot",
+        "impl Slot for places::DitherSlot",
+        "impl Slot for places::GroundTilesSlot",
+        "impl Slot for places::HeightfieldSlot",
+        "impl Slot for places::HorizonsSlot",
+        "impl Slot for places::OccupancySlot",
+        "impl Slot for places::PlacedSlot",
+        "impl Slot for places::ProbeLightSlot",
+        "impl Slot for places::ReflectionsSlot",
         "impl Slot for slots::AntialiasingSlot",
         "impl Slot for slots::ExposureSlot",
         "impl Slot for slots::LightingSlot",
@@ -1205,11 +1232,13 @@
         "mod lights",
         "mod occupancy",
         "mod placed",
+        "mod places",
         "mod shadows",
         "mod slots",
         "mod smokes",
         "mod sun",
         "static defaults::MODULES: &[ShaderModule]",
+        "static places::PLACES: &[Place]",
         "struct environment::EnvironmentPlan",
         "struct heightfield::CoverEntryas [\"\" in \"\"]",
         "struct heightfield::CoverSources<'a>",
@@ -1226,6 +1255,16 @@
         "struct heightfield::WaterDraws<'a>",
         "struct placed::PlacedRecordas [\"\"]",
         "struct placed::Placements<'a>",
+        "struct places::BloomSlot",
+        "struct places::CoverSlot",
+        "struct places::DitherSlot",
+        "struct places::GroundTilesSlot",
+        "struct places::HeightfieldSlot",
+        "struct places::HorizonsSlot",
+        "struct places::OccupancySlot",
+        "struct places::PlacedSlot",
+        "struct places::ProbeLightSlot",
+        "struct places::ReflectionsSlot",
         "struct shadows::KeptRefresh",
         "struct slots::AntialiasingSlot",
         "struct slots::DebugViewList",
@@ -1254,6 +1293,394 @@
         "trait shadows::ShadowCastersFace",
         "trait sun::SunFace"
       ],
+      "places": {
+        "antialiasing": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": null
+        },
+        "bloom": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": {
+            "absent": "nobody",
+            "answers": [
+              "fn glow_weight(color: vec3<f32>) -> f32"
+            ],
+            "module": "place::bloom",
+            "types": []
+          }
+        },
+        "cover": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": {
+            "absent": "nobody",
+            "answers": [
+              "fn cover_growth(lush: f32) -> CoverGrowth",
+              "fn cover_tint(lush: f32, vegetated: f32) -> vec3<f32>",
+              "fn cover_clump_spacing(layer: u32) -> f32",
+              "fn cover_clump_layer(at: vec2<f32>, layer: u32) -> vec4<f32>",
+              "fn cover_clumped(look: vec4<f32>) -> CoverClumped",
+              "fn cover_share(away: f32, law: CoverLaw) -> f32",
+              "fn cover_shown(away: f32, share: f32, law: CoverLaw) -> f32",
+              "fn cover_seen(depth: f32) -> CoverSeen",
+              "const COVER_FAR_SIDE: f32",
+              "const COVER_ROUGHNESS: f32"
+            ],
+            "module": "place::cover",
+            "types": [
+              "CoverLaw",
+              "CoverGrowth",
+              "CoverClumped",
+              "CoverSeen"
+            ]
+          }
+        },
+        "debug_view": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": null
+        },
+        "dither": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": {
+            "absent": "nobody",
+            "answers": [
+              "fn dithering() -> bool",
+              "fn stored(color: vec3<f32>, pixel: vec2<f32>) -> vec3<f32>"
+            ],
+            "module": "place::dither",
+            "types": []
+          }
+        },
+        "exposure": {
+          "cpu": null,
+          "gpu": "dyn engine_faces::display::MeteredExposure",
+          "wgsl": null
+        },
+        "ground_cover": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": null
+        },
+        "ground_tiles": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": {
+            "absent": "required",
+            "answers": [
+              "fn ground_of(info: TerrainInfo) -> GroundTerrain",
+              "fn ground_extent(terrain: GroundTerrain) -> vec2<f32>",
+              "fn level_tiles(terrain: GroundTerrain, level: u32) -> vec2<u32>",
+              "fn tile_layer(terrain: GroundTerrain, level: u32, tile: vec2<u32>) -> u32",
+              "fn level_tile(terrain: GroundTerrain, level: u32, samples: vec2<f32>) -> LevelTile",
+              "fn tile_height(tile: LevelTile, sample: vec2<u32>) -> f32",
+              "fn tile_peak(tile: LevelTile, texel: vec2<u32>, mip: u32) -> f32",
+              "fn tile_gradient(tile: LevelTile, sample: vec2<u32>) -> vec2<f32>",
+              "fn tile_material(tile: LevelTile, sample: vec2<u32>) -> GroundMaterial",
+              "fn triangle_height(a: f32, b: f32, c: f32, d: f32, f: vec2<f32>) -> f32",
+              "fn true_height(terrain: GroundTerrain, local: vec2<f32>, level: u32, tile: LevelTile) -> f32",
+              "fn ground_tile(terrain: GroundTerrain, local: vec2<f32>, first: u32) -> GroundTile",
+              "fn ground_height(terrain: GroundTerrain, local: vec2<f32>) -> GroundHeight",
+              "fn ground_colors_mip(terrain: GroundTerrain, footprint: f32) -> u32",
+              "fn ground_colors(terrain: GroundTerrain, layer: u32, local: vec2<f32>, mip: u32) -> vec4<f32>",
+              "fn macro_color(colors: vec4<f32>) -> vec3<f32>",
+              "fn material_look(base: u32, material: u32) -> MaterialLook",
+              "fn material_cover(base: u32, material: u32) -> MaterialCover",
+              "const NOT_RESIDENT: u32",
+              "const TILE_QUADS: u32",
+              "const PEAK_MIPS: u32",
+              "const PEAK_CELLS: u32"
+            ],
+            "module": "place::ground_tiles",
+            "types": [
+              "MaterialCover",
+              "GroundTerrain",
+              "LevelTile",
+              "TerrainInfo",
+              "GroundHeight",
+              "GroundTile",
+              "GroundMaterial",
+              "MaterialLook"
+            ]
+          }
+        },
+        "heightfield": {
+          "cpu": null,
+          "gpu": "dyn engine_faces::heightfield::HeightfieldFace",
+          "wgsl": {
+            "absent": "required",
+            "answers": [
+              "fn terrain_uniform() -> TerrainUniform",
+              "fn terrain_view_uniform() -> TerrainView",
+              "fn surface_leaf(index: u32) -> SurfaceTriangle",
+              "fn water_info_at(texel: vec3<i32>) -> vec4<u32>",
+              "fn surface_vertex(triangle: SurfaceTriangle, vertex: u32) -> vec2<f32>",
+              "fn terrain_level_height(local: vec2<f32>, level: u32) -> TerrainLevelHeight",
+              "fn terrain_ground_samples(local: vec2<f32>) -> TerrainGroundSamples",
+              "fn terrain_ground_rise(samples: TerrainGroundSamples, local: vec2<f32>, height: f32, meters: f32) -> TerrainGroundRise",
+              "fn water_texel(block: u32, sample: vec2<u32>) -> vec3<i32>",
+              "fn water_words(words: vec4<u32>) -> WaterWords",
+              "fn water_cell(local: vec2<f32>, level: u32) -> WaterCell",
+              "fn water_smooth(surfaces: array<vec2<f32>, 16>, within: vec2<f32>, spacing: f32) -> WaterLevel",
+              "fn water_read(cell: WaterCell) -> WaterAt",
+              "fn water_at_level(level: WaterLevel) -> WaterAt",
+              "fn water_words_add(at: WaterAt, words: WaterWords, share: f32, nearest: bool) -> WaterAt",
+              "const TERRAIN_GRID: u32",
+              "const WATER_LIVE_BLOCK: u32",
+              "const NO_WATER_BLOCK: u32",
+              "const NO_WATER_SURFACE: f32",
+              "const WATER_TILE_PATCHES: u32",
+              "const WATER_SPAN_LEAST: f32",
+              "const WATER_SPAN_MOST: f32",
+              "const WATER_HELD: f32"
+            ],
+            "module": "place::heightfield",
+            "types": [
+              "TerrainUniform",
+              "TerrainView",
+              "SurfaceTriangle",
+              "TerrainLevelHeight",
+              "TerrainSubdivision",
+              "TerrainGroundSamples",
+              "TerrainGroundRise",
+              "WaterWords",
+              "WaterLevel",
+              "WaterAt",
+              "WaterCell"
+            ]
+          }
+        },
+        "horizons": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": {
+            "absent": "nobody",
+            "answers": [
+              "fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32",
+              "fn bounce_light(world: vec3<f32>, normal: vec3<f32>, on_terrain: bool) -> BounceLight",
+              "fn open_sky(world: vec3<f32>) -> OpenSky"
+            ],
+            "module": "place::horizons",
+            "types": [
+              "BounceLight",
+              "OpenSky"
+            ]
+          }
+        },
+        "lighting": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": {
+            "absent": "required",
+            "answers": [
+              "fn highlights() -> vec4<f32>",
+              "fn specular() -> f32",
+              "fn distribution(n_h: f32, alpha: f32) -> f32",
+              "fn visibility(n_v: f32, n_l: f32, alpha: f32) -> f32",
+              "fn fresnel(f0: vec3<f32>, cosine: f32) -> vec3<f32>",
+              "fn environment_brdf(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32>",
+              "fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, distance: f32, on_terrain: bool, crown: f32) -> f32",
+              "fn sun_debug(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, on_terrain: bool) -> u32",
+              "fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32>",
+              "fn widened(point: SurfacePoint, turn_dx: vec3<f32>, turn_dy: vec3<f32>) -> SurfacePoint",
+              "fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded",
+              "fn finish_ground(point: SurfacePoint, local: vec3<f32>) -> Shaded"
+            ],
+            "module": "place::lighting",
+            "types": []
+          }
+        },
+        "lights": {
+          "cpu": null,
+          "gpu": "dyn engine_faces::lights::LightListFace",
+          "wgsl": {
+            "absent": "nobody",
+            "answers": [
+              "fn light_cluster(world: vec3<f32>, pixel: vec2<f32>) -> LightCluster",
+              "fn cluster_light(cluster: LightCluster, n: u32) -> Light",
+              "fn shaped_lights() -> bool",
+              "fn kept_regions() -> bool",
+              "fn lights_on() -> bool",
+              "const LIGHT_INTERIOR: u32",
+              "const LIGHT_EXTERIOR: u32"
+            ],
+            "module": "place::lights",
+            "types": [
+              "Light",
+              "LightCluster"
+            ]
+          }
+        },
+        "meshes": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": null
+        },
+        "occupancy": {
+          "cpu": null,
+          "gpu": "dyn engine_faces::occupancy::OccupancyFace",
+          "wgsl": {
+            "absent": "nobody",
+            "answers": [
+              "fn occupancy_visibility(world: vec3<f32>) -> f32",
+              "fn foliage() -> vec4<f32>"
+            ],
+            "module": "place::occupancy",
+            "types": []
+          }
+        },
+        "particles": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": null
+        },
+        "placed": {
+          "cpu": null,
+          "gpu": "dyn engine_faces::placed::PlacedFace",
+          "wgsl": {
+            "absent": "nobody",
+            "answers": [
+              "fn placed_shown(record: Record) -> bool",
+              "const DEAD: u32",
+              "const HIDDEN: u32"
+            ],
+            "module": "place::placed",
+            "types": [
+              "Record",
+              "Pose"
+            ]
+          }
+        },
+        "post_effects": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": null
+        },
+        "probe_light": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": {
+            "absent": "nobody",
+            "answers": [
+              "fn environment_light(direction: vec3<f32>, level: f32, world: vec3<f32>, reflected_sky: vec3<f32>) -> EnvironmentLight",
+              "fn in_interior(world: vec3<f32>) -> bool"
+            ],
+            "module": "place::probe_light",
+            "types": [
+              "EnvironmentLight"
+            ]
+          }
+        },
+        "probes": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": null
+        },
+        "reflections": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": {
+            "absent": "nobody",
+            "answers": [
+              "fn reflects() -> bool",
+              "fn max_roughness() -> f32"
+            ],
+            "module": "place::reflections",
+            "types": []
+          }
+        },
+        "scatter": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": null
+        },
+        "shadows": {
+          "cpu": null,
+          "gpu": "dyn engine_faces::shadows::ShadowCastersFace",
+          "wgsl": {
+            "absent": "nobody",
+            "answers": [
+              "fn sun_shadowed() -> bool",
+              "fn sun_shadow(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, crown: f32) -> f32",
+              "fn air_shadow(world: vec3<f32>) -> f32",
+              "fn shadow_lookup(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>) -> vec2<f32>",
+              "fn kept_texels(world: vec3<f32>) -> KeptTexels",
+              "fn keep_lift(lift: KeptLift)",
+              "fn kept_level(texel: f32, spacing: f32, levels: u32) -> u32"
+            ],
+            "module": "place::shadows",
+            "types": [
+              "KeptTexels",
+              "KeptLift"
+            ]
+          }
+        },
+        "sky": {
+          "cpu": null,
+          "gpu": "dyn engine_faces::environment::EnvironmentFace",
+          "wgsl": {
+            "absent": "nobody",
+            "answers": [
+              "fn sky_average(normal: vec3<f32>) -> vec3<f32>",
+              "fn sky_above(normal: vec3<f32>) -> vec3<f32>",
+              "fn atmospheric(light: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>) -> vec4<f32>",
+              "fn atmospheric_cover(eye: vec3<f32>, point: vec3<f32>) -> f32",
+              "fn cloud_passing(world: vec3<f32>) -> f32",
+              "fn mirrored_along(start: vec3<f32>, direction: vec3<f32>) -> vec3<f32>",
+              "fn environment_levels() -> u32",
+              "fn environment_size() -> u32",
+              "fn environment_sample(direction: vec3<f32>, layer: u32, level: f32) -> vec3<f32>",
+              "fn zenith() -> vec3<f32>",
+              "fn horizon() -> vec3<f32>",
+              "fn ambient() -> f32",
+              "fn sunlight(authored: vec3<f32>) -> vec3<f32>",
+              "fn adapted_exposure(authored: f32) -> f32"
+            ],
+            "module": "place::sky",
+            "types": []
+          }
+        },
+        "sun": {
+          "cpu": null,
+          "gpu": "dyn engine_faces::sun::SunFace",
+          "wgsl": {
+            "absent": "nobody",
+            "answers": [
+              "fn sun_direction() -> vec3<f32>",
+              "fn sun_color() -> vec3<f32>"
+            ],
+            "module": "place::sun",
+            "types": []
+          }
+        },
+        "terrain_shading": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": null
+        },
+        "tonemap": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": {
+            "absent": "nobody",
+            "answers": [
+              "fn tonemap(color: vec3<f32>) -> vec3<f32>",
+              "fn apply(color: vec3<f32>, at: PostPixel) -> vec3<f32>",
+              "fn exposure() -> f32"
+            ],
+            "module": "place::tonemap",
+            "types": []
+          }
+        },
+        "water": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": null
+        }
+      },
       "wgsl": [
         "wgsl src/defaults/bloom.wgsl::glow_weight(color: vec3<f32>) -> f32",
         "wgsl src/defaults/cover.wgsl::cover_clump_layer(at: vec2<f32>, layer: u32) -> vec4<f32>",
@@ -1306,7 +1733,104 @@
         "wgsl src/defaults/sun.wgsl::sun_direction() -> vec3<f32>",
         "wgsl src/defaults/tonemap.wgsl::apply(color: vec3<f32>, at: PostPixel) -> vec3<f32>",
         "wgsl src/defaults/tonemap.wgsl::exposure() -> f32",
-        "wgsl src/defaults/tonemap.wgsl::tonemap(color: vec3<f32>) -> vec3<f32>"
+        "wgsl src/defaults/tonemap.wgsl::tonemap(color: vec3<f32>) -> vec3<f32>",
+        "wgsl src/places/bloom.wgsl::glow_weight(color: vec3<f32>) -> f32",
+        "wgsl src/places/cover.wgsl::cover_clump_layer(at: vec2<f32>, layer: u32) -> vec4<f32>",
+        "wgsl src/places/cover.wgsl::cover_clump_spacing(layer: u32) -> f32",
+        "wgsl src/places/cover.wgsl::cover_clumped(look: vec4<f32>) -> CoverClumped",
+        "wgsl src/places/cover.wgsl::cover_growth(lush: f32) -> CoverGrowth",
+        "wgsl src/places/cover.wgsl::cover_seen(depth: f32) -> CoverSeen",
+        "wgsl src/places/cover.wgsl::cover_share(away: f32, law: CoverLaw) -> f32",
+        "wgsl src/places/cover.wgsl::cover_shown(away: f32, share: f32, law: CoverLaw) -> f32",
+        "wgsl src/places/cover.wgsl::cover_tint(lush: f32, vegetated: f32) -> vec3<f32>",
+        "wgsl src/places/dither.wgsl::dithering() -> bool",
+        "wgsl src/places/dither.wgsl::stored(color: vec3<f32>, pixel: vec2<f32>) -> vec3<f32>",
+        "wgsl src/places/ground_tiles.wgsl::ground_colors(terrain: GroundTerrain, layer: u32, local: vec2<f32>, mip: u32) -> vec4<f32>",
+        "wgsl src/places/ground_tiles.wgsl::ground_colors_mip(terrain: GroundTerrain, footprint: f32) -> u32",
+        "wgsl src/places/ground_tiles.wgsl::ground_extent(terrain: GroundTerrain) -> vec2<f32>",
+        "wgsl src/places/ground_tiles.wgsl::ground_height(terrain: GroundTerrain, local: vec2<f32>) -> GroundHeight",
+        "wgsl src/places/ground_tiles.wgsl::ground_of(info: TerrainInfo) -> GroundTerrain",
+        "wgsl src/places/ground_tiles.wgsl::ground_tile(terrain: GroundTerrain, local: vec2<f32>, first: u32) -> GroundTile",
+        "wgsl src/places/ground_tiles.wgsl::level_tile(terrain: GroundTerrain, level: u32, samples: vec2<f32>) -> LevelTile",
+        "wgsl src/places/ground_tiles.wgsl::level_tiles(terrain: GroundTerrain, level: u32) -> vec2<u32>",
+        "wgsl src/places/ground_tiles.wgsl::macro_color(colors: vec4<f32>) -> vec3<f32>",
+        "wgsl src/places/ground_tiles.wgsl::material_cover(base: u32, material: u32) -> MaterialCover",
+        "wgsl src/places/ground_tiles.wgsl::material_look(base: u32, material: u32) -> MaterialLook",
+        "wgsl src/places/ground_tiles.wgsl::tile_gradient(tile: LevelTile, sample: vec2<u32>) -> vec2<f32>",
+        "wgsl src/places/ground_tiles.wgsl::tile_height(tile: LevelTile, sample: vec2<u32>) -> f32",
+        "wgsl src/places/ground_tiles.wgsl::tile_layer(terrain: GroundTerrain, level: u32, tile: vec2<u32>) -> u32",
+        "wgsl src/places/ground_tiles.wgsl::tile_material(tile: LevelTile, sample: vec2<u32>) -> GroundMaterial",
+        "wgsl src/places/ground_tiles.wgsl::tile_peak(tile: LevelTile, texel: vec2<u32>, mip: u32) -> f32",
+        "wgsl src/places/ground_tiles.wgsl::triangle_height(a: f32, b: f32, c: f32, d: f32, f: vec2<f32>) -> f32",
+        "wgsl src/places/ground_tiles.wgsl::true_height(terrain: GroundTerrain, local: vec2<f32>, level: u32, tile: LevelTile) -> f32",
+        "wgsl src/places/heightfield.wgsl::surface_leaf(index: u32) -> SurfaceTriangle",
+        "wgsl src/places/heightfield.wgsl::surface_vertex(triangle: SurfaceTriangle, vertex: u32) -> vec2<f32>",
+        "wgsl src/places/heightfield.wgsl::terrain_ground_rise(samples: TerrainGroundSamples, local: vec2<f32>, height: f32, meters: f32) -> TerrainGroundRise",
+        "wgsl src/places/heightfield.wgsl::terrain_ground_samples(local: vec2<f32>) -> TerrainGroundSamples",
+        "wgsl src/places/heightfield.wgsl::terrain_level_height(local: vec2<f32>, level: u32) -> TerrainLevelHeight",
+        "wgsl src/places/heightfield.wgsl::terrain_uniform() -> TerrainUniform",
+        "wgsl src/places/heightfield.wgsl::terrain_view_uniform() -> TerrainView",
+        "wgsl src/places/heightfield.wgsl::water_at_level(level: WaterLevel) -> WaterAt",
+        "wgsl src/places/heightfield.wgsl::water_cell(local: vec2<f32>, level: u32) -> WaterCell",
+        "wgsl src/places/heightfield.wgsl::water_info_at(texel: vec3<i32>) -> vec4<u32>",
+        "wgsl src/places/heightfield.wgsl::water_read(cell: WaterCell) -> WaterAt",
+        "wgsl src/places/heightfield.wgsl::water_smooth(surfaces: array<vec2<f32>, 16>, within: vec2<f32>, spacing: f32) -> WaterLevel",
+        "wgsl src/places/heightfield.wgsl::water_texel(block: u32, sample: vec2<u32>) -> vec3<i32>",
+        "wgsl src/places/heightfield.wgsl::water_words(words: vec4<u32>) -> WaterWords",
+        "wgsl src/places/heightfield.wgsl::water_words_add(at: WaterAt, words: WaterWords, share: f32, nearest: bool) -> WaterAt",
+        "wgsl src/places/horizons.wgsl::bounce_light(world: vec3<f32>, normal: vec3<f32>, on_terrain: bool) -> BounceLight",
+        "wgsl src/places/horizons.wgsl::open_sky(world: vec3<f32>) -> OpenSky",
+        "wgsl src/places/horizons.wgsl::terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32",
+        "wgsl src/places/lighting.wgsl::distribution(n_h: f32, alpha: f32) -> f32",
+        "wgsl src/places/lighting.wgsl::environment_brdf(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32>",
+        "wgsl src/places/lighting.wgsl::finish(point: SurfacePoint, local: vec3<f32>) -> Shaded",
+        "wgsl src/places/lighting.wgsl::finish_ground(point: SurfacePoint, local: vec3<f32>) -> Shaded",
+        "wgsl src/places/lighting.wgsl::fresnel(f0: vec3<f32>, cosine: f32) -> vec3<f32>",
+        "wgsl src/places/lighting.wgsl::highlights() -> vec4<f32>",
+        "wgsl src/places/lighting.wgsl::local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32>",
+        "wgsl src/places/lighting.wgsl::specular() -> f32",
+        "wgsl src/places/lighting.wgsl::sun_debug(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, on_terrain: bool) -> u32",
+        "wgsl src/places/lighting.wgsl::sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, distance: f32, on_terrain: bool, crown: f32) -> f32",
+        "wgsl src/places/lighting.wgsl::visibility(n_v: f32, n_l: f32, alpha: f32) -> f32",
+        "wgsl src/places/lighting.wgsl::widened(point: SurfacePoint, turn_dx: vec3<f32>, turn_dy: vec3<f32>) -> SurfacePoint",
+        "wgsl src/places/lights.wgsl::cluster_light(cluster: LightCluster, n: u32) -> Light",
+        "wgsl src/places/lights.wgsl::kept_regions() -> bool",
+        "wgsl src/places/lights.wgsl::light_cluster(world: vec3<f32>, pixel: vec2<f32>) -> LightCluster",
+        "wgsl src/places/lights.wgsl::lights_on() -> bool",
+        "wgsl src/places/lights.wgsl::shaped_lights() -> bool",
+        "wgsl src/places/occupancy.wgsl::foliage() -> vec4<f32>",
+        "wgsl src/places/occupancy.wgsl::occupancy_visibility(world: vec3<f32>) -> f32",
+        "wgsl src/places/placed.wgsl::placed_shown(record: Record) -> bool",
+        "wgsl src/places/probe_light.wgsl::environment_light(direction: vec3<f32>, level: f32, world: vec3<f32>, reflected_sky: vec3<f32>) -> EnvironmentLight",
+        "wgsl src/places/probe_light.wgsl::in_interior(world: vec3<f32>) -> bool",
+        "wgsl src/places/reflections.wgsl::max_roughness() -> f32",
+        "wgsl src/places/reflections.wgsl::reflects() -> bool",
+        "wgsl src/places/shadows.wgsl::air_shadow(world: vec3<f32>) -> f32",
+        "wgsl src/places/shadows.wgsl::keep_lift(lift: KeptLift)",
+        "wgsl src/places/shadows.wgsl::kept_level(texel: f32, spacing: f32, levels: u32) -> u32",
+        "wgsl src/places/shadows.wgsl::kept_texels(world: vec3<f32>) -> KeptTexels",
+        "wgsl src/places/shadows.wgsl::shadow_lookup(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>) -> vec2<f32>",
+        "wgsl src/places/shadows.wgsl::sun_shadow(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, crown: f32) -> f32",
+        "wgsl src/places/shadows.wgsl::sun_shadowed() -> bool",
+        "wgsl src/places/sky.wgsl::adapted_exposure(authored: f32) -> f32",
+        "wgsl src/places/sky.wgsl::ambient() -> f32",
+        "wgsl src/places/sky.wgsl::atmospheric(light: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>) -> vec4<f32>",
+        "wgsl src/places/sky.wgsl::atmospheric_cover(eye: vec3<f32>, point: vec3<f32>) -> f32",
+        "wgsl src/places/sky.wgsl::cloud_passing(world: vec3<f32>) -> f32",
+        "wgsl src/places/sky.wgsl::environment_levels() -> u32",
+        "wgsl src/places/sky.wgsl::environment_sample(direction: vec3<f32>, layer: u32, level: f32) -> vec3<f32>",
+        "wgsl src/places/sky.wgsl::environment_size() -> u32",
+        "wgsl src/places/sky.wgsl::horizon() -> vec3<f32>",
+        "wgsl src/places/sky.wgsl::mirrored_along(start: vec3<f32>, direction: vec3<f32>) -> vec3<f32>",
+        "wgsl src/places/sky.wgsl::sky_above(normal: vec3<f32>) -> vec3<f32>",
+        "wgsl src/places/sky.wgsl::sky_average(normal: vec3<f32>) -> vec3<f32>",
+        "wgsl src/places/sky.wgsl::sunlight(authored: vec3<f32>) -> vec3<f32>",
+        "wgsl src/places/sky.wgsl::zenith() -> vec3<f32>",
+        "wgsl src/places/sun.wgsl::sun_color() -> vec3<f32>",
+        "wgsl src/places/sun.wgsl::sun_direction() -> vec3<f32>",
+        "wgsl src/places/tonemap.wgsl::apply(color: vec3<f32>, at: PostPixel) -> vec3<f32>",
+        "wgsl src/places/tonemap.wgsl::exposure() -> f32",
+        "wgsl src/places/tonemap.wgsl::tonemap(color: vec3<f32>) -> vec3<f32>"
       ]
     },
     {
@@ -2297,6 +2821,45 @@
         "variant PhysicsSystems::Obstruct",
         "variant PhysicsSystems::Step"
       ],
+      "wgsl": []
+    },
+    {
+      "crate": "engine_places",
+      "faces": {},
+      "items": [
+        "impl CpuSlot for GroundSlot",
+        "impl List for WaterBodiesList",
+        "impl List for WorldSolidsList",
+        "impl Slot for GroundSlot",
+        "impl Slot for PhysicsSlot",
+        "static PLACES: &[Place]",
+        "struct GroundSlot",
+        "struct PhysicsSlot",
+        "struct WaterBodiesList",
+        "struct WorldSolidsList"
+      ],
+      "places": {
+        "ground": {
+          "cpu": "engine_core::ground::Ground",
+          "gpu": null,
+          "wgsl": null
+        },
+        "physics": {
+          "cpu": null,
+          "gpu": null,
+          "wgsl": null
+        },
+        "water_bodies": {
+          "cpu": "engine_core::water::WaterBodies",
+          "gpu": null,
+          "wgsl": null
+        },
+        "world_solids": {
+          "cpu": "engine_core::solids::WorldSolids",
+          "gpu": null,
+          "wgsl": null
+        }
+      },
       "wgsl": []
     },
     {

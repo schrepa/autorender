@@ -574,6 +574,17 @@ pub fn files(
             })
             .collect();
     crates.extend(default_crates(repository, &crates));
+    let declared = crate::gpu::contracts::catalog();
+    crates.extend(
+        declared
+            .iter()
+            .map(|place| place.declared_in().to_owned())
+            .filter(|name| {
+                repository
+                    .of_crate(name)
+                    .is_some_and(|package| package.own() && !package.core())
+            }),
+    );
     let listed: Vec<serde_json::Value> = faces(repository, &crates)?
         .into_iter()
         .map(|(name, face)| {
@@ -585,6 +596,14 @@ pub fn files(
             });
             if !face.defaults.is_empty() {
                 listed["defaults"] = json!(face.defaults);
+            }
+            let places: serde_json::Map<String, serde_json::Value> = declared
+                .iter()
+                .filter(|place| place.declared_in() == name)
+                .map(|place| (place.name.to_owned(), crate::bricks::place_face(place)))
+                .collect();
+            if !places.is_empty() {
+                listed["places"] = serde_json::Value::Object(places);
             }
             listed
         })
