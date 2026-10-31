@@ -1,4 +1,4 @@
 engine_render::shader_modules! {
     "probes::sample" in "reflection_probes" = "sample.wgsl";
-    "face::probes" in "reflection_probes" = "faces/probes.wgsl";
+    "probes::faces::probe_light" in "reflection_probes" = "faces/probe_light.wgsl";
 }

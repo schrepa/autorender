@@ -1,10 +1,11 @@
+import package::cover::faces::cover::{cover_clumped, cover_growth, cover_share, cover_tint};
 import package::cover::laws::{COVER_CLUMP_HEIGHT, COVER_LEAF_STEPS, COVER_LEAVES, cover_clump,
     cover_clump_lean, cover_tuft};
 import package::engine::math::unit;
-import package::face::cover::{CoverLaw, cover_clumped, cover_growth, cover_share, cover_tint};
-import package::face::ground::{GroundMaterial, GroundTerrain, NOT_RESIDENT, ground_colors,
+import package::face::ground_tiles::{GroundMaterial, GroundTerrain, NOT_RESIDENT, ground_colors,
     ground_extent, ground_height, level_tile, macro_color, material_cover, material_look,
     tile_gradient, tile_height, tile_material};
+import package::place::cover::CoverLaw;
 
 struct Grow {
     origin: vec4<f32>,

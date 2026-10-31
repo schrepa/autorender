@@ -1,6 +1,7 @@
-import package::face::placed::{DEAD, HIDDEN, Record};
 import package::frame::view::seen_share;
 import package::meshes::declarations::FADE_SLOT;
+import package::place::placed::Record;
+import package::scatter::faces::placed::{DEAD, HIDDEN};
 
 struct Frame {
     eye: vec4<f32>,

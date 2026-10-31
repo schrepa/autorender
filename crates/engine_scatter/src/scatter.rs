@@ -4,7 +4,8 @@ use std::rc::Rc;
 
 use crate::shaders::entry::{scatter_cull, scatter_snap};
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{MeshHandle, RecordKey, RenderSnapshot, RenderStats};
+use engine_core::smoke::{SmokeEntry, SmokeResult, SmokeSession};
+use engine_core::{Absent, Face, FaceType, MeshHandle, RecordKey, RenderSnapshot, RenderStats, Slot};
 use engine_faces::heightfield::TerrainInfo;
 use engine_faces::placed::{PlacedFace, PlacedRecord, Placements};
 use engine_faces::shadows::{KeptRefresh, SHADOW_FORMAT, SHADOW_POSES};
@@ -85,6 +86,28 @@ pub(crate) trait PlacedCovers {
     fn covers(&self) -> &[Cover];
 
     fn objects(&self) -> u32;
+}
+
+pub(crate) struct ScatterCoversSlot;
+
+impl Slot for ScatterCoversSlot {
+    const NAME: &'static str = "scatter_covers";
+    const FACE: Face = Face {
+        cpu: None,
+        gpu: Some(FaceType::of::<dyn PlacedCovers>()),
+        wgsl: None,
+        absent: Absent::Required,
+    };
+    const SMOKES: &'static [SmokeEntry] = &[SmokeEntry {
+        name: "slot_scatter_covers",
+        brick: Self::NAME,
+        gpu: true,
+        run: scatter_covers,
+    }];
+}
+
+fn scatter_covers(session: &mut dyn SmokeSession) -> SmokeResult {
+    engine_faces::smokes::frames(session, ScatterCoversSlot::NAME)
 }
 
 pub(crate) struct ScatterPass {
@@ -876,13 +899,9 @@ pub(crate) static PART: PartEntry = PartEntry {
             Hook::ShadowCasters,
         ],
         contributes: &[],
-        effects: &[],
+        resolve: None,
         labels: &[],
         lazy: false,
-        faces: &[
-            engine_render::offer_face!(ScatterPass => dyn PlacedFace),
-            engine_render::offer_face!(ScatterPass => dyn PlacedCovers),
-        ],
         needs: &["meshes"],
         piece: None,
     },

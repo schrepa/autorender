@@ -58,10 +58,9 @@ pub(crate) static PART: PartEntry = PartEntry {
         }],
         hooks: &[],
         contributes: std::slice::from_ref(&FRAME_OCCUPANCY),
-        effects: &[],
+        resolve: None,
         labels: &[],
         lazy: false,
-        faces: &[engine_render::offer_face!(OccupancyPass => dyn OccupancyFace)],
         needs: &[],
         piece: Some(PieceDecl {
             name: "canopy",

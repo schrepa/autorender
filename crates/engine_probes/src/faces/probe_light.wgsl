@@ -1,10 +1,6 @@
 import package::face::sky::environment_sample;
+import package::place::probe_light::EnvironmentLight;
 import package::probes::sample::{PROBES, PROBE_ENTRY_WORDS, box_projected, probe_words};
-
-struct EnvironmentLight {
-    reflected: vec3<f32>,
-    interior: vec2<f32>,
-}
 
 fn environment_light(direction: vec3<f32>, level: f32, world: vec3<f32>,
         reflected_sky: vec3<f32>) -> EnvironmentLight {
