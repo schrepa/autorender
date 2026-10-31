@@ -1,10 +1,10 @@
 import package::face::dither::stored;
-import package::face::ground::{GroundTerrain, ground_height};
+import package::face::ground_tiles::{GroundTerrain, ground_height};
 import package::face::lighting::finish;
-import package::face::surface_point::{BODY_WATER, SurfacePoint};
 import package::frame::view::{camera, stable_normalize};
 import package::meshes::declarations::{SceneTargets, TemporalTargets};
-import package::meshes::surface::{Shaded, scene_targets, temporal_targets};
+import package::meshes::surface::{BODY_WATER, Shaded, SurfacePoint, scene_targets,
+    temporal_targets};
 
 const POND_MOST: u32 = 16u;
 
