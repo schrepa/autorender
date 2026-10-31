@@ -22,7 +22,7 @@ pub const PALETTE_BYTES: usize = PALETTE_ENTRIES * size_of::<PaletteEntry>();
 
 engine_render::gpu_structs! {
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub struct PaletteEntry as ["TerrainPaletteEntry", "PaletteEntry" in "face::ground", "PaletteEntry" in "terrain::bounce_maps"] {
+    pub struct PaletteEntry as ["TerrainPaletteEntry", "PaletteEntry"] {
         pub color: [f32; 4],
         pub params: [f32; 4],
         pub maps: [f32; 4],
@@ -35,13 +35,13 @@ engine_render::gpu_structs! {
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub struct TerrainInfo as ["TerrainInfo" in "face::ground"] {
+    pub struct TerrainInfo as ["TerrainInfo" in "place::ground_tiles"] {
         pub origin: [f32; 4],
         pub levels: [u32; 4],
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub struct CoverEntry as ["MaterialCover" in "face::ground"] {
+    pub struct CoverEntry as ["MaterialCover" in "place::ground_tiles"] {
         pub shape: [f32; 4],
         pub color: [f32; 4],
     }
