@@ -431,10 +431,9 @@ pub static PART: PartEntry = PartEntry {{
         resources: &[],
         hooks: &[],
         contributes: &[],
-        effects: &[],
+        resolve: None,
         labels: &[],
         lazy: false,
-        faces: &[],
         needs: &[],
         piece: None,
     }},
@@ -444,7 +443,7 @@ pub static PART: PartEntry = PartEntry {{
     );
     let registered = format!(
         "{stats}\n            .render_part(&PART)\n            .shaders(MODULES)\n            \
-         .face_defaults(engine_faces::defaults::MODULES)"
+         .places(engine_faces::places::PLACES)"
     );
     source
         .replace(

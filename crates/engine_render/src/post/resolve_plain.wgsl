@@ -1,4 +1,4 @@
-import package::generated::scene::scene_light;
+import package::face::post_scene::apply as post_scene;
 import package::post::frame::{
     drawn_uv, effect_shade, linear, occlusion, occlusion_at, post, scene,
 };
@@ -51,7 +51,7 @@ fn resolve(position: vec4<f32>) -> Resolved {
     let visible = occlusion_at(occlusion, pixel, post);
     let shaded = texel.rgb * effect_shade(texel.a, visible, post);
     let at = PostPixel(position.xy, uv, pixel, 0.0, 1u);
-    let lit = scene_light(SceneLight(shaded, texel.a), at);
+    let lit = post_scene(SceneLight(shaded, texel.a), at);
     return Resolved(lit.color, at);
 }
 
