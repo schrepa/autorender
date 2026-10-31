@@ -2,13 +2,12 @@ use crate::shaders::entry::{draw, sky};
 use engine_core::table_data::sky::SkyTables;
 use engine_core::table_data::sky::{MULTIPLE_SIZE, TRANSMITTANCE_SIZE};
 use engine_core::{
-    Applied, Clouds, Grading, NightSky, ReflectionProbeSettings, RenderSnapshot, RenderStats, Sky,
-    SkyLighting, SkyLightingValues, StaticTable, Sunlight,
+    Applied, Clouds, FaceOffer, Grading, NightSky, ReflectionProbeSettings, RenderSnapshot,
+    RenderStats, Sky, SkyLighting, SkyLightingValues, StaticTable, Sunlight,
 };
 use engine_faces::environment::{EnvironmentFace, EnvironmentPlan};
 use engine_faces::sun::{Sun, SunFace};
 use engine_render::cached::{Bound, Cached};
-use engine_render::composite::{PixelEffect, PostStage};
 use engine_render::gpu_calls::Queue;
 use engine_render::graph::{
     Access, FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
@@ -35,6 +34,7 @@ use crate::clouds::{CloudFrame, CloudPass};
 use crate::environment::{ENVIRONMENT_FORMAT, Environment, SkyLight};
 use crate::gpu_layouts::{SKY_TABLE_GROUP, SkyPiece};
 use crate::haze::{Haze, haze_runs};
+use crate::under_eye::SurfaceUnderEye;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const VIEW_SIZE: (u32, u32) = (192, 108);
@@ -620,14 +620,9 @@ pub(crate) static PART: PartEntry = PartEntry {
             FRAME_ENVIRONMENT,
             COMPOSITE_HAZE,
         ],
-        effects: &[PixelEffect {
-            stage: PostStage::Light,
-            module: "sky::haze",
-            reads: &["haze"],
-        }],
+        resolve: None,
         labels: &[],
         lazy: false,
-        faces: &[engine_render::offer_face!(SkyPass => dyn EnvironmentFace)],
         needs: &[],
         piece: Some(PieceDecl {
             name: "sky",
@@ -638,6 +633,8 @@ pub(crate) static PART: PartEntry = PartEntry {
     },
     create,
 };
+
+pub(crate) const OFFER: FaceOffer = engine_render::offer_face!(SkyPass => dyn EnvironmentFace);
 
 fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
     let _owner = memory::owned("sky");
@@ -726,7 +723,7 @@ impl SkyPass {
             (
                 clouds,
                 snapshot.tables.cloud_noise.as_ref(),
-                (snapshot.camera_position, snapshot.surface_under_eye),
+                (snapshot.camera_position, SurfaceUnderEye::of(snapshot)),
                 snapshot.presented_seconds,
             ),
             ((sun, &self.piece), self.tables.bindings(), pieces),

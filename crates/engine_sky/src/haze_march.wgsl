@@ -1,13 +1,13 @@
 import package::engine::math::{pcg, unit};
 import package::face::horizons::open_sky;
 import package::face::shadows::{air_shadow, sun_shadowed};
-import package::face::sky::cloud_passing;
 import package::face::sun::{sun_color, sun_direction};
 import package::face::tonemap::exposure;
 import package::frame::view::{PI, camera, eye_world, pixel_noise};
 import package::generated::pieces::pieces;
 import package::post::frame::{depth_texture, inverse_distance_at, post};
 import package::sky::air::air_light;
+import package::sky::faces::sky::cloud_passing;
 
 const HAZE_STEPS: u32 = 24u;
 const HAZE_OCTAVES: u32 = 3u;

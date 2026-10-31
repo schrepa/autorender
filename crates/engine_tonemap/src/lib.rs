@@ -9,21 +9,20 @@ mod gpu_layouts;
 pub mod shaders;
 mod tonemap;
 
-use engine_core::{Brick, Bricks, Place};
-use engine_faces::slots::TonemapSlot;
+use engine_core::{Brick, Bricks, Fill};
+use engine_faces::places::TonemapSlot;
 use engine_render::render_bricks::AddRenderParts;
 
 pub struct TonemapBrick;
 
 impl Brick for TonemapBrick {
-    const SLOT: Option<Place> = Some(Place::slot::<TonemapSlot>());
-
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<engine_core::Grading>()
             .render_part(&tonemap::PART)
             .shaders(shaders::MODULES)
-            .face_defaults(engine_faces::defaults::MODULES)
+            .places(engine_faces::places::PLACES)
+            .fill(Fill::<TonemapSlot>::new().wgsl("tonemap::faces::tonemap"))
             .mirrors(gpu_layouts::LAYOUTS, &[]);
     }
 }

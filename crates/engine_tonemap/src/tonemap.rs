@@ -3,13 +3,11 @@ use std::mem::offset_of;
 use engine_core::glam::Vec3;
 use engine_core::{Grading, GradingValues};
 use engine_faces::display::MeteredExposure;
-use engine_render::composite::{PixelEffect, PostStage};
 use engine_render::parts::{Create, GpuPart, PartDecl, PartEntry, Prelude, PreludeStage, Step};
 use engine_render::pieces::{PieceAt, PieceDecl};
 
 use crate::gpu_layouts::DisplayPiece;
 
-pub(crate) const TONEMAP: &str = "face::tonemap";
 pub(crate) const PIECE: &str = "tonemap::piece";
 
 pub(crate) static PART: PartEntry = PartEntry {
@@ -20,14 +18,9 @@ pub(crate) static PART: PartEntry = PartEntry {
         resources: &[],
         hooks: &[],
         contributes: &[],
-        effects: &[PixelEffect {
-            stage: PostStage::Tonemap,
-            module: TONEMAP,
-            reads: &[],
-        }],
+        resolve: None,
         labels: &[],
         lazy: false,
-        faces: &[],
         needs: &[],
         piece: Some(PieceDecl {
             name: "display",

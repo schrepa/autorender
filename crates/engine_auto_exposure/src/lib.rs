@@ -14,21 +14,20 @@ pub mod shaders;
 
 pub use settings::AutoExposure;
 
-use engine_core::{Brick, Bricks, Place};
-use engine_faces::slots::ExposureSlot;
+use engine_core::{Brick, Bricks, Fill};
+use engine_faces::places::ExposureSlot;
 use engine_render::render_bricks::AddRenderParts;
 
 pub struct AutoExposureBrick;
 
 impl Brick for AutoExposureBrick {
-    const SLOT: Option<Place> = Some(Place::slot::<ExposureSlot>());
-
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<AutoExposure>()
             .render_part(&exposure::PART)
             .shaders(shaders::MODULES)
-            .face_defaults(engine_faces::defaults::MODULES)
+            .places(engine_faces::places::PLACES)
+            .fill(Fill::<ExposureSlot>::new().gpu(exposure::OFFER))
             .pipeline_layouts(pipeline_layouts::PIPELINE_LAYOUTS)
             .mirrors(gpu_layouts::LAYOUTS, gpu_layouts::DECLARED);
     }
