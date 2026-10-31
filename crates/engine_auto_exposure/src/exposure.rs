@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::mem::offset_of;
 use std::rc::Rc;
 
-use engine_core::{Grading, RenderSnapshot, RenderStats, Sky, Sunlight};
+use engine_core::{FaceOffer, Grading, RenderSnapshot, RenderStats, Sky, Sunlight};
 use engine_faces::display::MeteredExposure;
 use engine_faces::environment::{ADAPTATION_MOST, ADAPTATION_POWER, NOON_LIGHT};
 use engine_render::buffers::{ReadbackRing, storage, uniform};
@@ -44,15 +44,17 @@ pub(crate) static PART: PartEntry = PartEntry {
         }],
         hooks: &[],
         contributes: &[],
-        effects: &[],
+        resolve: None,
         labels: &["engine/exposure"],
         lazy: true,
-        faces: &[engine_render::offer_face!(ExposurePass => dyn MeteredExposure)],
         needs: &[],
         piece: None,
     },
     create,
 };
+
+pub(crate) const OFFER: FaceOffer =
+    engine_render::offer_face!(ExposurePass => dyn MeteredExposure);
 
 fn create(_: &Create<'_>) -> Box<dyn GpuPart> {
     Box::new(ExposurePass::default())

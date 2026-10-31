@@ -4,7 +4,7 @@ engine_render::shader_modules! {
     "sky::air" in "sky" = "air.wgsl";
     "sky::environment" in "sky" = "environment.wgsl";
     "sky::piece" in "sky" = "piece.wgsl";
-    "face::sky" in "sky" = "faces/sky.wgsl";
+    "sky::faces::sky" in "sky" = "faces/sky.wgsl";
     "sky::tables" in "sky" = "tables.wgsl";
     "sky::clouds" in "sky" = "clouds.wgsl";
     "sky::environment_maps" in "sky" = "environment_maps.wgsl";

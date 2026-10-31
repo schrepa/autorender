@@ -11,16 +11,16 @@ mod haze;
 mod pipeline_layouts;
 pub mod shaders;
 mod sky;
+mod under_eye;
 
-use engine_core::{Brick, Bricks, Place};
-use engine_faces::slots::SkySlot;
+use engine_core::{Brick, Bricks, Fill, Join, Member};
+use engine_faces::places::SkySlot;
+use engine_render::composite::PostLight;
 use engine_render::render_bricks::AddRenderParts;
 
 pub struct SkyBrick;
 
 impl Brick for SkyBrick {
-    const SLOT: Option<Place> = Some(Place::slot::<SkySlot>());
-
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<engine_core::Clouds>()
@@ -28,9 +28,20 @@ impl Brick for SkyBrick {
             .settings::<engine_core::Haze>()
             .settings::<engine_core::NightSky>()
             .settings::<engine_core::SkyLighting>()
+            .extract(under_eye::extract_surface_under_eye)
             .render_part(&sky::PART)
             .shaders(shaders::MODULES)
-            .face_defaults(engine_faces::defaults::MODULES)
+            .places(engine_faces::places::PLACES)
+            .fill(
+                Fill::<SkySlot>::new()
+                    .wgsl("sky::faces::sky")
+                    .gpu(sky::OFFER),
+            )
+            .join(Join::<PostLight>::new().wgsl(Member {
+                module: "sky::haze",
+                functions: &["apply"],
+                reads: &["haze"],
+            }))
             .pipeline_layouts(pipeline_layouts::PIPELINE_LAYOUTS)
             .mirrors(gpu_layouts::LAYOUTS, gpu_layouts::DECLARED)
             .mirrors(&[], gpu_layouts::MIRRORED);

@@ -1,4 +1,4 @@
-use engine_core::Sunlight;
+use engine_core::{FaceOffer, Sunlight};
 use engine_faces::sun::{Sun, SunFace};
 use engine_render::parts::{Begin, BeginOut, Create, GpuPart, PartDecl, PartEntry};
 use engine_render::pieces::PieceDecl;
@@ -13,10 +13,9 @@ pub(crate) static PART: PartEntry = PartEntry {
         resources: &[],
         hooks: &[],
         contributes: &[],
-        effects: &[],
+        resolve: None,
         labels: &[],
         lazy: false,
-        faces: &[engine_render::offer_face!(SunPart => dyn SunFace)],
         needs: &[],
         piece: Some(PieceDecl {
             name: "sun",
@@ -27,6 +26,8 @@ pub(crate) static PART: PartEntry = PartEntry {
     },
     create,
 };
+
+pub(crate) const OFFER: FaceOffer = engine_render::offer_face!(SunPart => dyn SunFace);
 
 struct SunPart {
     piece: SunPiece,

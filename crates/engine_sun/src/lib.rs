@@ -3,8 +3,8 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-use engine_core::{Brick, Bricks, Place};
-use engine_faces::slots::SunSlot;
+use engine_core::{Brick, Bricks, Fill};
+use engine_faces::places::SunSlot;
 use engine_render::render_bricks::AddRenderParts;
 
 mod gpu_layouts;
@@ -14,14 +14,17 @@ mod shaders;
 pub struct SunBrick;
 
 impl Brick for SunBrick {
-    const SLOT: Option<Place> = Some(Place::slot::<SunSlot>());
-
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<engine_core::Sunlight>()
             .render_part(&part::PART)
             .shaders(shaders::MODULES)
-            .face_defaults(engine_faces::defaults::MODULES)
+            .places(engine_faces::places::PLACES)
+            .fill(
+                Fill::<SunSlot>::new()
+                    .wgsl("sun::faces::sun")
+                    .gpu(part::OFFER),
+            )
             .mirrors(gpu_layouts::LAYOUTS, &[]);
     }
 }
