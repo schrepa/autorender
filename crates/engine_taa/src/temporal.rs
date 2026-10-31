@@ -6,9 +6,7 @@
 use crate::shaders::entry::temporal;
 use engine_core::{Applied, Dither, RenderSnapshot, RenderStats, TemporalAntialiasing};
 use engine_render::cached::{Bound, GroupCache, Versioned};
-use engine_render::composite::{
-    PixelEffect, PostStage, composite_entry, effect_reads, pixel_effects,
-};
+use engine_render::composite::composite_entry;
 use engine_render::graph::{
     Access, BLACK, Clear, FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl,
     ResourceId, Stage,
@@ -46,14 +44,9 @@ pub(crate) static PART: PartEntry = PartEntry {
         }],
         hooks: &[],
         contributes: &[],
-        effects: &[PixelEffect {
-            stage: PostStage::Resolve,
-            module: RESOLVE,
-            reads: &[],
-        }],
+        resolve: Some(RESOLVE),
         labels: &["engine/taa-", "engine/temporal"],
         lazy: true,
-        faces: &[],
         needs: &[],
         piece: None,
     },
@@ -393,12 +386,12 @@ impl GpuPart for TemporalPass {
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         if self.reads.is_none() {
-            let effects = pixel_effects(cx.parts);
-            self.reads = Some(
-                effect_reads(&effects)
-                    .filter_map(|read| cx.table.resource(read))
-                    .collect(),
-            );
+            self.reads = cx.parts.post().map(|post| {
+                post.reads()
+                    .iter()
+                    .filter_map(|&read| cx.table.resource(read))
+                    .collect()
+            });
         }
         if cx.frame.kind.debug {
             self.resolve = None;

@@ -1,6 +1,6 @@
 engine_render::shader_modules! {
     "bloom::piece" in "bloom" = "piece.wgsl";
-    "face::bloom" in "bloom" = "faces/bloom.wgsl";
+    "bloom::faces::bloom" in "bloom" = "faces/bloom.wgsl";
     "bloom::chain" in "bloom" = "chain.wgsl";
     "bloom::apply" in "bloom" = "apply.wgsl";
 }

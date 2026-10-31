@@ -11,17 +11,16 @@ mod pipeline_layouts;
 pub mod shaders;
 mod temporal;
 
-use engine_core::{Brick, Bricks, Place};
-use engine_faces::slots::AntialiasingSlot;
+use engine_core::{Brick, Bricks, Fill};
+use engine_faces::places::AntialiasingSlot;
 use engine_render::render_bricks::AddRenderParts;
 
 pub struct TaaBrick;
 
 impl Brick for TaaBrick {
-    const SLOT: Option<Place> = Some(Place::slot::<AntialiasingSlot>());
-
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .fill(Fill::<AntialiasingSlot>::new())
             .settings::<engine_core::TemporalAntialiasing>()
             .smoke(
                 "temporal_antialiasing",
@@ -30,7 +29,7 @@ impl Brick for TaaBrick {
             )
             .render_part(&temporal::PART)
             .shaders(shaders::MODULES)
-            .face_defaults(engine_faces::defaults::MODULES)
+            .places(engine_faces::places::PLACES)
             .pipeline_layouts(pipeline_layouts::PIPELINE_LAYOUTS)
             .mirrors(gpu_layouts::LAYOUTS, &[]);
     }

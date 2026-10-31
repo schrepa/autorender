@@ -1,8 +1,14 @@
-use engine_render::composite::{PixelEffect, PostStage};
+use engine_core::Member;
 use engine_render::parts::{Create, GpuPart, PartDecl, PartEntry, Prelude, Step};
 use engine_render::pieces::PieceDecl;
 
 use crate::gpu_layouts::DitherPiece;
+
+pub(crate) const MEMBER: Member = Member {
+    module: "dither::apply",
+    functions: &["apply"],
+    reads: &[],
+};
 
 pub static PART: PartEntry = PartEntry {
     decl: PartDecl {
@@ -12,14 +18,9 @@ pub static PART: PartEntry = PartEntry {
         resources: &[],
         hooks: &[],
         contributes: &[],
-        effects: &[PixelEffect {
-            stage: PostStage::Display,
-            module: "dither::apply",
-            reads: &[],
-        }],
+        resolve: None,
         labels: &[],
         lazy: false,
-        faces: &[],
         needs: &[],
         piece: Some(PieceDecl {
             name: "dither",

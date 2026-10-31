@@ -1,7 +1,7 @@
 import package::engine::color::decode_srgb;
 import package::engine::screen_points::{depth_normal, world_at};
 import package::face::cover::{cover_growth, cover_seen, cover_tint};
-import package::face::ground::{
+import package::face::ground_tiles::{
     LevelTile, NOT_RESIDENT, PEAK_CELLS, PEAK_MIPS, TILE_QUADS, TerrainInfo, ground_colors,
     ground_colors_mip, ground_extent, ground_of, ground_tile, level_tiles, macro_color,
     material_look, tile_height, tile_layer, tile_material, tile_peak, triangle_height,
@@ -13,7 +13,6 @@ import package::face::sky::{
     ambient as sky_ambient, atmospheric, cloud_passing, sky_above, sky_average,
 };
 import package::face::sun::{sun_color, sun_direction};
-import package::face::surface_point::{BODY_SOLID, BODY_THIN, BODY_WATER};
 import package::face::tonemap::tonemap;
 import package::frame::view::{camera, stable_normalize};
 import package::generated::pieces::pieces;
@@ -22,7 +21,7 @@ import package::meshes::impostor_frames::{
     IMPOSTOR_CUTOFF, IMPOSTOR_HEMISPHERE, ImpostorRecord, impostor_basis, impostor_facing,
     impostor_frame_direction, impostor_frames, impostor_grid, impostor_met,
 };
-import package::meshes::surface::MIRRORED_BITS;
+import package::meshes::surface::{BODY_SOLID, BODY_THIN, BODY_WATER, MIRRORED_BITS};
 import package::meshes::vertex::octahedral_normal;
 import package::post::frame::{depth_texture, drawn_uv, glow, linear, post};
 

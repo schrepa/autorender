@@ -1,9 +1,8 @@
-use engine_core::{Applied, RenderStats};
+use engine_core::{Applied, Member, RenderStats};
 use engine_faces::heightfield::{HeightfieldFace, TerrainInfo};
 use engine_faces::placed::PlacedFace;
 use engine_render::bindings::GroupRef;
 use engine_render::cached::{Bound, GroupCache, Versioned};
-use engine_render::composite::{PixelEffect, PostStage};
 use engine_render::depth_pyramid::{DepthPyramid, Reduction};
 use engine_render::gpu_calls::Queue;
 use engine_render::graph::{
@@ -36,6 +35,12 @@ const SCENE_LEVELS: u32 = 6;
 const TARGET: &str = "reflections";
 const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
+pub(crate) const MEMBER: Member = Member {
+    module: "reflections::apply",
+    functions: &["apply"],
+    reads: &[TARGET],
+};
+
 pub(crate) static PART: PartEntry = PartEntry {
     decl: PartDecl {
         name: "reflections",
@@ -50,14 +55,9 @@ pub(crate) static PART: PartEntry = PartEntry {
         }],
         hooks: &[],
         contributes: &[COMPOSITE_REFLECTIONS],
-        effects: &[PixelEffect {
-            stage: PostStage::Scene,
-            module: "reflections::apply",
-            reads: &[TARGET],
-        }],
+        resolve: None,
         labels: &["engine/reflections-"],
         lazy: true,
-        faces: &[],
         needs: &[],
         piece: Some(PieceDecl {
             name: "reflections",
