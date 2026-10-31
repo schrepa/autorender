@@ -2,7 +2,8 @@ use super::operations::{coordinate, reply, terrains};
 use super::*;
 use crate::{HydrologySample, PATH_FAR};
 use engine_core::bounds::MAX_POINTS;
-use engine_core::{Error, ErrorCode, Operation, WaterKind};
+use engine_core::{Error, ErrorCode, Operation};
+use engine_places::WaterKind;
 #[cfg(feature = "schema")]
 use engine_settings::stated;
 use serde_json::Value;

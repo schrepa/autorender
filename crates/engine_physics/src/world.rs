@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_collision::{Collider, CollisionWorld};
-use engine_core::{FixedTime, Ground, InterpolateTransform, Parent, Transform, Wind, section_in};
+use engine_core::{FixedTime, InterpolateTransform, Parent, Transform, Wind, section_in};
+use engine_places::Ground;
 use glam::{Quat, Vec3};
 use rapier3d::prelude as rp;
 
@@ -184,11 +185,11 @@ impl PhysicsWorld {
             .is_ok()
     }
 
-    pub(crate) fn solids(&self) -> impl Iterator<Item = engine_core::WaterObstacle> + '_ {
+    pub(crate) fn solids(&self) -> impl Iterator<Item = engine_places::WaterObstacle> + '_ {
         let solver = self.solver.as_ref();
         self.bodies.iter().filter_map(move |body| {
             let rigid = solver?.bodies.get(body.handle)?;
-            Some(engine_core::WaterObstacle {
+            Some(engine_places::WaterObstacle {
                 center: rigid.translation(),
                 axes: glam::Mat3::from_quat(*rigid.rotation())
                     * glam::Mat3::from_diagonal(body.form.half),

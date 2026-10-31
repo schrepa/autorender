@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use bevy_ecs::prelude::World;
-use engine_core::{
-    Error, GroundSource, TileKey, WaterFace, WaterSample, WaterSurfaces, WaterWorker,
-};
+use engine_core::{Error, TileKey};
+use engine_places::{GroundSource, WaterFace, WaterSample, WaterSurfaces, WaterWorker};
 use glam::Vec3;
 
 use super::Terrains;

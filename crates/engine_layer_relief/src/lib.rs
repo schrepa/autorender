@@ -7,8 +7,8 @@ include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
 mod relief;
 
-use engine_core::{Brick, Bricks};
-use engine_terrain::layer::{AddTerrainLayers, LayerKind};
+use engine_core::{Brick, Bricks, Join};
+use engine_terrain::layer::{LayerKind, TerrainLayersList};
 
 pub use relief::{HUMMOCKS, HummocksLayer, STEPS, StepsLayer};
 
@@ -16,7 +16,9 @@ pub struct LayerReliefBrick;
 
 impl Brick for LayerReliefBrick {
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.terrain_layers(KINDS);
+        for &kind in KINDS {
+            bricks.join(Join::<TerrainLayersList>::new().cpu(kind));
+        }
     }
 }
 

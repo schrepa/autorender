@@ -3,33 +3,33 @@ use super::solids::{TerrainDecks, TerrainFields, TerrainPlaced};
 use super::water_body::TerrainWater;
 use super::*;
 use crate::jobs::{ShadingJob, SteadiedJob, TerrainWorker};
-use crate::layer::{AddTerrainLayers, TerrainLayerKinds};
+use crate::layer::{TerrainLayerKinds, TerrainLayersList};
 use crate::scene::{PREFETCH, TERRAIN};
 use engine_core::{
-    Brick, Bricks, DetailConsumer, EnvironmentSection, ExplainRecord, ExplainRequest,
-    FixedSimulation, FixedSimulationSystems, GlobalTransforms, Ground, GroundSlot, JobWorker,
-    TerrainDebug, ViewSync, ViewSyncSystems, WorldSync, WorldSyncSystems,
+    Brick, Bricks, DetailConsumer, DetailConsumersList, EnvironmentSection, ExplainRecord,
+    ExplainRequest, Fill, FixedSimulation, FixedSimulationSystems, GlobalTransforms, JobWorker,
+    Join, TerrainDebug, ViewSync, ViewSyncSystems, WorldSync, WorldSyncSystems,
 };
-use engine_scene::AddSceneComponents;
+use engine_places::{Ground, GroundSlot, WaterBodiesList, WorldSolidsList};
+use engine_scene::SceneComponentsList;
 
 pub struct TerrainBrick;
 
 impl Brick for TerrainBrick {
-    const SLOT: Option<engine_core::Place> = Some(engine_core::Place::slot::<GroundSlot>());
-
     fn register(bricks: &mut Bricks) {
         bricks
+            .fill(Fill::<GroundSlot>::new().cpu(Ground::new("terrain", TerrainGround)))
             .settings::<TerrainSettings>()
-            .detail_consumer(DetailConsumer {
+            .join(Join::<DetailConsumersList>::new().cpu(DetailConsumer {
                 name: "tiles",
                 setting: "terrain.max_tiles",
                 stat: "terrain.tile_cut",
-            })
-            .detail_consumer(DetailConsumer {
+            }))
+            .join(Join::<DetailConsumersList>::new().cpu(DetailConsumer {
                 name: "terrain_leaves",
                 setting: "terrain.subdivision_leaves",
                 stat: "terrain.leaf_cut",
-            })
+            }))
             .records(&[
                 TileJob::KIND.name(),
                 BakeJob::KIND.name(),
@@ -40,14 +40,17 @@ impl Brick for TerrainBrick {
                 SETTLED_KIND,
             ])
             .resource::<Terrains>()
-            .insert_resource(Ground::new("terrain", TerrainGround))
-            .world_solids("ground", TerrainFields)
-            .world_solids("decks", TerrainDecks)
-            .world_solids("placed", TerrainPlaced)
-            .water_body(TerrainWater)
-            .resource::<TerrainLayerKinds>()
-            .terrain_layers(crate::expr::KINDS)
-            .scene_components(&[&TERRAIN, &PREFETCH])
+            .join(Join::<WorldSolidsList>::new().cpu(("ground", Box::new(TerrainFields))))
+            .join(Join::<WorldSolidsList>::new().cpu(("decks", Box::new(TerrainDecks))))
+            .join(Join::<WorldSolidsList>::new().cpu(("placed", Box::new(TerrainPlaced))))
+            .join(Join::<WaterBodiesList>::new().cpu(Box::new(TerrainWater)))
+            .resource::<TerrainLayerKinds>();
+        for &kind in crate::expr::KINDS {
+            bricks.join(Join::<TerrainLayersList>::new().cpu(kind));
+        }
+        bricks
+            .join(Join::<SceneComponentsList>::new().cpu(&TERRAIN))
+            .join(Join::<SceneComponentsList>::new().cpu(&PREFETCH))
             .systems(ViewSync, stream_terrains.in_set(ViewSyncSystems::Stream))
             .systems(
                 FixedSimulation,

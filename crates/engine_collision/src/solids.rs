@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
-use engine_core::{FieldSamples, TileKey};
+use engine_core::TileKey;
+use engine_places::FieldSamples;
 use glam::{Mat3, Vec3};
 use parry3d::shape::HeightField;
 

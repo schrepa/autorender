@@ -8,10 +8,10 @@ include!(concat!(env!("OUT_DIR"), "/source.rs"));
 use std::any::Any;
 use std::sync::Arc;
 
-use engine_core::{Brick, Bricks, Error, ErrorCode, parse_value};
+use engine_core::{Brick, Bricks, Error, ErrorCode, Join, parse_value};
 use engine_terrain::codec::{Reader, Writer};
 use engine_terrain::layer::{
-    AddTerrainLayers, Below, LayerFiles, LayerKind, Made, Row, TerrainLayer, no_files, same_as,
+    Below, LayerFiles, LayerKind, Made, Row, TerrainLayer, TerrainLayersList, no_files, same_as,
 };
 use engine_terrain::layers::reaches;
 use engine_terrain::{Stamp, StampOp};
@@ -22,7 +22,9 @@ pub struct LayerStampsBrick;
 
 impl Brick for LayerStampsBrick {
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.terrain_layers(KINDS);
+        for &kind in KINDS {
+            bricks.join(Join::<TerrainLayersList>::new().cpu(kind));
+        }
     }
 }
 

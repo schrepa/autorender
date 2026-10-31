@@ -11,6 +11,7 @@ schema = ["dep:schemars", "engine_core/schema", "engine_settings/schema", "engin
 
 [dependencies]
 engine_core.workspace = true
+engine_places.workspace = true
 engine_scene.workspace = true
 engine_terrain.workspace = true
 engine_math.workspace = true

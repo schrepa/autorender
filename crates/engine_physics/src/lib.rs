@@ -22,10 +22,9 @@ pub use views::{PhysicsWorldView, RigidBodyView, rigid_body_view};
 pub use world::PhysicsWorld;
 
 use bevy_ecs::prelude::*;
-use engine_core::{
-    Brick, Bricks, FixedSimulation, FixedSimulationSystems, PhysicsSlot, Place, WaterObstacles,
-};
-use engine_scene::AddSceneComponents;
+use engine_core::{Brick, Bricks, Fill, FixedSimulation, FixedSimulationSystems, Join};
+use engine_places::{PhysicsSlot, WaterObstacles};
+use engine_scene::SceneComponentsList;
 
 pub struct PhysicsBrick;
 
@@ -36,10 +35,9 @@ pub enum PhysicsSystems {
 }
 
 impl Brick for PhysicsBrick {
-    const SLOT: Option<Place> = Some(Place::slot::<PhysicsSlot>());
-
     fn register(bricks: &mut Bricks) {
         bricks
+            .fill(Fill::<PhysicsSlot>::new())
             .settings::<Physics>()
             .stats::<PhysicsStats>()
             .resource::<PhysicsWorld>()
@@ -61,7 +59,7 @@ impl Brick for PhysicsBrick {
                 ),
             )
             .inspector::<PhysicsWorld, PhysicsWorldView>(|_, world| PhysicsWorldView::of(world))
-            .scene_components(&[&RIGID_BODY])
+            .join(Join::<SceneComponentsList>::new().cpu(&RIGID_BODY))
             .smoke("physics", false, smoke::run);
     }
 }

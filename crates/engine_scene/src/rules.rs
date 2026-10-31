@@ -1,7 +1,9 @@
+use engine_core::Error;
 use engine_core::glam::Vec2;
-use engine_core::{Error, Grounded};
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
+
+use crate::Grounded;
 
 pub const MAX_ALONG: usize = 10_000;
 

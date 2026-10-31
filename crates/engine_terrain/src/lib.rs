@@ -53,9 +53,8 @@ pub use hydrology::{
     WETNESS_RANGE,
 };
 pub use layer::{
-    AddTerrainLayers, Below, ChangeMap, FineRegion, LayerBake, LayerFiles, LayerKind, LayerTile,
-    NoFiles, Place, Row, SamplePoint, TerrainLayer, TerrainLayerKinds, TerrainLayersList,
-    TileFrame,
+    Below, ChangeMap, FineRegion, LayerBake, LayerFiles, LayerKind, LayerTile, NoFiles, Place, Row,
+    SamplePoint, TerrainLayer, TerrainLayerKinds, TerrainLayersList, TileFrame,
 };
 pub use layers::{Blend, HeightImage, Layers, Stamp, StampOp};
 pub use path::{Bridge, HeightGrid, PATH_FAR, PathSample, Route, RouteOptions, route};

@@ -6,14 +6,15 @@ use engine_core::bevy_ecs::world::{EntityWorldMut, World};
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::smoke::{SmokeEntry, SmokeFailure, SmokeResult, SmokeSession, component};
 use engine_core::{
-    BrickRegistry, Bricks, CORE_ROW, Error, Expected, Grounded, List, Mesh, Tint, missing_brick,
+    Absent, BrickRegistry, CORE_ROW, CpuList, Error, Expected, Face, FaceType, List, Members, Mesh,
+    Tint, missing_brick,
 };
 use engine_settings::{ErrorCode, Rule, Setting};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use crate::instance::Lookups;
-use crate::{SceneDocument, SceneFiles, SceneObject};
+use crate::{Grounded, SceneDocument, SceneFiles, SceneObject};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Placement {
@@ -210,7 +211,7 @@ impl PreparedComponent for Tint {
     }
 }
 
-pub(crate) static GROUNDED: ComponentKind = ComponentKind {
+pub static GROUNDED: ComponentKind = ComponentKind {
     name: "grounded",
     shows: "Grounded",
     placement: Placement::Roots(ErrorCode::InvalidGrounded),
@@ -242,7 +243,6 @@ pub static CORE_COMPONENTS: &[&ComponentKind] = &[
     &crate::lighting::LIGHT,
     &crate::lighting::PARTICLES,
     &TINT,
-    &GROUNDED,
     &crate::spline::SPLINE,
     &crate::probe::REFLECTION_PROBE,
 ];
@@ -464,20 +464,23 @@ pub struct SceneComponents {
     kinds: Vec<(&'static str, &'static ComponentKind)>,
 }
 
-impl SceneComponents {
-    pub fn add(&mut self, brick: &'static str, kinds: &[&'static ComponentKind]) {
-        for &kind in kinds {
-            match self
-                .kinds
-                .iter_mut()
-                .find(|(_, held)| held.name == kind.name)
-            {
-                Some(held) => *held = (brick, kind),
-                None => self.kinds.push((brick, kind)),
-            }
+impl Members for SceneComponents {
+    type Member = &'static ComponentKind;
+
+    fn add(&mut self, brick: &'static str, kind: &'static ComponentKind) {
+        register_components(brick, &[kind]);
+        match self
+            .kinds
+            .iter_mut()
+            .find(|(_, held)| held.name == kind.name)
+        {
+            Some(held) => *held = (brick, kind),
+            None => self.kinds.push((brick, kind)),
         }
     }
+}
 
+impl SceneComponents {
     pub fn get(&self, name: &str) -> Option<(&'static str, &'static ComponentKind)> {
         self.kinds
             .iter()
@@ -494,6 +497,12 @@ pub struct SceneComponentsList;
 
 impl List for SceneComponentsList {
     const NAME: &'static str = "scene_components";
+    const FACE: Face = Face {
+        cpu: Some(FaceType::of::<SceneComponents>()),
+        gpu: None,
+        wgsl: None,
+        absent: Absent::Required,
+    };
     const SMOKES: &'static [SmokeEntry] = &[SmokeEntry {
         name: "list_scene_components",
         brick: Self::NAME,
@@ -502,21 +511,8 @@ impl List for SceneComponentsList {
     }];
 }
 
-pub trait AddSceneComponents {
-    fn scene_components(&mut self, kinds: &[&'static ComponentKind]) -> &mut Self;
-}
-
-impl AddSceneComponents for Bricks<'_> {
-    fn scene_components(&mut self, kinds: &[&'static ComponentKind]) -> &mut Self {
-        let brick = self.name();
-        register_components(brick, kinds);
-        let world = self.world_mut();
-        if !world.contains_resource::<SceneComponents>() {
-            world.init_resource::<SceneComponents>();
-        }
-        world.resource_mut::<SceneComponents>().add(brick, kinds);
-        self.list::<SceneComponentsList>()
-    }
+impl CpuList for SceneComponentsList {
+    type Cpu = SceneComponents;
 }
 
 const EXAMPLE: &str = "example";

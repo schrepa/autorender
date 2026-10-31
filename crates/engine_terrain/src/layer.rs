@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use bevy_ecs::prelude::Resource;
-use engine_core::{Bricks, Error, ErrorCode, Expected, List};
+use engine_core::{Absent, CpuList, Error, ErrorCode, Expected, Face, FaceType, List, Members};
 use glam::Vec2;
 use serde_json::Value;
 
@@ -467,6 +467,12 @@ pub struct TerrainLayersList;
 
 impl List for TerrainLayersList {
     const NAME: &'static str = "terrain_layers";
+    const FACE: Face = Face {
+        cpu: Some(FaceType::of::<TerrainLayerKinds>()),
+        gpu: None,
+        wgsl: None,
+        absent: Absent::Required,
+    };
     const SMOKES: &'static [engine_core::smoke::SmokeEntry] = &[engine_core::smoke::SmokeEntry {
         name: "list_terrain_layers",
         brick: Self::NAME,
@@ -475,20 +481,27 @@ impl List for TerrainLayersList {
     }];
 }
 
+impl CpuList for TerrainLayersList {
+    type Cpu = TerrainLayerKinds;
+}
+
 #[derive(Resource, Clone, Debug, Default)]
 pub struct TerrainLayerKinds {
     kinds: Vec<&'static LayerKind>,
 }
 
-impl TerrainLayerKinds {
-    pub fn add(&mut self, kinds: &[&'static LayerKind]) {
-        for &kind in kinds {
-            if !self.kinds.iter().any(|known| known.name == kind.name) {
-                self.kinds.push(kind);
-            }
+impl Members for TerrainLayerKinds {
+    type Member = &'static LayerKind;
+
+    fn add(&mut self, _: &'static str, kind: &'static LayerKind) {
+        register_kinds(&[kind]);
+        if !self.kinds.iter().any(|known| known.name == kind.name) {
+            self.kinds.push(kind);
         }
     }
+}
 
+impl TerrainLayerKinds {
     pub fn get(&self, name: &str) -> Option<&'static LayerKind> {
         self.kinds.iter().find(|kind| kind.name == name).copied()
     }
@@ -499,21 +512,5 @@ impl TerrainLayerKinds {
 
     pub fn names(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.kinds.iter().map(|kind| kind.name)
-    }
-}
-
-pub trait AddTerrainLayers {
-    fn terrain_layers(&mut self, kinds: &[&'static LayerKind]) -> &mut Self;
-}
-
-impl AddTerrainLayers for Bricks<'_> {
-    fn terrain_layers(&mut self, kinds: &[&'static LayerKind]) -> &mut Self {
-        register_kinds(kinds);
-        let world = self.world_mut();
-        if !world.contains_resource::<TerrainLayerKinds>() {
-            world.init_resource::<TerrainLayerKinds>();
-        }
-        world.resource_mut::<TerrainLayerKinds>().add(kinds);
-        self.list::<TerrainLayersList>()
     }
 }

@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::{Entity, World};
-use engine_core::{Error, ErrorCode, Ground, GroundSlot, Operation, Slot, bounds, missing_brick};
+use engine_core::{Error, ErrorCode, Operation, Slot, bounds, missing_brick};
+use engine_places::{Ground, GroundSlot};
 #[cfg(feature = "schema")]
 use engine_settings::stated;
 use glam::{Vec2, Vec3};

@@ -156,7 +156,7 @@ pub struct RenderTerrain {
     pub gpu_surface: Option<Arc<crate::gpu::SurfaceData>>,
     pub falls: Arc<[Fall]>,
     pub water_window: Option<Arc<WaterWindow>>,
-    pub water_touches: Vec<engine_core::WaterObstacle>,
+    pub water_touches: Vec<engine_places::WaterObstacle>,
     pub water_touches_beyond: u32,
     pub lighting: Option<Arc<TerrainLighting>>,
     pub bounce: Option<Arc<TerrainBounce>>,
@@ -300,7 +300,7 @@ pub(crate) fn extract_terrains(world: &World, snapshot: &mut RenderSnapshot) {
         render.water_touches_beyond = 0;
         if let (Some(window), Some(obstacles)) = (
             state.hydrology.window.as_deref(),
-            world.get_resource::<engine_core::WaterObstacles>(),
+            world.get_resource::<engine_places::WaterObstacles>(),
         ) {
             render.water_touches_beyond = window.touching(
                 &obstacles.obstacles,

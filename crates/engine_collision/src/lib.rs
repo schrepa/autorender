@@ -31,8 +31,8 @@ pub use views::{
 pub use world::{CollisionWorld, SensorEvents, refresh_collision_world};
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, FixedPostSimulation, FixedPreSimulation};
-use engine_scene::AddSceneComponents;
+use engine_core::{Brick, Bricks, FixedPostSimulation, FixedPreSimulation, Join};
+use engine_scene::SceneComponentsList;
 
 pub struct Collision;
 
@@ -48,7 +48,7 @@ impl Brick for Collision {
             .resource::<CollisionConfig>()
             .resource::<CollisionWorld>()
             .resource::<SensorEvents>()
-            .scene_components(&[&COLLIDER])
+            .join(Join::<SceneComponentsList>::new().cpu(&COLLIDER))
             .systems(
                 FixedPreSimulation,
                 (world::sync_ground, world::sync)

@@ -11,10 +11,10 @@ mod profile;
 use std::any::Any;
 use std::sync::Arc;
 
-use engine_core::{Brick, Bricks, ErrorCode, Pyramid, parse_value};
+use engine_core::{Brick, Bricks, ErrorCode, Join, Pyramid, parse_value};
 use engine_terrain::codec::{Reader, Writer};
 use engine_terrain::layer::{
-    self, AddTerrainLayers, Below, LayerBake, LayerFiles, LayerKind, Made, Row, TerrainLayer, maps,
+    self, Below, LayerBake, LayerFiles, LayerKind, Made, Row, TerrainLayer, TerrainLayersList, maps,
 };
 use engine_terrain::path::{Bridge, PathSample};
 use glam::Vec2;
@@ -29,7 +29,9 @@ pub struct LayerPathsBrick;
 
 impl Brick for LayerPathsBrick {
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.terrain_layers(KINDS);
+        for &kind in KINDS {
+            bricks.join(Join::<TerrainLayersList>::new().cpu(kind));
+        }
     }
 }
 
