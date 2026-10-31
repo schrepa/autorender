@@ -1,26 +1,6 @@
-import package::face::heightfield::{TERRAIN_GRID, terrain};
+import package::terrain::faces::heightfield::{TERRAIN_GRID, terrain};
 
 @group(1) @binding(17) var terrain_heights: texture_2d_array<f32>;
-
-struct TerrainView {
-    relative_view_projection: mat4x4<f32>,
-    eye_offset: vec4<f32>,
-    inverse_relative_view_projection: mat4x4<f32>,
-}
-
-struct TerrainUniform {
-    anchor: vec4<f32>,
-    eye: vec4<f32>,
-    surface: vec4<u32>,
-    origin: vec4<f32>,
-    directory: vec4<u32>,
-    relief: vec4<f32>,
-    cover: vec4<f32>,
-    macro_map: vec4<u32>,
-    steep: vec4<f32>,
-    pixel_error: vec4<f32>,
-    water: vec4<u32>,
-}
 
 struct PatchInput {
     @builtin(vertex_index) vertex: u32,
@@ -62,12 +42,6 @@ fn terrain_vertex(input: PatchInput) -> vec3<f32> {
 
 @group(1) @binding(23) var<storage, read> terrain_directory: array<u32>;
 
-struct SurfaceTriangle {
-    a: vec2<f32>,
-    b: vec2<f32>,
-    c: vec2<f32>,
-}
-
 const SURFACE_MESHLET_LEVEL: u32 = 2u;
 const SURFACE_MESHLET_VERTICES: u32 = 15u;
 const SURFACE_MESHLET_INDICES: u32 = 48u;
@@ -84,11 +58,6 @@ fn surface_along(tail: vec2<f32>, head: vec2<f32>, steps: u32) -> vec2<f32> {
         }
     }
     return select(low, head, steps == (1u << SURFACE_MESHLET_LEVEL));
-}
-
-struct TerrainLevelHeight {
-    height: f32,
-    found: bool,
 }
 
 fn spread_slopes(shortened: f32) -> f32 {

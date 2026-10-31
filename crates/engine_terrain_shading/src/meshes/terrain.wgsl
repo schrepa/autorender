@@ -2,19 +2,20 @@ import package::face::cover::{COVER_FAR_SIDE, COVER_ROUGHNESS, CoverLaw, cover_c
     cover_clump_spacing, cover_clumped, cover_growth, cover_seen, cover_share, cover_shown,
     cover_tint};
 import package::face::dither::stored;
-import package::face::ground::macro_color;
-import package::face::heightfield::{WATER_HELD, WaterCell, surface_vertex, terrain,
-    terrain_level_height, terrain_view, water_cell};
+import package::face::ground_tiles::macro_color;
 import package::face::horizons::bounce_light;
 import package::face::lighting::{finish_ground, local_light, widened};
 import package::face::shadows::{KeptLift, keep_lift, kept_level, kept_texels};
 import package::face::sun::sun_direction;
-import package::face::surface_point::{BODY_GROUND, SurfacePoint};
 import package::frame::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail_distance, detail_level,
     detail_resolved, detail_span, eye_world, fade_noise, material_detail, stable_normalize};
 import package::meshes::declarations::{DepthSceneTargets, DepthTemporalTargets};
-import package::meshes::surface::{Shaded, scene_targets, temporal_targets, world_plane};
+import package::meshes::surface::{BODY_GROUND, Shaded, SurfacePoint, scene_targets,
+    temporal_targets, world_plane};
+import package::place::heightfield::WaterCell;
 import package::terrain::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
+import package::terrain::faces::heightfield::{WATER_HELD, surface_vertex, terrain,
+    terrain_level_height, terrain_view, water_cell};
 import package::terrain::field::{SURFACE_MESHLET_LEVEL, spread_slopes, terrain_directory};
 import package::terrain::sky::terrain_sky_map;
 import package::terrain::surface::{surface_leaf, surface_relative, terrain_true_height};

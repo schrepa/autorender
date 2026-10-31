@@ -1,5 +1,6 @@
-import package::face::heightfield::{NO_WATER_BLOCK, TERRAIN_GRID, WATER_SPAN_LEAST,
-    WATER_SPAN_MOST, WATER_TILE_PATCHES, WaterCell, terrain, water_smooth, water_texel};
+import package::place::heightfield::{WaterCell, WaterLevel};
+import package::terrain::faces::heightfield::{NO_WATER_BLOCK, TERRAIN_GRID, WATER_SPAN_LEAST,
+    WATER_SPAN_MOST, WATER_TILE_PATCHES, terrain, water_smooth, water_texel};
 import package::terrain::field::terrain_directory;
 
 @group(1) @binding(50) var water_surface: texture_2d_array<f32>;
@@ -9,15 +10,6 @@ const WATER_BLOCKS_SIDE: u32 = 16u;
 const WATER_TILE_WORDS: u32 = 256u;
 const WATER_FLOW_RANGE: f32 = 8.0;
 const WATER_SHEAR_RANGE: f32 = 8.0;
-
-struct WaterWords {
-    flow: vec2<f32>,
-    span: f32,
-    lake: bool,
-    sheet: bool,
-    state: vec3<f32>,
-    reach: u32,
-}
 
 fn water_span(code: f32) -> f32 {
     let steps = round(abs(code) * 127.0);
@@ -44,15 +36,6 @@ fn water_spline(t: f32) -> WaterSpline {
     spline.rates = vec4<f32>(-s * s, (3.0 * t - 4.0) * t, (2.0 - 3.0 * t) * t + 1.0, t * t)
         * 0.5;
     return spline;
-}
-
-struct WaterLevel {
-    surface: f32,
-    slope: vec2<f32>,
-    depth: f32,
-    held: f32,
-    held_rate: vec2<f32>,
-    shares: mat4x4<f32>,
 }
 
 fn water_level(cell: WaterCell) -> WaterLevel {

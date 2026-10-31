@@ -1,10 +1,10 @@
-import package::face::heightfield::terrain;
 import package::face::lighting::sun_debug;
 import package::frame::view::eye_world;
 import package::meshes::debug::{DEBUG_KIND_TERRAIN, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL,
     DEBUG_PATCH_EDGE, DEBUG_PATCH_SHIFT, DEBUG_TILE_EDGE, DebugTargets, debug_targets};
 import package::terrain::draw::{TerrainOutput, terrain_forward_look, terrain_holes_test,
     terrain_seen, terrain_shared_ground, terrain_shares};
+import package::terrain::faces::heightfield::terrain;
 import package::terrain::sky::terrain_sky_map;
 
 @fragment

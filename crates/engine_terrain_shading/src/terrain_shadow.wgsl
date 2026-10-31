@@ -1,4 +1,4 @@
-import package::face::heightfield::terrain;
+import package::terrain::faces::heightfield::terrain;
 import package::terrain::field::{PatchInput, terrain_vertex};
 
 struct View {

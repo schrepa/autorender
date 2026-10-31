@@ -1,6 +1,6 @@
 engine_render::gpu_consts! {
     pub(crate) const NOT_RESIDENT: u32 = u32::MAX => ["NOT_RESIDENT"];
-    pub(crate) const ERROR_MIPS: u32 = engine_terrain::ERROR_MIPS => ["SURFACE_ERROR_MIPS", "PEAK_MIPS" in "face::ground"];
+    pub(crate) const ERROR_MIPS: u32 = engine_terrain::ERROR_MIPS => ["SURFACE_ERROR_MIPS", "PEAK_MIPS" in "terrain::faces::ground_tiles"];
     pub(crate) const TERRAIN_GRID: u32 = engine_terrain::PATCH_QUADS + 1 => ["TERRAIN_GRID"];
     pub(crate) const TERRAIN_GRID_VERTICES: u32 = TERRAIN_GRID * TERRAIN_GRID => ["TERRAIN_GRID_VERTICES"];
 
@@ -28,7 +28,7 @@ engine_render::gpu_consts! {
     pub(crate) const WATER_TILE_PATCHES: u32 = engine_terrain::PATCHES_PER_TILE => ["WATER_TILE_PATCHES"];
     pub(crate) const WATER_TILE_WORDS: u32 = WATER_TILE_PATCHES * WATER_TILE_PATCHES => ["WATER_TILE_WORDS"];
 
-    pub(crate) const PALETTE_ENTRIES: usize = engine_faces::heightfield::PALETTE_ENTRIES => ["TERRAIN_PALETTE_ENTRIES" in "terrain::draw", "PALETTE_ENTRIES" in "face::ground", "PALETTE_ENTRIES" in "terrain::bounce_maps"];
+    pub(crate) const PALETTE_ENTRIES: usize = engine_faces::heightfield::PALETTE_ENTRIES => ["TERRAIN_PALETTE_ENTRIES" in "terrain::draw", "PALETTE_ENTRIES" in "terrain::faces::ground_tiles", "PALETTE_ENTRIES" in "terrain::bounce_maps"];
 
     pub(crate) const CONTROL_GROUP: u32 = 8 => ["@tile_control" in "terrain::control"];
     pub(crate) const BOUNCE_GROUP: u32 = 8 => ["@bounce_ground" in "terrain::bounce_maps", "@bounce_down" in "terrain::bounce_maps", "@bounce_gather" in "terrain::bounce_maps"];
@@ -36,9 +36,9 @@ engine_render::gpu_consts! {
 }
 
 engine_render::gpu_mirrors! {
-    engine_core::TILE_QUADS => ["TILE_QUADS" in "face::ground"];
-    engine_terrain::ERROR_CELLS => ["PEAK_CELLS" in "face::ground"];
-    engine_terrain::BLOCK_SIDE => ["WATER_LIVE_BLOCK" in "face::heightfield"];
+    engine_core::TILE_QUADS => ["TILE_QUADS" in "terrain::faces::ground_tiles"];
+    engine_terrain::ERROR_CELLS => ["PEAK_CELLS" in "terrain::faces::ground_tiles"];
+    engine_terrain::BLOCK_SIDE => ["WATER_LIVE_BLOCK" in "terrain::faces::heightfield"];
     engine_terrain::lighting::DIRECTIONS => ["HORIZON_DIRECTIONS"];
     engine_terrain::lighting::HORIZON_LAYERS => ["HORIZON_LAYERS"];
     engine_terrain::bounce::BINS => ["BOUNCE_BINS" in "terrain::bounce_maps"];

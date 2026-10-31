@@ -1,5 +1,5 @@
 import package::face::cover::{COVER_FAR_SIDE, cover_seen, cover_tint};
-import package::face::ground::macro_color;
+import package::face::ground_tiles::macro_color;
 import package::face::horizons::terrain_visibility;
 import package::face::sky::{ambient, cloud_passing, sky_average};
 import package::face::sun::{sun_color, sun_direction};
