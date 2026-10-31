@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 
+use engine_core::smoke::{SmokeEntry, SmokeResult, SmokeSession};
 use engine_core::{Absent, BrickRegistry, Face, List, Place};
 
 use crate::faces::face_module;
@@ -23,6 +24,12 @@ pub struct PostScene;
 impl List for PostScene {
     const NAME: &'static str = "post_scene";
     const FACE: Face = post_list(include_str!("places/post_scene.wgsl"));
+    const SMOKES: &'static [SmokeEntry] = &[SmokeEntry {
+        name: "list_post_scene",
+        brick: Self::NAME,
+        gpu: true,
+        run: post_scene,
+    }];
 }
 
 pub struct PostLight;
@@ -30,6 +37,12 @@ pub struct PostLight;
 impl List for PostLight {
     const NAME: &'static str = "post_light";
     const FACE: Face = post_list(include_str!("places/post_light.wgsl"));
+    const SMOKES: &'static [SmokeEntry] = &[SmokeEntry {
+        name: "list_post_light",
+        brick: Self::NAME,
+        gpu: true,
+        run: post_light,
+    }];
 }
 
 pub struct PostDisplay;
@@ -37,6 +50,12 @@ pub struct PostDisplay;
 impl List for PostDisplay {
     const NAME: &'static str = "post_display";
     const FACE: Face = post_list(include_str!("places/post_display.wgsl"));
+    const SMOKES: &'static [SmokeEntry] = &[SmokeEntry {
+        name: "list_post_display",
+        brick: Self::NAME,
+        gpu: true,
+        run: post_display,
+    }];
 }
 
 pub static POST_PLACES: &[Place] = &[
@@ -160,4 +179,16 @@ pub fn transparent_source() -> String {
     format!(
         "{imports}\n@fragment\nfn {COMPOSITE_ENTRY}(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {{\n{body}}}\n"
     )
+}
+
+fn post_scene(session: &mut dyn SmokeSession) -> SmokeResult {
+    crate::place_smokes::frames(session, PostScene::NAME)
+}
+
+fn post_light(session: &mut dyn SmokeSession) -> SmokeResult {
+    crate::place_smokes::frames(session, PostLight::NAME)
+}
+
+fn post_display(session: &mut dyn SmokeSession) -> SmokeResult {
+    crate::place_smokes::frames(session, PostDisplay::NAME)
 }

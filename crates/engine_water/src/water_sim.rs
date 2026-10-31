@@ -2,8 +2,8 @@ use std::cell::Cell;
 use std::sync::Arc;
 
 use bytemuck::Zeroable;
-use engine_core::glam::{Mat3, Vec2, Vec3};
 use engine_core::Cut;
+use engine_core::glam::{Mat3, Vec2, Vec3};
 use engine_faces::heightfield::HeightfieldFace;
 use engine_places::WaterObstacle;
 use engine_render::bindings::EMPTY;

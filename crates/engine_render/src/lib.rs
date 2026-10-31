@@ -31,6 +31,7 @@ pub mod linker;
 pub mod parts;
 pub mod pieces;
 pub mod pipelines;
+pub mod place_smokes;
 pub mod places;
 pub mod render_bricks;
 pub mod retained_uploads;

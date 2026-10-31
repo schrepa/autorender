@@ -26,6 +26,10 @@ const ALLOWED: &[(&str, &str)] = &[
         "haze, the clouds and the sky",
     ),
     (
+        "crates/engine_sky/src/under_eye.rs",
+        "the surface under the eye, for the sky and fog",
+    ),
+    (
         "crates/engine_terrain_shading/src/terrain/part.rs",
         "terrain's eye-relative frame and culling, and water's view",
     ),

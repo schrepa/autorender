@@ -78,12 +78,12 @@ export type DescribeResult = { bricks: DescribedBrick[]; types: DescribedType[];
 export interface DescribedBrick {
   crate: string;
   explains: string[];
+  fills: string[];
   inspectors: DescribedEntry[];
-  lists: string[];
+  joins: string[];
   name: string;
   operations: DescribedEntry[];
   settings: DescribedEntry[];
-  slot?: string | null;
   stats: DescribedEntry[];
 }
 

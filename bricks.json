@@ -18,30 +18,55 @@
         }
       ],
       "crate": "engine_terrain",
-      "defaults": [],
       "dependencies": [
         "engine_assets",
         "engine_core",
         "engine_math",
+        "engine_places",
         "engine_profile",
         "engine_scene",
         "engine_settings",
         "engine_textures"
       ],
-      "faces": [],
-      "fills": [],
+      "fills": [
+        {
+          "cpu": true,
+          "gpu": null,
+          "place": "ground",
+          "wgsl": null
+        }
+      ],
       "inspectors": [
         "Terrains",
         "TerrainDebug",
         "TerrainPrefetch"
       ],
-      "joins": [],
-      "lists": [
-        "detail_consumers",
-        "world_solids",
-        "water_bodies",
-        "terrain_layers",
-        "scene_components"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "detail_consumers",
+          "wgsl": null
+        },
+        {
+          "cpu": true,
+          "place": "world_solids",
+          "wgsl": null
+        },
+        {
+          "cpu": true,
+          "place": "water_bodies",
+          "wgsl": null
+        },
+        {
+          "cpu": true,
+          "place": "terrain_layers",
+          "wgsl": null
+        },
+        {
+          "cpu": true,
+          "place": "scene_components",
+          "wgsl": null
+        }
       ],
       "name": "terrain",
       "needs": [],
@@ -81,14 +106,6 @@
         "crates/engine_terrain/**"
       ],
       "pieces": [],
-      "places": [
-        "ground",
-        "detail_consumers",
-        "world_solids",
-        "water_bodies",
-        "terrain_layers",
-        "scene_components"
-      ],
       "reads": [
         "physics",
         "water"
@@ -103,9 +120,9 @@
         "settled_water"
       ],
       "resources": [
+        "engine_places::ground::Ground",
         "engine_terrain::runtime::settings::TerrainSettings",
         "engine_terrain::runtime::residency::Terrains",
-        "engine_core::ground::Ground",
         "engine_terrain::layer::TerrainLayerKinds"
       ],
       "settings": [
@@ -115,7 +132,6 @@
           "opt_in": false
         }
       ],
-      "slot": "ground",
       "smokes": [
         {
           "gpu": true,
@@ -137,13 +153,53 @@
       "stats": [],
       "system_set": "terrain",
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "aed00c2a9ac5f17a24641fdaf575ee0ed51db7da272a5040eed702cab122a7a2"
+      "version": "c5d7dfccb64bead64e45064d2f3c0c68493f48dbd1b5bbd520ee5a33ec2331e4"
+    },
+    {
+      "components": [
+        "grounded"
+      ],
+      "consumers": [],
+      "crate": "engine_grounding",
+      "dependencies": [
+        "engine_core",
+        "engine_places",
+        "engine_scene"
+      ],
+      "fills": [],
+      "inspectors": [
+        "Grounded"
+      ],
+      "joins": [
+        {
+          "cpu": true,
+          "place": "scene_components",
+          "wgsl": null
+        }
+      ],
+      "name": "grounding",
+      "needs": [],
+      "operations": [],
+      "parts": [],
+      "passes": [],
+      "paths": [
+        "crates/engine_grounding/**"
+      ],
+      "pieces": [],
+      "reads": [],
+      "records": [],
+      "resources": [],
+      "settings": [],
+      "smokes": [],
+      "stats": [],
+      "system_set": "grounding",
+      "type": "engine_grounding::GroundingBrick",
+      "version": "47545cda0259ac139331133fcb385cf0130682df47a6a3580c38cd5bf12d2fda"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_core",
-      "defaults": [],
       "dependencies": [
         "engine_assets",
         "engine_math",
@@ -153,11 +209,9 @@
         "engine_tables",
         "engine_textures"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
       "joins": [],
-      "lists": [],
       "name": "wind",
       "needs": [],
       "operations": [],
@@ -168,7 +222,6 @@
         "crates/engine_core/src/wind/**"
       ],
       "pieces": [],
-      "places": [],
       "reads": [],
       "records": [],
       "resources": [
@@ -181,31 +234,27 @@
           "opt_in": false
         }
       ],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "wind",
       "type": "engine_core::wind::Wind",
-      "version": "a880c68c5f2ebff21cb1e5c58e17701c028420dd108a4162bceaf71e80647f4f"
+      "version": "7fd030dece0b1f2d8ab82f032cfbb8a86411ef62a23de6ad5bbe8f3c634b491b"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_world_streaming",
-      "defaults": [],
       "dependencies": [
         "engine_core",
         "engine_profile",
         "engine_settings"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [
         "WorldCells",
         "WorldChanges"
       ],
       "joins": [],
-      "lists": [],
       "name": "world_streaming",
       "needs": [],
       "operations": [
@@ -220,7 +269,6 @@
         "crates/engine_world_streaming/**"
       ],
       "pieces": [],
-      "places": [],
       "reads": [],
       "records": [],
       "resources": [
@@ -236,7 +284,6 @@
           "opt_in": false
         }
       ],
-      "slot": null,
       "smokes": [
         {
           "gpu": true,
@@ -248,7 +295,7 @@
       ],
       "system_set": "world_streaming",
       "type": "engine_world_streaming::WorldStreamingBrick",
-      "version": "181e848a0d0347a0939c40910d4e97e0c109f47592295568a407c4b173d56f73"
+      "version": "99419cdba5673733e7df915ceef27a9d91e841c0e32ff60b167b1b2ed94b67bc"
     },
     {
       "components": [
@@ -256,23 +303,25 @@
       ],
       "consumers": [],
       "crate": "engine_navigation",
-      "defaults": [],
       "dependencies": [
         "engine_core",
         "engine_math",
+        "engine_places",
         "engine_scene",
         "engine_settings",
         "engine_terrain"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [
         "NavAgent",
         "NavAgents"
       ],
-      "joins": [],
-      "lists": [
-        "scene_components"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "scene_components",
+          "wgsl": null
+        }
       ],
       "name": "navigation",
       "needs": [],
@@ -292,9 +341,6 @@
         "crates/engine_navigation/**"
       ],
       "pieces": [],
-      "places": [
-        "scene_components"
-      ],
       "reads": [],
       "records": [
         "terrain_portals"
@@ -311,7 +357,6 @@
           "opt_in": false
         }
       ],
-      "slot": null,
       "smokes": [
         {
           "gpu": true,
@@ -323,22 +368,19 @@
       ],
       "system_set": "navigation",
       "type": "engine_navigation::agents::NavigationBrick",
-      "version": "4f1311f733c61c4c82c246d7f387988c406526df26aa956264742fd81096cede"
+      "version": "987d8ac80da05d62d0802b78435fcdcb56d63cb9892a338e73b4f1fb81dd0de4"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_time_of_day",
-      "defaults": [],
       "dependencies": [
         "engine_core",
         "engine_settings"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
       "joins": [],
-      "lists": [],
       "name": "time_of_day",
       "needs": [],
       "operations": [],
@@ -348,7 +390,6 @@
         "crates/engine_time_of_day/**"
       ],
       "pieces": [],
-      "places": [],
       "reads": [
         "sun"
       ],
@@ -363,12 +404,11 @@
           "opt_in": true
         }
       ],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "time_of_day",
       "type": "engine_time_of_day::TimeOfDayBrick",
-      "version": "9c963a8149bfb1c4dc656b84d69779ef03a8ef2d3b6e7b0e9ca5b70e0fe925ee"
+      "version": "fd7baddab2ae794fb612413d17ebfdc19d9bbe944de302ff4b9eaf4e332baa46"
     },
     {
       "components": [
@@ -376,21 +416,23 @@
       ],
       "consumers": [],
       "crate": "engine_collision",
-      "defaults": [],
       "dependencies": [
         "engine_core",
+        "engine_places",
         "engine_profile",
         "engine_scene",
         "engine_settings"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [
         "CollisionWorld"
       ],
-      "joins": [],
-      "lists": [
-        "scene_components"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "scene_components",
+          "wgsl": null
+        }
       ],
       "name": "collision",
       "needs": [],
@@ -422,9 +464,6 @@
         "crates/engine_collision/**"
       ],
       "pieces": [],
-      "places": [
-        "scene_components"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -433,7 +472,6 @@
         "engine_collision::world::SensorEvents"
       ],
       "settings": [],
-      "slot": null,
       "smokes": [
         {
           "gpu": false,
@@ -443,7 +481,7 @@
       "stats": [],
       "system_set": "collision",
       "type": "engine_collision::Collision",
-      "version": "3517b70531a8f6d45b6273fcdf7353ff46d130f395f756c44522f53a525383d1"
+      "version": "8ff0578340a15d9a24f8067b24c76a2b5c51b399a504432c0a4b19a08dfe18f7"
     },
     {
       "components": [
@@ -451,22 +489,31 @@
       ],
       "consumers": [],
       "crate": "engine_physics",
-      "defaults": [],
       "dependencies": [
         "engine_collision",
         "engine_core",
+        "engine_places",
         "engine_profile",
         "engine_scene",
         "engine_settings"
       ],
-      "faces": [],
-      "fills": [],
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": null,
+          "place": "physics",
+          "wgsl": null
+        }
+      ],
       "inspectors": [
         "PhysicsWorld"
       ],
-      "joins": [],
-      "lists": [
-        "scene_components"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "scene_components",
+          "wgsl": null
+        }
       ],
       "name": "physics",
       "needs": [],
@@ -477,10 +524,6 @@
         "crates/engine_physics/**"
       ],
       "pieces": [],
-      "places": [
-        "physics",
-        "scene_components"
-      ],
       "reads": [
         "collision"
       ],
@@ -489,7 +532,7 @@
         "engine_physics::settings::Physics",
         "engine_physics::settings::PhysicsStats",
         "engine_physics::world::PhysicsWorld",
-        "engine_core::water::WaterObstacles",
+        "engine_places::water::WaterObstacles",
         "engine_physics::obstacles::WaterReaches"
       ],
       "settings": [
@@ -499,7 +542,6 @@
           "opt_in": false
         }
       ],
-      "slot": "physics",
       "smokes": [
         {
           "gpu": false,
@@ -511,41 +553,27 @@
       ],
       "system_set": "physics",
       "type": "engine_physics::PhysicsBrick",
-      "version": "5eb5f0587912736bd3075cd391d9a040a68bb95ead965c6cc66b3812d18d4343"
+      "version": "cbd66554fe126ecbf48c8b7ecc8121dfb13784b19b2a3c888695305ce38c86ea"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_sun",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render"
       ],
-      "faces": [
-        "SunFace",
-        "sun"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": "SunFace",
+          "place": "sun",
+          "wgsl": "sun::faces::sun"
+        }
       ],
-      "fills": [],
       "inspectors": [],
       "joins": [],
-      "lists": [],
       "name": "sun",
       "needs": [
         {
@@ -567,9 +595,6 @@
           "size": 32
         }
       ],
-      "places": [
-        "sun"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -582,45 +607,31 @@
           "opt_in": false
         }
       ],
-      "slot": "sun",
       "smokes": [],
       "stats": [],
       "system_set": "sun",
       "type": "engine_sun::SunBrick",
-      "version": "b71f5be05e4fad231eedfcd6a266e8433312e1437e3a9c0a16eebbb43d86b88b"
+      "version": "7168f19e6cb95311e9d0e5cee119258601ed9e283fe66536c8274636a6f7b8d5"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_lighting",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render"
       ],
-      "faces": [
-        "lighting"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": null,
+          "place": "lighting",
+          "wgsl": "lighting::faces::lighting"
+        }
       ],
-      "fills": [],
       "inspectors": [],
       "joins": [],
-      "lists": [],
       "name": "lighting_model",
       "needs": [
         {
@@ -641,10 +652,6 @@
         },
         {
           "default": true,
-          "face": "surface_point"
-        },
-        {
-          "default": true,
           "face": "bloom"
         },
         {
@@ -653,7 +660,7 @@
         },
         {
           "default": true,
-          "face": "probes"
+          "face": "probe_light"
         },
         {
           "default": true,
@@ -682,9 +689,6 @@
           "size": 32
         }
       ],
-      "places": [
-        "lighting"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -703,43 +707,31 @@
           "opt_in": false
         }
       ],
-      "slot": "lighting",
       "smokes": [],
       "stats": [],
       "system_set": "lighting_model",
       "type": "engine_lighting::LightingModelBrick",
-      "version": "37a9795d1031dc977686c1678413f4f774729afd236be2b3024f9ccde2e35f5e"
+      "version": "cbf897bb60cdcf65ddd2b38e5bb6c639219340318b9f8562dd3b2c7e3c2e9f0d"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_meshes",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render"
       ],
-      "faces": [],
-      "fills": [],
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": null,
+          "place": "meshes",
+          "wgsl": null
+        }
+      ],
       "inspectors": [],
       "joins": [],
-      "lists": [],
       "name": "meshes",
       "needs": [
         {
@@ -749,10 +741,6 @@
         {
           "default": true,
           "face": "occupancy"
-        },
-        {
-          "default": true,
-          "face": "surface_point"
         },
         {
           "default": true,
@@ -772,40 +760,20 @@
         "crates/engine_meshes/**"
       ],
       "pieces": [],
-      "places": [
-        "meshes"
-      ],
       "reads": [],
       "records": [],
       "resources": [],
       "settings": [],
-      "slot": "meshes",
       "smokes": [],
       "stats": [],
       "system_set": "meshes",
       "type": "engine_meshes::MeshesBrick",
-      "version": "b62aec4eb5ed736decbf5a7446da3ec7b82524a4d6429068239890ced43b62e7"
+      "version": "fbce01dbf3c3eed116bb8c5c38b8ef725b3183fc707bd610422d0f40fc3713ed"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_terrain_shading",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
@@ -813,17 +781,33 @@
         "engine_terrain",
         "engine_textures"
       ],
-      "faces": [
-        "HeightfieldFace",
-        "ground",
-        "heightfield",
-        "horizons"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": null,
+          "place": "ground_tiles",
+          "wgsl": "terrain::faces::ground_tiles"
+        },
+        {
+          "cpu": false,
+          "gpu": "HeightfieldFace",
+          "place": "heightfield",
+          "wgsl": "terrain::faces::heightfield"
+        },
+        {
+          "cpu": false,
+          "gpu": null,
+          "place": "horizons",
+          "wgsl": "terrain::faces::horizons"
+        }
       ],
-      "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "terrain_shading"
+      "joins": [
+        {
+          "cpu": false,
+          "place": "terrain_shading",
+          "wgsl": null
+        }
       ],
       "name": "terrain_shading",
       "needs": [
@@ -850,10 +834,6 @@
         {
           "default": true,
           "face": "shadows"
-        },
-        {
-          "default": true,
-          "face": "surface_point"
         }
       ],
       "operations": [],
@@ -875,58 +855,53 @@
           "size": 6160
         }
       ],
-      "places": [
-        "terrain_shading"
-      ],
       "reads": [],
       "records": [],
       "resources": [],
       "settings": [],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "terrain_shading",
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "9355fc807c07d6dc0f52e8ccc0ad188e8cf39ca0e91e88116a199f396ca6cae5"
+      "version": "092e7831e9121cf73e6dddd2751bf218af80caaf1581918aa5b60ef471730d83"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_scatter",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render",
         "engine_terrain"
       ],
-      "faces": [
-        "PlacedFace",
-        "PlacedCovers",
-        "OccupancyFace",
-        "occupancy",
-        "placed"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": "OccupancyFace",
+          "place": "occupancy",
+          "wgsl": "scatter::faces::occupancy"
+        },
+        {
+          "cpu": false,
+          "gpu": "PlacedFace",
+          "place": "placed",
+          "wgsl": "scatter::faces::placed"
+        },
+        {
+          "cpu": false,
+          "gpu": "PlacedCovers",
+          "place": "scatter_covers",
+          "wgsl": null
+        }
       ],
-      "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "scatter"
+      "joins": [
+        {
+          "cpu": false,
+          "place": "scatter",
+          "wgsl": null
+        }
       ],
       "name": "scatter",
       "needs": [
@@ -936,7 +911,7 @@
         },
         {
           "default": false,
-          "face": "ground"
+          "face": "ground_tiles"
         },
         {
           "default": false,
@@ -961,9 +936,6 @@
           "size": 112
         }
       ],
-      "places": [
-        "scatter"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -982,7 +954,6 @@
           "opt_in": false
         }
       ],
-      "slot": null,
       "smokes": [
         {
           "gpu": true,
@@ -992,7 +963,7 @@
       "stats": [],
       "system_set": "scatter",
       "type": "engine_scatter::ScatterBrick",
-      "version": "88863946768690ccf007e343d79d6982a2c217a245594517fd882af88429224a"
+      "version": "b7bac7326ca3bab0c7e342688efa08566f7d8c8ae25f77dd8bdb740d9859eede"
     },
     {
       "components": [],
@@ -1009,22 +980,6 @@
         }
       ],
       "crate": "engine_shadows",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
@@ -1032,15 +987,21 @@
         "engine_render",
         "engine_terrain"
       ],
-      "faces": [
-        "ShadowCastersFace",
-        "shadows"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": "ShadowCastersFace",
+          "place": "shadows",
+          "wgsl": "shadows::faces::shadows"
+        }
       ],
-      "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "detail_consumers"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "detail_consumers",
+          "wgsl": null
+        }
       ],
       "name": "shadows",
       "needs": [],
@@ -1062,10 +1023,6 @@
           "size": 736
         }
       ],
-      "places": [
-        "shadows",
-        "detail_consumers"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -1084,12 +1041,11 @@
           "opt_in": false
         }
       ],
-      "slot": "shadows",
       "smokes": [],
       "stats": [],
       "system_set": "shadows",
       "type": "engine_shadows::ShadowsBrick",
-      "version": "0add9a4b7e5e2088a75806b3cec4ef466cbe3981ced10ee97b98ee61c53409d6"
+      "version": "52bc99c4796d3287ed61d4198169c92ba2c9ca50294ee40425af23290e42067c"
     },
     {
       "components": [],
@@ -1106,21 +1062,26 @@
         }
       ],
       "crate": "engine_lights",
-      "defaults": [],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render"
       ],
-      "faces": [
-        "LightListFace",
-        "lights"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": "LightListFace",
+          "place": "lights",
+          "wgsl": "lights::faces::lights"
+        }
       ],
-      "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "detail_consumers"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "detail_consumers",
+          "wgsl": null
+        }
       ],
       "name": "lights",
       "needs": [],
@@ -1135,10 +1096,6 @@
         "crates/engine_lights/**"
       ],
       "pieces": [],
-      "places": [
-        "lights",
-        "detail_consumers"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -1152,47 +1109,47 @@
           "opt_in": false
         }
       ],
-      "slot": "lights",
       "smokes": [],
       "stats": [],
       "system_set": "lights",
       "type": "engine_lights::LightsBrick",
-      "version": "19eb80348b287c5e34ef56986b0aaf928ccb474071b27e69e4f9dc071eac49a2"
+      "version": "93c1f3f688b736c51976cf9f2239643ce3f07b0e0fcae909ce0be0149db1eaa7"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_sky",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
+        "engine_places",
         "engine_render",
         "engine_time_of_day"
       ],
-      "faces": [
-        "EnvironmentFace",
-        "sky"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": "EnvironmentFace",
+          "place": "sky",
+          "wgsl": "sky::faces::sky"
+        }
       ],
-      "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [],
+      "joins": [
+        {
+          "cpu": false,
+          "place": "post_light",
+          "wgsl": {
+            "functions": [
+              "apply"
+            ],
+            "module": "sky::haze",
+            "reads": [
+              "haze"
+            ]
+          }
+        }
+      ],
       "name": "sky",
       "needs": [
         {
@@ -1243,9 +1200,6 @@
           "size": 480
         }
       ],
-      "places": [
-        "sky"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -1282,12 +1236,11 @@
           "opt_in": false
         }
       ],
-      "slot": "sky",
       "smokes": [],
       "stats": [],
       "system_set": "sky",
       "type": "engine_sky::SkyBrick",
-      "version": "7b3ad2b19524fb9e925010d0046719183ca60d27c6e366671079e6705835f6dc"
+      "version": "841b5494bf68b72c956d8ef0e505376b39e806032b83163961f75a4789aab58b"
     },
     {
       "components": [],
@@ -1299,36 +1252,31 @@
         }
       ],
       "crate": "engine_probes",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render"
       ],
-      "faces": [
-        "probes"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": null,
+          "place": "probe_light",
+          "wgsl": "probes::faces::probe_light"
+        }
       ],
-      "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "probes",
-        "detail_consumers"
+      "joins": [
+        {
+          "cpu": false,
+          "place": "probes",
+          "wgsl": null
+        },
+        {
+          "cpu": true,
+          "place": "detail_consumers",
+          "wgsl": null
+        }
       ],
       "name": "reflection_probes",
       "needs": [
@@ -1352,10 +1300,6 @@
         "crates/engine_probes/**"
       ],
       "pieces": [],
-      "places": [
-        "probes",
-        "detail_consumers"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -1369,12 +1313,11 @@
           "opt_in": false
         }
       ],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "reflection_probes",
       "type": "engine_probes::ReflectionProbesBrick",
-      "version": "62eb94b7cddb7284168b6c195b62e1b182d96dc49c7927fb38354de879e859a9"
+      "version": "42dc3498cb08da977c2d31962bdcf262cc6be7e15f81a8494896a5e21fb3d536"
     },
     {
       "components": [],
@@ -1386,22 +1329,6 @@
         }
       ],
       "crate": "engine_ground_cover",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
@@ -1409,15 +1336,26 @@
         "engine_render",
         "engine_terrain"
       ],
-      "faces": [
-        "cover"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": null,
+          "place": "cover",
+          "wgsl": "cover::faces::cover"
+        }
       ],
-      "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "ground_cover",
-        "detail_consumers"
+      "joins": [
+        {
+          "cpu": false,
+          "place": "ground_cover",
+          "wgsl": null
+        },
+        {
+          "cpu": true,
+          "place": "detail_consumers",
+          "wgsl": null
+        }
       ],
       "name": "ground_cover",
       "needs": [
@@ -1438,12 +1376,8 @@
           "face": "sun"
         },
         {
-          "default": true,
-          "face": "surface_point"
-        },
-        {
           "default": false,
-          "face": "ground"
+          "face": "ground_tiles"
         }
       ],
       "operations": [],
@@ -1457,10 +1391,6 @@
         "crates/engine_ground_cover/**"
       ],
       "pieces": [],
-      "places": [
-        "ground_cover",
-        "detail_consumers"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -1473,12 +1403,11 @@
           "opt_in": false
         }
       ],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "ground_cover",
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "d36cac9b724b00af134ef707198bf53242c4655449f2b8d3304abdfbb085e21c"
+      "version": "a90c2a700d287fc4173582574b4ce86b9559de38e8c918cd8e055fe30a07af93"
     },
     {
       "components": [],
@@ -1500,35 +1429,26 @@
         }
       ],
       "crate": "engine_water",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
+        "engine_places",
         "engine_render",
         "engine_terrain"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "water",
-        "detail_consumers"
+      "joins": [
+        {
+          "cpu": false,
+          "place": "water",
+          "wgsl": null
+        },
+        {
+          "cpu": true,
+          "place": "detail_consumers",
+          "wgsl": null
+        }
       ],
       "name": "water",
       "needs": [
@@ -1551,10 +1471,6 @@
         {
           "default": true,
           "face": "sun"
-        },
-        {
-          "default": true,
-          "face": "surface_point"
         }
       ],
       "operations": [],
@@ -1568,10 +1484,6 @@
         "crates/engine_water/**"
       ],
       "pieces": [],
-      "places": [
-        "water",
-        "detail_consumers"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -1584,29 +1496,29 @@
           "opt_in": false
         }
       ],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "water",
       "type": "engine_water::WaterBrick",
-      "version": "9f9541cdd4862ede38d8a3d016567d8d5e14f7371ecbb1bbd494312d9bcac6c2"
+      "version": "6772010efd81b3ac06401402c17034dc216799ecab0d3432d7b0bb2ccfbc02e4"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_ambient_occlusion",
-      "defaults": [],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "post_effects"
+      "joins": [
+        {
+          "cpu": false,
+          "place": "post_effects",
+          "wgsl": null
+        }
       ],
       "name": "ambient_occlusion",
       "needs": [],
@@ -1621,9 +1533,6 @@
         "crates/engine_ambient_occlusion/**"
       ],
       "pieces": [],
-      "places": [
-        "post_effects"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -1636,33 +1545,16 @@
           "opt_in": false
         }
       ],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "ambient_occlusion",
       "type": "engine_ambient_occlusion::AmbientOcclusionBrick",
-      "version": "cf54fa786af1a8ddad6a9cf9f238f71a045729d62cc59ca9794d13726e920480"
+      "version": "6a40188b5e950fa52d58d958c90152cf255d6fb7baab5501851db7d35cf91304"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_reflections",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
@@ -1670,14 +1562,34 @@
         "engine_settings",
         "engine_terrain"
       ],
-      "faces": [
-        "reflections"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": null,
+          "place": "reflections",
+          "wgsl": "reflections::faces::reflections"
+        }
       ],
-      "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "post_effects"
+      "joins": [
+        {
+          "cpu": false,
+          "place": "post_scene",
+          "wgsl": {
+            "functions": [
+              "apply"
+            ],
+            "module": "reflections::apply",
+            "reads": [
+              "reflections"
+            ]
+          }
+        },
+        {
+          "cpu": false,
+          "place": "post_effects",
+          "wgsl": null
+        }
       ],
       "name": "reflections",
       "needs": [
@@ -1687,7 +1599,7 @@
         },
         {
           "default": false,
-          "face": "ground"
+          "face": "ground_tiles"
         },
         {
           "default": true,
@@ -1711,10 +1623,6 @@
         },
         {
           "default": true,
-          "face": "surface_point"
-        },
-        {
-          "default": true,
           "face": "tonemap"
         }
       ],
@@ -1734,9 +1642,6 @@
           "size": 48
         }
       ],
-      "places": [
-        "post_effects"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -1749,47 +1654,50 @@
           "opt_in": true
         }
       ],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "reflections",
       "type": "engine_reflections::ReflectionsBrick",
-      "version": "0da6e93efc3d42fd093895abe020d3cbb84087d629c9d91477ee4926dbb5a1c5"
+      "version": "7a1563612b6f5b6789f4297e810cb6e264c4f2f609c5825e1428dd21e4d75008"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_bloom",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render",
         "engine_settings"
       ],
-      "faces": [
-        "bloom"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": null,
+          "place": "bloom",
+          "wgsl": "bloom::faces::bloom"
+        }
       ],
-      "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "post_effects"
+      "joins": [
+        {
+          "cpu": false,
+          "place": "post_light",
+          "wgsl": {
+            "functions": [
+              "apply"
+            ],
+            "module": "bloom::apply",
+            "reads": [
+              "bloom"
+            ]
+          }
+        },
+        {
+          "cpu": false,
+          "place": "post_effects",
+          "wgsl": null
+        }
       ],
       "name": "bloom",
       "needs": [
@@ -1814,9 +1722,6 @@
           "size": 32
         }
       ],
-      "places": [
-        "post_effects"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -1829,46 +1734,47 @@
           "opt_in": false
         }
       ],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "bloom",
       "type": "engine_bloom::BloomBrick",
-      "version": "7eefb4bd13c0933ecf2596f2069981eceadafab65cee89d0853ff179e139b00c"
+      "version": "0ecd8a31607223346d9096f50b1a33eaaab128d7e90be9a8966dfe9875896e29"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_dither",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render"
       ],
-      "faces": [
-        "dither"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": null,
+          "place": "dither",
+          "wgsl": "dither::faces::dither"
+        }
       ],
-      "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "post_effects"
+      "joins": [
+        {
+          "cpu": false,
+          "place": "post_display",
+          "wgsl": {
+            "functions": [
+              "apply"
+            ],
+            "module": "dither::apply",
+            "reads": []
+          }
+        },
+        {
+          "cpu": false,
+          "place": "post_effects",
+          "wgsl": null
+        }
       ],
       "name": "dither",
       "needs": [],
@@ -1886,9 +1792,6 @@
           "size": 16
         }
       ],
-      "places": [
-        "post_effects"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -1901,12 +1804,11 @@
           "opt_in": false
         }
       ],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "dither",
       "type": "engine_dither::DitherBrick",
-      "version": "587891801e053badfd1592794d8a18aa99cf42a3f0c7a906146e2e1d5761624c"
+      "version": "1f36c8ce889e6652b8603aca82bf3d13595f8a6bce9b27508fdcb573483166a8"
     },
     {
       "components": [],
@@ -1918,34 +1820,24 @@
         }
       ],
       "crate": "engine_particles",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "particles",
-        "detail_consumers"
+      "joins": [
+        {
+          "cpu": false,
+          "place": "particles",
+          "wgsl": null
+        },
+        {
+          "cpu": true,
+          "place": "detail_consumers",
+          "wgsl": null
+        }
       ],
       "name": "particles",
       "needs": [
@@ -1987,10 +1879,6 @@
         "crates/engine_particles/**"
       ],
       "pieces": [],
-      "places": [
-        "particles",
-        "detail_consumers"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -2004,48 +1892,40 @@
           "opt_in": false
         }
       ],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "particles",
       "type": "engine_particles::ParticlesBrick",
-      "version": "1096e141a84708c558cf8ddb8d099afe491953984ff8fa3837b8b8e39cde59ba"
+      "version": "a50e7f99178d200da13b6a268c6cdfcefbcf4bc8dfd9f74043198f7516a6ff60"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_taa",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render"
       ],
-      "faces": [],
-      "fills": [],
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": null,
+          "place": "antialiasing",
+          "wgsl": null
+        }
+      ],
       "inspectors": [],
       "joins": [],
-      "lists": [],
       "name": "taa",
       "needs": [
         {
           "default": true,
           "face": "dither"
+        },
+        {
+          "default": true,
+          "face": "post_scene"
         }
       ],
       "operations": [],
@@ -2059,9 +1939,6 @@
         "crates/engine_taa/**"
       ],
       "pieces": [],
-      "places": [
-        "antialiasing"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -2074,7 +1951,6 @@
           "opt_in": false
         }
       ],
-      "slot": "antialiasing",
       "smokes": [
         {
           "gpu": true,
@@ -2084,41 +1960,28 @@
       "stats": [],
       "system_set": "taa",
       "type": "engine_taa::TaaBrick",
-      "version": "b0a9cadf71f451b85edbc3fb60d72752c0d2eab901377d429c9d7e6dd2cc6c06"
+      "version": "0b33eaaa36d44eb0e840e7ba633fd2f645a714aebc9341b9ff797f04558b8e42"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_auto_exposure",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render",
         "engine_settings"
       ],
-      "faces": [
-        "MeteredExposure"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": "MeteredExposure",
+          "place": "exposure",
+          "wgsl": null
+        }
       ],
-      "fills": [],
       "inspectors": [],
       "joins": [],
-      "lists": [],
       "name": "auto_exposure",
       "needs": [
         {
@@ -2141,9 +2004,6 @@
         "crates/engine_auto_exposure/**"
       ],
       "pieces": [],
-      "places": [
-        "exposure"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -2156,45 +2016,31 @@
           "opt_in": true
         }
       ],
-      "slot": "exposure",
       "smokes": [],
       "stats": [],
       "system_set": "auto_exposure",
       "type": "engine_auto_exposure::AutoExposureBrick",
-      "version": "e4558fc693e7be630064b519124b67b8e2836a63a4aea02348cded9d5f6b2842"
+      "version": "5c25ddbe6e622440c694ccfa5000912b3cfdfae9d30a1db87537278abe1ec967"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_tonemap",
-      "defaults": [
-        "shadows",
-        "sky",
-        "lights",
-        "probes",
-        "occupancy",
-        "horizons",
-        "tonemap",
-        "sun",
-        "bloom",
-        "reflections",
-        "dither",
-        "surface_point",
-        "cover",
-        "placed"
-      ],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render"
       ],
-      "faces": [
-        "tonemap"
+      "fills": [
+        {
+          "cpu": false,
+          "gpu": null,
+          "place": "tonemap",
+          "wgsl": "tonemap::faces::tonemap"
+        }
       ],
-      "fills": [],
       "inspectors": [],
       "joins": [],
-      "lists": [],
       "name": "tonemap",
       "needs": [
         {
@@ -2216,9 +2062,6 @@
           "size": 64
         }
       ],
-      "places": [
-        "tonemap"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -2231,29 +2074,29 @@
           "opt_in": false
         }
       ],
-      "slot": "tonemap",
       "smokes": [],
       "stats": [],
       "system_set": "tonemap",
       "type": "engine_tonemap::TonemapBrick",
-      "version": "801ef4b6585edd79e287269273661f8d2e68bb10a06f691055e04378dc7037e2"
+      "version": "50dc44b6ce45866f3e50501f6f4d623ebd445f7ee7c928afb7bde4345299208f"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_debug_view",
-      "defaults": [],
       "dependencies": [
         "engine_core",
         "engine_faces",
         "engine_render"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "debug_view"
+      "joins": [
+        {
+          "cpu": false,
+          "place": "debug_view",
+          "wgsl": null
+        }
       ],
       "name": "debug_view",
       "needs": [],
@@ -2268,9 +2111,6 @@
         "crates/engine_debug_view/**"
       ],
       "pieces": [],
-      "places": [
-        "debug_view"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -2283,7 +2123,6 @@
           "opt_in": true
         }
       ],
-      "slot": null,
       "smokes": [
         {
           "gpu": true,
@@ -2293,7 +2132,7 @@
       "stats": [],
       "system_set": "debug_view",
       "type": "engine_debug_view::DebugViewBrick",
-      "version": "dbbedd5b9276e48db92c3ebd81941495c6cac306a612e246eda64422a9fd10c3"
+      "version": "7c3018e86562e16f7d6151fd5c5866d2cab4545364f6cddba54056d0b8fcfee6"
     },
     {
       "components": [],
@@ -2305,7 +2144,6 @@
         }
       ],
       "crate": "engine_core",
-      "defaults": [],
       "dependencies": [
         "engine_assets",
         "engine_math",
@@ -2315,12 +2153,14 @@
         "engine_tables",
         "engine_textures"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "detail_consumers"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "detail_consumers",
+          "wgsl": null
+        }
       ],
       "name": "level_of_detail",
       "needs": [],
@@ -2332,9 +2172,6 @@
         "crates/engine_core/src/level_of_detail/**"
       ],
       "pieces": [],
-      "places": [
-        "detail_consumers"
-      ],
       "reads": [],
       "records": [],
       "resources": [
@@ -2347,18 +2184,16 @@
           "opt_in": false
         }
       ],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "level_of_detail",
       "type": "engine_core::level_of_detail::LevelOfDetail",
-      "version": "a880c68c5f2ebff21cb1e5c58e17701c028420dd108a4162bceaf71e80647f4f"
+      "version": "7fd030dece0b1f2d8ab82f032cfbb8a86411ef62a23de6ad5bbe8f3c634b491b"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_core",
-      "defaults": [],
       "dependencies": [
         "engine_assets",
         "engine_math",
@@ -2368,11 +2203,9 @@
         "engine_tables",
         "engine_textures"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
       "joins": [],
-      "lists": [],
       "name": "culling",
       "needs": [],
       "operations": [],
@@ -2386,7 +2219,6 @@
         "crates/engine_core/src/gpu_culling/**"
       ],
       "pieces": [],
-      "places": [],
       "reads": [],
       "records": [],
       "resources": [
@@ -2405,7 +2237,6 @@
           "opt_in": false
         }
       ],
-      "slot": null,
       "smokes": [
         {
           "gpu": true,
@@ -2415,13 +2246,12 @@
       "stats": [],
       "system_set": "culling",
       "type": "engine_core::gpu_culling::Culling",
-      "version": "a880c68c5f2ebff21cb1e5c58e17701c028420dd108a4162bceaf71e80647f4f"
+      "version": "7fd030dece0b1f2d8ab82f032cfbb8a86411ef62a23de6ad5bbe8f3c634b491b"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_core",
-      "defaults": [],
       "dependencies": [
         "engine_assets",
         "engine_math",
@@ -2431,11 +2261,9 @@
         "engine_tables",
         "engine_textures"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
       "joins": [],
-      "lists": [],
       "name": "resolution",
       "needs": [],
       "operations": [],
@@ -2446,7 +2274,6 @@
         "crates/engine_core/src/resolution/**"
       ],
       "pieces": [],
-      "places": [],
       "reads": [],
       "records": [],
       "resources": [
@@ -2465,30 +2292,30 @@
           "opt_in": true
         }
       ],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "resolution",
       "type": "engine_core::resolution::Resolution",
-      "version": "a880c68c5f2ebff21cb1e5c58e17701c028420dd108a4162bceaf71e80647f4f"
+      "version": "7fd030dece0b1f2d8ab82f032cfbb8a86411ef62a23de6ad5bbe8f3c634b491b"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_layer_noise",
-      "defaults": [],
       "dependencies": [
         "engine_core",
         "engine_math",
         "engine_settings",
         "engine_terrain"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "terrain_layers"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "terrain_layers",
+          "wgsl": null
+        }
       ],
       "name": "layer_noise",
       "needs": [],
@@ -2499,37 +2326,34 @@
         "crates/engine_layer_noise/**"
       ],
       "pieces": [],
-      "places": [
-        "terrain_layers"
-      ],
       "reads": [],
       "records": [],
       "resources": [],
       "settings": [],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "layer_noise",
       "type": "engine_layer_noise::LayerNoiseBrick",
-      "version": "2e58a8b1b3525f2de81ad694c445d634164e752e5afccd48b56227b38d5c3b8f"
+      "version": "253dfc9db56af087cb1e217a5e4af9ecc0abf6beb87a6697d84e4fc1eaf22653"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_layer_stamps",
-      "defaults": [],
       "dependencies": [
         "engine_core",
         "engine_math",
         "engine_settings",
         "engine_terrain"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "terrain_layers"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "terrain_layers",
+          "wgsl": null
+        }
       ],
       "name": "layer_stamps",
       "needs": [],
@@ -2540,37 +2364,34 @@
         "crates/engine_layer_stamps/**"
       ],
       "pieces": [],
-      "places": [
-        "terrain_layers"
-      ],
       "reads": [],
       "records": [],
       "resources": [],
       "settings": [],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "layer_stamps",
       "type": "engine_layer_stamps::LayerStampsBrick",
-      "version": "c562e4e3d26c8a8dc7fae0636424b15d17baf1f1b3b6bf94c986ecb1bba14bb9"
+      "version": "d9794e4242a10efe35859c470e8f1901a177e2e9650f0e9efceb53cc956a570f"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_layer_heightmap",
-      "defaults": [],
       "dependencies": [
         "engine_core",
         "engine_math",
         "engine_settings",
         "engine_terrain"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "terrain_layers"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "terrain_layers",
+          "wgsl": null
+        }
       ],
       "name": "layer_heightmap",
       "needs": [],
@@ -2581,37 +2402,34 @@
         "crates/engine_layer_heightmap/**"
       ],
       "pieces": [],
-      "places": [
-        "terrain_layers"
-      ],
       "reads": [],
       "records": [],
       "resources": [],
       "settings": [],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "layer_heightmap",
       "type": "engine_layer_heightmap::LayerHeightmapBrick",
-      "version": "57ce978c79a32fa56d13a9541a1283c505099320319761ca8fe7de50d2ad2843"
+      "version": "1ddfbc28b57d9b3b081196ef72bc1b581939557cb381753cc079e1bbdd30665f"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_layer_paths",
-      "defaults": [],
       "dependencies": [
         "engine_core",
         "engine_math",
         "engine_settings",
         "engine_terrain"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "terrain_layers"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "terrain_layers",
+          "wgsl": null
+        }
       ],
       "name": "layer_paths",
       "needs": [],
@@ -2622,37 +2440,34 @@
         "crates/engine_layer_paths/**"
       ],
       "pieces": [],
-      "places": [
-        "terrain_layers"
-      ],
       "reads": [],
       "records": [],
       "resources": [],
       "settings": [],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "layer_paths",
       "type": "engine_layer_paths::LayerPathsBrick",
-      "version": "ca03686dc0f41fe2f4e6b33e466dcf3e9e322c2ae5ab33edcc2f56f95900b50e"
+      "version": "6a0f59a708b41c5678a60459ebf8eb9415b8870391a81116a6b0bf7ea3b83bd1"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_layer_erosion",
-      "defaults": [],
       "dependencies": [
         "engine_core",
         "engine_math",
         "engine_settings",
         "engine_terrain"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "terrain_layers"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "terrain_layers",
+          "wgsl": null
+        }
       ],
       "name": "layer_erosion",
       "needs": [],
@@ -2663,37 +2478,34 @@
         "crates/engine_layer_erosion/**"
       ],
       "pieces": [],
-      "places": [
-        "terrain_layers"
-      ],
       "reads": [],
       "records": [],
       "resources": [],
       "settings": [],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "layer_erosion",
       "type": "engine_layer_erosion::LayerErosionBrick",
-      "version": "e53361f4414c7fe6a3077edad8372aea7b91a5f771d415af6fc2a96fc9183481"
+      "version": "20fea4507871472139d723d35537d21265385f4d5fe82693a95f1064ba65b63c"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_layer_hydrology",
-      "defaults": [],
       "dependencies": [
         "engine_core",
         "engine_math",
         "engine_settings",
         "engine_terrain"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "terrain_layers"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "terrain_layers",
+          "wgsl": null
+        }
       ],
       "name": "layer_hydrology",
       "needs": [],
@@ -2704,37 +2516,34 @@
         "crates/engine_layer_hydrology/**"
       ],
       "pieces": [],
-      "places": [
-        "terrain_layers"
-      ],
       "reads": [],
       "records": [],
       "resources": [],
       "settings": [],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "layer_hydrology",
       "type": "engine_layer_hydrology::LayerHydrologyBrick",
-      "version": "cca3393ababa1e068d069f6e75c445d41b7b3ca9ae8e63a7cbc50405a7c6e80c"
+      "version": "a33790feec85ddd811e6605696564164b33f0a4a04d3d42a77ea04683c917356"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine_layer_relief",
-      "defaults": [],
       "dependencies": [
         "engine_core",
         "engine_math",
         "engine_settings",
         "engine_terrain"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
-      "joins": [],
-      "lists": [
-        "terrain_layers"
+      "joins": [
+        {
+          "cpu": true,
+          "place": "terrain_layers",
+          "wgsl": null
+        }
       ],
       "name": "layer_relief",
       "needs": [],
@@ -2745,25 +2554,20 @@
         "crates/engine_layer_relief/**"
       ],
       "pieces": [],
-      "places": [
-        "terrain_layers"
-      ],
       "reads": [],
       "records": [],
       "resources": [],
       "settings": [],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "layer_relief",
       "type": "engine_layer_relief::LayerReliefBrick",
-      "version": "85164fdd5fd5a06526c5f2c17131b57905b1c2f2234b5ad45a051ed2e12f319c"
+      "version": "081ca1110407d103d6ef1d937b2dd10f6cd096770781b372fb131e4a1ad5fbba"
     },
     {
       "components": [],
       "consumers": [],
       "crate": "engine",
-      "defaults": [],
       "dependencies": [
         "engine_ambient_occlusion",
         "engine_auto_exposure",
@@ -2774,6 +2578,7 @@
         "engine_dev",
         "engine_dither",
         "engine_ground_cover",
+        "engine_grounding",
         "engine_layer_erosion",
         "engine_layer_heightmap",
         "engine_layer_hydrology",
@@ -2788,6 +2593,7 @@
         "engine_panic",
         "engine_particles",
         "engine_physics",
+        "engine_places",
         "engine_probes",
         "engine_profile",
         "engine_reflections",
@@ -2807,11 +2613,9 @@
         "engine_worker",
         "engine_world_streaming"
       ],
-      "faces": [],
       "fills": [],
       "inspectors": [],
       "joins": [],
-      "lists": [],
       "name": "scene_views",
       "needs": [],
       "operations": [
@@ -2831,17 +2635,15 @@
         "crates/engine/src/host/views/**"
       ],
       "pieces": [],
-      "places": [],
       "reads": [],
       "records": [],
       "resources": [],
       "settings": [],
-      "slot": null,
       "smokes": [],
       "stats": [],
       "system_set": "scene_views",
       "type": "engine::host::views::SceneViewsBrick",
-      "version": "f9c1a3e4c63f168e358e4e2251ef4a326344d6784005d5fc50da06f2c01f5051"
+      "version": "0334a334dce1de9ca87e59fc044ea6381aeacab454d422b575983e32b9c83ce7"
     }
   ],
   "frame": {
@@ -2909,110 +2711,10 @@
     ],
     "size": 7712
   },
-  "lists": [
-    {
-      "members": [
-        "terrain",
-        "shadows",
-        "lights",
-        "reflection_probes",
-        "ground_cover",
-        "water",
-        "particles",
-        "level_of_detail"
-      ],
-      "name": "detail_consumers"
-    },
-    {
-      "members": [
-        "terrain"
-      ],
-      "name": "world_solids"
-    },
-    {
-      "members": [
-        "terrain"
-      ],
-      "name": "water_bodies"
-    },
-    {
-      "members": [
-        "terrain",
-        "layer_noise",
-        "layer_stamps",
-        "layer_heightmap",
-        "layer_paths",
-        "layer_erosion",
-        "layer_hydrology",
-        "layer_relief"
-      ],
-      "name": "terrain_layers"
-    },
-    {
-      "members": [
-        "terrain",
-        "navigation",
-        "collision",
-        "physics"
-      ],
-      "name": "scene_components"
-    },
-    {
-      "members": [
-        "terrain_shading"
-      ],
-      "name": "terrain_shading"
-    },
-    {
-      "members": [
-        "scatter"
-      ],
-      "name": "scatter"
-    },
-    {
-      "members": [
-        "reflection_probes"
-      ],
-      "name": "probes"
-    },
-    {
-      "members": [
-        "ground_cover"
-      ],
-      "name": "ground_cover"
-    },
-    {
-      "members": [
-        "water"
-      ],
-      "name": "water"
-    },
-    {
-      "members": [
-        "ambient_occlusion",
-        "reflections",
-        "bloom",
-        "dither"
-      ],
-      "name": "post_effects"
-    },
-    {
-      "members": [
-        "particles"
-      ],
-      "name": "particles"
-    },
-    {
-      "members": [
-        "debug_view"
-      ],
-      "name": "debug_view"
-    }
-  ],
   "places": [
     {
       "face": {
-        "cpu": null,
+        "cpu": "engine_places::ground::Ground",
         "gpu": null,
         "wgsl": null
       },
@@ -3030,7 +2732,7 @@
     },
     {
       "face": {
-        "cpu": null,
+        "cpu": "engine_core::bricks::consumers::DetailConsumers",
         "gpu": null,
         "wgsl": null
       },
@@ -3055,7 +2757,7 @@
     },
     {
       "face": {
-        "cpu": null,
+        "cpu": "engine_places::solids::WorldSolids",
         "gpu": null,
         "wgsl": null
       },
@@ -3073,7 +2775,7 @@
     },
     {
       "face": {
-        "cpu": null,
+        "cpu": "engine_places::water::WaterBodies",
         "gpu": null,
         "wgsl": null
       },
@@ -3091,7 +2793,7 @@
     },
     {
       "face": {
-        "cpu": null,
+        "cpu": "engine_terrain::layer::TerrainLayerKinds",
         "gpu": null,
         "wgsl": null
       },
@@ -3116,13 +2818,14 @@
     },
     {
       "face": {
-        "cpu": null,
+        "cpu": "engine_scene::components::SceneComponents",
         "gpu": null,
         "wgsl": null
       },
       "kind": "list",
       "members": [
         "terrain",
+        "grounding",
         "navigation",
         "collision",
         "physics"
@@ -3156,8 +2859,16 @@
     {
       "face": {
         "cpu": null,
-        "gpu": null,
-        "wgsl": null
+        "gpu": "dyn engine_faces::sun::SunFace",
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn sun_direction() -> vec3<f32>",
+            "fn sun_color() -> vec3<f32>"
+          ],
+          "module": "place::sun",
+          "types": []
+        }
       },
       "kind": "slot",
       "members": [
@@ -3175,7 +2886,25 @@
       "face": {
         "cpu": null,
         "gpu": null,
-        "wgsl": null
+        "wgsl": {
+          "absent": "required",
+          "answers": [
+            "fn highlights() -> vec4<f32>",
+            "fn specular() -> f32",
+            "fn distribution(n_h: f32, alpha: f32) -> f32",
+            "fn visibility(n_v: f32, n_l: f32, alpha: f32) -> f32",
+            "fn fresnel(f0: vec3<f32>, cosine: f32) -> vec3<f32>",
+            "fn environment_brdf(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32>",
+            "fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, distance: f32, on_terrain: bool, crown: f32) -> f32",
+            "fn sun_debug(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, on_terrain: bool) -> u32",
+            "fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32>",
+            "fn widened(point: SurfacePoint, turn_dx: vec3<f32>, turn_dy: vec3<f32>) -> SurfacePoint",
+            "fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded",
+            "fn finish_ground(point: SurfacePoint, local: vec3<f32>) -> Shaded"
+          ],
+          "module": "place::lighting",
+          "types": []
+        }
       },
       "kind": "slot",
       "members": [
@@ -3210,44 +2939,24 @@
     {
       "face": {
         "cpu": null,
-        "gpu": null,
-        "wgsl": null
-      },
-      "kind": "list",
-      "members": [
-        "terrain_shading"
-      ],
-      "name": "terrain_shading",
-      "smokes": [
-        {
-          "gpu": true,
-          "name": "list_terrain_shading"
+        "gpu": "dyn engine_faces::shadows::ShadowCastersFace",
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn sun_shadowed() -> bool",
+            "fn sun_shadow(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>, crown: f32) -> f32",
+            "fn air_shadow(world: vec3<f32>) -> f32",
+            "fn shadow_lookup(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>) -> vec2<f32>",
+            "fn kept_texels(world: vec3<f32>) -> KeptTexels",
+            "fn keep_lift(lift: KeptLift)",
+            "fn kept_level(texel: f32, spacing: f32, levels: u32) -> u32"
+          ],
+          "module": "place::shadows",
+          "types": [
+            "KeptTexels",
+            "KeptLift"
+          ]
         }
-      ]
-    },
-    {
-      "face": {
-        "cpu": null,
-        "gpu": null,
-        "wgsl": null
-      },
-      "kind": "list",
-      "members": [
-        "scatter"
-      ],
-      "name": "scatter",
-      "smokes": [
-        {
-          "gpu": true,
-          "name": "list_scatter"
-        }
-      ]
-    },
-    {
-      "face": {
-        "cpu": null,
-        "gpu": null,
-        "wgsl": null
       },
       "kind": "slot",
       "members": [
@@ -3264,8 +2973,24 @@
     {
       "face": {
         "cpu": null,
-        "gpu": null,
-        "wgsl": null
+        "gpu": "dyn engine_faces::lights::LightListFace",
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn light_cluster(world: vec3<f32>, pixel: vec2<f32>) -> LightCluster",
+            "fn cluster_light(cluster: LightCluster, n: u32) -> Light",
+            "fn shaped_lights() -> bool",
+            "fn kept_regions() -> bool",
+            "fn lights_on() -> bool",
+            "const LIGHT_INTERIOR: u32",
+            "const LIGHT_EXTERIOR: u32"
+          ],
+          "module": "place::lights",
+          "types": [
+            "Light",
+            "LightCluster"
+          ]
+        }
       },
       "kind": "slot",
       "members": [
@@ -3282,8 +3007,28 @@
     {
       "face": {
         "cpu": null,
-        "gpu": null,
-        "wgsl": null
+        "gpu": "dyn engine_faces::environment::EnvironmentFace",
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn sky_average(normal: vec3<f32>) -> vec3<f32>",
+            "fn sky_above(normal: vec3<f32>) -> vec3<f32>",
+            "fn atmospheric(light: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>) -> vec4<f32>",
+            "fn atmospheric_cover(eye: vec3<f32>, point: vec3<f32>) -> f32",
+            "fn cloud_passing(world: vec3<f32>) -> f32",
+            "fn mirrored_along(start: vec3<f32>, direction: vec3<f32>) -> vec3<f32>",
+            "fn environment_levels() -> u32",
+            "fn environment_size() -> u32",
+            "fn environment_sample(direction: vec3<f32>, layer: u32, level: f32) -> vec3<f32>",
+            "fn zenith() -> vec3<f32>",
+            "fn horizon() -> vec3<f32>",
+            "fn ambient() -> f32",
+            "fn sunlight(authored: vec3<f32>) -> vec3<f32>",
+            "fn adapted_exposure(authored: f32) -> f32"
+          ],
+          "module": "place::sky",
+          "types": []
+        }
       },
       "kind": "slot",
       "members": [
@@ -3303,15 +3048,33 @@
         "gpu": null,
         "wgsl": null
       },
-      "kind": "list",
+      "kind": "slot",
       "members": [
-        "reflection_probes"
+        "taa"
       ],
-      "name": "probes",
+      "name": "antialiasing",
       "smokes": [
         {
           "gpu": true,
-          "name": "list_probes"
+          "name": "slot_antialiasing"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": "dyn engine_faces::display::MeteredExposure",
+        "wgsl": null
+      },
+      "kind": "slot",
+      "members": [
+        "auto_exposure"
+      ],
+      "name": "exposure",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "slot_exposure"
         }
       ]
     },
@@ -3319,17 +3082,370 @@
       "face": {
         "cpu": null,
         "gpu": null,
-        "wgsl": null
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn tonemap(color: vec3<f32>) -> vec3<f32>",
+            "fn apply(color: vec3<f32>, at: PostPixel) -> vec3<f32>",
+            "fn exposure() -> f32"
+          ],
+          "module": "place::tonemap",
+          "types": []
+        }
       },
-      "kind": "list",
+      "kind": "slot",
       "members": [
-        "ground_cover"
+        "tonemap"
       ],
-      "name": "ground_cover",
+      "name": "tonemap",
       "smokes": [
         {
           "gpu": true,
-          "name": "list_ground_cover"
+          "name": "slot_tonemap"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn glow_weight(color: vec3<f32>) -> f32"
+          ],
+          "module": "place::bloom",
+          "types": []
+        }
+      },
+      "kind": "slot",
+      "members": [
+        "bloom"
+      ],
+      "name": "bloom",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "slot_bloom"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn dithering() -> bool",
+            "fn stored(color: vec3<f32>, pixel: vec2<f32>) -> vec3<f32>"
+          ],
+          "module": "place::dither",
+          "types": []
+        }
+      },
+      "kind": "slot",
+      "members": [
+        "dither"
+      ],
+      "name": "dither",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "slot_dither"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn reflects() -> bool",
+            "fn max_roughness() -> f32"
+          ],
+          "module": "place::reflections",
+          "types": []
+        }
+      },
+      "kind": "slot",
+      "members": [
+        "reflections"
+      ],
+      "name": "reflections",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "slot_reflections"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn environment_light(direction: vec3<f32>, level: f32, world: vec3<f32>, reflected_sky: vec3<f32>) -> EnvironmentLight",
+            "fn in_interior(world: vec3<f32>) -> bool"
+          ],
+          "module": "place::probe_light",
+          "types": [
+            "EnvironmentLight"
+          ]
+        }
+      },
+      "kind": "slot",
+      "members": [
+        "reflection_probes"
+      ],
+      "name": "probe_light",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "slot_probe_light"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": "dyn engine_faces::occupancy::OccupancyFace",
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn occupancy_visibility(world: vec3<f32>) -> f32",
+            "fn foliage() -> vec4<f32>"
+          ],
+          "module": "place::occupancy",
+          "types": []
+        }
+      },
+      "kind": "slot",
+      "members": [
+        "scatter"
+      ],
+      "name": "occupancy",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "slot_occupancy"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": "dyn engine_faces::placed::PlacedFace",
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn placed_shown(record: Record) -> bool",
+            "const DEAD: u32",
+            "const HIDDEN: u32"
+          ],
+          "module": "place::placed",
+          "types": [
+            "Record",
+            "Pose"
+          ]
+        }
+      },
+      "kind": "slot",
+      "members": [
+        "scatter"
+      ],
+      "name": "placed",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "slot_placed"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn cover_growth(lush: f32) -> CoverGrowth",
+            "fn cover_tint(lush: f32, vegetated: f32) -> vec3<f32>",
+            "fn cover_clump_spacing(layer: u32) -> f32",
+            "fn cover_clump_layer(at: vec2<f32>, layer: u32) -> vec4<f32>",
+            "fn cover_clumped(look: vec4<f32>) -> CoverClumped",
+            "fn cover_share(away: f32, law: CoverLaw) -> f32",
+            "fn cover_shown(away: f32, share: f32, law: CoverLaw) -> f32",
+            "fn cover_seen(depth: f32) -> CoverSeen",
+            "const COVER_FAR_SIDE: f32",
+            "const COVER_ROUGHNESS: f32"
+          ],
+          "module": "place::cover",
+          "types": [
+            "CoverLaw",
+            "CoverGrowth",
+            "CoverClumped",
+            "CoverSeen"
+          ]
+        }
+      },
+      "kind": "slot",
+      "members": [
+        "ground_cover"
+      ],
+      "name": "cover",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "slot_cover"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32",
+            "fn bounce_light(world: vec3<f32>, normal: vec3<f32>, on_terrain: bool) -> BounceLight",
+            "fn open_sky(world: vec3<f32>) -> OpenSky"
+          ],
+          "module": "place::horizons",
+          "types": [
+            "BounceLight",
+            "OpenSky"
+          ]
+        }
+      },
+      "kind": "slot",
+      "members": [
+        "terrain_shading"
+      ],
+      "name": "horizons",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "slot_horizons"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": "dyn engine_faces::heightfield::HeightfieldFace",
+        "wgsl": {
+          "absent": "required",
+          "answers": [
+            "fn terrain_uniform() -> TerrainUniform",
+            "fn terrain_view_uniform() -> TerrainView",
+            "fn surface_leaf(index: u32) -> SurfaceTriangle",
+            "fn water_info_at(texel: vec3<i32>) -> vec4<u32>",
+            "fn surface_vertex(triangle: SurfaceTriangle, vertex: u32) -> vec2<f32>",
+            "fn terrain_level_height(local: vec2<f32>, level: u32) -> TerrainLevelHeight",
+            "fn terrain_ground_samples(local: vec2<f32>) -> TerrainGroundSamples",
+            "fn terrain_ground_rise(samples: TerrainGroundSamples, local: vec2<f32>, height: f32, meters: f32) -> TerrainGroundRise",
+            "fn water_texel(block: u32, sample: vec2<u32>) -> vec3<i32>",
+            "fn water_words(words: vec4<u32>) -> WaterWords",
+            "fn water_cell(local: vec2<f32>, level: u32) -> WaterCell",
+            "fn water_smooth(surfaces: array<vec2<f32>, 16>, within: vec2<f32>, spacing: f32) -> WaterLevel",
+            "fn water_read(cell: WaterCell) -> WaterAt",
+            "fn water_at_level(level: WaterLevel) -> WaterAt",
+            "fn water_words_add(at: WaterAt, words: WaterWords, share: f32, nearest: bool) -> WaterAt",
+            "const TERRAIN_GRID: u32",
+            "const WATER_LIVE_BLOCK: u32",
+            "const NO_WATER_BLOCK: u32",
+            "const NO_WATER_SURFACE: f32",
+            "const WATER_TILE_PATCHES: u32",
+            "const WATER_SPAN_LEAST: f32",
+            "const WATER_SPAN_MOST: f32",
+            "const WATER_HELD: f32"
+          ],
+          "module": "place::heightfield",
+          "types": [
+            "TerrainUniform",
+            "TerrainView",
+            "SurfaceTriangle",
+            "TerrainLevelHeight",
+            "TerrainSubdivision",
+            "TerrainGroundSamples",
+            "TerrainGroundRise",
+            "WaterWords",
+            "WaterLevel",
+            "WaterAt",
+            "WaterCell"
+          ]
+        }
+      },
+      "kind": "slot",
+      "members": [
+        "terrain_shading"
+      ],
+      "name": "heightfield",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "slot_heightfield"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": {
+          "absent": "required",
+          "answers": [
+            "fn ground_of(info: TerrainInfo) -> GroundTerrain",
+            "fn ground_extent(terrain: GroundTerrain) -> vec2<f32>",
+            "fn level_tiles(terrain: GroundTerrain, level: u32) -> vec2<u32>",
+            "fn tile_layer(terrain: GroundTerrain, level: u32, tile: vec2<u32>) -> u32",
+            "fn level_tile(terrain: GroundTerrain, level: u32, samples: vec2<f32>) -> LevelTile",
+            "fn tile_height(tile: LevelTile, sample: vec2<u32>) -> f32",
+            "fn tile_peak(tile: LevelTile, texel: vec2<u32>, mip: u32) -> f32",
+            "fn tile_gradient(tile: LevelTile, sample: vec2<u32>) -> vec2<f32>",
+            "fn tile_material(tile: LevelTile, sample: vec2<u32>) -> GroundMaterial",
+            "fn triangle_height(a: f32, b: f32, c: f32, d: f32, f: vec2<f32>) -> f32",
+            "fn true_height(terrain: GroundTerrain, local: vec2<f32>, level: u32, tile: LevelTile) -> f32",
+            "fn ground_tile(terrain: GroundTerrain, local: vec2<f32>, first: u32) -> GroundTile",
+            "fn ground_height(terrain: GroundTerrain, local: vec2<f32>) -> GroundHeight",
+            "fn ground_colors_mip(terrain: GroundTerrain, footprint: f32) -> u32",
+            "fn ground_colors(terrain: GroundTerrain, layer: u32, local: vec2<f32>, mip: u32) -> vec4<f32>",
+            "fn macro_color(colors: vec4<f32>) -> vec3<f32>",
+            "fn material_look(base: u32, material: u32) -> MaterialLook",
+            "fn material_cover(base: u32, material: u32) -> MaterialCover",
+            "const NOT_RESIDENT: u32",
+            "const TILE_QUADS: u32",
+            "const PEAK_MIPS: u32",
+            "const PEAK_CELLS: u32"
+          ],
+          "module": "place::ground_tiles",
+          "types": [
+            "MaterialCover",
+            "GroundTerrain",
+            "LevelTile",
+            "TerrainInfo",
+            "GroundHeight",
+            "GroundTile",
+            "GroundMaterial",
+            "MaterialLook"
+          ]
+        }
+      },
+      "kind": "slot",
+      "members": [
+        "terrain_shading"
+      ],
+      "name": "ground_tiles",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "slot_ground_tiles"
         }
       ]
     },
@@ -3359,16 +3475,67 @@
       },
       "kind": "list",
       "members": [
-        "ambient_occlusion",
-        "reflections",
-        "bloom",
-        "dither"
+        "ground_cover"
       ],
-      "name": "post_effects",
+      "name": "ground_cover",
       "smokes": [
         {
           "gpu": true,
-          "name": "list_post_effects"
+          "name": "list_ground_cover"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": null
+      },
+      "kind": "list",
+      "members": [
+        "scatter"
+      ],
+      "name": "scatter",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "list_scatter"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": null
+      },
+      "kind": "list",
+      "members": [
+        "terrain_shading"
+      ],
+      "name": "terrain_shading",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "list_terrain_shading"
+        }
+      ]
+    },
+    {
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": null
+      },
+      "kind": "list",
+      "members": [
+        "reflection_probes"
+      ],
+      "name": "probes",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "list_probes"
         }
       ]
     },
@@ -3396,60 +3563,6 @@
         "gpu": null,
         "wgsl": null
       },
-      "kind": "slot",
-      "members": [
-        "taa"
-      ],
-      "name": "antialiasing",
-      "smokes": [
-        {
-          "gpu": true,
-          "name": "slot_antialiasing"
-        }
-      ]
-    },
-    {
-      "face": {
-        "cpu": null,
-        "gpu": null,
-        "wgsl": null
-      },
-      "kind": "slot",
-      "members": [
-        "auto_exposure"
-      ],
-      "name": "exposure",
-      "smokes": [
-        {
-          "gpu": true,
-          "name": "slot_exposure"
-        }
-      ]
-    },
-    {
-      "face": {
-        "cpu": null,
-        "gpu": null,
-        "wgsl": null
-      },
-      "kind": "slot",
-      "members": [
-        "tonemap"
-      ],
-      "name": "tonemap",
-      "smokes": [
-        {
-          "gpu": true,
-          "name": "slot_tonemap"
-        }
-      ]
-    },
-    {
-      "face": {
-        "cpu": null,
-        "gpu": null,
-        "wgsl": null
-      },
       "kind": "list",
       "members": [
         "debug_view"
@@ -3461,85 +3574,121 @@
           "name": "list_debug_view"
         }
       ]
-    }
-  ],
-  "slots": [
-    {
-      "filler": "terrain",
-      "fillers": [
-        "terrain"
-      ],
-      "name": "ground"
     },
     {
-      "filler": "physics",
-      "fillers": [
-        "physics"
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": null
+      },
+      "kind": "list",
+      "members": [
+        "ambient_occlusion",
+        "reflections",
+        "bloom",
+        "dither"
       ],
-      "name": "physics"
+      "name": "post_effects",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "list_post_effects"
+        }
+      ]
     },
     {
-      "filler": "sun",
-      "fillers": [
-        "sun"
+      "face": {
+        "cpu": null,
+        "gpu": "dyn engine_scatter::scatter::PlacedCovers",
+        "wgsl": null
+      },
+      "kind": "slot",
+      "members": [
+        "scatter"
       ],
-      "name": "sun"
+      "name": "scatter_covers",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "slot_scatter_covers"
+        }
+      ]
     },
     {
-      "filler": "lighting_model",
-      "fillers": [
-        "lighting_model"
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn apply(color: vec3<f32>, at: PostPixel) -> vec3<f32>"
+          ],
+          "module": "place::post_light",
+          "types": []
+        }
+      },
+      "kind": "list",
+      "members": [
+        "sky",
+        "bloom"
       ],
-      "name": "lighting"
+      "name": "post_light",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "list_post_light"
+        }
+      ]
     },
     {
-      "filler": "meshes",
-      "fillers": [
-        "meshes"
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn apply(light: SceneLight, at: PostPixel) -> SceneLight"
+          ],
+          "module": "place::post_scene",
+          "types": []
+        }
+      },
+      "kind": "list",
+      "members": [
+        "reflections"
       ],
-      "name": "meshes"
+      "name": "post_scene",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "list_post_scene"
+        }
+      ]
     },
     {
-      "filler": "shadows",
-      "fillers": [
-        "shadows"
+      "face": {
+        "cpu": null,
+        "gpu": null,
+        "wgsl": {
+          "absent": "nobody",
+          "answers": [
+            "fn apply(color: vec3<f32>, at: PostPixel) -> vec3<f32>"
+          ],
+          "module": "place::post_display",
+          "types": []
+        }
+      },
+      "kind": "list",
+      "members": [
+        "dither"
       ],
-      "name": "shadows"
-    },
-    {
-      "filler": "lights",
-      "fillers": [
-        "lights"
-      ],
-      "name": "lights"
-    },
-    {
-      "filler": "sky",
-      "fillers": [
-        "sky"
-      ],
-      "name": "sky"
-    },
-    {
-      "filler": "taa",
-      "fillers": [
-        "taa"
-      ],
-      "name": "antialiasing"
-    },
-    {
-      "filler": "auto_exposure",
-      "fillers": [
-        "auto_exposure"
-      ],
-      "name": "exposure"
-    },
-    {
-      "filler": "tonemap",
-      "fillers": [
-        "tonemap"
-      ],
-      "name": "tonemap"
+      "name": "post_display",
+      "smokes": [
+        {
+          "gpu": true,
+          "name": "list_post_display"
+        }
+      ]
     }
   ]
 }

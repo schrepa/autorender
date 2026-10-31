@@ -246,6 +246,7 @@ pub(crate) const MAP: &[Rule] = &[
             "crates/engine_scene/**",
             "crates/engine_settings/**",
             "crates/engine_places/**",
+            "crates/engine_grounding/**",
         ],
         checks: &[
             CoreSmokes,

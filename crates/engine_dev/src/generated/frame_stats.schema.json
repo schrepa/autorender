@@ -1135,12 +1135,6 @@
     },
     "linked": {
       "properties": {
-        "defaulted": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
         "faces": {
           "additionalProperties": {
             "type": "string"
@@ -1165,7 +1159,6 @@
       },
       "required": [
         "faces",
-        "defaulted",
         "nobody",
         "lists"
       ],

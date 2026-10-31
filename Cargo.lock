@@ -896,6 +896,7 @@ dependencies = [
  "engine_dev",
  "engine_dither",
  "engine_ground_cover",
+ "engine_grounding",
  "engine_layer_erosion",
  "engine_layer_heightmap",
  "engine_layer_hydrology",
@@ -910,6 +911,7 @@ dependencies = [
  "engine_panic",
  "engine_particles",
  "engine_physics",
+ "engine_places",
  "engine_probes",
  "engine_profile",
  "engine_reflections",
@@ -1032,6 +1034,7 @@ version = "0.1.0"
 dependencies = [
  "bevy_ecs",
  "engine_core",
+ "engine_places",
  "engine_profile",
  "engine_scene",
  "engine_settings",
@@ -1124,6 +1127,19 @@ dependencies = [
  "engine_render",
  "engine_terrain",
  "wgpu",
+]
+
+[[package]]
+name = "engine_grounding"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "engine_core",
+ "engine_places",
+ "engine_scene",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
 ]
 
 [[package]]
@@ -1307,6 +1323,7 @@ dependencies = [
  "bevy_ecs",
  "engine_core",
  "engine_math",
+ "engine_places",
  "engine_scene",
  "engine_settings",
  "engine_sources",
@@ -1344,6 +1361,7 @@ dependencies = [
  "bevy_ecs",
  "engine_collision",
  "engine_core",
+ "engine_places",
  "engine_profile",
  "engine_scene",
  "engine_settings",
@@ -1359,7 +1377,12 @@ dependencies = [
 name = "engine_places"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "engine_core",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1509,6 +1532,7 @@ dependencies = [
  "bytemuck",
  "engine_core",
  "engine_faces",
+ "engine_places",
  "engine_render",
  "engine_time_of_day",
  "glam 0.30.9",
@@ -1560,6 +1584,7 @@ dependencies = [
  "engine_assets",
  "engine_core",
  "engine_math",
+ "engine_places",
  "engine_profile",
  "engine_scene",
  "engine_settings",
@@ -1625,6 +1650,7 @@ dependencies = [
  "bytemuck",
  "engine_core",
  "engine_faces",
+ "engine_places",
  "engine_render",
  "engine_sources",
  "engine_terrain",
@@ -2154,6 +2180,7 @@ dependencies = [
  "bytemuck",
  "engine_core",
  "engine_faces",
+ "engine_places",
  "engine_render",
  "engine_scene",
  "engine_settings",
@@ -4908,6 +4935,7 @@ dependencies = [
  "engine_lodbuild",
  "engine_native",
  "engine_navigation",
+ "engine_places",
  "engine_profiler",
  "engine_render",
  "engine_scene",

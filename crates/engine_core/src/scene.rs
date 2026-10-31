@@ -327,7 +327,6 @@ pub struct RenderSnapshot {
     pub view_projection: Mat4,
     pub camera_position: Vec3,
     pub detail_eye: Vec3,
-    pub surface_under_eye: Option<f32>,
     pub elapsed_seconds: f32,
     pub presented_seconds: f64,
     pub wind: [f32; 4],

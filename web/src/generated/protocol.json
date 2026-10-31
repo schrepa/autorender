@@ -1,6 +1,7 @@
 {
   "bricks": [
     "terrain",
+    "grounding",
     "wind",
     "world_streaming",
     "navigation",

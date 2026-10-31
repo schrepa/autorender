@@ -281,7 +281,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     observed.check(count > 0, || "no tile has portals".into());
 
     let route = (Vec2::new(212.0, 262.0), Vec2::new(412.0, 262.0));
-    let obstacles = [engine_core::GroundObstacle {
+    let obstacles = [engine_places::GroundObstacle {
         center: Vec2::new(312.0, 262.0),
         radius: 12.0,
     }];
@@ -584,7 +584,7 @@ fn portals(
     Ok((ground, bytes))
 }
 
-fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> engine_core::GroundGrid {
+fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> engine_places::GroundGrid {
     let side = engine_terrain::TILE_SAMPLES as usize;
     let stride = engine_terrain::TILE_STRIDE as usize;
     let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
@@ -616,7 +616,7 @@ fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> engine_core::Gr
         }
         holes = any.then(|| bits.into_boxed_slice());
     }
-    engine_core::GroundGrid {
+    engine_places::GroundGrid {
         key,
         spacing,
         heights,
@@ -624,7 +624,7 @@ fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> engine_core::Gr
         bridges: layers
             .bridges()
             .into_iter()
-            .map(|bridge| engine_core::GroundBridge {
+            .map(|bridge| engine_places::GroundBridge {
                 deck: bridge.deck,
                 width: bridge.width,
                 tunnel: bridge.tunnel,
@@ -668,7 +668,7 @@ impl Graph {
         &self,
         pyramid: &Pyramid,
         route: (Vec2, Vec2),
-        obstacles: &[engine_core::GroundObstacle],
+        obstacles: &[engine_places::GroundObstacle],
         slice: u64,
     ) -> Result<Option<NavPath>, String> {
         let mut search =

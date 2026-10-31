@@ -508,9 +508,7 @@ fn part_claim(
                             registry
                                 .bricks()
                                 .iter()
-                                .find(|brick| {
-                                    brick.fills.iter().any(|filled| filled.place == part)
-                                })
+                                .find(|brick| brick.fills.iter().any(|filled| filled.place == part))
                                 .map(|brick| {
                                     let render = brick
                                         .extension::<engine_render::render_bricks::RenderBrick>();

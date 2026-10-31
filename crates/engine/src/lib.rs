@@ -71,7 +71,7 @@ mod games {
     pub use engine_debug_view::DebugViewBrick;
     pub use engine_dither::DitherBrick;
     pub use engine_ground_cover::GroundCoverBrick;
-    pub use engine_grounding::{Grounded, GroundingBrick};
+    pub use engine_grounding::GroundingBrick;
     pub use engine_lighting::LightingModelBrick;
     pub use engine_lights::LightsBrick;
     pub use engine_meshes::MeshesBrick;
@@ -87,6 +87,7 @@ mod games {
     pub use engine_probes::ReflectionProbesBrick;
     pub use engine_reflections::{Reflections, ReflectionsBrick};
     pub use engine_scatter::ScatterBrick;
+    pub use engine_scene::Grounded;
     pub use engine_shadows::ShadowsBrick;
     pub use engine_sky::SkyBrick;
     pub use engine_sun::SunBrick;
@@ -121,13 +122,13 @@ pub mod bricks {
     pub use engine_core::{
         Absent, AddBrick, AuthoredId, Brick, BrickCost, BrickCosts, BrickList, BrickRecord,
         BrickRegistry, BrickRow, BrickSet, BrickStats, BrickTable, Bricks, CORE_PASSES, CORE_ROW,
-        CpuList, CpuSlot, DetailConsumer, DetailConsumersList, DrawState, ExplainEntry,
-        ExplainRecord, ExplainRequest, ExplainedEntity, Explainer, Extracted, Face, FaceOffer,
-        FaceType, Fill, Filled, GPU_IDLE_ROW, InspectedKind, InspectorEntry, Join, Joined, List,
-        Member, Members, Operation, OperationEntry, OperationScene, Owned, Place, PlaceKind,
-        SettingsEntry, Slot, StatsEntry, UNATTRIBUTED_ROW, WARMUP_FRAMES, authored_entity,
-        authored_id, bounds, brick_name, face_name, missing_brick, parse_json, parse_value,
-        parse_value_at, source_line,
+        CpuList, CpuSlot, DetailConsumer, DetailConsumers, DetailConsumersList, DrawState,
+        ExplainEntry, ExplainRecord, ExplainRequest, ExplainedEntity, Explainer, Extracted, Face,
+        FaceOffer, FaceType, Fill, Filled, GPU_IDLE_ROW, InspectedKind, InspectorEntry, Join,
+        Joined, List, Member, Members, Operation, OperationEntry, OperationScene, Owned, Place,
+        PlaceKind, SettingsEntry, Slot, StatsEntry, UNATTRIBUTED_ROW, WARMUP_FRAMES,
+        authored_entity, authored_id, bounds, brick_name, face_name, missing_brick, parse_json,
+        parse_value, parse_value_at, source_line,
     };
     pub use engine_places::PhysicsSlot;
 

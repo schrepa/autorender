@@ -6,7 +6,9 @@ use engine::bevy_ecs::prelude::World;
 use engine::bevy_ecs::schedule::graph::Direction;
 use engine::bevy_ecs::schedule::{NodeId, Schedules, SystemSet};
 use engine::bevy_ecs::system::System;
-use engine::bricks::{Absent, BrickRecord, BrickRegistry, BrickSet, PlaceKind};
+use engine::bricks::{
+    Absent, BrickRecord, BrickRegistry, BrickSet, DetailConsumer, DetailConsumers, PlaceKind,
+};
 use engine::scene::SceneComponents;
 use engine_render::linker::face_imports;
 use engine_render::pieces::{PieceDecl, place};
@@ -346,12 +348,16 @@ fn places(registry: &BrickRegistry) -> Vec<Value> {
         .collect()
 }
 
+type Kind = (&'static str, &'static str);
+
+type Consumer = (&'static str, DetailConsumer);
+
 fn record(
     brick: &BrickRecord,
     registry: &BrickRegistry,
     repository: &Repository,
     types: Option<&BTreeSet<TypeId>>,
-    kinds: &[(&'static str, &'static str)],
+    (kinds, consumers): (&[Kind], &[Consumer]),
 ) -> Result<Value, String> {
     let package = repository.of_crate(brick.crate_name).ok_or_else(|| {
         format!(
@@ -399,10 +405,10 @@ fn record(
                 })),
             }))
             .collect::<Vec<_>>(),
-        "consumers": brick
-            .consumers
+        "consumers": consumers
             .iter()
-            .map(|consumer| json!({
+            .filter(|(owner, _)| *owner == brick.name)
+            .map(|(_, consumer)| json!({
                 "name": consumer.name,
                 "setting": consumer.setting,
                 "stat": consumer.stat,
@@ -474,6 +480,14 @@ pub fn bricks_json(repository: &Repository, engine: &mut Engine) -> Result<Strin
                 .collect()
         })
         .unwrap_or_default();
+    let consumers: Vec<(&'static str, DetailConsumer)> = world
+        .get_resource::<DetailConsumers>()
+        .map(|held| {
+            held.consumers()
+                .map(|(brick, consumer)| (brick, *consumer))
+                .collect()
+        })
+        .unwrap_or_default();
     let bricks = registry
         .bricks()
         .iter()
@@ -483,7 +497,7 @@ pub fn bricks_json(repository: &Repository, engine: &mut Engine) -> Result<Strin
                 registry,
                 repository,
                 accessed.get(brick.name),
-                &kinds,
+                (&kinds, &consumers),
             )
         })
         .collect::<Result<Vec<_>, _>>()?;

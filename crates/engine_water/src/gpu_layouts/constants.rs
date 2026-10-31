@@ -4,7 +4,7 @@ engine_render::gpu_consts! {
     pub(crate) const WATER_SHEAR_RANGE: f32 = engine_terrain::WATER_SHEAR_RANGE => ["SIM_SHEAR_RANGE" in "water::sim"];
     pub(crate) const WATER_GRADIENT_RANGE: f32 = 4.0 => ["WATER_GRADIENT_RANGE"];
 
-    pub(crate) const WATER_SIM_GROUP: u32 = engine_terrain::BLOCK_SIDE => ["WATER_SIM_GROUP" in "water::sim", "WATER_LIVE_BLOCK" in "face::heightfield", "@sim_exchange" in "water::sim", "@sim_waves" in "water::sim", "@sim_seconds" in "water::sim", "@sim_drain" in "water::sim", "@sim_update" in "water::sim", "@sim_touch" in "water::sim", "@sim_burst" in "water::sim", "@sim_push" in "water::sim", "@sim_ended" in "water::sim", "@sim_tally" in "water::sim", "@sim_activity" in "water::sim", "@sim_look" in "water::sim", "@sim_drawn" in "water::sim"];
+    pub(crate) const WATER_SIM_GROUP: u32 = engine_terrain::BLOCK_SIDE => ["WATER_SIM_GROUP" in "water::sim", "WATER_LIVE_BLOCK" in "place::heightfield", "@sim_exchange" in "water::sim", "@sim_waves" in "water::sim", "@sim_seconds" in "water::sim", "@sim_drain" in "water::sim", "@sim_update" in "water::sim", "@sim_touch" in "water::sim", "@sim_burst" in "water::sim", "@sim_push" in "water::sim", "@sim_ended" in "water::sim", "@sim_tally" in "water::sim", "@sim_activity" in "water::sim", "@sim_look" in "water::sim", "@sim_drawn" in "water::sim"];
     pub(crate) const SIM_SLOTS: usize = 64 => ["SIM_SLOTS" in "water::sim"];
     pub(crate) const SIM_CELL_SUMS: u64 = 4 => ["SIM_CELL_SUMS" in "water::sim"];
     pub(crate) const SIM_BLOCK_LOOKS: u64 = 3 => ["SIM_BLOCK_LOOKS" in "water::sim"];

@@ -386,12 +386,13 @@ impl GpuPart for TemporalPass {
 
     fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
         if self.reads.is_none() {
-            self.reads = cx.parts.post().map(|post| {
-                post.reads()
+            self.reads = Some(
+                cx.parts
+                    .post_reads()
                     .iter()
                     .filter_map(|&read| cx.table.resource(read))
-                    .collect()
-            });
+                    .collect(),
+            );
         }
         if cx.frame.kind.debug {
             self.resolve = None;

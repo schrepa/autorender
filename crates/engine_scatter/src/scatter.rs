@@ -5,7 +5,9 @@ use std::rc::Rc;
 use crate::shaders::entry::{scatter_cull, scatter_snap};
 use engine_core::glam::{Mat4, Vec3};
 use engine_core::smoke::{SmokeEntry, SmokeResult, SmokeSession};
-use engine_core::{Absent, Face, FaceType, MeshHandle, RecordKey, RenderSnapshot, RenderStats, Slot};
+use engine_core::{
+    Absent, Face, FaceType, MeshHandle, RecordKey, RenderSnapshot, RenderStats, Slot,
+};
 use engine_faces::heightfield::TerrainInfo;
 use engine_faces::placed::{PlacedFace, PlacedRecord, Placements};
 use engine_faces::shadows::{KeptRefresh, SHADOW_FORMAT, SHADOW_POSES};

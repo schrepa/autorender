@@ -261,26 +261,9 @@
         "host_faults",
         "host_images",
         "host_parity",
-        "list_debug_view",
-        "list_ground_cover",
-        "list_particles",
-        "list_post_effects",
-        "list_probes",
-        "list_scatter",
         "list_terrain_layers",
-        "list_terrain_shading",
-        "list_water",
         "native",
         "physics",
-        "slot_antialiasing",
-        "slot_exposure",
-        "slot_lighting",
-        "slot_lights",
-        "slot_meshes",
-        "slot_shadows",
-        "slot_sky",
-        "slot_sun",
-        "slot_tonemap",
         "spline",
         "surfaces",
         "terrain_draws"
@@ -521,31 +504,14 @@
         "host_faults",
         "host_images",
         "host_parity",
-        "list_debug_view",
         "list_detail_consumers",
-        "list_ground_cover",
-        "list_particles",
-        "list_post_effects",
-        "list_probes",
-        "list_scatter",
-        "list_terrain_shading",
-        "list_water",
         "list_water_bodies",
         "list_world_solids",
         "lit_meshes_frames",
         "meshes",
         "native",
         "plugins",
-        "slot_antialiasing",
-        "slot_exposure",
         "slot_ground",
-        "slot_lighting",
-        "slot_lights",
-        "slot_meshes",
-        "slot_shadows",
-        "slot_sky",
-        "slot_sun",
-        "slot_tonemap",
         "spline",
         "streamed_scene",
         "surfaces",
@@ -595,24 +561,7 @@
         "host_faults",
         "host_images",
         "host_parity",
-        "list_debug_view",
-        "list_ground_cover",
-        "list_particles",
-        "list_post_effects",
-        "list_probes",
-        "list_scatter",
-        "list_terrain_shading",
-        "list_water",
         "native",
-        "slot_antialiasing",
-        "slot_exposure",
-        "slot_lighting",
-        "slot_lights",
-        "slot_meshes",
-        "slot_shadows",
-        "slot_sky",
-        "slot_sun",
-        "slot_tonemap",
         "temporal_antialiasing"
       ]
     },
@@ -670,15 +619,7 @@
         "host_faults",
         "host_images",
         "host_parity",
-        "list_debug_view",
         "list_detail_consumers",
-        "list_ground_cover",
-        "list_particles",
-        "list_post_effects",
-        "list_probes",
-        "list_scatter",
-        "list_terrain_shading",
-        "list_water",
         "list_water_bodies",
         "list_world_solids",
         "lit_meshes_frames",
@@ -686,17 +627,8 @@
         "native",
         "physics",
         "plugins",
-        "slot_antialiasing",
-        "slot_exposure",
         "slot_ground",
-        "slot_lighting",
-        "slot_lights",
-        "slot_meshes",
         "slot_physics",
-        "slot_shadows",
-        "slot_sky",
-        "slot_sun",
-        "slot_tonemap",
         "spline",
         "streamed_scene",
         "surfaces",
@@ -790,28 +722,11 @@
         "highlands_jobs",
         "highlands_pond",
         "highlands_torrent",
-        "list_debug_view",
-        "list_ground_cover",
-        "list_particles",
-        "list_post_effects",
-        "list_probes",
-        "list_scatter",
-        "list_terrain_shading",
-        "list_water",
         "list_water_bodies",
         "list_world_solids",
         "lit_meshes_frames",
         "plugins",
-        "slot_antialiasing",
-        "slot_exposure",
         "slot_ground",
-        "slot_lighting",
-        "slot_lights",
-        "slot_meshes",
-        "slot_shadows",
-        "slot_sky",
-        "slot_sun",
-        "slot_tonemap",
         "streamed_scene",
         "terrain_draws",
         "terrain_shapes",
@@ -940,6 +855,7 @@
       "kind": "list",
       "members": [
         "terrain",
+        "grounding",
         "navigation",
         "collision",
         "physics"
@@ -990,26 +906,6 @@
       ]
     },
     {
-      "kind": "list",
-      "members": [
-        "terrain_shading"
-      ],
-      "place": "terrain_shading",
-      "smokes": [
-        "list_terrain_shading"
-      ]
-    },
-    {
-      "kind": "list",
-      "members": [
-        "scatter"
-      ],
-      "place": "scatter",
-      "smokes": [
-        "list_scatter"
-      ]
-    },
-    {
       "kind": "slot",
       "members": [
         "shadows"
@@ -1037,59 +933,6 @@
       "place": "sky",
       "smokes": [
         "slot_sky"
-      ]
-    },
-    {
-      "kind": "list",
-      "members": [
-        "reflection_probes"
-      ],
-      "place": "probes",
-      "smokes": [
-        "list_probes"
-      ]
-    },
-    {
-      "kind": "list",
-      "members": [
-        "ground_cover"
-      ],
-      "place": "ground_cover",
-      "smokes": [
-        "list_ground_cover"
-      ]
-    },
-    {
-      "kind": "list",
-      "members": [
-        "water"
-      ],
-      "place": "water",
-      "smokes": [
-        "list_water"
-      ]
-    },
-    {
-      "kind": "list",
-      "members": [
-        "ambient_occlusion",
-        "reflections",
-        "bloom",
-        "dither"
-      ],
-      "place": "post_effects",
-      "smokes": [
-        "list_post_effects"
-      ]
-    },
-    {
-      "kind": "list",
-      "members": [
-        "particles"
-      ],
-      "place": "particles",
-      "smokes": [
-        "list_particles"
       ]
     },
     {
@@ -1123,6 +966,166 @@
       ]
     },
     {
+      "kind": "slot",
+      "members": [
+        "bloom"
+      ],
+      "place": "bloom",
+      "smokes": [
+        "slot_bloom"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "dither"
+      ],
+      "place": "dither",
+      "smokes": [
+        "slot_dither"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "reflections"
+      ],
+      "place": "reflections",
+      "smokes": [
+        "slot_reflections"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "reflection_probes"
+      ],
+      "place": "probe_light",
+      "smokes": [
+        "slot_probe_light"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "scatter"
+      ],
+      "place": "occupancy",
+      "smokes": [
+        "slot_occupancy"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "scatter"
+      ],
+      "place": "placed",
+      "smokes": [
+        "slot_placed"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "ground_cover"
+      ],
+      "place": "cover",
+      "smokes": [
+        "slot_cover"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "terrain_shading"
+      ],
+      "place": "horizons",
+      "smokes": [
+        "slot_horizons"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "terrain_shading"
+      ],
+      "place": "heightfield",
+      "smokes": [
+        "slot_heightfield"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "terrain_shading"
+      ],
+      "place": "ground_tiles",
+      "smokes": [
+        "slot_ground_tiles"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "water"
+      ],
+      "place": "water",
+      "smokes": [
+        "list_water"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "ground_cover"
+      ],
+      "place": "ground_cover",
+      "smokes": [
+        "list_ground_cover"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "scatter"
+      ],
+      "place": "scatter",
+      "smokes": [
+        "list_scatter"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "terrain_shading"
+      ],
+      "place": "terrain_shading",
+      "smokes": [
+        "list_terrain_shading"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "reflection_probes"
+      ],
+      "place": "probes",
+      "smokes": [
+        "list_probes"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "particles"
+      ],
+      "place": "particles",
+      "smokes": [
+        "list_particles"
+      ]
+    },
+    {
       "kind": "list",
       "members": [
         "debug_view"
@@ -1130,6 +1133,60 @@
       "place": "debug_view",
       "smokes": [
         "list_debug_view"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "ambient_occlusion",
+        "reflections",
+        "bloom",
+        "dither"
+      ],
+      "place": "post_effects",
+      "smokes": [
+        "list_post_effects"
+      ]
+    },
+    {
+      "kind": "slot",
+      "members": [
+        "scatter"
+      ],
+      "place": "scatter_covers",
+      "smokes": [
+        "slot_scatter_covers"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "sky",
+        "bloom"
+      ],
+      "place": "post_light",
+      "smokes": [
+        "list_post_light"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "reflections"
+      ],
+      "place": "post_scene",
+      "smokes": [
+        "list_post_scene"
+      ]
+    },
+    {
+      "kind": "list",
+      "members": [
+        "dither"
+      ],
+      "place": "post_display",
+      "smokes": [
+        "list_post_display"
       ]
     }
   ],
@@ -1144,28 +1201,12 @@
         "highlands_jobs",
         "highlands_pond",
         "highlands_torrent",
-        "list_debug_view",
-        "list_ground_cover",
-        "list_particles",
-        "list_post_effects",
-        "list_probes",
-        "list_scatter",
-        "list_terrain_shading",
-        "list_water",
         "list_water_bodies",
         "list_world_solids",
         "lit_meshes_frames",
         "plugins",
-        "slot_antialiasing",
-        "slot_exposure",
         "slot_ground",
-        "slot_lighting",
-        "slot_lights",
-        "slot_meshes",
-        "slot_shadows",
-        "slot_sky",
-        "slot_sun",
-        "slot_tonemap",
+        "slot_scatter_covers",
         "streamed_scene",
         "terrain_draws",
         "terrain_shapes",
@@ -1470,6 +1511,7 @@
       "smokes": [
         "debug_view",
         "highlands_lod",
+        "slot_scatter_covers",
         "terrain_draws"
       ],
       "stats": true

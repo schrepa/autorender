@@ -53,8 +53,7 @@ pub(crate) static PART: PartEntry = PartEntry {
     create,
 };
 
-pub(crate) const OFFER: FaceOffer =
-    engine_render::offer_face!(ExposurePass => dyn MeteredExposure);
+pub(crate) const OFFER: FaceOffer = engine_render::offer_face!(ExposurePass => dyn MeteredExposure);
 
 fn create(_: &Create<'_>) -> Box<dyn GpuPart> {
     Box::new(ExposurePass::default())

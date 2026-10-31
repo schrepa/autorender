@@ -607,7 +607,10 @@ struct Registered {
 }
 
 fn after_space(code: &[char], mut at: usize) -> usize {
-    while code.get(at).is_some_and(|character| character.is_whitespace()) {
+    while code
+        .get(at)
+        .is_some_and(|character| character.is_whitespace())
+    {
         at += 1;
     }
     at
@@ -763,7 +766,9 @@ fn unanswered(
                 "defines {ty}, a type of place::{place}, where it imports it from there"
             ));
         } else if !imported.contains(ty) && rust::has_word(&code, ty) {
-            problems.push(format!("uses {ty} without importing it from place::{place}"));
+            problems.push(format!(
+                "uses {ty} without importing it from place::{place}"
+            ));
         }
     }
     let asked: Vec<&Answer> = match functions {

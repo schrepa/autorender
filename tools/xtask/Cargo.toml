@@ -14,6 +14,7 @@ engine_textures.workspace = true
 texture2ddecoder.workspace = true
 engine_lodbuild.workspace = true
 engine_core.workspace = true
+engine_places.workspace = true
 engine_terrain.workspace = true
 engine_navigation.workspace = true
 engine_worker.workspace = true
