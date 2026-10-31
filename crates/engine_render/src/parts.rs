@@ -4,7 +4,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use engine_core::{
-    Error, ErrorCode, Expected, FaceOffer, LinkedStats, MeshHandle, RecordKey, RenderFrame,
+    BrickRegistry, Error, ErrorCode, Expected, LinkedStats, MeshHandle, RecordKey, RenderFrame,
     RenderMaterial, RenderMesh, RenderSnapshot, RenderStats, RenderTexture,
 };
 use glam::Mat4;
@@ -454,10 +454,9 @@ pub struct PartDecl {
     pub resources: &'static [ResourceDecl],
     pub hooks: &'static [Hook],
     pub contributes: &'static [crate::bindings::Contribution],
-    pub effects: &'static [crate::composite::PixelEffect],
+    pub resolve: Option<&'static str>,
     pub labels: &'static [&'static str],
     pub lazy: bool,
-    pub faces: &'static [FaceOffer],
     pub needs: &'static [&'static str],
     pub piece: Option<PieceDecl>,
 }
@@ -605,7 +604,7 @@ struct Slot {
 
 struct Offered {
     face: TypeId,
-    slot: usize,
+    brick: &'static str,
     cast: Box<dyn Any + Send + Sync>,
 }
 
@@ -614,6 +613,7 @@ pub struct Parts {
     slots: Vec<Slot>,
     names: &'static [&'static str],
     offered: Vec<Offered>,
+    post_reads: Vec<&'static str>,
     linked: LinkedStats,
 }
 
@@ -622,9 +622,11 @@ impl Parts {
         &mut self,
         entries: &[&'static PartEntry],
         core: &Core,
+        bricks: &BrickRegistry,
         linked: LinkedStats,
     ) -> Result<GraphTable, Error> {
         self.linked = linked;
+        self.post_reads = crate::composite::post_reads(bricks);
         if entries.len() > 64 {
             return Err(Error::new(ErrorCode::RenderFailed, "$.parts")
                 .at_most(64)
@@ -660,26 +662,7 @@ impl Parts {
             };
             self.slots.push(slot);
         }
-        self.offered.clear();
-        for (index, slot) in self.slots.iter().enumerate() {
-            for offer in slot.entry.decl.faces {
-                let face = (offer.face)();
-                if let Some(first) = self.offered.iter().find(|known| known.face == face) {
-                    return Err(Error::new(
-                        ErrorCode::SlotFilledTwice,
-                        format!("$.faces.{}", offer.name()),
-                    )
-                    .expected(Expected::Unique)
-                    .got(slot.entry.decl.brick)
-                    .nearest(self.slots[first.slot].entry.decl.brick));
-                }
-                self.offered.push(Offered {
-                    face,
-                    slot: index,
-                    cast: (offer.cast)(),
-                });
-            }
-        }
+        self.offer(bricks)?;
         let mut table = GraphTable::default();
         for (index, slot) in self.slots.iter().enumerate() {
             let decl = &slot.entry.decl;
@@ -693,6 +676,44 @@ impl Parts {
         let names: Vec<&'static str> = self.slots.iter().map(|slot| slot.entry.decl.name).collect();
         self.names = Box::leak(names.into_boxed_slice());
         Ok(table)
+    }
+
+    fn offer(&mut self, bricks: &BrickRegistry) -> Result<(), Error> {
+        self.offered.clear();
+        for brick in bricks.bricks() {
+            for offer in brick.fills.iter().filter_map(|filled| filled.gpu) {
+                let face = (offer.face)();
+                if let Some(first) = self.offered.iter().find(|known| known.face == face) {
+                    return Err(Error::new(
+                        ErrorCode::SlotFilledTwice,
+                        format!("$.faces.{}", offer.name()),
+                    )
+                    .expected(Expected::Unique)
+                    .got(brick.name)
+                    .nearest(first.brick));
+                }
+                self.offered.push(Offered {
+                    face,
+                    brick: brick.name,
+                    cast: (offer.cast)(),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn offering<F: ?Sized + 'static>(&self) -> Option<(usize, &FaceCast<F>)> {
+        let face = TypeId::of::<F>();
+        let offered = self.offered.iter().find(|offered| offered.face == face)?;
+        let cast = offered.cast.downcast_ref::<FaceCast<F>>()?;
+        let index = self.slots.iter().position(|slot| {
+            slot.entry.decl.brick == offered.brick
+                && slot.part.as_deref().is_some_and(|part| {
+                    let part: &dyn Any = part;
+                    (cast.get)(part).is_some()
+                })
+        })?;
+        Some((index, cast))
     }
 
     fn core_part<T: GpuPart>(&self) -> Option<&T> {
@@ -768,28 +789,20 @@ impl Parts {
     }
 
     pub fn face<F: ?Sized + 'static>(&self) -> Option<&F> {
-        let face = TypeId::of::<F>();
-        let offered = self.offered.iter().find(|offered| offered.face == face)?;
-        let cast = offered.cast.downcast_ref::<FaceCast<F>>()?;
-        let part: &dyn Any = self.slots.get(offered.slot)?.part.as_deref()?;
+        let (slot, cast) = self.offering::<F>()?;
+        let part: &dyn Any = self.slots.get(slot)?.part.as_deref()?;
         (cast.get)(part)
     }
 
     pub fn face_mut<F: ?Sized + 'static>(&mut self) -> Option<&mut F> {
-        let face = TypeId::of::<F>();
-        let offered = self.offered.iter().find(|offered| offered.face == face)?;
-        let get_mut = offered.cast.downcast_ref::<FaceCast<F>>()?.get_mut;
-        let slot = offered.slot;
+        let (slot, cast) = self.offering::<F>()?;
+        let get_mut = cast.get_mut;
         let part: &mut dyn Any = self.slots.get_mut(slot)?.part.as_deref_mut()?;
         get_mut(part)
     }
 
-    pub fn offers(&self, brick: &str) -> Vec<&'static str> {
-        self.slots
-            .iter()
-            .filter(|slot| slot.entry.decl.brick == brick)
-            .flat_map(|slot| slot.entry.decl.faces.iter().map(FaceOffer::name))
-            .collect()
+    pub fn post_reads(&self) -> &[&'static str] {
+        &self.post_reads
     }
 
     pub fn produces(&self, resource: impl Into<Option<ResourceId>>) -> bool {

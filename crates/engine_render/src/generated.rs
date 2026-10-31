@@ -1,6 +1,6 @@
 use engine_core::Error;
 
-use crate::composite::{PixelEffect, SCENE_MODULE, composites, scene_source};
+use crate::composite::{composites, resolves};
 use crate::parts::PartEntry;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -10,17 +10,9 @@ pub struct Generated {
 }
 
 pub fn generated(parts: &[&'static PartEntry]) -> Result<Vec<Generated>, Error> {
-    let effects: Vec<PixelEffect> = parts
-        .iter()
-        .flat_map(|part| part.decl.effects.iter().copied())
-        .collect();
-    let mut made: Vec<Generated> = composites(&effects)?
+    let resolves = resolves(parts.iter().filter_map(|part| part.decl.resolve));
+    Ok(composites(&resolves)
         .into_iter()
         .map(|(path, _, source)| Generated { path, source })
-        .collect();
-    made.push(Generated {
-        path: SCENE_MODULE.to_owned(),
-        source: scene_source(&effects),
-    });
-    Ok(made)
+        .collect())
 }

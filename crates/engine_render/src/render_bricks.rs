@@ -9,7 +9,6 @@ use crate::pipeline_layouts::PipelineLayout;
 pub struct RenderBrick {
     pub parts: Vec<&'static PartEntry>,
     pub modules: Vec<&'static [ShaderModule]>,
-    pub defaults: Vec<&'static [ShaderModule]>,
     pub layouts: Vec<&'static [(&'static str, &'static PipelineLayout)]>,
     pub mirrors: Vec<&'static [Layout]>,
     pub constants: Vec<&'static [Constant]>,
@@ -19,28 +18,12 @@ impl RenderBrick {
     pub fn modules(&self) -> impl Iterator<Item = &'static ShaderModule> + '_ {
         self.modules.iter().flat_map(|modules| modules.iter())
     }
-
-    pub fn defaults(&self) -> impl Iterator<Item = &'static ShaderModule> + '_ {
-        self.defaults.iter().flat_map(|modules| modules.iter())
-    }
-
-    pub fn faces(&self) -> impl Iterator<Item = &'static str> + '_ {
-        self.parts
-            .iter()
-            .flat_map(|part| part.decl.faces.iter().map(engine_core::FaceOffer::name))
-            .chain(
-                self.modules()
-                    .filter_map(|module| crate::faces::face_of(module.path)),
-            )
-    }
 }
 
 pub trait AddRenderParts {
     fn render_part(&mut self, part: &'static PartEntry) -> &mut Self;
 
     fn shaders(&mut self, modules: &'static [ShaderModule]) -> &mut Self;
-
-    fn face_defaults(&mut self, modules: &'static [ShaderModule]) -> &mut Self;
 
     fn pipeline_layouts(
         &mut self,
@@ -63,18 +46,6 @@ impl AddRenderParts for Bricks<'_> {
     fn shaders(&mut self, modules: &'static [ShaderModule]) -> &mut Self {
         if let Some(render) = self.extension::<RenderBrick>() {
             render.modules.push(modules);
-        }
-        self
-    }
-
-    fn face_defaults(&mut self, modules: &'static [ShaderModule]) -> &mut Self {
-        if let Some(render) = self.extension::<RenderBrick>()
-            && !render
-                .defaults
-                .iter()
-                .any(|known| std::ptr::eq(*known, modules))
-        {
-            render.defaults.push(modules);
         }
         self
     }

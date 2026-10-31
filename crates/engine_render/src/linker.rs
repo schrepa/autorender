@@ -7,6 +7,7 @@ use engine_core::{Error, ErrorCode, Expected};
 use wesl::Mangler as _;
 
 use crate::bindings::ResolvedLayout;
+use crate::places::{LinkedPlace, PLACE_OWNER, place_module};
 use crate::shaders::Entry;
 
 pub const UNPLACED_GROUP: u32 = 1_000_000;
@@ -62,7 +63,6 @@ struct Source {
 #[derive(Default)]
 pub struct Linker {
     sources: Vec<Source>,
-    defaults: Vec<ShaderModule>,
     sources_hash: u64,
     composed: BTreeMap<ComposeKey, Arc<Composed>>,
 }
@@ -88,17 +88,13 @@ impl Linker {
                 if known.brick == module.brick && known.text == module.source {
                     continue;
                 }
-                let error = match crate::faces::face_of(module.path) {
-                    Some(face) => Error::new(ErrorCode::SlotFilledTwice, format!("$.faces.{face}")),
-                    None => Error::new(
-                        ErrorCode::DuplicateBrick,
-                        format!("$.shaders.{}", module.path),
-                    ),
-                };
-                return Err(error
-                    .expected(Expected::Unique)
-                    .got(module.brick)
-                    .nearest(known.brick));
+                return Err(Error::new(
+                    ErrorCode::DuplicateBrick,
+                    format!("$.shaders.{}", module.path),
+                )
+                .expected(Expected::Unique)
+                .got(module.brick)
+                .nearest(known.brick));
             }
             self.add(
                 module.path.to_owned(),
@@ -111,39 +107,40 @@ impl Linker {
         Ok(())
     }
 
-    pub fn add_defaults(&mut self, modules: &[ShaderModule]) -> Result<(), Error> {
-        for module in modules {
-            let Some(face) = crate::faces::face_of(module.path) else {
-                return Err(Error::new(
-                    ErrorCode::InvalidName,
-                    format!("$.shaders.{}", module.path),
-                )
-                .expected(Expected::Matching)
-                .got(module.path)
-                .nearest(crate::faces::face_module(module.path)));
-            };
-            if let Some(known) = self.defaults.iter().find(|known| known.path == module.path) {
-                if known.source == module.source {
-                    continue;
-                }
-                return Err(Error::new(
-                    ErrorCode::DuplicateBrick,
-                    format!("$.faces.{face}.default"),
-                )
-                .expected(Expected::Unique)
-                .got(module.brick)
-                .nearest(known.brick));
+    pub fn add_places(&mut self, places: &[LinkedPlace]) -> Result<(), Error> {
+        for linked in places {
+            let name = linked.place.name;
+            if let Some(contract) = linked.place.face.wgsl {
+                self.add_place_module(place_module(name), PLACE_OWNER, Cow::Borrowed(contract))?;
             }
-            self.defaults.push(*module);
+            if let Some(source) = &linked.source {
+                self.add_place_module(
+                    crate::faces::face_module(name),
+                    crate::parts::CORE_BRICK,
+                    Cow::Owned(source.clone()),
+                )?;
+            }
         }
+        self.rehash();
         Ok(())
     }
 
-    pub fn faces_offered(&self) -> Vec<(&str, &'static str)> {
-        self.sources
-            .iter()
-            .filter_map(|source| Some((crate::faces::face_of(&source.path)?, source.brick)))
-            .collect()
+    fn add_place_module(
+        &mut self,
+        path: String,
+        brick: &'static str,
+        text: Cow<'static, str>,
+    ) -> Result<(), Error> {
+        if let Some(known) = self.sources.iter().find(|known| known.path == path) {
+            return Err(
+                Error::new(ErrorCode::DuplicateBrick, format!("$.shaders.{path}"))
+                    .expected(Expected::Unique)
+                    .got(known.brick)
+                    .nearest(brick),
+            );
+        }
+        self.add(path, brick, text, false);
+        Ok(())
     }
 
     pub fn face_needs(&self) -> Vec<FaceNeed> {
@@ -160,38 +157,11 @@ impl Linker {
         needs
     }
 
-    pub fn resolve_faces(&mut self) -> Result<Vec<String>, FaceNeed> {
-        let mut defaulted = Vec::new();
-        loop {
-            let mut added = false;
-            for need in self.face_needs() {
-                let path = crate::faces::face_module(&need.face);
-                if self.sources.iter().any(|source| source.path == path) {
-                    continue;
-                }
-                let Some(default) = self.defaults.iter().find(|module| module.path == path) else {
-                    return Err(need);
-                };
-                let (brick, source) = (default.brick, default.source);
-                self.add(path, brick, Cow::Borrowed(source), false);
-                defaulted.push(need.face);
-                added = true;
-            }
-            if !added {
-                self.rehash();
-                return Ok(defaulted);
-            }
-        }
-    }
-
-    pub fn answered(&self) -> BTreeMap<String, &'static str> {
-        self.face_needs()
-            .into_iter()
-            .filter_map(|need| {
-                let brick = self.module_brick(&crate::faces::face_module(&need.face))?;
-                Some((need.face, brick))
-            })
-            .collect()
+    pub fn unanswered(&self) -> Option<FaceNeed> {
+        self.face_needs().into_iter().find(|need| {
+            let path = crate::faces::face_module(&need.face);
+            !self.sources.iter().any(|source| source.path == path)
+        })
     }
 
     pub fn add_generated(&mut self, path: String, brick: &'static str, source: String) -> bool {

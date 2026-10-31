@@ -84,7 +84,6 @@ pub struct RenderStats {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LinkedStats {
     pub faces: &'static [(&'static str, &'static str)],
-    pub defaulted: &'static [&'static str],
     pub nobody: &'static [&'static str],
     pub lists: &'static [(&'static str, &'static [&'static str])],
 }
@@ -108,7 +107,6 @@ impl Serialize for ListBricks {
 #[derive(Serialize)]
 struct LinkedJson {
     faces: FaceBricks,
-    defaulted: &'static [&'static str],
     nobody: &'static [&'static str],
     lists: ListBricks,
 }
@@ -117,7 +115,6 @@ impl Serialize for LinkedStats {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         LinkedJson {
             faces: FaceBricks(self.faces),
-            defaulted: self.defaulted,
             nobody: self.nobody,
             lists: ListBricks(self.lists),
         }
@@ -137,18 +134,16 @@ impl schemars::JsonSchema for LinkedStats {
 
     fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
         let faces = generator.subschema_for::<BTreeMap<String, String>>();
-        let defaulted = generator.subschema_for::<Vec<String>>();
         let nobody = generator.subschema_for::<Vec<String>>();
         let lists = generator.subschema_for::<BTreeMap<String, Vec<String>>>();
         schemars::json_schema!({
             "type": "object",
             "properties": {
                 "faces": faces,
-                "defaulted": defaulted,
                 "nobody": nobody,
                 "lists": lists,
             },
-            "required": ["faces", "defaulted", "nobody", "lists"],
+            "required": ["faces", "nobody", "lists"],
         })
     }
 }

@@ -8,7 +8,7 @@ use engine_core::{RenderSnapshot, glam::Mat4};
 
 use crate::bindings::{GroupRef, POST};
 use crate::cached::Bound;
-use crate::composite::{PLAIN_RESOLVE, composite_entry, effect_reads, pixel_effects};
+use crate::composite::{PLAIN_RESOLVE, composite_entry};
 use crate::gpu_data::PostUniform;
 use crate::graph::{
     Access, BLACK, Clear, FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl,
@@ -58,10 +58,9 @@ pub static PART: PartEntry = PartEntry {
         ],
         hooks: &[],
         contributes: &[],
-        effects: &[],
+        resolve: None,
         labels: &["engine/post-", "engine/post."],
         lazy: true,
-        faces: &[],
         needs: &[],
         piece: None,
     },
@@ -176,7 +175,7 @@ impl GpuPart for PostPass {
             return;
         }
         self.linked = true;
-        self.reads = effect_reads(&pixel_effects(cx.parts)).collect();
+        self.reads = cx.parts.post_reads().to_vec();
         if let Some(post) = self.post.get_mut() {
             post.composite = composite_pipeline(&cx.core.device, cx.core.canvas_format());
         }

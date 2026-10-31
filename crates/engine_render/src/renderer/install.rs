@@ -36,7 +36,7 @@ impl Renderer {
             .place_pieces(&device, pieces.placed.clone(), pieces.size);
         self.core.shared = shared;
         let scope = crate::gpu_calls::validation_scope(&device);
-        let installed = self.parts.install(&entries, &self.core, linked);
+        let installed = self.parts.install(&entries, &self.core, bricks, linked);
         if installed.is_ok() {
             for &(index, at) in &pieces.placed {
                 let _owner = crate::memory::owned(self.parts.decl(index).brick);
@@ -97,70 +97,48 @@ fn link(
             linker.add_modules(modules)?;
         }
     }
-    for (_, render) in render_bricks(bricks) {
-        for defaults in &render.defaults {
-            linker.add_defaults(defaults)?;
-        }
-    }
+    let places = places_of(bricks)?;
+    linker.add_places(&places)?;
     linker.add_generated(PIECES_MODULE.to_owned(), CORE_BRICK, pieces);
     for module in generated(entries)? {
         linker.add_generated(module.path, CORE_BRICK, module.source);
     }
-    check_needs(bricks, entries, &linker)?;
-    let defaulted = linker
-        .resolve_faces()
-        .map_err(|need| bricks.face_unanswered(&need.face, need.brick))?;
-    let places = places_of(bricks)?;
-    let linked = linked_stats(&linker, defaulted, &places);
-    Ok((linker, linked))
+    check_needs(bricks, entries)?;
+    if let Some(need) = linker.unanswered() {
+        return Err(bricks.face_unanswered(&need.face, need.brick));
+    }
+    Ok((linker, linked_stats(&places)))
 }
 
-fn linked_stats(linker: &Linker, defaulted: Vec<String>, places: &[LinkedPlace]) -> LinkedStats {
-    let faces: Vec<(&'static str, &'static str)> = linker
-        .answered()
-        .into_iter()
-        .map(|(face, brick)| (leaked(face), brick))
-        .collect();
-    let mut defaulted: Vec<&'static str> = defaulted.into_iter().map(leaked).collect();
-    defaulted.sort_unstable();
+fn linked_stats(places: &[LinkedPlace]) -> LinkedStats {
+    let mut faces: Vec<(&'static str, &'static str)> = Vec::new();
     let mut nobody: Vec<&'static str> = Vec::new();
     let mut lists: Vec<(&'static str, &'static [&'static str])> = Vec::new();
     for linked in places {
         match &linked.answered {
+            Some(Answered::Filler { brick, .. }) => faces.push((linked.place.name, *brick)),
             Some(Answered::Nobody) => nobody.push(linked.place.name),
             Some(Answered::Members(members)) => {
                 let bricks: Vec<&'static str> = members.iter().map(|&(brick, _)| brick).collect();
                 lists.push((linked.place.name, Box::leak(bricks.into_boxed_slice())));
             }
-            Some(Answered::Filler { .. }) | None => {}
+            None => {}
         }
     }
+    faces.sort_unstable();
+    nobody.sort_unstable();
+    lists.sort_unstable_by_key(|&(place, _)| place);
     LinkedStats {
         faces: Box::leak(faces.into_boxed_slice()),
-        defaulted: Box::leak(defaulted.into_boxed_slice()),
         nobody: Box::leak(nobody.into_boxed_slice()),
         lists: Box::leak(lists.into_boxed_slice()),
     }
 }
 
-fn leaked(text: String) -> &'static str {
-    Box::leak(text.into_boxed_str())
-}
-
-fn check_needs(
-    bricks: &BrickRegistry,
-    entries: &[&'static PartEntry],
-    linker: &Linker,
-) -> Result<(), Error> {
-    let offered = linker.faces_offered();
+fn check_needs(bricks: &BrickRegistry, entries: &[&'static PartEntry]) -> Result<(), Error> {
     for entry in entries {
         for &need in entry.decl.needs {
-            let answered = bricks.filler(need).is_some()
-                || offered.iter().any(|&(face, _)| face == need)
-                || entries
-                    .iter()
-                    .any(|other| other.decl.faces.iter().any(|offer| offer.name() == need));
-            if !answered {
+            if bricks.filled(need).is_none() {
                 return Err(bricks.face_unanswered(need, entry.decl.brick));
             }
         }
