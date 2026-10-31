@@ -1,9 +1,10 @@
 import package::face::cover::cover_tint;
-import package::face::ground::{
+import package::face::ground_tiles::{
     GroundTerrain, LevelTile, TerrainInfo, ground_colors, ground_extent, ground_of, ground_tile,
     macro_color, material_look, tile_height, tile_material, true_height
 };
-import package::face::placed::{DEAD, HIDDEN, Pose, Record};
+import package::place::placed::{Pose, Record};
+import package::scatter::faces::placed::{DEAD, HIDDEN};
 
 struct Snap {
     counts: vec4<u32>,

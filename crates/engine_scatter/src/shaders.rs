@@ -1,7 +1,7 @@
 engine_render::shader_modules! {
     "scatter::piece" in "scatter" = "piece.wgsl";
-    "face::occupancy" in "scatter" = "faces/occupancy.wgsl";
-    "face::placed" in "scatter" = "faces/placed.wgsl";
+    "scatter::faces::occupancy" in "scatter" = "faces/occupancy.wgsl";
+    "scatter::faces::placed" in "scatter" = "faces/placed.wgsl";
     "terrain::occupancy_maps" in "scatter" = "occupancy.wgsl";
     "scatter::cull" in "scatter" = "scatter_cull.wgsl";
     "scatter::snap" in "scatter" = "scatter_snap.wgsl";

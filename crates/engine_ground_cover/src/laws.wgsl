@@ -1,4 +1,5 @@
-import package::face::cover::{CoverLaw, cover_clump_layer};
+import package::cover::faces::cover::cover_clump_layer;
+import package::place::cover::CoverLaw;
 
 const COVER_LUSH_RATIO: f32 = 2.0;
 

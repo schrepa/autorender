@@ -1,4 +1,5 @@
-import package::face::placed::{Pose, Record, placed_shown};
+import package::place::placed::{Pose, Record};
+import package::scatter::faces::placed::placed_shown;
 
 struct Splat {
     area: vec4<f32>,

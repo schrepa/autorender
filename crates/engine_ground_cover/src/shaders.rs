@@ -2,7 +2,7 @@ use engine_render::graph::Targets;
 use engine_render::shaders::Entry;
 
 engine_render::shader_modules! {
-    "face::cover" in "ground_cover" = "faces/cover.wgsl";
+    "cover::faces::cover" in "ground_cover" = "faces/cover.wgsl";
     "cover::laws" in "ground_cover" = "laws.wgsl";
     "cover::draw" in "ground_cover" = "cover.wgsl";
     "cover::debug" in "ground_cover" = "cover_debug.wgsl";

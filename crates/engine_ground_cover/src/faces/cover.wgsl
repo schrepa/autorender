@@ -2,29 +2,10 @@ import package::cover::laws::{COVER_CLUMP_BRIGHT, COVER_CLUMP_DRY, COVER_CLUMP_H
     COVER_CLUMP_HUE, COVER_CLUMP_LATTICES, COVER_LUSH_RATIO, COVER_LUSH_REFLECTANCE,
     COVER_ROOT_OCCLUSION, cover_clump_hash, cover_widening};
 import package::frame::view::seen_share;
+import package::place::cover::{CoverClumped, CoverGrowth, CoverLaw, CoverSeen};
 
 const COVER_FAR_SIDE: f32 = 0.8;
 const COVER_ROUGHNESS: f32 = 0.7;
-
-struct CoverLaw {
-    span: f32,
-}
-
-struct CoverGrowth {
-    height: f32,
-    density: f32,
-    tint: vec3<f32>,
-}
-
-struct CoverClumped {
-    height: f32,
-    tint: vec3<f32>,
-}
-
-struct CoverSeen {
-    tip: f32,
-    occlusion: f32,
-}
 
 fn cover_growth(lush: f32) -> CoverGrowth {
     let toward = saturate(lush) - 0.5;
