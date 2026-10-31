@@ -114,10 +114,9 @@ pub(crate) static PART: PartEntry = PartEntry {
             Hook::View,
         ],
         contributes: std::slice::from_ref(&FRAME_HORIZONS),
-        effects: &[],
+        resolve: None,
         labels: &[],
         lazy: false,
-        faces: &[engine_render::offer_face!(TerrainPass => dyn HeightfieldFace)],
         needs: &[],
         piece: Some(PieceDecl {
             name: "horizons",

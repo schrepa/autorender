@@ -1,14 +1,15 @@
-import package::face::ground::NOT_RESIDENT;
+import package::face::ground_tiles::NOT_RESIDENT;
+import package::place::heightfield::{SurfaceTriangle, TerrainGroundRise, TerrainGroundSamples,
+    TerrainLevelHeight, TerrainSubdivision, TerrainUniform, TerrainView, WaterAt, WaterCell,
+    WaterLevel, WaterWords};
 import package::terrain::draw::{TerrainBlend, TerrainShadingLevel, terrain_band_rise,
     terrain_border_blend, terrain_control, terrain_control_sampler, terrain_controls_blend,
     terrain_gradient_between, terrain_layer_fades, terrain_material, terrain_material_rises,
     terrain_normals, terrain_steep_blend};
-import package::terrain::field::{SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES,
-    SurfaceTriangle, TerrainLevelHeight, TerrainUniform, TerrainView, surface_along,
+import package::terrain::field::{SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES, surface_along,
     terrain_directory, terrain_load};
 import package::terrain::water_blocks::{WATER_BLOCK, WATER_BLOCKS_SIDE, WATER_FLOW_RANGE,
-    WATER_SHEAR_RANGE, WATER_TILE_WORDS, WaterLevel, WaterWords, water_extent, water_level,
-    water_span, water_spline};
+    WATER_SHEAR_RANGE, WATER_TILE_WORDS, water_extent, water_level, water_span, water_spline};
 
 @group(1) @binding(18) var<uniform> terrain_view: TerrainView;
 
@@ -17,6 +18,18 @@ import package::terrain::water_blocks::{WATER_BLOCK, WATER_BLOCKS_SIDE, WATER_FL
 const TERRAIN_GRID: u32 = 17u;
 
 @group(1) @binding(36) var<storage, read> terrain_surface_leaves: array<SurfaceTriangle>;
+
+fn terrain_uniform() -> TerrainUniform {
+    return terrain;
+}
+
+fn terrain_view_uniform() -> TerrainView {
+    return terrain_view;
+}
+
+fn surface_leaf(index: u32) -> SurfaceTriangle {
+    return terrain_surface_leaves[index];
+}
 
 fn surface_vertex(triangle: SurfaceTriangle, vertex: u32) -> vec2<f32> {
     let parts = 1u << SURFACE_MESHLET_LEVEL;
@@ -76,21 +89,6 @@ fn terrain_level_height(local: vec2<f32>, level: u32) -> TerrainLevelHeight {
     return held;
 }
 
-struct TerrainSubdivision {
-    square: vec4<f32>,
-    tree: vec4<u32>,
-    frame: vec4<u32>,
-    extent: vec4<f32>,
-    cutout: vec4<f32>,
-    planes: array<vec4<f32>, 6>,
-}
-
-struct TerrainGroundSamples {
-    controls: vec4<u32>,
-    gradients: vec4<u32>,
-    within: vec2<f32>,
-}
-
 fn terrain_ground_samples(local: vec2<f32>) -> TerrainGroundSamples {
     var samples = TerrainGroundSamples(vec4<u32>(0u), vec4<u32>(0u), vec2<f32>(0.0));
     let base = terrain.directory.x;
@@ -115,11 +113,6 @@ fn terrain_ground_samples(local: vec2<f32>) -> TerrainGroundSamples {
     return samples;
 }
 
-struct TerrainGroundRise {
-    rise: f32,
-    relief: bool,
-}
-
 fn terrain_ground_rise(samples: TerrainGroundSamples, local: vec2<f32>, height: f32,
         meters: f32) -> TerrainGroundRise {
     let gradient = terrain_gradient_between(samples.gradients, samples.within);
@@ -142,6 +135,10 @@ fn terrain_ground_rise(samples: TerrainGroundSamples, local: vec2<f32>, height: 
 }
 
 @group(1) @binding(51) var water_info: texture_2d_array<u32>;
+
+fn water_info_at(texel: vec3<i32>) -> vec4<u32> {
+    return textureLoad(water_info, texel.xy, texel.z, 0);
+}
 
 const WATER_LIVE_BLOCK: u32 = 8u;
 
@@ -171,21 +168,6 @@ fn water_words(words: vec4<u32>) -> WaterWords {
     read.state = vec3<f32>(state.xy, state.z * WATER_SHEAR_RANGE);
     read.reach = words.y >> 24u;
     return read;
-}
-
-struct WaterAt {
-    surface: f32,
-    depth: f32,
-    held: f32,
-    words: WaterWords,
-    slope: vec2<f32>,
-}
-
-struct WaterCell {
-    level: u32,
-    block: u32,
-    first: vec2<u32>,
-    within: vec2<f32>,
 }
 
 fn water_cell(local: vec2<f32>, level: u32) -> WaterCell {

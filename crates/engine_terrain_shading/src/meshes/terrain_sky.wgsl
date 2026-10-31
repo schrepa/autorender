@@ -1,4 +1,4 @@
-import package::face::heightfield::terrain;
+import package::terrain::faces::heightfield::terrain;
 import package::terrain::field::terrain_directory;
 
 @group(1) @binding(22) var terrain_sky_sampler: sampler;

@@ -1,3 +1,6 @@
+import package::place::ground_tiles::{GroundHeight, GroundMaterial, GroundTerrain, GroundTile,
+    LevelTile, MaterialCover, MaterialLook, TerrainInfo};
+
 const NOT_RESIDENT: u32 = 0xffffffffu;
 const TILE_QUADS: u32 = 256u;
 const PEAK_MIPS: u32 = 8u;
@@ -17,11 +20,6 @@ struct PaletteEntry {
 
 const PALETTE_ENTRIES: u32 = 113u;
 
-struct MaterialCover {
-    shape: vec4<f32>,
-    color: vec4<f32>,
-}
-
 @group(0) @binding(0) var heights: texture_2d_array<f32>;
 @group(0) @binding(1) var<storage, read> directory: array<u32>;
 @group(0) @binding(2) var control: texture_2d_array<u32>;
@@ -29,46 +27,6 @@ struct MaterialCover {
 @group(0) @binding(4) var macro_maps: texture_2d_array<f32>;
 @group(0) @binding(5) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
 @group(0) @binding(6) var<storage, read> covers: array<MaterialCover>;
-
-struct GroundTerrain {
-    directory: u32,
-    levels: u32,
-    spacing: f32,
-}
-
-struct LevelTile {
-    layer: u32,
-    first: vec2<u32>,
-}
-
-struct TerrainInfo {
-    origin: vec4<f32>,
-    levels: vec4<u32>,
-}
-
-struct GroundHeight {
-    found: bool,
-    level: u32,
-    tile: LevelTile,
-    height: f32,
-}
-
-struct GroundTile {
-    found: bool,
-    level: u32,
-    tile: LevelTile,
-}
-
-struct GroundMaterial {
-    first: u32,
-    second: u32,
-    share: u32,
-}
-
-struct MaterialLook {
-    far: vec4<f32>,
-    canopy: vec4<f32>,
-}
 
 fn ground_of(info: TerrainInfo) -> GroundTerrain {
     return GroundTerrain(info.levels.x, info.levels.y, info.origin.w);

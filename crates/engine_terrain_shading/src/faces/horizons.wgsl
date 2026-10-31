@@ -1,20 +1,9 @@
 import package::face::sun::sun_direction;
 import package::generated::pieces::pieces;
+import package::place::horizons::{BounceLight, OpenSky};
 import package::terrain::bounce::{bounce_at, bounce_held, bounce_seen};
 import package::terrain::horizons::{HORIZON_RECORDS, HORIZON_RECORD_VECTORS, TERRAIN_HORIZONS,
     horizon_crest, horizon_records, horizon_turn};
-
-struct BounceLight {
-    light: vec3<f32>,
-    sky: f32,
-    weight: f32,
-}
-
-struct OpenSky {
-    held: bool,
-    seen: f32,
-    beyond: f32,
-}
 
 fn terrain_visibility(world: vec3<f32>, on_terrain: bool) -> f32 {
     if !TERRAIN_HORIZONS {
