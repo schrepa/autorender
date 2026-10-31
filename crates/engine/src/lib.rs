@@ -30,14 +30,15 @@ pub use engine_core::command_line;
 pub use engine_core::{bevy_ecs, glam, smoke, smoke_check, smoke_eq};
 
 pub mod ground {
-    pub use engine_core::{
+    pub use engine_core::{Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
+    pub use engine_places::{
         GroundBridge, GroundGrid, GroundObstacle, GroundRead, GroundRecord, GroundRegions,
-        GroundSlot, GroundSource, GroundWorker, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey,
+        GroundSlot, GroundSource, GroundWorker,
     };
 }
 
 pub mod solids {
-    pub use engine_core::{
+    pub use engine_places::{
         FieldSamples, SolidField, SolidShape, SolidsFace, SolidsMember, WorldSolid, WorldSolids,
         WorldSolidsList,
     };
@@ -54,24 +55,23 @@ mod games {
         DynamicResolutionStats, Engine, EngineConfig, EngineEntityCommands, Filter,
         FixedPostSimulation, FixedPreSimulation, FixedSimulation, FixedSimulationSystems,
         FixedTime, Foliage, FrameReport, FrameTime, GlobalTransform, GlobalTransforms, Grading,
-        Ground, GroundFace, GroundPoint, Grounded, Grounding, Haze, HeightHeld, Highlights,
-        InputState, Interior, InterpolateTransform, LevelOfDetail, LightPreset, LightRegion,
-        LocalLight, LocalLightSettings, MakeSources, MakeTextures, Material, MaterialHandle, Mesh,
-        Mesh3d, MeshHandle, MeshVertex, NightSky, OcclusionCulling, Parent, ParticleBlend,
-        ParticleEmitter, ParticleSettings, Plugin, PluginGroup, Presentation, PresentationState,
-        PresentedTime, PresentedTransform, PresentedTransforms, ProvidedAssets, Records,
-        ReflectionProbe, ReflectionProbeSettings, Resolution, ResolutionStats, Sampler, Shadows,
-        Sky, SkyLighting, SkyOcclusion, SplineMesh, Spot, StreamingFocus, SubpixelCulling,
-        Sunlight, Surface, SurfaceLight, TemporalAntialiasing, Texture, TextureHandle, TextureRef,
-        TextureSet, TextureSource, TextureUsage, Tint, TopLayer, Transform, UvTransform, ViewSync,
-        ViewSyncSystems, WaterBodies, WaterBodiesList, WaterFace, WaterKind, WaterObstacle,
-        WaterObstacles, WaterSample, WaterSurfaces, WaterWorker, Wind, WorldSync, WorldSyncSystems,
-        Wrap, edit_transform, math, reset_all_interpolation, reset_interpolation, set_parent,
-        set_parents, trim_cards,
+        Grounding, Haze, Highlights, InputState, Interior, InterpolateTransform, LevelOfDetail,
+        LightPreset, LightRegion, LocalLight, LocalLightSettings, MakeSources, MakeTextures,
+        Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, NightSky, OcclusionCulling,
+        Parent, ParticleBlend, ParticleEmitter, ParticleSettings, Plugin, PluginGroup,
+        Presentation, PresentationState, PresentedTime, PresentedTransform, PresentedTransforms,
+        ProvidedAssets, Records, ReflectionProbe, ReflectionProbeSettings, Resolution,
+        ResolutionStats, Sampler, Shadows, Sky, SkyLighting, SkyOcclusion, SplineMesh, Spot,
+        StreamingFocus, SubpixelCulling, Sunlight, Surface, SurfaceLight, TemporalAntialiasing,
+        Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage, Tint,
+        TopLayer, Transform, UvTransform, ViewSync, ViewSyncSystems, Wind, WorldSync,
+        WorldSyncSystems, Wrap, edit_transform, math, reset_all_interpolation, reset_interpolation,
+        set_parent, set_parents, trim_cards,
     };
     pub use engine_debug_view::DebugViewBrick;
     pub use engine_dither::DitherBrick;
     pub use engine_ground_cover::GroundCoverBrick;
+    pub use engine_grounding::{Grounded, GroundingBrick};
     pub use engine_lighting::LightingModelBrick;
     pub use engine_lights::LightsBrick;
     pub use engine_meshes::MeshesBrick;
@@ -80,6 +80,10 @@ mod games {
     };
     pub use engine_particles::ParticlesBrick;
     pub use engine_physics::Physics;
+    pub use engine_places::{
+        Ground, GroundFace, GroundPoint, HeightHeld, WaterBodies, WaterBodiesList, WaterFace,
+        WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSurfaces, WaterWorker,
+    };
     pub use engine_probes::ReflectionProbesBrick;
     pub use engine_reflections::{Reflections, ReflectionsBrick};
     pub use engine_scatter::ScatterBrick;
@@ -120,15 +124,17 @@ pub mod bricks {
         CpuList, CpuSlot, DetailConsumer, DetailConsumersList, DrawState, ExplainEntry,
         ExplainRecord, ExplainRequest, ExplainedEntity, Explainer, Extracted, Face, FaceOffer,
         FaceType, Fill, Filled, GPU_IDLE_ROW, InspectedKind, InspectorEntry, Join, Joined, List,
-        Member, Members, Operation, OperationEntry, OperationScene, Owned, PhysicsSlot, Place,
-        PlaceKind, SettingsEntry, Slot, StatsEntry, UNATTRIBUTED_ROW, WARMUP_FRAMES,
-        authored_entity, authored_id, bounds, brick_name, face_name, missing_brick, parse_json,
-        parse_value, parse_value_at, source_line,
+        Member, Members, Operation, OperationEntry, OperationScene, Owned, Place, PlaceKind,
+        SettingsEntry, Slot, StatsEntry, UNATTRIBUTED_ROW, WARMUP_FRAMES, authored_entity,
+        authored_id, bounds, brick_name, face_name, missing_brick, parse_json, parse_value,
+        parse_value_at, source_line,
     };
+    pub use engine_places::PhysicsSlot;
 
     pub fn standard() -> BrickList {
         BrickList::default()
             .with::<engine_terrain::TerrainBrick>()
+            .with::<engine_grounding::GroundingBrick>()
             .with::<engine_core::Wind>()
             .with::<engine_world_streaming::WorldStreamingBrick>()
             .with::<engine_navigation::NavigationBrick>()
@@ -252,6 +258,8 @@ pub use game_host::GameHost;
 
 pub fn shader_modules() -> Vec<engine_render::linker::ShaderModule> {
     use bricks::AddBrick;
+    use engine_render::linker::ShaderModule;
+    use engine_render::places::{PLACE_OWNER, place_module};
     let mut engine = Engine::default();
     engine.app.add_bricks(bricks::standard());
     let mut modules = engine_render::shaders::MODULES.to_vec();
@@ -259,10 +267,24 @@ pub fn shader_modules() -> Vec<engine_render::linker::ShaderModule> {
         return modules;
     };
     for (_, render) in engine_render::render_bricks::render_bricks(registry) {
-        for module in render.modules().chain(render.defaults()) {
+        for module in render.modules() {
             if !modules.iter().any(|known| known.path == module.path) {
                 modules.push(*module);
             }
+        }
+    }
+    let declared = engine_render::composite::POST_PLACES.iter().copied();
+    for place in declared.chain(registry.places()) {
+        let Some(source) = place.face.wgsl else {
+            continue;
+        };
+        let path = place_module(place.name);
+        if !modules.iter().any(|known| known.path == path) {
+            modules.push(ShaderModule {
+                path: Box::leak(path.into_boxed_str()),
+                brick: PLACE_OWNER,
+                source,
+            });
         }
     }
     modules

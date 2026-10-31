@@ -56,6 +56,7 @@ pub const RULES: Rules = Rules {
             ("engine", "engine_debug_view"),
             ("engine", "engine_dither"),
             ("engine", "engine_ground_cover"),
+            ("engine", "engine_grounding"),
             ("engine", "engine_layer_erosion"),
             ("engine", "engine_layer_heightmap"),
             ("engine", "engine_layer_hydrology"),
