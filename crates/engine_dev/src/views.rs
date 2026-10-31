@@ -149,13 +149,6 @@ pub struct StreamedIdView {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct GroundedView {
-    pub offset: f32,
-    pub level: Option<u32>,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct SplineMeshView {
     pub points: Vec<[f32; 3]>,
     pub mesh: Option<String>,

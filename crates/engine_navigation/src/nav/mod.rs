@@ -2,12 +2,10 @@ use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::sync::Arc;
 
-use engine_core::{
-    Error, ErrorCode, GroundBridge, GroundGrid, GroundObstacle, Pyramid, TILE_QUADS, TILE_SAMPLES,
-    TileKey,
-};
+use engine_core::{Error, ErrorCode, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
 use engine_math::collections::HashMap;
 use engine_math::{max, min};
+use engine_places::{GroundBridge, GroundGrid, GroundObstacle};
 use engine_settings::settings;
 use engine_terrain::codec::{self, Reader, Writer};
 use engine_terrain::{MAX_LEVEL, record, tagged};

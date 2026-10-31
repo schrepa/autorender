@@ -9,7 +9,8 @@ use crate::shallow_water::{live_split, step_seconds};
 use crate::{BLOCK_SIDE, Footprint, SteadyWater, Tile, TileKey};
 use engine_core::TerrainDebug;
 use engine_core::math::{max, min, sin_cos};
-use engine_core::{Camera, Viewport, WaterObstacle};
+use engine_core::{Camera, Viewport};
+use engine_places::WaterObstacle;
 
 pub const LIVE_PIXELS: f32 = 4.0;
 pub const LONGEST_FRAME: f64 = 1.0 / 30.0;

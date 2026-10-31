@@ -11,11 +11,11 @@ mod erosion;
 use std::any::Any;
 use std::sync::Arc;
 
-use engine_core::{Brick, Bricks, Pyramid};
+use engine_core::{Brick, Bricks, Join, Pyramid};
 use engine_settings::{ErrorCode, parse_value};
 use engine_terrain::codec::{Reader, Writer};
 use engine_terrain::layer::{
-    AddTerrainLayers, Below, ChangeMap, LayerBake, LayerFiles, LayerKind, Made, Row, TerrainLayer,
+    Below, ChangeMap, LayerBake, LayerFiles, LayerKind, Made, Row, TerrainLayer, TerrainLayersList,
     maps, no_files, same_as,
 };
 use serde_json::Value;
@@ -27,7 +27,9 @@ pub struct LayerErosionBrick;
 
 impl Brick for LayerErosionBrick {
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.terrain_layers(KINDS);
+        for &kind in KINDS {
+            bricks.join(Join::<TerrainLayersList>::new().cpu(kind));
+        }
     }
 }
 

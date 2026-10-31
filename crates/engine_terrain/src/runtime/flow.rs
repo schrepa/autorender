@@ -5,7 +5,8 @@ use glam::Vec2;
 
 use super::Terrains;
 use crate::{Block, RiverFlow};
-use engine_core::{FixedTime, WaterObstacles};
+use engine_core::FixedTime;
+use engine_places::WaterObstacles;
 
 const NEAR: f32 = 16.0;
 const EVERY: u64 = 6;

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::{Entity, World};
 use engine_core::collections::HashMap;
-use engine_core::{FieldSamples, SolidField, SolidShape, SolidsFace, WorldSolid};
+use engine_places::{FieldSamples, SolidField, SolidShape, SolidsFace, WorldSolid};
 use glam::{Mat4, Quat, Vec2, Vec3};
 
 use super::{BRIDGE_SOLIDS, DECK_DEPTH, DECK_MARGIN, DECK_RISE, PlacedShape, Terrains};

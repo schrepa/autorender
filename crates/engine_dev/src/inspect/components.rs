@@ -32,16 +32,6 @@ impl DevTools {
             |light| json!(SceneLight::from(light)),
         )
         .expect("descriptor_bounded");
-        self.insert(Inspector {
-            brick: None,
-            descriptor: InspectorDescriptor::generated(schemas, "Grounded"),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| {
-                entity.is_some_and(|entity| world.get::<engine_core::Grounded>(entity).is_some())
-            }),
-            read: Box::new(grounded_view),
-        })
-        .expect("descriptor_bounded");
         self.register_component::<Tint>(
             InspectorDescriptor::generated(schemas, "Tint")
                 .with_default(json!(crate::views::TintView(Tint::WHITE.0))),
@@ -161,16 +151,6 @@ impl DevTools {
         })
         .expect("descriptor_bounded");
     }
-}
-
-fn grounded_view(world: &World, entity: Option<Entity>, _context: &Context<'_>) -> Option<Value> {
-    let entity = entity?;
-    let grounded = world.get::<engine_core::Grounded>(entity)?;
-    let at = world.get::<engine_core::GroundedAt>(entity);
-    Some(json!(crate::views::GroundedView {
-        offset: grounded.offset,
-        level: at.and_then(|at| at.level),
-    }))
 }
 
 fn spline_mesh_view(world: &World, entity: Option<Entity>, context: &Context<'_>) -> Option<Value> {

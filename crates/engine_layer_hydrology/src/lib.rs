@@ -13,11 +13,11 @@ mod rivers;
 use std::any::Any;
 use std::sync::Arc;
 
-use engine_core::{Brick, Bricks, Error, ErrorCode, parse_value};
+use engine_core::{Brick, Bricks, Error, ErrorCode, Join, parse_value};
 use engine_settings::InvalidSetting;
 use engine_terrain::codec::{Codec, Reader, Writer};
 use engine_terrain::layer::{
-    AddTerrainLayers, LayerBake, LayerFiles, LayerKind, Made, Place, TerrainLayer, maps, no_files,
+    LayerBake, LayerFiles, LayerKind, Made, Place, TerrainLayer, TerrainLayersList, maps, no_files,
     same_as,
 };
 use engine_terrain::{GivenRiver, Hydrology, Pyramid};
@@ -33,7 +33,9 @@ pub struct LayerHydrologyBrick;
 
 impl Brick for LayerHydrologyBrick {
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.terrain_layers(KINDS);
+        for &kind in KINDS {
+            bricks.join(Join::<TerrainLayersList>::new().cpu(kind));
+        }
     }
 }
 

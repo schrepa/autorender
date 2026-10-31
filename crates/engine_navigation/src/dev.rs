@@ -1,8 +1,7 @@
 use bevy_ecs::prelude::{Entity, World};
 use bevy_ecs::world::Mut;
-use engine_core::{
-    Error, Ground, GroundRead, GroundSlot, Jobs, Operation, Slot, Transform, missing_brick,
-};
+use engine_core::{Error, Jobs, Operation, Slot, Transform, missing_brick};
+use engine_places::{Ground, GroundRead, GroundSlot};
 use engine_settings::{ErrorCode, InvalidSetting, Rule, Setting};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};

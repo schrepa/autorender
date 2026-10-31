@@ -3,7 +3,8 @@ use std::cell::Cell;
 use bevy_ecs::prelude::{Entity, World};
 use std::sync::Arc;
 
-use engine_core::{FieldSamples, TILE_QUADS, TILE_SAMPLES, TileKey, WorldSolids};
+use engine_core::{TILE_QUADS, TILE_SAMPLES, TileKey};
+use engine_places::{FieldSamples, WorldSolids};
 use glam::Vec3;
 use parry3d::{
     bounding_volume::Aabb,

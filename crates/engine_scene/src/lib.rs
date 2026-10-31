@@ -9,6 +9,7 @@ mod components;
 mod document;
 mod environment;
 mod files;
+mod grounded;
 mod hierarchy;
 mod instance;
 mod lighting;
@@ -23,10 +24,10 @@ mod writer;
 
 pub use bricks::added;
 pub use components::{
-    AddSceneComponents, CORE_COMPONENTS, ComponentContext, ComponentKind, ComponentPath, Placement,
-    Prepared, PreparedComponent, Reach, SceneComponents, SceneComponentsList, admitted,
-    component_kind, component_kinds, component_kinds_in, component_names, no_files, no_paths,
-    object_example, parsed, register_components, ruled, valid, valid_world,
+    CORE_COMPONENTS, ComponentContext, ComponentKind, ComponentPath, GROUNDED, Placement, Prepared,
+    PreparedComponent, Reach, SceneComponents, SceneComponentsList, admitted, component_kind,
+    component_kinds, component_kinds_in, component_names, no_files, no_paths, object_example,
+    parsed, register_components, ruled, valid, valid_world,
 };
 pub use document::{
     MAX_SOURCE_BYTES, MeshSource, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
@@ -41,6 +42,7 @@ pub use files::{
     MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshStreams, SceneFile, SceneFileKind, SceneFiles,
     decode_mesh_buffer, encode_mesh_buffer, encode_mesh_buffer_with, valid_uri,
 };
+pub use grounded::Grounded;
 pub use instance::{Lookups, MeshOrigin, SceneEntity, SceneInstance, TextureOrigin, authored_id};
 pub use lighting::{SceneEmitter, SceneLight, SceneParticleBlend, SceneSpot};
 pub use material::{

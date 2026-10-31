@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::Component;
-use engine_core::WaterKind;
+use engine_places::WaterKind;
 use engine_settings::{Setting, settings};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};

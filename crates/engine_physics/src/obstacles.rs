@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_collision::{ColliderShape, CollisionWorld};
-use engine_core::{WaterBodies, WaterObstacle, WaterObstacles};
+use engine_places::{WaterBodies, WaterObstacle, WaterObstacles};
 use glam::Vec3;
 
 use crate::PhysicsWorld;

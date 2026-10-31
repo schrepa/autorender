@@ -8,13 +8,13 @@ include!(concat!(env!("OUT_DIR"), "/source.rs"));
 use std::any::Any;
 use std::sync::Arc;
 
-use engine_core::{Brick, Bricks, Error, ErrorCode};
+use engine_core::{Brick, Bricks, Error, ErrorCode, Join};
 use engine_math::{max, min};
 use engine_settings::{InvalidSetting, Rule, Setting};
 use engine_terrain::codec::{Reader, Writer};
 use engine_terrain::given::MAX_CREDIT;
 use engine_terrain::layer::{
-    AddTerrainLayers, Below, FineRegion, LayerFiles, LayerKind, Made, Row, TerrainLayer, same_as,
+    Below, FineRegion, LayerFiles, LayerKind, Made, Row, TerrainLayer, TerrainLayersList, same_as,
 };
 use engine_terrain::layers::MAX_HEIGHT;
 use engine_terrain::noise::smooth;
@@ -27,7 +27,9 @@ pub struct LayerHeightmapBrick;
 
 impl Brick for LayerHeightmapBrick {
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.terrain_layers(KINDS);
+        for &kind in KINDS {
+            bricks.join(Join::<TerrainLayersList>::new().cpu(kind));
+        }
     }
 }
 

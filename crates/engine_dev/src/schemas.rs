@@ -118,7 +118,6 @@ pub fn generated(world: &World) -> Result<Generated, String> {
         "RigidBody": schemars::schema_for!(engine_physics::RigidBodyView),
         "Terrain": schemars::schema_for!(views::TerrainView),
         "Tint": schemars::schema_for!(views::TintView),
-        "Grounded": schemars::schema_for!(views::GroundedView),
         "Jobs": schemars::schema_for!(views::JobsView),
         "StaticTables": schemars::schema_for!(views::StaticTablesView),
         "StreamedId": schemars::schema_for!(views::StreamedIdView),

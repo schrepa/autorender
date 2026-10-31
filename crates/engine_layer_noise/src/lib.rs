@@ -11,14 +11,16 @@ mod tile;
 
 pub use layer::{Noise, NoiseLayer};
 
-use engine_core::{Brick, Bricks};
-use engine_terrain::layer::{AddTerrainLayers, LayerKind, no_files};
+use engine_core::{Brick, Bricks, Join};
+use engine_terrain::layer::{LayerKind, TerrainLayersList, no_files};
 
 pub struct LayerNoiseBrick;
 
 impl Brick for LayerNoiseBrick {
     fn register(bricks: &mut Bricks<'_>) {
-        bricks.terrain_layers(KINDS);
+        for &kind in KINDS {
+            bricks.join(Join::<TerrainLayersList>::new().cpu(kind));
+        }
     }
 }
 

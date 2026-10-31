@@ -1,5 +1,6 @@
-use engine_core::{Error, ErrorCode, GroundGrid, GroundWorker, Pyramid, TileKey, WaterWorker};
+use engine_core::{Error, ErrorCode, Pyramid, TileKey};
 use engine_math::collections::HashMap;
+use engine_places::{GroundGrid, GroundWorker, WaterWorker};
 use engine_terrain::codec::{self, Reader};
 use engine_terrain::record;
 

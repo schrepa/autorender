@@ -8,12 +8,14 @@ use bevy_ecs::prelude::*;
 use engine_core::math::{clamp, max};
 use engine_core::{
     Brick, BrickStats, Bricks, Cooking, EnvironmentSection, Error, FixedSimulation,
-    FixedSimulationSystems, FixedTime, GAMEPLAY_JOBS, Ground, GroundObstacle, GroundRead,
-    GroundRecord, GroundSource, HeightHeld, IDLE_JOBS, JobBudget, JobFailures, JobId, Jobs, Parent,
-    RecordKey, TileKey, Transform, WaterBodies, WaterSurfaces, job_output, job_priority,
-    section_in,
+    FixedSimulationSystems, FixedTime, GAMEPLAY_JOBS, IDLE_JOBS, JobBudget, JobFailures, JobId,
+    Jobs, Join, Parent, RecordKey, TileKey, Transform, job_output, job_priority, section_in,
 };
-use engine_scene::AddSceneComponents;
+use engine_places::{
+    Ground, GroundObstacle, GroundRead, GroundRecord, GroundSource, HeightHeld, WaterBodies,
+    WaterSurfaces,
+};
+use engine_scene::SceneComponentsList;
 use engine_settings::{InvalidSetting, settings};
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
@@ -664,7 +666,7 @@ impl Brick for NavigationBrick {
             .operation::<NavPathQuery>()
             .component_inspector::<NavAgent, NavAgentView>(dev::agent_view)
             .inspector::<NavAgents, Option<NavAgentsView>>(|world, _| dev::agents_view(world))
-            .scene_components(&[&NAV_AGENT]);
+            .join(Join::<SceneComponentsList>::new().cpu(&NAV_AGENT));
         crate::smokes::register(bricks);
     }
 }

@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Entity, World};
-use engine_core::{SolidShape, WorldSolid, WorldSolids};
+use engine_places::{SolidShape, WorldSolid, WorldSolids};
 use glam::Vec3;
 
 use crate::bvh::Bvh;
