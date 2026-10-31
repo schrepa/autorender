@@ -2,29 +2,19 @@ use bevy_ecs::prelude::{Resource, World};
 use serde::{Deserialize, Serialize};
 
 use crate::sections::environment_section;
-use crate::{Camera, FrameTime, RenderSnapshot, WaterBodies};
+use crate::{Camera, FrameTime, RenderSnapshot};
 use engine_settings::settings;
 
 pub(crate) fn extract_lighting(world: &World, snapshot: &mut RenderSnapshot) {
     let eye = world.resource::<Camera>().eye();
     snapshot.camera_position = eye;
     snapshot.detail_eye = crate::TerrainDebug::detail_eye(world);
-    snapshot.surface_under_eye = surface_under(world, eye);
     snapshot.elapsed_seconds = world
         .get_resource::<FrameTime>()
         .map_or(0.0, |time| time.elapsed_seconds as f32);
     snapshot.presented_seconds = world
         .get_resource::<crate::PresentedTime>()
         .map_or(0.0, |time| time.seconds);
-}
-
-fn surface_under(world: &World, eye: glam::Vec3) -> Option<f32> {
-    let water = WaterBodies::water_in(world, eye);
-    if let Some(water) = water.filter(|water| water.depth > 0.0) {
-        return Some(water.surface);
-    }
-    let ground = crate::Ground::sample_in(world, eye.x, eye.z);
-    ground.map(|ground| ground.height)
 }
 
 pub const MAX_SHADOW_LEVELS: u32 = 20;

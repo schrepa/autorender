@@ -21,7 +21,12 @@ const TEMPLATE_IMPORTS: &str = "use engine_settings::{InvalidSetting, settings};
 const CORE_IMPORTS: &str = "use engine_core::{Brick, BrickStats, Bricks, Engine, EnvironmentSection, Error, Presentation};\n";
 
 const SLOT_IMPORTS: &str = "use engine_core::{
-    Brick, BrickStats, Bricks, Engine, EnvironmentSection, Error, Place, Presentation,
+    Brick, BrickStats, Bricks, Engine, EnvironmentSection, Error, Fill, Presentation,
+};
+";
+
+const LIST_IMPORTS: &str = "use engine_core::{
+    Brick, BrickStats, Bricks, Engine, EnvironmentSection, Error, Join, Presentation,
 };
 ";
 
@@ -302,16 +307,15 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
     let mut metadata = String::new();
     match &claim {
         Some(claim) if claim.kind == "slot" => {
-            source = slot_source(&source, &pascal, &claim.path)?;
+            let fill = format!("fill(Fill::<{}>::new())", claim.path);
+            source = place_source(&source, SLOT_IMPORTS, &stats, &fill)?;
             if claim.gpu {
                 source = gpu_source(&source, &pascal, name, &stats);
             }
         }
         Some(claim) => {
-            source = source.replace(
-                &stats,
-                &format!("{stats}\n            .{}::<{}>()", claim.kind, claim.path),
-            );
+            let join = format!("join(Join::<{}>::new())", claim.path);
+            source = place_source(&source, LIST_IMPORTS, &stats, &join)?;
         }
         None => println!(
             "{}",
@@ -387,19 +391,21 @@ workspace = true
     Ok(())
 }
 
-fn slot_source(source: &str, pascal: &str, slot: &str) -> Result<String, String> {
+fn place_source(
+    source: &str,
+    imports: &str,
+    stats: &str,
+    registration: &str,
+) -> Result<String, String> {
     if !source.contains(CORE_IMPORTS) {
         return Err(format!(
             "{BRICK_TEMPLATE} no longer imports engine_core as `{}`",
             CORE_IMPORTS.trim_end()
         ));
     }
-    Ok(source.replace(CORE_IMPORTS, SLOT_IMPORTS).replace(
-        &format!("impl Brick for {pascal}Brick {{\n"),
-        &format!(
-            "impl Brick for {pascal}Brick {{\n    const SLOT: Option<Place> = Some(Place::slot::<{slot}>());\n\n"
-        ),
-    ))
+    Ok(source
+        .replace(CORE_IMPORTS, imports)
+        .replace(stats, &format!("{stats}\n            .{registration}")))
 }
 
 struct Claim {
@@ -503,7 +509,9 @@ fn part_claim(
                             registry
                                 .bricks()
                                 .iter()
-                                .find(|brick| brick.slot == Some(part))
+                                .find(|brick| {
+                                    brick.fills.iter().any(|filled| filled.place == part)
+                                })
                                 .map(|brick| {
                                     let render = brick
                                         .extension::<engine_render::render_bricks::RenderBrick>();

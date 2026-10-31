@@ -1,7 +1,10 @@
 use bevy_ecs::prelude::{Resource, World};
 use serde::{Deserialize, Serialize};
 
-use crate::bricks::{Brick, Bricks, DetailConsumer, DrawState, ExplainRecord, ExplainRequest};
+use crate::bricks::{
+    Brick, Bricks, DetailConsumer, DetailConsumersList, DrawState, ExplainRecord, ExplainRequest,
+    Join,
+};
 use crate::sections::environment_section;
 use engine_settings::settings;
 
@@ -9,11 +12,11 @@ impl Brick for LevelOfDetail {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<LevelOfDetail>()
-            .detail_consumer(DetailConsumer {
+            .join(Join::<DetailConsumersList>::new().cpu(DetailConsumer {
                 name: "impostors",
                 setting: "level_of_detail.max_impostors",
                 stat: "level_of_detail.impostor_cut",
-            })
+            }))
             .explain(explain_level);
     }
 }

@@ -9,9 +9,9 @@ use engine_settings::ErrorCode;
 use serde_json::Value;
 
 use super::{
-    Brick, BrickSet, BrickStats, CORE_PASSES, CORE_ROW, DetailConsumer, EnvironmentSection, Error,
-    Expected, ExplainEntry, ExplainRecord, ExplainRequest, Filled, Joined, Operation, Place,
-    crate_of, parse_value, parse_value_at, short_type_name,
+    Brick, BrickSet, BrickStats, CORE_PASSES, CORE_ROW, EnvironmentSection, Error, Expected,
+    ExplainEntry, ExplainRecord, ExplainRequest, Filled, Joined, Operation, Place, PlaceKind,
+    SlotsFn, crate_of, parse_value, parse_value_at, short_type_name,
 };
 use crate::RenderSnapshot;
 use crate::smoke::SmokeEntry;
@@ -35,13 +35,10 @@ pub struct BrickRecord {
     pub name: &'static str,
     pub type_path: &'static str,
     pub crate_name: &'static str,
-    pub slot: Option<&'static str>,
-    pub lists: Vec<&'static str>,
     pub places: Vec<Place>,
     pub fills: Vec<Filled>,
     pub joins: Vec<Joined>,
     pub knows: Vec<Place>,
-    pub consumers: Vec<DetailConsumer>,
     pub records: Vec<&'static str>,
     pub settings: Vec<SettingsEntry>,
     pub stats: Vec<StatsEntry>,
@@ -77,13 +74,10 @@ impl BrickRecord {
             name,
             type_path: std::any::type_name::<B>(),
             crate_name: crate_of::<B>(),
-            slot: B::SLOT.map(|place| place.name),
-            lists: Vec::new(),
-            places: B::SLOT.into_iter().collect(),
+            places: Vec::new(),
             fills: Vec::new(),
             joins: Vec::new(),
             knows: Vec::new(),
-            consumers: Vec::new(),
             records: Vec::new(),
             settings: Vec::new(),
             stats: Vec::new(),
@@ -132,9 +126,6 @@ impl BrickRecord {
     }
 
     pub(super) fn join(&mut self, place: Place, joined: Joined) {
-        if !self.lists.contains(&place.name) {
-            self.lists.push(place.name);
-        }
         if !self.places.iter().any(|known| known.name == place.name) {
             self.places.push(place);
         }
@@ -166,7 +157,7 @@ impl BrickRecord {
 pub struct BrickRegistry {
     bricks: Vec<BrickRecord>,
     left_out: Vec<&'static str>,
-    fillers: Vec<(&'static str, &'static str)>,
+    fillers: Vec<(&'static str, SlotsFn)>,
 }
 
 impl BrickRegistry {
@@ -332,19 +323,6 @@ impl BrickRegistry {
         smokes
     }
 
-    pub fn consumers(&self) -> impl Iterator<Item = (&'static str, &DetailConsumer)> + '_ {
-        self.bricks.iter().flat_map(|brick| {
-            brick
-                .consumers
-                .iter()
-                .map(move |consumer| (brick.name, consumer))
-        })
-    }
-
-    pub fn consumer(&self, name: &str) -> Option<(&'static str, &DetailConsumer)> {
-        self.consumers().find(|(_, consumer)| consumer.name == name)
-    }
-
     pub fn pass_owner(&self, pass: &str) -> Option<&'static str> {
         if CORE_PASSES.contains(&pass) {
             return Some(CORE_ROW);
@@ -360,18 +338,20 @@ impl BrickRegistry {
     }
 
     pub fn filler(&self, slot: &str) -> Option<&BrickRecord> {
-        self.bricks.iter().find(|brick| brick.slot == Some(slot))
+        self.bricks
+            .iter()
+            .find(|brick| brick.fills.iter().any(|filled| filled.place == slot))
     }
 
     pub fn fillers(&self, slot: &str) -> Vec<&'static str> {
         let mut fillers: Vec<&'static str> = self
             .bricks
             .iter()
-            .filter(|brick| brick.slot == Some(slot))
+            .filter(|brick| brick.fills.iter().any(|filled| filled.place == slot))
             .map(|brick| brick.name)
             .collect();
-        for &(known, name) in &self.fillers {
-            if known == slot && !fillers.contains(&name) {
+        for &(name, slots) in &self.fillers {
+            if !fillers.contains(&name) && slots().contains(&slot) {
                 fillers.push(name);
             }
         }
@@ -380,18 +360,22 @@ impl BrickRegistry {
 
     pub fn know_fillers(
         &mut self,
-        fillers: impl IntoIterator<Item = (&'static str, &'static str)>,
+        fillers: impl IntoIterator<Item = (&'static str, fn() -> &'static [&'static str])>,
     ) {
-        for filler in fillers {
-            if !self.fillers.contains(&filler) {
-                self.fillers.push(filler);
+        for (name, slots) in fillers {
+            if !self.fillers.iter().any(|&(known, _)| known == name) {
+                self.fillers.push((name, slots));
             }
         }
     }
 
     pub fn knows_slot(&self, slot: &str) -> bool {
-        self.bricks.iter().any(|brick| brick.slot == Some(slot))
-            || self.fillers.iter().any(|&(known, _)| known == slot)
+        self.place(slot)
+            .is_some_and(|place| place.kind == PlaceKind::Slot)
+            || self
+                .fillers
+                .iter()
+                .any(|&(_, slots)| slots().contains(&slot))
     }
 
     pub fn face_unanswered(&self, face: &str, needed_by: &str) -> Error {
@@ -476,18 +460,8 @@ impl BrickRegistry {
                 Error::new(ErrorCode::SlotFilledTwice, format!("$.slots.{place}"))
                     .expected(Expected::Unique)
                     .got(name)
-                    .nearest(first),
-            );
-        }
-        if let Some(slot) = record.slot
-            && let Some(first) = self.filler(slot)
-        {
-            return Err(
-                Error::new(ErrorCode::SlotFilledTwice, format!("$.slots.{slot}"))
-                    .expected(Expected::Unique)
-                    .got(name)
-                    .nearest(first.name)
-                    .variants(self.fillers(slot)),
+                    .nearest(first)
+                    .variants(self.fillers(place)),
             );
         }
         let taken = |kind: &str, key: &str, owner: &str| {
@@ -543,11 +517,6 @@ impl BrickRegistry {
         for smoke in record.places.iter().flat_map(|place| place.smokes) {
             if let Some(known) = self.smoke(smoke.name) {
                 return Err(taken("smokes", smoke.name, known.brick));
-            }
-        }
-        for consumer in &record.consumers {
-            if let Some((known, _)) = self.consumer(consumer.name) {
-                return Err(taken("consumers", consumer.name, known));
             }
         }
         let mut record = record;

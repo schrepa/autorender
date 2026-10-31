@@ -11,7 +11,7 @@ pub use attribution::{
     BrickCost, BrickCosts, BrickRow, BrickTable, CORE_PASSES, CORE_ROW, GPU_IDLE_ROW,
     UNATTRIBUTED_ROW, WARMUP_FRAMES,
 };
-pub use consumers::{Cut, DetailConsumer, DetailConsumersList};
+pub use consumers::{Cut, DetailConsumer, DetailConsumers, DetailConsumersList};
 pub use engine_settings::{
     Allowed, Detail, Error, Expected, parse_json, parse_value, parse_value_at,
 };
@@ -29,6 +29,7 @@ pub use registry::{
 };
 pub use scene::{AuthoredId, OperationScene, authored_entity, authored_id};
 
+use std::any::TypeId;
 use std::panic::Location;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
@@ -45,8 +46,6 @@ use crate::RenderSnapshot;
 use crate::smoke::{SmokeEntry, SmokeResult, SmokeSession};
 
 pub trait Brick: Send + Sync + 'static {
-    const SLOT: Option<Place> = None;
-
     fn register(bricks: &mut Bricks<'_>);
 }
 
@@ -326,26 +325,6 @@ impl Bricks<'_> {
         self
     }
 
-    pub fn list<L: List>(&mut self) -> &mut Self {
-        if !self.record.lists.contains(&L::NAME) {
-            self.record.lists.push(L::NAME);
-            self.record.places.push(Place::list::<L>());
-        }
-        self
-    }
-
-    pub fn detail_consumer(&mut self, consumer: DetailConsumer) -> &mut Self {
-        if !self
-            .record
-            .consumers
-            .iter()
-            .any(|known| known.name == consumer.name)
-        {
-            self.record.consumers.push(consumer);
-        }
-        self.list::<DetailConsumersList>()
-    }
-
     pub fn smoke(
         &mut self,
         name: &'static str,
@@ -400,7 +379,12 @@ impl AddBrick for App {
         }
         self.world_mut()
             .resource_mut::<BrickRegistry>()
-            .know_fillers(bricks.fillers.iter().copied());
+            .know_fillers(
+                bricks
+                    .known
+                    .iter()
+                    .map(|listed| (listed.name, listed.slots)),
+            );
         for listed in bricks.entries {
             (listed.add)(self);
         }
@@ -413,10 +397,12 @@ impl AddBrick for App {
 
 type AddFn = fn(&mut App);
 
+type SlotsFn = fn() -> &'static [&'static str];
+
 #[derive(Clone, Copy)]
 struct Listed {
     name: &'static str,
-    slot: Option<&'static str>,
+    slots: SlotsFn,
     add: AddFn,
 }
 
@@ -424,17 +410,57 @@ impl Listed {
     fn of<B: Brick>() -> Self {
         Self {
             name: brick_name::<B>(),
-            slot: B::SLOT.map(|place| place.name),
+            slots: fills_of::<B>,
             add: add_one::<B>,
         }
     }
+
+    fn fills(&self, slot: &str) -> bool {
+        (self.slots)().contains(&slot)
+    }
+
+    fn shares_a_slot(&self, other: &Self) -> bool {
+        (self.slots)().iter().any(|&slot| other.fills(slot))
+    }
+}
+
+fn fills_of<B: Brick>() -> &'static [&'static str] {
+    static FILLS: Mutex<Vec<(TypeId, &'static [&'static str])>> = Mutex::new(Vec::new());
+    let id = TypeId::of::<B>();
+    let known = FILLS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+        .find(|(brick, _)| *brick == id)
+        .map(|&(_, fills)| fills);
+    if let Some(fills) = known {
+        return fills;
+    }
+    let mut app = App::empty();
+    let mut bricks = Bricks {
+        app: &mut app,
+        record: BrickRecord::new::<B>(brick_name::<B>()),
+    };
+    B::register(&mut bricks);
+    let fills: Vec<&'static str> = bricks
+        .record
+        .fills
+        .iter()
+        .map(|filled| filled.place)
+        .collect();
+    let fills: &'static [&'static str] = Box::leak(fills.into_boxed_slice());
+    FILLS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push((id, fills));
+    fills
 }
 
 #[derive(Clone, Default)]
 pub struct BrickList {
     entries: Vec<Listed>,
     left_out: Vec<&'static str>,
-    fillers: Vec<(&'static str, &'static str)>,
+    known: Vec<Listed>,
     errors: Vec<Error>,
 }
 
@@ -469,28 +495,37 @@ impl BrickList {
     #[must_use]
     pub fn fill<B: Brick>(mut self) -> Self {
         let listed = Listed::of::<B>();
-        let Some(slot) = listed.slot else {
+        if (listed.slots)().is_empty() {
             let error = Error::new(
                 ErrorCode::InvalidArguments,
-                format!("$.bricks.{}.slot", listed.name),
+                format!("$.bricks.{}.fills", listed.name),
             )
             .expected(Expected::Present);
             self.errors.push(error);
             return self;
-        };
+        }
         self.know(listed);
-        match self
-            .entries
-            .iter()
-            .position(|known| known.slot == Some(slot))
-        {
-            Some(index) => {
-                let replaced = std::mem::replace(&mut self.entries[index], listed);
-                if replaced.name != listed.name && !self.left_out.contains(&replaced.name) {
-                    self.left_out.push(replaced.name);
-                }
+        let mut placed = false;
+        let mut replaced: Vec<&'static str> = Vec::new();
+        self.entries.retain_mut(|known| {
+            if !known.shares_a_slot(&listed) {
+                return true;
             }
-            None => self.entries.push(listed),
+            replaced.push(known.name);
+            if placed {
+                return false;
+            }
+            *known = listed;
+            placed = true;
+            true
+        });
+        if !placed {
+            self.entries.push(listed);
+        }
+        for name in replaced {
+            if name != listed.name && !self.left_out.contains(&name) {
+                self.left_out.push(name);
+            }
         }
         self.left_out.retain(|&name| name != listed.name);
         self
@@ -511,10 +546,8 @@ impl BrickList {
     }
 
     fn know(&mut self, listed: Listed) {
-        if let Some(slot) = listed.slot
-            && !self.fillers.contains(&(slot, listed.name))
-        {
-            self.fillers.push((slot, listed.name));
+        if !self.known.iter().any(|known| known.name == listed.name) {
+            self.known.push(listed);
         }
     }
 
@@ -529,15 +562,15 @@ impl BrickList {
     pub fn filler(&self, slot: &str) -> Option<&'static str> {
         self.entries
             .iter()
-            .find(|listed| listed.slot == Some(slot))
+            .find(|listed| listed.fills(slot))
             .map(|listed| listed.name)
     }
 
     pub fn fillers<'a>(&'a self, slot: &'a str) -> impl Iterator<Item = &'static str> + 'a {
-        self.fillers
+        self.known
             .iter()
-            .filter(move |&&(known, _)| known == slot)
-            .map(|&(_, name)| name)
+            .filter(move |listed| listed.fills(slot))
+            .map(|listed| listed.name)
     }
 
     pub fn check(&self) -> Result<(), Error> {
@@ -545,20 +578,19 @@ impl BrickList {
             return Err(error.clone());
         }
         for (index, listed) in self.entries.iter().enumerate() {
-            let Some(slot) = listed.slot else {
-                continue;
-            };
-            if let Some(first) = self.entries[..index]
-                .iter()
-                .find(|earlier| earlier.slot == Some(slot))
-            {
-                return Err(
-                    Error::new(ErrorCode::SlotFilledTwice, format!("$.slots.{slot}"))
-                        .expected(Expected::Unique)
-                        .got(listed.name)
-                        .nearest(first.name)
-                        .variants(self.fillers(slot)),
-                );
+            for &slot in (listed.slots)() {
+                if let Some(first) = self.entries[..index]
+                    .iter()
+                    .find(|earlier| earlier.fills(slot))
+                {
+                    return Err(
+                        Error::new(ErrorCode::SlotFilledTwice, format!("$.slots.{slot}"))
+                            .expected(Expected::Unique)
+                            .got(listed.name)
+                            .nearest(first.name)
+                            .variants(self.fillers(slot)),
+                    );
+                }
             }
         }
         Ok(())

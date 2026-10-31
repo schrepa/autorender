@@ -1,7 +1,7 @@
 use engine_core::bevy_ecs::prelude::{Entity, World};
 use engine_core::{
-    AssetLibrary, BrickCost, BrickCosts, BrickRegistry, DrawState, ExplainRecord, ExplainRequest,
-    ExplainedEntity, Mesh3d,
+    AssetLibrary, BrickCost, BrickCosts, BrickRegistry, DetailConsumers, DrawState, ExplainRecord,
+    ExplainRequest, ExplainedEntity, Mesh3d,
 };
 use engine_scene::{SceneDocument, SceneFiles, SceneInstance};
 use engine_settings::{Error, ErrorCode, Expected};
@@ -145,7 +145,11 @@ fn cuts(world: &World, registry: &BrickRegistry, stats: &Value) -> Vec<ExplainRe
                 .with("cut", cut),
         );
     }
-    for (brick, consumer) in registry.consumers() {
+    let consumers = world
+        .get_resource::<DetailConsumers>()
+        .into_iter()
+        .flat_map(DetailConsumers::consumers);
+    for (brick, consumer) in consumers {
         let reported = consumer
             .stat
             .split('.')
