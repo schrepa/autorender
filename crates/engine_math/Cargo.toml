@@ -17,4 +17,4 @@ foldhash = { workspace = true, optional = true }
 workspace = true
 
 [package.metadata.engine]
-core = true
+kind = "support"

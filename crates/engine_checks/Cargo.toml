@@ -9,7 +9,6 @@ publish.workspace = true
 engine = { workspace = true, features = ["schema"] }
 engine_core.workspace = true
 engine_dev.workspace = true
-engine_faces.workspace = true
 engine_places.workspace = true
 engine_render.workspace = true
 engine_sources.workspace = true
@@ -20,3 +19,6 @@ toml_edit.workspace = true
 
 [lints]
 workspace = true
+
+[package.metadata.engine]
+kind = "tool"

@@ -887,49 +887,12 @@ dependencies = [
 name = "engine"
 version = "0.1.0"
 dependencies = [
- "engine_ambient_occlusion",
- "engine_auto_exposure",
- "engine_bloom",
- "engine_collision",
  "engine_core",
- "engine_debug_view",
- "engine_dev",
- "engine_dither",
- "engine_ground_cover",
- "engine_grounding",
- "engine_layer_erosion",
- "engine_layer_heightmap",
- "engine_layer_hydrology",
- "engine_layer_noise",
- "engine_layer_paths",
- "engine_layer_relief",
- "engine_layer_stamps",
- "engine_lighting",
- "engine_lights",
- "engine_meshes",
- "engine_navigation",
  "engine_panic",
- "engine_particles",
- "engine_physics",
- "engine_places",
- "engine_probes",
  "engine_profile",
- "engine_reflections",
  "engine_render",
- "engine_scatter",
  "engine_scene",
  "engine_settings",
- "engine_shadows",
- "engine_sky",
- "engine_sun",
- "engine_taa",
- "engine_terrain",
- "engine_terrain_shading",
- "engine_time_of_day",
- "engine_tonemap",
- "engine_water",
- "engine_worker",
- "engine_world_streaming",
  "js-sys",
  "schemars",
  "serde",
@@ -946,9 +909,9 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
- "wgpu",
 ]
 
 [[package]]
@@ -985,30 +948,26 @@ dependencies = [
 name = "engine_auto_exposure"
 version = "0.1.0"
 dependencies = [
- "bevy_ecs",
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
- "engine_settings",
  "schemars",
  "serde",
- "wgpu",
 ]
 
 [[package]]
 name = "engine_bloom"
 version = "0.1.0"
 dependencies = [
- "bevy_ecs",
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
- "engine_settings",
  "schemars",
  "serde",
- "wgpu",
 ]
 
 [[package]]
@@ -1019,7 +978,6 @@ dependencies = [
  "engine",
  "engine_core",
  "engine_dev",
- "engine_faces",
  "engine_places",
  "engine_render",
  "engine_sources",
@@ -1029,15 +987,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_codec"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "engine_collision"
 version = "0.1.0"
 dependencies = [
- "bevy_ecs",
  "engine_core",
+ "engine_ecs",
  "engine_places",
- "engine_profile",
- "engine_scene",
- "engine_settings",
  "glam 0.30.9",
  "parry3d",
  "schemars",
@@ -1056,7 +1019,6 @@ dependencies = [
  "engine_profile",
  "engine_settings",
  "engine_sources",
- "engine_tables",
  "engine_textures",
  "glam 0.30.9",
  "schemars",
@@ -1070,25 +1032,19 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
- "wgpu",
 ]
 
 [[package]]
 name = "engine_dev"
 version = "0.1.0"
 dependencies = [
- "engine_collision",
  "engine_core",
- "engine_navigation",
- "engine_physics",
  "engine_profile",
  "engine_scene",
  "engine_settings",
- "engine_terrain",
- "engine_time_of_day",
- "engine_world_streaming",
  "schemars",
  "serde",
  "serde_json",
@@ -1100,20 +1056,25 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
 ]
 
 [[package]]
-name = "engine_faces"
+name = "engine_ecs"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
+ "bevy_ecs",
+]
+
+[[package]]
+name = "engine_fly_camera"
+version = "0.1.0"
+dependencies = [
  "engine_core",
- "engine_render",
- "glam 0.30.9",
- "serde_json",
- "wgpu",
+ "engine_ecs",
+ "engine_places",
 ]
 
 [[package]]
@@ -1122,24 +1083,32 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
  "engine_math",
+ "engine_places",
  "engine_render",
- "engine_terrain",
- "wgpu",
 ]
 
 [[package]]
 name = "engine_grounding"
 version = "0.1.0"
 dependencies = [
- "bevy_ecs",
  "engine_core",
+ "engine_ecs",
  "engine_places",
- "engine_scene",
  "glam 0.30.9",
  "schemars",
  "serde",
+]
+
+[[package]]
+name = "engine_heightfield"
+version = "0.1.0"
+dependencies = [
+ "glam 0.30.9",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1147,10 +1116,9 @@ name = "engine_layer_erosion"
 version = "0.1.0"
 dependencies = [
  "engine_core",
+ "engine_ecs",
  "engine_math",
- "engine_settings",
  "engine_sources",
- "engine_terrain",
  "glam 0.30.9",
  "libm",
  "schemars",
@@ -1163,10 +1131,9 @@ name = "engine_layer_heightmap"
 version = "0.1.0"
 dependencies = [
  "engine_core",
+ "engine_ecs",
  "engine_math",
- "engine_settings",
  "engine_sources",
- "engine_terrain",
  "glam 0.30.9",
  "schemars",
  "serde",
@@ -1178,10 +1145,9 @@ name = "engine_layer_hydrology"
 version = "0.1.0"
 dependencies = [
  "engine_core",
+ "engine_ecs",
  "engine_math",
- "engine_settings",
  "engine_sources",
- "engine_terrain",
  "glam 0.30.9",
  "libm",
  "schemars",
@@ -1194,10 +1160,9 @@ name = "engine_layer_noise"
 version = "0.1.0"
 dependencies = [
  "engine_core",
+ "engine_ecs",
  "engine_math",
- "engine_settings",
  "engine_sources",
- "engine_terrain",
  "glam 0.30.9",
  "libm",
  "schemars",
@@ -1210,10 +1175,9 @@ name = "engine_layer_paths"
 version = "0.1.0"
 dependencies = [
  "engine_core",
+ "engine_ecs",
  "engine_math",
- "engine_settings",
  "engine_sources",
- "engine_terrain",
  "glam 0.30.9",
  "libm",
  "schemars",
@@ -1226,10 +1190,9 @@ name = "engine_layer_relief"
 version = "0.1.0"
 dependencies = [
  "engine_core",
+ "engine_ecs",
  "engine_math",
- "engine_settings",
  "engine_sources",
- "engine_terrain",
  "glam 0.30.9",
  "libm",
  "schemars",
@@ -1242,10 +1205,9 @@ name = "engine_layer_stamps"
 version = "0.1.0"
 dependencies = [
  "engine_core",
+ "engine_ecs",
  "engine_math",
- "engine_settings",
  "engine_sources",
- "engine_terrain",
  "glam 0.30.9",
  "libm",
  "schemars",
@@ -1259,7 +1221,8 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
 ]
 
@@ -1269,18 +1232,16 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
- "wgpu",
 ]
 
 [[package]]
 name = "engine_lodbuild"
 version = "0.1.0"
 dependencies = [
- "engine_assets",
  "engine_math",
- "engine_settings",
  "glam 0.30.9",
 ]
 
@@ -1297,7 +1258,8 @@ name = "engine_meshes"
 version = "0.1.0"
 dependencies = [
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
 ]
 
@@ -1305,9 +1267,6 @@ dependencies = [
 name = "engine_native"
 version = "0.1.0"
 dependencies = [
- "engine",
- "engine_profiler",
- "engine_worker",
  "png",
  "pollster",
  "serde_json",
@@ -1320,14 +1279,11 @@ dependencies = [
 name = "engine_navigation"
 version = "0.1.0"
 dependencies = [
- "bevy_ecs",
  "engine_core",
+ "engine_ecs",
  "engine_math",
  "engine_places",
- "engine_scene",
- "engine_settings",
  "engine_sources",
- "engine_terrain",
  "glam 0.30.9",
  "schemars",
  "serde",
@@ -1349,22 +1305,18 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
- "wgpu",
 ]
 
 [[package]]
 name = "engine_physics"
 version = "0.1.0"
 dependencies = [
- "bevy_ecs",
- "engine_collision",
  "engine_core",
+ "engine_ecs",
  "engine_places",
- "engine_profile",
- "engine_scene",
- "engine_settings",
  "glam 0.30.9",
  "parry3d",
  "rapier3d",
@@ -1374,11 +1326,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "engine_places"
+name = "engine_place"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
- "engine_core",
+ "bytemuck",
+ "engine_assets",
+ "engine_settings",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "engine_places"
+version = "0.1.0"
+dependencies = [
+ "engine_ecs",
+ "engine_place",
  "glam 0.30.9",
  "schemars",
  "serde",
@@ -1406,9 +1370,9 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
- "wgpu",
 ]
 
 [[package]]
@@ -1438,16 +1402,22 @@ dependencies = [
 name = "engine_reflections"
 version = "0.1.0"
 dependencies = [
- "bevy_ecs",
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
- "engine_settings",
- "engine_terrain",
  "schemars",
  "serde",
- "wgpu",
+]
+
+[[package]]
+name = "engine_registry"
+version = "0.1.0"
+dependencies = [
+ "bevy_ecs",
+ "engine_place",
+ "serde_json",
 ]
 
 [[package]]
@@ -1478,10 +1448,9 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
- "engine_terrain",
- "wgpu",
 ]
 
 [[package]]
@@ -1492,7 +1461,6 @@ dependencies = [
  "bevy_ecs",
  "engine_core",
  "engine_settings",
- "engine_world_streaming",
  "schemars",
  "serde",
  "serde_json",
@@ -1518,11 +1486,9 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
- "engine_profile",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
- "engine_terrain",
- "wgpu",
 ]
 
 [[package]]
@@ -1531,12 +1497,10 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
  "engine_places",
  "engine_render",
- "engine_time_of_day",
  "glam 0.30.9",
- "wgpu",
 ]
 
 [[package]]
@@ -1547,12 +1511,50 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_splines"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_ecs",
+ "engine_places",
+]
+
+[[package]]
+name = "engine_sprites"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_ecs",
+ "engine_render",
+ "engine_sources",
+ "serde",
+]
+
+[[package]]
+name = "engine_standard"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_places",
+]
+
+[[package]]
+name = "engine_standard_smokes"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_ecs",
+ "engine_places",
+]
+
+[[package]]
 name = "engine_sun"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
 ]
 
@@ -1562,15 +1564,16 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
- "wgpu",
 ]
 
 [[package]]
 name = "engine_tables"
 version = "0.1.0"
 dependencies = [
+ "engine_ecs",
  "engine_math",
  "engine_sources",
  "libm",
@@ -1580,16 +1583,11 @@ dependencies = [
 name = "engine_terrain"
 version = "0.1.0"
 dependencies = [
- "bevy_ecs",
- "engine_assets",
  "engine_core",
+ "engine_ecs",
  "engine_math",
  "engine_places",
- "engine_profile",
- "engine_scene",
- "engine_settings",
  "engine_sources",
- "engine_textures",
  "glam 0.30.9",
  "libm",
  "schemars",
@@ -1603,11 +1601,9 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
- "engine_terrain",
- "engine_textures",
- "wgpu",
 ]
 
 [[package]]
@@ -1625,9 +1621,8 @@ dependencies = [
 name = "engine_time_of_day"
 version = "0.1.0"
 dependencies = [
- "bevy_ecs",
  "engine_core",
- "engine_settings",
+ "engine_ecs",
  "glam 0.30.9",
  "schemars",
  "serde",
@@ -1639,7 +1634,8 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
 ]
 
@@ -1649,34 +1645,31 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
  "engine_places",
  "engine_render",
  "engine_sources",
- "engine_terrain",
  "serde_json",
- "wgpu",
+]
+
+[[package]]
+name = "engine_wind"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_ecs",
+ "engine_places",
 ]
 
 [[package]]
 name = "engine_worker"
 version = "0.1.0"
 dependencies = [
- "engine_layer_erosion",
- "engine_layer_heightmap",
- "engine_layer_hydrology",
- "engine_layer_noise",
- "engine_layer_paths",
- "engine_layer_relief",
- "engine_layer_stamps",
  "engine_lodbuild",
  "engine_math",
- "engine_navigation",
  "engine_panic",
  "engine_settings",
  "engine_sources",
- "engine_tables",
- "engine_terrain",
  "engine_textures",
  "js-sys",
  "png",
@@ -1691,10 +1684,8 @@ dependencies = [
 name = "engine_world_streaming"
 version = "0.1.0"
 dependencies = [
- "bevy_ecs",
  "engine_core",
- "engine_profile",
- "engine_settings",
+ "engine_ecs",
  "glam 0.30.9",
  "schemars",
  "serde",
@@ -2165,8 +2156,6 @@ dependencies = [
  "engine",
  "engine_native",
  "engine_sources",
- "highlands_pond",
- "highlands_toon_lighting",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -2179,17 +2168,13 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "engine_core",
- "engine_faces",
+ "engine_ecs",
  "engine_places",
  "engine_render",
- "engine_scene",
- "engine_settings",
- "engine_terrain",
  "glam 0.30.9",
  "schemars",
  "serde",
  "serde_json",
- "wgpu",
 ]
 
 [[package]]
@@ -2197,7 +2182,8 @@ name = "highlands_toon_lighting"
 version = "0.1.0"
 dependencies = [
  "engine_core",
- "engine_faces",
+ "engine_ecs",
+ "engine_places",
  "engine_render",
 ]
 
@@ -2326,6 +2312,13 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "kinds"
+version = "0.1.0"
+dependencies = [
+ "toml_edit",
 ]
 
 [[package]]

@@ -7,55 +7,18 @@ publish.workspace = true
 
 [features]
 default = []
-dev = ["dep:engine_dev", "dep:wgpu", "engine_core/dev", "engine_render/dev", "engine_ambient_occlusion/dev", "engine_auto_exposure/dev", "engine_bloom/dev", "engine_debug_view/dev", "engine_lights/dev", "engine_reflections/dev", "engine_taa/dev", "schema"]
-profiling = ["engine_profile/enabled", "engine_core/profiling", "engine_collision/profiling", "engine_physics/profiling", "engine_render/profiling", "engine_terrain/profiling"]
-attribution = ["engine_core/attribution", "engine_collision/attribution"]
-schema = ["engine_core/schema", "engine_settings/schema", "engine_panic/schema", "engine_scene/schema", "engine_terrain/schema", "engine_layer_noise/schema", "engine_layer_stamps/schema", "engine_layer_heightmap/schema", "engine_layer_paths/schema", "engine_layer_erosion/schema", "engine_layer_hydrology/schema", "engine_layer_relief/schema", "engine_world_streaming/schema", "engine_navigation/schema", "engine_time_of_day/schema", "engine_collision/schema", "engine_physics/schema", "engine_bloom/schema", "engine_auto_exposure/schema", "engine_reflections/schema", "engine_places/schema", "engine_grounding/schema", "dep:schemars"]
+dev = ["dep:wgpu", "engine_core/dev", "engine_render/dev", "schema"]
+profiling = ["engine_profile/enabled", "engine_core/profiling", "engine_render/profiling"]
+attribution = ["engine_core/attribution"]
+schema = ["engine_core/schema", "engine_settings/schema", "engine_panic/schema", "engine_scene/schema", "dep:schemars"]
 
 [dependencies]
 engine_core.workspace = true
-engine_places.workspace = true
 engine_profile.workspace = true
-engine_collision.workspace = true
-engine_physics.workspace = true
-engine_terrain.workspace = true
-engine_grounding.workspace = true
-engine_layer_noise.workspace = true
-engine_layer_stamps.workspace = true
-engine_layer_heightmap.workspace = true
-engine_layer_paths.workspace = true
-engine_layer_erosion.workspace = true
-engine_layer_hydrology.workspace = true
-engine_layer_relief.workspace = true
-engine_world_streaming.workspace = true
-engine_navigation.workspace = true
-engine_time_of_day.workspace = true
 engine_scene.workspace = true
-engine_dev = { workspace = true, optional = true }
 engine_settings.workspace = true
 engine_render.workspace = true
-engine_sun.workspace = true
-engine_lighting.workspace = true
-engine_meshes.workspace = true
-engine_terrain_shading.workspace = true
-engine_scatter.workspace = true
-engine_shadows.workspace = true
-engine_lights.workspace = true
-engine_sky.workspace = true
-engine_probes.workspace = true
-engine_ground_cover.workspace = true
-engine_water.workspace = true
-engine_ambient_occlusion.workspace = true
-engine_reflections.workspace = true
-engine_bloom.workspace = true
-engine_dither.workspace = true
-engine_particles.workspace = true
-engine_taa.workspace = true
-engine_auto_exposure.workspace = true
-engine_tonemap.workspace = true
-engine_debug_view.workspace = true
 engine_panic.workspace = true
-engine_worker.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars = { workspace = true, optional = true }
@@ -75,4 +38,4 @@ crate-type = ["cdylib", "rlib"]
 workspace = true
 
 [package.metadata.engine]
-core = true
+kind = "host"

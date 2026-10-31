@@ -7,13 +7,10 @@ publish.workspace = true
 
 [features]
 default = []
-dev = ["engine/dev"]
-profiling = ["engine/profiling", "engine_profiler/profiling"]
+dev = []
+profiling = []
 
 [dependencies]
-engine.workspace = true
-engine_profiler.workspace = true
-engine_worker.workspace = true
 png.workspace = true
 sha2.workspace = true
 serde_json.workspace = true
@@ -28,4 +25,4 @@ name = "app_native"
 workspace = true
 
 [package.metadata.engine]
-core = true
+kind = "host"

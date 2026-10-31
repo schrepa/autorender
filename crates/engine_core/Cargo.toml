@@ -16,7 +16,6 @@ schema = ["dep:schemars", "engine_assets/schema", "engine_settings/schema"]
 engine_assets.workspace = true
 engine_math.workspace = true
 engine_settings.workspace = true
-engine_tables.workspace = true
 engine_profile.workspace = true
 bevy_app.workspace = true
 bevy_ecs.workspace = true
@@ -38,4 +37,4 @@ crate-type = ["rlib"]
 workspace = true
 
 [package.metadata.engine]
-core = true
+kind = "core"

@@ -17,6 +17,7 @@ name = "schema"
 required-features = ["schema"]
 
 [package.metadata.engine]
+kind = "app"
 page = "player.html"
 game = "player"
 native = "engine-player-native"

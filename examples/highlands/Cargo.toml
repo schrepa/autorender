@@ -13,6 +13,7 @@ name = "highlands-native"
 path = "src/main.rs"
 
 [package.metadata.engine]
+kind = "app"
 page = "highlands.html"
 game = "highlands"
 native = "highlands-native"
@@ -27,8 +28,6 @@ engine_sources.workspace = true
 
 [dependencies]
 engine.workspace = true
-highlands_pond = { workspace = true, features = ["schema"] }
-highlands_toon_lighting.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

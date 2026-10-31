@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_textures", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_collision", "crates/engine_physics", "crates/engine_profile", "crates/engine_terrain", "crates/engine_layer_noise", "crates/engine_layer_stamps", "crates/engine_layer_heightmap", "crates/engine_layer_paths", "crates/engine_layer_erosion", "crates/engine_layer_hydrology", "crates/engine_layer_relief", "crates/engine_world_streaming", "crates/engine_time_of_day", "crates/engine_tables", "crates/engine_sources", "crates/engine_worker", "crates/engine_native", "crates/engine_profiler", "crates/engine_panic", "crates/engine_player", "examples/highlands", "tools/xtask", "tools/assetc", "tools/lodbuild", "tools/coresmoke", "crates/engine_navigation", "crates/engine_checks", "crates/engine_faces", "crates/engine_places", "crates/engine_grounding", "crates/engine_sun", "crates/engine_lighting", "crates/engine_meshes", "crates/engine_shadows", "crates/engine_lights", "crates/engine_sky", "crates/engine_taa", "crates/engine_auto_exposure", "crates/engine_tonemap", "crates/engine_terrain_shading", "crates/engine_scatter", "crates/engine_ground_cover", "crates/engine_water", "crates/engine_probes", "crates/engine_particles", "crates/engine_debug_view", "crates/engine_ambient_occlusion", "crates/engine_reflections", "crates/engine_bloom", "crates/engine_dither", "examples/highlands/bricks/toon_lighting", "examples/highlands/bricks/pond"]
+members = ["crates/engine", "crates/engine_core", "crates/engine_math", "crates/engine_settings", "crates/engine_assets", "crates/engine_textures", "crates/engine_scene", "crates/engine_render", "crates/engine_dev", "crates/engine_collision", "crates/engine_physics", "crates/engine_profile", "crates/engine_terrain", "crates/engine_layer_noise", "crates/engine_layer_stamps", "crates/engine_layer_heightmap", "crates/engine_layer_paths", "crates/engine_layer_erosion", "crates/engine_layer_hydrology", "crates/engine_layer_relief", "crates/engine_world_streaming", "crates/engine_time_of_day", "crates/engine_tables", "crates/engine_sources", "crates/engine_worker", "crates/engine_native", "crates/engine_profiler", "crates/engine_panic", "crates/engine_player", "examples/highlands", "tools/xtask", "tools/assetc", "tools/lodbuild", "tools/coresmoke", "crates/engine_navigation", "crates/engine_checks", "crates/engine_places", "crates/engine_grounding", "crates/engine_sun", "crates/engine_lighting", "crates/engine_meshes", "crates/engine_shadows", "crates/engine_lights", "crates/engine_sky", "crates/engine_taa", "crates/engine_auto_exposure", "crates/engine_tonemap", "crates/engine_terrain_shading", "crates/engine_scatter", "crates/engine_ground_cover", "crates/engine_water", "crates/engine_probes", "crates/engine_particles", "crates/engine_debug_view", "crates/engine_ambient_occlusion", "crates/engine_reflections", "crates/engine_bloom", "crates/engine_dither", "examples/highlands/bricks/toon_lighting", "examples/highlands/bricks/pond", "crates/engine_ecs", "crates/engine_place", "crates/engine_registry", "crates/engine_heightfield", "crates/engine_codec", "crates/engine_standard", "crates/engine_standard_smokes", "crates/engine_wind", "crates/engine_splines", "crates/engine_fly_camera", "crates/engine_sprites", "tools/kinds"]
 resolver = "3"
 exclude = ["vendor"]
 
@@ -44,7 +44,6 @@ engine_panic = { path = "crates/engine_panic" }
 engine_assetc = { path = "tools/assetc" }
 engine_lodbuild = { path = "tools/lodbuild" }
 engine_checks = { path = "crates/engine_checks" }
-engine_faces = { path = "crates/engine_faces" }
 engine_places = { path = "crates/engine_places" }
 engine_grounding = { path = "crates/engine_grounding" }
 engine_sun = { path = "crates/engine_sun" }
@@ -67,6 +66,17 @@ engine_ambient_occlusion = { path = "crates/engine_ambient_occlusion" }
 engine_reflections = { path = "crates/engine_reflections" }
 engine_bloom = { path = "crates/engine_bloom" }
 engine_dither = { path = "crates/engine_dither" }
+engine_ecs = { path = "crates/engine_ecs" }
+engine_place = { path = "crates/engine_place" }
+engine_registry = { path = "crates/engine_registry" }
+engine_heightfield = { path = "crates/engine_heightfield" }
+engine_codec = { path = "crates/engine_codec" }
+engine_standard = { path = "crates/engine_standard" }
+engine_standard_smokes = { path = "crates/engine_standard_smokes" }
+engine_wind = { path = "crates/engine_wind" }
+engine_splines = { path = "crates/engine_splines" }
+engine_fly_camera = { path = "crates/engine_fly_camera" }
+engine_sprites = { path = "crates/engine_sprites" }
 highlands_pond = { path = "examples/highlands/bricks/pond" }
 highlands_toon_lighting = { path = "examples/highlands/bricks/toon_lighting" }
 base64 = "=0.22.1"
@@ -109,7 +119,7 @@ wesl = { version = "=0.6.0", default-features = false }
 toml_edit = { version = "=0.25.15", default-features = false, features = ["parse"] }
 
 [workspace.lints.rust]
-unsafe_code = "deny"
+unsafe_code = "forbid"
 ambiguous_glob_reexports = "deny"
 hidden_glob_reexports = "deny"
 

@@ -7,14 +7,13 @@ publish.workspace = true
 
 [features]
 default = []
-schema = ["dep:schemars", "engine_core/schema", "engine_settings/schema", "engine_world_streaming/schema"]
+schema = ["dep:schemars", "engine_core/schema", "engine_settings/schema"]
 
 [dependencies]
 bevy_ecs.workspace = true
 base64.workspace = true
 engine_core.workspace = true
 engine_settings.workspace = true
-engine_world_streaming.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars = { workspace = true, optional = true }
@@ -23,4 +22,4 @@ schemars = { workspace = true, optional = true }
 workspace = true
 
 [package.metadata.engine]
-core = true
+kind = "core"

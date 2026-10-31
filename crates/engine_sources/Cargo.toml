@@ -12,4 +12,4 @@ sha2.workspace = true
 workspace = true
 
 [package.metadata.engine]
-core = true
+kind = "support"

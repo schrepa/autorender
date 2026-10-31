@@ -9,19 +9,10 @@ publish.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [package.metadata.engine]
+kind = "host"
 worker = true
 
 [dependencies]
-engine_terrain.workspace = true
-engine_layer_noise.workspace = true
-engine_layer_stamps.workspace = true
-engine_layer_heightmap.workspace = true
-engine_layer_paths.workspace = true
-engine_layer_erosion.workspace = true
-engine_layer_hydrology.workspace = true
-engine_layer_relief.workspace = true
-engine_navigation.workspace = true
-engine_tables.workspace = true
 engine_textures.workspace = true
 engine_math.workspace = true
 engine_settings.workspace = true

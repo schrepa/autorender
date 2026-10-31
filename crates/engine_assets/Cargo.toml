@@ -21,4 +21,4 @@ glam.workspace = true
 workspace = true
 
 [package.metadata.engine]
-core = true
+kind = "core"
