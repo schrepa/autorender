@@ -1,18 +1,18 @@
 import package::engine::color::luminance;
 import package::face::dither::stored;
 import package::face::heightfield::{NO_WATER_BLOCK, NO_WATER_SURFACE, TerrainSubdivision,
-    WATER_HELD, WATER_LIVE_BLOCK, WaterAt, surface_vertex, terrain, terrain_level_height,
-    terrain_surface_leaves, terrain_view, water_at_level, water_cell, water_info, water_read,
+    WATER_HELD, WATER_LIVE_BLOCK, WaterAt, surface_leaf, surface_vertex, terrain_level_height,
+    terrain_uniform, terrain_view_uniform, water_at_level, water_cell, water_info_at, water_read,
     water_smooth, water_texel, water_words, water_words_add};
 import package::face::lighting::{distribution, environment_brdf, finish, fresnel, highlights,
     specular, sun_visibility, visibility};
 import package::face::sky::{ambient, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
-import package::face::surface_point::{BODY_WATER, SurfacePoint};
 import package::frame::view::{PI, camera, detail_across, detail_level, eye_world,
     stable_normalize};
 import package::meshes::declarations::{SceneTargets, TemporalTargets};
-import package::meshes::surface::{Shaded, scene_targets, temporal_targets};
+import package::meshes::surface::{BODY_WATER, Shaded, SurfacePoint, scene_targets,
+    temporal_targets};
 import package::water::flow::{water_detail, water_stirring};
 import package::water::foam::{water_blocking, water_contact, water_foam, water_foam_layers,
     water_layers, water_splatted};
@@ -90,7 +90,7 @@ fn water_field(local: vec2<f32>) -> f32 {
         var levels = vec3<f32>(0.0);
         for (var corner = 0u; corner < 3u; corner++) {
             let texel = water_texel(cell.block, cell.first + water_corner(corner, upper));
-            levels[corner] = bitcast<f32>(textureLoad(water_info, texel.xy, texel.z, 0).z);
+            levels[corner] = bitcast<f32>(water_info_at(texel).z);
         }
         level = dot(levels, water_weights(cell.within));
     }
@@ -99,7 +99,7 @@ fn water_field(local: vec2<f32>) -> f32 {
 
 fn water_live_field(local: vec2<f32>) -> f32 {
     let n = water.sim.w;
-    let cells = (local + terrain.origin.xz - water.sim.xy) / water.sim.z - 0.5;
+    let cells = (local + terrain_uniform().origin.xz - water.sim.xy) / water.sim.z - 0.5;
     if n < 2.0 || any(cells < vec2<f32>(0.0)) || any(cells > vec2<f32>(n - 1.0)) {
         return NO_WATER_SURFACE;
     }
@@ -119,7 +119,7 @@ fn water_live_field(local: vec2<f32>) -> f32 {
     if weight <= 0.0 {
         return NO_WATER_SURFACE;
     }
-    return sum / weight + water.sim_datum.x - terrain.origin.y;
+    return sum / weight + water.sim_datum.x - terrain_uniform().origin.y;
 }
 
 fn water_live_look(at: vec2<i32>) -> vec4<f32> {
@@ -135,11 +135,11 @@ fn water_live_look(at: vec2<i32>) -> vec4<f32> {
 
 fn water_live_read(local: vec2<f32>) -> WaterAt {
     let n = water.sim.w;
-    let cells = (local + terrain.origin.xz - water.sim.xy) / water.sim.z - 0.5;
+    let cells = (local + terrain_uniform().origin.xz - water.sim.xy) / water.sim.z - 0.5;
     let corner = clamp(floor(cells), vec2<f32>(1.0), vec2<f32>(n - 3.0));
     let within = saturate(cells - corner);
     let first = vec2<i32>(corner) - vec2<i32>(1);
-    let lift = water.sim_datum.x - terrain.origin.y;
+    let lift = water.sim_datum.x - terrain_uniform().origin.y;
     var surfaces: array<vec2<f32>, 16>;
     var words: array<vec2<u32>, 16>;
     for (var k = 0u; k < 16u; k++) {
@@ -203,7 +203,7 @@ fn water_live_share(local: vec2<f32>, seen: f32) -> f32 {
     if handed.level != 0u {
         return 0.0;
     }
-    let cells = (local + terrain.origin.xz - water.sim.xy) / water.sim.z;
+    let cells = (local + terrain_uniform().origin.xz - water.sim.xy) / water.sim.z;
     let edges = min(min(cells.x, cells.y), min(n - cells.x, n - cells.y));
     if edges <= 2.0 {
         return 0.0;
@@ -233,7 +233,7 @@ fn water_pixel(local: vec2<f32>, seen: f32) -> WaterAt {
     if live >= 1.0 {
         return water_live_read(local);
     }
-    let picked = detail_level(seen, terrain.anchor.w, terrain.directory.y);
+    let picked = detail_level(seen, terrain_uniform().anchor.w, terrain_uniform().directory.y);
     let cell = water_cell(local, picked.level);
     var at = water_read(cell);
     if picked.blend > 0.0 && cell.level == picked.level {
@@ -247,18 +247,18 @@ fn water_pixel(local: vec2<f32>, seen: f32) -> WaterAt {
 
 fn water_drawn(drawn: vec3<f32>) -> WaterAt {
     let world = eye_world(drawn);
-    return water_pixel(world.xz - terrain.origin.xz, detail_across(world));
+    return water_pixel(world.xz - terrain_uniform().origin.xz, detail_across(world));
 }
 
 fn water_on_surface(drawn: vec3<f32>, at: WaterAt) -> vec3<f32> {
-    let above = eye_world(drawn).y - terrain.origin.y - at.surface;
+    let above = eye_world(drawn).y - terrain_uniform().origin.y - at.surface;
     return drawn - vec3<f32>(0.0, above, 0.0);
 }
 
 fn water_relative(local: vec2<f32>, height: f32) -> vec3<f32> {
-    let from_eye = terrain.origin.xz - terrain.eye.xz;
-    return vec3<f32>(local.x + from_eye.x, height + terrain.anchor.y, local.y + from_eye.y)
-        + terrain_view.eye_offset.xyz;
+    let from_eye = terrain_uniform().origin.xz - terrain_uniform().eye.xz;
+    return vec3<f32>(local.x + from_eye.x, height + terrain_uniform().anchor.y,
+        local.y + from_eye.y) + terrain_view_uniform().eye_offset.xyz;
 }
 
 fn water_lift(world: vec3<f32>) -> f32 {
@@ -266,11 +266,12 @@ fn water_lift(world: vec3<f32>) -> f32 {
 }
 
 fn water_output(vertex: u32, instance: u32) -> WaterOutput {
-    let local = surface_vertex(terrain_surface_leaves[water_tree.tree.z + instance], vertex);
+    let local = surface_vertex(surface_leaf(water_tree.tree.z + instance), vertex);
     var relative = water_relative(local, water_field(local));
     relative.y += water_lift(eye_world(relative));
     var output: WaterOutput;
-    output.clip_position = terrain_view.relative_view_projection * vec4<f32>(relative, 1.0);
+    output.clip_position = terrain_view_uniform().relative_view_projection
+        * vec4<f32>(relative, 1.0);
     output.relative = relative;
     return output;
 }

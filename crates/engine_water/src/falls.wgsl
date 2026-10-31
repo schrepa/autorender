@@ -1,12 +1,11 @@
 import package::engine::color::luminance;
 import package::face::dither::stored;
-import package::face::heightfield::{WATER_HELD, terrain};
+import package::face::heightfield::{WATER_HELD, terrain_uniform};
 import package::face::lighting::{environment_brdf, finish, sun_visibility};
 import package::face::sun::{sun_color, sun_direction};
-import package::face::surface_point::SurfacePoint;
 import package::frame::view::{camera, detail_resolved, detail_span, eye_world, stable_normalize};
 import package::meshes::declarations::{SceneTargets, TemporalTargets};
-import package::meshes::surface::{Shaded, scene_targets, temporal_targets};
+import package::meshes::surface::{Shaded, SurfacePoint, scene_targets, temporal_targets};
 import package::water::footprint::WATER_SMOOTHEST;
 import package::water::surface::{water_body, water_ground, water_pixel, water_scattered,
     water_scene, water_transmitted};
@@ -99,9 +98,9 @@ fn fall_white(path: f32, white: f32) -> vec3<f32> {
 }
 
 fn fall_clear(world: vec3<f32>, thickness: f32) -> f32 {
-    let at = water_pixel(world.xz - terrain.origin.xz,
+    let at = water_pixel(world.xz - terrain_uniform().origin.xz,
         detail_resolved(detail_span(world, vec3<f32>(0.0, 1.0, 0.0)).xy));
-    let surface = terrain.origin.y + at.surface;
+    let surface = terrain_uniform().origin.y + at.surface;
     let under = select(0.0, 1.0, at.depth > 0.0 && at.held >= WATER_HELD);
     return mix(1.0, smoothstep(thickness, 2.0 * thickness, world.y - surface), under);
 }

@@ -19,7 +19,7 @@ const FILES: &[&str] = &[
     "../engine_render/src/meshes/vertex.wgsl",
     "../engine_render/src/noise.wgsl",
     "../engine_render/src/wind.wgsl",
-    "../engine_faces/src/defaults/",
+    "../engine_faces/src/places/",
     "../engine_bloom/src/",
     "../engine_dither/src/",
     "../engine_lighting/src/",

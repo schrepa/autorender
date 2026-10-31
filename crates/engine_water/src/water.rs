@@ -53,12 +53,11 @@ pub static PART: PartEntry = PartEntry {
                 Stages::FRAGMENT,
             )],
         }],
-        effects: &[],
         labels: &[],
         lazy: false,
-        faces: &[],
         needs: &[],
         piece: None,
+        resolve: None,
     },
     create,
 };

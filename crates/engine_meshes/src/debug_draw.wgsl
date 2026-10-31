@@ -1,11 +1,11 @@
 import package::face::lighting::sun_debug;
-import package::face::surface_point::SurfacePoint;
 import package::meshes::debug::{DEBUG_FADING, DebugOutput, DebugTargets, debug_targets};
 import package::meshes::declarations::MOVED_SLOT;
 import package::meshes::impostor_frames::{IMPOSTOR_FADING, impostor_index};
 import package::meshes::impostors::{ImpostorInput, ImpostorOutput, impostor_card, impostor_point,
     impostor_shaded};
 import package::meshes::shade::{extended_fragment, surface_point};
+import package::meshes::surface::SurfacePoint;
 import package::meshes::vertex::ExtendedOutput;
 
 fn point_targets(record: u32, object: u32, detail: u32, point: SurfacePoint) -> DebugTargets {
