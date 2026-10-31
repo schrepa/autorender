@@ -7,9 +7,15 @@ publish.workspace = true
 
 [features]
 default = []
+schema = ["dep:schemars", "engine_core/schema"]
 
 [dependencies]
 engine_core.workspace = true
+bevy_ecs.workspace = true
+glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars = { workspace = true, optional = true }
 
 [lints]
 workspace = true
