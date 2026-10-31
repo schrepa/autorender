@@ -413,12 +413,11 @@ pub static PART: PartEntry = PartEntry {
         resources: &[],
         hooks: &[Hook::Transparent],
         contributes: &[],
-        effects: &[],
         labels: &[],
         lazy: false,
-        faces: &[],
         needs: &[],
         piece: None,
+        resolve: None,
     },
     create,
 };

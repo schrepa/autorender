@@ -1,4 +1,4 @@
-import package::face::heightfield::{WATER_HELD, terrain, terrain_view};
+import package::face::heightfield::{WATER_HELD, terrain_uniform, terrain_view_uniform};
 import package::frame::view::{PI, detail_across, eye_world};
 import package::water::bursts::{water_burst_bits, water_burst_life, water_burst_slot,
     water_burst_weight};
@@ -731,12 +731,12 @@ fn particles_gather(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let spacing = particle_spacing();
     let world = vec2<f32>(particle_frame.lattice.xy + point) * spacing;
-    let at = water_pixel(world - terrain.origin.xz, spacing);
+    let at = water_pixel(world - terrain_uniform().origin.xz, spacing);
     var words = vec4<u32>(0u);
     if at.held >= WATER_HELD && at.depth > WATER_FOAM_WET {
         words = vec4<u32>(pack2x16float(at.words.flow),
             pack2x16float(vec2<f32>(at.depth, at.words.state.x)), pack2x16float(at.slope),
-            bitcast<u32>(terrain.origin.y + at.surface));
+            bitcast<u32>(terrain_uniform().origin.y + at.surface));
     }
     particle_lattice[particle_lattice_at(point, false)] = words;
 }
@@ -973,9 +973,9 @@ struct FoamQuad {
 }
 
 fn foam_quad(raft: Particle, corner: vec2<f32>) -> FoamQuad {
-    let local = raft.at - terrain.origin.xz;
+    let local = raft.at - terrain_uniform().origin.xz;
     let pixel = detail_across(eye_world(water_relative(local,
-        raft.surface - terrain.origin.y)));
+        raft.surface - terrain_uniform().origin.y)));
     let long = length(raft.axis);
     let along = select(vec2<f32>(1.0, 0.0), raft.axis / long, long > 0.0);
     let across = vec2<f32>(-along.y, along.x);
@@ -997,10 +997,11 @@ fn vs_foam(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance
     let index = (1u - particle_frame.pool.z) * (pools.x + pools.y) + instance;
     let raft = particle_read(foam_pool[2u * index], foam_pool[2u * index + 1u], false);
     let quad = foam_quad(raft, foam_corner(vertex));
-    var relative = water_relative(quad.at, raft.surface - terrain.origin.y);
+    var relative = water_relative(quad.at, raft.surface - terrain_uniform().origin.y);
     relative.y += water_lift(eye_world(relative));
     var output: FoamOutput;
-    output.clip_position = terrain_view.relative_view_projection * vec4<f32>(relative, 1.0);
+    output.clip_position = terrain_view_uniform().relative_view_projection
+        * vec4<f32>(relative, 1.0);
     output.within = quad.within;
     output.layers = quad.layers;
     return output;

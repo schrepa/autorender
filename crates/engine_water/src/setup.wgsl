@@ -1,7 +1,7 @@
 import package::face::heightfield::{NO_WATER_BLOCK, NO_WATER_SURFACE, TERRAIN_GRID,
     TerrainGroundRise, TerrainGroundSamples, WATER_HELD, WATER_LIVE_BLOCK, WATER_TILE_PATCHES,
-    WaterCell, terrain, terrain_ground_rise, terrain_ground_samples, terrain_level_height,
-    water_cell, water_info, water_read, water_texel};
+    WaterCell, terrain_ground_rise, terrain_ground_samples, terrain_level_height, terrain_uniform,
+    water_cell, water_info_at, water_read, water_texel};
 import package::water::surface::{WATER_GRAVITY, WATER_TURBULENT_SPEED};
 
 struct SimSetup {
@@ -58,7 +58,8 @@ struct SetupLive {
 
 fn setup_ground_at(corner: vec2<i32>) -> f32 {
     let local = vec2<f32>(corner) * setup_frame.meters.x;
-    return (terrain.origin.y + terrain_level_height(local, 0u).height) - setup_frame.meters.y;
+    return (terrain_uniform().origin.y + terrain_level_height(local, 0u).height)
+        - setup_frame.meters.y;
 }
 
 fn setup_raised(samples: TerrainGroundSamples, local: vec2<f32>, height: f32)
@@ -95,14 +96,14 @@ fn setup_nearest(cell: WaterCell) -> vec4<u32> {
     }
     let near = select(vec2<u32>(0u), vec2<u32>(1u), cell.within >= vec2<f32>(0.5));
     let texel = water_texel(cell.block, cell.first + near);
-    return textureLoad(water_info, texel.xy, texel.z, 0);
+    return water_info_at(texel);
 }
 
 fn setup_live_cell(at: vec2<i32>) -> SetupLive {
     var live = SetupLive(false, NO_WATER_SURFACE, vec2<f32>(0.0), false);
     let spacing = setup_frame.meters.x * f32(setup_frame.square.w);
     let middle = (vec2<f32>(setup_holding(at)) + 0.5) * spacing;
-    let size = f32(WATER_TILE_PATCHES * (TERRAIN_GRID - 1u)) * terrain.anchor.w;
+    let size = f32(WATER_TILE_PATCHES * (TERRAIN_GRID - 1u)) * terrain_uniform().anchor.w;
     let tiles = vec2<i32>(setup_frame.tiles.zw);
     let tile = vec2<i32>(floor(middle / size)) - bitcast<vec2<i32>>(setup_frame.tiles.xy);
     if any(tile < vec2<i32>(0)) || any(tile >= tiles) {
@@ -132,7 +133,7 @@ fn setup_live_cell(at: vec2<i32>) -> SetupLive {
     }
     let flow = vec2<f32>(bitcast<f32>(setup_live[entry + 1u]),
         bitcast<f32>(setup_live[entry + 2u]));
-    live.surface = (surface + terrain.origin.y) - setup_frame.meters.y;
+    live.surface = (surface + terrain_uniform().origin.y) - setup_frame.meters.y;
     live.held = flow.x >= 0.5 * SETUP_LIVE_HELD;
     live.flow = select(flow, vec2<f32>(0.0), live.held);
     return live;
@@ -150,7 +151,7 @@ fn setup_ghost(at: vec2<i32>) -> vec4<f32> {
     if shown.held < WATER_HELD || shown.depth <= SETUP_DRY {
         return vec4<f32>(NO_WATER_SURFACE, 0.0, 0.0, SETUP_UNHELD);
     }
-    let surface = (shown.surface + terrain.origin.y) - setup_frame.meters.y;
+    let surface = (shown.surface + terrain_uniform().origin.y) - setup_frame.meters.y;
     if shown.words.lake {
         return vec4<f32>(surface, 0.0, 0.0, surface);
     }
@@ -266,7 +267,7 @@ fn setup_cover(at: vec2<i32>) -> vec2<f32> {
         return vec2<f32>(0.0);
     }
     return vec2<f32>(f32(covered) / f32(SETUP_POINTS),
-        (terrain.origin.y + sum / f32(covered)) - setup_frame.meters.y);
+        (terrain_uniform().origin.y + sum / f32(covered)) - setup_frame.meters.y);
 }
 
 var<workgroup> setup_risen: array<f32, SETUP_CORNERS>;
@@ -314,7 +315,7 @@ fn setup_blocks(
             let lattice = first + vec2<i32>(corner);
             let point = vec2<f32>(lattice) * setup_frame.meters.x;
             let bare = setup_ground_at(lattice);
-            let height = (setup_frame.meters.y + bare) - terrain.origin.y;
+            let height = (setup_frame.meters.y + bare) - terrain_uniform().origin.y;
             let raised = setup_raised(terrain_ground_samples(point), point, height);
             let at = corner.y * SETUP_SIDE + corner.x;
             setup_ground[base + at] = bare + raised.rise;
@@ -361,7 +362,7 @@ fn setup_sample(window: u32, at: vec2<i32>) -> vec4<u32> {
 }
 
 fn setup_window(window: u32, start: vec2<i32>, local: vec2<f32>) -> TerrainGroundSamples {
-    let at = max(local / terrain.anchor.w, vec2<f32>(0.0));
+    let at = max(local / terrain_uniform().anchor.w, vec2<f32>(0.0));
     let last = vec2<f32>(setup_frame.square.yz);
     let cell = min(floor(at), last - 1.0);
     let first = vec2<i32>(cell) - start;
@@ -407,7 +408,7 @@ fn setup_raise(
     let risen = setup_cell_risen(local.xy);
     let ground = base + SETUP_CORNERS + local.y * WATER_LIVE_BLOCK + local.x;
     setup_ground[ground] = setup_held(setup_ground[ground], risen.x);
-    let middle = (vec2<f32>(first + vec2<i32>(local.xy)) + 0.5) * cell / terrain.anchor.w;
+    let middle = (vec2<f32>(first + vec2<i32>(local.xy)) + 0.5) * cell / terrain_uniform().anchor.w;
     let nearest = setup_sample(window, vec2<i32>(floor(middle + 0.5)) - start);
     setup_ground[ground + SETUP_CELLS] = setup_rough(bitcast<f32>(nearest.z), risen.y > 0.0, cell);
 }

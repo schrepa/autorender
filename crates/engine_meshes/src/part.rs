@@ -9,12 +9,11 @@ pub(crate) static PART: PartEntry = PartEntry {
         resources: &[],
         hooks: &[],
         contributes: &[],
-        effects: &[],
         labels: &[],
         lazy: false,
-        faces: &[],
         needs: &[],
         piece: None,
+        resolve: None,
     },
     create,
 };

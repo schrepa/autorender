@@ -3,7 +3,6 @@ import package::engine::wind::slot_sway;
 import package::face::dither::stored;
 import package::face::lighting::{finish, local_light, widened};
 import package::face::sun::sun_direction;
-import package::face::surface_point::{BODY_SOLID, BODY_THIN, SurfacePoint};
 import package::frame::view::{camera, fade_noise, material_detail, stable_normalize};
 import package::meshes::declarations::{
     ALPHA_MASK, DepthSceneTargets, DepthTemporalTargets, MASK_MIP_SCALE, MATERIAL_MAPS, MOVED_SLOT,
@@ -19,7 +18,8 @@ import package::meshes::shade::{
     MaterialTexels, alpha_cutoff, fragment_pixel, geometric_normal, leafiness, mapped_normal,
     material_texels, plant_tint, rippled, top_layer_amount
 };
-import package::meshes::surface::{Shaded, scene_targets, temporal_targets};
+import package::meshes::surface::{BODY_SOLID, BODY_THIN, Shaded, SurfacePoint, scene_targets,
+    temporal_targets};
 import package::meshes::vertex::{octahedral_normal, origin_key, pose_matrix, slot_wind};
 
 const IMPOSTOR_FOLIAGE: u32 = 0x1000000u;
