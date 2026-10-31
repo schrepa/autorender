@@ -3,7 +3,6 @@ import package::face::lights::{cluster_light, kept_regions, light_cluster, light
     shaped_lights};
 import package::face::shadows::{shadow_lookup, sun_shadow, sun_shadowed};
 import package::face::sky::cloud_passing;
-import package::face::surface_point::SurfacePoint;
 import package::frame::view::PI;
 import package::generated::pieces::pieces;
 import package::lighting::debug::debug_shadowed;
@@ -12,7 +11,7 @@ import package::lighting::surface::{environment_lobe, finish_reflecting, mirrore
     sky_map_light};
 import package::meshes::debug::{DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON,
     DEBUG_SUN_LEVEL, DEBUG_SUN_NONE};
-import package::meshes::surface::{SPECULAR_LIMIT, SPECULAR_VARIANCE, Shaded};
+import package::meshes::surface::{SPECULAR_LIMIT, SPECULAR_VARIANCE, Shaded, SurfacePoint};
 
 fn highlights() -> vec4<f32> {
     return pieces.lighting.highlights;

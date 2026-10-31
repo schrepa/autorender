@@ -1,23 +1,5 @@
 import package::lights::clusters::{KEPT_REGIONS, LOCAL_LIGHTS, SHAPED_LIGHTS, clusters, light_data};
-
-struct Light {
-    position: vec3<f32>,
-    range: f32,
-    color: vec3<f32>,
-    cos_outer: f32,
-    direction: vec3<f32>,
-    cos_inner: f32,
-    radius: f32,
-    length: f32,
-    region: u32,
-    pad: u32,
-}
-
-struct LightCluster {
-    range: vec2<u32>,
-    depth: f32,
-    end: f32,
-}
+import package::place::lights::{Light, LightCluster};
 
 const LIGHT_INTERIOR: u32 = 1u;
 const LIGHT_EXTERIOR: u32 = 2u;

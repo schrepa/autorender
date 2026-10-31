@@ -68,15 +68,17 @@ pub(crate) static PART: PartEntry = PartEntry {
         }],
         hooks: &[],
         contributes: &[LIGHTS_LIGHTS],
-        effects: &[],
+        resolve: None,
         labels: LABELS,
         lazy: true,
-        faces: &[engine_render::offer_face!(gpu::LightPass => dyn LightListFace)],
         needs: &[],
         piece: None,
     },
     create: gpu::create,
 };
+
+pub(crate) const LIGHT_LIST: engine_core::FaceOffer =
+    engine_render::offer_face!(gpu::LightPass => dyn LightListFace);
 
 pub(crate) use crate::gpu_layouts::ClusterUniform;
 

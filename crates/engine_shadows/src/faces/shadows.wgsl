@@ -1,17 +1,7 @@
 import package::generated::pieces::pieces;
+import package::place::shadows::{KeptLift, KeptTexels};
 import package::shadows::sample::{KEPT_GROUND_TEXELS, SHADOW_MAPS, air_visibility, crown_light,
     kept_lift, map_lookup, map_visibility, shadow_level};
-
-struct KeptTexels {
-    first: u32,
-    count: u32,
-    texels: vec4<f32>,
-}
-
-struct KeptLift {
-    first: u32,
-    lifts: vec4<f32>,
-}
 
 fn sun_shadowed() -> bool {
     return SHADOW_MAPS && pieces.shadow.state.x != 0.0;

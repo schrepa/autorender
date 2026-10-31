@@ -12,10 +12,9 @@ pub(crate) static PART: PartEntry = PartEntry {
         resources: &[],
         hooks: &[],
         contributes: &[],
-        effects: &[],
+        resolve: None,
         labels: &[],
         lazy: false,
-        faces: &[],
         needs: &[],
         piece: Some(PieceDecl {
             name: "lighting",

@@ -1,9 +1,9 @@
-import package::face::lighting::{distribution, fresnel, visibility};
 import package::face::lights::{LIGHT_EXTERIOR, LIGHT_INTERIOR, Light};
-import package::face::probes::in_interior;
-import package::face::surface_point::SurfacePoint;
+import package::face::probe_light::in_interior;
 import package::generated::pieces::pieces;
+import package::lighting::faces::lighting::{distribution, fresnel, visibility};
 import package::lighting::surface::{cap_share, disk_energy, dominant_direction};
+import package::meshes::surface::SurfacePoint;
 
 fn tube_energy(alpha: f32, angle: f32) -> f32 {
     return alpha / saturate(alpha + 0.5 * angle);
