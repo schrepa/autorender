@@ -142,14 +142,19 @@ fn refused(
         .collect();
     bricks.sort_unstable();
     bricks.dedup();
+    let reached: Vec<String> = reach
+        .reached
+        .iter()
+        .map(|&(variable, _)| {
+            let variable = &variables[variable as usize];
+            format!("{}::{}", variable.brick, variable.name)
+        })
+        .collect();
     Error::new(
         code,
-        format!(
-            "$.pipelines.{}.{stage}.{what}[{}]",
-            reach.label,
-            bricks.join(",")
-        ),
+        format!("{}.{stage}.{what}[{}]", reach.label, bricks.join(",")),
     )
+    .got(reached)
 }
 
 fn joined(first: &[(u32, Stages)], second: &[(u32, Stages)]) -> Vec<(u32, Stages)> {

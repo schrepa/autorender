@@ -192,7 +192,7 @@ impl FrameRegions<'_> {
             counts: [
                 self.plan.regions.len() as u32,
                 self.clipmap.len() as u32,
-                0,
+                self.clipmap.mask_words() as u32,
                 self.clipmap.side(),
             ],
             moving: [self.layout.still, self.plan.moving.len() as u32, 0, 0],

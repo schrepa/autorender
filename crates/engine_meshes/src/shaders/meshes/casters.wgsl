@@ -25,7 +25,6 @@ struct DrawArgs {
 @group(1) @binding(6) var<storage, read_write> ids: array<u32>;
 @group(1) @binding(7) var<storage, read_write> args: array<DrawArgs>;
 @group(1) @binding(8) var<storage, read_write> totals: array<atomic<u32>, 4>;
-@group(1) @binding(9) var<storage, read> starts: array<u32>;
 
 const KEEP_AFTER: u32 = 8u;
 const MOVING_UNTIL: u32 = 64u;
@@ -56,7 +55,7 @@ fn pose_key(pose: Rows, group: u32) -> u32 {
 }
 
 fn group_start(group: u32) -> u32 {
-    return starts[group];
+    return ids[map_start(SKY_MAP + 1u) + group];
 }
 
 fn group_end(group: u32) -> u32 {

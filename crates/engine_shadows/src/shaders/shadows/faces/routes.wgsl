@@ -4,7 +4,6 @@ import package::shadows::sample::shadow_tiles;
 @group(0) @binding(0) var<uniform> caster_cull: CasterCull;
 @group(0) @binding(0) var<storage, read> caster_routes: Routes;
 @group(0) @binding(0) var<storage, read_write> caster_marks: array<atomic<u32>>;
-@group(0) @binding(0) var<storage, read_write> caster_masks: array<atomic<u32>>;
 
 fn overlaps(rectangle: vec4<f32>, low: vec3<f32>, high: vec3<f32>, depth: f32) -> bool {
     return all(high.xy >= rectangle.xy) && all(low.xy <= rectangle.zw) && low.z <= depth;
@@ -63,13 +62,9 @@ fn mark_caster(level: u32, tile: vec2<i32>, moving: bool) -> u32 {
         return 0u;
     }
     let bit = (level * side + cell.y) * side + cell.x;
-    let word = bit / 32u;
+    let word = select(0u, caster_cull.counts.z, moving) + bit / 32u;
     let flag = 1u << (bit % 32u);
-    if moving {
-        if (atomicLoad(&caster_masks[word]) & flag) == 0u {
-            atomicOr(&caster_masks[word], flag);
-        }
-    } else if (atomicLoad(&caster_marks[word]) & flag) == 0u {
+    if (atomicLoad(&caster_marks[word]) & flag) == 0u {
         atomicOr(&caster_marks[word], flag);
     }
     let routed = entry >> 16u;

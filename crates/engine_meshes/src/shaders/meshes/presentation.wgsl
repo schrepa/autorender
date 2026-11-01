@@ -9,6 +9,7 @@ import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
     CandidateData as Candidate, GROUP, LOD_LEVELS, LOD_STATE, PARENT_GROUP, PHASE1, PHASE2,
     PROBE, PresentationFrame as Frame, UNWATCHED, VISIBLE};
 import package::meshes::screen_cull::{F32_MAX, covers_no_pixel, hidden};
+import package::meshes::slots::{instance_poses, instance_still};
 import package::place::instances::{MOVED_SLOT, STILL_FRAMES};
 
 struct Rows {
@@ -82,6 +83,11 @@ fn rows_matrix(rows: Rows) -> mat4x4<f32> {
 fn matrix_rows(m: mat4x4<f32>) -> Rows {
     let t = transpose(m);
     return Rows(t[0], t[1], t[2]);
+}
+
+fn slot_rows(slot: u32) -> Rows {
+    let pose = instance_poses[slot];
+    return Rows(pose.row_0, pose.row_1, pose.row_2);
 }
 
 fn trs(translation: vec3<f32>, rotation: vec4<f32>, scale: vec3<f32>) -> mat4x4<f32> {
@@ -392,7 +398,7 @@ fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
         shown = state & 3u;
         previous = (state >> 2u) & 3u;
         progress = (state >> 4u) & 0xffffu;
-        let model = rows_matrix(poses[candidate.slot]);
+        let model = rows_matrix(slot_rows(candidate.slot));
         let nearer = lod_level_at(batch, model, 1.0 - frame.fade.y);
         let farther = lod_level_at(batch, model, 1.0 + frame.fade.y);
         let wanted = max(nearer, min(shown, farther));
@@ -442,7 +448,7 @@ fn occlusion_test(@builtin(global_invocation_id) id: vec3<u32>) {
     if batch.bounds_max.w != 0.0 {
         return;
     }
-    let is_hidden = hidden(frame.view_projection * rows_matrix(poses[candidate.slot]),
+    let is_hidden = hidden(frame.view_projection * rows_matrix(slot_rows(candidate.slot)),
         batch.bounds_min.xyz, batch.bounds_max.xyz, depth_pyramid, frame.viewport);
     flags = (flags & ~OCCLUDED) | select(0u, OCCLUDED, is_hidden);
     if (flags & PHASE1) == 0u {
@@ -479,7 +485,7 @@ fn count_still(@builtin(global_invocation_id) id: vec3<u32>) {
     var key = 0u;
     var count = 0u;
     if (scan[candidate.position] & VALID) != 0u {
-        key = pose_key(poses[candidate.slot]);
+        key = pose_key(slot_rows(candidate.slot));
         count = select(1u, min(state.y + 1u, STILL_FRAMES), key == state.x && state.y != 0u);
     }
     if key != state.x || count != state.y {
@@ -495,9 +501,9 @@ fn probe_cull(@builtin(global_invocation_id) id: vec3<u32>) {
     let candidate = slot_candidates[id.x];
     var flags = scan[candidate.position] & ~PROBE;
     let batch = batches[candidate.batch];
-    let still = still_frames[candidate.slot].y >= STILL_FRAMES;
+    let still = instance_still[candidate.slot].y >= STILL_FRAMES;
     if (flags & VALID) != 0u && still && batch.bounds_max.w != 1.0 {
-        let model = rows_matrix(poses[candidate.slot]);
+        let model = rows_matrix(slot_rows(candidate.slot));
         if !outside(model, batch.bounds_min.xyz, batch.bounds_max.xyz)
                 && !(frame.subpixel != 0u && covers_no_pixel(frame.view_projection * model,
                     batch.bounds_min.xyz, batch.bounds_max.xyz, frame.viewport.xy)) {

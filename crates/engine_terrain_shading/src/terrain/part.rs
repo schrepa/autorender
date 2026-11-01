@@ -183,8 +183,8 @@ impl GpuPart for TerrainGpu {
             meshlet: cx.buffer("meshlet_indices", Lifetime::Kept),
             patches: cx.buffer("patches", Lifetime::Kept),
             grid: cx.buffer("grid_indices", Lifetime::Kept),
-            normal_jobs: cx.buffer("normal_jobs", Lifetime::Frame),
-            control_jobs: cx.buffer("control_jobs", Lifetime::Frame),
+            normal_jobs: cx.buffer("normal_jobs", Lifetime::Kept),
+            control_jobs: cx.buffer("control_jobs", Lifetime::Kept),
             slots: std::array::from_fn(|_| {
                 (
                     cx.buffer("subdivision", Lifetime::Kept),

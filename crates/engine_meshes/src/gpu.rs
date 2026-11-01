@@ -131,7 +131,6 @@ pub(crate) struct CasterBuffers {
     pub args: Buffer<MeshesGpu>,
     pub template: Buffer<MeshesGpu>,
     pub totals: Buffer<MeshesGpu>,
-    pub starts: Buffer<MeshesGpu>,
     pub listed: Buffer<MeshesGpu>,
     pub listed_groups: Buffer<MeshesGpu>,
     pub no_flags: Buffer<MeshesGpu>,
@@ -377,7 +376,6 @@ fn install_casters(cx: &mut Install<'_, MeshesGpu>) -> CasterBuffers {
         args: buffer("shadow_args"),
         template: buffer("shadow_args_template"),
         totals: buffer("shadow_counters"),
-        starts: buffer("shadow_group_starts"),
         listed: buffer("shadow_casters"),
         listed_groups: buffer("shadow_caster_groups"),
         no_flags: buffer("shadow_no_flags"),
@@ -545,7 +543,6 @@ fn install_computes(
         p::COUNT_STILL,
         &[
             (p::FRAME, Bind::Buffer(presented.frame)),
-            (p::POSES, Bind::Buffer(instances.poses)),
             (p::SCAN, Bind::Buffer(presented.scan)),
             (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
             (p::STILL_FRAMES, Bind::Buffer(instances.still_frames)),
@@ -557,7 +554,6 @@ fn install_computes(
         &[
             (p::FRAME, Bind::Buffer(presented.frame)),
             (p::BATCHES, Bind::Buffer(presented.batches)),
-            (p::POSES, Bind::Buffer(instances.poses)),
             (p::SCAN, Bind::Buffer(presented.scan)),
             (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
             (p::LOD_STATES, Bind::Buffer(presented.lod_states)),
@@ -600,7 +596,6 @@ fn install_computes(
             (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
             (p::SCAN, Bind::Buffer(presented.scan)),
             (p::BATCHES, Bind::Buffer(presented.batches)),
-            (p::POSES, Bind::Buffer(instances.poses)),
             (p::DEPTH_PYRAMID, Bind::Texture(presented.pyramid)),
             (p::OCCLUSION_COUNTS, Bind::Buffer(presented.counts)),
         ],
@@ -659,8 +654,6 @@ fn install_computes(
                 (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
                 (p::SCAN, Bind::Buffer(presented.scan)),
                 (p::BATCHES, Bind::Buffer(presented.batches)),
-                (p::STILL_FRAMES, Bind::Buffer(instances.still_frames)),
-                (p::POSES, Bind::Buffer(instances.poses)),
             ],
         )?);
         faces.push(compaction(
@@ -683,7 +676,6 @@ fn install_computes(
                 (casters::STILLNESS, Bind::Buffer(casters.stillness)),
                 (casters::IDS, Bind::Buffer(casters.ids)),
                 (casters::ARGS, Bind::Buffer(casters.args)),
-                (casters::STARTS, Bind::Buffer(casters.starts)),
             ],
         )
     };

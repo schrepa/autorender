@@ -54,7 +54,6 @@ pub(crate) struct ShadowsGpu {
     tiles: Texture<Self>,
     map_marks: Buffer<Self>,
     depth_marks: Buffer<Self>,
-    masks: Buffer<Self>,
     routes: Buffer<Self>,
     cull: Buffer<Self>,
     sky_views: Buffer<Self>,
@@ -176,9 +175,8 @@ impl ShadowsGpu {
             cx.release(self.sky);
         }
         let mask_bytes = plan.mark_bytes().max(4);
-        for marks in [self.map_marks, self.depth_marks, self.masks] {
-            cx.allocate_buffer(marks, mask_bytes);
-        }
+        cx.allocate_buffer(self.map_marks, 2 * mask_bytes);
+        cx.allocate_buffer(self.depth_marks, mask_bytes);
         cx.allocate_buffer(self.routes, size_of::<Routes>() as u64);
         cx.allocate_buffer(self.cull, size_of::<CasterCull>() as u64);
         cx.allocate_buffer(self.sky_views, size_of::<SkyViews>() as u64);
@@ -199,7 +197,6 @@ impl GpuPart for ShadowsGpu {
         let tiles = cx.texture("shadow_tiles", TABLE_FORMAT, Lifetime::Kept);
         let map_marks = cx.buffer("caster_marks", Lifetime::Kept);
         let depth_marks = cx.buffer("shadow_marks", Lifetime::Kept);
-        let masks = cx.buffer("caster_masks", Lifetime::Kept);
         let routes = cx.buffer("shadow_routes", Lifetime::Kept);
         let cull = cx.buffer("caster_cull", Lifetime::Kept);
         let sky_views = cx.buffer("sky_views", Lifetime::Kept);
@@ -216,7 +213,6 @@ impl GpuPart for ShadowsGpu {
         cx.frame(face_routes::CASTER_CULL, Bind::Buffer(cull))?;
         cx.frame(face_routes::CASTER_ROUTES, Bind::Buffer(routes))?;
         cx.frame(face_routes::CASTER_MARKS, Bind::Buffer(map_marks))?;
-        cx.frame(face_routes::CASTER_MASKS, Bind::Buffer(masks))?;
         let maps = cx
             .pass("shadow_maps")
             .depth_cleared(regions, 1.0)
@@ -257,7 +253,6 @@ impl GpuPart for ShadowsGpu {
             tiles,
             map_marks,
             depth_marks,
-            masks,
             routes,
             cull,
             sky_views,
@@ -322,7 +317,12 @@ impl GpuPart for ShadowsGpu {
             );
         }
         cx.read_back::<ShadowFeedback>(MAP_MARKS, self.map_marks, bytes.clone(), AfterRead::Clear);
-        cx.read_back::<ShadowFeedback>(MASKS, self.masks, bytes, AfterRead::Clear);
+        cx.read_back::<ShadowFeedback>(
+            MASKS,
+            self.map_marks,
+            bytes.end..2 * bytes.end,
+            AfterRead::Clear,
+        );
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

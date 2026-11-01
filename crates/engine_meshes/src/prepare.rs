@@ -736,12 +736,12 @@ impl MeshesGpu {
         }
         let classify = plan.source == Some(Source::Presented);
         cx.allocate_buffer(buffers.stillness, storage_bytes(plan.stillness_capacity as u64 * STILLNESS_BYTES));
-        cx.allocate_buffer(buffers.ids, storage_bytes((ID_CAPACITIES * plan.id_capacity * 4) as u64));
+        let starts = (ID_CAPACITIES * plan.id_capacity * 4) as u64;
+        cx.allocate_buffer(buffers.ids, storage_bytes(starts + (plan.arg_capacity * 4) as u64));
         let args = (MAPS * plan.arg_capacity) as u64 * DRAW_ARGS_BYTES;
         cx.allocate_buffer(buffers.args, storage_bytes(args));
         cx.allocate_buffer(buffers.template, storage_bytes(args));
         cx.allocate_buffer(buffers.totals, storage_bytes(CASTER_TOTALS_BYTES));
-        cx.allocate_buffer(buffers.starts, storage_bytes((plan.starts.len() * 4) as u64));
         cx.allocate_buffer(buffers.no_flags, storage_bytes(0));
         if draws.generation != Some(plan.generation) {
             draws.generation = Some(plan.generation);
@@ -754,7 +754,7 @@ impl MeshesGpu {
                 cx.write(buffers.template, 0, &plan.template);
             }
             if !plan.starts.is_empty() {
-                cx.write(buffers.starts, 0, &plan.starts);
+                cx.write(buffers.ids, starts, &plan.starts);
             }
             if !classify {
                 cx.allocate_buffer(buffers.listed, storage_bytes((plan.listed.len().max(1) * size_of::<CandidateData>()) as u64));

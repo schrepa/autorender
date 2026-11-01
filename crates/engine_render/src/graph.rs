@@ -254,18 +254,18 @@ fn refused(code: ErrorCode, path: String) -> Error {
     Error::new(code, path)
 }
 
-fn follows_of(after: &[Vec<PassId>], count: usize) -> Vec<Bits> {
-    let earlier = |pass: usize| after.get(pass).into_iter().flatten().map(|known| known.index());
+fn follows_of(before: &[Bits]) -> Vec<Bits> {
+    let count = before.len();
     (0..count)
         .map(|start| {
             let mut follows = Bits::of(count);
-            let mut open: Vec<usize> = earlier(start).collect();
+            let mut open: Vec<usize> = before[start].iter().collect();
             while let Some(pass) = open.pop() {
                 if follows.contains(pass) {
                     continue;
                 }
                 follows.insert(pass);
-                open.extend(earlier(pass));
+                open.extend(before[pass].iter());
             }
             follows
         })
@@ -310,8 +310,8 @@ impl StaticGraph {
                 ));
             }
         }
-        let follows = follows_of(&after, count);
         let mut before = vec![Bits::of(count); count];
+        let mut kept = Vec::new();
         for (late, reader) in nodes.iter().enumerate() {
             let reads = reader.reads_only();
             let inputs = reader.inputs();
@@ -335,8 +335,9 @@ impl StaticGraph {
                             before[early].insert(late);
                         }
                     } else if reads.contains(resource) {
-                        let kept_after = entry.life == Life::Kept && follows[early].contains(late);
-                        if !kept_after {
+                        if entry.life == Life::Kept {
+                            kept.push((early, late));
+                        } else {
                             before[late].insert(early);
                         }
                     }
@@ -350,6 +351,12 @@ impl StaticGraph {
             }
             for pass in &after[late] {
                 before[late].insert(pass.index());
+            }
+        }
+        let follows = follows_of(&before);
+        for (early, late) in kept {
+            if !follows[early].contains(late) {
+                before[late].insert(early);
             }
         }
         let mut placed = Bits::of(count);
