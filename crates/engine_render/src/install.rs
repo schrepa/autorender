@@ -16,6 +16,10 @@ pub(crate) enum Bound {
         layers: Range<u32>,
     },
     Buffer(u32),
+    Window {
+        buffer: u32,
+        size: u64,
+    },
     Sampler(u32),
     Target(ViewTarget),
     Asset,
@@ -57,6 +61,7 @@ pub(crate) struct BufferDecl {
     pub(crate) lifetime: Lifetime,
     pub(crate) part: u32,
     pub(crate) usage: wgpu::BufferUsages,
+    pub(crate) window: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -64,6 +69,7 @@ pub(crate) struct PassDecl {
     pub(crate) name: &'static str,
     pub(crate) label: Option<&'static str>,
     pub(crate) span: Option<&'static str>,
+    pub(crate) group: Option<&'static str>,
     pub(crate) part: u32,
     pub(crate) work: Work,
     pub(crate) layer: Option<Layer>,
@@ -111,6 +117,12 @@ impl PassDecl {
     }
 }
 
+impl Bound {
+    pub(crate) fn window(&self) -> bool {
+        matches!(self, Self::Window { .. })
+    }
+}
+
 impl PipelineDecl {
     pub(crate) fn entries(&self) -> Vec<Entry> {
         match &self.program {
@@ -147,6 +159,7 @@ pub(crate) struct FrameBind {
 pub(crate) struct Claim {
     pub(crate) point: TypeId,
     pub(crate) part: u32,
+    pub(crate) uber: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -192,6 +205,7 @@ pub(crate) struct InstallCore {
     pub(crate) draws: Vec<DrawEntry>,
     pub(crate) linker: Linker,
     pub(crate) features: wgpu::Features,
+    pub(crate) limits: engine_core::DeviceLimits,
     pub(crate) problems: Vec<Error>,
 }
 
@@ -209,6 +223,7 @@ impl InstallCore {
             draws: Vec::new(),
             linker,
             features,
+            limits: engine_core::DeviceLimits::without_device(0),
             problems: Vec::new(),
         }
     }
@@ -243,8 +258,16 @@ impl InstallCore {
             lifetime,
             part: self.part,
             usage: wgpu::BufferUsages::empty(),
+            window: None,
         });
         (self.declared.buffers.len() - 1) as u32
+    }
+
+    pub(crate) fn window(&mut self, buffer: u32, size: u64) {
+        let part = self.part;
+        if let Some(declared) = self.declared.buffers.get_mut(buffer as usize).filter(|declared| declared.part == part) {
+            declared.window = Some(size);
+        }
     }
 
     pub(crate) fn use_buffer(&mut self, buffer: u32, usage: wgpu::BufferUsages) {
@@ -296,6 +319,7 @@ impl InstallCore {
             name,
             label: None,
             span: None,
+            group: None,
             part: self.part,
             work,
             layer: None,
@@ -348,6 +372,29 @@ impl InstallCore {
         {
             return Err(Error::new(ErrorCode::PassMismatch, path));
         }
+        let bound = bound
+            .into_iter()
+            .map(|(var, bound)| {
+                let window = match &bound {
+                    Bound::Buffer(buffer) => self
+                        .declared
+                        .buffers
+                        .get(*buffer as usize)
+                        .and_then(|declared| declared.window)
+                        .map(|size| (*buffer, size)),
+                    Bound::Texture(_)
+                    | Bound::Slice { .. }
+                    | Bound::Window { .. }
+                    | Bound::Sampler(_)
+                    | Bound::Target(_)
+                    | Bound::Asset => None,
+                };
+                match window {
+                    Some((buffer, size)) => (var, Bound::Window { buffer, size }),
+                    None => (var, bound),
+                }
+            })
+            .collect();
         let decl = PipelineDecl {
             part: self.part,
             scope,
@@ -371,7 +418,7 @@ impl InstallCore {
                     return Err(Error::new(ErrorCode::UnknownVariable, path).got(var.name()));
                 }
             }
-            if let Bound::Buffer(buffer) = bound {
+            if let Bound::Buffer(buffer) | Bound::Window { buffer, .. } = bound {
                 let usage = self.linker.buffer_usage(*var);
                 self.use_buffer(*buffer, usage);
             }
@@ -403,7 +450,7 @@ impl InstallCore {
         (self.declared.inputs.len() - 1) as u32
     }
 
-    pub(crate) fn claim(&mut self, point: TypeId, name: &'static str, pass: u32) -> Result<(), Error> {
+    pub(crate) fn claim(&mut self, (point, uber): (TypeId, bool), name: &'static str, pass: u32) -> Result<(), Error> {
         let path = self.path(&format!("claims.{name}"));
         if !self.fills.contains(&point) {
             return Err(Error::new(ErrorCode::PlaceNotFilled, path).got(self.package));
@@ -419,6 +466,7 @@ impl InstallCore {
         self.declared.claims.push(Claim {
             point,
             part: self.part,
+            uber,
         });
         Ok(())
     }

@@ -219,6 +219,7 @@ impl GpuPart for ShadowsGpu {
         Res<'static, View>,
         Res<'static, DebugShown>,
     );
+    const NAME: &'static str = "shadows";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use shaders::shadows::faces::routes as face_routes;
@@ -251,11 +252,17 @@ impl GpuPart for ShadowsGpu {
         cx.frame(face_routes::CASTER_MARKS, Bind::Buffer(map_marks))?;
         let maps = cx
             .pass("shadow_maps")
+            .label("engine/shadow-map")
             .depth_cleared(regions, 1.0)
             .depth(atlas, Access::Load)
             .depth_cleared(sky, 1.0)
             .id();
-        let marks = cx.pass("shadow_marks").at(Layer::Backdrop).id();
+        let marks = cx
+            .pass("shadow_marks")
+            .label("engine/shadow-marks")
+            .span("shadow_marks")
+            .at(Layer::Backdrop)
+            .id();
         let opening = cx
             .pass("sky_occlusion")
             .color_cleared(opened, wgpu::Color::WHITE)

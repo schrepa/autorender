@@ -39,7 +39,6 @@ export interface Runtime {
   tick_pipelining(): boolean;
   job_hash(): Uint8Array;
   distribution(values: Float64Array): Json<Distribution | null>;
-  dev_command?(request: string, width: number, height: number, paused: boolean): Json<Reply>;
   dev_request?(line: string, context: string): Json<Step>;
   dev_resume?(outcome: string, context: string): Json<Step>;
   dev_reloaded?(source: string, context: string, files?: unknown): Json<Step>;

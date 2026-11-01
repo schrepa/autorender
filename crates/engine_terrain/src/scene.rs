@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use engine_core::{
-    ComponentKind, ComponentKindOf, Error, ErrorCode, Expected, MaterialHandle, MeshHandle, Rule,
-    SceneCx, ScenePath, Setting, parse_value_at,
+    ComponentKind, ComponentKindOf, Error, ErrorCode, Expected, MaterialHandle, MeshHandle,
+    Placement, Rule, SceneCx, ScenePath, Setting, parse_value_at,
 };
 use engine_heightfield::layer::{LayerFiles, LayerKind};
 use engine_heightfield::tile::{
@@ -651,7 +651,7 @@ impl SceneTerrain {
 
 pub(crate) fn terrain_kind() -> ComponentKindOf<TerrainScene> {
     ComponentKind::of::<TerrainScene>("terrain")
-        .check_placed(placed_terrain)
+        .placement(Placement::Entities(ErrorCode::InvalidStreamed))
         .prepare(prepare_terrain)
         .files_in(terrain_files)
         .paths_in(terrain_paths)
@@ -666,12 +666,6 @@ pub(crate) fn prefetch_kind() -> ComponentKindOf<TerrainPrefetch> {
         .example(object_example)
 }
 
-fn placed_terrain(_: &TerrainScene, placed: engine_core::Placed, path: &str) -> Result<(), Error> {
-    if placed.streamed {
-        return Err(Error::new(ErrorCode::InvalidStreamed, path).expected(Expected::Absent));
-    }
-    Ok(())
-}
 
 fn prepare_terrain(
     scene: TerrainScene,

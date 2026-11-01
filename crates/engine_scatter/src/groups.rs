@@ -7,11 +7,12 @@ use engine_core::{
 };
 use engine_math::collections::HashMap;
 use engine_places::ground::{PlacedAsset, TerrainEntry, TileFace};
+use engine_render::{ground_data, pack_color, pack_surface};
 use glam::Vec3;
 
 use crate::layouts::{
     Cover, LAYER_SHIFT, LEVELS, NEAR_LEVEL_SHIFT, NO_LAYER, PlacedRecord, RANK_MAX, RANK_SHIFT,
-    STATE_FRESH, SlotColor, TERRAIN_INDEX, ground_data, pack_color, pack_surface, pose_rows,
+    STATE_FRESH, SlotColor, TERRAIN_INDEX, pose_rows,
 };
 use crate::pool::TileObjects;
 use crate::settings::{PlacedLook, ScatterSettings};

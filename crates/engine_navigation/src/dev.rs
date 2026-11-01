@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Error, ErrorCode, InvalidSetting, Jobs, Operation, Records, Rule, SceneIds, Setting, Transform,
+    Error, ErrorCode, Expected, Filled, InvalidSetting, Jobs, Operation, Records, Rule, SceneIds,
+    Setting, Slot, Transform,
 };
 use engine_places::ground::{Ground, GroundRead};
 use engine_places::navigation::{NavAgent, NavStatus, NavWalk};
@@ -289,6 +290,7 @@ impl Operation for NavPathQuery {
     const CONTROL: bool = false;
     type Params = (
         Res<'static, Ground>,
+        Filled<'static, Ground>,
         Res<'static, Records>,
         SceneIds<'static, 'static>,
         ResMut<'static, NavAgents>,
@@ -297,11 +299,15 @@ impl Operation for NavPathQuery {
     type Request = Self;
 
     fn run(
-        (ground, records, ids, mut navigation, mut jobs): SystemParamItem<'_, '_, Self::Params>,
+        (ground, filled, records, ids, mut navigation, mut jobs): SystemParamItem<
+            '_,
+            '_,
+            Self::Params,
+        >,
         request: Self,
     ) -> Result<Value, Error> {
         walk(
-            (&*ground, &*records, &ids),
+            (&*ground, filled.listed(), &*records, &ids),
             (&mut *navigation, &mut jobs),
             request,
         )
@@ -328,7 +334,7 @@ fn out_of_range(invalid: InvalidSetting, path: &str) -> Error {
 }
 
 fn walk(
-    (ground, records, ids): (&Ground, &Records, &SceneIds),
+    (ground, listed, records, ids): (&Ground, bool, &Records, &SceneIds),
     (navigation, jobs): (&mut NavAgents, &mut Jobs),
     NavPathQuery { from, to, options }: NavPathQuery,
 ) -> Result<Value, Error> {
@@ -342,6 +348,11 @@ fn walk(
         code: ErrorCode::OutOfRange,
         ..Error::from(invalid).within("$.options")
     })?;
+    if !listed {
+        return Err(Error::new(ErrorCode::MissingPlugin, "$.op")
+            .expected(Expected::Present)
+            .got(Ground::NAME));
+    }
     let terrain = match ground.0.source(from, to) {
         GroundRead::Ready(source) => Some(ground_key(ids, source.ground)),
         GroundRead::Waiting => None,

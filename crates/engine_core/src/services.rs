@@ -18,8 +18,6 @@ use crate::{Aabb, Camera, Error, ErrorCode, Expected, List, Mesh, Operation, Slo
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
-    pub root: bool,
-    pub streamed: bool,
     pub world: Mat4,
 }
 
@@ -161,6 +159,7 @@ pub struct ComponentKind {
     example: Option<fn() -> Value>,
     prepare: Option<PrepareHook>,
     view: Option<ViewHook>,
+    view_schema: Option<fn() -> Value>,
 }
 
 #[must_use]
@@ -192,6 +191,7 @@ impl ComponentKind {
                 example: None,
                 prepare: None,
                 view: None,
+                view_schema: None,
             },
             component: PhantomData,
         }
@@ -205,6 +205,11 @@ impl ComponentKind {
     #[doc(hidden)]
     pub fn register(&self, world: &mut World) -> ComponentId {
         (self.register)(world)
+    }
+
+    #[doc(hidden)]
+    pub fn registrar(&self) -> fn(&mut World) -> ComponentId {
+        self.register
     }
 
     #[doc(hidden)]
@@ -329,6 +334,11 @@ impl ComponentKind {
     pub fn example_value(&self) -> Option<Value> {
         self.example.map(|example| example())
     }
+
+    #[doc(hidden)]
+    pub fn view_schema(&self) -> Option<Value> {
+        self.view_schema.map(|schema| schema())
+    }
 }
 
 impl<C: Component + Clone + Serialize + DeserializeOwned> ComponentKindOf<C> {
@@ -422,10 +432,11 @@ impl<C: Component + Clone + Serialize + DeserializeOwned> ComponentKindOf<C> {
         self
     }
 
-    pub fn view<A: Component, V: Serialize + 'static>(
+    pub fn view<A: Component, V: Serialize + schemars::JsonSchema + 'static>(
         mut self,
         view: fn(&C, Option<&A>) -> V,
     ) -> Self {
+        self.kind.view_schema = Some(view_schema_of::<V>);
         self.kind.view = Some(Arc::new(move |world: &World, entity: Entity| {
             let component = world.get::<C>(entity)?;
             let write = || serde_json::to_value(view(component, world.get::<A>(entity))).ok();
@@ -442,6 +453,10 @@ impl<C> From<ComponentKindOf<C>> for ComponentKind {
     fn from(of: ComponentKindOf<C>) -> Self {
         of.kind
     }
+}
+
+fn view_schema_of<V: schemars::JsonSchema>() -> Value {
+    serde_json::to_value(schemars::schema_for!(V)).unwrap_or(Value::Null)
 }
 
 fn parsed<C: DeserializeOwned>(value: &Value, path: &str) -> Result<C, Error> {
@@ -818,6 +833,25 @@ impl PartDraws {
         match self.draws.iter_mut().find(|(of, _)| *of == part) {
             Some((_, held)) => *held = held.saturating_add(draws),
             None => self.draws.push((part, draws)),
+        }
+    }
+}
+
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+#[component(immutable)]
+pub struct PartFaults {
+    faulted: Vec<TypeId>,
+}
+
+impl PartFaults {
+    pub fn faulted(&self, part: TypeId) -> bool {
+        self.faulted.contains(&part)
+    }
+
+    #[doc(hidden)]
+    pub fn add(&mut self, part: TypeId) {
+        if !self.faulted.contains(&part) {
+            self.faulted.push(part);
         }
     }
 }

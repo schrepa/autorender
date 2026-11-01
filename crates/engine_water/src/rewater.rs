@@ -100,7 +100,7 @@ pub(crate) fn rewater(
     ground: Res<GroundWork>,
     mut state: ResMut<WaterState>,
 ) {
-    let work = Work::of(&clock, &ground);
+    let work = Work::until(&clock, &ground, state.work_end);
     let mut budget = work.slice;
     let state = &mut *state;
     let [mut rewatered, mut stale] = [0, 0];

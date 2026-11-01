@@ -12,12 +12,24 @@ pub(crate) struct Work {
 
 impl Work {
     pub(crate) fn of(clock: &WorkClock, ground: &GroundWork) -> Self {
+        Self::until(
+            clock,
+            ground,
+            clock.now().map_or(0.0, |now| now + ground.millis),
+        )
+    }
+
+    pub(crate) fn until(clock: &WorkClock, ground: &GroundWork, end: f64) -> Self {
         Self {
             slice: ground.slice.max(1),
             clock: clock.reading,
-            end: clock.now().map_or(0.0, |now| now + ground.millis),
+            end,
             upload: Cell::new(ground.upload),
         }
+    }
+
+    pub(crate) fn end(&self) -> f64 {
+        self.end
     }
 
     pub(crate) fn refill(&self, budget: &mut u64) -> bool {

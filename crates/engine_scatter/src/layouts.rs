@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::Resource;
 use bytemuck::{Pod, Zeroable};
-use engine_core::{Grounding, ImpostorRecord, Surface, gpu_consts, gpu_struct};
+use engine_core::{ImpostorRecord, gpu_consts, gpu_struct};
 use engine_render::debug::{
     DEBUG_CASTS, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_LEVEL_SHIFT,
 };
@@ -256,49 +256,6 @@ pub(crate) fn placed_group(impostor: ImpostorRecord, color: [u32; 2]) -> PlacedG
         color,
         pad: [0; 2],
     }
-}
-
-pub(crate) fn pack_surface(surface: Surface) -> u32 {
-    let unit = |value: f32, fallback: f32, max: f32| {
-        let value = if value.is_nan() { fallback } else { value };
-        (engine_math::clamp(value / max, 0.0, 1.0) * 255.0).round() as u32
-    };
-    let matte = Surface::MATTE;
-    unit(surface.roughness, matte.roughness, 1.0)
-        | unit(surface.metalness, matte.metalness, 1.0) << 8
-        | unit(surface.emission, matte.emission, Surface::MAX_EMISSION) << 16
-        | unit(surface.ripples, matte.ripples, 1.0) << 24
-}
-
-pub(crate) fn pack_color(color: [f32; 4]) -> [u32; 2] {
-    let unit = |value: f32, fallback: f32| {
-        let value = if value.is_nan() { fallback } else { value };
-        (engine_math::clamp(value, 0.0, 1.0) * 65535.0).round() as u32
-    };
-    [
-        unit(color[0], 0.0) | unit(color[1], 0.0) << 16,
-        unit(color[2], 0.0) | unit(color[3], 1.0) << 16,
-    ]
-}
-
-pub(crate) fn ground_data(
-    grounding: Option<Grounding>,
-    normal: [f32; 2],
-    sink: f32,
-    scale: f32,
-) -> GroundData {
-    let Some(grounding) = grounding else {
-        return [0; 4];
-    };
-    let snorm = |value: f32| {
-        u32::from((engine_math::clamp(value, -1.0, 1.0) * 32767.0).round() as i16 as u16)
-    };
-    [
-        snorm(normal[0]) | snorm(normal[1]) << 16,
-        sink.to_bits(),
-        (grounding.height * scale).to_bits(),
-        0,
-    ]
 }
 
 pub(crate) fn pose_rows(model: Mat4) -> PoseData {

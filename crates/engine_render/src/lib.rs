@@ -38,6 +38,7 @@ mod pieces;
 mod pipeline_layouts;
 mod pipelines;
 mod places;
+mod pyramid;
 mod registration;
 mod shaders;
 mod shared;
@@ -68,6 +69,7 @@ pub use platform::{AdapterInfo, RenderTarget, read_range};
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub use platform::{GpuPreference, NativeWindow, start_native_instances_with};
+pub use pyramid::{PYRAMID_GROUP, PyramidExtent};
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub use renderer::GpuMark;
@@ -82,6 +84,8 @@ pub use shaders::FULLSCREEN;
 pub use staging::MIN_STAGED_BYTES;
 
 pub const IMPOSTOR_VERTICES: u32 = 6;
+
+pub const DEV: bool = cfg!(feature = "dev");
 
 pub fn level_region(view: &engine_core::View, level: u32) -> (u32, u32) {
     let (display, render) = (view.display_size(), view.render_size());
@@ -397,6 +401,14 @@ pub enum Shape<'a, P, S> {
     },
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MeshPass {
+    pub opaque: bool,
+    pub prepass: bool,
+    pub fading: bool,
+    pub grounding: bool,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum DepthUse {
     None,
@@ -527,8 +539,16 @@ impl<P: GpuPart> Install<'_, P> {
         Sampler(self.core.sampler(desc), PhantomData)
     }
 
+    pub fn window(&mut self, buffer: Buffer<P>, size: u64) {
+        self.core.window(buffer.0, size);
+    }
+
     pub fn features(&self) -> wgpu::Features {
         self.core.features
+    }
+
+    pub fn limits(&self) -> &engine_core::DeviceLimits {
+        &self.core.limits
     }
 
     pub fn frame(&mut self, variable: Var, bound: Bind<P>) -> Result<(), Error> {
@@ -559,6 +579,12 @@ impl<P: GpuPart> Install<'_, P> {
     pub fn after(&mut self, pass: Pass<P>, earlier: Pass<P>) {
         if let Some(declared) = self.core.pass_mut(pass.0) {
             declared.after.push(earlier.0);
+        }
+    }
+
+    pub fn group(&mut self, pass: Pass<P>, name: &'static str) {
+        if let Some(declared) = self.core.pass_mut(pass.0) {
+            declared.group = Some(name);
         }
     }
 
@@ -626,7 +652,7 @@ impl<P: GpuPart> Install<'_, P> {
     }
 
     pub fn claim<D: DrawPoint>(&mut self, pass: Pass<P>) -> Result<Draws<D>, Error> {
-        self.core.claim(TypeId::of::<D>(), D::NAME, pass.0)?;
+        self.core.claim((TypeId::of::<D>(), D::UBER_MATERIALS), D::NAME, pass.0)?;
         let members = self
             .core
             .members::<registration::DrawRecord<D>>()
@@ -782,6 +808,14 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.release_buffer(buffer.0);
     }
 
+    pub fn renew_buffer(&mut self, buffer: Buffer<P>, bytes: u64) {
+        self.core.renew_buffer(buffer.0, bytes);
+    }
+
+    pub fn clear_buffer_range(&mut self, buffer: Buffer<P>, range: Range<u64>) {
+        self.core.clear_buffer_range(buffer.0, range);
+    }
+
     pub fn write<T: bytemuck::Pod>(&mut self, buffer: Buffer<P>, offset: u64, data: &[T]) {
         self.core.write(buffer.0, offset, bytemuck::cast_slice(data));
     }
@@ -799,6 +833,14 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn count_upload(&mut self, bytes: u64) {
         self.core.uploads.counted += bytes;
+    }
+
+    pub fn memory(&mut self, category: &'static str, bytes: u64) {
+        let memory = &mut self.core.uploads.memory;
+        match memory.iter_mut().find(|(known, _)| *known == category) {
+            Some((_, held)) => *held += bytes,
+            None => memory.push((category, bytes)),
+        }
     }
 
     pub fn write_texture(
@@ -852,6 +894,11 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.run_pass(pass.0);
     }
 
+    pub fn copy_at_end(&mut self, from: Copied<P>, to: Copied<P>, regions: &[CopyRegion]) {
+        let regions = regions.iter().map(region_of).collect();
+        self.core.queued.ending.push((copied(from), copied(to), regions));
+    }
+
     pub fn cameras(&mut self, views: &[CameraUniform]) {
         self.core.cameras(views);
     }
@@ -874,6 +921,26 @@ impl<P: GpuPart> Prepare<'_, P> {
             buffer: buffer.0,
             range,
             then,
+            once: false,
+            deliver: delivered::<R>,
+        })
+    }
+
+    pub fn read_back_once<R: Readback>(
+        &mut self,
+        tag: u32,
+        buffer: Buffer<P>,
+        range: Range<u64>,
+        then: AfterRead,
+    ) -> bool {
+        let part = self.core.part;
+        self.core.read_back(encode::Asked {
+            part,
+            tag,
+            buffer: buffer.0,
+            range,
+            then,
+            once: true,
             deliver: delivered::<R>,
         })
     }
@@ -905,6 +972,9 @@ impl<P: GpuPart> Encode<'_, P> {
     pub fn span(&mut self, name: &'static str) {
         self.core.close_encode_span(self.timer);
         self.core.timed.asked = Some(name);
+        if self.core.group_of(self.core.pass) == name {
+            self.core.open_encode_span(self.timer);
+        }
     }
 
     pub fn clear(&mut self, buffer: Buffer<P>) {
@@ -943,13 +1013,17 @@ impl<P: GpuPart> Encode<'_, P> {
     }
 
     pub fn dispatch(&mut self, pipeline: &ComputePipeline<P>, count: Count<P>) -> u32 {
+        self.dispatch_at(pipeline, count, &[])
+    }
+
+    pub fn dispatch_at(&mut self, pipeline: &ComputePipeline<P>, count: Count<P>, offsets: &[u32]) -> u32 {
         let count = match count {
             Count::Groups(groups) => encode::CountRaw::Groups(groups),
             Count::Indirect(input, offset) => encode::CountRaw::Indirect(input.0, offset),
         };
         self.core.open_encode_span(self.timer);
         let part = self.core.part;
-        self.core.dispatch(part, pipeline.0, count)
+        self.core.dispatch(part, pipeline.0, count, offsets)
     }
 }
 
@@ -968,7 +1042,15 @@ fn streams<P, S>(streams: &[(DrawInput<P, S>, u64)]) -> Vec<(u32, u64)> {
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
     pub fn draw(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>) {
-        self.issue(pipeline, shape, None);
+        self.issue(pipeline, (shape, &[], MeshPass::default()), None);
+    }
+
+    pub fn draw_at(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>, offsets: &[u32]) {
+        self.issue(pipeline, (shape, offsets, MeshPass::default()), None);
+    }
+
+    pub fn draw_with(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>, mesh: MeshPass) {
+        self.issue(pipeline, (shape, &[], mesh), None);
     }
 
     pub fn draw_timed<'l>(
@@ -979,13 +1061,24 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
     ) {
         let timer = self.raw.timer();
         let label: Box<dyn FnOnce() -> String + 'l> = Box::new(label);
-        self.issue(pipeline, shape, Some((timer, label)));
+        self.issue(pipeline, (shape, &[], MeshPass::default()), Some((timer, label)));
+    }
+
+    pub fn draw_timed_with<'l>(
+        &mut self,
+        pipeline: &Pipeline<P, S>,
+        (shape, mesh): (Shape<'_, P, S>, MeshPass),
+        label: impl FnOnce() -> String + 'l,
+    ) {
+        let timer = self.raw.timer();
+        let label: Box<dyn FnOnce() -> String + 'l> = Box::new(label);
+        self.issue(pipeline, (shape, &[], mesh), Some((timer, label)));
     }
 
     fn issue(
         &mut self,
         pipeline: &Pipeline<P, S>,
-        shape: Shape<'_, P, S>,
+        (shape, offsets, mesh): (Shape<'_, P, S>, &[u32], MeshPass),
         timed: encode::TimedDraw<'_>,
     ) {
         let shape = match shape {
@@ -1057,7 +1150,7 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         let part = self.raw.part();
         let run = self.raw.run();
         let point = run.point;
-        run.draw(part, point, pipeline.0, shape, timed);
+        run.draw(part, point, pipeline.0, (shape, offsets, mesh), timed);
     }
 }
 

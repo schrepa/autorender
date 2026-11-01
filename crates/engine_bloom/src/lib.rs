@@ -8,8 +8,10 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod part;
 mod settings;
 
+use std::any::TypeId;
+
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Schedule, Source, View, gpu_struct};
+use engine_core::{Brick, Bricks, PartFaults, Schedule, Source, View, gpu_struct};
 use engine_render::{PostLight, RenderBricks};
 
 pub use settings::{Bloom, BloomStats};
@@ -43,6 +45,7 @@ impl Brick for BloomBrick {
 fn publish_bloom(
     bloom: Res<Bloom>,
     view: Res<View>,
+    faults: Res<PartFaults>,
     mut piece: ResMut<BloomPiece>,
     mut stats: ResMut<BloomStats>,
 ) {
@@ -51,7 +54,9 @@ fn publish_bloom(
         threshold: [bloom.threshold, 0.0, 0.0, 0.0],
         applied: [bloom.intensity, f32::from(active), 0.0, 0.0],
     });
-    stats.set_if_neq(BloomStats { active });
+    stats.set_if_neq(BloomStats {
+        active: active && !faults.faulted(TypeId::of::<part::BloomGpu>()),
+    });
 }
 
 fn forget_bloom(mut stats: ResMut<BloomStats>) {

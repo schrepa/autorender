@@ -278,6 +278,8 @@ pub struct TerrainEntry {
     pub placement: Arc<[PlacedAsset]>,
     pub layers: Arc<[PlacedLayer]>,
     pub tiles: Arc<[TileFace]>,
+    pub sample_offset: Vec2,
+    pub kept: Arc<[(TileKey, Stamp)]>,
 }
 
 #[derive(Resource, Clone)]
@@ -357,15 +359,34 @@ impl Slot for Heightfield {
     const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::HEIGHTFIELD];
 }
 
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug)]
+pub struct WorkEntry {
+    pub streamed: bool,
+    pub drawn: bool,
+    pub entry: TerrainEntry,
+}
+
+#[derive(Resource, Clone, Debug, Default)]
 pub struct GroundWork {
     pub slice: u64,
     pub millis: f64,
+    pub end: f64,
     pub upload: u64,
+    pub entries: Arc<[WorkEntry]>,
 }
 
 impl Slot for GroundWork {
     const NAME: &'static str = "ground_work";
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GroundBaking {
+    pub lighting: u32,
+    pub unbounced: u32,
+}
+
+impl Slot for GroundBaking {
+    const NAME: &'static str = "ground_baking";
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

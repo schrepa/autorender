@@ -4,8 +4,8 @@ use engine_places::ground::{GroundTiles, TerrainTiles};
 use engine_places::shadows::{CasterMap, CasterView, ShadowCasters};
 use engine_render::{
     Access, AfterRead, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw, DrawInput,
-    Encode, GpuPart, Install, Lifetime, MainView, Own, Pass, Pipeline, Prepare, RenderPipeline,
-    SamplerDesc, Shape, Texture, VertexLayout, wgpu,
+    Encode, GpuPart, Install, Lifetime, MainView, MeshPass, Own, Pass, Pipeline, Prepare,
+    RenderPipeline, SamplerDesc, Shape, Texture, VertexLayout, wgpu,
 };
 
 use crate::far_cover::FarCoverTable;
@@ -101,6 +101,7 @@ struct HeldGroup {
     casts: Option<bool>,
     look: usize,
     masked: bool,
+    grounded: bool,
 }
 
 #[derive(Default)]
@@ -459,6 +460,7 @@ impl ScatterGpu {
                 group.extended,
             ),
             masked: group.masked(),
+            grounded: group.source.grounding().is_some(),
         }));
     }
 
@@ -726,7 +728,7 @@ impl ScatterGpu {
                         continue;
                     };
                     let record = DrawRecord::of(DrawKind::Placed, level, casts);
-                    draw.draw(
+                    draw.draw_with(
                         pipeline,
                         Shape::MeshIndirect {
                             mesh,
@@ -734,6 +736,12 @@ impl ScatterGpu {
                             args: inputs.args,
                             offset,
                             streams: &[(inputs.ids, ids), (inputs.records, record.offset())],
+                        },
+                        MeshPass {
+                            opaque: !prepass,
+                            prepass,
+                            fading: fades,
+                            grounding: group.grounded,
                         },
                     );
                     draws += 1;

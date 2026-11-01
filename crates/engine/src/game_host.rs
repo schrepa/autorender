@@ -350,6 +350,11 @@ impl<G: Game> GameHost<G> {
         self.jobs.working()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn deliver_readbacks(&mut self) {
+        self.app.deliver();
+    }
+
     pub(crate) fn dev_tools(&self) -> &engine_dev::DevTools {
         &self.development.tools
     }
@@ -358,30 +363,48 @@ impl<G: Game> GameHost<G> {
         self.game.scene()
     }
 
-    pub fn dev_command(&mut self, request: &str, width: u32, height: u32, paused: bool) -> String {
+    pub(crate) fn dev_handle(
+        &mut self,
+        request: &str,
+        size: (u32, u32),
+        paused: bool,
+    ) -> crate::dev_host::Handled {
         if self
             .development
             .submits_frame(self.app.engine().app.world(), request, paused)
         {
             self.game.before_frame(self.app.engine_mut());
         }
-        self.development.command(
-            &mut self.app,
-            self.game.scene(),
-            request,
-            width,
-            height,
-            paused,
-        )
+        self.development
+            .command(&mut self.app, self.game.scene(), request, size, paused)
     }
 
-    pub fn dev_reload(
+    pub(crate) fn dev_run(
+        &mut self,
+        call: crate::dev_host::Call<'_>,
+        size: (u32, u32),
+        paused: bool,
+    ) -> serde_json::Value {
+        if let crate::dev_host::Call::Control(name, args) = &call
+            && self.development.submits(
+                self.app.engine().app.world(),
+                (*name, args.clone()),
+                paused,
+            )
+        {
+            self.game.before_frame(self.app.engine_mut());
+        }
+        self.development
+            .call(&mut self.app, self.game.scene(), call, size, paused)
+    }
+
+    pub(crate) fn dev_reload(
         &mut self,
         source: &str,
         expected_revision: &str,
         revision: &str,
         files: Option<&SceneFiles>,
-    ) -> String {
+    ) -> serde_json::Value {
         let none = SceneFiles::default();
         let files = files.unwrap_or(&none);
         let result = reload_checked(

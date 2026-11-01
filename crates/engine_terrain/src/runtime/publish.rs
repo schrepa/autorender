@@ -1,6 +1,8 @@
 use super::*;
 use engine_core::Joined;
-use engine_places::ground::{PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles};
+use engine_places::ground::{
+    GroundWork, PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles, WorkEntry,
+};
 use engine_places::terrain::TerrainLayers;
 use engine_places::water::Hydrology;
 
@@ -13,20 +15,26 @@ pub(crate) struct Published {
     detail: (u32, u32),
     assets: ((u64, u64), u64),
     held: Vec<(Arc<[TerrainEdit]>, Arc<[Option<Solid>]>, u128)>,
+    sampled: Vec<([u32; 2], usize)>,
 }
 
 impl Published {
     fn of(
         (terrains, settings): (&Terrains, &TerrainSettings),
         assets: &AssetLibrary,
-        into: &mut Self,
+        (into, every): (&mut Self, bool),
     ) {
         into.epoch = terrains.epoch;
         into.revision = terrains.revision();
         into.drawn.clear();
         into.reach.clear();
         into.held.clear();
-        for state in terrains.entries.iter().filter(|state| state.drawn) {
+        into.sampled.clear();
+        for state in terrains
+            .entries
+            .iter()
+            .filter(|state| every || state.drawn)
+        {
             into.drawn.push((
                 state.entity,
                 state.around.is_some(),
@@ -38,10 +46,22 @@ impl Published {
                 .extend(state.ranges.iter().map(|range| range * LOAD_REACH));
             into.held
                 .push((state.terrain.edits.clone(), state.solids.clone(), state.relief));
+            let offset = sample_offset(state);
+            into.sampled.push((
+                [offset.x.to_bits(), offset.y.to_bits()],
+                state.store.kept_tiles(),
+            ));
         }
         into.detail = (settings.pixel_error.to_bits(), settings.pinned_levels);
         into.assets = (assets.revision(), assets.material_revision());
     }
+}
+
+fn sample_offset(state: &TerrainState) -> Vec2 {
+    state
+        .surface
+        .as_ref()
+        .map_or(Vec2::ZERO, |(layers, _)| layers.offset)
 }
 
 fn surface_program(state: &TerrainState) -> bool {
@@ -147,7 +167,18 @@ fn entry_of(
             .collect(),
         layers: Arc::from(placed_layers(surface.rules.authored())),
         tiles: state.store.faces().cloned().collect(),
+        sample_offset: sample_offset(state),
+        kept: state.store.kept_faces().collect(),
     }
+}
+
+#[derive(Default)]
+pub(crate) struct PublishedTiles {
+    last: Published,
+    seen: Published,
+    every_last: Published,
+    every_seen: Published,
+    every: Vec<TerrainEntry>,
 }
 
 pub(crate) fn publish_tiles(
@@ -155,23 +186,56 @@ pub(crate) fn publish_tiles(
     assets: Res<AssetLibrary>,
     kinds: Joined<TerrainLayers>,
     mut tiles: ResMut<TerrainTiles>,
-    mut published: Local<(Published, Published)>,
+    mut ground: ResMut<GroundWork>,
+    mut published: Local<PublishedTiles>,
 ) {
-    let (last, seen) = &mut *published;
-    Published::of((&terrains, &settings), &assets, seen);
-    if *seen == *last && !tiles.is_changed() {
+    let published = &mut *published;
+    let changed = tiles.is_changed();
+    Published::of(
+        (&terrains, &settings),
+        &assets,
+        (&mut published.every_seen, true),
+    );
+    if published.every_seen != published.every_last
+        || published.every.len() != terrains.entries.len()
+        || changed
+    {
+        let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
+        published.every = terrains
+            .entries
+            .iter()
+            .map(|state| entry_of((&terrains, state), (&settings, &kinds), &assets))
+            .collect();
+        std::mem::swap(&mut published.every_last, &mut published.every_seen);
+    }
+    ground.entries = terrains
+        .entries
+        .iter()
+        .zip(&published.every)
+        .map(|(state, entry)| WorkEntry {
+            streamed: state.streamed,
+            drawn: state.drawn,
+            entry: entry.clone(),
+        })
+        .collect();
+    Published::of(
+        (&terrains, &settings),
+        &assets,
+        (&mut published.seen, false),
+    );
+    if published.seen == published.last && !changed {
         return;
     }
-    let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
     *tiles = TerrainTiles {
         terrains: terrains
             .entries
             .iter()
-            .filter(|state| state.drawn)
-            .map(|state| entry_of((&terrains, state), (&settings, &kinds), &assets))
+            .zip(&published.every)
+            .filter(|(state, _)| state.drawn)
+            .map(|(_, entry)| entry.clone())
             .collect(),
     };
-    std::mem::swap(last, seen);
+    std::mem::swap(&mut published.last, &mut published.seen);
 }
 
 pub(crate) fn publish_hydrology(

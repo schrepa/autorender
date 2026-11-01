@@ -108,6 +108,8 @@ pub(crate) trait Installed: Send + Sync {
     fn encode(&mut self, pass: u32, core: &mut EncodeCore, timer: &GpuProfiler) -> u32;
 
     fn refresh(&mut self, world: &mut World);
+
+    fn rebind(&mut self, world: &mut World);
 }
 
 struct Held<P: GpuPart> {
@@ -167,5 +169,9 @@ impl<P: GpuPart> Installed for Held<P> {
     fn refresh(&mut self, world: &mut World) {
         self.reads = SystemState::new(world);
         self.fresh = true;
+    }
+
+    fn rebind(&mut self, world: &mut World) {
+        self.reads = SystemState::new(world);
     }
 }

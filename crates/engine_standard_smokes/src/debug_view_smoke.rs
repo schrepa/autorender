@@ -325,7 +325,7 @@ fn settle(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
             detail["lod2_instances"],
             detail["impostor_instances"]
         ]);
-        let current = rendering["read_back_age"]
+        let current = rendering["meshes_stats"]["read_back_age"]
             .as_u64()
             .is_some_and(|age| age < frame);
         stable = if current && counts == previous {

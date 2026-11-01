@@ -293,6 +293,10 @@ impl GpuMeshes {
         self.arena.capacity_bytes()
     }
 
+    pub(crate) fn staging_bytes(&self) -> u64 {
+        (self.staging.capacity() * size_of::<Vertex>()) as u64
+    }
+
     pub fn sync(&mut self, device: &wgpu::Device, queue: &Queue, world: &World) -> u64 {
         let (Some(residency), Some(library)) = (
             world.get_resource::<AssetResidency>(),

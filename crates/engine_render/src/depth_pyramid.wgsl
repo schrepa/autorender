@@ -1,8 +1,3 @@
-struct Extent {
-    size: vec2<u32>,
-    last: vec2<u32>,
-}
-
 fn farthest_depth(source: texture_depth_2d, base: vec2<u32>, last: vec2<u32>) -> f32 {
     return min(
         min(textureLoad(source, min(base, last), 0),

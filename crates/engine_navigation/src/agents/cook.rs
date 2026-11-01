@@ -52,6 +52,9 @@ impl NavAgents {
             graph.flight = flying;
             while let Some(&key) = graph.tiles.get(graph.next) {
                 let priority = job_priority(IDLE_JOBS, graph.next as u32);
+                if !jobs.admit(priority) {
+                    break;
+                }
                 let input = portals_input(&graph.walked, key, &graph.gait);
                 graph.flight.push(jobs.start(&PORTALS, input, priority));
                 graph.next += 1;

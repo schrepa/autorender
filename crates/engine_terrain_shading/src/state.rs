@@ -10,7 +10,8 @@ use engine_core::{
 };
 use engine_heightfield::tile::shaded_elsewhere;
 use engine_places::ground::{
-    GroundTiles, Heightfield, HeldTile, Pyramid, TerrainEntry, TerrainTiles, TileFace, TileKey,
+    GroundBaking, GroundTiles, Heightfield, HeldTile, Pyramid, TerrainEntry, TerrainTiles,
+    TileFace, TileKey,
 };
 use engine_places::shadows::ShadowChanges;
 use engine_render::DebugShown;
@@ -158,6 +159,14 @@ impl TerrainBakes {
 
     pub(crate) fn attached(&self) -> u32 {
         self.attached.len() as u32
+    }
+
+    fn unbounced(&self, settings: &TerrainShading, entry: &TerrainEntry) -> bool {
+        let bounce = &self.bounce;
+        settings.bounces()
+            && !entry.surroundings
+            && self.lighting.failed.is_none()
+            && (bounce.asked.is_some() || (bounce.made.is_none() && bounce.failed.is_none()))
     }
 
     pub(crate) fn prune(&mut self, entry: &TerrainEntry) {
@@ -706,6 +715,7 @@ pub(crate) fn bake(
     time: Res<FrameTime>,
     mut jobs: Jobs,
     mut bakes: ResMut<Bakes>,
+    mut baking: ResMut<GroundBaking>,
 ) {
     let frame = time.frame;
     let bakes = &mut *bakes;
@@ -778,6 +788,20 @@ pub(crate) fn bake(
         };
         held.bounce
             .ask(&mut jobs, &BOUNCE, codec::encode(&job), frame);
+    }
+    let (mut lighting, mut unbounced) = (0, 0);
+    for entry in tiles.terrains.iter() {
+        let Some(held) = bakes.terrains.get(&entry.terrain) else {
+            continue;
+        };
+        lighting += u32::from(held.lighting.asked.is_some());
+        unbounced += u32::from(held.unbounced(&settings, entry));
+    }
+    if baking.lighting != lighting || baking.unbounced != unbounced {
+        *baking = GroundBaking {
+            lighting,
+            unbounced,
+        };
     }
 }
 
@@ -1136,12 +1160,19 @@ pub(crate) fn forget(
     mut spawner: Spawner<TerrainShadingBrick>,
     mut atlas: ResMut<Atlas>,
     mut bakes: ResMut<Bakes>,
+    mut baking: ResMut<GroundBaking>,
     mut jobs: Jobs,
 ) {
     for entity in &own {
         spawner.despawn(entity);
     }
     *atlas = Atlas::default();
+    if baking.lighting != 0 || baking.unbounced != 0 {
+        *baking = GroundBaking {
+            lighting: 0,
+            unbounced: 0,
+        };
+    }
     let bakes = &mut *bakes;
     let mut released = BTreeSet::new();
     for (_, held) in std::mem::take(&mut bakes.terrains) {

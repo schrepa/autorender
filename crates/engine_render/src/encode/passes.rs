@@ -11,8 +11,25 @@ impl Run {
         if self.merge && shares && self.open.as_ref().is_some_and(|open| open.shared) {
             return false;
         }
-        self.leave();
+        if self.labelled.is_some_and(|known| self.same_group(known, pass)) {
+            self.end_render();
+        } else {
+            self.leave();
+        }
         true
+    }
+
+    pub(crate) fn same_group(&self, first: u32, second: u32) -> bool {
+        if first == second {
+            return true;
+        }
+        let passes = &self.machine.declared.passes;
+        match (passes.get(first as usize), passes.get(second as usize)) {
+            (Some(first), Some(second)) => {
+                first.part == second.part && first.group.is_some() && first.group == second.group
+            }
+            (Some(_) | None, _) => false,
+        }
     }
 
     pub(super) fn resolving(&self, pass: u32) -> Option<PassNames> {
@@ -33,7 +50,11 @@ impl Run {
         if let Some(names) = self.resolving(pass) {
             return names.pass;
         }
-        self.machine.declared.passes.get(pass as usize).map_or("", |declared| declared.name)
+        self.machine
+            .declared
+            .passes
+            .get(pass as usize)
+            .map_or("", |declared| declared.group.unwrap_or(declared.name))
     }
 
     pub(crate) fn stage_of(&self, pass: u32) -> Option<&'static str> {
@@ -52,11 +73,19 @@ impl Run {
             return;
         };
         self.end_render();
-        let group = self.group_of(self.pass);
-        if let (Some(span), Some(encoder)) = (timer.span_in(group, name), self.encoder.as_mut()) {
+        if let (Some(span), Some(encoder)) = (self.encode_span(timer, name), self.encoder.as_mut()) {
             span.mark(encoder, false);
         }
         self.timed.open = Some(name);
+    }
+
+    fn encode_span<'t>(&self, timer: &'t GpuProfiler, name: &'static str) -> Option<crate::profiling::Span<'t>> {
+        let group = self.group_of(self.pass);
+        if group == name {
+            timer.span(name)
+        } else {
+            timer.span_in(group, name)
+        }
     }
 
     pub(crate) fn close_encode_span(&mut self, timer: &GpuProfiler) {
@@ -65,8 +94,7 @@ impl Run {
             return;
         };
         self.end_render();
-        let group = self.group_of(self.pass);
-        if let (Some(span), Some(encoder)) = (timer.span_in(group, name), self.encoder.as_mut()) {
+        if let (Some(span), Some(encoder)) = (self.encode_span(timer, name), self.encoder.as_mut()) {
             span.mark(encoder, true);
         }
     }
@@ -84,7 +112,7 @@ impl Run {
     }
 
     pub(crate) fn group(&mut self, pass: u32) {
-        if !GROUPED || self.labelled == Some(pass) {
+        if !GROUPED || self.labelled.is_some_and(|known| self.same_group(known, pass)) {
             return;
         }
         let name = self.group_of(pass);

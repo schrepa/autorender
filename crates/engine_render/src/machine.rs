@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use engine_core::{Entry, Error, ErrorCode};
@@ -88,6 +89,7 @@ pub(crate) struct BuiltPipeline {
     pub(crate) made: Vec<(u64, wgpu::RenderPipeline)>,
     pub(crate) computed: Vec<(u64, wgpu::ComputePipeline)>,
     pub(crate) layout_key: String,
+    pub(crate) program_key: u64,
 }
 
 pub(crate) fn layout_key(pipeline: &BuiltPipeline) -> String {
@@ -209,6 +211,25 @@ pub(crate) fn in_pass(pipeline: &BuiltPipeline, index: u32, pass: &PassDecl) -> 
     decl_in_pass(&pipeline.decl, index, pass)
 }
 
+fn claimed_member(decl: &PipelineDecl, pass: &PassDecl) -> bool {
+    matches!(decl.scope, Scoped::Point(point) if point != std::any::TypeId::of::<crate::MainView>())
+        && decl.part != pass.part
+}
+
+fn owned_by(declared: &Declared, bound: &Bound, part: u32) -> bool {
+    match bound {
+        Bound::Texture(texture) | Bound::Slice { texture, .. } => declared
+            .textures
+            .get(*texture as usize)
+            .is_some_and(|texture| texture.part == part),
+        Bound::Buffer(buffer) | Bound::Window { buffer, .. } => declared
+            .buffers
+            .get(*buffer as usize)
+            .is_some_and(|buffer| buffer.part == part),
+        Bound::Sampler(_) | Bound::Target(_) | Bound::Asset => false,
+    }
+}
+
 fn depth_writes_of(declared: &Declared) -> Vec<bool> {
     declared
         .passes
@@ -267,7 +288,7 @@ fn handle_of(bound: &Bound) -> Option<Handle> {
             mips: [mips.start, mips.end],
             layers: [layers.start, layers.end],
         }),
-        Bound::Buffer(buffer) => Some(Handle::Buffer(*buffer)),
+        Bound::Buffer(buffer) | Bound::Window { buffer, .. } => Some(Handle::Buffer(*buffer)),
         Bound::Target(view) => Some(Handle::Target(final_target(*view))),
         Bound::Sampler(_) | Bound::Asset => None,
     }
@@ -612,7 +633,7 @@ impl Machine {
                         wgpu::BindGroupLayoutEntry {
                             binding: *binding,
                             visibility: shader_stages(stages),
-                            ty: ty.binding(filterable_bound(Some(bound), &declared), false),
+                            ty: ty.binding(filterable_bound(Some(bound), &declared), bound.window()),
                             count: None,
                         }
                     })
@@ -642,6 +663,14 @@ impl Machine {
                 bind_group_layouts: &layouts.iter().map(|layout| Some(*layout)).collect::<Vec<_>>(),
                 immediate_size: 0,
             });
+            let mut hasher = DefaultHasher::new();
+            format!("{:?}", decl.program).hash(&mut hasher);
+            for stage in &stages {
+                stage.entry.name().hash(&mut hasher);
+                stage.composed.text.hash(&mut hasher);
+            }
+            layout_key.hash(&mut hasher);
+            let program_key = hasher.finish();
             let modules = stages
                 .iter()
                 .map(|stage| {
@@ -663,6 +692,7 @@ impl Machine {
                 made: Vec::new(),
                 computed: Vec::new(),
                 layout_key,
+                program_key,
             });
         }
         let view_copies = copies(&declared, &pipelines, &depth_writes);
@@ -699,7 +729,7 @@ fn doubled_of(
 ) -> Vec<bool> {
     let texture_of = |bound: &Bound| match bound {
         Bound::Texture(texture) | Bound::Slice { texture, .. } => Some(*texture),
-        Bound::Buffer(_) | Bound::Sampler(_) | Bound::Target(_) | Bound::Asset => None,
+        Bound::Buffer(_) | Bound::Window { .. } | Bound::Sampler(_) | Bound::Target(_) | Bound::Asset => None,
     };
     declared
         .textures
@@ -859,6 +889,7 @@ fn graph_of(
             registered: index as u32,
             layer: pass_layer(pass),
             shared: shared(pass),
+            group: pass.group,
         };
         let depth_written = depth_writes.get(index).copied().unwrap_or(true);
         let direct_depth = reads_depth_direct(pass, depth_written);
@@ -869,14 +900,24 @@ fn graph_of(
         let bound_id = |bound: &Bound| -> Option<ResourceId> {
             match bound {
                 Bound::Texture(texture) | Bound::Slice { texture, .. } => ids.textures.get(*texture as usize).copied(),
-                Bound::Buffer(buffer) => ids.buffers.get(*buffer as usize).copied(),
+                Bound::Buffer(buffer) | Bound::Window { buffer, .. } => ids.buffers.get(*buffer as usize).copied(),
                 Bound::Target(view) => ids.target(target_read(*view, entry.layer, direct_depth)),
                 Bound::Sampler(_) | Bound::Asset => None,
             }
         };
+        let mut current = Vec::new();
         for pipeline in pipelines.iter().filter(|pipeline| in_pass(pipeline, index as u32, pass)) {
             reads.extend(pipeline.reads.iter().filter_map(&bound_id));
             writes.extend(pipeline.writes.iter().filter_map(&bound_id));
+            if claimed_member(&pipeline.decl, pass) {
+                current.extend(
+                    pipeline
+                        .reads
+                        .iter()
+                        .filter(|bound| owned_by(declared, bound, pipeline.decl.part))
+                        .filter_map(&bound_id),
+                );
+            }
         }
         for input in &declared.inputs {
             let scoped = match input.scope {
@@ -949,6 +990,7 @@ fn graph_of(
             colors,
             depth,
             after: pass.after.iter().map(|after| PassId::new(*after as usize)).collect(),
+            current,
         });
     }
     let canvas = ids.target(Target::Canvas);
@@ -990,12 +1032,14 @@ fn graph_of(
                 registered: 0,
                 layer: Some(layer),
                 shared: true,
+                group: None,
             },
             reads: vec![from],
             writes: vec![copy],
             colors: Vec::new(),
             depth: None,
             after: Vec::new(),
+            current: Vec::new(),
         });
     }
     let graph = StaticGraph::build(resources, passes)?;

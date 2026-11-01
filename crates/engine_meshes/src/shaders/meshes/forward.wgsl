@@ -6,7 +6,7 @@ import package::meshes::shade::{extended_fragment, extended_temporal_output, fra
 import package::meshes::vertex::ExtendedTemporalOutput;
 
 fn drawn_pixel(clip_position: vec4<f32>, previous: vec3<f32>) -> ViewPixel {
-    return ViewPixel(clip_position, vec4<f32>(previous.xy, 0.0, previous.z));
+    return view_pixel(clip_position, vec4<f32>(previous.xy, 0.0, previous.z));
 }
 
 fn mesh_targets(shaded: Shaded, clip_position: vec4<f32>, previous: vec3<f32>) -> ViewTargets {

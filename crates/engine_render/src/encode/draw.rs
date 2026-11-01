@@ -1,5 +1,22 @@
 use super::*;
 
+type OwnGroups = Vec<(u32, Option<wgpu::BindGroup>, Vec<u32>)>;
+
+fn with_offsets(mut own: OwnGroups, groups: &[crate::machine::OwnGroup], offsets: &[u32]) -> OwnGroups {
+    let mut given = offsets.iter().copied();
+    for ((_, _, dynamic), group) in own.iter_mut().zip(groups) {
+        let mut windows: Vec<u32> = group
+            .entries
+            .iter()
+            .filter(|(_, bound, _)| bound.window())
+            .map(|(binding, _, _)| *binding)
+            .collect();
+        windows.sort_unstable();
+        dynamic.extend(windows.iter().map(|_| given.next().unwrap_or(0)));
+    }
+    own
+}
+
 impl Run {
     pub(super) fn scoped(&self, part: u32, point: Option<TypeId>, pipeline: u32) -> bool {
         let Some(built) = self.machine.pipelines.get(pipeline as usize) else {
@@ -28,7 +45,7 @@ impl Run {
     }
 
     #[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
-    pub(crate) fn draw(&mut self, part: u32, point: Option<TypeId>, handle: u32, shape: RawShape, timed: TimedDraw<'_>) {
+    pub(crate) fn draw(&mut self, part: u32, point: Option<TypeId>, handle: u32, (shape, offsets, pass): (RawShape, &[u32], crate::MeshPass), timed: TimedDraw<'_>) {
         let Some((pipeline, filled)) = self.pipeline_of(handle) else {
             return;
         };
@@ -46,12 +63,29 @@ impl Run {
         if filled.is_some_and(|filled| self.filled[filled].groups.is_empty()) {
             self.fill_groups(pipeline, filled);
         }
+        let uber = point.is_some_and(|point| self.machine.declared.claims.iter().any(|claim| claim.point == point && claim.uber));
         let variant = match &shape {
             RawShape::Mesh { mesh, material, .. } | RawShape::MeshIndirect { mesh, material, .. } => {
                 let extended = self.assets.meshes.get(*mesh).is_some_and(|gpu| gpu.extended);
                 let known = material.is_none_or(|handle| self.assets.materials.group(handle).is_some());
                 known.then(|| {
-                    let variant = self.assets.materials.binding(*material).1.with_extended(extended);
+                    let variant = self
+                        .assets
+                        .materials
+                        .binding(*material)
+                        .1
+                        .with_extended(extended)
+                        .with_fading(pass.fading)
+                        .with_grounding(pass.grounding);
+                    let variant = if uber {
+                        variant.uber()
+                    } else if pass.prepass {
+                        variant.prepass()
+                    } else if pass.opaque {
+                        variant.opaque()
+                    } else {
+                        variant
+                    };
                     (variant.bits(), variant.constants())
                 })
             }
@@ -68,7 +102,7 @@ impl Run {
             Program::Compute(_) => 0,
         };
         let frame_group = self.frame_groups.get(variant as usize).and_then(|groups| groups.0[parity].clone());
-        let own: Vec<(u32, Option<wgpu::BindGroup>)> = built
+        let own: Vec<(u32, Option<wgpu::BindGroup>, Vec<u32>)> = built
             .groups
             .iter()
             .enumerate()
@@ -76,9 +110,10 @@ impl Run {
                 let filled_group = filled.and_then(|filled| {
                     self.filled[filled].groups.iter().find(|(index, _)| *index == group.index).map(|(_, made)| made.clone())
                 });
-                (group.index, filled_group.or_else(|| self.own_groups[pipeline as usize].0[at][parity].clone()))
+                (group.index, filled_group.or_else(|| self.own_groups[pipeline as usize].0[at][parity].clone()), Vec::new())
             })
             .collect();
+        let own = with_offsets(own, &built.groups, offsets);
         let vertex_inputs: Vec<Option<wgpu::Buffer>> = match &shape {
             RawShape::Buffers { vertices, .. } | RawShape::Indirect { vertices, .. } => {
                 vertices.iter().map(|input| self.input(part, *input)).collect()
@@ -132,9 +167,9 @@ impl Run {
             render.set_bind_group(0, group, &[open.offset]);
             open.set.frame = Some((variant, open.offset));
         }
-        for (index, group) in &own {
+        for (index, group, dynamic) in &own {
             if let Some(group) = group {
-                render.set_bind_group(*index, group, &[]);
+                render.set_bind_group(*index, group, dynamic);
             }
         }
         match shape {
@@ -269,7 +304,7 @@ impl Run {
         }
     }
 
-    pub(crate) fn dispatch(&mut self, part: u32, handle: u32, count: CountRaw) -> u32 {
+    pub(crate) fn dispatch(&mut self, part: u32, handle: u32, count: CountRaw, offsets: &[u32]) -> u32 {
         self.end_open();
         let Some(built) = self.machine.pipelines.get(handle as usize) else {
             return 0;
@@ -286,12 +321,13 @@ impl Run {
         let label = self.label_of(self.pass).unwrap_or("engine/part-dispatch");
         let parity = self.parity;
         let frame_group = self.frame_groups.get(built.variant as usize).and_then(|groups| groups.0[parity].clone());
-        let own: Vec<(u32, Option<wgpu::BindGroup>)> = built
+        let own: Vec<(u32, Option<wgpu::BindGroup>, Vec<u32>)> = built
             .groups
             .iter()
             .enumerate()
-            .map(|(at, group)| (group.index, self.own_groups[handle as usize].0[at][parity].clone()))
+            .map(|(at, group)| (group.index, self.own_groups[handle as usize].0[at][parity].clone(), Vec::new()))
             .collect();
+        let own = with_offsets(own, &built.groups, offsets);
         let indirect = match count {
             CountRaw::Indirect(input, offset) => match self.input(part, input) {
                 Some(buffer) => Some((buffer, offset)),
@@ -321,9 +357,9 @@ impl Run {
         if let Some(group) = &frame_group {
             pass.set_bind_group(0, group, &[0]);
         }
-        for (index, group) in &own {
+        for (index, group, dynamic) in &own {
             if let Some(group) = group {
-                pass.set_bind_group(*index, group, &[]);
+                pass.set_bind_group(*index, group, dynamic);
             }
         }
         match (count, indirect) {

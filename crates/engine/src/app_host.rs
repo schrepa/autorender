@@ -483,7 +483,7 @@ impl AppHost {
         }
     }
 
-    fn deliver(&mut self) {
+    pub(crate) fn deliver(&mut self) {
         self.renderer.deliver(self.engine.app.world_mut());
     }
 
@@ -669,6 +669,7 @@ impl AppHost {
             self.engine.reveal_ticks_ahead();
         }
         let display = matches!(kind, FrameKind::Display { .. });
+        self.engine.start_frame();
         let world = self.engine.app.world();
         let shown = world
             .get_resource::<engine_render::DebugShown>()
@@ -711,6 +712,7 @@ impl AppHost {
         if frame.gpu().is_some() {
             self.gpu_inputs_stale = !rendered.submitted;
         }
+        self.engine.rendered(rendered.submitted);
         self.stats = FrameStats {
             frame: frame_number,
             tick,

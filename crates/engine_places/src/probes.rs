@@ -92,6 +92,7 @@ impl Slot for ProbeViews {
 impl DrawPoint for ProbeViews {
     type Layer = ();
     type Args = ProbeView;
+    const UBER_MATERIALS: bool = true;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -113,6 +114,8 @@ pub struct ProbeFace {
 pub struct ProbeCaptures {
     pub faces: Vec<ProbeFace>,
     pub size: u32,
+    pub cubes: u32,
+    pub finished: Option<u32>,
     pub views: bool,
     pub still: bool,
 }

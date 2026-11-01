@@ -41,6 +41,15 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     );
     rests(session)?;
     toggles(session)?;
+    parented(session)?;
+    session.source(&empty().to_string());
+    session.without(&["engine_collision", "engine_physics"]);
+    let missing = session.request("inspect", json!({"component": "physics"}));
+    smoke_eq!(
+        json!(missing.err().map(|refused| refused["error"]["code"].clone())),
+        json!("missing_plugin"),
+        "left_out_without_collision"
+    );
     Ok(())
 }
 
@@ -125,6 +134,49 @@ fn toggles(session: &mut dyn SmokeSession) -> Checked<()> {
     Ok(())
 }
 
+fn parented(session: &mut dyn SmokeSession) -> Checked<()> {
+    let mut hung = scene();
+    hung["id"] = json!("physics-hung");
+    if let Some(entities) = hung["entities"].as_array_mut() {
+        entities.push(json!({
+            "id": "hung",
+            "collider": {"shape": {"kind": "sphere", "radius": HALF}},
+            "rigid_body": {},
+            "transform": {"translation": [5.0, FLOOR_TOP + HALF, 0.0]},
+        }));
+    }
+    session.source(&hung.to_string());
+    seconds(session, 3);
+    let before = component(session, "crate", "Transform")?;
+    let parent = session.request(
+        "control",
+        json!({"name": "parent", "args": {"entity": "hung", "parent": "floor"}}),
+    );
+    smoke_eq!(
+        json!(parent.err().map(|refused| refused["error"].clone())),
+        json!(null),
+        "parented_body_builds"
+    );
+    session.step(1);
+    let parented = query(session, "physics_body", json!({"entity": "hung"}))?;
+    let expected = json!({"problem": "not_root", "simulated": false});
+    smoke_eq!(
+        shown(
+            parented["problem"] == "not_root" && parented["simulated"] == false,
+            &parented,
+            &expected
+        ),
+        expected,
+        "parented_body_refused"
+    );
+    smoke_eq!(
+        component(session, "crate", "Transform")?,
+        before,
+        "parented_body_leaves_world"
+    );
+    Ok(())
+}
+
 fn shown(passed: bool, got: &Value, expected: &Value) -> Value {
     if passed {
         expected.clone()
@@ -137,6 +189,16 @@ fn seconds(session: &mut dyn SmokeSession, count: u32) {
     for _ in (0..count * SECOND).step_by(STEP) {
         session.step(STEP as u32);
     }
+}
+
+fn empty() -> Value {
+    json!({
+        "id": "physics-empty",
+        "revision": 1,
+        "materials": [],
+        "meshes": [],
+        "entities": [],
+    })
 }
 
 fn scene() -> Value {

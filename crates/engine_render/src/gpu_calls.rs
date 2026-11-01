@@ -108,7 +108,7 @@ fn write_texture(
 }
 
 #[expect(clippy::disallowed_methods, reason = "the renderer's one submission")]
-fn submit(
+pub(crate) fn submit(
     queue: &wgpu::Queue,
     buffers: impl IntoIterator<Item = wgpu::CommandBuffer>,
 ) -> wgpu::SubmissionIndex {

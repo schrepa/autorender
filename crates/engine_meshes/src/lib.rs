@@ -7,6 +7,7 @@ mod debug;
 mod draw;
 mod drawn;
 mod encode;
+mod explain;
 mod gpu;
 mod layouts;
 mod order;
@@ -95,6 +96,9 @@ impl Brick for MeshesBrick {
             .resource::<presentation::CasterTotals>()
             .resource::<drawn::WatchedSlot>()
             .operation::<drawn::MeshDrawn>()
+            .observation::<drawn::MeshesListing>()
+            .explain::<explain::Culled>()
+            .explain::<explain::Level>()
             .fill::<Instances>(Some(shaders::meshes::faces::instances::MODULE))
             .fill::<ImpostorPolicy>(None)
             .join::<SceneComponents>(

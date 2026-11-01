@@ -29,7 +29,6 @@ shader_modules! {
     "engine::shading" = "shading.wgsl";
     "engine::mesh::declarations" = "meshes/declarations.wgsl";
     "engine::mesh::vertex" = "meshes/vertex.wgsl";
-    "engine::pyramid" = "depth_pyramid.wgsl";
     "engine::impostor_bake" = "impostors/bake.wgsl";
     "engine::post::pixel" = "post/pixel.wgsl";
     "engine::post::frame" = "effects.wgsl";
@@ -61,6 +60,7 @@ pub const IMPOSTOR_FRAMES_MODULE: &str = "engine::mesh::impostor_frames";
 pub const IMPOSTORS_MODULE: &str = "engine::impostors";
 pub const MATH_MODULE: &str = "engine::math";
 pub const VIEW_MODULE: &str = "engine::view";
+pub const PYRAMID_MODULE: &str = "engine::pyramid";
 
 fn unsigned(source: &mut String, name: &str, value: u32) {
     let _ = writeln!(source, "const {name}: u32 = {value}u;");
@@ -140,7 +140,7 @@ pub fn view_source() -> String {
     source
 }
 
-pub fn generated_core() -> [(&'static str, String); 7] {
+pub fn generated_core() -> [(&'static str, String); 8] {
     [
         (PRESENTATION_MODULE, presentation_source()),
         (DEBUG_MODULE, debug_source()),
@@ -149,6 +149,7 @@ pub fn generated_core() -> [(&'static str, String); 7] {
         (IMPOSTORS_MODULE, crate::impostors::atlas_source()),
         (MATH_MODULE, math_source()),
         (VIEW_MODULE, view_source()),
+        (PYRAMID_MODULE, crate::pyramid::source()),
     ]
 }
 

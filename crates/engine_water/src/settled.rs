@@ -1344,6 +1344,7 @@ pub(crate) fn request_settle(
     let eye = view.detail_eye();
     let work = Work::of(&clock, &ground);
     let state = &mut *state;
+    state.work_end = work.end();
     let mut cx = Follow {
         jobs: &mut jobs,
         records: &records,

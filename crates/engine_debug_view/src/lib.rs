@@ -37,10 +37,14 @@ impl Brick for DebugViewBrick {
             let wgsl = (index == 0).then_some(shaders::debug_view::modes::MODULE);
             bricks.join::<DebugModes>(modes::member(name), wgsl);
         }
-        bricks
-            .systems(Schedule::ViewSync, (probe::advance, modes::publish))
-            .operation::<ProbePixel>()
-            .observation::<ProbedPixel>()
-            .part::<ProbeGpu>();
+        if engine_render::DEV {
+            bricks
+                .systems(Schedule::ViewSync, (probe::advance, modes::publish))
+                .operation::<ProbePixel>()
+                .observation::<ProbedPixel>()
+                .part::<ProbeGpu>();
+        } else {
+            bricks.systems(Schedule::ViewSync, modes::publish);
+        }
     }
 }

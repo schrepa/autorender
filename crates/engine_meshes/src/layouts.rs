@@ -10,7 +10,6 @@ gpu_consts! {
     pub const GROUP: u32 = 64;
     pub const PARENT_GROUP: u32 = 64;
     pub const ARGS_GROUP: u32 = 64;
-    pub const PYRAMID_GROUP: u32 = 8;
     pub const STILLNESS: u32 = 1;
     pub const MOVING_MAP: u32 = 7;
     pub const SKY_MAP: u32 = 8;

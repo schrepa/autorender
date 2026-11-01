@@ -19,7 +19,7 @@ mod terrain_sky;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, JobKind, Schedule, Source};
-use engine_places::ground::{Bounce, GroundTiles, Heightfield, Horizons};
+use engine_places::ground::{Bounce, GroundBaking, GroundTiles, Heightfield, Horizons};
 use engine_places::lighting::{Ambient, SunBlockers};
 use engine_places::probes::ProbeViews;
 use engine_places::shadows::{ShadowCasters, ShadowMaps};
@@ -55,6 +55,7 @@ impl Brick for TerrainShadingBrick {
             .piece::<HorizonsPiece>()
             .fill::<Heightfield>(Some(faces::heightfield::MODULE))
             .fill::<GroundTiles>(Some(faces::ground_tiles::MODULE))
+            .fill::<GroundBaking>(None)
             .within(horizons_on, |bricks| {
                 bricks
                     .fill::<Horizons>(Some(faces::horizons::MODULE))

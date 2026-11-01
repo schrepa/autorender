@@ -80,7 +80,7 @@ impl Options {
         #[cfg(feature = "dev")]
         if let Some(names) = &self.host.smoke {
             let list = crate::bricks(engine::BrickList::default());
-            let entries = match engine::smokes::registered(&list) {
+            let entries = match crate::smokes(&list) {
                 Ok(entries) => entries,
                 Err(error) => return engine_native::exit(Err(error)),
             };
@@ -89,7 +89,17 @@ impl Options {
                 names,
                 &entries,
                 &list,
-                &|source, engine| engine::smokes::played(source, engine, ScenePlayer::new),
+                &|source, engine| {
+                    let world = engine.app.world_mut();
+                    if source.is_none() && engine::host::has_setting(world, crate::player::FLIES) {
+                        engine::host::apply_setting(
+                            world,
+                            crate::player::FLIES,
+                            &serde_json::json!(false),
+                        )?;
+                    }
+                    engine::smokes::played(source, engine, ScenePlayer::new)
+                },
                 &|session| session,
             );
         }

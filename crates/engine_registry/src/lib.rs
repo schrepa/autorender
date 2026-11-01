@@ -24,7 +24,7 @@ pub use entries::{
     parse_section, set_section,
 };
 pub use explain::{ExplainAsk, ExplainEntry, ExplainRecord, explain};
-pub use gates::{GateDriver, GateFn, GateId, Gates, Scope, gate_on};
+pub use gates::{GateDriver, GateFn, GateId, Gates, Scope, gate_off, gate_on};
 pub use hooks::{BrickHooks, NamedField, Removal, Settle, run_settles};
 pub use jobs::{
     JobBatch, JobKindRef, JobList, JobListed, JobMember, JobOrder, JobOrders, JobQueue,

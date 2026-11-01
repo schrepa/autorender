@@ -101,5 +101,5 @@ fn adapt_exposure() {
         stops = mix(state.stops, wanted, 1.0 - exp(-settings.frame.y / max(seconds, 1.0e-3)));
     }
     let authored = max(settings.frame.x, 1.0e-6);
-    state = ExposureState(authored * exp2(stops), stops, metered, 1.0, view, day, vec2<f32>(0.0));
+    state = ExposureState(authored * exp2(stops), stops, metered, 1.0, view, day);
 }

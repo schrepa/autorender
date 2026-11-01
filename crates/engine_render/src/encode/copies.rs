@@ -35,17 +35,28 @@ impl Run {
         let Work::Copy { from, to } = decl.work else {
             return;
         };
+        self.group(pass);
+        self.record_copy(from, to, &regions);
+    }
+
+    pub(crate) fn copy_at_end(&mut self) {
+        self.leave();
+        for (from, to, regions) in std::mem::take(&mut self.queued.ending) {
+            self.record_copy(from, to, &regions);
+        }
+    }
+
+    fn record_copy(&mut self, from: Copied, to: Copied, regions: &[crate::CopyRegion]) {
         let (source, target) = (self.copied_texture(from), self.copied_texture(to));
         let buffer = |copied: Copied| match copied {
             Copied::Buffer(buffer) => self.buffers.get(buffer as usize).and_then(Option::as_ref).map(|(made, _)| made.clone()),
             Copied::Texture(_) | Copied::Target(_) | Copied::Canvas => None,
         };
         let (from_buffer, to_buffer) = (buffer(from), buffer(to));
-        self.group(pass);
         let Some(encoder) = self.encoder.as_mut() else {
             return;
         };
-        for region in &regions {
+        for region in regions {
             match region {
                 crate::CopyRegion::Bytes { from: at, to: into, size } => {
                     if let (Some(source), Some(target)) = (&from_buffer, &to_buffer) {
@@ -127,7 +138,8 @@ impl Run {
                     self.rings.len() - 1
                 }
             };
-            let once = most.is_some_and(|most| bytes > most);
+            let over = most.is_some_and(|most| bytes > most);
+            let once = request.once || over;
             let idle = |slot: &Slot| !slot.once && slot.state.load(Ordering::Acquire) == 0 && slot.bytes >= bytes;
             if once || (!self.rings[ring].slots.iter().any(idle) && self.rings[ring].kept() < slots) {
                 let staging = crate::memory::buffer(
@@ -146,7 +158,7 @@ impl Run {
                     asked: None,
                     once,
                 });
-                if once {
+                if over {
                     self.overflows += 1;
                 }
             }

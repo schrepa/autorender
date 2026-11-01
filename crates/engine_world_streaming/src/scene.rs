@@ -347,8 +347,8 @@ impl StreamedScene {
             }
         }
         let entities = scene.entities.as_ref();
-        let kept = expand_list(&kept, (&names, &prefabs), (kinds, false), Some(entities))?;
-        let streamed = expand_list(&streamed, (&names, &prefabs), (kinds, true), None)?;
+        let kept = expand_list(&kept, (&names, &prefabs), kinds, Some(entities))?;
+        let streamed = expand_list(&streamed, (&names, &prefabs), kinds, None)?;
         let known: BTreeSet<&str> = entities
             .keys()
             .map(String::as_str)
@@ -443,7 +443,7 @@ fn along_path<'a>(
 fn expand_list(
     list: &[Listed<'_>],
     (names, prefabs): (&Names<'_>, &Prefabs<'_>),
-    (kinds, streamed): (&[ComponentKind], bool),
+    kinds: &[ComponentKind],
     taken: Option<&BTreeMap<String, Entity>>,
 ) -> Result<ExpandedList, Error> {
     let held = |id: &str| taken.is_some_and(|taken| taken.contains_key(id));
@@ -518,7 +518,7 @@ fn expand_list(
             .iter()
             .map(|entity| (&entity.source, entity.path.clone())),
         &transforms,
-        (kinds, streamed),
+        kinds,
     )?;
     Ok(ExpandedList {
         entities,
@@ -627,7 +627,7 @@ fn refused_placement(
 fn validate_graph<'a>(
     entries: impl Iterator<Item = (&'a StreamedObject, String)>,
     transforms: &[Transform],
-    (kinds, streamed): (&[ComponentKind], bool),
+    kinds: &[ComponentKind],
 ) -> Result<(), Error> {
     let entries: Vec<_> = entries.collect();
     let ids: BTreeMap<_, _> = entries
@@ -716,11 +716,7 @@ fn validate_graph<'a>(
                 .got(entries[index].0.transform));
             }
             let (entity, at) = &entries[index];
-            let placed = Placed {
-                root: entity.parent.is_none(),
-                streamed,
-                world: matrix,
-            };
+            let placed = Placed { world: matrix };
             for (name, value) in entity.authored() {
                 if let Some(kind) = kind(kinds, name) {
                     kind.validate_placed(value, placed, &format!("{at}.{name}"))?;

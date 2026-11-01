@@ -106,6 +106,86 @@ pub struct Context<'a> {
     pub scene: Option<&'a SceneInstance>,
     pub renderer: Option<&'a dyn RendererFacts>,
 }
+
+pub enum ToolCall<'a> {
+    Query(&'a str, Value),
+    Describe(DescribeRequest),
+    Inspect(InspectRequest),
+}
+
+impl<'a> ToolCall<'a> {
+    pub fn of(envelope: &'a Envelope) -> Result<Self, Error> {
+        match envelope.verb {
+            Verb::Query => Ok(Self::Query(envelope.name()?, envelope.args()?)),
+            Verb::Describe => envelope.body().map(Self::Describe),
+            Verb::Inspect => envelope.body().map(Self::Inspect),
+            verb @ (Verb::Control
+            | Verb::Capture
+            | Verb::Profile
+            | Verb::Explain
+            | Verb::Watch
+            | Verb::Check) => Err(Error::new(ErrorCode::UnsupportedCommand, "$.verb")
+                .got(verb.name())
+                .variants([Verb::Describe, Verb::Inspect, Verb::Query].map(Verb::name))),
+        }
+    }
+
+    pub fn status() -> Self {
+        Self::Query("status", Value::Object(serde_json::Map::new()))
+    }
+
+    pub fn inspect(entity: &str, component: &str) -> Self {
+        Self::Inspect(InspectRequest {
+            entity: Some(entity.to_owned()),
+            parent: None,
+            component: Some(component.to_owned()),
+            offset: 0,
+            limit: crate::protocol::default_limit(),
+        })
+    }
+}
+
+fn observe(engine: &Engine, scene: Option<&SceneInstance>) -> Observation {
+    let world = engine.app.world();
+    Observation {
+        frame: world
+            .get_resource::<FrameTime>()
+            .map(|time| time.frame.to_string()),
+        tick: world
+            .get_resource::<FixedTime>()
+            .map(|time| time.tick.to_string()),
+        scene: scene.map(|scene| SceneObservation {
+            id: scene.id().to_owned(),
+            revision: scene.revision().to_string(),
+        }),
+        presentation: presentation_view(engine.presentation()),
+    }
+}
+
+fn replied(observation: Observation, outcome: Result<Value, Error>) -> Reply {
+    let (result, error) = match outcome {
+        Ok(result) => (Some(result), None),
+        Err(error) => (None, Some(error)),
+    };
+    Reply {
+        version: Some(PROTOCOL_VERSION),
+        ok: error.is_none(),
+        observation: Some(observation),
+        result,
+        error,
+    }
+}
+
+fn too_large(reply: Reply) -> Reply {
+    Reply {
+        ok: false,
+        result: None,
+        error: Some(
+            Error::new(ErrorCode::ResponseTooLarge, "$").at_most(MAX_RESPONSE_BYTES as u64),
+        ),
+        ..reply
+    }
+}
 type HasInspector = Box<dyn Fn(&World, Option<Entity>) -> bool + Send + Sync>;
 
 pub(crate) struct Inspector {
@@ -283,60 +363,39 @@ impl DevTools {
     }
 
     pub fn execute(&self, engine: &mut Engine, context: Context<'_>, source: &str) -> String {
-        let scene = context.scene;
-        let world = engine.app.world();
-        let observation = Observation {
-            frame: world
-                .get_resource::<FrameTime>()
-                .map(|time| time.frame.to_string()),
-            tick: world
-                .get_resource::<FixedTime>()
-                .map(|time| time.tick.to_string()),
-            scene: scene.map(|scene| SceneObservation {
-                id: scene.id().to_owned(),
-                revision: scene.revision().to_string(),
-            }),
-            presentation: presentation_view(engine.presentation()),
-        };
-        let (result, error) = match self.parse_and_execute(engine, context, source) {
-            Ok(result) => (Some(result), None),
-            Err(error) => (None, Some(error)),
-        };
-        let reply = Reply {
-            version: Some(PROTOCOL_VERSION),
-            ok: error.is_none(),
-            observation: Some(observation),
-            result,
-            error,
-        };
+        let observation = observe(engine, context.scene);
+        let outcome = Envelope::parse(source).and_then(|envelope| {
+            let call = ToolCall::of(&envelope)?;
+            self.run(engine, context, call)
+        });
+        let reply = replied(observation, outcome);
         encode(&reply, MAX_RESPONSE_BYTES).unwrap_or_else(|_| {
-            let refused = Reply {
-                ok: false,
-                result: None,
-                error: Some(
-                    Error::new(ErrorCode::ResponseTooLarge, "$").at_most(MAX_RESPONSE_BYTES as u64),
-                ),
-                ..reply
-            };
-            serde_json::to_string(&refused).expect("reply_serializes")
+            serde_json::to_string(&too_large(reply)).expect("reply_serializes")
         })
     }
 
-    fn parse_and_execute(
+    pub fn call(&self, engine: &mut Engine, context: Context<'_>, call: ToolCall<'_>) -> Value {
+        let observation = observe(engine, context.scene);
+        let reply = replied(observation, self.run(engine, context, call));
+        let reply = match encode(&reply, MAX_RESPONSE_BYTES) {
+            Ok(_) => reply,
+            Err(_) => too_large(reply),
+        };
+        serde_json::to_value(reply).expect("reply_serializes")
+    }
+
+    fn run(
         &self,
         engine: &mut Engine,
         context: Context<'_>,
-        source: &str,
+        call: ToolCall<'_>,
     ) -> Result<Value, Error> {
-        let envelope = Envelope::parse(source)?;
         let scene = context.scene;
         let wrong_world =
             |engine: &Engine| scene.is_some_and(|scene| !scene.belongs_to(engine.app.world()));
         let refused = || Error::new(ErrorCode::WrongWorld, "$.scene");
-        match envelope.verb {
-            Verb::Query => {
-                let name = envelope.name()?;
-                let args = envelope.args()?;
+        match call {
+            ToolCall::Query(name, args) => {
                 if let Some(name) = self.query_operation(engine.app.world(), name)? {
                     if wrong_world(engine) {
                         return Err(refused());
@@ -357,30 +416,20 @@ impl DevTools {
                 }
                 self.query(engine, context, query)
             }
-            Verb::Describe => {
-                let request: DescribeRequest = envelope.body()?;
+            ToolCall::Describe(request) => {
                 if wrong_world(engine) {
                     return Err(refused());
                 }
                 self.describe(engine.app.world(), &request)
                     .map(result::describe)
             }
-            Verb::Inspect => {
-                let request: InspectRequest = envelope.body()?;
+            ToolCall::Inspect(request) => {
                 if wrong_world(engine) {
                     return Err(refused());
                 }
                 self.inspect_request(engine, context, &request)
                     .map(result::inspect)
             }
-            verb @ (Verb::Control
-            | Verb::Capture
-            | Verb::Profile
-            | Verb::Explain
-            | Verb::Watch
-            | Verb::Check) => Err(Error::new(ErrorCode::UnsupportedCommand, "$.verb")
-                .got(verb.name())
-                .variants([Verb::Describe, Verb::Inspect, Verb::Query].map(Verb::name))),
         }
     }
 
@@ -433,8 +482,21 @@ impl DevTools {
             offset: request.offset,
             limit: request.limit,
         };
+        let settled = request.component.as_deref().filter(|key| {
+            engine
+                .app
+                .world()
+                .get_resource::<Registry>()
+                .is_some_and(|registry| registry.stats_section(key).is_some())
+        });
+        if let Some(key) = settled {
+            self.inspect(engine.app.world(), context, selector)?;
+            engine_core::settle_stats(engine.app.world_mut(), key);
+        }
         engine.refresh_transforms();
-        self.inspect(engine.app.world(), context, selector)
+        let mut inspected = self.inspect(engine.app.world(), context, selector)?;
+        drawn_levels(engine.app.world_mut(), &mut inspected);
+        Ok(inspected)
     }
 
     fn status(&self, engine: &Engine, scene: Option<&SceneInstance>) -> StatusResult {
@@ -820,6 +882,23 @@ fn read_value(
             .got(&inspector.descriptor.name)
     })?;
     Ok(value)
+}
+
+fn drawn_levels(world: &mut World, inspected: &mut InspectResult) {
+    let rows = match inspected {
+        InspectResult::Entity { entity } => std::slice::from_mut(entity),
+        InspectResult::Page { entities, .. } => entities.as_mut_slice(),
+        InspectResult::Resource { .. } => return,
+    };
+    for row in rows {
+        let EntityComponents::Values(components) = &mut row.components else {
+            continue;
+        };
+        if let Some(view) = components.get_mut("Mesh3d") {
+            let drawn = crate::bricks::mesh_drawn(world, &row.id);
+            view["drawn_level"] = drawn.get("drawn_level").cloned().unwrap_or(Value::Null);
+        }
+    }
 }
 
 pub(crate) fn validate_name(name: &str, path: &str) -> Result<(), Error> {

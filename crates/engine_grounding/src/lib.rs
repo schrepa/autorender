@@ -7,8 +7,8 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, Expected, Parent, Placed, Placement, Rule,
-    SceneComponents, Schedule, Setting, Source, Transform,
+    Brick, Bricks, ComponentKind, Error, ErrorCode, Parent, Placement, Rule, SceneComponents,
+    Schedule, Setting, Source, Transform,
 };
 use engine_places::ground::{Ground, Grounded, GroundedAt, HeightHeld};
 use glam::Vec2;
@@ -28,7 +28,6 @@ impl Brick for GroundingBrick {
                 ComponentKind::of::<Grounded>("grounded")
                     .check(check_grounded)
                     .placement(Placement::Roots(ErrorCode::InvalidGrounded))
-                    .check_placed(placed_grounded)
                     .schema(grounded_schema)
                     .example(grounded_example)
                     .view::<GroundedAt, GroundedView>(grounded_view),
@@ -56,13 +55,6 @@ fn check_grounded(grounded: &Grounded, path: &str) -> Result<(), Error> {
         .offset
         .check("offset", OFFSET)
         .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, path))
-}
-
-fn placed_grounded(_: &Grounded, placed: Placed, path: &str) -> Result<(), Error> {
-    if placed.root {
-        return Ok(());
-    }
-    Err(Error::new(ErrorCode::InvalidGrounded, path).expected(Expected::Absent))
 }
 
 fn grounded_schema() -> Value {

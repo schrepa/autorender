@@ -6,8 +6,11 @@
 extern crate engine_ecs as bevy_ecs;
 
 macro_rules! contract {
-    ($file:literal $(, $name:ident)* $(,)?) => {{
-        const CONSTANTS: &[(&str, u32)] = &[$((::core::stringify!($name), $name)),*];
+    ($file:literal $(, $name:ident)* $(,)? $(; $($float:ident),+ $(,)?)?) => {{
+        const CONSTANTS: &[(&str, crate::contract::Value)] = &[
+            $((::core::stringify!($name), crate::contract::Value::U32($name)),)*
+            $($((::core::stringify!($float), crate::contract::Value::F32($float)),)+)?
+        ];
         const TEXT: &str = ::core::include_str!($file);
         const BYTES: [u8; crate::contract::length(CONSTANTS, TEXT)] =
             crate::contract::written(CONSTANTS, TEXT);
@@ -39,10 +42,34 @@ pub mod wind;
 use engine_place::PlaceDecl;
 
 mod contract {
+    use engine_place::__private::wgsl::{Piece, Written, write};
+
     const LEAD: &[u8] = b"const ";
     const TYPED: &[u8] = b": u32 = ";
     const END: &[u8] = b"u;\n";
+    const FLOAT_TYPED: &[u8] = b": f32 = ";
+    const FLOAT_END: &[u8] = b";\n";
     const IMPORT: &[u8] = b"import ";
+    const FLOAT_ROOM: usize = 64;
+
+    #[derive(Clone, Copy)]
+    pub(crate) enum Value {
+        U32(u32),
+        F32(f32),
+    }
+
+    const fn float(value: f32) -> Written<FLOAT_ROOM> {
+        let written = write::<FLOAT_ROOM>(&[Piece::F32(value)]);
+        assert!(written.len <= FLOAT_ROOM, "contract_float_fits");
+        written
+    }
+
+    const fn width(value: Value) -> usize {
+        match value {
+            Value::U32(value) => TYPED.len() + digits(value) + END.len(),
+            Value::F32(value) => FLOAT_TYPED.len() + float(value).len + FLOAT_END.len(),
+        }
+    }
 
     const fn digits(value: u32) -> usize {
         let mut count = 1;
@@ -54,12 +81,12 @@ mod contract {
         count
     }
 
-    pub(crate) const fn length(constants: &[(&str, u32)], text: &str) -> usize {
+    pub(crate) const fn length(constants: &[(&str, Value)], text: &str) -> usize {
         let mut total = text.len();
         let mut at = 0;
         while at < constants.len() {
             let (name, value) = constants[at];
-            total += LEAD.len() + name.len() + TYPED.len() + digits(value) + END.len();
+            total += LEAD.len() + name.len() + width(value);
             at += 1;
         }
         total
@@ -109,7 +136,10 @@ mod contract {
         end
     }
 
-    pub(crate) const fn written<const N: usize>(constants: &[(&str, u32)], text: &str) -> [u8; N] {
+    pub(crate) const fn written<const N: usize>(
+        constants: &[(&str, Value)],
+        text: &str,
+    ) -> [u8; N] {
         let (imports, rest) = text.as_bytes().split_at(imports_end(text.as_bytes()));
         let mut out = [0; N];
         let mut end = put(&mut out, 0, imports);
@@ -118,16 +148,27 @@ mod contract {
             let (name, value) = constants[at];
             end = put(&mut out, end, LEAD);
             end = put(&mut out, end, name.as_bytes());
-            end = put(&mut out, end, TYPED);
-            let mut place = digits(value);
-            let mut rest = value;
-            while place > 0 {
-                place -= 1;
-                out[end + place] = b'0' + (rest % 10) as u8;
-                rest /= 10;
+            match value {
+                Value::U32(value) => {
+                    end = put(&mut out, end, TYPED);
+                    let mut place = digits(value);
+                    let mut rest = value;
+                    while place > 0 {
+                        place -= 1;
+                        out[end + place] = b'0' + (rest % 10) as u8;
+                        rest /= 10;
+                    }
+                    end += digits(value);
+                    end = put(&mut out, end, END);
+                }
+                Value::F32(value) => {
+                    end = put(&mut out, end, FLOAT_TYPED);
+                    let written = float(value);
+                    let (shown, _) = written.bytes.split_at(written.len);
+                    end = put(&mut out, end, shown);
+                    end = put(&mut out, end, FLOAT_END);
+                }
             }
-            end += digits(value);
-            end = put(&mut out, end, END);
             at += 1;
         }
         put(&mut out, end, rest);
@@ -150,6 +191,7 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<sun::SunPath>(),
     PlaceDecl::slot::<sun::Sun>(),
     PlaceDecl::slot::<sky::SkyLight>(),
+    PlaceDecl::slot::<sky::EnvironmentLayers>(),
     PlaceDecl::slot::<exposure::Exposure>(),
     PlaceDecl::slot::<tonemap::Display>(),
     PlaceDecl::slot::<lighting::Lighting>(),
@@ -175,6 +217,7 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<ground::GroundSurface>(),
     PlaceDecl::slot::<ground::Heightfield>(),
     PlaceDecl::slot::<ground::GroundWork>(),
+    PlaceDecl::slot::<ground::GroundBaking>(),
     PlaceDecl::slot::<ground::GroundTiles>(),
     PlaceDecl::slot::<ground::Horizons>(),
     PlaceDecl::slot::<ground::Bounce>(),
@@ -191,6 +234,7 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<water::Waterline>(),
     PlaceDecl::slot::<water::WaterObstacles>(),
     PlaceDecl::slot::<water::WaterFlow>(),
+    PlaceDecl::slot::<water::WaterWork>(),
     PlaceDecl::slot::<water::Hydrology>(),
     PlaceDecl::component::<water::WaterBody>("water_body"),
     PlaceDecl::slot::<wind::Wind>(),

@@ -2,7 +2,7 @@ use crate::collections::{HashMap, HashSet};
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use bevy_ecs::change_detection::Mut;
 use bevy_ecs::resource::Resource;
@@ -252,17 +252,42 @@ impl Ticket {
 pub struct Jobs<'w, 's> {
     orders: Deferred<'s, JobOrders>,
     listed: Res<'w, JobListed>,
+    exchange: Option<Res<'w, JobExchange>>,
 }
 
 impl Jobs<'_, '_> {
+    pub fn admit(&mut self, priority: u32) -> bool {
+        let exchange = self.exchange.as_deref();
+        let [slots, urgent] = *self.orders.budget.get_or_insert_with(|| {
+            let (workers, running) = exchange.map_or((0, 0), |exchange| {
+                let admitted = exchange.admitted.load(Ordering::Relaxed);
+                (exchange.workers, exchange.running() + admitted)
+            });
+            let budget = JobBudget::of(workers, running);
+            [budget.slots, budget.urgent]
+        });
+        let mut budget = JobBudget { slots, urgent };
+        let admitted = budget.take(priority);
+        self.orders.budget = Some([budget.slots, budget.urgent]);
+        if admitted {
+            if let Some(exchange) = exchange {
+                exchange.admitted.fetch_add(1, Ordering::Relaxed);
+            }
+            self.orders.admitted = true;
+        }
+        admitted
+    }
+
     pub fn start(&mut self, kind: &'static JobKind, input: Vec<u8>, priority: u32) -> Ticket {
         let key = self.listed_key(kind, &input);
+        let admitted = std::mem::take(&mut self.orders.admitted);
         self.orders.orders.push(JobOrder::Start {
             key: key.0,
             kind: kind.name,
             source: kind.source.hash(),
             input,
             priority,
+            admitted,
         });
         Ticket::new(key)
     }
@@ -550,6 +575,7 @@ struct Asked {
     priority: u32,
     fetching: bool,
     making: bool,
+    admitted: bool,
 }
 
 struct Shared<'a>(&'a [(RecordKey, Arc<[u8]>)]);
@@ -579,6 +605,7 @@ pub struct JobExchange {
     done: HashMap<JobId, Result<Vec<u8>, String>>,
     flights: Vec<Flight>,
     asked: Vec<Asked>,
+    admitted: AtomicUsize,
     cache: [u64; 4],
     held: u32,
     shared: Vec<(RecordKey, Arc<[u8]>)>,
@@ -603,6 +630,7 @@ impl Default for JobExchange {
             done: HashMap::default(),
             flights: Vec::new(),
             asked: Vec::new(),
+            admitted: AtomicUsize::new(0),
             cache: [0; 4],
             held: 0,
             shared: Vec::new(),
@@ -743,7 +771,9 @@ impl JobExchange {
     }
 
     pub fn share(&mut self, key: RecordKey, bytes: Arc<[u8]>) {
-        self.shared.retain(|(shared, _)| *shared != key);
+        if self.shared.iter().any(|(shared, _)| *shared == key) {
+            return;
+        }
         self.shared.push((key, Arc::clone(&bytes)));
         self.shares.push(JobShare::Set { key, bytes });
     }
@@ -858,6 +888,7 @@ impl JobExchange {
                     source,
                     input,
                     priority,
+                    admitted,
                 } => {
                     store.want(key);
                     self.asked.push(Asked {
@@ -868,6 +899,7 @@ impl JobExchange {
                         priority,
                         fetching: false,
                         making: true,
+                        admitted,
                     });
                 }
                 JobOrder::Fetch {
@@ -886,6 +918,7 @@ impl JobExchange {
                         priority,
                         fetching: true,
                         making: true,
+                        admitted: false,
                     });
                 }
                 JobOrder::Look {
@@ -903,6 +936,7 @@ impl JobExchange {
                         priority,
                         fetching: true,
                         making: false,
+                        admitted: false,
                     });
                 }
                 JobOrder::Cancel { key } => {
@@ -939,9 +973,14 @@ impl JobExchange {
     }
 
     fn admit(&mut self, store: &RecordStore, firsts: &[JobBatch]) {
+        *self.admitted.get_mut() = 0;
         let mut budgets: Vec<(JobBatch, JobBudget)> = Vec::new();
         for mut asked in std::mem::take(&mut self.asked) {
             if !self.wanted(asked.key, store) {
+                continue;
+            }
+            if asked.admitted {
+                self.begin(asked);
                 continue;
             }
             if asked.batch.run == LEFT_OVER {

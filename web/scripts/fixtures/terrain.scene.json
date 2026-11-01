@@ -16,6 +16,29 @@
     "near": 0.5,
     "far": 4000
   },
+  "environment": {
+    "scatter": {
+      "looks": [
+        {
+          "mesh": "box",
+          "lods": [
+            {
+              "mesh": "box",
+              "error": 0.0625
+            }
+          ],
+          "sway": 0.5
+        }
+      ]
+    },
+    "ground_cover": {
+      "looks": {
+        "meadow": {
+          "density": 60
+        }
+      }
+    }
+  },
   "textures": [
     {
       "id": "grain",
@@ -980,10 +1003,7 @@
                 0.12,
                 0.2,
                 0.06
-              ],
-              "cover": {
-                "density": 60
-              }
+              ]
             },
             {
               "id": "rock",
@@ -1065,13 +1085,6 @@
               "id": "crate",
               "mesh": "box",
               "material": "plain",
-              "lods": [
-                {
-                  "mesh": "box",
-                  "error": 0.0625
-                }
-              ],
-              "sway": 0.5,
               "collider": {
                 "shape": {
                   "kind": "cuboid",

@@ -19,6 +19,7 @@ use engine_core::{
 };
 use engine_places::lighting::{Ambient, Interiors};
 use engine_places::probes::{ProbeCaptures, ProbeViews, ReflectionProbe};
+use engine_places::sky::EnvironmentLayers;
 use engine_render::RenderBricks;
 
 pub use component::{SceneInterior, SceneReflectionProbe};
@@ -86,6 +87,10 @@ impl Brick for ReflectionProbesBrick {
             )
             .off(probes::forget_probes)
             .generated(GENERATED)
-            .part::<captures::ProbesGpu>();
+            .part::<captures::ProbesGpu>()
+            .draws::<captures::ProbesGpu, EnvironmentLayers>(
+                (),
+                captures::ProbesGpu::draw_environment,
+            );
     }
 }

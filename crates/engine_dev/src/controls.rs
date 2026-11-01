@@ -1,10 +1,12 @@
 use crate::protocol::{
     CaptureRequest, ExplainQuestion, MAX_WATCHED, ProfileRequest, WatchRequest, bounds,
 };
-use crate::results::{DebugMissingAssetResult, result};
-use crate::{BrowserControl, bounded};
+use crate::results::{DebugMissingAssetResult, EnvironmentResult, ParentResult, result};
+use crate::{BrowserControl, EnvironmentControl, bounded};
+use bevy_ecs::prelude::World;
 use engine_core::{AssetLibrary, Camera, Engine, Mesh3d, Projection, glam::Vec3};
-use engine_scene::SceneInstance;
+use engine_registry::OperationScene;
+use engine_scene::{SceneEnvironment, SceneInstance};
 use engine_settings::{Error, ErrorCode, Expected};
 use serde_json::Value;
 
@@ -101,6 +103,7 @@ impl BrowserControl {
             | Self::DebugFault { .. }
             | Self::DebugDeviceLoss { .. }
             | Self::DebugMissingAsset { .. }
+            | Self::Parent { .. }
             | Self::Jobs { .. } => {}
         }
         Ok(())
@@ -239,7 +242,9 @@ pub fn validated_camera(
 
 pub enum OperationCall {
     Brick { name: &'static str, request: Value },
+    Environment(EnvironmentControl),
     MissingAsset { entity: String },
+    Parent { entity: String, parent: String },
 }
 
 impl OperationCall {
@@ -252,11 +257,85 @@ impl OperationCall {
             Self::Brick { name, request } => {
                 crate::bricks::run(engine.app.world_mut(), name, request.clone())
             }
+            Self::Environment(control) => {
+                environment(engine.app.world_mut(), control).map_err(|error| {
+                    if error.path.starts_with("$.") || error.path.starts_with("$[") {
+                        error.within("$.args")
+                    } else {
+                        error
+                    }
+                })
+            }
             Self::MissingAsset { entity } => {
                 missing_asset(engine, scene, entity).map_err(|error| error.within("$.args"))
             }
+            Self::Parent { entity, parent } => parented(engine, scene, (entity, parent)),
         }
     }
+}
+
+fn environment(world: &mut World, control: &EnvironmentControl) -> Result<Value, Error> {
+    let current = |world: &World| {
+        serde_json::to_value(SceneEnvironment::current(world)).expect("environment_serializes")
+    };
+    let before = current(world);
+    let environment = if control.merge {
+        let mut merged = serde_json::Map::new();
+        for (key, value) in &control.sections {
+            let mut section = before[key.as_str()].clone();
+            overlay(&mut section, value.clone());
+            merged.insert(key.clone(), section);
+        }
+        engine_settings::parse_json::<SceneEnvironment>(&Value::Object(merged).to_string())?
+    } else {
+        control.sections()
+    };
+    let skipped = environment.apply_sections(world, "$")?;
+    let after = current(world);
+    let named = environment.ordered_keys(world);
+    let pick = |all: &Value| {
+        named
+            .iter()
+            .map(|key| (key.clone(), all[key.as_str()].clone()))
+            .collect::<serde_json::Map<_, _>>()
+    };
+    Ok(result::environment(EnvironmentResult {
+        temporary: true,
+        environment_changed: named.clone(),
+        before: pick(&before),
+        after: pick(&after),
+        skipped,
+    }))
+}
+
+fn overlay(base: &mut Value, patch: Value) {
+    match (base, patch) {
+        (Value::Object(base), Value::Object(patch)) => {
+            for (key, value) in patch {
+                overlay(base.entry(key).or_insert(Value::Null), value);
+            }
+        }
+        (base, patch) => *base = patch,
+    }
+}
+
+fn parented(
+    engine: &mut Engine,
+    scene: Option<&SceneInstance>,
+    (entity, parent): (&str, &str),
+) -> Result<Value, Error> {
+    let refused = || Error::new(ErrorCode::CollisionInvalidTransform, "$");
+    let world = engine.app.world_mut();
+    let scene = scene
+        .map(SceneInstance::operation_scene)
+        .or_else(|| world.get_resource::<OperationScene>().cloned())
+        .ok_or_else(refused)?;
+    let (Some(child), Some(parent)) = (scene.entity(world, entity), scene.entity(world, parent))
+    else {
+        return Err(refused());
+    };
+    engine_core::set_parent(world, child, Some(parent)).map_err(|_| refused())?;
+    Ok(result::parent(ParentResult { temporary: true }))
 }
 
 fn missing_asset(

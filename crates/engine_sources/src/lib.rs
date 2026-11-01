@@ -36,12 +36,12 @@ impl Node {
         node
     }
 
-    fn write(&self, out: &mut String, depth: usize) {
+    fn write(&self, out: &mut String, depth: usize, source: &str) {
         let indent = "    ".repeat(depth);
         if let Some(index) = self.module {
             out.push_str(&format!(
                 "{indent}pub const MODULE: ::engine_core::Module = \
-                 ::engine_core::Module::generated(&crate::SOURCE, {index});\n"
+                 ::engine_core::Module::generated(&{source}, {index});\n"
             ));
             let mut named = vec!["MODULE".to_owned()];
             for (names, kind) in [(&self.entries, "Entry"), (&self.variables, "Var")] {
@@ -65,7 +65,7 @@ impl Node {
                 name.clone()
             };
             out.push_str(&format!("{indent}pub mod {name} {{\n"));
-            child.write(out, depth + 1);
+            child.write(out, depth + 1, source);
             out.push_str(&format!("{indent}}}\n"));
         }
     }
@@ -75,10 +75,61 @@ pub fn emit() {
     let manifest = PathBuf::from(var("CARGO_MANIFEST_DIR"));
     let out = PathBuf::from(var("OUT_DIR"));
     let package = var("CARGO_PKG_NAME");
-    let shaders = manifest.join("src").join("shaders");
-    let prefix = prefix(&shaders);
     let root = workspace_root(&manifest);
-    let hash = digest(&package, &manifest, &root, false);
+    let src = manifest.join("src");
+    let bricks = src.join("bricks");
+    let hash = digest(&package, &manifest, &root, false, None);
+
+    let mut code = String::new();
+    code.push_str("extern crate engine_ecs as bevy_ecs;\n");
+    code.push_str(&source_code(
+        &package,
+        hash,
+        &src,
+        Some(&bricks),
+        "crate::SOURCE",
+    ));
+    fs::write(out.join("brick.rs"), code).expect("OUT_DIR is writable");
+
+    let mut modules: Vec<String> = fs::read_dir(&bricks)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.path().join("mod.rs").is_file())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| !scratch(name))
+        .collect();
+    modules.sort();
+    if modules.is_empty() {
+        return;
+    }
+    let folder = out.join("bricks");
+    fs::create_dir_all(&folder).expect("OUT_DIR is writable");
+    let crate_name = package.replace('-', "_");
+    for module in modules {
+        let inside = bricks.join(&module);
+        let named = format!("{crate_name}_{module}");
+        let hash = digest(&named, &manifest, &root, false, Some(&inside));
+        let code = source_code(
+            &named,
+            hash,
+            &inside,
+            None,
+            &format!("crate::bricks::{module}::SOURCE"),
+        );
+        fs::write(folder.join(format!("{module}.rs")), code).expect("OUT_DIR is writable");
+    }
+}
+
+fn source_code(
+    package: &str,
+    hash: [u8; 32],
+    folder: &Path,
+    skipped: Option<&Path>,
+    source: &str,
+) -> String {
+    let shaders = folder.join("shaders");
+    let prefix = prefix(&shaders);
 
     let mut wgsl = Vec::new();
     if prefix.is_some() {
@@ -90,7 +141,7 @@ pub fn emit() {
     let mut tree = Node::default();
     let mut texts = String::new();
     for (index, file) in wgsl.iter().enumerate() {
-        let inside = file.strip_prefix(&shaders).expect("under src/shaders");
+        let inside = file.strip_prefix(&shaders).expect("under shaders");
         let segments: Vec<String> = inside
             .with_extension("")
             .components()
@@ -108,7 +159,7 @@ pub fn emit() {
         node.variables = variables(&text);
     }
     if let Some(prefix) = &prefix {
-        let generated = generated_wgsl(&manifest);
+        let generated = generated_wgsl(folder, skipped);
         if !generated.is_empty() {
             texts.push_str(&format!(
                 "    ::engine_core::ShaderText::generated({:?}, {generated:?}),\n",
@@ -118,7 +169,6 @@ pub fn emit() {
     }
 
     let mut code = String::new();
-    code.push_str("extern crate engine_ecs as bevy_ecs;\n");
     code.push_str(&format!(
         "pub(crate) static SOURCE: ::engine_core::Source = \
          ::engine_core::Source::generated({package:?}, {hash:?}, &[\n{texts}]);\n"
@@ -128,9 +178,9 @@ pub fn emit() {
         "    #![allow(dead_code, non_upper_case_globals, \
          reason = \"every entry and variable of the brick's modules is named\")]\n",
     );
-    tree.write(&mut code, 1);
+    tree.write(&mut code, 1, source);
     code.push_str("}\n");
-    fs::write(out.join("brick.rs"), code).expect("OUT_DIR is writable");
+    code
 }
 
 pub fn emit_of(named: &[(&str, &str)]) {
@@ -147,26 +197,37 @@ pub fn emit_of(named: &[(&str, &str)]) {
             .and_then(Item::as_str)
             .unwrap_or_else(|| panic!("the workspace names no path for {package}"));
         let folder = normal(&root.join(path));
-        let hash = digest(package, &folder, &root, true);
+        let hash = digest(package, &folder, &root, true, None);
         code.push_str(&format!("pub(crate) const {constant}: [u8; 32] = {hash:?};\n"));
     }
     fs::write(out.join("sources.rs"), code).expect("OUT_DIR is writable");
 }
 
-fn digest(package: &str, manifest: &Path, root: &Path, every: bool) -> [u8; 32] {
+fn digest(
+    package: &str,
+    manifest: &Path,
+    root: &Path,
+    every: bool,
+    inside: Option<&Path>,
+) -> [u8; 32] {
+    let own = normal(manifest);
     let mut crates = BTreeSet::new();
-    crates.insert(normal(manifest));
+    crates.insert(own.clone());
     reach(manifest, root, &mut crates, every);
 
     let mut hash = Sha256::new();
     hash.update(package.as_bytes());
     hash.update([0]);
     for dir in &crates {
+        let src = match inside {
+            Some(inside) if *dir == own => inside.to_path_buf(),
+            Some(_) | None => dir.join("src"),
+        };
         let mut files = Vec::new();
-        list(&dir.join("src"), &mut files);
+        list(&src, &mut files);
         files.push(dir.join("Cargo.toml"));
         files.sort();
-        println!("cargo:rerun-if-changed={}", dir.join("src").display());
+        println!("cargo:rerun-if-changed={}", src.display());
         println!("cargo:rerun-if-changed={}", dir.join("Cargo.toml").display());
         for file in &files {
             hash.update(relative(root, file).as_bytes());
@@ -412,10 +473,13 @@ fn variables(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn generated_wgsl(manifest: &Path) -> String {
+fn generated_wgsl(folder: &Path, skipped: Option<&Path>) -> String {
     let mut files = Vec::new();
-    list(&manifest.join("src"), &mut files);
-    files.retain(|file| file.extension().is_some_and(|extension| extension == "rs"));
+    list(folder, &mut files);
+    files.retain(|file| {
+        file.extension().is_some_and(|extension| extension == "rs")
+            && skipped.is_none_or(|skipped| !file.starts_with(skipped))
+    });
     files.sort();
     let mut wgsl = String::new();
     for file in &files {

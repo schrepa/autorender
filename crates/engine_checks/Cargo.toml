@@ -16,10 +16,6 @@ engine_render.workspace = true
 serde_json.workspace = true
 toml_edit.workspace = true
 
-[dev-dependencies]
-engine_fly_camera.workspace = true
-engine_standard.workspace = true
-
 [lints]
 workspace = true
 
