@@ -365,10 +365,22 @@ impl StaticGraph {
                     .filter(|&index| !placed.contains(index))
                     .min_by_key(|&index| nodes[index].key(index))
                     .unwrap_or(0);
+                let waiting: Vec<String> = (0..count)
+                    .filter(|&index| !placed.contains(index))
+                    .map(|index| {
+                        let on: Vec<&str> = before[index]
+                            .without(&placed)
+                            .iter()
+                            .map(|earlier| nodes[earlier].entry.label)
+                            .collect();
+                        format!("{} after {}", nodes[index].entry.label, on.join("+"))
+                    })
+                    .collect();
                 return Err(refused(
                     ErrorCode::AmbiguousPasses,
                     format!("$.passes.{}", nodes[stuck].entry.label),
-                ));
+                )
+                .got(waiting));
             };
             placed.insert(next);
             order.push(next);

@@ -58,15 +58,14 @@ struct WaterOutput {
 }
 
 fn water_leaf_terrain(instance: u32) -> vec2<u32> {
-    var terrain = 0u;
-    loop {
+    let last = max(water.terrains.x, 1u) - 1u;
+    for (var terrain = 0u; terrain < last; terrain += 1u) {
         let span = WATER_LEAF_FIRST + 2u * terrain;
-        if terrain + 1u >= water.terrains.x
-            || instance < water_leaf_spans[span] + water_leaf_spans[span + 1u] {
+        if instance < water_leaf_spans[span] + water_leaf_spans[span + 1u] {
             return vec2<u32>(terrain, instance - water_leaf_spans[span]);
         }
-        terrain += 1u;
     }
+    return vec2<u32>(last, instance - water_leaf_spans[WATER_LEAF_FIRST + 2u * last]);
 }
 
 fn water_corner(corner: u32, upper: bool) -> vec2<u32> {
