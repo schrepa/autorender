@@ -803,6 +803,7 @@ pub(crate) fn set_formats(outputs: &[OutputDecl], layer: Option<Layer>) -> Vec<(
     ];
     for (index, output) in outputs.iter().enumerate() {
         let written = match layer {
+            Some(_) if output.layers.is_empty() => continue,
             Some(layer) => output.layers.contains(&layer),
             None => output.layers.is_empty(),
         };

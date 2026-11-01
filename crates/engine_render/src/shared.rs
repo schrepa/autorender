@@ -260,7 +260,7 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
     for depth in [false, true] {
         let name = if depth { "DepthViewTargets" } else { "ViewTargets" };
         let _ = writeln!(body, "\nstruct {name} {{\n    @location(0) color: vec4<f32>,\n    @location(1) glow: vec2<f32>,");
-        for (index, output) in outputs.iter().enumerate() {
+        for (index, output) in outputs.iter().filter(|output| !output.layers.is_empty()).enumerate() {
             let _ = writeln!(body, "    @location({}) {}: {},", index + 2, output.name, output_type(output.format));
         }
         if depth {
@@ -277,7 +277,7 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
     }
     let _ = writeln!(body, "    return targets;\n}}\n\nfn depth_view_targets(shaded: Shaded, at: ViewPixel, depth: f32) -> DepthViewTargets {{");
     let _ = writeln!(body, "    let targets = view_targets(shaded, at);\n    var out: DepthViewTargets;\n    out.color = targets.color;\n    out.glow = targets.glow;");
-    for output in outputs {
+    for output in outputs.iter().filter(|output| !output.layers.is_empty()) {
         let _ = writeln!(body, "    out.{name} = targets.{name};", name = output.name);
     }
     let _ = writeln!(body, "    out.depth = depth;\n    return out;\n}}\n\nstruct CompositeOut {{\n    @location(0) canvas: vec4<f32>,");
