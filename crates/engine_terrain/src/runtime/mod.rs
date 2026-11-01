@@ -60,12 +60,16 @@ use engine_heightfield::layer::LayerKind;
 use glam::{Mat4, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
-use crate::jobs::{BAKE, BakeJob, StackView, TILE_BUILD, TerrainRecipe, TileJob};
+use crate::jobs::{BAKE, BakeJob, TILE_BUILD};
 use crate::{
-    Biome, BiomeLayer, BiomeRules, Biomes, Bridge, Expr, GivenRiver, HydrologyStats, Layers,
-    LodRanges, NoiseMask, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, Route, RouteOptions, Solid,
-    Stamp, TILE_QUADS, TILE_STRIDE, Tile, TileKey, TileSample, WantedTile, WantedView,
+    Bridge, GivenRiver, HydrologyStats, Layers, LodRanges, Pyramid, Route, RouteOptions, Stamp,
+    TILE_QUADS, TILE_STRIDE, TileKey, WantedTile, WantedView,
 };
+use engine_heightfield::tile::{
+    Biome, BiomeLayer, BiomeRules, Biomes, Expr, NoiseMask, PATCH_QUADS, PATCHES_PER_TILE, Solid,
+    StackView, SurfaceData, TerrainRecipe, Tile, TileJob, TileSample,
+};
+use engine_heightfield::{covers, reaches};
 use engine_core::{
     AssetLibrary, Camera, Cut, Error, ErrorCode, Expected, ExtraRules, IDLE_JOBS, InvalidSetting,
     JobFailures, Jobs, MaterialHandle, MeshHandle, Records, Rule, Setting, TextureHandle, Ticket,

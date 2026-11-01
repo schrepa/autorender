@@ -143,9 +143,9 @@ impl GpuPart for ProbesGpu {
             .placed
             .is_some_and(|(size, cubes)| size == placed.0 && placed.1 > cubes);
         if self.placed != Some(placed) {
-            cx.free(self.radiance);
+            cx.release(self.radiance);
             if !kept {
-                cx.free(self.maps);
+                cx.release(self.maps);
             }
             self.placed = Some(placed);
         }
@@ -173,7 +173,7 @@ impl GpuPart for ProbesGpu {
         self.drawn.extend_from_slice(&state.drawn);
         self.finished = state.finished;
         if !state.listed {
-            cx.free(self.depth);
+            cx.release(self.depth);
         }
         if !self.drawn.is_empty() {
             cx.allocate(self.depth, extent(1), 1);

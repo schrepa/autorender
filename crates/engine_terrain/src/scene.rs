@@ -6,6 +6,9 @@ use engine_core::{
     SceneCx, ScenePath, Setting, parse_value_at,
 };
 use engine_heightfield::layer::{LayerFiles, LayerKind};
+use engine_heightfield::tile::{
+    AuthoredPlacement, Biome, Biomes, MacroCauses, PlacementLayer, SteepLayer,
+};
 use engine_places::ground::{SurfaceMaterial, SurfaceProjection};
 use engine_places::terrain::TerrainLayers;
 use glam::{Vec2, Vec3};
@@ -15,8 +18,8 @@ use serde_json::{Number, Value, json};
 use crate::layer::{self, TerrainLayer};
 use crate::runtime::{MATERIAL_RULES, TerrainPrefetch, TerrainScene, check_material};
 use crate::{
-    Biome, Biomes, Layers, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer, Pyramid,
-    Surroundings, Terrain, TerrainSurface,
+    Layers, PlacedCollider, PlacedShape, PlacementAsset, Pyramid, Surroundings, Terrain,
+    TerrainSurface,
 };
 
 pub const GROUND_HEIGHT: &str = "ground_height";
@@ -72,7 +75,7 @@ pub struct SceneTerrainSurface {
     pub materials: Vec<SceneTerrainMaterial>,
     pub biomes: Vec<Biome>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub steep: Option<crate::SteepLayer>,
+    pub steep: Option<SteepLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bridge: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -80,13 +83,13 @@ pub struct SceneTerrainSurface {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub placements: Vec<PlacementLayer>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub placed: Vec<crate::AuthoredPlacement>,
+    pub placed: Vec<AuthoredPlacement>,
     #[serde(default, skip_serializing_if = "is_default_causes")]
-    pub macro_colors: crate::MacroCauses,
+    pub macro_colors: MacroCauses,
 }
 
-fn is_default_causes(causes: &crate::MacroCauses) -> bool {
-    *causes == crate::MacroCauses::default()
+fn is_default_causes(causes: &MacroCauses) -> bool {
+    *causes == MacroCauses::default()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -630,6 +633,7 @@ impl SceneTerrain {
                     origin: self.origin,
                     points: layer_points(item, kinds)?,
                     at: format!("{path}.layers[{index}].points"),
+                    ..ScenePath::default()
                 })
             })
             .collect()

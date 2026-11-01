@@ -3,21 +3,14 @@ use glam::Vec2;
 use engine_math::clamp;
 
 use super::{
-    Generator, RIVER_EDGE_FAR, RIVER_EDGE_STEP, RIVER_EDGE_ZERO, Stage, Tile, on_triangle,
-    river_meters, river_step,
+    FLOOD, FORM, GRAIN, Generator, POWER, RATIO_STEP, RIVER_EDGE_FAR, RIVER_EDGE_STEP,
+    RIVER_EDGE_ZERO, SAMPLES, Stage, Tile, bed_at, from_half, on_triangle, river_meters, river_step,
 };
 use crate::hydrology::RIVER_FAR;
-use crate::{Bed, HydrologyBake as Hydrology, HydrologySample, Reach, Rivers, TILE_STRIDE};
+use crate::{Bed, HydrologyBake as Hydrology, HydrologySample, Rivers, TILE_STRIDE};
 
-const SAMPLES: usize = (TILE_STRIDE * TILE_STRIDE) as usize;
-
-const GRAIN: usize = 0;
-const POWER: usize = 1;
-const FLOOD: usize = 2;
-const FORM: usize = 3;
 const PLANES: usize = 4;
 
-const RATIO_STEP: f32 = 1.0 / 512.0;
 const RATIO_STEPS: f32 = 4095.0;
 
 fn half(value: f32) -> u16 {
@@ -26,10 +19,6 @@ fn half(value: f32) -> u16 {
     }
     let bits = value.to_bits();
     ((bits + 0x7fff + ((bits >> 16) & 1)) >> 16) as u16
-}
-
-fn from_half(code: u16) -> f32 {
-    f32::from_bits(u32::from(code) << 16)
 }
 
 fn flood_meters(step: u16) -> f32 {
@@ -50,41 +39,31 @@ fn form(bed: &Bed) -> u16 {
     bed.reach as u16 | u16::from(bed.carved) << 3 | steps << 4
 }
 
-fn reach(form: u16) -> Reach {
-    match form & 7 {
-        0 => Reach::Pool,
-        1 => Reach::Plane,
-        2 => Reach::Steps,
-        3 => Reach::Cascade,
-        _ => Reach::Falls,
-    }
-}
-
 fn no_beds() -> Box<[u16]> {
     let mut planes = vec![0; PLANES * SAMPLES];
     planes[FLOOD * SAMPLES..(FLOOD + 1) * SAMPLES].fill(RIVER_EDGE_FAR);
     planes.into_boxed_slice()
 }
 
-pub(crate) type RiverRows<'a> = (Option<&'a [u16]>, Option<&'a [u16]>);
+pub type RiverRows<'a> = (Option<&'a [u16]>, Option<&'a [u16]>);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct RiverInputs {
-    pub(crate) river: f32,
-    pub(crate) grain: f32,
-    pub(crate) power: f32,
-    pub(crate) flood: f32,
+pub struct RiverInputs {
+    pub river: f32,
+    pub grain: f32,
+    pub power: f32,
+    pub flood: f32,
 }
 
 impl RiverInputs {
-    pub(crate) const FAR: Self = Self {
+    pub const FAR: Self = Self {
         river: RIVER_FAR,
         grain: 0.0,
         power: 0.0,
         flood: RIVER_FAR,
     };
 
-    pub(crate) fn held((edges, beds): RiverRows<'_>, at: usize) -> Self {
+    pub fn held((edges, beds): RiverRows<'_>, at: usize) -> Self {
         let plane = |index: usize| beds.map(|beds| beds[index * SAMPLES + at]);
         Self {
             river: edges.map_or(RIVER_FAR, |edges| river_meters(edges[at])),
@@ -94,7 +73,7 @@ impl RiverInputs {
         }
     }
 
-    pub(crate) fn at(rivers: &Rivers, [x, z]: [f32; 2], (ground, spacing): (f32, f32)) -> Self {
+    pub fn at(rivers: &Rivers, [x, z]: [f32; 2], (ground, spacing): (f32, f32)) -> Self {
         let bed = rivers.bed_at(x, z);
         Self {
             river: rivers.edge(x, z, spacing),
@@ -104,7 +83,7 @@ impl RiverInputs {
         }
     }
 
-    pub(crate) fn with_maps(
+    pub fn with_maps(
         self,
         hydrology: &Hydrology,
         [x, z]: [f32; 2],
@@ -164,24 +143,7 @@ impl Tile {
     }
 
     pub fn bed(&self, local: Vec2) -> Option<Bed> {
-        let beds = self.river_beds.as_deref()?;
-        let (i, j, fu, fv) = self.cell(local)?;
-        let (x, z) = (i + i32::from(fu >= 0.5), j + i32::from(fv >= 0.5));
-        let at = (z as usize + 1) * TILE_STRIDE as usize + x as usize + 1;
-        let step = beds[FLOOD * SAMPLES + at];
-        if step == RIVER_EDGE_FAR {
-            return None;
-        }
-        let form = beds[FORM * SAMPLES + at];
-        let d50 = from_half(beds[GRAIN * SAMPLES + at]);
-        Some(Bed {
-            reach: reach(form),
-            d50,
-            d84: d50 * (1.0 + f32::from(form >> 4) * RATIO_STEP),
-            power: from_half(beds[POWER * SAMPLES + at]),
-            flood: self.height(x, z) + river_meters(step),
-            carved: form & 8 != 0,
-        })
+        bed_at(self.river_beds.as_deref()?, &self.heights, self.spacing, local)
     }
 
     pub(crate) fn river_inputs(&self, x: i32, z: i32) -> RiverInputs {

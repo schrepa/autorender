@@ -1,15 +1,14 @@
-use engine_core::{Error, Expected};
+use engine_codec::{Error, Expected, ExtraRules, InvalidSetting, fields};
 use engine_math::{clamp, max, min, sin_cos};
-use engine_core::{ExtraRules, InvalidSetting, fields};
 use serde::{Deserialize, Serialize};
 
-use crate::expr::Expr;
-use crate::expr_layer::{producer, read_map};
-use crate::surface::{
-    Compiled, Control, Reads, RowInputs, RowScratch, Scope, erosion_row, setting_error,
-    terrain_error, unknown, unknown_map,
+use super::expr::{Expr, producer, read_map};
+use super::surface::{
+    Compiled, Reads, RowInputs, RowScratch, Scope, erosion_row, setting_error, terrain_error,
+    unknown, unknown_map,
 };
-use crate::{Placed, TILE_QUADS, TILE_STRIDE, Tile};
+use super::{Control, Footprint, Solid, Tile};
+use crate::{TILE_QUADS, TILE_STRIDE};
 
 pub const AUTHORED_LAYER: u16 = u16::MAX - 1;
 
@@ -71,25 +70,25 @@ impl ExtraRules for PlacementLayer {
         if self.density * self.footprint * self.footprint / 10_000.0 > 1.0 {
             return Err(InvalidSetting::new(
                 "density",
-                engine_core::Expected::Number,
+                engine_codec::Expected::Number,
             ));
         }
         if self.scale[0] > self.scale[1] {
             return Err(InvalidSetting::new(
                 "scale",
-                engine_core::Expected::Sorted,
+                engine_codec::Expected::Sorted,
             ));
         }
         if self.assets.iter().map(|choice| choice.weight).sum::<f32>() <= 0.0 {
             return Err(InvalidSetting::new(
                 "assets",
-                engine_core::Expected::Nonzero,
+                engine_codec::Expected::Nonzero,
             ));
         }
         if self.far.is_some_and(|far| far.level <= self.level) {
             return Err(InvalidSetting::new(
                 "far.level",
-                engine_core::Expected::Above,
+                engine_codec::Expected::Above,
             ));
         }
         Ok(())
@@ -232,29 +231,53 @@ pub(crate) fn place_authored(
     cost
 }
 
-pub fn footprint(placed: &Placed, solid: &Solid) -> Footprint {
-    use glam::{Mat3, Mat4, Vec3};
-    let model = placed.model(Vec3::ZERO, placed.position[1])
-        * Mat4::from_translation(Vec3::from_array(solid.center));
-    let axes = Mat3::from_mat4(model) * Mat3::from_diagonal(Vec3::from_array(solid.half));
-    Footprint {
-        center: model.w_axis.truncate().to_array(),
-        axes: axes.to_cols_array(),
-        round: solid.round,
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Placed {
+    pub position: [f32; 3],
+    pub yaw: f32,
+    pub lean: [f32; 2],
+    pub scale: f32,
+    pub sink: f32,
+    pub ground: [f32; 2],
+    pub asset: u16,
+    pub layer: u16,
+    pub near_level: Option<u8>,
+    pub rank: f32,
+}
+
+impl Placed {
+    pub fn model(&self, origin: glam::Vec3, base: f32) -> glam::Mat4 {
+        use glam::Vec3;
+        let [lean_x, lean_z] = self.lean;
+        let up = Vec3::new(
+            lean_x,
+            max(1.0 - lean_x * lean_x - lean_z * lean_z, 0.01).sqrt(),
+            lean_z,
+        )
+        .normalize();
+        let (sin, cos) = sin_cos(self.yaw);
+        let forward = Vec3::new(cos, 0.0, sin);
+        let tangent = (forward - up * forward.dot(up)).normalize_or(Vec3::X);
+        let across = tangent.cross(up);
+        let [x, _, z] = self.position;
+        glam::Mat4::from_cols(
+            (tangent * self.scale).extend(0.0),
+            (up * self.scale).extend(0.0),
+            (across * self.scale).extend(0.0),
+            (origin + Vec3::new(x, base, z)).extend(1.0),
+        )
     }
-}
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Solid {
-    pub center: [f32; 3],
-    pub half: [f32; 3],
-    pub round: bool,
-}
-
-impl Solid {
-    pub fn valid(&self) -> bool {
-        self.center.iter().all(|value| value.is_finite())
-            && self.half.iter().all(|&half| half.is_finite() && half > 0.0)
+    pub fn footprint(&self, solid: &Solid) -> Footprint {
+        use glam::{Mat3, Mat4, Vec3};
+        let model = self.model(Vec3::ZERO, self.position[1])
+            * Mat4::from_translation(Vec3::from_array(solid.center));
+        let axes = Mat3::from_mat4(model) * Mat3::from_diagonal(Vec3::from_array(solid.half));
+        Footprint {
+            center: model.w_axis.truncate().to_array(),
+            axes: axes.to_cols_array(),
+            round: solid.round,
+        }
     }
 }
 
@@ -262,70 +285,6 @@ impl Solid {
 pub struct Obstacle {
     pub center: glam::Vec2,
     pub radius: f32,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Footprint {
-    pub center: [f32; 3],
-    pub axes: [f32; 9],
-    pub round: bool,
-}
-
-impl Footprint {
-    fn axes(&self) -> glam::Mat3 {
-        glam::Mat3::from_cols_array(&self.axes)
-    }
-
-    pub fn middle(&self) -> glam::Vec2 {
-        glam::Vec2::new(self.center[0], self.center[2])
-    }
-
-    pub fn reach(&self) -> glam::Vec2 {
-        let rows = self.axes().transpose();
-        let along = |row: glam::Vec3| {
-            if self.round {
-                row.length()
-            } else {
-                row.abs().element_sum()
-            }
-        };
-        glam::Vec2::new(along(rows.x_axis), along(rows.z_axis))
-    }
-
-    pub fn span(&self, point: glam::Vec2) -> Option<[f32; 2]> {
-        let inverse = self.axes().inverse();
-        let at = inverse
-            * (glam::Vec3::new(point.x, 0.0, point.y) - glam::Vec3::from_array(self.center));
-        let up = inverse.y_axis;
-        if self.round {
-            let rise = up.dot(up);
-            let along = at.dot(up);
-            let reach = along * along - rise * (at.dot(at) - 1.0);
-            if !(rise > 0.0 && reach >= 0.0) {
-                return None;
-            }
-            let root = reach.sqrt();
-            return Some([(-along - root) / rise, (-along + root) / rise]);
-        }
-        let mut span = [f32::NEG_INFINITY, f32::INFINITY];
-        for k in 0..3 {
-            if up[k] != 0.0 {
-                let (a, b) = ((-1.0 - at[k]) / up[k], (1.0 - at[k]) / up[k]);
-                span = [max(span[0], min(a, b)), min(span[1], max(a, b))];
-            } else if at[k].abs() > 1.0 {
-                return None;
-            }
-        }
-        (span[0] <= span[1]).then_some(span)
-    }
-
-    pub(crate) fn valid(&self) -> bool {
-        self.center
-            .iter()
-            .chain(&self.axes)
-            .all(|value| value.is_finite())
-            && self.axes().determinant() != 0.0
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -546,7 +505,7 @@ impl MaskInputs {
         &mut self,
         (tile, stack, reads): (&Tile, &crate::Layers, Reads),
         (point, local, [x, z]): ([f32; 2], [f32; 2], [i32; 2]),
-        sample: &crate::TileSample,
+        sample: &super::TileSample,
     ) {
         let spacing = tile.spacing();
         let normal = sample.normal;
@@ -624,7 +583,7 @@ struct Candidate {
     rank: f32,
     point: [f32; 2],
     local: [f32; 2],
-    sample: crate::TileSample,
+    sample: super::TileSample,
     share_of_materials: f32,
 }
 
@@ -642,7 +601,7 @@ pub(crate) fn place_row(
         &crate::Layers,
         Placing,
         &mut PlaceScratch,
-        &crate::BiomeRules,
+        &super::BiomeRules,
     ),
 ) -> (u64, Option<(usize, usize)>) {
     let spacing = tile.spacing();
@@ -730,7 +689,7 @@ pub(crate) fn place_row(
                 let held = &mut controls[row * stride + column];
                 if *held == u32::MAX {
                     *held =
-                        crate::gpu::sample_control(tile, (stack, rules), (column, row)).packed();
+                        super::gpu::sample_control(tile, (stack, rules), (column, row)).packed();
                 }
                 Control::unpack(*held)
             }
@@ -833,9 +792,9 @@ pub(crate) fn place_row(
     (cost, Some(next))
 }
 
-crate::codec::record!(PlacementChoice { asset, weight });
-crate::codec::record!(FarPlacement { level });
-crate::codec::record!(PlacementLayer {
+engine_codec::record!(PlacementChoice { asset, weight });
+engine_codec::record!(FarPlacement { level });
+engine_codec::record!(PlacementLayer {
     id,
     assets,
     density,
@@ -850,7 +809,7 @@ crate::codec::record!(PlacementLayer {
     level,
     far,
 });
-crate::codec::record!(AuthoredPlacement {
+engine_codec::record!(AuthoredPlacement {
     asset,
     position,
     yaw,
@@ -859,15 +818,22 @@ crate::codec::record!(AuthoredPlacement {
     align,
     level,
 });
-crate::codec::record!(Solid {
-    center,
-    half,
-    round
+engine_codec::record!(Placed {
+    position,
+    yaw,
+    lean,
+    scale,
+    sink,
+    ground,
+    asset,
+    layer,
+    near_level,
+    rank,
 });
-crate::codec::record!(Footprint {
-    center,
-    axes,
-    round
+engine_codec::tagged!(Placing {
+    0 => All,
+    1 => Near,
+    2 => Far,
 });
 
 type MapSources<'a> = (

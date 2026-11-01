@@ -1,11 +1,11 @@
-import package::place::ground_surface::{SurfaceGround, SurfaceInputs};
-import package::generated::terrain::{
+import package::place::ground_surface::{
     BIOME_WORDS, H_BIOMES, H_EROSION, H_FADE, H_HYDROLOGY, H_PATHS, H_PROGRAM, H_READS,
-    H_WET_BIOMES, MAX_MATERIALS, MAX_STACK, NONE, OP_ADD, OP_CONSTANT, OP_CURVATURE, OP_DEPOSIT,
-    OP_END, OP_FACING, OP_FLOOD, OP_FLOW, OP_GRADIENT, OP_GRAIN, OP_HEIGHT, OP_INVERT, OP_LAKE,
-    OP_MAX, OP_MIN, OP_MULTIPLY, OP_NOISE, OP_PATH, OP_POWER, OP_REMAP, OP_RIVER, OP_VALUE,
-    OP_WETNESS, OP_WORN, SURFACE_PATH_FAR, SURFACE_RIVER_FAR, SurfaceEntry,
+    H_WET_BIOMES, MAX_MATERIALS, MAX_STACK, OP_ADD, OP_CONSTANT, OP_CURVATURE, OP_DEPOSIT, OP_END,
+    OP_FACING, OP_FLOOD, OP_FLOW, OP_GRADIENT, OP_GRAIN, OP_HEIGHT, OP_INVERT, OP_LAKE, OP_MAX,
+    OP_MIN, OP_MULTIPLY, OP_NOISE, OP_PATH, OP_POWER, OP_REMAP, OP_RIVER, OP_VALUE, OP_WETNESS,
+    OP_WORN, SurfaceGround, SurfaceInputs,
 };
+import package::generated::terrain::{NONE, SURFACE_PATH_FAR, SURFACE_RIVER_FAR, SurfaceEntry};
 
 @group(0) @binding(0) var<storage, read> surface_program: array<u32>;
 @group(0) @binding(0) var<storage, read> surface_materials: array<SurfaceEntry>;

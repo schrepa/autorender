@@ -29,10 +29,9 @@ pub use layers::{Blend, HeightImage, Layers, Stamp, StampOp};
 pub use path::{Bridge, PathSample};
 pub use rivers::{Given, RIVER_STEP, River, RiverLine, Rivers};
 pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverListing, RiverSight};
-pub use tile::{Control, SampleShape, smooth_gradient};
 
 pub fn bound(value: f32) -> f64 {
-    value.to_string().parse().unwrap_or(f64::from(value))
+    engine_codec::rule::Bound::bound(value)
 }
 
 pub fn schema<T: schemars::JsonSchema>() -> serde_json::Value {

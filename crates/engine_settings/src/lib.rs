@@ -4,23 +4,15 @@
 )]
 
 mod error;
-pub mod fields;
 
-pub use engine_codec::{Allowed, Detail, Error, ErrorCode, Expected, MAX_GOT_BYTES, closest};
+pub use engine_codec::{
+    Allowed, Detail, Error, ErrorCode, Expected, ExtraRules, ID_PATTERN, InvalidSetting,
+    MAX_GOT_BYTES, MAX_ID_BYTES, Rule, Setting, closest, fields, is_id, rule, state, stated,
+    valid_uri,
+};
 #[cfg(target_arch = "wasm32")]
 pub use error::js_error;
 pub use error::{JS_ERROR_NAME, parse_json, parse_value, parse_value_at};
-pub use fields::{
-    ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, is_id, state, stated,
-    valid_uri,
-};
-
-pub mod rule {
-    pub use crate::fields::{
-        Bound, above, above_to, any, at_least, at_most, budget, count, finite, id, multiple,
-        power_of_two, range, same,
-    };
-}
 
 #[doc(hidden)]
 pub mod __private {

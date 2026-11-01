@@ -2,8 +2,12 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 use std::sync::Arc;
 
+use engine_core::Stamp;
 use engine_core::collections::HashMap;
+use engine_heightfield::ErrorPyramid;
+use engine_heightfield::tile::shaded_elsewhere;
 use engine_places::ground::{Pyramid, TerrainEntry, TerrainTiles, TileFace, TileKey};
+use engine_places::water::Waterline;
 use engine_render::{Prepare, Texture, wgpu};
 use glam::Vec2;
 
@@ -25,6 +29,7 @@ const _: () = assert!(
 struct Uploaded {
     tile: TileFace,
     shading: Option<Arc<TileShading>>,
+    water: Option<Arc<[u16]>>,
 }
 
 #[derive(Default)]
@@ -77,6 +82,7 @@ impl TileAtlas {
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
         (tiles, atlas, bakes): (&TerrainTiles, &Atlas, &Bakes),
+        (line, watered): (&Waterline, bool),
     ) {
         self.uploads = 0;
         self.controls = 0;
@@ -132,6 +138,7 @@ impl TileAtlas {
         } else {
             atlas.uploads.clone()
         };
+        let found = water_errors(line, watered || !uploads.is_empty());
         for (id, layer, upload) in uploads {
             let Some(index) = tiles.terrains.iter().position(|entry| entry.terrain == id.0) else {
                 continue;
@@ -151,15 +158,20 @@ impl TileAtlas {
                 Upload::Arrived => None,
                 Upload::Replaced | Upload::Errors => self.uploaded.remove(&id),
             };
+            let water = errors_of(&found, id, tile.stamp);
+            let wet = before
+                .as_ref()
+                .is_none_or(|held| !same_errors(held.water.as_ref(), water));
             if upload == Upload::Errors {
-                if before.as_ref().is_none_or(|held| held.tile.water_errors != tile.water_errors) {
-                    write_errors(cx, handles.water_errors, layer, &tile.water_errors);
+                if wet {
+                    write_water(cx, handles.water_errors, layer, water);
                 }
                 let shading = before.and_then(|held| held.shading);
-                self.uploaded.insert(id, Uploaded { tile: tile.clone(), shading });
+                let (tile, water) = (tile.clone(), water.cloned());
+                self.uploaded.insert(id, Uploaded { tile, shading, water });
                 continue;
             }
-            let shades = TileShading::shades(id.1.level, entry.surroundings);
+            let shades = shaded_elsewhere(id.1.level, entry.surroundings);
             let heights = before.as_ref().is_none_or(|held| held.tile.heights != tile.heights);
             if heights {
                 write_layer(cx, handles.heights, layer, (bytemuck::cast_slice(&tile.heights[..]), 4));
@@ -175,11 +187,8 @@ impl TileAtlas {
                     });
                 }
             }
-            let water = before
-                .as_ref()
-                .is_none_or(|held| held.tile.water_errors != tile.water_errors);
-            if water {
-                write_errors(cx, handles.water_errors, layer, &tile.water_errors);
+            if wet {
+                write_water(cx, handles.water_errors, layer, water);
             }
             let (control, shading) = if shades {
                 self.shade(cx, handles, &placing, before.as_ref(), bakes)
@@ -188,7 +197,11 @@ impl TileAtlas {
                 (control, None)
             };
             self.uploads += u32::from(heights || control);
-            self.uploaded.insert(id, Uploaded { tile: tile.clone(), shading });
+            let (tile, water) = (tile.clone(), water.cloned());
+            self.uploaded.insert(id, Uploaded { tile, shading, water });
+        }
+        if watered {
+            self.rewater(cx, handles, atlas, &found);
         }
         if !self.normal_jobs.is_empty() {
             let bytes = std::mem::size_of_val(self.normal_jobs.as_slice()) as u64;
@@ -200,6 +213,29 @@ impl TileAtlas {
             cx.allocate_buffer(handles.control_jobs, bytes);
             cx.write(handles.control_jobs, 0, &self.control_jobs);
             self.controls = self.control_jobs.len() as u32;
+        }
+    }
+
+    fn rewater(
+        &mut self,
+        cx: &mut Prepare<'_, TerrainGpu>,
+        handles: &Handles,
+        atlas: &Atlas,
+        found: &WaterErrors<'_>,
+    ) {
+        let mut resident: Vec<(TileId, u32)> =
+            atlas.slots.iter().map(|(&id, &layer)| (id, layer)).collect();
+        resident.sort_unstable();
+        for (id, layer) in resident {
+            let held = (atlas.tile(id.0, id.1), self.uploaded.get_mut(&id));
+            let (Some(tile), Some(uploaded)) = held else {
+                continue;
+            };
+            let water = errors_of(found, id, tile.stamp);
+            if !same_errors(uploaded.water.as_ref(), water) {
+                write_water(cx, handles.water_errors, layer, water);
+                uploaded.water = water.cloned();
+            }
         }
     }
 
@@ -324,7 +360,7 @@ impl TileAtlas {
             .terrains
             .iter()
             .find(|entry| entry.terrain == key.0)
-            .is_some_and(|entry| TileShading::shades(key.1.level, entry.surroundings));
+            .is_some_and(|entry| shaded_elsewhere(key.1.level, entry.surroundings));
         let (normals, materials) = fades_of(atlas, &key, fades, shaded);
         let timed = atlas.surfaced.contains_key(&key);
         let normals_move = normals > 0.0 && (timed || !shaded);
@@ -433,6 +469,15 @@ fn write_errors(cx: &mut Prepare<'_, TerrainGpu>, texture: Texture<TerrainGpu>, 
     }
 }
 
+fn write_water(
+    cx: &mut Prepare<'_, TerrainGpu>,
+    texture: Texture<TerrainGpu>,
+    layer: u32,
+    water: Option<&Arc<[u16]>>,
+) {
+    write_errors(cx, texture, layer, water_halves(water));
+}
+
 fn write_peaks(cx: &mut Prepare<'_, TerrainGpu>, texture: Texture<TerrainGpu>, layer: u32, peaks: &[f32]) {
     for mip in 0..SURFACE_ERROR_MIPS {
         let side = ERROR_CELLS >> mip;
@@ -463,6 +508,33 @@ fn peaks_mip(peaks: &[f32], mip: u32) -> &[f32] {
 
 fn listed_tile(tiles: &[TileFace], key: TileKey) -> Option<&TileFace> {
     tiles.iter().find(|tile| tile.key == key)
+}
+
+type WaterErrors<'a> = HashMap<TileId, (Stamp, &'a Arc<[u16]>)>;
+
+fn water_errors(line: &Waterline, wanted: bool) -> WaterErrors<'_> {
+    if !wanted {
+        return HashMap::default();
+    }
+    line.errors
+        .iter()
+        .map(|held| ((held.terrain, held.key), (held.stamp, &held.errors)))
+        .collect()
+}
+
+fn errors_of<'a>(found: &WaterErrors<'a>, id: TileId, stamp: Stamp) -> Option<&'a Arc<[u16]>> {
+    found
+        .get(&id)
+        .filter(|(at, _)| *at == stamp)
+        .map(|&(_, errors)| errors)
+}
+
+fn same_errors(a: Option<&Arc<[u16]>>, b: Option<&Arc<[u16]>>) -> bool {
+    water_halves(a) == water_halves(b)
+}
+
+fn water_halves(errors: Option<&Arc<[u16]>>) -> &[u16] {
+    errors.map_or(ErrorPyramid::dry().halves(), |held| &held[..])
 }
 
 fn same_shading(a: Option<&Arc<TileShading>>, b: Option<&Arc<TileShading>>) -> bool {

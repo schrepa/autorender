@@ -6,7 +6,9 @@ use engine_core::{
     FrameTime, JobFailures, Jobs, Records, Spawner, Ticket, VIEW_JOBS, View, job_priority,
 };
 use engine_heightfield::tile::{Solid, TileJob};
-use engine_heightfield::{ErrorPyramid, Fall, HydrologyBake, Layers, Pyramid, Rivers, Stamp, TileKey};
+use engine_heightfield::{
+    ErrorPyramid, Fall, HydrologyBake, Layers, Pyramid, Rivers, Stamp, TileKey, reaches,
+};
 use engine_places::ground::{TerrainTiles, TileFace};
 use engine_places::water::{WaterBody, WaterQuery, WaterSample, WaterTileErrors, Waterline};
 use glam::{Vec2, Vec3};
@@ -124,7 +126,7 @@ impl WaterTerrain {
                 .edits
                 .iter()
                 .copied()
-                .filter(|stamp| crate::settled::reaches(stamp, &pyramid, key))
+                .filter(|stamp| reaches(stamp, &pyramid, key))
                 .collect(),
         })
     }

@@ -325,6 +325,7 @@ impl SettleFeedback {
                 break;
             };
             self.loads += 1;
+            let steps = stepping(&ask.start);
             self.squares[slot] = Some(Square {
                 inputs: ask.inputs,
                 terrain: ask.terrain,
@@ -336,7 +337,7 @@ impl SettleFeedback {
                 stirred: 0,
                 looks: Vec::new(),
                 settled: false,
-                stepping: stepping(&ask.start),
+                stepping: steps,
                 flowing: 0,
                 phase: Phase::Stepping,
                 asked_means: None,
@@ -941,15 +942,15 @@ impl SettleGpu {
         }
         self.layout = Some((layout, generation));
         for (slot, wanted) in work.loads.iter().enumerate() {
-            let Some((load, start)) = wanted else {
+            let Some((count, start)) = wanted else {
                 continue;
             };
-            if self.loaded.get(slot) == Some(load) {
+            if self.loaded.get(slot) == Some(count) {
                 continue;
             }
             load(&self.slots, &layout, slot as u32, start, cx);
             if let Some(held) = self.loaded.get_mut(slot) {
-                *held = *load;
+                *held = *count;
             }
         }
         match work.room {

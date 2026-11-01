@@ -22,19 +22,24 @@ impl SolidField for TerrainSolids {
     }
 }
 
-impl FieldSamples for Tile {
+struct TileSamples(Arc<Tile>);
+
+impl FieldSamples for TileSamples {
     fn height(&self, x: i32, z: i32) -> f32 {
-        Tile::height(self, x, z)
+        self.0.height(x, z)
     }
 
     fn hole(&self, x: u32, z: u32) -> bool {
-        self.is_hole(x, z)
+        self.0.is_hole(x, z)
     }
 
     fn same(&self, other: &dyn FieldSamples) -> bool {
-        other.as_any().downcast_ref::<Tile>().is_some_and(|other| {
-            self.heights() == other.heights() && self.hole_bits() == other.hole_bits()
-        })
+        other
+            .as_any()
+            .downcast_ref::<TileSamples>()
+            .is_some_and(|other| {
+                self.0.heights() == other.0.heights() && self.0.hole_bits() == other.0.hole_bits()
+            })
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -52,7 +57,7 @@ fn collision_tiles(state: &TerrainState) -> impl Iterator<Item = &Arc<Tile>> {
 
 fn ground_fields(state: &TerrainState, fields: &mut Vec<FieldTile>) {
     for tile in collision_tiles(state) {
-        let samples: Arc<dyn FieldSamples> = tile.clone();
+        let samples: Arc<dyn FieldSamples> = Arc::new(TileSamples(Arc::clone(tile)));
         fields.push(FieldTile {
             owner: state.entity,
             key: tile.key(),

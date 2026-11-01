@@ -10,8 +10,8 @@ import package::face::lighting::{finish_ground, local_light, widened};
 import package::face::shadows::{KeptLift, keep_lift, kept_level, kept_texels};
 import package::face::sun::sun_direction;
 import package::engine::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail_distance, detail_level,
-    detail_resolved, detail_span, eye_world, fade_noise, material_detail, stable_normalize};
-import package::engine::shading::{BODY_GROUND, Shaded, SurfacePoint, ViewPixel, world_plane};
+    detail_resolved, detail_span, eye_world, fade_noise, material_detail, stable_normalize, view_pixel};
+import package::engine::shading::{BODY_GROUND, Shaded, SurfacePoint, world_plane};
 import package::face::water::{WATER_HELD, WaterCell, water_cell, water_level};
 import package::generated::targets::{DepthViewTargets, depth_view_targets};
 import package::terrain_shading::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
@@ -1425,7 +1425,7 @@ fn terrain_resolve_targets(input: TerrainResolveInput, dither: f32) -> DepthView
     var shaded = finish_ground(point, local_light(point, position.xy));
     shaded.color = stored(shaded.color, position.xy);
     let previous = vec4<f32>(resolved.previous.xy, 0.0, resolved.previous.z);
-    return depth_view_targets(shaded, ViewPixel(position, previous), resolved.depth);
+    return depth_view_targets(shaded, view_pixel(position, previous), resolved.depth);
 }
 
 @fragment

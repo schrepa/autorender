@@ -11,6 +11,7 @@ mod tables;
 
 pub(crate) use part::TerrainGpu;
 pub(crate) use patches::{planes, visible};
+pub(crate) use surface::meshlet_indices;
 
 const LAYER_SIZE: u32 = crate::gpu::TILE_STRIDE;
 const SLOT: u64 = 256;

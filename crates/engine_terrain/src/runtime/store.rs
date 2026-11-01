@@ -1,5 +1,4 @@
 use super::*;
-use crate::ErrorPyramid;
 use engine_places::ground::TileFace;
 
 struct Resident {
@@ -28,7 +27,7 @@ fn memory_bytes(tile: &Tile) -> u64 {
     (arrays * 4 + holes + std::mem::size_of_val(tile.placed())) as u64
 }
 
-fn face_of(tile: &Tile, stamps: &Arc<[Stamp]>, pyramid: &Pyramid) -> TileFace {
+fn face_of(tile: &Tile, stamps: &Arc<[Stamp]>, pyramid: &Pyramid, current: bool) -> TileFace {
     let key = tile.key();
     let corner = pyramid.tile_origin(key);
     let size = TILE_QUADS as f32 * tile.spacing();
@@ -47,15 +46,15 @@ fn face_of(tile: &Tile, stamps: &Arc<[Stamp]>, pyramid: &Pyramid) -> TileFace {
         control: tile.control().map(Arc::from),
         river_edges: tile.river_edges().map(Arc::from),
         river_beds: tile.river_beds().map(Arc::from),
+        rivers: tile.river_texels().map(Arc::from),
         patch_bounds: (0..PATCHES_PER_TILE * PATCHES_PER_TILE)
             .map(|index| tile.patch_bounds(index % PATCHES_PER_TILE, index / PATCHES_PER_TILE))
             .collect(),
         patch_holes: Arc::from(&tile.patch_holes()[..]),
         ground_errors: Arc::from(tile.ground_errors().halves()),
-        water_errors: Arc::from(ErrorPyramid::dry().halves()),
-        errors: tile.ground_errors().values().collect(),
         stamps: Arc::clone(stamps),
         placed: Arc::from(tile.placed()),
+        current,
     }
 }
 
@@ -149,7 +148,7 @@ impl TileStore {
                 }
             }
         }
-        let face = face_of(&tile, &stamps, &self.pyramid);
+        let face = face_of(&tile, &stamps, &self.pyramid, made == self.generation);
         self.tiles.insert(
             key,
             Resident {
@@ -184,6 +183,9 @@ impl TileStore {
         }
         for key in self.cache.keys_where(|key, _| under(key)) {
             self.forget(key);
+        }
+        for resident in self.tiles.values_mut() {
+            resident.face.current = resident.made == generation;
         }
         self.revision += 1;
     }

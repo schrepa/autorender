@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    CookMode, DeviceLimits, Error, FrameTime, IDLE_JOBS, JobFailures, Jobs, RecordKey, Records, Ticket,
-    VIEW_JOBS, View, WorkClock, job_priority,
+    CookMode, DeviceLimits, Error, FrameTime, IDLE_JOBS, JobFailures, Jobs, RecordKey, Records,
+    Ticket, VIEW_JOBS, View, WorkClock, job_priority,
 };
 use engine_heightfield::tile::{Solid, TILE_STRIDE, TileJob};
-use engine_heightfield::{Pyramid, Stamp, TILE_QUADS};
+use engine_heightfield::{Pyramid, Stamp, TILE_QUADS, reaches};
 use engine_places::ground::GroundWork;
 use glam::Vec2;
 
@@ -56,20 +56,6 @@ pub fn settled_alike(handed: &[u8], made: &[u8]) -> bool {
         }
     }
     wetness * 50 <= cells && apart * 100 <= wet.max(1)
-}
-
-pub(crate) fn reaches(stamp: &Stamp, pyramid: &Pyramid, key: TileKey) -> bool {
-    let center = Vec2::from(stamp.center);
-    let radius = Vec2::splat(stamp.radius + stamp.falloff);
-    covers((center - radius, center + radius), pyramid, key)
-}
-
-fn covers((low, high): (Vec2, Vec2), pyramid: &Pyramid, key: TileKey) -> bool {
-    let spacing = pyramid.spacing(u32::from(key.level));
-    let size = TILE_QUADS as f32 * spacing;
-    let first = Vec2::new(f32::from(key.x), f32::from(key.z)) * size - Vec2::splat(2.0 * spacing);
-    let last = first + Vec2::splat(size + 4.0 * spacing);
-    first.x <= high.x && first.y <= high.y && last.x >= low.x && last.y >= low.y
 }
 
 #[derive(Clone, PartialEq, Eq)]

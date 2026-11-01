@@ -1,3 +1,4 @@
+use engine_heightfield::tile::shaded_elsewhere;
 use engine_places::ground::{TerrainEntry, TerrainTiles, TileKey};
 use engine_places::probes::ProbeCaptures;
 use engine_places::shadows::ground_level;
@@ -471,10 +472,15 @@ fn terrain_uniform(
         );
     let relative = (anchor - eye).as_vec3();
     let tables = parts.tables;
-    let cover = match views.cover {
+    let cover = match &views.cover {
         None => [0.0; 4],
         Some((cover, _)) if terrain.surroundings => [0.0, 0.0, cover.density, 0.0],
-        Some((cover, pixels)) => [cover.width_of(terrain.terrain) * pixels, 0.0, cover.density, 0.0],
+        Some((cover, pixels)) => [
+            cover.width_of(terrain.terrain) * *pixels,
+            0.0,
+            cover.density,
+            0.0,
+        ],
     };
     let deepest = tables
         .palette_of(parts.index as usize, terrain.materials.len())
@@ -512,7 +518,7 @@ fn terrain_uniform(
                     steep.gradient[1],
                 ]
             });
-            let averaged = crate::TileShading::shades(1, terrain.surroundings);
+            let averaged = shaded_elsewhere(1, terrain.surroundings);
             [material, low, high, if averaged { 1.0 } else { 0.0 }]
         },
         water: [0, water.map_or(0, |(slot, _)| slot + 1), water.map_or(0, |(_, first)| first), 0],

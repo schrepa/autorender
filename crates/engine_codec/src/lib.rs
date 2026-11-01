@@ -6,6 +6,7 @@
 
 mod codes;
 mod error;
+pub mod fields;
 
 use std::sync::Arc;
 
@@ -13,6 +14,22 @@ use glam::{Vec2, Vec3};
 
 pub use codes::ErrorCode;
 pub use error::{Allowed, Detail, Error, Expected, MAX_GOT_BYTES, closest};
+pub use fields::{
+    ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, is_id, state, stated,
+    valid_uri,
+};
+
+pub mod rule {
+    pub use crate::fields::{
+        Bound, above, above_to, any, at_least, at_most, budget, count, finite, id, multiple,
+        power_of_two, range, same,
+    };
+}
+
+#[doc(hidden)]
+pub mod __private {
+    pub use ::schemars;
+}
 
 pub fn invalid(path: impl Into<String>) -> Error {
     Error::new(ErrorCode::InvalidRecord, path)

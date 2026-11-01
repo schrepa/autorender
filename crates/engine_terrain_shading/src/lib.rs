@@ -76,6 +76,7 @@ impl Brick for TerrainShadingBrick {
                     state::publish_changes,
                     state::publish_piece,
                     state::rest_surface,
+                    state::publish_heightfield,
                     state::count,
                 ),
             )

@@ -4,7 +4,8 @@ use engine_math::{clamp, max, sin_cos};
 
 use engine_heightfield::layer::ChangeMap;
 use engine_heightfield::noise::{gradient_value, smooth};
-use engine_heightfield::{Generator, Layers, MacroCauses, PathSample, Pyramid, TILE_QUADS};
+use engine_heightfield::tile::{Generator, MacroCauses};
+use engine_heightfield::{Layers, PathSample, Pyramid, TILE_QUADS};
 
 pub const MAX_MACRO_TEXELS: u32 = 4096;
 pub const MACRO_BLOCK: u32 = 4;

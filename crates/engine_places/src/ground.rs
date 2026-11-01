@@ -2,12 +2,19 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::{Component, Entity, Resource};
-use engine_math::{max, sin_cos};
+use engine_heightfield::tile::{
+    BIOME_WORDS, H_BIOMES, H_EROSION, H_FADE, H_HYDROLOGY, H_MATERIALS, H_PATHS, H_PROGRAM,
+    H_READS, H_STACK, H_WET_BIOMES, MAX_MATERIALS, MAX_STACK, OP_ADD, OP_CONSTANT, OP_CURVATURE,
+    OP_DEPOSIT, OP_END, OP_FACING, OP_FLOOD, OP_FLOW, OP_GRADIENT, OP_GRAIN, OP_HEIGHT, OP_INVERT,
+    OP_LAKE, OP_MAX, OP_MIN, OP_MULTIPLY, OP_NOISE, OP_PATH, OP_POWER, OP_REMAP, OP_RIVER,
+    OP_VALUE, OP_WETNESS, OP_WORN,
+};
 use engine_place::{JobRef, List, MaterialHandle, MeshHandle, Slot, Stamp, TextureHandle};
-use glam::{Mat4, Vec2, Vec3};
+use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 pub use engine_heightfield::grid::{MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
+pub use engine_heightfield::tile::{Placed, Steep};
 
 pub const PALETTE_ENTRIES: u32 = 113;
 
@@ -168,12 +175,6 @@ pub struct GroundedAt {
     pub level: Option<u32>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Steep {
-    pub material: u8,
-    pub gradient: [f32; 2],
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SurfaceProjection {
@@ -216,56 +217,6 @@ pub struct SurfaceMaps {
     pub normal: Option<TextureHandle>,
     pub metallic_roughness: Option<TextureHandle>,
 }
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Placed {
-    pub position: [f32; 3],
-    pub yaw: f32,
-    pub lean: [f32; 2],
-    pub scale: f32,
-    pub sink: f32,
-    pub ground: [f32; 2],
-    pub asset: u16,
-    pub layer: u16,
-    pub near_level: Option<u8>,
-    pub rank: f32,
-}
-
-impl Placed {
-    pub fn model(&self, origin: Vec3, base: f32) -> Mat4 {
-        let [lean_x, lean_z] = self.lean;
-        let up = Vec3::new(
-            lean_x,
-            max(1.0 - lean_x * lean_x - lean_z * lean_z, 0.01).sqrt(),
-            lean_z,
-        )
-        .normalize();
-        let (sin, cos) = sin_cos(self.yaw);
-        let forward = Vec3::new(cos, 0.0, sin);
-        let tangent = (forward - up * forward.dot(up)).normalize_or(Vec3::X);
-        let across = tangent.cross(up);
-        let [x, _, z] = self.position;
-        Mat4::from_cols(
-            (tangent * self.scale).extend(0.0),
-            (up * self.scale).extend(0.0),
-            (across * self.scale).extend(0.0),
-            (origin + Vec3::new(x, base, z)).extend(1.0),
-        )
-    }
-}
-
-engine_codec::record!(Placed {
-    position,
-    yaw,
-    lean,
-    scale,
-    sink,
-    ground,
-    asset,
-    layer,
-    near_level,
-    rank,
-});
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlacedAsset {
@@ -351,7 +302,46 @@ pub struct GroundSurface;
 
 impl Slot for GroundSurface {
     const NAME: &'static str = "ground_surface";
-    const WGSL: Option<&'static str> = Some(include_str!("places/ground_surface.wgsl"));
+    const WGSL: Option<&'static str> = Some(contract!(
+        "places/ground_surface.wgsl",
+        OP_CONSTANT,
+        OP_HEIGHT,
+        OP_GRADIENT,
+        OP_CURVATURE,
+        OP_FLOW,
+        OP_WETNESS,
+        OP_LAKE,
+        OP_RIVER,
+        OP_PATH,
+        OP_NOISE,
+        OP_MULTIPLY,
+        OP_ADD,
+        OP_MIN,
+        OP_MAX,
+        OP_INVERT,
+        OP_REMAP,
+        OP_GRAIN,
+        OP_POWER,
+        OP_FLOOD,
+        OP_WORN,
+        OP_DEPOSIT,
+        OP_FACING,
+        OP_VALUE,
+        OP_END,
+        H_PROGRAM,
+        H_STACK,
+        H_BIOMES,
+        H_MATERIALS,
+        H_READS,
+        H_HYDROLOGY,
+        H_PATHS,
+        H_FADE,
+        H_WET_BIOMES,
+        H_EROSION,
+        BIOME_WORDS,
+        MAX_STACK,
+        MAX_MATERIALS,
+    ));
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]

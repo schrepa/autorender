@@ -7,17 +7,16 @@ use engine_math::clamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use engine_heightfield::tile::{
+    Compiled, Expr, Input, Reads, RiverInputs, RowInputs, RowScratch, SampleShape, Scope, producer,
+    read_map, terrain_error, unknown_map,
+};
 use engine_heightfield::{Gather, StartTile};
 
 use crate::codec::{Codec, Reader, Writer, get_grid, invalid, on_grid, put_grid};
-use crate::expr::Expr;
 use crate::layer::{
     Below, LayerBake, LayerFiles, LayerKind, Made, Place, Row, TerrainLayer, no_files, same_as,
 };
-use crate::surface::{
-    Compiled, Input, Reads, RowInputs, RowScratch, SampleShape, Scope, terrain_error, unknown_map,
-};
-use crate::tile::RiverInputs;
 use crate::{Blend, HydrologySample, Layers, MAX_LEVEL, PathSample, Pyramid};
 
 pub static EXPRESSION: LayerKind = LayerKind {
@@ -424,30 +423,6 @@ impl Codec for ShapeGrid {
             return Err(invalid("$.shapes").got(heights.len()));
         }
         Ok(Self::new(spacing, width, heights))
-    }
-}
-
-pub(crate) fn producer(layers: &[Arc<dyn TerrainLayer>], name: &str) -> Option<usize> {
-    (layers.iter()).rposition(|layer| layer.outputs().iter().any(|output| output == name))
-}
-
-pub(crate) fn read_map(
-    stack: &Layers,
-    producer: Option<usize>,
-    name: &str,
-    row: &Row<'_>,
-    heights: &[f32],
-    out: &mut [f32],
-) {
-    let read = match producer {
-        Some(index) => stack
-            .layers()
-            .get(index)
-            .is_some_and(|layer| layer.map_row(name, Below::new(stack, index), row, heights, out)),
-        None => false,
-    };
-    if !read {
-        out.fill(0.0);
     }
 }
 

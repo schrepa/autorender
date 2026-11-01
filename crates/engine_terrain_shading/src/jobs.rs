@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use engine_codec::{self as codec, Error, record};
 use engine_core::{ErrorCode, Job, JobCx, JobKind, RecordKey};
-use engine_heightfield::{Generator, Pyramid, Recipe, Stamp, TILE_QUADS, Tile, TileKey};
+use engine_heightfield::layer::LayerKind;
+use engine_heightfield::tile::{Generator, Recipe, Tile};
+use engine_heightfield::{Pyramid, Stamp, TILE_QUADS, TileKey};
+use engine_places::terrain::TerrainLayers;
 
 use crate::bounce::{MAX_PROBES, TerrainBounce, bounce};
 use crate::lighting::{Ground, TerrainLighting, light};
@@ -132,11 +135,21 @@ pub fn shading_output(bytes: &[u8]) -> Result<TileShading, Error> {
     codec::decode(bytes)
 }
 
-fn recipe(cx: &JobCx<'_>, key: [u8; 32]) -> Result<Arc<Recipe>, Error> {
+fn kinds(cx: &JobCx<'_>) -> Vec<&'static LayerKind> {
+    cx.members::<TerrainLayers>().copied().collect()
+}
+
+fn recipe(
+    cx: &JobCx<'_>,
+    shared: [u8; 32],
+    kinds: &[&'static LayerKind],
+) -> Result<Arc<Recipe>, Error> {
+    let key = RecordKey::from_hash(shared);
     let bytes = cx
-        .share(RecordKey::from_hash(key))
-        .ok_or_else(|| Error::new(ErrorCode::UnknownReference, "$.recipe"))?;
-    Ok(Arc::new(codec::decode(bytes)?))
+        .share(key)
+        .ok_or_else(|| unshared("$.recipe", &key.hex()))?;
+    let recipe = Recipe::read(bytes, &|stack| cx.share(RecordKey::from_hash(stack)), kinds)?;
+    Ok(Arc::new(recipe))
 }
 
 struct LightingMaking {
@@ -162,8 +175,10 @@ impl Job for LightingMaking {
 fn start_lighting(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
     let mut job: LightingJob = codec::decode(input)?;
     job.check()?;
-    let recipe = recipe(cx, job.recipe)?;
-    let making = GroundMaking::new(&recipe, job.level, std::mem::take(&mut job.tiles))?;
+    let kinds = kinds(cx);
+    let recipe = recipe(cx, job.recipe, &kinds)?;
+    let tiles = std::mem::take(&mut job.tiles);
+    let making = GroundMaking::new((&recipe, kinds), job.level, tiles)?;
     Ok(Box::new(LightingMaking { making, job }))
 }
 
@@ -191,8 +206,10 @@ impl Job for BounceMaking {
 fn start_bounce(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
     let mut job: BounceJob = codec::decode(input)?;
     job.check()?;
-    let recipe = recipe(cx, job.recipe)?;
-    let making = GroundMaking::new(&recipe, job.level, std::mem::take(&mut job.tiles))?;
+    let kinds = kinds(cx);
+    let recipe = recipe(cx, job.recipe, &kinds)?;
+    let tiles = std::mem::take(&mut job.tiles);
+    let making = GroundMaking::new((&recipe, kinds), job.level, tiles)?;
     Ok(Box::new(BounceMaking { making, job, recipe }))
 }
 
@@ -212,8 +229,8 @@ impl Job for MacroMaking {
 
 fn start_macro(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
     let job: MacroJob = codec::decode(input)?;
+    let recipe = recipe(cx, job.recipe, &kinds(cx))?;
     job.check()?;
-    let recipe = recipe(cx, job.recipe)?;
     if job.level >= recipe.pyramid.levels() {
         return Err(level_outside(job.level, &recipe.pyramid));
     }
@@ -229,7 +246,8 @@ impl Job for ShadingMaking {
 
 fn start_shading(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
     let job: ShadingJob = codec::decode(input)?;
-    let recipe = recipe(cx, job.recipe)?;
+    let kinds = kinds(cx);
+    let recipe = recipe(cx, job.recipe, &kinds)?;
     let (pyramid, key) = (recipe.pyramid, job.key);
     let reads = TileShading::reads(&pyramid, key);
     if !pyramid.contains(key) || reads.is_empty() {
@@ -239,7 +257,7 @@ fn start_shading(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error
         ShadingReads::Tiles(tiles)
             if key.level == 1 && names(tiles.iter().map(|&(at, _)| at), &reads) =>
         {
-            let surface = (recipe.layers.clone(), recipe.rules.clone());
+            let surface = (recipe.layers.clone(), recipe.rules.clone(), kinds);
             Ok(Box::new(ShadingMaking::from_ground(surface, pyramid, key, tiles)))
         }
         ShadingReads::Shadings(shadings)
@@ -258,12 +276,13 @@ fn start_shading(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error
 }
 
 fn shared_shading(cx: &JobCx<'_>, record: [u8; 32], key: TileKey) -> Result<TileShading, Error> {
+    let shared = RecordKey::from_hash(record);
     let bytes = cx
-        .share(RecordKey::from_hash(record))
-        .ok_or_else(|| Error::new(ErrorCode::UnknownReference, "$.reads"))?;
+        .share(shared)
+        .ok_or_else(|| unshared("$.reads", &shared.hex()))?;
     let shading: TileShading = codec::decode(bytes)?;
     if shading.key() != key {
-        return Err(Error::new(ErrorCode::InvalidValue, "$.reads"));
+        return Err(mismatched("$.reads", &shared.hex()));
     }
     Ok(shading)
 }
@@ -274,6 +293,7 @@ fn names(named: impl Iterator<Item = TileKey>, reads: &[TileKey]) -> bool {
 
 pub(crate) struct GroundMaking {
     recipe: Arc<Recipe>,
+    kinds: Vec<&'static LayerKind>,
     pyramid: Pyramid,
     level: u32,
     tiles: Vec<(TileKey, Vec<Stamp>)>,
@@ -285,7 +305,11 @@ pub(crate) struct GroundMaking {
 }
 
 impl GroundMaking {
-    fn new(recipe: &Arc<Recipe>, level: u32, tiles: Vec<(TileKey, Vec<Stamp>)>) -> Result<Self, Error> {
+    fn new(
+        (recipe, kinds): (&Arc<Recipe>, Vec<&'static LayerKind>),
+        level: u32,
+        tiles: Vec<(TileKey, Vec<Stamp>)>,
+    ) -> Result<Self, Error> {
         let pyramid = recipe.pyramid;
         if level >= pyramid.levels() {
             return Err(level_outside(level, &pyramid));
@@ -309,6 +333,7 @@ impl GroundMaking {
         let samples = [columns as usize * quads + 1, rows as usize * quads + 1];
         Ok(Self {
             recipe: Arc::clone(recipe),
+            kinds,
             pyramid,
             level,
             tiles,
@@ -342,13 +367,13 @@ impl GroundMaking {
                 return Ok(false);
             }
             if self.generator.is_none() {
-                let layers = self.recipe.stamped(&self.tiles[self.next].1)?;
+                let layers = self.recipe.stamped(&self.tiles[self.next].1, &self.kinds)?;
                 self.generator = Some(Generator::new(layers, &self.pyramid, held));
             }
             let Some(generator) = self.generator.as_mut() else {
                 continue;
             };
-            let Some(made) = generator.advance(*budget) else {
+            let Some(made) = generator.advance(budget) else {
                 if generator.failed() {
                     return Err(invalid_heights());
                 }
@@ -415,6 +440,14 @@ fn between(tile: &Tile, x: f32, z: f32) -> f32 {
 
 pub(crate) fn invalid_heights() -> Error {
     Error::new(ErrorCode::InvalidTerrain, "$.heights").expected(engine_codec::Expected::Finite)
+}
+
+fn unshared(path: &str, name: &str) -> Error {
+    Error::new(ErrorCode::UnknownReference, path).got(name)
+}
+
+fn mismatched(path: &str, name: &str) -> Error {
+    Error::new(ErrorCode::InvalidValue, path).got(name)
 }
 
 fn outside(key: TileKey) -> Error {

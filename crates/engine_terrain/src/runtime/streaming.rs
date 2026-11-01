@@ -3,7 +3,7 @@ use engine_core::{
     CookMode, DeviceLimits, FrameTime, GlobalTransforms, Joined, Projection, View, WorkClock,
 };
 use engine_places::streaming::StreamingFocus;
-use engine_places::terrain::{DrawnRivers, TerrainLayers};
+use engine_places::terrain::TerrainLayers;
 use glam::UVec2;
 
 pub(super) fn vertical_fov(camera: &Camera) -> f32 {
@@ -422,7 +422,6 @@ impl Reliefs {
 }
 
 pub(crate) type StreamReads<'w> = (
-    Res<'w, DrawnRivers>,
     Res<'w, Camera>,
     Res<'w, View>,
     Res<'w, FrameTime>,
@@ -440,7 +439,7 @@ pub(crate) type StreamReads<'w> = (
 )]
 pub(crate) fn stream_terrains(
     settings: Res<TerrainSettings>,
-    (drawn, camera, view, time, clock, cooking, limits, globals, assets, records): StreamReads<'_>,
+    (camera, view, time, clock, cooking, limits, globals, assets, records): StreamReads<'_>,
     kinds: Joined<TerrainLayers>,
     focus: Query<Entity, With<StreamingFocus>>,
     prefetch: Query<(Entity, &TerrainPrefetch)>,
@@ -502,7 +501,6 @@ pub(crate) fn stream_terrains(
     let mut asking = Asking {
         jobs: &mut jobs,
         records: &records,
-        drawn: drawn.make,
         kinds: &kinds,
     };
     terrains.stream(
@@ -526,12 +524,7 @@ pub(crate) fn stream_terrains(
 
 pub(crate) fn work_between_frames(
     settings: Res<TerrainSettings>,
-    (drawn, time, clock, records): (
-        Res<DrawnRivers>,
-        Res<FrameTime>,
-        Res<WorkClock>,
-        Res<Records>,
-    ),
+    (time, clock, records): (Res<FrameTime>, Res<WorkClock>, Res<Records>),
     kinds: Joined<TerrainLayers>,
     mut jobs: Jobs,
     mut terrains: ResMut<Terrains>,
@@ -540,7 +533,6 @@ pub(crate) fn work_between_frames(
     let mut asking = Asking {
         jobs: &mut jobs,
         records: &records,
-        drawn: drawn.make,
         kinds: &kinds,
     };
     let milliseconds = f64::from(time.between_frames_micros) / 1000.0;

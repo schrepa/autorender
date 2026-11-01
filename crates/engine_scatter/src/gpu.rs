@@ -748,8 +748,9 @@ impl ScatterGpu {
             let record = DrawRecord::of(DrawKind::PlacedCard, 0, held.casts);
             draw.draw(
                 &self.lit.card,
-                Shape::IndirectStreams {
-                    streams: &[(inputs.cards, cards), (inputs.records, record.offset())],
+                Shape::IndirectAt {
+                    vertices: &[(inputs.cards, cards), (inputs.records, record.offset())],
+                    indices: None,
                     args: inputs.card_args,
                     offset,
                 },
@@ -815,8 +816,9 @@ impl ScatterGpu {
         if let Some((cards, offset)) = self.card_source(view) {
             draw.draw(
                 &self.shadow_card,
-                Shape::IndirectStreams {
-                    streams: &[(inputs.caster_cards, cards)],
+                Shape::IndirectAt {
+                    vertices: &[(inputs.caster_cards, cards)],
+                    indices: None,
                     args: inputs.caster_card_args,
                     offset,
                 },

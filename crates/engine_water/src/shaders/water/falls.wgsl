@@ -1,6 +1,7 @@
 import package::engine::color::luminance;
-import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};
-import package::engine::view::{camera, detail_resolved, detail_span, eye_world, stable_normalize};
+import package::engine::shading::{Shaded, SurfacePoint};
+import package::engine::view::{camera, detail_resolved, detail_span, eye_world, stable_normalize,
+    view_pixel};
 import package::face::dither::stored;
 import package::face::heightfield::{terrain_uniform, use_terrain};
 import package::face::lighting::{environment_brdf, finish, sun_visibility};
@@ -199,7 +200,9 @@ fn fs_fall(input: FallTemporalOutput) -> ViewTargets {
     use_terrain(input.terrain);
     let pixel = input.clip_position.xy;
     let shade = fall_mirroring(shade_fall(fall_temporal_output(input)), pixel);
-    var targets = view_targets(shade.shaded, ViewPixel(input.clip_position, input.previous));
+    let previous = input.previous;
+    var targets = view_targets(shade.shaded,
+        view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
     targets.color = vec4<f32>(stored(shade.shaded.color, pixel) * shade.shown, shade.coverage);
     return targets;
 }

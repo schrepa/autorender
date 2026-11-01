@@ -399,6 +399,7 @@ pub(crate) fn plan_casters(
         let change = ShadowChanges {
             boxes: Vec::new(),
             all: true,
+            casters: groups_changed,
         };
         match own.single() {
             Ok(entity) => spawner.insert(entity, change),

@@ -13,7 +13,6 @@ engine_places.workspace = true
 engine_heightfield.workspace = true
 engine_codec.workspace = true
 engine_math.workspace = true
-libm.workspace = true
 glam.workspace = true
 schemars.workspace = true
 serde.workspace = true

@@ -8,8 +8,9 @@ use engine_core::{
     RecordExchange, Records, Spawner, TextureHandle, TextureSet, TextureUsage, Ticket, View, codec,
     content_hash,
 };
+use engine_heightfield::tile::shaded_elsewhere;
 use engine_places::ground::{
-    GroundTiles, HeldTile, Pyramid, TerrainEntry, TerrainTiles, TileFace, TileKey,
+    GroundTiles, HeldTile, Heightfield, Pyramid, TerrainEntry, TerrainTiles, TileFace, TileKey,
 };
 use engine_places::shadows::ShadowChanges;
 use glam::{Vec2, Vec3};
@@ -378,9 +379,8 @@ pub(crate) fn place_tiles(
                         atlas.ground_changes.push((stood.0.min(stands.0), stood.1.max(stands.1), stands.2));
                     }
                     if same_ground {
-                        let watered = held.water_errors != tile.water_errors;
                         atlas.held.insert(id, tile.clone());
-                        if let (true, Some(layer)) = (watered, layer) {
+                        if let Some(layer) = layer {
                             atlas.uploads.push((id, layer, Upload::Errors));
                         }
                         continue;
@@ -403,7 +403,8 @@ pub(crate) fn place_tiles(
         };
         for tile in entry.tiles.iter() {
             let id = (terrain, tile.key);
-            let unsurfaced = tile.control.is_none() && !TileShading::shades(tile.key.level, entry.surroundings);
+            let unsurfaced =
+                tile.control.is_none() && !shaded_elsewhere(tile.key.level, entry.surroundings);
             if unsurfaced && atlas.surfaced.remove(&id).is_some() {
                 atlas.changed.push(id);
             }
@@ -425,7 +426,7 @@ pub(crate) fn place_tiles(
         if replaced.is_none() {
             atlas.ground_changes.push(ground_box(entry, tile));
         }
-        let shades = TileShading::shades(id.1.level, entry.surroundings);
+        let shades = shaded_elsewhere(id.1.level, entry.surroundings);
         let shading = bakes.of(id.0).is_some_and(|held| held.shadings.contains_key(&id.1));
         atlas.place(id, tile, replaced, (shades, entry.surface_program, shading));
     }
@@ -470,7 +471,8 @@ fn shaded_changes(atlas: &Atlas, tiles: &TerrainTiles, bakes: &Bakes) -> BTreeSe
     for entry in tiles.terrains.iter() {
         for tile in entry.tiles.iter() {
             let id = (entry.terrain, tile.key);
-            if !TileShading::shades(tile.key.level, entry.surroundings) || !atlas.slots.contains_key(&id) {
+            if !shaded_elsewhere(tile.key.level, entry.surroundings) || !atlas.slots.contains_key(&id)
+            {
                 continue;
             }
             let shading = bakes.of(entry.terrain).is_some_and(|held| held.shadings.contains_key(&tile.key));
@@ -494,10 +496,15 @@ fn ground_box(terrain: &TerrainEntry, tile: &TileFace) -> (Vec3, Vec3, f32) {
     let spacing = pyramid.spacing(level);
     let skirt = SKIRT_SPACINGS * spacing;
     let (low, high) = (tile.bounds.0.y, tile.bounds.1.y);
+    let reach = if level + 1 >= pyramid.levels() {
+        f32::INFINITY
+    } else {
+        spacing
+    };
     (
         terrain.origin + Vec3::new(corner.x, low - skirt, corner.y),
         terrain.origin + Vec3::new(corner.x + size, high, corner.y + size),
-        spacing,
+        reach,
     )
 }
 
@@ -515,6 +522,7 @@ pub(crate) fn publish_changes(
     let change = ShadowChanges {
         boxes: atlas.ground_changes.clone(),
         all: false,
+        casters: false,
     };
     match own.single() {
         Ok(entity) => spawner.insert(entity, change),
@@ -824,6 +832,26 @@ pub(crate) fn rest_surface(tiles: Res<TerrainTiles>, atlas: Res<Atlas>, mut tota
         totals.grounds = [0; 2];
         totals.waters = [0; 2];
     }
+}
+
+pub(crate) fn publish_heightfield(
+    settings: Res<TerrainShading>,
+    totals: Res<SurfaceTotals>,
+    mut heightfield: ResMut<Heightfield>,
+) {
+    let leaf_indices = if heightfield.leaf_indices.is_empty() {
+        crate::terrain::meshlet_indices()
+            .into_iter()
+            .map(u32::from)
+            .collect()
+    } else {
+        Arc::clone(&heightfield.leaf_indices)
+    };
+    heightfield.set_if_neq(Heightfield {
+        leaf_indices,
+        subdivision_error: settings.subdivision_error,
+        water_leaves: totals.waters,
+    });
 }
 
 fn records_left(settings: &TerrainShading, tiles: &TerrainTiles, bakes: &Bakes) -> u32 {

@@ -313,7 +313,7 @@ fn finest_spacing(side: f32, depth: u32) -> f32 {
     leg / (1 << SURFACE_MESHLET_LEVEL) as f32
 }
 
-fn meshlet_indices() -> Vec<u16> {
+pub(crate) fn meshlet_indices() -> Vec<u16> {
     let parts = 1_u32 << SURFACE_MESHLET_LEVEL;
     (0..SURFACE_MESHLET_INDICES / 3)
         .flat_map(|piece| {

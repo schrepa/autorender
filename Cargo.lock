@@ -1001,6 +1001,7 @@ dependencies = [
 name = "engine_codec"
 version = "0.1.0"
 dependencies = [
+ "engine_math",
  "glam 0.30.9",
  "schemars",
  "serde",
@@ -1607,8 +1608,6 @@ name = "engine_settings"
 version = "0.1.0"
 dependencies = [
  "engine_codec",
- "engine_math",
- "glam 0.30.9",
  "js-sys",
  "schemars",
  "serde",
@@ -1773,7 +1772,6 @@ dependencies = [
  "engine_render",
  "engine_sources",
  "glam 0.30.9",
- "libm",
  "schemars",
  "serde",
  "serde_json",

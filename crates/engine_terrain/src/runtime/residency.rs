@@ -53,7 +53,7 @@ pub(super) struct TerrainState {
     pub(super) failures: JobFailures,
     pub(super) prefetched: TileMap<(Ticket, Generation)>,
     pub(super) cook: Option<CookTiles>,
-    pub(super) surface: Option<(Arc<Layers>, Option<Arc<crate::gpu::SurfaceData>>)>,
+    pub(super) surface: Option<(Arc<Layers>, Option<Arc<SurfaceData>>)>,
     pub(super) materials: bool,
 }
 
@@ -118,8 +118,7 @@ impl TerrainState {
                 .as_ref()
                 .is_some_and(|(held, _)| Arc::ptr_eq(held, &layers));
             if !current {
-                let data = crate::gpu::SurfaceData::new(&self.terrain.surface.rules, &layers)
-                    .map(Arc::new);
+                let data = SurfaceData::new(&self.terrain.surface.rules, &layers).map(Arc::new);
                 self.surface = Some((layers, data));
             }
             self.surface.as_ref().is_none_or(|(_, data)| data.is_none())
@@ -136,13 +135,19 @@ impl TerrainState {
     }
 
     pub(super) fn retire(self, retired: &mut Retired) {
-        retired
-            .jobs
-            .extend(self.dispatched.into_values().map(|(ticket, _, _)| ticket));
+        retired.jobs.extend(
+            self.dispatched
+                .into_values()
+                .into_iter()
+                .map(|(ticket, _, _)| ticket),
+        );
         retired.jobs.extend(self.bake.job);
-        retired
-            .jobs
-            .extend(self.prefetched.into_values().map(|(ticket, _)| ticket));
+        retired.jobs.extend(
+            self.prefetched
+                .into_values()
+                .into_iter()
+                .map(|(ticket, _)| ticket),
+        );
         retired
             .jobs
             .extend(self.cook.into_iter().flat_map(CookTiles::asked));
@@ -184,7 +189,7 @@ impl TerrainState {
     pub(super) fn bake_source(
         &self,
         authored: &Arc<Layers>,
-        make: Option<engine_places::terrain::DrawRivers>,
+        kinds: &[&'static LayerKind],
     ) -> Arc<Layers> {
         let base = self.baked.clone().unwrap_or_else(|| authored.clone());
         if *self.baked_rivers == *self.terrain.rivers || !authored.has_hydrology() {
@@ -196,7 +201,7 @@ impl TerrainState {
             .iter()
             .map(|drawn| drawn.river.clone())
             .collect();
-        Arc::new(authored.with_drawn(&drawn, self.baked.as_deref(), make))
+        Arc::new(authored.with_drawn(&drawn, self.baked.as_deref(), kinds))
     }
 
     pub(super) fn redrawn(&mut self, drawn: Arc<[TerrainRiver]>, before: Option<&Layers>) {
@@ -320,18 +325,4 @@ pub struct Terrains {
 pub(super) struct Retired {
     pub(super) jobs: Vec<Ticket>,
     pub(super) shares: Vec<engine_core::RecordKey>,
-}
-
-pub(crate) fn reaches(stamp: &Stamp, pyramid: &Pyramid, key: TileKey) -> bool {
-    let center = Vec2::from(stamp.center);
-    let radius = Vec2::splat(stamp.radius + stamp.falloff);
-    covers((center - radius, center + radius), pyramid, key)
-}
-
-pub(crate) fn covers((low, high): (Vec2, Vec2), pyramid: &Pyramid, key: TileKey) -> bool {
-    let spacing = pyramid.spacing(u32::from(key.level));
-    let size = TILE_QUADS as f32 * spacing;
-    let first = Vec2::new(f32::from(key.x), f32::from(key.z)) * size - Vec2::splat(2.0 * spacing);
-    let last = first + Vec2::splat(size + 4.0 * spacing);
-    first.x <= high.x && first.y <= high.y && last.x >= low.x && last.y >= low.y
 }

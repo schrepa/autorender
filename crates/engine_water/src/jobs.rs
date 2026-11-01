@@ -1,7 +1,9 @@
 use engine_codec::{Expected, Reader, record};
 use engine_core::{Error, ErrorCode, Job, JobCx, JobKind, RecordKey, codec};
+use engine_heightfield::layer::LayerKind;
 use engine_heightfield::tile::{Recipe, Solid, TileJob};
 use engine_heightfield::{Stamp, TileKey};
+use engine_places::terrain::TerrainLayers;
 
 use crate::SOURCE;
 use crate::settled::settled_alike;
@@ -94,24 +96,29 @@ pub(crate) fn invalid_heights() -> Error {
     Error::new(ErrorCode::InvalidTerrain, "$.heights").expected(Expected::Finite)
 }
 
-fn recipe(cx: &JobCx<'_>, shared: [u8; 32]) -> Result<Recipe, Error> {
+fn kinds(cx: &JobCx<'_>) -> Vec<&'static LayerKind> {
+    cx.members::<TerrainLayers>().copied().collect()
+}
+
+fn recipe(cx: &JobCx<'_>, shared: [u8; 32], kinds: &[&'static LayerKind]) -> Result<Recipe, Error> {
     let key = RecordKey::from_hash(shared);
     let bytes = cx
         .share(key)
         .ok_or_else(|| unshared("$.recipe", &key.hex()))?;
-    codec::decode(bytes)
+    Recipe::read(bytes, &|stack| cx.share(RecordKey::from_hash(stack)), kinds)
 }
 
 fn start_tile_water(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
     let mut reader = Reader::new(input);
     let job: TileJob = reader.get()?;
     reader.finish()?;
-    let recipe = recipe(cx, job.recipe)?;
+    let kinds = kinds(cx);
+    let recipe = recipe(cx, job.recipe, &kinds)?;
     if !recipe.pyramid.contains(job.key) {
         return Err(outside(job.key));
     }
     Ok(Box::new(BaseWater::new(
-        recipe.stamped(&job.stamps)?,
+        recipe.stamped(&job.stamps, &kinds)?,
         recipe.pyramid,
         job.key,
     )))
@@ -134,7 +141,8 @@ fn start_part(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
         cell,
     } = reader.get()?;
     reader.finish()?;
-    let recipe = recipe(cx, shared)?;
+    let kinds = kinds(cx);
+    let recipe = recipe(cx, shared, &kinds)?;
     if key.level != 0 || !recipe.pyramid.contains(key) {
         return Err(outside(key));
     }
@@ -145,7 +153,7 @@ fn start_part(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
         return Err(Error::new(ErrorCode::InvalidValue, "$.solids"));
     }
     Ok(Box::new(PartMaking::new(
-        (recipe.stamped(&stamps)?, recipe.rules.clone()),
+        (recipe.stamped(&stamps, &kinds)?, recipe.rules.clone()),
         recipe.pyramid,
         key,
         (cell, solids),
@@ -163,7 +171,8 @@ fn start_steadied(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Erro
     let mut reader = Reader::new(input);
     let job: SteadiedJob = reader.get()?;
     reader.finish()?;
-    let recipe = recipe(cx, job.tile.recipe)?;
+    let kinds = kinds(cx);
+    let recipe = recipe(cx, job.tile.recipe, &kinds)?;
     let (key, cell) = (job.tile.key, job.cell);
     if !recipe.pyramid.contains(key) {
         return Err(outside(key));
@@ -187,7 +196,7 @@ fn start_steadied(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Erro
         )
     };
     Ok(Box::new(Steadying::new(
-        recipe.stamped(&job.tile.stamps)?,
+        recipe.stamped(&job.tile.stamps, &kinds)?,
         recipe.pyramid,
         key,
         (cell, reads),
@@ -205,7 +214,12 @@ fn start_settled(_: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
     Err(Error::new(ErrorCode::JobUnsupported, "$.jobs.water::settled").got("water::settled"))
 }
 
-fn settled(cx: &JobCx<'_>, record: [u8; 32], key: TileKey, cell: f32) -> Result<SteadyWater, Error> {
+fn settled(
+    cx: &JobCx<'_>,
+    record: [u8; 32],
+    key: TileKey,
+    cell: f32,
+) -> Result<SteadyWater, Error> {
     let shared = RecordKey::from_hash(record);
     let water: SteadyWater = match cx.share(shared).map(<[u8]>::split_first) {
         Some(Some((&SETTLED_SHARE, rest))) => codec::decode(rest)?,
@@ -217,7 +231,12 @@ fn settled(cx: &JobCx<'_>, record: [u8; 32], key: TileKey, cell: f32) -> Result<
     Ok(water)
 }
 
-fn summary(cx: &JobCx<'_>, record: [u8; 32], key: TileKey, cell: f32) -> Result<SteadySummary, Error> {
+fn summary(
+    cx: &JobCx<'_>,
+    record: [u8; 32],
+    key: TileKey,
+    cell: f32,
+) -> Result<SteadySummary, Error> {
     let shared = RecordKey::from_hash(record);
     let (head, _) = match cx.share(shared).map(<[u8]>::split_first) {
         Some(Some((&SUMMARY_SHARE, rest))) => SteadyWater::head(rest)?,
@@ -229,7 +248,7 @@ fn summary(cx: &JobCx<'_>, record: [u8; 32], key: TileKey, cell: f32) -> Result<
     Ok(head.summary)
 }
 
-fn outside(key: TileKey) -> Error {
+pub(crate) fn outside(key: TileKey) -> Error {
     Error::new(ErrorCode::OutOfRange, "$.key").got([u16::from(key.level), key.x, key.z])
 }
 

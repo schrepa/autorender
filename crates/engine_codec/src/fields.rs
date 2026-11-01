@@ -1,3 +1,9 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "rule bounds are f64 and each setting type compares them in its own width"
+)]
+
 use std::borrow::Cow;
 
 use glam::Vec3;

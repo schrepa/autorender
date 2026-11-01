@@ -1,14 +1,13 @@
-use engine_core::{Error, ErrorCode, Expected};
+use engine_codec::{Error, ErrorCode, Expected, ExtraRules, InvalidSetting, Rule, Setting, fields};
 use engine_math::{clamp, max, min, sin_cos};
-use engine_core::{ExtraRules, InvalidSetting, Rule, Setting, fields};
 use serde::{Deserialize, Serialize};
 
-use crate::PathSample;
-use engine_places::ground::Steep;
-use crate::expr::{Expr, MAX_EXPR_DEPTH, MAX_EXPR_LIST};
-use crate::gpu::op;
-use crate::layer::maps;
+use super::Control;
+use super::expr::{Expr, MAX_EXPR_DEPTH, MAX_EXPR_LIST};
+use super::gpu::op;
 use crate::Layers;
+use crate::PathSample;
+use crate::layer::maps;
 use crate::noise::{gradient_value, gradient_values, smooth};
 
 pub const MAX_SURFACE_MATERIALS: usize = 255;
@@ -100,10 +99,16 @@ impl ExtraRules for SteepLayer {
         } else {
             Err(InvalidSetting::new(
                 "slope",
-                engine_core::Expected::Sorted,
+                engine_codec::Expected::Sorted,
             ))
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Steep {
+    pub material: u8,
+    pub gradient: [f32; 2],
 }
 
 fields! {
@@ -130,16 +135,16 @@ pub struct Biomes {
     pub biomes: Vec<Biome>,
     pub steep: Option<SteepLayer>,
     pub assets: Vec<String>,
-    pub placements: Vec<crate::PlacementLayer>,
-    pub placed: Vec<crate::AuthoredPlacement>,
+    pub placements: Vec<super::placement::PlacementLayer>,
+    pub placed: Vec<super::placement::AuthoredPlacement>,
     pub macro_colors: MacroCauses,
 }
 
-pub(crate) fn terrain_error(path: impl Into<String>) -> Error {
+pub fn terrain_error(path: impl Into<String>) -> Error {
     Error::new(ErrorCode::InvalidTerrain, path)
 }
 
-pub(crate) fn setting_error(invalid: InvalidSetting, at: &str) -> Error {
+pub fn setting_error(invalid: InvalidSetting, at: &str) -> Error {
     Error {
         code: ErrorCode::InvalidTerrain,
         ..Error::from(invalid).within(at)
@@ -152,7 +157,7 @@ pub(crate) fn unknown(path: impl Into<String>, got: &str, names: &[String]) -> E
         .variants(names)
 }
 
-pub(crate) fn unknown_map(path: &str, got: &str, published: Vec<String>) -> Error {
+pub fn unknown_map(path: &str, got: &str, published: Vec<String>) -> Error {
     Error::new(ErrorCode::UnknownMap, path).got(got).variants(
         maps::GPU
             .iter()
@@ -162,14 +167,14 @@ pub(crate) fn unknown_map(path: &str, got: &str, published: Vec<String>) -> Erro
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Reads {
-    pub(crate) water: bool,
-    pub(crate) path: bool,
-    pub(crate) erosion: bool,
+pub struct Reads {
+    pub water: bool,
+    pub path: bool,
+    pub erosion: bool,
 }
 
 impl Reads {
-    pub(crate) fn and(self, other: Self) -> Self {
+    pub fn and(self, other: Self) -> Self {
         Self {
             water: self.water || other.water,
             path: self.path || other.path,
@@ -178,20 +183,20 @@ impl Reads {
     }
 }
 
-pub(crate) struct RowInputs<'a> {
-    pub(crate) xs: &'a [f32],
-    pub(crate) zs: &'a [f32],
-    pub(crate) spacing: f32,
-    pub(crate) height: &'a [f32],
-    pub(crate) gradient: &'a [[f32; 2]],
-    pub(crate) curvature: &'a [f32],
-    pub(crate) water: &'a [crate::HydrologySample],
-    pub(crate) erosion: &'a [f32],
-    pub(crate) path: &'a [PathSample],
+pub struct RowInputs<'a> {
+    pub xs: &'a [f32],
+    pub zs: &'a [f32],
+    pub spacing: f32,
+    pub height: &'a [f32],
+    pub gradient: &'a [[f32; 2]],
+    pub curvature: &'a [f32],
+    pub water: &'a [crate::HydrologySample],
+    pub erosion: &'a [f32],
+    pub path: &'a [PathSample],
 }
 
 #[derive(Default)]
-pub(crate) struct RowScratch {
+pub struct RowScratch {
     rows: Vec<Vec<f32>>,
 }
 
@@ -208,7 +213,7 @@ impl RowScratch {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Input {
+pub enum Input {
     Height,
     Slope,
     Curvature,
@@ -241,7 +246,7 @@ const INPUTS: [(&str, Input); 13] = [
 ];
 
 impl Input {
-    pub(crate) fn named(name: &str) -> Option<Self> {
+    pub fn named(name: &str) -> Option<Self> {
         INPUTS
             .iter()
             .find(|(known, _)| *known == name)
@@ -368,7 +373,7 @@ impl Input {
     }
 }
 
-pub(crate) struct Scope {
+pub struct Scope {
     gpu: bool,
     users: Vec<(String, String)>,
 }
@@ -381,14 +386,14 @@ impl Scope {
         }
     }
 
-    pub(crate) fn cpu() -> Self {
+    pub fn cpu() -> Self {
         Self {
             gpu: false,
             users: Vec::new(),
         }
     }
 
-    pub(crate) fn users(self) -> Vec<(String, String)> {
+    pub fn users(self) -> Vec<(String, String)> {
         self.users
     }
 
@@ -407,7 +412,7 @@ impl Scope {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Compiled {
+pub enum Compiled {
     Constant(f32),
     Ramp(Input, [f32; 2]),
     Value(Input),
@@ -430,31 +435,6 @@ pub(crate) enum Compiled {
     Max(Vec<Compiled>),
     Invert(Box<Compiled>),
     Remap(Box<Compiled>, [f32; 2]),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SampleShape {
-    pub gradient: [f32; 2],
-    pub curvature: f32,
-}
-
-impl SampleShape {
-    pub fn of(around: [[f32; 3]; 3], spacing: f32) -> Self {
-        let [[a, b, c], [d, e, f], [g, h, i]] = around;
-        Self {
-            gradient: smooth_gradient(around, spacing),
-            curvature: (a + b + c + d + f + g + h + i - 8.0 * e) / (3.0 * spacing * spacing),
-        }
-    }
-}
-
-pub(crate) fn smooth_gradient(around: [[f32; 3]; 3], spacing: f32) -> [f32; 2] {
-    let [[a, b, c], [d, _, f], [g, h, i]] = around;
-    let across = 12.0 * spacing;
-    [
-        ((c - a) + 4.0 * (f - d) + (i - g)) / across,
-        ((g - a) + 4.0 * (h - b) + (i - c)) / across,
-    ]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -553,7 +533,7 @@ fn fold(
 }
 
 impl Compiled {
-    pub(crate) fn from(
+    pub fn from(
         expr: &Expr,
         path: &str,
         depth: usize,
@@ -678,7 +658,7 @@ impl Compiled {
             .collect()
     }
 
-    pub(crate) fn reads(&self) -> Reads {
+    pub fn reads(&self) -> Reads {
         match self {
             Self::Ramp(input, _) | Self::Value(input) => input.reads(),
             Self::Constant(_) | Self::User { .. } | Self::Facing { .. } | Self::Noise { .. } => {
@@ -691,7 +671,7 @@ impl Compiled {
         }
     }
 
-    pub(crate) fn shaped(&self) -> bool {
+    pub fn shaped(&self) -> bool {
         match self {
             Self::Ramp(input, _) | Self::Value(input) => input.shaped(),
             Self::Facing { .. } => true,
@@ -703,7 +683,7 @@ impl Compiled {
         }
     }
 
-    pub(crate) fn cost(&self) -> u64 {
+    pub fn cost(&self) -> u64 {
         match self {
             Self::Constant(_) => 0,
             Self::Ramp(..) | Self::Value(_) | Self::User { .. } | Self::Facing { .. } => 1,
@@ -715,7 +695,7 @@ impl Compiled {
         }
     }
 
-    pub(crate) fn evaluate_row(
+    pub fn evaluate_row(
         &self,
         row: &RowInputs<'_>,
         maps: &[Vec<f32>],
@@ -934,34 +914,8 @@ pub struct BiomeRules {
     wet_biomes: usize,
     cost: u64,
     reads: Reads,
-    placements: Vec<crate::placement::CompiledPlacement>,
-    placed: Vec<crate::placement::CompiledAuthored>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Control {
-    pub a: u8,
-    pub b: u8,
-    pub blend: u8,
-    pub wet: u8,
-}
-
-impl Control {
-    pub fn packed(self) -> u32 {
-        u32::from(self.a)
-            | u32::from(self.b) << 8
-            | u32::from(self.blend) << 16
-            | u32::from(self.wet) << 24
-    }
-
-    pub fn unpack(value: u32) -> Self {
-        Self {
-            a: value as u8,
-            b: (value >> 8) as u8,
-            blend: (value >> 16) as u8,
-            wet: (value >> 24) as u8,
-        }
-    }
+    placements: Vec<super::placement::CompiledPlacement>,
+    placed: Vec<super::placement::CompiledAuthored>,
 }
 
 impl Biomes {
@@ -1077,8 +1031,8 @@ impl Biomes {
             })
             .sum::<u64>();
         let placements =
-            crate::placement::compile(&self.placements, &self.materials, &self.assets)?;
-        let placed = crate::placement::compile_authored(&self.placed, &self.assets)?;
+            super::placement::compile(&self.placements, &self.materials, &self.assets)?;
+        let placed = super::placement::compile_authored(&self.placed, &self.assets)?;
         let reads = biomes.iter().fold(Reads::default(), |reads, biome| {
             let reads = (biome.wetness.as_ref()).map_or(reads, |rule| reads.and(rule.reads()));
             biome
@@ -1119,7 +1073,7 @@ impl BiomeRules {
     }
 
     pub fn check_maps(&self, layers: &Layers) -> Result<(), Error> {
-        crate::placement::check_maps(&self.placements, layers)
+        super::placement::check_maps(&self.placements, layers)
     }
 
     #[must_use]
@@ -1133,33 +1087,33 @@ impl BiomeRules {
         rules
     }
 
-    pub fn places(&self, level: u8, placing: crate::Placing) -> bool {
+    pub fn places(&self, level: u8, placing: super::Placing) -> bool {
         let near = self.placements.iter().any(|layer| layer.level == level)
             || self.placed.iter().any(|object| object.level == level);
         let far = self.placements.iter().any(|layer| layer.far == Some(level));
         match placing {
-            crate::Placing::All => near || far,
-            crate::Placing::Near => near,
-            crate::Placing::Far => far,
+            super::Placing::All => near || far,
+            super::Placing::Near => near,
+            super::Placing::Far => far,
         }
     }
 
-    pub fn place_authored(&self, tile: &crate::Tile, out: &mut Vec<crate::Placed>) -> u64 {
-        crate::placement::place_authored(&self.placed, tile, out)
+    pub fn place_authored(&self, tile: &super::Tile, out: &mut Vec<super::Placed>) -> u64 {
+        super::placement::place_authored(&self.placed, tile, out)
     }
 
     pub(crate) fn place_row(
         &self,
-        tile: &crate::Tile,
+        tile: &super::Tile,
         (layer, row): (usize, usize),
-        out: &mut Vec<crate::Placed>,
+        out: &mut Vec<super::Placed>,
         (layers, placing, scratch): (
             &crate::Layers,
-            crate::Placing,
-            &mut crate::placement::PlaceScratch,
+            super::Placing,
+            &mut super::placement::PlaceScratch,
         ),
     ) -> (u64, Option<(usize, usize)>) {
-        crate::placement::place_row(
+        super::placement::place_row(
             &self.placements,
             tile,
             0x5eed_0057,
@@ -1174,7 +1128,7 @@ impl BiomeRules {
     }
 
     pub(crate) fn program(&self, words: &mut Vec<u32>) -> (u32, u32, u32) {
-        use crate::gpu::BIOME_WORDS;
+        use super::gpu::BIOME_WORDS;
         let (table, entry) = (words.len(), BIOME_WORDS as usize);
         words.extend(std::iter::repeat_n(0, entry * self.biomes.len()));
         let (mut stack, mut materials) = (1, 0);
@@ -1345,7 +1299,7 @@ impl BiomeRules {
     }
 }
 
-use crate::codec::record;
+use engine_codec::record;
 
 record!(Facing { heading, ramp });
 record!(NoiseMask {

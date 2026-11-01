@@ -1,14 +1,13 @@
 use super::ground_face::publish_ground;
 use super::programs::{SurfaceEntry, SurfaceProgramGpu, publish_programs};
-use super::publish::{publish_hydrology, publish_paths, publish_tiles};
+use super::publish::{publish_hydrology, publish_tiles};
 use super::solids::sync_solids;
 use super::*;
-use crate::expr::EXPRESSION;
+use crate::expr_layer::EXPRESSION;
 use crate::jobs::GROUND_GRID;
 use crate::scene::{prefetch_kind, terrain_kind};
 use engine_core::{Brick, Bricks, GpuStruct, JobKind, SceneComponents, Schedule, Source};
 use engine_places::ground::{Ground, GroundSurface, TerrainTiles};
-use engine_places::streaming::StreamingPaths;
 use engine_places::terrain::TerrainLayers;
 use engine_places::water::Hydrology;
 use engine_render::RenderBricks;
@@ -32,7 +31,6 @@ impl Brick for TerrainBrick {
             .fill::<Ground>(None)
             .fill::<TerrainTiles>(None)
             .fill::<Hydrology>(None)
-            .fill::<StreamingPaths>(None)
             .fill::<GroundSurface>(Some(crate::shaders::terrain::faces::surface::MODULE))
             .join::<SceneComponents>(terrain_kind(), None)
             .join::<SceneComponents>(prefetch_kind(), None)
@@ -46,13 +44,12 @@ impl Brick for TerrainBrick {
                     publish_ground,
                     publish_tiles,
                     publish_hydrology,
-                    publish_paths,
                     publish_programs,
                 ),
             )
             .systems(Schedule::WorldSync, bridges::sync)
             .systems(Schedule::Waiting, stream_terrains)
-            .systems(Schedule::BetweenFrames, work_between_frames)
+            .systems(Schedule::BetweenFrames, (work_between_frames, publish_ground))
             .operation::<TerrainEditControl>()
             .operation::<TerrainUndoControl>()
             .operation::<TerrainRedoControl>()

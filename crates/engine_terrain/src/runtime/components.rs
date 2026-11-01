@@ -1,5 +1,5 @@
 use super::*;
-use crate::surface::{setting_error, terrain_error};
+use engine_heightfield::tile::{MacroCauses, Ramp, Remap, SteepLayer, setting_error, terrain_error};
 use engine_places::solids::SolidSource;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -189,7 +189,7 @@ impl TerrainSurface {
         };
         let scaled = |mask: Expr, by: f32| Expr::Mul(vec![mask, Expr::Constant(by)]);
         let remap = |mask: Expr, from: f32, to: f32| {
-            Expr::Remap(crate::expr::Remap {
+            Expr::Remap(Remap {
                 of: Box::new(mask),
                 from,
                 to,
@@ -225,7 +225,7 @@ impl TerrainSurface {
                         "snow",
                         remap(
                             Expr::Add(vec![
-                                Expr::Ramp(crate::expr::Ramp {
+                                Expr::Ramp(Ramp {
                                     map: crate::layer::maps::HEIGHT.to_owned(),
                                     from: snow_height - 100.0,
                                     to: snow_height + 100.0,
@@ -240,11 +240,11 @@ impl TerrainSurface {
                 ],
                 wetness: None,
             }],
-            steep: Some(crate::SteepLayer {
+            steep: Some(SteepLayer {
                 material: "rock".into(),
                 slope: [28.0, 35.0],
             }),
-            macro_colors: crate::MacroCauses::default(),
+            macro_colors: MacroCauses::default(),
         }
     }
 

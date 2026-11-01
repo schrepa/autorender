@@ -1,4 +1,6 @@
+use engine_core::math::half;
 use engine_render::DebugMode;
+use engine_render::debug::DEBUG_KIND_WATER;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -46,15 +48,9 @@ struct WaterProbe {
     roughness: f32,
 }
 
-fn half(bits: u16) -> f32 {
-    let sign = if bits & 0x8000 == 0 { 1.0 } else { -1.0 };
-    let exponent = i32::from((bits >> 10) & 0x1f);
-    let fraction = f32::from(bits & 0x3ff);
-    match exponent {
-        0 => sign * fraction * 2.0_f32.powi(-24),
-        31 => sign * f32::INFINITY,
-        _ => sign * (1.0 + fraction / 1024.0) * 2.0_f32.powi(exponent - 15),
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+struct Probed {
+    water: Option<WaterProbe>,
 }
 
 fn water_reach(code: u32) -> Option<WaterReach> {
@@ -75,17 +71,16 @@ fn water_span(code: u8) -> f32 {
     if code == 0 {
         return 0.0;
     }
-    WATER_SPAN_LEAST * (WATER_SPAN_MOST / WATER_SPAN_LEAST).powf(f32::from(code - 1) / DEBUG_SPAN_STEPS)
+    WATER_SPAN_LEAST
+        * (WATER_SPAN_MOST / WATER_SPAN_LEAST).powf(f32::from(code - 1) / DEBUG_SPAN_STEPS)
 }
 
-fn probe(ids: [u32; 4], color: [f32; 4]) -> Value {
-    let [_, object, detail, froudes] = ids;
-    let state = color[0].to_bits();
+fn water_probe((object, detail): (u32, u32), (froudes, state): (u32, u32)) -> WaterProbe {
     let share = |word: u32, byte: u32| f32::from(((word >> (byte * 8)) & 0xff) as u8) / 255.0;
     let halves = |pair: u32| (half(pair as u16), half((pair >> 16) as u16));
     let (depth, speed) = halves(object);
     let (froude, eddies) = halves(froudes);
-    serde_json::to_value(WaterProbe {
+    WaterProbe {
         depth,
         speed,
         froude,
@@ -95,6 +90,13 @@ fn probe(ids: [u32; 4], color: [f32; 4]) -> Value {
         span: water_span((detail & 0xff) as u8),
         eddies,
         roughness: share(detail, 1),
-    })
-    .unwrap_or(Value::Null)
+    }
+}
+
+fn probe(ids: [u32; 4], color: [f32; 4]) -> Value {
+    let [record, object, detail, froudes] = ids;
+    let state = color[0].to_bits();
+    let water = (record & 0xf == DEBUG_KIND_WATER)
+        .then(|| water_probe((object, detail), (froudes, state)));
+    serde_json::to_value(Probed { water }).unwrap_or(Value::Null)
 }

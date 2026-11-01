@@ -650,6 +650,7 @@ pub(crate) fn publish_tiles(
                 impostors: impostor_boxes(&state, pooled.slots.clone()),
             }
         }));
+    placed.groups.clone_from(&boxes);
     *published = Some((revision, boxes));
 }
 
@@ -673,6 +674,7 @@ pub(crate) fn publish_changes(
                 .map(|&(low, high)| (low, high, f32::INFINITY))
                 .collect(),
             all: state.restyled,
+            casters: false,
         },
     );
 }

@@ -2,10 +2,12 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use engine_codec::{self as codec, Error, Reader, Writer};
-use engine_heightfield::{
-    BiomeRules, Control, Generator, Layers, Pyramid, Stamp, SurfaceInputs, TILE_QUADS, TILE_SAMPLES,
-    Tile, TileKey, control_row, smooth_gradient, stamped,
+use engine_heightfield::layer::LayerKind;
+use engine_heightfield::tile::{
+    BiomeRules, Control, Generator, SurfaceInputs, Tile, control_row, gradient_word,
+    smooth_gradient, stamped, word_gradient,
 };
+use engine_heightfield::{Layers, Pyramid, Stamp, TILE_QUADS, TILE_SAMPLES, TileKey};
 
 use crate::gpu::TILE_STRIDE;
 
@@ -22,10 +24,6 @@ pub struct TileShading {
 }
 
 impl TileShading {
-    pub fn shades(level: u8, around: bool) -> bool {
-        level > 0 && !around
-    }
-
     pub fn reads(pyramid: &Pyramid, key: TileKey) -> Vec<TileKey> {
         let Some(finer) = key.level.checked_sub(1) else {
             return Vec::new();
@@ -131,52 +129,6 @@ impl codec::Codec for TileShading {
             gradients,
         })
     }
-}
-
-fn half_bits(value: f32) -> u16 {
-    let bits = value.to_bits();
-    let sign = ((bits >> 16) & 0x8000) as u16;
-    let exponent = ((bits >> 23) & 0xff) as i32;
-    let mantissa = bits & 0x7f_ffff;
-    if exponent == 0xff {
-        return sign | 0x7c00 | if mantissa == 0 { 0 } else { 0x200 };
-    }
-    let unbiased = exponent - 127;
-    if unbiased > 15 {
-        return sign | 0x7c00;
-    }
-    if unbiased < -25 {
-        return sign;
-    }
-    let (full, shift, base) = if unbiased >= -14 {
-        (mantissa, 13, ((unbiased + 15) as u32) << 10)
-    } else {
-        (mantissa | 0x80_0000, (-1 - unbiased) as u32, 0)
-    };
-    let kept = base | (full >> shift);
-    let rest = full & ((1 << shift) - 1);
-    let half = 1 << (shift - 1);
-    let rounded = kept + u32::from(rest > half || (rest == half && (kept & 1) == 1));
-    sign | rounded as u16
-}
-
-fn half_value(bits: u16) -> f32 {
-    let sign = u32::from(bits & 0x8000) << 16;
-    let exponent = u32::from(bits >> 10) & 0x1f;
-    let mantissa = u32::from(bits & 0x3ff);
-    match exponent {
-        0 => f32::from_bits(sign | (mantissa as f32 * (1.0 / 16_777_216.0)).to_bits()),
-        0x1f => f32::from_bits(sign | 0x7f80_0000 | (mantissa << 13)),
-        _ => f32::from_bits(sign | ((exponent + 112) << 23) | (mantissa << 13)),
-    }
-}
-
-pub(crate) fn gradient_word([x, z]: [f32; 2]) -> u32 {
-    u32::from(half_bits(x)) | u32::from(half_bits(z)) << 16
-}
-
-fn word_gradient(word: u32) -> [f32; 2] {
-    [half_value(word as u16), half_value((word >> 16) as u16)]
 }
 
 fn taps(sample: i64, last: i64) -> ([(i64, u32); 3], usize) {
@@ -317,6 +269,7 @@ enum Reads {
 struct Ground {
     layers: Arc<Layers>,
     rules: Arc<BiomeRules>,
+    kinds: Vec<&'static LayerKind>,
     tiles: Vec<(TileKey, Vec<Stamp>)>,
     next: usize,
     generating: Option<(Arc<Layers>, Generator)>,
@@ -348,7 +301,7 @@ impl Window {
 
 impl ShadingMaking {
     pub(crate) fn from_ground(
-        (layers, rules): (Arc<Layers>, Arc<BiomeRules>),
+        (layers, rules, kinds): (Arc<Layers>, Arc<BiomeRules>, Vec<&'static LayerKind>),
         pyramid: Pyramid,
         key: TileKey,
         tiles: Vec<(TileKey, Vec<Stamp>)>,
@@ -361,6 +314,7 @@ impl ShadingMaking {
         let ground = Ground {
             layers,
             rules,
+            kinds,
             tiles,
             next: 0,
             generating: None,
@@ -444,7 +398,7 @@ impl Ground {
             };
             let key = *key;
             if self.generating.is_none() {
-                let layers = stamped(&self.layers, stamps)?;
+                let layers = stamped(&self.layers, stamps, &self.kinds)?;
                 let generator = Generator::new(layers.clone(), pyramid, key);
                 self.generating = Some((layers, generator));
             }

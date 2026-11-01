@@ -636,7 +636,7 @@ pub(crate) fn positions(layers: &Layers, pyramid: &Pyramid, key: TileKey) -> [Ve
 
 type Rows = (Vec<f32>, Vec<[u32; 2]>);
 
-pub(crate) fn tile_rows(layers: &Layers, pyramid: &Pyramid, key: TileKey) -> Option<Rows> {
+fn tile_rows(layers: &Layers, pyramid: &Pyramid, key: TileKey) -> Option<Rows> {
     let stride = TILE_STRIDE as usize;
     let (_, hydrology) = layers.hydrology_layer()?;
     let spacing = pyramid.spacing(u32::from(key.level));
@@ -659,7 +659,7 @@ pub(crate) fn tile_origin(key: TileKey, spacing: f32) -> Vec2 {
     Vec2::new(f32::from(key.x), f32::from(key.z)) * (TILE_QUADS as f32 * spacing)
 }
 
-pub(crate) fn tile_water_of(rows: Option<Rows>, tile: &Tile) -> Option<TileWater> {
+fn tile_water_of(rows: Option<Rows>, tile: &Tile) -> Option<TileWater> {
     let (surface, info) = rows?;
     let spacing = tile.spacing();
     TileWater::new(
@@ -670,8 +670,25 @@ pub(crate) fn tile_water_of(rows: Option<Rows>, tile: &Tile) -> Option<TileWater
     )
 }
 
-pub(crate) fn kept(water: Option<TileWater>) -> Result<Option<TileWater>, Error> {
+fn kept(water: Option<TileWater>) -> Result<Option<TileWater>, Error> {
     engine_codec::decode(&engine_codec::encode(&water))
+}
+
+pub(crate) fn generated(
+    generator: &mut Generator,
+    budget: &mut u64,
+    (layers, pyramid): (&Layers, &Pyramid),
+) -> Result<Option<(Tile, Option<TileWater>)>, Error> {
+    let Some(made) = generator.advance(budget) else {
+        if generator.failed() {
+            return Err(crate::jobs::invalid_heights());
+        }
+        return Ok(None);
+    };
+    let rows = tile_rows(layers, pyramid, generator.key());
+    let own = kept(tile_water_of(rows, &made))?;
+    let tile: Tile = engine_codec::decode(&engine_codec::encode(&made))?;
+    Ok(Some((tile, own)))
 }
 
 pub(crate) struct BaseWater {
@@ -845,7 +862,11 @@ pub(crate) fn point(
     Some(water.and_then(|water| point_on((&face.heights, water), (i, j, fu, fv))))
 }
 
-pub(crate) fn tile_point(tile: &Tile, water: Option<&TileWater>, local: Vec2) -> Option<WaterPoint> {
+pub(crate) fn tile_point(
+    tile: &Tile,
+    water: Option<&TileWater>,
+    local: Vec2,
+) -> Option<WaterPoint> {
     let sample = tile.sample(local)?;
     if sample.hole {
         return None;

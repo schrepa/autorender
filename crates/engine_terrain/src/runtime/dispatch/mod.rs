@@ -1,11 +1,9 @@
 use super::*;
 use engine_core::RecordKey;
-use engine_heightfield::layer::DrawRivers;
 
 pub(super) struct Asking<'a, 'w, 's> {
     pub(super) jobs: &'a mut Jobs<'w, 's>,
     pub(super) records: &'a Records,
-    pub(super) drawn: Option<DrawRivers>,
     pub(super) kinds: &'a [&'static LayerKind],
 }
 

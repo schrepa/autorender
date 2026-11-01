@@ -14,7 +14,7 @@ pub(super) fn bake(
     asking: &mut Asking<'_, '_, '_>,
     frame: u64,
 ) -> bool {
-    let layers = state.bake_source(authored, asking.drawn);
+    let layers = state.bake_source(authored, asking.kinds);
     if layers.unbaked().is_none() {
         return false;
     }

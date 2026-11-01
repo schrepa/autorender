@@ -6,12 +6,12 @@ use engine_core::math::GRAVITY;
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max, min};
 
-use engine_codec::{self as codec, Error, Reader, Writer, record};
 use crate::shallow_water::{self, CELL_MEANS, DRY, UNHELD, WET_MOST, resistance, velocity};
 use crate::tile_water::{
-    NONE, PointState, TileWater, WATER_SPAN_LEAST, breaking, kept, nearest, pack, pack_state,
-    shears, tile_origin, tile_point, tile_rows, tile_water_of, turbulence, unpack,
+    NONE, PointState, TileWater, WATER_SPAN_LEAST, breaking, generated, nearest, pack, pack_state,
+    shears, tile_origin, tile_point, turbulence, unpack,
 };
+use engine_codec::{self as codec, Error, Reader, Writer, record};
 use engine_heightfield::tile::{
     BiomeRules, Footprint, Generator, Solid, TILE_STRIDE, Tile, gradient_word, on_triangle,
     smooth_gradient,
@@ -629,7 +629,6 @@ impl WaterPart {
 pub(crate) struct PartMaking {
     layers: Arc<Layers>,
     pyramid: Pyramid,
-    key: TileKey,
     cell: f32,
     solids: Vec<Option<Solid>>,
     generator: Generator,
@@ -646,24 +645,17 @@ impl PartMaking {
             generator: Generator::new(Arc::clone(&layers), &pyramid, key).with_surface(rules),
             layers,
             pyramid,
-            key,
             cell,
             solids,
         }
     }
 
     pub(crate) fn advance(&mut self, budget: &mut u64) -> Result<Option<WaterPart>, Error> {
-        let Some(made) = self.generator.advance(budget) else {
-            if self.generator.failed() {
-                return Err(crate::jobs::invalid_heights());
-            }
+        let Some((tile, own)) =
+            generated(&mut self.generator, budget, (&self.layers, &self.pyramid))?
+        else {
             return Ok(None);
         };
-        let own = kept(tile_water_of(
-            tile_rows(&self.layers, &self.pyramid, self.key),
-            &made,
-        ))?;
-        let tile: Tile = codec::decode(&codec::encode(&made))?;
         Ok(Some(WaterPart::of(
             &self.pyramid,
             (&tile, own.as_ref()),
@@ -2284,7 +2276,6 @@ pub(crate) enum SettledReads {
 pub(crate) struct Steadying {
     layers: Arc<Layers>,
     pyramid: Pyramid,
-    key: TileKey,
     cell: f32,
     generator: Generator,
     reads: SettledReads,
@@ -2301,24 +2292,17 @@ impl Steadying {
             generator: Generator::new(Arc::clone(&layers), &pyramid, key),
             layers,
             pyramid,
-            key,
             cell,
             reads,
         }
     }
 
     pub(crate) fn advance(&mut self, budget: &mut u64) -> Result<Option<Option<TileWater>>, Error> {
-        let Some(made) = self.generator.advance(budget) else {
-            if self.generator.failed() {
-                return Err(crate::jobs::invalid_heights());
-            }
+        let Some((tile, own)) =
+            generated(&mut self.generator, budget, (&self.layers, &self.pyramid))?
+        else {
             return Ok(None);
         };
-        let own = kept(tile_water_of(
-            tile_rows(&self.layers, &self.pyramid, self.key),
-            &made,
-        ))?;
-        let tile: Tile = codec::decode(&codec::encode(&made))?;
         let held = (&tile, own.as_ref());
         let pyramid = &self.pyramid;
         let water = match &self.reads {

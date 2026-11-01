@@ -3,7 +3,7 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 use engine_math::{clamp, max, min, sin_cos};
 
 use engine_codec::{self as codec, Codec, Error, Reader, Writer};
-use engine_heightfield::SampleShape;
+use engine_heightfield::tile::SampleShape;
 
 pub const DIRECTIONS: usize = 16;
 

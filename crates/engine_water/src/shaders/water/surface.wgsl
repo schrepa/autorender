@@ -1,8 +1,8 @@
 import package::engine::color::luminance;
 import package::engine::math::GRAVITY;
-import package::engine::shading::{BODY_WATER, Shaded, SurfacePoint, ViewPixel};
+import package::engine::shading::{BODY_WATER, Shaded, SurfacePoint};
 import package::engine::view::{PI, camera, detail_across, detail_level, eye_world,
-    stable_normalize};
+    stable_normalize, view_pixel};
 import package::face::dither::stored;
 import package::face::heightfield::{SURFACE_LEAF_INDICES, surface_leaf, surface_leaf_count,
     surface_vertex, terrain_level_height, terrain_uniform, terrain_view_uniform, use_terrain};
@@ -664,8 +664,9 @@ fn shade_mesh(mesh: vec3<f32>, pixel: vec2<f32>) -> WaterShade {
 fn fs_water(input: WaterOutput) -> ViewTargets {
     use_terrain(input.terrain);
     let shade = shade_mesh(input.relative, input.clip_position.xy);
-    var targets = view_targets(shade.shaded, ViewPixel(input.clip_position,
-        water_previous(input.relative, shade.flow, saturate(shade.coverage))));
+    let previous = water_previous(input.relative, shade.flow, saturate(shade.coverage));
+    var targets = view_targets(shade.shaded,
+        view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
     targets.color = water_covering(shade, input.clip_position.xy);
     return targets;
 }

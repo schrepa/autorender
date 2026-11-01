@@ -3,7 +3,8 @@ use std::f32::consts::TAU;
 use engine_math::{clamp, max, min, sin_cos};
 
 use engine_codec::{self as codec, Codec, Error, Reader, Writer};
-use engine_heightfield::{BiomeRules, Layers, SampleShape, control_at};
+use engine_heightfield::Layers;
+use engine_heightfield::tile::{BiomeRules, SampleShape, control_at};
 
 use crate::lighting::{Ground, normalized, unorm};
 

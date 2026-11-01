@@ -1,7 +1,6 @@
 use super::*;
 use engine_core::Joined;
 use engine_places::ground::{PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles};
-use engine_places::streaming::{StreamingPath, StreamingPaths};
 use engine_places::terrain::TerrainLayers;
 use engine_places::water::Hydrology;
 
@@ -12,7 +11,8 @@ pub(crate) struct Published {
     drawn: Vec<(Entity, bool, Option<[u8; 32]>, bool, bool)>,
     reach: Vec<f32>,
     detail: (u32, u32),
-    assets: (u64, u64),
+    assets: ((u64, u64), u64),
+    held: Vec<(Arc<[TerrainEdit]>, Arc<[Option<Solid>]>, u128)>,
 }
 
 impl Published {
@@ -25,6 +25,7 @@ impl Published {
         into.revision = terrains.revision();
         into.drawn.clear();
         into.reach.clear();
+        into.held.clear();
         for state in terrains.entries.iter().filter(|state| state.drawn) {
             into.drawn.push((
                 state.entity,
@@ -35,6 +36,8 @@ impl Published {
             ));
             into.reach
                 .extend(state.ranges.iter().map(|range| range * LOAD_REACH));
+            into.held
+                .push((state.terrain.edits.clone(), state.solids.clone(), state.relief));
         }
         into.detail = (settings.pixel_error.to_bits(), settings.pinned_levels);
         into.assets = (assets.revision(), assets.material_revision());
@@ -117,6 +120,9 @@ fn entry_of(
         may_hole: state.terrain.layers.may_hole(),
         reach: state.ranges.iter().map(|range| range * LOAD_REACH).collect(),
         recipe: state.recipe.as_ref().map(|recipe| recipe.key.hash()),
+        edits: state.terrain.edits.iter().map(|edit| edit.stamp).collect(),
+        solids: state.solids.clone(),
+        relief: state.relief,
         pinned_levels: settings.pinned_levels,
         pixel_error: settings.pixel_error,
         level_errors: Arc::from(state.store.errors()),
@@ -166,26 +172,6 @@ pub(crate) fn publish_tiles(
             .collect(),
     };
     std::mem::swap(last, seen);
-}
-
-pub(crate) fn publish_paths(
-    scenes: Query<&TerrainScene>,
-    kinds: Joined<TerrainLayers>,
-    mut paths: ResMut<StreamingPaths>,
-) {
-    let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
-    let found: Vec<StreamingPath> = scenes
-        .iter()
-        .flat_map(|scene| scene.authored.scene_paths(&kinds, ""))
-        .map(|path| StreamingPath {
-            layer: path.id,
-            origin: Vec3::from_array(path.origin),
-            points: path.points,
-        })
-        .collect();
-    if paths.paths != found {
-        paths.paths = found;
-    }
 }
 
 pub(crate) fn publish_hydrology(

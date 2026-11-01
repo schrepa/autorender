@@ -3,58 +3,22 @@ use std::sync::Arc;
 
 use engine_core::{Error, ErrorCode, Expected, Job, JobCx, JobKind, RecordKey};
 use engine_heightfield::layer::LayerKind;
+use engine_heightfield::reaches;
+use engine_heightfield::tile::{Recipe, shaded_elsewhere, stamped};
 use engine_places::ground::{GroundBridge, GroundGrid};
 use engine_places::terrain::TerrainLayers;
 use glam::Vec2;
 
 use crate::codec::{self, Reader, Writer, record};
-use crate::runtime::reaches;
 use crate::{
-    BiomeRules, Biomes, Generator, Layers, Placing, Pyramid, SOURCE, Stamp, TILE_QUADS,
-    TILE_SAMPLES, TILE_STRIDE, Tile, TileKey,
+    Generator, Layers, Pyramid, SOURCE, Stamp, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, Tile, TileKey,
 };
+
+pub use engine_heightfield::tile::{StackView, TerrainRecipe, TileJob};
 
 pub static TILE_BUILD: JobKind = JobKind::new("terrain::tile", &SOURCE, start_tile);
 pub static BAKE: JobKind = JobKind::new("terrain::bake", &SOURCE, start_bake);
 pub static GROUND_GRID: JobKind = JobKind::new("terrain::ground_grid", &SOURCE, start_grid);
-
-codec::tagged!(Placing {
-    0 => All,
-    1 => Near,
-    2 => Far,
-});
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct StackView {
-    pub offset: Vec2,
-    pub low: Vec2,
-    pub high: Vec2,
-    pub blend: f32,
-}
-
-record!(StackView {
-    offset,
-    low,
-    high,
-    blend,
-});
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct TerrainRecipe {
-    pub stack: [u8; 32],
-    pub view: Option<StackView>,
-    pub pyramid: Pyramid,
-    pub surface: Biomes,
-    pub materials: bool,
-}
-
-record!(TerrainRecipe {
-    stack,
-    view,
-    pyramid,
-    surface,
-    materials,
-});
 
 pub fn share_stack(layers: &Layers) -> Arc<[u8]> {
     let mut writer = Writer::new();
@@ -66,25 +30,6 @@ pub fn share_recipe(recipe: &TerrainRecipe) -> Arc<[u8]> {
     let mut writer = Writer::new();
     writer.put(recipe);
     Arc::from(writer.into_bytes())
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct TileJob {
-    pub recipe: [u8; 32],
-    pub key: TileKey,
-    pub stamps: Vec<Stamp>,
-}
-
-record!(TileJob {
-    recipe,
-    key,
-    stamps,
-});
-
-impl TileJob {
-    pub fn identity(&self) -> Vec<u8> {
-        codec::encode(self)
-    }
 }
 
 pub fn tile_output(bytes: &[u8]) -> Result<Tile, Error> {
@@ -148,24 +93,6 @@ pub struct GridJob {
 
 record!(GridJob { identity, key });
 
-struct Recipe {
-    layers: Arc<Layers>,
-    pyramid: Pyramid,
-    rules: Arc<BiomeRules>,
-    materials: bool,
-    around: bool,
-}
-
-impl Recipe {
-    fn stamped(
-        &self,
-        stamps: &[Stamp],
-        kinds: &[&'static LayerKind],
-    ) -> Result<Arc<Layers>, Error> {
-        stamped(&self.layers, stamps, kinds)
-    }
-}
-
 const HELD_RECIPES: usize = 8;
 
 thread_local! {
@@ -224,38 +151,12 @@ fn recipe(
     kinds: &[&'static LayerKind],
 ) -> Result<Arc<Recipe>, Error> {
     held(&RECIPES, key, || {
-        let recipe: TerrainRecipe = codec::decode(shared(cx, key, "$.recipe")?)?;
-        let stack = stack(cx, recipe.stack, kinds)?;
-        let layers = match recipe.view {
-            Some(view) => {
-                Arc::new(stack.surroundings(view.offset, (view.low, view.high), view.blend))
-            }
-            None => stack,
-        };
-        let rules = recipe.surface.compile()?;
-        Ok(Recipe {
-            layers,
-            pyramid: recipe.pyramid,
-            rules: Arc::new(rules),
-            materials: recipe.materials,
-            around: recipe.view.is_some(),
-        })
+        Recipe::read(
+            shared(cx, key, "$.recipe")?,
+            &|stack| cx.share(RecordKey::from_hash(stack)),
+            kinds,
+        )
     })
-}
-
-pub fn stamped(
-    layers: &Arc<Layers>,
-    stamps: &[Stamp],
-    kinds: &[&'static LayerKind],
-) -> Result<Arc<Layers>, Error> {
-    if stamps.is_empty() {
-        return Ok(layers.clone());
-    }
-    layers.with_stamps(stamps, kinds).map(Arc::new)
-}
-
-pub(crate) fn shaded_elsewhere(level: u8, around: bool) -> bool {
-    level > 0 && !around
 }
 
 fn start_tile(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {

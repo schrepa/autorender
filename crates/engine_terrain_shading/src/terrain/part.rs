@@ -444,7 +444,8 @@ impl GpuPart for TerrainGpu {
             water: &water,
             cover: canopy,
         };
-        self.atlas.upload(cx, h, (&tiles, &atlas, &bakes));
+        let watered = water.is_changed();
+        self.atlas.upload(cx, h, (&tiles, &atlas, &bakes), (&water, watered));
         if self.atlas.normal_jobs() > 0 {
             cx.run(self.passes.normals);
         }
