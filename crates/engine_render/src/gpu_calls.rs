@@ -2,7 +2,7 @@ use std::cell::Cell;
 
 mod submission;
 
-pub use submission::{Handover, Recorded};
+pub use submission::Handover;
 
 pub struct Queue {
     submission: submission::Submission,

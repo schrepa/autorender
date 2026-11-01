@@ -607,7 +607,7 @@ impl ScatterGpu {
         if !plan.args.is_empty() {
             cx.write(self.draws, 0, &plan.args);
         }
-        if plan.lists_left {
+        if plan.lists_left && held.objects > 0 {
             let at = plan.fading_view as u64 * 16;
             cx.read_back::<ScatterFeedback>(LEFT_OUT, self.card_args, at..at + 16, AfterRead::Keep);
         }

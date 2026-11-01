@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 
 use bevy_ecs::{component::Component, resource::Resource, world::World};
 use serde_json::Value;
@@ -22,6 +22,7 @@ pub trait List: Send + Sync + 'static {
 pub trait DrawPoint: Slot {
     type Layer: Copy + Ord + Send + Sync + 'static;
     type Args: Copy + Send + Sync + 'static;
+    const UBER_MATERIALS: bool = false;
 }
 
 #[derive(Clone, Copy)]
@@ -31,6 +32,7 @@ pub struct PlaceDecl {
     wgsl: Option<&'static str>,
     smokes: &'static [Smoke],
     insert: fn(&mut World),
+    read: fn(&World, &mut dyn FnMut(&dyn Any)),
     ty: fn() -> TypeId,
 }
 
@@ -42,6 +44,7 @@ impl PlaceDecl {
             wgsl: S::WGSL,
             smokes: S::SMOKES,
             insert: insert_slot::<S>,
+            read: read_slot::<S>,
             ty: TypeId::of::<S>,
         }
     }
@@ -53,6 +56,7 @@ impl PlaceDecl {
             wgsl: L::WGSL,
             smokes: L::SMOKES,
             insert: insert_nothing,
+            read: read_nothing,
             ty: TypeId::of::<L>,
         }
     }
@@ -64,6 +68,7 @@ impl PlaceDecl {
             wgsl: None,
             smokes: &[],
             insert: insert_component::<C>,
+            read: read_nothing,
             ty: TypeId::of::<C>,
         }
     }
@@ -94,6 +99,11 @@ impl PlaceDecl {
     }
 
     #[doc(hidden)]
+    pub fn read(&self, world: &World, each: &mut dyn FnMut(&dyn Any)) {
+        (self.read)(world, each)
+    }
+
+    #[doc(hidden)]
     pub fn type_id(&self) -> TypeId {
         (self.ty)()
     }
@@ -116,6 +126,14 @@ fn insert_component<C: Component>(world: &mut World) {
 }
 
 fn insert_nothing(_: &mut World) {}
+
+fn read_slot<S: Slot>(world: &World, each: &mut dyn FnMut(&dyn Any)) {
+    if let Some(value) = world.get_resource::<S>() {
+        each(value);
+    }
+}
+
+fn read_nothing(_: &World, _: &mut dyn FnMut(&dyn Any)) {}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Stamp(u64);
@@ -226,7 +244,12 @@ pub trait SmokeSession {
     fn source(&mut self, document: &str);
     fn file(&mut self, name: &str, bytes: &[u8]);
     fn idle(&mut self, milliseconds: f64);
-    fn joined(&mut self, list: TypeId, each: &mut dyn FnMut(&dyn std::any::Any));
+    fn joined(&mut self, list: TypeId, each: &mut dyn FnMut(&dyn Any));
+    fn members(&mut self, _place: &str) -> Vec<&'static str> {
+        Vec::new()
+    }
+    fn slot(&mut self, _slot: TypeId, _each: &mut dyn FnMut(&dyn Any)) {}
+    fn without(&mut self, _bricks: &[&'static str]) {}
 }
 
 #[macro_export]

@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use engine_core::{BrickList, Job, JobCx, JobRef, RecordKey};
+use engine_core::{BrickList, Job, JobCx, JobMemo, JobRef, RecordKey};
 use engine_registry::{JobList, Shares};
 use engine_settings::{Error, ErrorCode, Expected};
 
@@ -75,6 +75,7 @@ pub struct Worker {
     list: Arc<JobList>,
     clock: fn() -> f64,
     shares: Shared,
+    memo: JobMemo,
     held: Vec<Held>,
     stepped: Vec<(u64, Box<dyn Job>)>,
 }
@@ -85,6 +86,7 @@ impl Worker {
             list,
             clock,
             shares: Shared::default(),
+            memo: JobMemo::default(),
             held: Vec::new(),
             stepped: Vec::new(),
         }
@@ -113,6 +115,7 @@ impl Worker {
 
     pub fn clear(&mut self) {
         self.shares.bytes.clear();
+        self.memo = JobMemo::default();
         self.held.clear();
         self.stepped.clear();
     }
@@ -141,7 +144,7 @@ impl Worker {
             (0..self.held.len()).min_by_key(|&at| (self.held[at].priority, self.held[at].id))?;
         let id = self.held[at].id;
         let stepped = {
-            let mut cx = JobCx::new(&self.list, &self.shares);
+            let mut cx = JobCx::new(&self.list, &self.shares, &mut self.memo);
             sliced(&mut self.held[at], &mut cx, self.clock)
         };
         match stepped {
@@ -157,8 +160,8 @@ impl Worker {
         }
     }
 
-    pub fn run(&self, kind: &JobRef, input: &[u8]) -> Result<Vec<u8>, Error> {
-        let mut cx = JobCx::new(&self.list, &self.shares);
+    pub fn run(&mut self, kind: &JobRef, input: &[u8]) -> Result<Vec<u8>, Error> {
+        let mut cx = JobCx::new(&self.list, &self.shares, &mut self.memo);
         let mut job = cx.start(kind, input)?;
         loop {
             if let Some(output) = job.step(u64::MAX, &mut cx)? {
@@ -169,7 +172,7 @@ impl Worker {
 
     pub fn start(&mut self, id: u64, kind: &JobRef, input: &[u8]) -> Result<(), Error> {
         let job = {
-            let mut cx = JobCx::new(&self.list, &self.shares);
+            let mut cx = JobCx::new(&self.list, &self.shares, &mut self.memo);
             cx.start(kind, input)?
         };
         self.stepped.push((id, job));
@@ -183,7 +186,7 @@ impl Worker {
             .position(|(stepped, _)| *stepped == id)
             .ok_or_else(|| Error::new(ErrorCode::UnknownValue, "$.id").got(id))?;
         let stepped = {
-            let mut cx = JobCx::new(&self.list, &self.shares);
+            let mut cx = JobCx::new(&self.list, &self.shares, &mut self.memo);
             self.stepped[at].1.step(budget.max(1), &mut cx)
         };
         match stepped {

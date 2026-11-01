@@ -37,11 +37,16 @@ impl GpuPart for BloomGpu {
         } else {
             wgpu::TextureFormat::Rgba16Float
         };
-        let levels = cx.texture("bloom", format, Lifetime::Kept);
+        let levels = cx.texture("engine/bloom", format, Lifetime::Kept);
         let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
         cx.frame(apply::BLOOM, mip(levels, 0))?;
         cx.frame(apply::BLOOM_SAMPLER, Bind::Sampler(sampler))?;
-        let pass = cx.pass("bloom").color(levels, Access::Load).id();
+        let pass = cx
+            .pass("bloom")
+            .label("engine/bloom")
+            .span("bloom")
+            .color(levels, Access::Load)
+            .id();
         let first = cx.render_pipeline(pass, &fullscreen(chain::FS_BLOOM_FIRST, None), &[])?;
         let mut down = Vec::new();
         let mut up = Vec::new();

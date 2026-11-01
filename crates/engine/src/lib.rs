@@ -112,8 +112,7 @@ pub fn shader_modules(bricks: impl FnOnce(BrickList) -> BrickList) -> Result<Vec
 pub fn scene_kinds(
     bricks: impl FnOnce(BrickList) -> BrickList,
 ) -> Result<engine_scene::SceneKinds> {
-    let engine = game::engine(bricks)?;
-    Ok(engine_scene::SceneKinds::of(engine.app.world()))
+    engine_scene::SceneKinds::listed(&bricks(BrickList::default()))
 }
 
 fn add_module(modules: &mut Vec<ShaderModule>, path: &'static str, source: &'static str) {

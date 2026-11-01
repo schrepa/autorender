@@ -8,8 +8,13 @@ use engine_core::{Error, ErrorCode, MaterialHandle, MeshHandle, Stamp, TextureHa
 use crate::retained::{RetainedRender, Snapshot};
 
 const UNMAPPED_BUCKET: u32 = u32::MAX;
+const INITIAL_CAPACITY: usize = 1_024;
 
 type GroupIds = HashMap<u64, u32>;
+
+pub(crate) fn capacity_for(needed: usize, limit: usize) -> usize {
+    needed.max(INITIAL_CAPACITY).next_power_of_two().min(limit)
+}
 
 #[derive(Debug, PartialEq)]
 pub struct DrawBatch {
@@ -71,6 +76,8 @@ pub struct BatchPlan {
     used_material_sources: Vec<bool>,
     used_texture_sources: Vec<bool>,
     pub instance_limit: Option<usize>,
+    pub instance_capacity: usize,
+    pub capacity_grown: u64,
     pub refused: Option<Error>,
     valid: bool,
     order_reused: bool,
@@ -82,6 +89,18 @@ pub struct BatchPlan {
 }
 
 impl BatchPlan {
+    pub(crate) fn limit(&self) -> usize {
+        self.instance_limit
+            .unwrap_or(engine_places::meshes::MOVED_SLOT as usize)
+    }
+
+    pub(crate) fn grow_capacity(&mut self, payload: usize) {
+        if self.instance_capacity == 0 || payload > self.instance_capacity {
+            self.instance_capacity = capacity_for(payload, self.limit());
+            self.capacity_grown += 1;
+        }
+    }
+
     pub fn prepare_frame(&mut self, retained: &RetainedRender) -> Result<(), Error> {
         let key = (retained.identity(), retained.structure_revision());
         let source_key = (retained.identity(), retained.source_revision());

@@ -50,7 +50,9 @@ pub use steady_water::*;
 pub use tile_water::*;
 pub use views::PoolView;
 pub use water_settle::SettleFeedback;
-pub use windows::{LIVE_PIXELS, LONGEST_FRAME, WaterRead, WaterSourceCell, WaterWindow, live_steps};
+pub use windows::{
+    LIVE_PIXELS, LONGEST_FRAME, WaterRead, WaterSourceCell, WaterWindow, live_steps,
+};
 
 use state::{RiverBody, WaterState};
 use water_particles::ParticleTallies;
@@ -233,7 +235,7 @@ fn publish_piece(shown: Res<DebugShown>, mut piece: ResMut<gpu::WaterPiece>) {
 fn despawn_water(
     owned: Query<Entity, With<RiverBody>>,
     (mut falls, mut white): (ResMut<TerrainFalls>, ResMut<TerrainWhiteWater>),
-    mut state: ResMut<WaterState>,
+    (mut state, mut feedback): (ResMut<WaterState>, ResMut<SettleFeedback>),
     mut stats: ResMut<WaterStats>,
     mut line: ResMut<Waterline>,
     mut jobs: Jobs,
@@ -246,6 +248,7 @@ fn despawn_water(
         spawner.despawn(entity);
     }
     state.clear(&mut jobs);
+    feedback.restart();
     *stats = WaterStats::default();
     line.watered.clear();
     line.errors.clear();

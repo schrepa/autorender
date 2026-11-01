@@ -13,6 +13,7 @@ use crate::profiling::{GpuProfiler, Span};
 
 const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
 const RAN_ORDERS: usize = 256;
+const OPAQUE_MESHES: &str = "opaque_meshes";
 
 struct Viewed {
     view_projection: Mat4,
@@ -35,6 +36,15 @@ fn mark_span(profiler: &GpuProfiler, encoder: Option<&mut wgpu::CommandEncoder>,
     if let (Some(encoder), Some(span)) = (encoder, profiler.span(name)) {
         span.mark(encoder, end);
     }
+}
+
+fn opaque_span(passes: &[crate::install::PassDecl], plan: &crate::graph::Plan) -> Option<(usize, usize)> {
+    let opaque = |planned: &crate::graph::Planned| {
+        passes.get(planned.pass.index()).is_some_and(|pass| {
+            crate::machine::shared(pass) && crate::machine::pass_layer(pass).is_some_and(|layer| layer <= crate::Layer::Backdrop)
+        })
+    };
+    Some((plan.passes.iter().position(opaque)?, plan.passes.iter().rposition(opaque)?))
 }
 
 fn camera_of(
@@ -165,7 +175,7 @@ impl Renderer {
         let profile_upload = engine_profile::span("render", "asset_uploads");
         let mesh_bytes = run.assets.meshes.sync(&device, &self.core.queue, world);
         let mut mips = None;
-        let (mut texture_bytes, _) = run.assets.materials.sync(&device, &self.core.queue, world, &mut mips);
+        let (mut texture_bytes, mut mip_levels) = run.assets.materials.sync(&device, &self.core.queue, world, &mut mips);
         run.assets.impostors.run(&device, &self.core.queue, world, (&run.assets.meshes, &run.assets.materials), &mut mips);
         if let Some(encoder) = mips.take() {
             self.core.queue.hand(Handover::from(encoder));
@@ -176,6 +186,7 @@ impl Renderer {
         run.debug = debug;
         run.temporal = temporal_frame;
         run.drawn = 0;
+        run.uploads.counted = 0;
         run.part_draws.fill(0);
         run.region = region.upscales().then(|| region.render.pixels());
         run.asked_frame = world.get_resource::<FrameTime>().map_or(run.frame, |time| time.frame);
@@ -254,8 +265,9 @@ impl Renderer {
         if let Some(library) = world.get_resource::<engine_core::AssetLibrary>() {
             for texture in std::mem::take(&mut run.wanted_textures) {
                 if let Some(source) = library.texture(texture) {
-                    let (bytes, _) = run.assets.materials.upload_texture(&device, &self.core.queue, (texture, true), source, &mut mips);
+                    let (bytes, levels) = run.assets.materials.upload_texture(&device, &self.core.queue, (texture, true), source, &mut mips);
                     texture_bytes += bytes;
+                    mip_levels += levels;
                 }
             }
         }
@@ -268,10 +280,10 @@ impl Renderer {
         if let Some(error) = run.queued.refused.take() {
             return Err(error);
         }
-        run.write_cameras();
+        let mut camera_bytes = run.write_cameras();
         run.write_post();
         let bytes = piece_bytes(world, &run.piece_layout);
-        run.write_pieces(bytes);
+        camera_bytes += run.write_pieces(bytes);
         run.refresh_groups();
         drop(profile_writes);
         self.core.profiler.begin_frame(&device);
@@ -305,7 +317,15 @@ impl Renderer {
         let mut parted: Option<(&'static str, u32)> = None;
         let mut ran: Vec<&'static str> = Vec::new();
         let declared = run.machine.declared.passes.len();
-        for planned in &plan.passes {
+        let opaque = opaque_span(&run.machine.declared.passes, &plan);
+        let mut opaque_open = false;
+        for (at, planned) in plan.passes.iter().enumerate() {
+            if opaque_open && opaque.is_some_and(|(_, last)| at > last) {
+                let Some(run) = self.run.as_mut() else { break };
+                run.leave();
+                mark_span(&self.core.profiler, run.encoder.as_mut(), OPAQUE_MESHES, true);
+                opaque_open = false;
+            }
             if planned.batch != batch {
                 let Some(run) = self.run.as_mut() else { break };
                 run.leave();
@@ -356,6 +376,10 @@ impl Renderer {
                 }
                 self.mark(encoder.as_mut(), timed, span);
                 timed = span;
+                if !opaque_open && opaque.is_some_and(|(first, _)| first == at) {
+                    mark_span(&self.core.profiler, encoder.as_mut(), OPAQUE_MESHES, false);
+                    opaque_open = true;
+                }
                 if !keeps && let Some(began) = wanted {
                     mark_span(&self.core.profiler, encoder.as_mut(), began, false);
                     parted = Some((began, part));
@@ -396,6 +420,9 @@ impl Renderer {
                 label: Some("engine/frame-encoder"),
             })
         });
+        if opaque_open {
+            mark_span(&self.core.profiler, Some(&mut encoder), OPAQUE_MESHES, true);
+        }
         if let Some((open, _)) = parted.take() {
             mark_span(&self.core.profiler, Some(&mut encoder), open, true);
         }
@@ -425,10 +452,11 @@ impl Renderer {
             return Ok(RenderStats::default());
         };
         run.assets.impostors.after_submit();
+        run.queued.staging.after_submit();
         run.map_readbacks();
         crate::platform::poll(&device);
         drop(profile_submit);
-        let (resident_textures, resident_texture_bytes, _) = run.assets.materials.texture_totals();
+        let (resident_textures, resident_texture_bytes, mip_bytes) = run.assets.materials.texture_totals();
         let resident_mesh_bytes = world
             .get_resource::<AssetResidency>()
             .map_or(0, |residency| {
@@ -438,9 +466,9 @@ impl Renderer {
                     .map(|(_, mesh)| mesh.byte_len())
                     .sum()
             });
-        Ok(RenderStats {
+        let stats = RenderStats {
             draw_calls: run.drawn,
-            upload_bytes: mesh_bytes + texture_bytes,
+            upload_bytes: camera_bytes + run.uploads.counted + mesh_bytes + texture_bytes,
             resident_meshes: run.assets.meshes.len() as u32,
             mesh_upload_bytes: mesh_bytes,
             resident_mesh_bytes,
@@ -454,7 +482,23 @@ impl Renderer {
             linked: self.linked,
             readback_overflows: run.overflows,
             ..RenderStats::default()
-        })
+        };
+        let immediate = self.core.queue.take_immediate();
+        if engine_profile::active() {
+            stat_counters(&stats);
+            engine_profile::counter("render.immediate_submissions", f64::from(immediate));
+            engine_profile::counter("render.texture_mip_levels", f64::from(mip_levels));
+            engine_profile::counter("render.camera_write_bytes", camera_bytes as f64);
+            engine_profile::counter("render.gpu_presentation", f64::from(u8::from(gpu_mode)));
+            engine_profile::counter("render.camera_upload_reused", f64::from(u8::from(camera_bytes == 0)));
+            engine_profile::counter("memory.gpu_impostor_bytes", run.assets.impostors.capacity_bytes() as f64);
+            engine_profile::counter("memory.gpu_pose_staging_bytes", run.queued.staging.capacity_bytes() as f64);
+            engine_profile::counter("memory.gpu_mesh_payload_bytes", stats.resident_mesh_bytes as f64);
+            engine_profile::counter("memory.gpu_mesh_arena_bytes", run.assets.meshes.capacity_bytes() as f64);
+            engine_profile::counter("memory.gpu_texture_payload_bytes", stats.resident_texture_bytes as f64);
+            engine_profile::counter("memory.gpu_texture_mip_bytes", mip_bytes as f64);
+        }
+        Ok(stats)
     }
 
     fn ran_passes(&mut self, ran: Vec<&'static str>) -> engine_core::Names {
@@ -483,6 +527,48 @@ impl Renderer {
         }
     }
 }
+
+#[cfg(feature = "profiling")]
+#[expect(clippy::expect_used, reason = "render stats always serialize")]
+fn stat_counters(stats: &RenderStats) {
+    use engine_core::collections::HashMap;
+    thread_local! {
+        static NAMES: std::cell::RefCell<HashMap<String, &'static str>> =
+            std::cell::RefCell::new(HashMap::default());
+    }
+    fn visit(path: &mut String, value: &serde_json::Value) {
+        let number = match value {
+            serde_json::Value::Object(fields) => {
+                for (key, value) in fields {
+                    let length = path.len();
+                    path.push('.');
+                    path.push_str(key);
+                    visit(path, value);
+                    path.truncate(length);
+                }
+                return;
+            }
+            serde_json::Value::Number(number) => number.as_f64(),
+            serde_json::Value::Bool(flag) => Some(f64::from(u8::from(*flag))),
+            serde_json::Value::Null
+            | serde_json::Value::String(_)
+            | serde_json::Value::Array(_) => None,
+        };
+        if let Some(number) = number {
+            let name = NAMES.with_borrow_mut(|names| {
+                *names
+                    .entry(path.clone())
+                    .or_insert_with(|| Box::leak(path.clone().into_boxed_str()))
+            });
+            engine_profile::counter(name, number);
+        }
+    }
+    let value = serde_json::to_value(stats).expect("render_stats_serialize");
+    visit(&mut "render".to_owned(), &value);
+}
+
+#[cfg(not(feature = "profiling"))]
+fn stat_counters(_: &RenderStats) {}
 
 fn piece_bytes(world: &World, layout: &[(usize, crate::pieces::PieceAt)]) -> Vec<u8> {
     let Some(registry) = world.get_resource::<engine_registry::Registry>() else {

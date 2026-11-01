@@ -12,10 +12,13 @@ use crate::lighting::{Ground, TerrainLighting, light};
 use crate::macro_colors::{MACRO_BLOCK, MAX_MACRO_TEXELS, macro_colors};
 use crate::shading::{ShadingMaking, TileShading};
 
-pub static LIGHTING: JobKind = JobKind::new("terrain_shading::lighting", &crate::SOURCE, start_lighting);
+pub static LIGHTING: JobKind =
+    JobKind::new("terrain_shading::lighting", &crate::SOURCE, start_lighting);
 pub static BOUNCE: JobKind = JobKind::new("terrain_shading::bounce", &crate::SOURCE, start_bounce);
-pub static MACRO_COLORS: JobKind = JobKind::new("terrain_shading::macro_colors", &crate::SOURCE, start_macro);
-pub static SHADING: JobKind = JobKind::new("terrain_shading::shading", &crate::SOURCE, start_shading);
+pub static MACRO_COLORS: JobKind =
+    JobKind::new("terrain_shading::macro_colors", &crate::SOURCE, start_macro);
+pub static SHADING: JobKind =
+    JobKind::new("terrain_shading::shading", &crate::SOURCE, start_shading);
 
 pub const MAX_LIGHTING_TEXELS: u32 = 4096;
 
@@ -144,12 +147,13 @@ fn recipe(
     shared: [u8; 32],
     kinds: &[&'static LayerKind],
 ) -> Result<Arc<Recipe>, Error> {
-    let key = RecordKey::from_hash(shared);
-    let bytes = cx
-        .share(key)
-        .ok_or_else(|| unshared("$.recipe", &key.hex()))?;
-    let recipe = Recipe::read(bytes, &|stack| cx.share(RecordKey::from_hash(stack)), kinds)?;
-    Ok(Arc::new(recipe))
+    cx.held(shared, || {
+        let key = RecordKey::from_hash(shared);
+        let bytes = cx
+            .share(key)
+            .ok_or_else(|| unshared("$.recipe", &key.hex()))?;
+        Recipe::read(bytes, &|stack| cx.share(RecordKey::from_hash(stack)), kinds)
+    })
 }
 
 struct LightingMaking {
@@ -210,7 +214,11 @@ fn start_bounce(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error>
     let recipe = recipe(cx, job.recipe, &kinds)?;
     let tiles = std::mem::take(&mut job.tiles);
     let making = GroundMaking::new((&recipe, kinds), job.level, tiles)?;
-    Ok(Box::new(BounceMaking { making, job, recipe }))
+    Ok(Box::new(BounceMaking {
+        making,
+        job,
+        recipe,
+    }))
 }
 
 struct MacroMaking {
@@ -221,9 +229,15 @@ struct MacroMaking {
 impl Job for MacroMaking {
     fn step(&mut self, _: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
         let causes = self.recipe.rules.authored().macro_colors;
-        macro_colors(&self.recipe.layers, &self.recipe.pyramid, self.job.level, self.job.size, &causes)
-            .map(Some)
-            .ok_or_else(invalid_heights)
+        macro_colors(
+            &self.recipe.layers,
+            &self.recipe.pyramid,
+            self.job.level,
+            self.job.size,
+            &causes,
+        )
+        .map(Some)
+        .ok_or_else(invalid_heights)
     }
 }
 
@@ -240,7 +254,9 @@ fn start_macro(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> 
 impl Job for ShadingMaking {
     fn step(&mut self, budget: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
         let mut budget = budget;
-        Ok(self.advance(&mut budget)?.map(|shading| codec::encode(&shading)))
+        Ok(self
+            .advance(&mut budget)?
+            .map(|shading| codec::encode(&shading)))
     }
 }
 
@@ -258,7 +274,9 @@ fn start_shading(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error
             if key.level == 1 && names(tiles.iter().map(|&(at, _)| at), &reads) =>
         {
             let surface = (recipe.layers.clone(), recipe.rules.clone(), kinds);
-            Ok(Box::new(ShadingMaking::from_ground(surface, pyramid, key, tiles)))
+            Ok(Box::new(ShadingMaking::from_ground(
+                surface, pyramid, key, tiles,
+            )))
         }
         ShadingReads::Shadings(shadings)
             if key.level > 1 && names(shadings.iter().map(|&(at, _)| at), &reads) =>

@@ -8,7 +8,6 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod emitters;
-mod nearest;
 mod part;
 mod scene;
 

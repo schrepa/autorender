@@ -147,7 +147,12 @@ impl<G: Game> Runner<'_, G> {
                     return Ok(Backend::Gpu(Box::new((self.attach)(session))));
                 }
                 Err(error) if self.gpu == Some(true) => return Err(error),
-                Err(_) => {}
+                Err(error) => {
+                    eprintln!(
+                        "{}",
+                        serde_json::json!({"event": "gpu_unavailable", "error": error})
+                    );
+                }
             }
         }
         let mut engine = engine_of(bricks)?;

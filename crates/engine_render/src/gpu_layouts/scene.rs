@@ -13,9 +13,10 @@ gpu_structs! {
         pub color: [u16; 4],
         pub uv1: [f32; 2],
     }
+}
 
-    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub struct MaterialUniform as ["MaterialMaps"] {
+engine_core::gpu_struct! {
+    pub struct MaterialUniform {
         pub transforms: [[f32; 4]; 10],
         pub emissive: [f32; 4],
         pub params: [f32; 4],

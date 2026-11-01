@@ -1,8 +1,8 @@
 import package::face::ground_tiles::{GroundTerrain, NOT_RESIDENT, level_tiles, tile_layer};
 import package::face::heightfield::{TERRAIN_GRID, terrain_uniform};
 import package::generated::water::{NO_WATER_BLOCK, NO_WATER_SURFACE, WATER_BLOCK, WATER_BLOCKS_SIDE,
-    WATER_FLOW_RANGE, WATER_SHEAR_RANGE, WATER_SPAN_LEAST, WATER_SPAN_MOST, WATER_TILE_PATCHES,
-    WATER_TILE_WORDS};
+    WATER_FLOW_RANGE, WATER_SHEAR_RANGE, WATER_SPAN_LEAST, WATER_SPAN_MOST, WATER_SPAN_STEPS,
+    WATER_TILE_PATCHES, WATER_TILE_WORDS};
 import package::place::water::{WaterAt, WaterCell, WaterLevel, WaterWords};
 
 @group(0) @binding(0) var water_surface: texture_2d_array<f32>;
@@ -24,7 +24,8 @@ fn water_ground() -> GroundTerrain {
 fn water_span(code: f32) -> f32 {
     let steps = round(abs(code) * 127.0);
     let octaves = log2(WATER_SPAN_MOST / WATER_SPAN_LEAST);
-    return select(WATER_SPAN_LEAST * exp2(octaves * (steps - 1.0) / 126.0), 0.0, steps < 0.5);
+    return select(WATER_SPAN_LEAST * exp2(octaves * (steps - 1.0) / WATER_SPAN_STEPS), 0.0,
+        steps < 0.5);
 }
 
 fn water_extent() -> vec2<f32> {

@@ -365,8 +365,7 @@ impl AppHost {
             return false;
         }
         let micros = (milliseconds * 1000.0).min(f64::from(u32::MAX)) as u32;
-        self.engine.between_frames(micros);
-        self.engine_loading()
+        self.engine.between_frames(micros)
     }
 
     pub fn set_job_workers(&mut self, workers: u32) {

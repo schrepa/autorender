@@ -1,15 +1,13 @@
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    Allowed, Cut, DeviceLimits, Expected, FrameTime, InvalidSetting, Poses, Rule, Setting, View,
-    fields, gpu_struct, settings, stats,
+    Allowed, Cut, DeviceLimits, Expected, FrameTime, InvalidSetting, Nearest, Poses, Rule, Setting,
+    View, fields, gpu_struct, settings, stats,
 };
 use engine_places::particles::{
     MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleEmitter,
 };
 use glam::{Mat4, Vec3};
-
-use crate::nearest::Nearest;
 
 settings! {
     #[section("particles")]

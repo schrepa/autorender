@@ -1,11 +1,4 @@
-import package::generated::shadows::{SKY_DIRECTIONS, SKY_LAYERS};
-
-struct SkyViews {
-    clips: array<mat4x4<f32>, SKY_LAYERS>,
-    directions: array<vec4<f32>, SKY_LAYERS>,
-    counts: vec4<f32>,
-    occlusion: vec4<f32>,
-}
+import package::generated::shadows::{SKY_DIRECTIONS, SkyViews};
 
 @group(0) @binding(0) var sky_maps: texture_depth_2d_array;
 @group(0) @binding(0) var sky_sampler: sampler_comparison;

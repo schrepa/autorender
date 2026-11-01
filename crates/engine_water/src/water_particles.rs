@@ -9,6 +9,7 @@ use engine_render::{
 };
 use glam::{UVec2, Vec2, Vec3};
 
+use crate::Water;
 use crate::gpu::{
     PARTICLE_ARGS, PARTICLE_DRAW, PARTICLE_FOAM_BEFORE, PARTICLE_GROUP, PARTICLE_ITEMS,
     PARTICLE_LATTICE, PARTICLE_MARGIN, PARTICLE_SIDE, ParticleFrame,
@@ -18,7 +19,6 @@ use crate::state::WaterState;
 use crate::water::WaterGpu;
 use crate::water_settle::TALLIES;
 use crate::windows::LONGEST_FRAME;
-use crate::Water;
 
 const TEXEL_SPLIT: u32 = 16;
 const HANDOVER_PIXELS: f32 = 1.0;
@@ -34,6 +34,7 @@ const TALLY_WORDS: usize = PARTICLE_FOAM_BEFORE as usize;
 const ARGS_BYTES: u64 = 24;
 const DRAW_ARGS: u64 = 32;
 const DRAW_BYTES: u64 = 16;
+const PARTICLES_SPAN: &str = "water_particles";
 
 #[derive(Resource, Default)]
 pub(crate) struct ParticleTallies {
@@ -92,6 +93,7 @@ pub(crate) struct Particles {
     pub(crate) grid: Option<Grid>,
     last: Option<f64>,
     step: Option<u32>,
+    kept: Option<(Option<f64>, Option<u32>)>,
     generation: u64,
     pub(crate) frame: Option<ParticleFrame>,
 }
@@ -104,25 +106,31 @@ impl Particles {
         }
         self.last = None;
         self.step = None;
+        self.kept = None;
     }
 
     fn prepare(
         &mut self,
         (terrain, seen, limits): (u32, ParticleView, &DeviceLimits),
         (settings, ridden, wind, seconds): (&Water, f32, [f32; 2], f64),
+        submitted: bool,
     ) {
+        if let Some((last, step)) = self.kept.take().filter(|_| !submitted) {
+            (self.last, self.step) = (last, step);
+        }
+        self.kept = Some((self.last, self.step));
         if let Some(grid) = self.grid.as_mut()
             && std::mem::take(&mut grid.encoded)
+            && submitted
         {
             grid.held = Some(grid.window);
             grid.read ^= 1;
         }
         let texel = settings.simulation_cell / TEXEL_SPLIT as f32;
         let asked = wanted(limits, seen);
-        let kept = self
-            .grid
-            .as_ref()
-            .filter(|grid| grid.texel == texel && grid.sizes.texels >= asked && grid.sizes.texels < 2 * asked);
+        let kept = self.grid.as_ref().filter(|grid| {
+            grid.texel == texel && grid.sizes.texels >= asked && grid.sizes.texels < 2 * asked
+        });
         let texels = kept.map_or(asked, |grid| grid.sizes.texels);
         let (sizes, cut) = sized(limits, (texels, seen.display), settings.foam_points);
         let keeps = kept.is_some_and(|grid| {
@@ -237,7 +245,11 @@ fn wanted(limits: &DeviceLimits, seen: ParticleView) -> u32 {
     asked.next_multiple_of(block).min(most).max(block)
 }
 
-fn sized(limits: &DeviceLimits, (texels, display): (u32, UVec2), asked: u32) -> (ParticleSizes, Cut) {
+fn sized(
+    limits: &DeviceLimits,
+    (texels, display): (u32, UVec2),
+    asked: u32,
+) -> (ParticleSizes, Cut) {
     let binding = limits.storage_room;
     let items = u64::from(limits.max_compute_workgroups_per_dimension) * u64::from(PARTICLE_GROUP);
     let held = (binding as f64 / POINT_BYTES as f64).sqrt() as u32;
@@ -313,6 +325,7 @@ pub(crate) fn plan_particles(
     state.particles.prepare(
         (terrain, seen, &limits),
         (&water, ridden, wind.velocity, seconds),
+        view.submitted(),
     );
 }
 
@@ -367,6 +380,42 @@ pub(crate) fn levels(
     ]
 }
 
+fn passes(
+    cx: &mut Install<'_, WaterGpu>,
+    after: Pass<WaterGpu>,
+    (counts, args): (Buffer<WaterGpu>, Buffer<WaterGpu>),
+) -> [Pass<WaterGpu>; 5] {
+    let lattice_pass = cx
+        .pass("water_particles")
+        .after(after)
+        .label("engine/water-particles-lattice")
+        .span(PARTICLES_SPAN)
+        .id();
+    let first_copy = cx.copy(
+        "water_particles_args",
+        Copied::Buffer(counts),
+        Copied::Buffer(args),
+    );
+    let scan_pass = cx
+        .pass("water_particles_scan")
+        .after(first_copy)
+        .label("engine/water-particles-scan")
+        .span(PARTICLES_SPAN)
+        .id();
+    let second_copy = cx.copy(
+        "water_particles_draw_args",
+        Copied::Buffer(counts),
+        Copied::Buffer(args),
+    );
+    let splat_pass = cx
+        .pass("water_particles_splat")
+        .after(second_copy)
+        .label("engine/water-particles-splat")
+        .span(PARTICLES_SPAN)
+        .id();
+    [lattice_pass, first_copy, scan_pass, second_copy, splat_pass]
+}
+
 impl ParticlesGpu {
     pub(crate) fn install(
         cx: &mut Install<'_, WaterGpu>,
@@ -396,19 +445,8 @@ impl ParticlesGpu {
             compare: None,
             anisotropy: engine_render::MATERIAL_ANISOTROPY,
         });
-        let lattice_pass = cx.pass("water_particles").after(after).id();
-        let first_copy = cx.copy(
-            "water_particles_args",
-            Copied::Buffer(counts),
-            Copied::Buffer(args),
-        );
-        let scan_pass = cx.pass("water_particles_scan").after(first_copy).id();
-        let second_copy = cx.copy(
-            "water_particles_draw_args",
-            Copied::Buffer(counts),
-            Copied::Buffer(args),
-        );
-        let splat_pass = cx.pass("water_particles_splat").after(second_copy).id();
+        let [lattice_pass, first_copy, scan_pass, second_copy, splat_pass] =
+            passes(cx, after, (counts, args));
         let own = [
             (particles::PARTICLE_FRAME, Bind::Buffer(frame)),
             (particles::PARTICLE_LATTICE, Bind::Buffer(lattice)),
@@ -417,10 +455,16 @@ impl ParticlesGpu {
             (particles::PARTICLE_SPLAT, Bind::Buffer(splat)),
         ];
         let bound = |cx: &mut Install<'_, WaterGpu>, entry, level: u32| {
-            let mut all: Vec<(engine_core::Var, Bind<WaterGpu>)> =
-                own.iter().map(|(var, bind)| (*var, crate::water::copied(bind))).collect();
+            let mut all: Vec<(engine_core::Var, Bind<WaterGpu>)> = own
+                .iter()
+                .map(|(var, bind)| (*var, crate::water::copied(bind)))
+                .collect();
             all.extend(levels(texture, level));
-            all.extend(shared.iter().map(|(var, bind)| (*var, crate::water::copied(bind))));
+            all.extend(
+                shared
+                    .iter()
+                    .map(|(var, bind)| (*var, crate::water::copied(bind))),
+            );
             crate::water::reached(cx, &[entry], all)
         };
         let pipeline = |cx: &mut Install<'_, WaterGpu>, pass, entry, level| {
@@ -493,7 +537,11 @@ impl ParticlesGpu {
         ]
     }
 
-    pub(crate) fn prepare(&mut self, particles: &crate::water_particles::Particles, cx: &mut Prepare<'_, WaterGpu>) {
+    pub(crate) fn prepare(
+        &mut self,
+        particles: &crate::water_particles::Particles,
+        cx: &mut Prepare<'_, WaterGpu>,
+    ) {
         self.running = None;
         cx.allocate_buffer(self.frame, size_of::<ParticleFrame>() as u64);
         let (Some(grid), Some(frame)) = (particles.grid.as_ref(), particles.frame.as_ref()) else {
@@ -535,12 +583,12 @@ impl ParticlesGpu {
                 (self.splat, area * SPLAT_BYTES),
             ];
             for (buffer, bytes) in sizes {
+                cx.release_buffer(buffer);
                 cx.allocate_buffer(buffer, bytes);
-                let words = (bytes.max(16).next_multiple_of(4) / 4) as usize;
-                cx.write(buffer, 0, &vec![0_u32; words]);
             }
+            cx.release_buffer(self.args);
             cx.allocate_buffer(self.args, DRAW_ARGS + DRAW_BYTES);
-            cx.write(self.args, 0, &[0_u32; ((DRAW_ARGS + DRAW_BYTES) / 4) as usize]);
+            cx.release(self.texture);
             cx.allocate(
                 self.texture,
                 wgpu::Extent3d {
@@ -592,43 +640,50 @@ impl ParticlesGpu {
         self.running.is_some()
     }
 
-    pub(crate) fn encode(&mut self, pass: Pass<WaterGpu>, cx: &mut Encode<'_, WaterGpu>) -> Option<u32> {
-        let Some((points, texels)) = self.running else {
-            return [self.lattice_pass, self.scan_pass, self.splat_pass]
-                .contains(&pass)
-                .then_some(0);
-        };
-        let groups = |cx: &mut Encode<'_, WaterGpu>, pipeline, count| cx.dispatch(pipeline, Count::Groups(count));
-        if pass == self.lattice_pass {
-            let mut dispatched = groups(cx, &self.begin, [1, 1, 1]);
-            dispatched += groups(cx, &self.gather, [points, points, 1]);
-            dispatched += groups(cx, &self.currents, [points, points, 1]);
-            return Some(dispatched);
-        }
-        if pass == self.scan_pass {
-            let mut dispatched = cx.dispatch(&self.age, Count::Indirect(self.scan_args, 0));
-            dispatched += groups(cx, &self.births, [points, points, 1]);
-            dispatched += cx.dispatch(&self.sum, Count::Indirect(self.scan_args, ARGS_BYTES / 2));
-            dispatched += groups(cx, &self.scan, [1, 1, 1]);
-            return Some(dispatched);
-        }
-        if pass == self.splat_pass {
-            let mut dispatched = cx.dispatch(&self.place, Count::Indirect(self.splat_args, ARGS_BYTES / 2));
-            dispatched += cx.dispatch(&self.splat_pipeline, Count::Indirect(self.splat_args, 0));
-            let side = texels.div_ceil(PARTICLE_SIDE);
-            dispatched += groups(cx, &self.look, [side, side, 1]);
-            for (level, down) in (1..=TEXTURE_LEVELS).zip(&self.down) {
-                let side = (texels >> level).div_ceil(PARTICLE_SIDE);
-                dispatched += groups(cx, down, [side, side, 1]);
-            }
-            return Some(dispatched);
-        }
-        None
+    pub(crate) fn forget(&mut self) {
+        self.generation = None;
     }
 
-    pub(crate) fn draw_foam(&self, draw: &mut Draw<'_, WaterGpu, Own>, pipeline: &Pipeline<WaterGpu, Own>) -> u32 {
+    pub(crate) fn encode(&mut self, pass: Pass<WaterGpu>, cx: &mut Encode<'_, WaterGpu>) -> bool {
+        let ours = [self.lattice_pass, self.scan_pass, self.splat_pass].contains(&pass);
+        let Some((points, texels)) = self.running.filter(|_| ours) else {
+            return ours;
+        };
+        let groups = |cx: &mut Encode<'_, WaterGpu>, pipeline, count| {
+            cx.dispatch(pipeline, Count::Groups(count));
+        };
+        if pass == self.lattice_pass {
+            groups(cx, &self.begin, [1, 1, 1]);
+            groups(cx, &self.gather, [points, points, 1]);
+            groups(cx, &self.currents, [points, points, 1]);
+        } else if pass == self.scan_pass {
+            cx.dispatch(&self.age, Count::Indirect(self.scan_args, 0));
+            groups(cx, &self.births, [points, points, 1]);
+            cx.dispatch(&self.sum, Count::Indirect(self.scan_args, ARGS_BYTES / 2));
+            groups(cx, &self.scan, [1, 1, 1]);
+        } else {
+            cx.dispatch(
+                &self.place,
+                Count::Indirect(self.splat_args, ARGS_BYTES / 2),
+            );
+            cx.dispatch(&self.splat_pipeline, Count::Indirect(self.splat_args, 0));
+            let side = texels.div_ceil(PARTICLE_SIDE);
+            groups(cx, &self.look, [side, side, 1]);
+            for (level, down) in (1..=TEXTURE_LEVELS).zip(&self.down) {
+                let side = (texels >> level).div_ceil(PARTICLE_SIDE);
+                groups(cx, down, [side, side, 1]);
+            }
+        }
+        true
+    }
+
+    pub(crate) fn draw_foam(
+        &self,
+        draw: &mut Draw<'_, WaterGpu, Own>,
+        pipeline: &Pipeline<WaterGpu, Own>,
+    ) {
         let (Some(args), true) = (self.foam_args, self.running()) else {
-            return 0;
+            return;
         };
         draw.draw(
             pipeline,
@@ -639,6 +694,5 @@ impl ParticlesGpu {
                 offset: DRAW_ARGS,
             },
         );
-        1
     }
 }

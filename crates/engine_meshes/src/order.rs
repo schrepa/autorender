@@ -3,12 +3,13 @@ use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, Detail, DeviceLimits, MaterialHandle, Mesh,
     ResidentMesh, View,
 };
-use engine_places::meshes::MOVED_SLOT;
+use engine_places::meshes::{Instances, MOVED_SLOT};
+use engine_render::Resolve;
 use glam::Vec3;
 
 use crate::batches::{BatchPlan, DrawBatch};
 use crate::layouts::LOD_LEVELS;
-use crate::presentation::frustum_uniform;
+use crate::presentation::{frustum_uniform, rasterized};
 use crate::retained::RetainedRender;
 use crate::settings::{Culling, OcclusionCulling, SubpixelCulling};
 use crate::uploads::PoseData;
@@ -146,19 +147,31 @@ fn flat_batch(retained: &RetainedRender, plan: &BatchPlan, batch: &DrawBatch) ->
 pub(crate) fn plan_draws(
     retained: Res<RetainedRender>,
     (assets, residency): (Res<AssetLibrary>, Res<AssetResidency>),
-    (view, detail, limits): (Res<View>, Res<Detail>, Res<DeviceLimits>),
+    (view, detail, limits, resolve): (Res<View>, Res<Detail>, Res<DeviceLimits>, Res<Resolve>),
     culling: Res<Culling>,
     occlusion: Res<OcclusionCulling>,
     subpixel: Res<SubpixelCulling>,
     mut plan: ResMut<BatchPlan>,
     mut order: ResMut<DrawOrder>,
     mut decided: ResMut<MeshPlan>,
+    mut instances: ResMut<Instances>,
 ) {
     let plan = &mut *plan;
     plan.instance_limit = instance_limit(&limits);
     {
         let _profile = engine_core::profile::span("render", "batch_plan");
         plan.refused = plan.prepare_frame(&retained).err();
+    }
+    if plan.refused.is_none() {
+        plan.grow_capacity(retained.snapshot().instances.len());
+    }
+    let (capacity, candidates) = (
+        plan.instance_capacity as u32,
+        plan.ordered_instances.len().min(u32::MAX as usize) as u32,
+    );
+    if (instances.capacity, instances.candidates) != (capacity, candidates) {
+        instances.capacity = capacity;
+        instances.candidates = candidates;
     }
     let key = (
         plan.generation(),
@@ -170,11 +183,12 @@ pub(crate) fn plan_draws(
         order.planned = Some(key);
         order_draws(&retained, (&assets, &residency), plan, &mut order);
     }
-    let (planes, absolute) = frustum_uniform(view.view_projection());
+    let gpu = retained.gpu();
+    let (planes, absolute) =
+        frustum_uniform(rasterized(&view, resolve.offset, gpu && view.temporal()));
     let bounded = absolute.iter().flatten().all(|value| {
         value.is_finite() && *value <= engine_core::presentation_bounds::MAX_COEFFICIENT
     }) && planes.iter().flatten().all(|value| value.is_finite());
-    let gpu = retained.gpu();
     let frustum = culling.frustum && bounded;
     let candidates = plan.ordered_instances.len();
     let unbudgeted = frustum && culling.budget() >= candidates;

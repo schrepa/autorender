@@ -131,14 +131,12 @@ pub struct Ops {
 
 pub const SCENE_CLEAR: [f64; 4] = [0.009, 0.015, 0.025, 1.0];
 pub const TRANSPARENT: [f64; 4] = [0.0, 0.0, 0.0, 0.0];
-pub const WHITE: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
 pub const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 pub const FAR: f32 = 0.0;
 
 #[derive(Clone, Copy, Debug)]
 pub struct ResourceEntry {
     pub label: &'static str,
-    pub part: u32,
     pub life: Life,
     pub view: bool,
 }
@@ -146,8 +144,6 @@ pub struct ResourceEntry {
 #[derive(Clone, Copy, Debug)]
 pub struct PassEntry {
     pub label: &'static str,
-    pub part: u32,
-    pub local: u32,
     pub package: &'static str,
     pub registered: u32,
     pub layer: Option<Layer>,
@@ -244,7 +240,6 @@ pub struct Planned {
 #[derive(Clone, Debug, Default)]
 pub struct Plan {
     pub passes: Vec<Planned>,
-    pub written: Bits,
 }
 
 #[derive(Debug, Default)]
@@ -433,14 +428,6 @@ impl StaticGraph {
         self.resources.len()
     }
 
-    pub fn entry(&self, pass: PassId) -> PassEntry {
-        self.nodes[pass.index()].entry
-    }
-
-    pub fn resource(&self, resource: ResourceId) -> ResourceEntry {
-        self.resources[resource.index()]
-    }
-
     pub fn plan(&self, runs: &Bits, outputs: &Bits) -> Result<Plan, Error> {
         let mut needed = outputs.clone();
         for (index, resource) in self.resources.iter().enumerate() {
@@ -487,10 +474,25 @@ impl StaticGraph {
                 written.insert(index);
             }
         }
+        let planned_writes = kept
+            .iter()
+            .flatten()
+            .fold(Bits::of(self.resources.len()), |all, planned| {
+                all.union(&self.nodes[planned.pass.index()].outputs())
+            });
         let mut passes = Vec::new();
         for mut planned in kept.into_iter().flatten() {
             let node = &self.nodes[planned.pass.index()];
-            if let Some(resource) = node.required().without(&written).first() {
+            let refused_read = node.required().without(&written).iter().find(|&resource| {
+                let unwritten = self.resources[resource].life == Life::Frame && !planned_writes.contains(resource);
+                let elsewhere = self
+                    .nodes
+                    .iter()
+                    .filter(|other| other.outputs().contains(resource))
+                    .all(|other| other.entry.package != node.entry.package);
+                !(unwritten && elsewhere)
+            });
+            if let Some(resource) = refused_read {
                 return Err(refused(
                     ErrorCode::ReadBeforeWrite,
                     format!("$.passes.{}.reads.{}", node.entry.label, self.resources[resource].label),
@@ -507,7 +509,7 @@ impl StaticGraph {
             written = written.union(&node.outputs());
             passes.push(planned);
         }
-        Ok(Plan { passes, written })
+        Ok(Plan { passes })
     }
 }
 
@@ -516,7 +518,6 @@ pub const PLANS: usize = 16;
 #[derive(Debug, Default)]
 pub struct PlanCache {
     plans: Vec<(Bits, Bits, Plan)>,
-    misses: u64,
 }
 
 impl PlanCache {
@@ -535,7 +536,6 @@ impl PlanCache {
             Some(index) => index,
             None => {
                 let plan = graph.plan(runs, outputs)?;
-                self.misses += 1;
                 if self.plans.len() >= most.max(1) {
                     self.plans.remove(0);
                 }
@@ -544,10 +544,6 @@ impl PlanCache {
             }
         };
         Ok(&self.plans[index].2)
-    }
-
-    pub fn misses(&self) -> u64 {
-        self.misses
     }
 
     pub fn clear(&mut self) {

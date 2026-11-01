@@ -1,7 +1,8 @@
 use bevy_ecs::prelude::Entity;
 use engine_core::{Error, ErrorCode};
 use engine_dev::results::{
-    CaptureResult, FramesResult, GameResult, KeptArtifact, ProbeResult, WatchResult, result,
+    AuthoredEntity, CaptureResult, FramesResult, GameResult, KeptArtifact, ProbeResult,
+    WatchResult, result,
 };
 use engine_dev::{
     DrawState, Effect, EntityFacts, ExplainQuestion, HostContext, Outcome, ProfileRequest, Step,
@@ -430,7 +431,7 @@ impl<G: Game> GameHost<G> {
             return self.dev_done(probed, context);
         }
         if probed["result"]["probing"] != true {
-            let probe = match probed["result"]["probe"].take() {
+            let mut probe = match probed["result"]["probe"].take() {
                 Value::Object(probe) => probe,
                 Value::Null
                 | Value::Bool(_)
@@ -442,10 +443,13 @@ impl<G: Game> GameHost<G> {
                     );
                 }
             };
-            probed["result"] = result::probe(ProbeResult {
-                probe,
-                entity: None,
-            });
+            let entity = probe
+                .remove("entity")
+                .as_ref()
+                .and_then(Value::as_u64)
+                .and_then(Entity::try_from_bits)
+                .map(|entity| AuthoredEntity::of(self.engine().app.world(), entity));
+            probed["result"] = result::probe(ProbeResult { probe, entity });
             return self.dev_done(probed, context);
         }
         if waits >= PROBE_WAITS {

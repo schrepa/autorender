@@ -61,7 +61,11 @@ impl GpuPart for TraceGpu {
         let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
         cx.frame(apply::REFLECTIONS, Bind::Texture(reflected))?;
         cx.frame(apply::REFLECTIONS_SAMPLER, Bind::Sampler(sampler))?;
-        let reduce = cx.pass("nearest_depth").span(SPAN).id();
+        let reduce = cx
+            .pass("nearest_depth")
+            .label("engine/depth-pyramid")
+            .span(SPAN)
+            .id();
         let copy = cx.copy(
             "scene_levels_copy",
             Copied::Target(ViewTarget::Scene),
@@ -69,12 +73,14 @@ impl GpuPart for TraceGpu {
         );
         let chain = cx
             .pass("scene_levels")
+            .label("engine/post-scene-levels")
             .span(SPAN)
             .after(copy)
             .color(levels_texture, Access::Load)
             .id();
         let reflect = cx
             .pass("reflections")
+            .label("engine/post-reflections")
             .span(SPAN)
             .color(reflected, Access::Clear)
             .id();

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use engine_core::fields;
 use engine_heightfield::path::distance_to_segment;
 use engine_math::{max, min};
-use glam::{Vec2, Vec3};
+use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
 use crate::{

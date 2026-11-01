@@ -96,16 +96,12 @@ impl Renderer {
             }
         }));
 
-        let device_limits = device.limits();
         let mut display = Display::new(
             instance,
             surface,
             target,
             &adapter,
-            (
-                device_limits.max_texture_dimension_2d,
-                device_limits.max_texture_array_layers,
-            ),
+            device.limits().max_texture_dimension_2d,
         )?;
         let scope = crate::gpu_calls::validation_scope(&device);
         display.configure(&device);
@@ -139,6 +135,7 @@ impl Renderer {
             ran: Vec::new(),
             part_names: &[],
             linked: engine_core::LinkedStats::default(),
+            resolver: None,
         };
         crate::platform::yield_now().await;
         Ok(StartingRenderer {

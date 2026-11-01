@@ -6,7 +6,7 @@ use engine_core::collections::HashMap;
 use engine_core::{
     AlphaMode, AssetLibrary, GlobalTransforms, MAX_TRANSFORM_NODES, Material, MaterialBinding,
     MaterialHandle, Mesh, Mesh3d, MeshHandle, PresentationState, PresentedTransforms,
-    ScanClock, Stamp, Surface, Texture, TextureHandle, Transform, TransformIndex,
+    ScanClock, Stamp, Surface, TextureHandle, Transform, TransformIndex,
 };
 use engine_places::meshes::{Cube, Instances, Tint};
 use engine_places::splines::SplineMesh;
@@ -103,13 +103,11 @@ impl SourceMesh {
 pub(crate) struct SourceMaterial {
     pub handle: MaterialHandle,
     pub material: Material,
-    pub version: u64,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct SourceTexture {
     pub handle: TextureHandle,
-    pub texture: Arc<Texture>,
 }
 
 struct ResolvedSource {
@@ -285,17 +283,13 @@ impl Sources {
                     if self.texture_indices.contains_key(&texture) {
                         continue;
                     }
-                    let resolved = assets.texture(texture)?;
-                    self.textures.push(SourceTexture {
-                        handle: texture,
-                        texture: Arc::clone(resolved),
-                    });
+                    assets.texture(texture)?;
+                    self.textures.push(SourceTexture { handle: texture });
                     self.texture_indices.insert(texture, self.textures.len() - 1);
                 }
                 self.materials.push(SourceMaterial {
                     handle,
                     material: *material,
-                    version: assets.material_version(handle).unwrap_or(0),
                 });
                 self.material_used.push(false);
                 let index = self.materials.len() - 1;
@@ -386,19 +380,15 @@ impl Sources {
             if self.texture_indices.contains_key(&texture) {
                 continue;
             }
-            let Some(resolved) = assets.texture(texture) else {
+            if assets.texture(texture).is_none() {
                 return false;
-            };
-            self.textures.push(SourceTexture {
-                handle: texture,
-                texture: Arc::clone(resolved),
-            });
+            }
+            self.textures.push(SourceTexture { handle: texture });
             self.texture_indices.insert(texture, self.textures.len() - 1);
         }
         self.materials[index] = SourceMaterial {
             handle,
             material: *material,
-            version: assets.material_version(handle).unwrap_or(0),
         };
         self.contents_changed = true;
         true

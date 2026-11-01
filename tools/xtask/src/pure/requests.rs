@@ -335,7 +335,6 @@ fn query(
     let context = Context {
         scene,
         renderer: None,
-        render_slot: None,
     };
     let reply: Value = serde_json::from_str(&tools.execute(engine, context, source)).ok()?;
     if reply["ok"] == true {

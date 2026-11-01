@@ -6,8 +6,8 @@ import package::engine::presentation::{COEFFICIENT_LIMIT, COMMON_DETERMINANT_MAR
     NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE, NODE_VALID, NO_PARENT, POSE_FLOATS,
     ROUNDING_MARGIN};
 import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
-    CandidateData as Candidate, GROUP, LOD_LEVELS, PARENT_GROUP, PHASE1, PHASE2, PROBE,
-    PresentationFrame as Frame, VISIBLE};
+    CandidateData as Candidate, GROUP, LOD_LEVELS, LOD_STATE, PARENT_GROUP, PHASE1, PHASE2,
+    PROBE, PresentationFrame as Frame, UNWATCHED, VISIBLE};
 import package::meshes::screen_cull::{F32_MAX, covers_no_pixel, hidden};
 import package::place::instances::{MOVED_SLOT, STILL_FRAMES};
 
@@ -70,7 +70,6 @@ const OCCLUDED: u32 = 32u;
 const SUBPIXEL: u32 = 64u;
 const LOD_SHIFT: u32 = 8u;
 const IMPOSTOR: u32 = LOD_LEVELS;
-const LOD_STATE: u32 = 0x80000000u;
 const LOD_FADED: u32 = 65535u;
 
 var<workgroup> shared_values: array<u32, GROUP>;
@@ -733,6 +732,7 @@ fn gather_phase_one() {
     totals[3] = atomicLoad(&occlusion_counts[1]);
     if frame.occlusion == 0u {
         totals[12] = atomicLoad(&occlusion_counts[2]);
+        gather_watched();
     }
 }
 
@@ -745,4 +745,11 @@ fn gather_phase_two() {
     }
     totals[2] = atomicLoad(&occlusion_counts[0]);
     totals[12] = atomicLoad(&occlusion_counts[2]);
+    gather_watched();
+}
+
+fn gather_watched() {
+    if frame.watched != UNWATCHED {
+        totals[13] = lod_states[frame.watched];
+    }
 }

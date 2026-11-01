@@ -119,10 +119,17 @@ impl Haze {
         let history_texture = cx.texture("haze_history", HAZE_FORMAT, Lifetime::Previous);
         let uniform = cx.buffer("haze_view", Lifetime::Kept);
         cx.frame(haze::HAZE, Bind::Texture(hazed))?;
-        let march_pass = cx.pass("haze").color(marched, Access::Load).id();
+        let march_pass = cx
+            .pass("haze")
+            .label("engine/post-haze")
+            .span("haze")
+            .color(marched, Access::Load)
+            .id();
         let filter_pass = cx
             .pass("haze_filter")
             .after(march_pass)
+            .label("engine/post-haze-filter")
+            .span("haze")
             .color(hazed, Access::Load)
             .color(history_texture, Access::Load)
             .id();

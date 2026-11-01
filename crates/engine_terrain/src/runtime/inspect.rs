@@ -1,8 +1,8 @@
-use super::operations::reply;
+use super::operations::{coordinate, reply, within};
 use super::*;
 use crate::layer::maps;
 use crate::{HydrologyBake, TerrainLayer};
-use engine_core::{Joined, Operation, SceneIds};
+use engine_core::{Joined, Operation, SceneIds, bounds, stated};
 use engine_places::terrain::TerrainLayers;
 use serde_json::Value;
 
@@ -24,6 +24,7 @@ pub struct TerrainView {
     pub resident_tiles_by_level: Vec<u32>,
     pub level_errors: Vec<f32>,
     pub level_ranges: Vec<f32>,
+    pub level_spacings: Vec<f32>,
     pub hydrology: Option<HydrologyView>,
     pub erosion: Option<ErosionView>,
     pub paths: Vec<PathView>,
@@ -235,6 +236,9 @@ fn terrain_view(
         resident_tiles_by_level: levels,
         level_errors,
         level_ranges,
+        level_spacings: (0..terrain.pyramid.levels())
+            .map(|level| terrain.pyramid.spacing(level))
+            .collect(),
         hydrology,
         erosion,
         paths,
@@ -334,5 +338,144 @@ fn hydrology_view(
                     .collect()
             })
             .unwrap_or_default(),
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainLayerSweep {
+    pub center: [f64; 2],
+    #[schemars(transform = stated(bounds::SWEEP_EXTENT))]
+    pub half_extent: f64,
+    #[schemars(transform = stated(bounds::SWEEP_SAMPLES))]
+    pub samples: u32,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct LayerSweep {
+    pub compared: usize,
+    pub worst: SweepWorst,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct SweepWorst {
+    pub max_difference: f32,
+    pub at: Option<[f32; 2]>,
+}
+
+impl Operation for TerrainLayerSweep {
+    const NAME: &'static str = "terrain_layer_sweep";
+    type Params = (Res<'static, Terrains>, Joined<'static, TerrainLayers>);
+    type Request = Self;
+
+    fn run(
+        (terrains, kinds): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
+        let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
+        let center = Vec2::new(
+            coordinate(request.center[0], "$.center[0]")?,
+            coordinate(request.center[1], "$.center[1]")?,
+        );
+        let half_extent = within(request.half_extent, bounds::SWEEP_EXTENT, "$.half_extent")?;
+        within(
+            f64::from(request.samples),
+            bounds::SWEEP_SAMPLES,
+            "$.samples",
+        )?;
+        Ok(reply(layer_sweep(
+            (&terrains, &kinds),
+            center,
+            half_extent as f32,
+            request.samples,
+        )))
+    }
+}
+
+fn layer_sweep(
+    (terrains, kinds): (&Terrains, &[&'static LayerKind]),
+    center: Vec2,
+    half_extent: f32,
+    samples: u32,
+) -> LayerSweep {
+    let (mut compared, mut worst, mut at) = (0_usize, 0.0_f32, None);
+    for row in 0..samples {
+        for column in 0..samples {
+            let unit = Vec2::new(column as f32, row as f32) / (samples - 1) as f32 * 2.0 - 1.0;
+            let point = center + unit * half_extent;
+            let Some(sample) = terrains.sample(point.x, point.y) else {
+                continue;
+            };
+            if sample.hole || sample.level != 0 {
+                continue;
+            }
+            let (Some(terrain), Some(stack)) = (
+                terrains.terrain(sample.terrain),
+                terrains.layers(sample.terrain, kinds),
+            ) else {
+                continue;
+            };
+            let local = point - Vec2::new(terrain.origin.x, terrain.origin.z);
+            let height = terrain.origin.y + stack.height_at(&terrain.pyramid, local);
+            let difference = (height - sample.height).abs();
+            compared += 1;
+            if difference > worst || at.is_none() {
+                worst = engine_math::max(worst, difference);
+                at = Some(point.to_array());
+            }
+        }
+    }
+    LayerSweep {
+        compared,
+        worst: SweepWorst {
+            max_difference: worst,
+            at,
+        },
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainListing {}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct TerrainListed {
+    pub terrains: Vec<ListedTerrain>,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct ListedTerrain {
+    pub surroundings: bool,
+    pub tiles: Vec<[u16; 3]>,
+    pub drawn: bool,
+}
+
+impl Operation for TerrainListing {
+    const NAME: &'static str = "terrain_listing";
+    type Params = (Res<'static, Terrains>, Res<'static, TerrainSettings>);
+    type Request = Self;
+
+    fn run(
+        (terrains, settings): SystemParamItem<'_, '_, Self::Params>,
+        _: Self,
+    ) -> Result<Value, Error> {
+        Ok(reply(TerrainListed {
+            terrains: terrains
+                .entries
+                .iter()
+                .map(|state| ListedTerrain {
+                    surroundings: state.around.is_some(),
+                    tiles: state
+                        .store
+                        .tiles()
+                        .map(|tile| {
+                            let key = tile.key();
+                            [u16::from(key.level), key.x, key.z]
+                        })
+                        .collect(),
+                    drawn: settings.enabled && state.drawn,
+                })
+                .collect(),
+        }))
     }
 }

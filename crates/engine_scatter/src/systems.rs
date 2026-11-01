@@ -19,7 +19,7 @@ use crate::far_cover::FarCoverTable;
 use crate::groups::{Groups, Kept, Resolved, ScatterKey, placed_shape, resolve, scatter_key};
 use crate::layouts::{
     CanopyPiece, CullFrame, CullGroup, CullView, DEAD, DrawArgs, GroundData, LEVELS, PlacedRecord,
-    PoseData, SlotColor, draw_args, planes,
+    PoseData, SlotColor, draw_args,
 };
 use crate::occupancy::{OccupancyWindows, canopy, texel_share};
 use crate::pool::ScatterPool;
@@ -464,6 +464,7 @@ pub(crate) fn place_pool(
 pub(crate) fn plan_cull(
     (view, detail, maps, policy): (Res<View>, Res<Detail>, Res<ShadowMaps>, Res<ImpostorPolicy>),
     mut state: ResMut<ScatterState>,
+    mut feedback: ResMut<ScatterFeedback>,
 ) {
     let state = &mut *state;
     let plan = &mut state.plan;
@@ -489,7 +490,7 @@ pub(crate) fn plan_cull(
     let cards = impostors.map_or(0.0, |size| y_row * height / size);
     plan.views.clear();
     plan.views.push(CullView {
-        planes: planes(view_projection),
+        planes: engine_render::planes(view_projection),
         limits: [0.0; 4],
     });
     for (index, region) in maps.regions.iter().enumerate() {
@@ -526,6 +527,9 @@ pub(crate) fn plan_cull(
         state.generation += 1;
     }
     plan.lists_left = ids > room || cards_bytes > room;
+    if !plan.lists_left {
+        feedback.entries = 0;
+    }
     plan.frame = Some(CullFrame {
         eye: eye.extend(pixels).to_array(),
         counts: [state.objects, group_count, LEVELS, view_count],

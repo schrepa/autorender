@@ -336,14 +336,6 @@ impl PresentedTransforms {
         Some((value, value.revision()))
     }
 
-    #[inline]
-    pub(crate) fn prepared_matrix(&self, index: usize) -> Option<Mat4> {
-        self.valid
-            .get(index)
-            .filter(|&&valid| valid)
-            .map(|_| self.presented[index])
-    }
-
     pub fn len(&self) -> usize {
         self.presented_entities.len()
     }

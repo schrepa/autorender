@@ -11,7 +11,7 @@ mod gpu_layouts;
 mod haze;
 mod settings;
 mod sky;
-mod tables;
+pub mod tables;
 mod under_eye;
 mod views;
 

@@ -293,11 +293,6 @@ impl ComponentKind {
     }
 
     #[doc(hidden)]
-    pub fn listed_files(&self, value: &Value) -> Vec<String> {
-        self.listed_files_in(value, &SceneCx::new(None, None, None))
-    }
-
-    #[doc(hidden)]
     pub fn listed_files_in(&self, value: &Value, cx: &SceneCx<'_>) -> Vec<String> {
         self.files
             .as_ref()
@@ -312,11 +307,6 @@ impl ComponentKind {
     }
 
     #[doc(hidden)]
-    pub fn scene_paths(&self, value: &Value, path: &str) -> Result<Vec<ScenePath>, Error> {
-        self.scene_paths_in(value, &SceneCx::new(None, None, None), path)
-    }
-
-    #[doc(hidden)]
     pub fn scene_paths_in(
         &self,
         value: &Value,
@@ -326,11 +316,6 @@ impl ComponentKind {
         self.paths
             .as_ref()
             .map_or_else(|| Ok(Vec::new()), |paths| paths(value, cx, path))
-    }
-
-    #[doc(hidden)]
-    pub fn json_schema(&self) -> Value {
-        self.json_schema_in(&SceneCx::new(None, None, None))
     }
 
     #[doc(hidden)]

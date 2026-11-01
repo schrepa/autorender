@@ -228,6 +228,7 @@ pub(crate) struct ProbeState {
     sky: u64,
     set: u32,
     pub(crate) listed: bool,
+    pub(crate) captures: bool,
     views: bool,
     still: bool,
     pub(crate) timed: bool,
@@ -253,6 +254,7 @@ impl Default for ProbeState {
             sky: 0,
             set: 0,
             listed: false,
+            captures: false,
             views: false,
             still: false,
             timed: false,
@@ -395,7 +397,8 @@ pub(crate) fn plan_captures(
     let counted = |count: u64| count.min(u64::from(u32::MAX)) as u32;
     let probe_cut = Cut::of(counted(asked), counted(kept));
     let mut drawn = 0;
-    if gpu && !view.debug() && state.listed {
+    state.captures = gpu && !view.debug() && state.listed;
+    if state.captures {
         state.slots.tick();
         if state.stillness.settled() && present {
             drawn = state.capture(

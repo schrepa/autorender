@@ -19,6 +19,7 @@ use engine_heightfield::given::MAX_GIVEN_RIVERS;
 use engine_heightfield::layer;
 use engine_heightfield::layer::TerrainLayer;
 use engine_heightfield::path::PATH_FAR;
+use engine_heightfield::tile::{Generator, Tile};
 use engine_heightfield::{
     Blend, Bridge, GivenRiver, HydrologyBake, HydrologySample, HydrologyStats, Layers, PathSample,
 };
@@ -27,7 +28,6 @@ pub use bake::TerrainBake;
 pub use engine_heightfield::grid::{
     MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey,
 };
-pub use engine_heightfield::tile::{BiomeRules, Generator, PATCH_QUADS, PATCHES_PER_TILE, Tile};
 pub use engine_heightfield::{Stamp, StampOp};
 pub use path::{HeightGrid, Route, RouteOptions, height_grid, route};
 pub use runtime::LayerStats;

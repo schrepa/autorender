@@ -96,6 +96,27 @@ pub(crate) fn frames(session: &mut dyn SmokeSession, count: u32, check: &'static
     )
 }
 
+pub(crate) fn counter(reply: &Value, field: &str) -> u64 {
+    let observation = &reply["observation"];
+    let observation = if observation.is_object() {
+        observation
+    } else {
+        &reply["result"]["observation"]
+    };
+    observation[field]
+        .as_str()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(u64::MAX)
+}
+
+pub(crate) fn tick(reply: &Value) -> u64 {
+    counter(reply, "tick")
+}
+
+pub(crate) fn frame(reply: &Value) -> u64 {
+    counter(reply, "frame")
+}
+
 pub(crate) fn number(value: &Value) -> f64 {
     value.as_f64().unwrap_or(f64::NAN)
 }

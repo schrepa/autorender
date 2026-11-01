@@ -10,7 +10,7 @@ use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
 use super::{FrameTerrain, NO_HOLES, TerrainFrame, changed_run};
 use crate::gpu::{
-    PatchRecord, PATCH_GRID as GRID, PATCH_GRID_VERTICES as GRID_VERTICES, TerrainUniform,
+    PATCH_GRID as GRID, PATCH_GRID_VERTICES as GRID_VERTICES, PatchRecord, TerrainUniform,
     ViewUniform,
 };
 use crate::state::Atlas;
@@ -65,7 +65,10 @@ impl PatchDraws {
         if !self.indexed {
             let indices = grid_indices();
             self.index_count = indices.len() as u32;
-            cx.allocate_buffer(handles.grid, std::mem::size_of_val(indices.as_slice()) as u64);
+            cx.allocate_buffer(
+                handles.grid,
+                std::mem::size_of_val(indices.as_slice()) as u64,
+            );
             cx.write(handles.grid, 0, &indices);
             self.indexed = true;
         }
@@ -92,7 +95,6 @@ impl PatchDraws {
             let screen = ground_rect(views.camera, terrain, eye, uniform.relief[0]);
             frame.terrains.push(FrameTerrain {
                 terrain: index,
-                uniform: index as u32,
                 holes: atlas.holed.iter().any(|&(id, _)| id == terrain.terrain),
                 maps: Vec::with_capacity(views.regions.len()),
                 screen,
@@ -130,7 +132,10 @@ impl PatchDraws {
                 (self.records.len() as u64).next_power_of_two() * size_of::<PatchRecord>() as u64;
             self.fresh = true;
         }
-        cx.allocate_buffer(handles.patches, self.record_room.max(size_of::<PatchRecord>() as u64));
+        cx.allocate_buffer(
+            handles.patches,
+            self.record_room.max(size_of::<PatchRecord>() as u64),
+        );
         let run = if self.fresh {
             0..self.records.len()
         } else {
@@ -261,7 +266,13 @@ fn kept_patches(
     stack.extend((0..tiles_z * side).flat_map(|z| (0..tiles_x * side).map(move |x| (top, x, z))));
     let stray = |from: u32| {
         let measured: f32 = (finest..from)
-            .map(|at| terrain.level_errors.get(at as usize).copied().unwrap_or(0.0))
+            .map(|at| {
+                terrain
+                    .level_errors
+                    .get(at as usize)
+                    .copied()
+                    .unwrap_or(0.0)
+            })
             .sum();
         measured + pyramid.spacing(from)
     };
@@ -323,10 +334,16 @@ fn cut_out(cutout: Option<(Vec2, Vec2)>, corner: Vec2, size: f32) -> bool {
 }
 
 fn ground_rect(view: Mat4, terrain: &TerrainEntry, eye: DVec3, reach: f32) -> Option<[f32; 4]> {
-    let (low, high) = terrain.tiles.iter().map(|tile| (tile.bounds.0.y, tile.bounds.1.y)).fold(
-        (f32::INFINITY, f32::NEG_INFINITY),
-        |(low, high), (bottom, top)| (engine_math::min(low, bottom), engine_math::max(high, top)),
-    );
+    let (low, high) = terrain
+        .tiles
+        .iter()
+        .map(|tile| (tile.bounds.0.y, tile.bounds.1.y))
+        .fold(
+            (f32::INFINITY, f32::NEG_INFINITY),
+            |(low, high), (bottom, top)| {
+                (engine_math::min(low, bottom), engine_math::max(high, top))
+            },
+        );
     if low > high {
         return None;
     }
@@ -375,8 +392,7 @@ fn projected_rect(rect: [f32; 4], view: Mat4, min: Vec3, max: Vec3) -> Option<[f
     Some([left, bottom, right, top])
 }
 
-const PATCH_ATTRIBUTES: [wgpu::VertexAttribute; 5] =
-    wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x2, 2 => Uint32x2, 3 => Uint32, 4 => Uint32];
+const PATCH_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x2, 2 => Uint32x2, 3 => Uint32, 4 => Uint32];
 
 pub(super) fn patch_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
@@ -501,9 +517,17 @@ fn terrain_uniform(
         ],
         origin: terrain.origin.extend(0.0).to_array(),
         directory: [
-            tables.directory_bases.get(parts.index as usize).copied().unwrap_or(0),
+            tables
+                .directory_bases
+                .get(parts.index as usize)
+                .copied()
+                .unwrap_or(0),
             pyramid.levels(),
-            tables.palette_bases.get(parts.index as usize).copied().unwrap_or(0),
+            tables
+                .palette_bases
+                .get(parts.index as usize)
+                .copied()
+                .unwrap_or(0),
             parts.sky.layer(parts.index as usize),
         ],
         relief: [deepest, views.settings.relief_steps as f32, finest, 0.0],
@@ -521,7 +545,12 @@ fn terrain_uniform(
             let averaged = shaded_elsewhere(1, terrain.surroundings);
             [material, low, high, if averaged { 1.0 } else { 0.0 }]
         },
-        water: [0, water.map_or(0, |(slot, _)| slot + 1), water.map_or(0, |(_, first)| first), 0],
+        water: [
+            0,
+            water.map_or(0, |(slot, _)| slot + 1),
+            water.map_or(0, |(_, first)| first),
+            0,
+        ],
     }
 }
 

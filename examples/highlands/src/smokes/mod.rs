@@ -13,6 +13,8 @@ const GAME: &str = "highlands";
 
 const LIGHTING: &str = "lighting";
 
+const FLY_CAMERA_INPUT: (&str, &str) = ("engine_fly_camera", "input_camera");
+
 const SETTLE_FRAMES: u32 = 20_000;
 
 const SMOKES: [Smoke; 2] = [
@@ -40,14 +42,16 @@ const TOON: Smoke = Smoke {
     run: |session| toon_lighting::standard(session).map(drop),
 };
 
-pub fn smokes() -> engine::Result<Vec<SmokeEntry>> {
-    let mut smokes = vec![SmokeEntry {
+pub fn smokes(bricks: &BrickList) -> engine::Result<Vec<SmokeEntry>> {
+    let mut smokes = engine::smokes::registered(bricks)?;
+    smokes.retain(|entry| (entry.owner, entry.name) != FLY_CAMERA_INPUT);
+    smokes.push(SmokeEntry {
         restart: Some(Restart {
             first: jobs::workers,
             then: jobs::page,
         }),
         ..SmokeEntry::of(GAME, &JOBS)
-    }];
+    });
     smokes.extend(SMOKES.iter().map(|smoke| SmokeEntry::of(GAME, smoke)));
     smokes.push(SmokeEntry {
         list: Some(highlands_bricks::toon),

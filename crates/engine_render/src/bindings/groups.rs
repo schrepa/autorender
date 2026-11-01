@@ -1,9 +1,7 @@
 use engine_core::{Error, ErrorCode, Expected};
 
-use super::table::{Binding, Kind, Stages, Table};
+use super::table::{Kind, Stages, Table};
 use crate::pipeline_layouts::StageLimits;
-
-pub type BindingDecl = Binding;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResolvedBinding {
@@ -81,12 +79,6 @@ impl ResolvedLayout {
         self.bindings.iter().find(|binding| binding.name == name)
     }
 
-    pub fn group(&self, group: u32) -> impl Iterator<Item = &ResolvedBinding> + '_ {
-        self.bindings
-            .iter()
-            .filter(move |binding| binding.group == group)
-    }
-
     pub fn counts(&self, stage: Stages) -> StageCounts {
         let mut counts = StageCounts::default();
         for binding in &self.bindings {
@@ -95,10 +87,8 @@ impl ResolvedLayout {
             }
             match binding.kind {
                 Kind::Uniform { .. } => counts.uniform_buffers += 1,
-                Kind::Read { .. } | Kind::Write => counts.storage_buffers += 1,
                 Kind::Texture { .. } => counts.sampled_textures += 1,
                 Kind::Sampler(_) => counts.samplers += 1,
-                Kind::Storage(_) | Kind::StorageArray(_) => counts.storage_textures += 1,
             }
         }
         counts

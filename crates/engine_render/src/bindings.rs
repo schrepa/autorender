@@ -1,14 +1,11 @@
-use crate::impostors::bake::ImpostorBake;
 use crate::gpu_layouts::scene::MaterialUniform;
+use crate::impostors::ImpostorBake;
 
 mod groups;
 mod table;
 
-pub use groups::{BindingDecl, ResolvedBinding, ResolvedLayout, StageCounts};
-pub use table::{
-    Binding, Format, Kind, Sample, Sampling, Stages, Table, View, bind, dynamic_uniform, read,
-    read_of, sampler, texture, uniform, uniform_of, write,
-};
+pub use groups::{ResolvedBinding, ResolvedLayout};
+pub use table::{Kind, Sample, Sampling, Stages, Table, View, sampler, texture, uniform_of};
 
 use Sample::{Depth, Float};
 use Sampling::Filtering;
@@ -32,8 +29,6 @@ macro_rules! tables {
                 bindings: &[$($binding),*],
             };
         )*
-
-        pub const TABLES: &[(&str, &Table)] = &[$((stringify!($name), &$name)),*];
     };
 }
 

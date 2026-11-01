@@ -1,6 +1,7 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod debug_view_smoke;
+mod frame_loop;
 mod hierarchy;
 mod host_parity;
 mod navigation;
@@ -21,6 +22,11 @@ pub struct StandardSmokesBrick;
 impl Brick for StandardSmokesBrick {
     const SOURCE: &'static Source = &SOURCE;
     const SMOKES: &'static [Smoke] = &[
+        Smoke {
+            name: "frame_loop",
+            runs: Runs::Gpu,
+            run: frame_loop::frame_loop,
+        },
         Smoke {
             name: "host_parity",
             runs: Runs::Gpu,

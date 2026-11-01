@@ -27,6 +27,7 @@ pub(crate) struct ProbesGpu {
     views: Draws<ProbeViews>,
     drawn: Vec<(ProbeView, u32)>,
     finished: Option<(u32, u32)>,
+    timed: bool,
     levels: u32,
     placed: Option<(u32, u32)>,
     grid: u64,
@@ -51,11 +52,13 @@ impl GpuPart for ProbesGpu {
         cx.frame(sample::PROBE_SAMPLER, Bind::Sampler(sampler))?;
         let captures = cx
             .pass("probe_captures")
+            .label("engine/probe-face")
             .color_cleared(radiance, wgpu::Color::BLACK)
             .depth(depth, Access::Clear)
             .id();
         let filter_pass = cx
             .pass("probe_filter")
+            .label("engine/environment")
             .after(captures)
             .color_cleared(radiance, wgpu::Color::BLACK)
             .color_cleared(maps, wgpu::Color::BLACK)
@@ -120,6 +123,7 @@ impl GpuPart for ProbesGpu {
             views,
             drawn: Vec::new(),
             finished: None,
+            timed: false,
             levels: 1,
             placed: None,
             grid: 0,
@@ -172,6 +176,7 @@ impl GpuPart for ProbesGpu {
         self.drawn.clear();
         self.drawn.extend_from_slice(&state.drawn);
         self.finished = state.finished;
+        self.timed = state.timed;
         if !state.listed {
             cx.release(self.depth);
         }
@@ -179,7 +184,7 @@ impl GpuPart for ProbesGpu {
             cx.allocate(self.depth, extent(1), 1);
             cx.cameras(&state.cameras);
         }
-        if state.timed {
+        if state.captures {
             cx.run(self.captures);
         }
         if self.finished.is_some() {
@@ -193,6 +198,9 @@ impl GpuPart for ProbesGpu {
                 self.filter_cube((cube, set), cx);
             }
             return 0;
+        }
+        if self.timed {
+            cx.span("probe_captures");
         }
         for (view, (at, layer)) in self.drawn.iter().enumerate() {
             let mut draw = cx.render(

@@ -92,7 +92,11 @@ impl GpuPart for MeterGpu {
         cx.frame(face::EXPOSURE_STATE, Bind::Buffer(state))?;
         let uniform = cx.buffer("exposure_uniform", Lifetime::Kept);
         let bins = cx.buffer("exposure_bins", Lifetime::Kept);
-        let pass = cx.pass("exposure").span("auto_exposure").id();
+        let pass = cx
+            .pass("exposure")
+            .label("engine/exposure")
+            .span("auto_exposure")
+            .id();
         let metering = cx.compute_pipeline(
             pass,
             meter::METER_EXPOSURE,

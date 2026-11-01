@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use engine_assets::MeshBuffer;
 use engine_core::{Camera, Error, Mesh, MeshVertex, Projection, Surface, Transform, glam};
 use engine_settings::{ErrorCode, Expected, InvalidSetting, Rule, Setting, fields, valid_uri};
 use serde::{Deserialize, Serialize};
@@ -100,8 +101,8 @@ impl SceneDocument {
                 object.insert("additionalProperties".to_owned(), Value::Bool(false));
             }
         }
-        if let Some(section) = registry.section(crate::environment::STREAMED) {
-            let mut streamed = serde_json::to_value(section.schema()).expect("schema_serializes");
+        if let Some(section) = registry.section_schema(crate::environment::STREAMED) {
+            let mut streamed = serde_json::to_value(section).expect("schema_serializes");
             if let (Some(Value::Object(nested)), Some(definitions)) = (
                 streamed
                     .as_object_mut()
@@ -352,45 +353,27 @@ impl MeshSource {
                 };
                 let colored = extras(&|vertex| vertex.color.is_some(), "color")?;
                 let second = extras(&|vertex| vertex.uv1.is_some(), "uv1")?;
-                with_extras(
-                    Mesh::new(
-                        vertices.iter().copied().map(MeshVertex::from).collect(),
-                        indices.clone(),
-                    ),
-                    colored.then(|| {
+                MeshBuffer {
+                    vertices: vertices.iter().copied().map(MeshVertex::from).collect(),
+                    indices: indices.clone(),
+                    colors: colored.then(|| {
                         vertices
                             .iter()
                             .map(|vertex| vertex.color.unwrap_or([1.0; 4]))
                             .collect()
                     }),
-                    second.then(|| {
+                    uv1: second.then(|| {
                         vertices
                             .iter()
                             .map(|vertex| vertex.uv1.unwrap_or([0.0; 2]))
                             .collect()
                     }),
-                    path,
-                )
+                    lods: None,
+                }
+                .mesh(path)
             }
         }
     }
-}
-
-pub(crate) fn with_extras(
-    mesh: Result<Mesh, Error>,
-    colors: Option<Vec<[f32; 4]>>,
-    uv1: Option<Vec<[f32; 2]>>,
-    path: &str,
-) -> Result<Mesh, Error> {
-    let invalid = |error: Error| error.coded(ErrorCode::InvalidMesh).within(path);
-    let mut mesh = mesh.map_err(invalid)?;
-    if let Some(colors) = colors {
-        mesh = mesh.with_colors(colors).map_err(invalid)?;
-    }
-    if let Some(uv1) = uv1 {
-        mesh = mesh.with_uv1(uv1).map_err(invalid)?;
-    }
-    Ok(mesh)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

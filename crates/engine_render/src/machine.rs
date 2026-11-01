@@ -84,7 +84,6 @@ pub(crate) struct BuiltPipeline {
     pub(crate) modules: Vec<wgpu::ShaderModule>,
     pub(crate) layout: wgpu::PipelineLayout,
     pub(crate) groups: Vec<OwnGroup>,
-    pub(crate) material: bool,
     pub(crate) variant: u32,
     pub(crate) reads: Vec<Bound>,
     pub(crate) writes: Vec<Bound>,
@@ -112,8 +111,6 @@ pub(crate) struct Machine {
     pub(crate) frame_bound: BTreeMap<u32, Bound>,
     pub(crate) variants: Vec<FrameVariant>,
     pub(crate) switches: Vec<(u32, engine_registry::GateId)>,
-    pub(crate) material: Option<wgpu::BindGroupLayout>,
-    pub(crate) empty: wgpu::BindGroupLayout,
     pub(crate) view_copies: Vec<(Layer, ViewTarget)>,
     pub(crate) doubled: Vec<bool>,
     pub(crate) depth_writes: Vec<bool>,
@@ -630,7 +627,6 @@ impl Machine {
                 modules,
                 layout,
                 groups,
-                material,
                 variant,
                 reads,
                 writes,
@@ -672,8 +668,6 @@ impl Machine {
             frame_bound,
             variants,
             switches,
-            material: Some(material_layout),
-            empty,
             view_copies,
             doubled,
             depth_writes,
@@ -805,7 +799,6 @@ fn graph_of(
         ids.textures.push(ResourceId::new(resources.len()));
         resources.push(ResourceEntry {
             label: texture.label,
-            part: texture.part,
             life: life(texture.lifetime),
             view: false,
         });
@@ -814,7 +807,6 @@ fn graph_of(
         ids.buffers.push(ResourceId::new(resources.len()));
         resources.push(ResourceEntry {
             label: buffer.label,
-            part: buffer.part,
             life: life(buffer.lifetime),
             view: false,
         });
@@ -823,7 +815,6 @@ fn graph_of(
         ids.targets.push((target, ResourceId::new(resources.len())));
         resources.push(ResourceEntry {
             label,
-            part: 0,
             life,
             view,
         });
@@ -847,8 +838,6 @@ fn graph_of(
         let part = declared.parts.get(pass.part as usize);
         let entry = PassEntry {
             label: pass.name,
-            part: pass.part,
-            local: index as u32,
             package: part.map_or("", |part| part.package),
             registered: index as u32,
             layer: pass_layer(pass),
@@ -980,8 +969,6 @@ fn graph_of(
         passes.push(GraphPass {
             entry: PassEntry {
                 label: "view_copy",
-                part: 0,
-                local: u32::MAX,
                 package: "",
                 registered: 0,
                 layer: Some(layer),

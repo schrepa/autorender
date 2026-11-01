@@ -5,7 +5,10 @@ import package::place::ground_surface::{
     OP_MIN, OP_MULTIPLY, OP_NOISE, OP_PATH, OP_POWER, OP_REMAP, OP_RIVER, OP_VALUE, OP_WETNESS,
     OP_WORN, SurfaceGround, SurfaceInputs,
 };
-import package::generated::terrain::{NONE, SURFACE_PATH_FAR, SURFACE_RIVER_FAR, SurfaceEntry};
+import package::generated::terrain::{
+    NONE, SURFACE_PATH_FAR, SURFACE_RIVER_EDGE_FAR, SURFACE_RIVER_EDGE_STEP, SURFACE_RIVER_EDGE_ZERO,
+    SURFACE_RIVER_FAR, SurfaceEntry,
+};
 
 @group(0) @binding(0) var<storage, read> surface_program: array<u32>;
 @group(0) @binding(0) var<storage, read> surface_materials: array<SurfaceEntry>;
@@ -291,6 +294,22 @@ fn shown(point: vec2<f32>) -> f32 {
 fn surface_level(terrain: u32, spacing: f32) -> u32 {
     let entry = surface_materials[terrain];
     return image_level(entry.image_spacing, entry.levels, spacing);
+}
+
+fn surface_river(held: vec4<u32>, present: bool) -> vec4<f32> {
+    var sample = vec4<f32>(SURFACE_RIVER_FAR, 0.0, 0.0, SURFACE_RIVER_FAR);
+    if !present {
+        return sample;
+    }
+    if held.x != SURFACE_RIVER_EDGE_FAR {
+        sample.x = (f32(held.x) - f32(SURFACE_RIVER_EDGE_ZERO)) * SURFACE_RIVER_EDGE_STEP;
+    }
+    sample.y = bitcast<f32>(held.y << 16u);
+    sample.z = bitcast<f32>(held.z << 16u);
+    if held.w != SURFACE_RIVER_EDGE_FAR {
+        sample.w = (f32(SURFACE_RIVER_EDGE_ZERO) - f32(held.w)) * SURFACE_RIVER_EDGE_STEP;
+    }
+    return sample;
 }
 
 fn surface_inputs(terrain: u32, ground: SurfaceGround, level: u32, river: vec4<f32>) -> SurfaceInputs {

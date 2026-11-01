@@ -1,4 +1,6 @@
 use crate::collections::{HashMap, HashSet};
+use std::any::{Any, TypeId};
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -73,15 +75,45 @@ pub trait Job: Send {
     fn step(&mut self, budget: u64, cx: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error>;
 }
 
+const HELD_VALUES: usize = 8;
+
+type HeldValues = Vec<([u8; 32], Arc<dyn Any + Send + Sync>)>;
+
+#[derive(Default)]
+pub struct JobMemo {
+    held: HashMap<TypeId, HeldValues>,
+}
+
+impl JobMemo {
+    fn find<T: Send + Sync + 'static>(&self, key: [u8; 32]) -> Option<Arc<T>> {
+        let held = self.held.get(&TypeId::of::<T>())?;
+        let (_, value) = held.iter().find(|(at, _)| *at == key)?;
+        Arc::clone(value).downcast::<T>().ok()
+    }
+
+    fn hold<T: Send + Sync + 'static>(&mut self, key: [u8; 32], value: Arc<T>) {
+        let held = self.held.entry(TypeId::of::<T>()).or_default();
+        if held.len() >= HELD_VALUES {
+            held.remove(0);
+        }
+        held.push((key, value as Arc<dyn Any + Send + Sync>));
+    }
+}
+
 pub struct JobCx<'c> {
     list: &'c JobList,
     shares: &'c dyn Shares,
+    memo: RefCell<&'c mut JobMemo>,
 }
 
 impl<'c> JobCx<'c> {
     #[doc(hidden)]
-    pub fn new(list: &'c JobList, shares: &'c dyn Shares) -> Self {
-        Self { list, shares }
+    pub fn new(list: &'c JobList, shares: &'c dyn Shares, memo: &'c mut JobMemo) -> Self {
+        Self {
+            list,
+            shares,
+            memo: RefCell::new(memo),
+        }
     }
 }
 
@@ -104,6 +136,20 @@ impl JobCx<'_> {
 
     pub fn members<L: List>(&self) -> impl Iterator<Item = &L::Member> + '_ {
         self.list.members::<L>()
+    }
+
+    pub fn held<T: Send + Sync + 'static>(
+        &self,
+        key: [u8; 32],
+        make: impl FnOnce() -> Result<T, Error>,
+    ) -> Result<Arc<T>, Error> {
+        let found = self.memo.borrow().find::<T>(key);
+        if let Some(found) = found {
+            return Ok(found);
+        }
+        let made = Arc::new(make()?);
+        self.memo.borrow_mut().hold(key, Arc::clone(&made));
+        Ok(made)
     }
 }
 
@@ -536,6 +582,7 @@ pub struct JobExchange {
     cache: [u64; 4],
     held: u32,
     shared: Vec<(RecordKey, Arc<[u8]>)>,
+    memo: JobMemo,
     stats: JobStats,
     last_failure: Option<String>,
 }
@@ -559,6 +606,7 @@ impl Default for JobExchange {
             cache: [0; 4],
             held: 0,
             shared: Vec::new(),
+            memo: JobMemo::default(),
             stats: JobStats::default(),
             last_failure: None,
         }
@@ -601,6 +649,7 @@ impl JobExchange {
 
     pub(crate) fn set_list(&mut self, list: JobList) {
         self.list = Arc::new(list);
+        self.memo = JobMemo::default();
     }
 
     pub fn submit(&mut self, kind: JobRef, input: Vec<u8>, priority: u32) -> JobId {
@@ -710,7 +759,7 @@ impl JobExchange {
     pub fn run_here(&mut self, kind: &JobRef, input: &[u8]) -> Result<Vec<u8>, String> {
         self.stats.in_place += 1;
         let shares = Shared(&self.shared);
-        let mut cx = JobCx::new(&self.list, &shares);
+        let mut cx = JobCx::new(&self.list, &shares, &mut self.memo);
         let mut job = cx.start(kind, input).map_err(|error| error.to_string())?;
         loop {
             if let Some(output) = job

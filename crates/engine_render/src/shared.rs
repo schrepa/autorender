@@ -137,6 +137,9 @@ fn fullscreen(fragment: engine_core::Entry) -> crate::RenderPipeline<'static> {
 
 impl GpuPart for Composite {
     type Reads = ();
+    const NAME: &'static str = "post";
+    const LAZY: bool = true;
+    const LABELS: &'static [&'static str] = &["engine/post-", "engine/post."];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let pass = cx.pass(COMPOSITE).label("engine/post-composite").span("post_composite").id();

@@ -38,11 +38,17 @@ gpu_consts! {
     pub const DEBUG_TILE_EDGE: u32 = 0x800;
     pub const DEBUG_PATCH_EDGE: u32 = 0x1000;
     pub const DEBUG_PATCH_SHIFT: u32 = 24;
+    pub const DEBUG_SHOWN_TILES: u32 = 1;
+    pub const DEBUG_SHOWN_MATERIALS: u32 = 2;
+    pub const DEBUG_SHOWN_SKY: u32 = 3;
+    pub const DEBUG_SHOWN_DETAIL: u32 = 4;
 }
 
-pub const HEIGHT_FORMAT: engine_render::wgpu::TextureFormat = engine_render::wgpu::TextureFormat::R32Float;
+pub const HEIGHT_FORMAT: engine_render::wgpu::TextureFormat =
+    engine_render::wgpu::TextureFormat::R32Float;
 
-pub const PALETTE_BYTES: usize = engine_places::ground::PALETTE_ENTRIES as usize * size_of::<PaletteEntry>();
+pub const PALETTE_BYTES: usize =
+    engine_places::ground::PALETTE_ENTRIES as usize * size_of::<PaletteEntry>();
 
 const _: () = assert!(
     engine_places::ground::PALETTE_ENTRIES as usize * size_of::<PaletteEntry>() <= 16_384,
@@ -99,6 +105,7 @@ gpu_struct! {
     #[derive(Resource)]
     pub struct HorizonsPiece {
         pub records: [[f32; 4]; 385],
+        pub debug: [u32; 4],
     }
 }
 

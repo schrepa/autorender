@@ -1,12 +1,18 @@
-import package::engine::materials::GROUNDING;
-import package::engine::mesh::declarations::{AffineVertexInput, TemporalOutput, slot_fade,
-    slot_index, slot_moved};
-import package::engine::mesh::vertex::{origin_key, placed_material, pose_matrix,
-    transform_vertex};
+import package::engine::mesh::declarations::{AffinePose as PoseRows, AffineVertexInput,
+    TemporalOutput, slot_fade, slot_index, slot_moved};
+import package::engine::mesh::vertex::{origin_key, output_color, pose_matrix, transform_vertex};
 import package::engine::view::{camera, detail_across};
 import package::face::wind::{slot_sway, wind_sway};
-import package::meshes::faces::instances::{instance_colors, instance_poses,
-    instance_previous_poses};
+import package::meshes::slots::{instance_colors, instance_poses, instance_previous_poses};
+import package::place::instances::{AffinePose, SlotColor};
+
+fn posed(pose: AffinePose) -> mat4x4<f32> {
+    return pose_matrix(PoseRows(pose.row_0, pose.row_1, pose.row_2));
+}
+
+fn pose_origin(pose: AffinePose) -> vec3<f32> {
+    return vec3<f32>(pose.row_0.w, pose.row_1.w, pose.row_2.w);
+}
 
 fn vertex_wind(model: mat4x4<f32>, position: vec3<f32>, world: vec3<f32>, sway: f32,
         time: f32) -> vec3<f32> {
@@ -19,19 +25,17 @@ fn slot_wind(model: mat4x4<f32>, world: vec3<f32>, sway: f32, time: f32) -> vec3
     return vertex_wind(model, vec3<f32>(0.0), world, sway, time);
 }
 
-fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
-    let slot = slot_index(input.slot);
-    let model = pose_matrix(instance_poses[slot]);
-    let material = instance_colors[slot];
+fn affine_temporal(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
+        moved: bool, material: SlotColor, fade: u32) -> TemporalOutput {
+    let model = posed(pose);
     var vertex = transform_vertex(input.position, input.normal, material.color,
         material.surface, input.uv, model);
-    vertex.material.w = slot_fade(input.slot) | origin_key(model[3].xyz);
+    vertex.material.w = fade | origin_key(model[3].xyz);
     let point = vec4<f32>(input.position, 1.0);
     var world = model * point;
-    if slot_moved(input.slot) {
-        let pose = instance_previous_poses[slot];
-        world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
-            dot(pose.row_2, point), 1.0);
+    if moved {
+        world = vec4<f32>(dot(previous.row_0, point), dot(previous.row_1, point),
+            dot(previous.row_2, point), 1.0);
     }
     let sway = slot_sway(material.flags);
     if sway > 0.0 {
@@ -42,17 +46,36 @@ fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
         world = vec4<f32>(world.xyz
             + vertex_wind(model, input.position, world.xyz, sway, camera.wind.w), 1.0);
     }
-    if GROUNDING {
-        vertex.material = placed_material(vertex.material, slot);
-    }
-    let previous = camera.previous_view_projection * world;
+    let shown = camera.previous_view_projection * world;
     var output: TemporalOutput;
     output.clip_position = vertex.clip_position;
     output.normal_u = vertex.normal_u;
     output.world_v = vertex.world_v;
     output.material = vertex.material;
-    output.previous = previous.xyw;
+    output.previous = shown.xyw;
     return output;
+}
+
+fn vertex_affine_temporal(input: AffineVertexInput) -> TemporalOutput {
+    let slot = slot_index(input.slot);
+    let moved = slot_moved(input.slot);
+    var previous: AffinePose;
+    if moved {
+        previous = instance_previous_poses[slot];
+    }
+    return affine_temporal(input, instance_poses[slot], previous, moved, instance_colors[slot],
+        slot_fade(input.slot));
+}
+
+fn slot_temporal(input: AffineVertexInput, pose: AffinePose, previous: AffinePose,
+        color: SlotColor, ground: vec4<u32>, fade: u32) -> TemporalOutput {
+    let moved = any(previous.row_0 != pose.row_0) || any(previous.row_1 != pose.row_1)
+        || any(previous.row_2 != pose.row_2);
+    var vertex = affine_temporal(input, pose, previous, moved, color, fade);
+    if ground.z != 0u {
+        vertex.material.x = pack4x8unorm(output_color(vertex.material));
+    }
+    return vertex;
 }
 
 struct MeshOutput {

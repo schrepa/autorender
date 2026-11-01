@@ -25,3 +25,9 @@ pub const WGSL_UNSIGNED: [(&str, u32); 10] = [
 ];
 
 pub const WGSL_FLOAT: [(&str, f32); 1] = [("MASK_MIP_SCALE", MASK_MIP_SCALE)];
+
+pub const CARD_FLAGS: [(&str, u32); 3] = [
+    ("IMPOSTOR_FADING", 1 << 31),
+    ("IMPOSTOR_FADING_OUT", 1 << 30),
+    ("IMPOSTOR_OVER", 1 << 15),
+];

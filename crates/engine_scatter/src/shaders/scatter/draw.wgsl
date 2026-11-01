@@ -21,6 +21,8 @@ struct PlacedVertex {
     @location(2) @interpolate(flat) material: vec4<u32>,
     @location(3) previous: vec3<f32>,
     @location(6) @interpolate(flat) object: vec4<u32>,
+    @location(8) @interpolate(flat) ground: vec4<u32>,
+    @location(9) @interpolate(flat) origin: vec3<f32>,
 }
 
 struct PlacedExtendedVertex {
@@ -32,27 +34,29 @@ struct PlacedExtendedVertex {
     @location(4) color: vec4<f32>,
     @location(5) uv1: vec2<f32>,
     @location(6) @interpolate(flat) object: vec4<u32>,
+    @location(8) @interpolate(flat) ground: vec4<u32>,
+    @location(9) @interpolate(flat) origin: vec3<f32>,
 }
 
 fn placed(vertex: SlotVertex, draw: vec4<u32>, slot: u32) -> PlacedVertex {
     return PlacedVertex(vertex.clip_position, vertex.normal_u, vertex.world_v, vertex.material,
-        vertex.previous, vec4<u32>(draw.x, slot, 0u, 0u));
+        vertex.previous, vec4<u32>(draw.x, slot, 0u, 0u), vertex.ground, vertex.origin);
 }
 
 fn placed_extended(vertex: SlotVertexExtended, draw: vec4<u32>, slot: u32) -> PlacedExtendedVertex {
     return PlacedExtendedVertex(vertex.clip_position, vertex.normal_u, vertex.world_v,
         vertex.material, vertex.previous, vertex.color, vertex.uv1,
-        vec4<u32>(draw.x, slot, 0u, 0u));
+        vec4<u32>(draw.x, slot, 0u, 0u), vertex.ground, vertex.origin);
 }
 
 fn slot_of(vertex: PlacedVertex) -> SlotVertex {
     return SlotVertex(vertex.clip_position, vertex.normal_u, vertex.world_v, vertex.material,
-        vertex.previous);
+        vertex.previous, vertex.ground, vertex.origin);
 }
 
 fn extended_of(vertex: PlacedExtendedVertex) -> SlotVertexExtended {
     return SlotVertexExtended(vertex.clip_position, vertex.normal_u, vertex.world_v,
-        vertex.material, vertex.previous, vertex.color, vertex.uv1);
+        vertex.material, vertex.previous, vertex.color, vertex.uv1, vertex.ground, vertex.origin);
 }
 
 fn placed_vertex(input: AffineVertexInput, slot: u32, fade: u32, draw: vec4<u32>) -> PlacedVertex {

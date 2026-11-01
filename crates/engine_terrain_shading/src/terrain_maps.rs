@@ -54,8 +54,16 @@ struct Shape {
 impl TerrainMaps {
     pub(crate) fn install(cx: &mut Install<'_, TerrainGpu>) -> Result<Self, Error> {
         Ok(Self {
-            albedo: cx.texture("material_albedo", wgpu::TextureFormat::Rgba8UnormSrgb, Lifetime::Kept),
-            data: cx.texture("material_data", wgpu::TextureFormat::Rgba8Unorm, Lifetime::Kept),
+            albedo: cx.texture(
+                "material_albedo",
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                Lifetime::Kept,
+            ),
+            data: cx.texture(
+                "material_data",
+                wgpu::TextureFormat::Rgba8Unorm,
+                Lifetime::Kept,
+            ),
             sampler: cx.sampler(SamplerDesc {
                 filter: wgpu::FilterMode::Linear,
                 mipmap: wgpu::MipmapFilterMode::Linear,
@@ -107,7 +115,11 @@ impl TerrainMaps {
         })
     }
 
-    pub(crate) fn prepare(&mut self, cx: &mut Prepare<'_, TerrainGpu>, (tiles, assets): (&TerrainTiles, &AssetLibrary)) {
+    pub(crate) fn prepare(
+        &mut self,
+        cx: &mut Prepare<'_, TerrainGpu>,
+        (tiles, assets): (&TerrainTiles, &AssetLibrary),
+    ) {
         if !self.filled {
             self.defaults(cx);
             self.filled = true;
@@ -135,7 +147,9 @@ impl TerrainMaps {
             .collect();
         self.listed.clone_from(&self.listing);
         let features = self.features;
-        let shape = listed.iter().find_map(|(_, maps)| shape_of(maps, assets, features));
+        let shape = listed
+            .iter()
+            .find_map(|(_, maps)| shape_of(maps, assets, features));
         let kept: Vec<&SurfaceMaps> = listed
             .iter()
             .filter(|(_, maps)| shape.is_some() && shape_of(maps, assets, features) == shape)
@@ -152,7 +166,12 @@ impl TerrainMaps {
         self.size = shape.map_or((1, 1), |shape| shape.size);
     }
 
-    fn fill(&self, cx: &mut Prepare<'_, TerrainGpu>, (kept, assets): (&[&SurfaceMaps], &AssetLibrary), shape: Shape) {
+    fn fill(
+        &self,
+        cx: &mut Prepare<'_, TerrainGpu>,
+        (kept, assets): (&[&SurfaceMaps], &AssetLibrary),
+        shape: Shape,
+    ) {
         let count = kept.len() as u32;
         let rendered = shape.levels == 1;
         let levels = if rendered {
@@ -178,14 +197,22 @@ impl TerrainMaps {
         for (layer, maps) in kept.iter().enumerate() {
             let layer = layer as u32;
             let places = [(0, layer), (1, 2 * layer), (1, 2 * layer + 1)];
-            for ((texture, (array, at)), default) in textures(maps, assets).iter().zip(places).zip(DEFAULTS) {
+            for ((texture, (array, at)), default) in
+                textures(maps, assets).iter().zip(places).zip(DEFAULTS)
+            {
                 let format = shape.formats[array];
                 for level in 0..shape.levels {
                     let bytes = match texture {
                         Some(texture) => texture.levels()[level].to_vec(),
                         None => solid_level(format, shape.size, level as u32, default),
                     };
-                    cx.write_level(arrays[array], (level as u32, at), shape.size, format, &bytes);
+                    cx.write_level(
+                        arrays[array],
+                        (level as u32, at),
+                        shape.size,
+                        format,
+                        &bytes,
+                    );
                 }
             }
         }
@@ -212,7 +239,13 @@ impl TerrainMaps {
             );
         }
         for (default, (array, layer)) in DEFAULTS.iter().zip([(0, 0), (1, 0), (1, 1)]) {
-            cx.write_level(arrays[array], (0, layer), (1, 1), TextureFormat::Rgba8, default);
+            cx.write_level(
+                arrays[array],
+                (0, layer),
+                (1, 1),
+                TextureFormat::Rgba8,
+                default,
+            );
         }
     }
 }

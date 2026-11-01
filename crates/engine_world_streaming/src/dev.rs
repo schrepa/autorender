@@ -1,4 +1,5 @@
 use bevy_ecs::prelude::*;
+use engine_core::__private::schemars::JsonSchema;
 use engine_core::{Error, ErrorCode, Expected, Operation, SceneIds};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -153,12 +154,15 @@ fn world_cells(cells: &WorldCells) -> WorldCellsView {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(crate = "engine_core::__private::schemars")]
 pub struct WorldChangesControl {
     #[serde(default)]
+    #[schemars(length(max = MAX_CHANGES))]
     pub remove: Vec<String>,
     #[serde(default)]
+    #[schemars(length(max = MAX_CHANGES))]
     pub restore: Vec<String>,
     #[serde(default)]
     pub clear: bool,
@@ -168,6 +172,11 @@ impl Operation for WorldChangesControl {
     const NAME: &'static str = "world_changes";
     type Params = ResMut<'static, WorldChanges>;
     type Request = Self;
+
+    fn schema() -> Value {
+        serde_json::to_value(engine_core::__private::schemars::schema_for!(WorldChangesControl))
+            .expect("schema_serializes")
+    }
 
     fn run(
         mut changes: SystemParamItem<'_, '_, Self::Params>,

@@ -15,6 +15,8 @@ gpu_consts! {
     pub const MOVING_MAP: u32 = 7;
     pub const SKY_MAP: u32 = 8;
     pub const MOVING_PAIRS: u32 = 8;
+    pub const LOD_STATE: u32 = 1 << 31;
+    pub const UNWATCHED: u32 = u32::MAX;
 }
 
 pub(crate) const DRAW_ARGS_BYTES: u64 = 20;
@@ -40,7 +42,8 @@ gpu_struct! {
         pub viewport: [f32; 4],
         pub plane: u32,
         pub lod_error: f32,
-        pub pad: [u32; 2],
+        pub watched: u32,
+        pub pad: u32,
         pub eye: [f32; 4],
         pub fade: [f32; 4],
     }

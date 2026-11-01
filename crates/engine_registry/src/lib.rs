@@ -1,6 +1,7 @@
 mod access;
 mod attribution;
 mod entries;
+mod explain;
 mod gates;
 mod hooks;
 mod jobs;
@@ -22,6 +23,7 @@ pub use entries::{
     Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry, access_of,
     parse_section, set_section,
 };
+pub use explain::{ExplainAsk, ExplainEntry, ExplainRecord, explain};
 pub use gates::{GateDriver, GateFn, GateId, Gates, Scope, gate_on};
 pub use hooks::{BrickHooks, NamedField, Removal, Settle, run_settles};
 pub use jobs::{

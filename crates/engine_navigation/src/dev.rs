@@ -13,8 +13,13 @@ use crate::{NavAgents, NavOptions, NavQuery, NavStats};
 const COORDINATE: Rule = Rule::Range(-1.0e6, 1.0e6);
 const FIRST_AGENTS: usize = 16;
 
+pub(crate) fn schema_of<T: schemars::JsonSchema>() -> Value {
+    serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null)
+}
+
 #[derive(Serialize, schemars::JsonSchema)]
 pub struct NavAgentView {
+    #[schemars(with = "crate::SceneNavAgent")]
     pub agent: NavAgent,
     pub status: NavStatus,
     pub searched_for: Option<[f32; 2]>,
@@ -109,6 +114,14 @@ impl Operation for NavAgentQuery {
             .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&id))?;
         Ok(json!(agent_view(agent, walk, at)))
     }
+
+    fn schema() -> Value {
+        schema_of::<Self>()
+    }
+
+    fn result_schema() -> Option<Value> {
+        Some(schema_of::<NavAgentView>())
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -166,6 +179,14 @@ impl Operation for NavAgentsQuery {
             first,
         }))
     }
+
+    fn schema() -> Value {
+        schema_of::<Self>()
+    }
+
+    fn result_schema() -> Option<Value> {
+        Some(schema_of::<NavAgentsView>())
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -216,6 +237,10 @@ impl Operation for NavGoControl {
             temporary: true,
             destination,
         }))
+    }
+
+    fn schema() -> Value {
+        schema_of::<Self>()
     }
 }
 
@@ -280,6 +305,10 @@ impl Operation for NavPathQuery {
             (&mut *navigation, &mut jobs),
             request,
         )
+    }
+
+    fn schema() -> Value {
+        schema_of::<Self>()
     }
 }
 

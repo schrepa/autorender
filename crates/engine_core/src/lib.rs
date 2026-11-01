@@ -56,7 +56,7 @@ pub use engine_place::{
     Mesh3d, MeshHandle, PlaceDecl, Runs, Slot, Smoke, SmokeFailure, SmokeSession, Stamp,
     TextureHandle, gpu_consts, smoke_eq,
 };
-pub use engine_registry::{AuthoredId, FrameFacts, RecordParity};
+pub use engine_registry::{AuthoredId, ExplainAsk, ExplainRecord, FrameFacts, RecordParity};
 pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting,
     fields, is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
@@ -71,7 +71,7 @@ pub use nearest::Nearest;
 pub use provided::*;
 pub use records::*;
 pub use scene::*;
-pub use section::{Cut, Operation, Readback, Section};
+pub use section::{Cut, Explain, Operation, Readback, Section};
 pub use services::{
     Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, Placed, Placement,
     Poses, Prepared, Reach, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneIds,

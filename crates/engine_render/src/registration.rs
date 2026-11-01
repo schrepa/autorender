@@ -18,6 +18,8 @@ pub(crate) type InstallFn = fn(&mut World, &mut InstallCore) -> Result<Box<dyn I
 pub(crate) struct PartRecord {
     pub(crate) part: TypeId,
     pub(crate) name: &'static str,
+    pub(crate) lazy: bool,
+    pub(crate) labels: &'static [&'static str],
     pub(crate) scope: Scope,
     pub(crate) install: InstallFn,
 }
@@ -26,7 +28,13 @@ impl PartRecord {
     pub(crate) fn of<P: GpuPart>(scope: Scope) -> Self {
         Self {
             part: TypeId::of::<P>(),
-            name: std::any::type_name::<P>(),
+            name: if P::NAME.is_empty() {
+                std::any::type_name::<P>()
+            } else {
+                P::NAME
+            },
+            lazy: P::LAZY,
+            labels: P::LABELS,
             scope,
             install: install::<P>,
         }
@@ -39,21 +47,16 @@ pub(crate) struct ResolvePass(pub(crate) crate::PassNames);
 
 pub(crate) struct DrawAny {
     pub(crate) part: TypeId,
-    pub(crate) point: TypeId,
-    pub(crate) scope: Scope,
     pub(crate) record: Arc<dyn Any + Send + Sync>,
 }
 
 impl DrawAny {
     pub(crate) fn of<P: GpuPart, D: DrawPoint>(
-        scope: Scope,
         layer: D::Layer,
         draw: fn(&P, &D::Args, &mut Draw<'_, P, D>) -> u32,
     ) -> Self {
         Self {
             part: TypeId::of::<P>(),
-            point: TypeId::of::<D>(),
-            scope,
             record: Arc::new(DrawRecord::<D> {
                 layer,
                 make: Box::new(move |part| DrawMember {

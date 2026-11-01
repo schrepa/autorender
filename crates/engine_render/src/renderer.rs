@@ -22,7 +22,7 @@ mod startup;
 
 pub use attribution::GpuPassTimes;
 pub use install::{Installation, InstalledPart, InstalledPiece, install_noop};
-pub(crate) use display::{Display, DisplayFrame};
+pub(crate) use display::Display;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::GpuMark;
 pub use startup::StartingRenderer;
@@ -73,6 +73,7 @@ pub struct Renderer {
     ran: Vec<&'static [&'static str]>,
     part_names: &'static [&'static str],
     linked: engine_core::LinkedStats,
+    resolver: Option<(&'static str, &'static str)>,
 }
 
 impl Renderer {
@@ -81,6 +82,11 @@ impl Renderer {
     }
 
     pub fn pass_owner(&self, pass: &str) -> Option<&'static str> {
+        if let Some((resolved, package)) = self.resolver
+            && resolved == pass
+        {
+            return Some(package);
+        }
         let machine = &self.run.as_ref()?.machine;
         let declared = machine.declared.passes.iter().find(|known| known.name == pass)?;
         machine.declared.parts.get(declared.part as usize).map(|part| part.package)
@@ -93,5 +99,4 @@ impl Renderer {
     pub fn resize(&mut self, width: u32, height: u32) {
         self.core.display.resize(width, height);
     }
-
 }

@@ -19,7 +19,6 @@ const TERRAIN_BYTES: u64 = size_of::<CoverTerrain>() as u64;
 const MATERIAL_BYTES: u64 = PALETTE_ENTRIES as u64 * size_of::<CoverMaterial>() as u64;
 
 pub(crate) struct CoverGpu {
-    clear_counts: Pass<Self>,
     grow: Pass<Self>,
     rows: Buffer<Self>,
     blades: Buffer<Self>,
@@ -52,8 +51,11 @@ impl GpuPart for CoverGpu {
         let materials = cx.buffer("cover_materials", Lifetime::Kept);
         cx.frame(face::COVER_TERRAINS, Bind::Buffer(terrains))?;
         cx.frame(face::COVER_MATERIALS, Bind::Buffer(materials))?;
-        let clear_counts = cx.clear("clear_cover_counts", counts);
-        let grow_pass = cx.pass("ground_cover").after(clear_counts).id();
+        let grow_pass = cx
+            .pass("ground_cover")
+            .label("engine/cover-grow")
+            .span("ground_cover")
+            .id();
         let growing = cx.compute_pipeline(
             grow_pass,
             grow::GROW_COVER,
@@ -102,7 +104,6 @@ impl GpuPart for CoverGpu {
         )?;
         let indirect = cx.draw_input(MainView, args);
         Ok(Self {
-            clear_counts,
             grow: grow_pass,
             rows,
             blades,
@@ -167,7 +168,6 @@ impl GpuPart for CoverGpu {
         cx.write(self.rows, 0, &plan.rows);
         cx.write(self.frame, 0, &[plan.frame]);
         self.cells.extend_from_slice(&plan.cells);
-        cx.run(self.clear_counts);
         cx.run(self.grow);
         cx.read_back::<BladeCounts>(0, self.counts, 0..COUNT_BYTES, AfterRead::Keep);
     }
@@ -176,14 +176,15 @@ impl GpuPart for CoverGpu {
         if pass != self.grow {
             return 0;
         }
-        let mut count = 0;
+        cx.clear(self.counts);
         for (index, &cells) in self.cells.iter().enumerate() {
             if index > 0 {
-                count += cx.dispatch(&self.stepping, Count::Groups([1, 1, 1]));
+                cx.dispatch(&self.stepping, Count::Groups([1, 1, 1]));
             }
-            count += cx.dispatch(&self.growing, Count::Groups([cells, cells, 1]));
+            cx.dispatch(&self.growing, Count::Groups([cells, cells, 1]));
         }
-        count + cx.dispatch(&self.finishing, Count::Groups([1, 1, 1]))
+        cx.dispatch(&self.finishing, Count::Groups([1, 1, 1]));
+        0
     }
 }
 

@@ -423,7 +423,7 @@ pub(crate) fn stream_cells(
         .map_or(cells.from_scene, |context| context.is_changed());
     if scene.is_changed() || context_changed {
         let content = context.as_deref().map_or_else(Content::default, |context| {
-            instance::content(&scene, context)
+            context.scope(|| instance::content(&scene, context))
         });
         cells.from_scene = context.is_some();
         cells.replace(Arc::new(content), &mut act);

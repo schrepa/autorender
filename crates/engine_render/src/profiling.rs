@@ -5,22 +5,6 @@ pub struct Span<'a> {
 }
 
 impl<'a> Span<'a> {
-    pub fn render(self) -> wgpu::RenderPassTimestampWrites<'a> {
-        self.render_part(true, true)
-    }
-
-    pub fn compute(self) -> wgpu::ComputePassTimestampWrites<'a> {
-        self.compute_part(true, true)
-    }
-
-    pub fn render_part(self, begin: bool, end: bool) -> wgpu::RenderPassTimestampWrites<'a> {
-        wgpu::RenderPassTimestampWrites {
-            query_set: self.query_set,
-            beginning_of_pass_write_index: begin.then_some(self.begin),
-            end_of_pass_write_index: end.then_some(self.begin + 1),
-        }
-    }
-
     pub fn compute_part(self, begin: bool, end: bool) -> wgpu::ComputePassTimestampWrites<'a> {
         wgpu::ComputePassTimestampWrites {
             query_set: self.query_set,

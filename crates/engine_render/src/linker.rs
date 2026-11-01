@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use engine_core::{Entry, Error, ErrorCode, Source, Var};
@@ -105,9 +104,7 @@ struct Module {
 #[derive(Clone, Debug)]
 pub(crate) struct Composed {
     pub(crate) module: String,
-    pub(crate) entry: String,
     pub(crate) text: String,
-    pub(crate) hash: u64,
     pub(crate) switches: Vec<u32>,
     pub(crate) overrides: Vec<(String, String)>,
 }
@@ -419,12 +416,8 @@ impl Linker {
                 }
             }
         }
-        let mut hasher = DefaultHasher::new();
-        text.hash(&mut hasher);
         let composed = Arc::new(Composed {
             module: module.to_owned(),
-            entry: entry.to_owned(),
-            hash: hasher.finish(),
             text,
             switches,
             overrides,

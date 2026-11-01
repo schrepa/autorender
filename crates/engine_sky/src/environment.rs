@@ -78,6 +78,7 @@ impl Environment {
         cx.frame(environment::ENVIRONMENT_SAMPLER, Bind::Sampler(sampler))?;
         let pass = cx
             .pass("sky_environment")
+            .label("engine/environment")
             .color_cleared(radiance, wgpu::Color::BLACK)
             .color_cleared(maps, wgpu::Color::BLACK)
             .id();

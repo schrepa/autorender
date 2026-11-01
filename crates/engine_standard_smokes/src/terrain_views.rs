@@ -36,6 +36,7 @@ fn fixture() -> Value {
         "camera": {"position": [0, 80, 140], "target": [0, 30, 0], "fov_degrees": 60, "near": 0.5, "far": 4000},
         "materials": [],
         "meshes": [],
+        "environment": {"ground_cover": {"looks": {"meadow": {"density": 60}}}},
         "entities": [{"id": "ground", "terrain": {
             "origin": [-512, 0, -512], "tiles": [4, 4], "spacing": 1,
             "layers": [
@@ -44,7 +45,7 @@ fn fixture() -> Value {
             ],
             "surface": {
                 "materials": [
-                    {"id": "meadow", "color": [0.12, 0.2, 0.06], "cover": {"density": 60}},
+                    {"id": "meadow", "color": [0.12, 0.2, 0.06]},
                     {"id": "rock", "color": [0.3, 0.28, 0.26], "roughness": 0.8},
                     {"id": "snow", "color": [0.85, 0.87, 0.9], "roughness": 0.5},
                 ],

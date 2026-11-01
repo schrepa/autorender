@@ -5,7 +5,7 @@ use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::{BoxedSystem, In, RunSystemError, System};
+use bevy_ecs::system::{BoxedSystem, In, RunSystemError};
 use bevy_ecs::world::{DeferredWorld, World};
 use engine_place::{Error, ErrorCode};
 use serde_json::Value;

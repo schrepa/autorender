@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
-use engine_core::{CookMode, DeviceLimits, Error, FrameTime, Jobs, Readback};
+use engine_core::{CookMode, DeviceLimits, Error, FrameTime, Jobs, Readback, View};
 use engine_places::ground::GroundTiles;
 use engine_render::{AfterRead, ComputePipeline, Count, Encode, Install, Pass, Prepare};
 
@@ -149,7 +149,17 @@ pub struct SettleFeedback {
     asked: BTreeMap<(u32, u64), (usize, u32)>,
     arrivals: Vec<(u64, u32, Vec<u8>)>,
     made: Vec<(Vec<u8>, Result<Vec<u8>, String>)>,
+    planned: Option<Planned>,
     pub(crate) work: SettleWork,
+}
+
+#[derive(Default)]
+struct Planned {
+    took: u32,
+    raised: Option<(usize, u32)>,
+    ran: Vec<(usize, u32, [u32; 3])>,
+    asked: Vec<(u32, u64)>,
+    means: Vec<(usize, u32)>,
 }
 
 impl Readback for SettleFeedback {
@@ -162,7 +172,62 @@ fn needs(start: &SettleStart) -> Capacity {
     Capacity::of(&start.stored, start.sources.len())
 }
 
+fn loaded(squares: &mut [Option<Square>], slot: usize, load: u32) -> Option<&mut Square> {
+    squares
+        .get_mut(slot)
+        .and_then(Option::as_mut)
+        .filter(|square| square.load == load)
+}
+
 impl SettleFeedback {
+    pub(crate) fn restart(&mut self) {
+        for square in std::mem::take(&mut self.squares)
+            .into_iter()
+            .flatten()
+            .rev()
+        {
+            self.waiting.push_front(SettleAsk {
+                terrain: square.terrain,
+                inputs: square.inputs,
+                start: square.start,
+            });
+        }
+        self.layout = None;
+        self.room = None;
+        self.steps = 0;
+        self.asked.clear();
+        self.arrivals.clear();
+        self.planned = None;
+    }
+
+    fn undo(&mut self, submitted: bool) -> Vec<usize> {
+        let Some(planned) = self.planned.take().filter(|_| !submitted) else {
+            return Vec::new();
+        };
+        self.steps = planned.took;
+        if let Some((slot, load)) = planned.raised
+            && let Some(square) = loaded(&mut self.squares, slot, load)
+        {
+            square.raised = false;
+        }
+        for (slot, load, [steps, since_look, stirred]) in planned.ran {
+            if let Some(square) = loaded(&mut self.squares, slot, load) {
+                (square.steps, square.since_look, square.stirred) = (steps, since_look, stirred);
+            }
+        }
+        for asked in &planned.asked {
+            self.asked.remove(asked);
+        }
+        let mut wanted = Vec::new();
+        for (slot, load) in planned.means {
+            if let Some(square) = loaded(&mut self.squares, slot, load) {
+                square.asked_means = None;
+                wanted.push(slot);
+            }
+        }
+        wanted
+    }
+
     fn settle(&mut self, starts: Vec<SettleAsk>) {
         for ask in starts {
             let asked = self.waiting.iter().any(|held| held.inputs == ask.inputs)
@@ -203,12 +268,13 @@ impl SettleFeedback {
 
     fn prepare(
         &mut self,
-        (cooking, binding, frame): (bool, u64, u64),
+        (cooking, binding, frame, submitted): (bool, u64, u64, bool),
         ground: &dyn Fn(Entity) -> Option<u32>,
     ) {
         self.work = SettleWork::default();
+        let mut wanted = self.undo(submitted);
         let ran = std::mem::take(&mut self.steps);
-        let wanted = self.take_readbacks(ran, cooking, frame);
+        wanted.extend(self.take_readbacks(ran, cooking, frame));
         let idle = self.waiting.is_empty() && self.squares.iter().all(Option::is_none);
         if idle {
             if !self.reading() {
@@ -223,8 +289,12 @@ impl SettleFeedback {
         let Some(layout) = self.layout else {
             return;
         };
+        let mut planned = Planned {
+            took: ran,
+            ..Planned::default()
+        };
         self.work.layout = Some((layout, self.layout_generation));
-        self.raise(&layout, ground);
+        self.raise(&layout, ground, &mut planned);
         self.work.room = self.room.map(|room| (room, self.room_generation));
         self.work.loads = self
             .squares
@@ -251,11 +321,17 @@ impl SettleFeedback {
             let most = most.clamp(1, u64::from(LOOK_EVERY)) as u32;
             self.steps = 1 << (u32::BITS - 1 - most.leading_zeros());
         }
-        let looks = self.write_squares();
-        self.ask_readbacks(&layout, (looks, wanted), frame);
+        let looks = self.write_squares(&mut planned);
+        self.ask_readbacks(&layout, (looks, wanted), frame, &mut planned);
+        self.planned = Some(planned);
     }
 
-    fn raise(&mut self, layout: &Layout, ground: &dyn Fn(Entity) -> Option<u32>) {
+    fn raise(
+        &mut self,
+        layout: &Layout,
+        ground: &dyn Fn(Entity) -> Option<u32>,
+        planned: &mut Planned,
+    ) {
         let found = self.squares.iter().enumerate().find_map(|(slot, square)| {
             let square = square.as_ref().filter(|square| !square.raised)?;
             Some((slot, ground(square.terrain)?))
@@ -302,6 +378,7 @@ impl SettleFeedback {
             terrain: [terrain, 0, 0, 0],
         };
         square.raised = true;
+        planned.raised = Some((slot, square.load));
         self.work.raise = Some(Raise {
             list,
             frame,
@@ -347,7 +424,7 @@ impl SettleFeedback {
         }
     }
 
-    fn write_squares(&mut self) -> Vec<usize> {
+    fn write_squares(&mut self, planned: &mut Planned) -> Vec<usize> {
         let steps = self.steps;
         let (mut blocks, mut sourced, mut stirring) = (0, 0, false);
         let mut written = vec![SimSlot::zeroed(); self.squares.len()];
@@ -368,6 +445,8 @@ impl SettleFeedback {
             let index = square.stirred;
             let runs = square.raised && square.phase != Phase::Reading && steps > 0;
             if runs {
+                let before = [square.steps, square.since_look, square.stirred];
+                planned.ran.push((slot, square.load, before));
                 flags |= SIM_STEPPING;
                 square.since_look += steps;
                 if stirs {
@@ -406,7 +485,13 @@ impl SettleFeedback {
         looks
     }
 
-    fn ask_readbacks(&mut self, layout: &Layout, (looks, wanted): (Vec<usize>, Vec<usize>), frame: u64) {
+    fn ask_readbacks(
+        &mut self,
+        layout: &Layout,
+        (looks, wanted): (Vec<usize>, Vec<usize>),
+        frame: u64,
+        planned: &mut Planned,
+    ) {
         let held = layout.held();
         let means = CELL_MEANS as u64;
         for slot in looks {
@@ -414,9 +499,12 @@ impl SettleFeedback {
                 continue;
             };
             let blocks = square.start.stored.stored() as u64;
-            let offset = (layout.averages_at(slot as u32) + (u64::from(SIM_CELL_SUMS) + means) * held) * 16;
+            let offset =
+                (layout.averages_at(slot as u32) + (u64::from(SIM_CELL_SUMS) + means) * held) * 16;
             let bytes = u64::from(SIM_BLOCK_LOOKS) * blocks * 16;
-            self.asked.insert((tag(slot, LOOK), frame), (slot, square.load));
+            self.asked
+                .insert((tag(slot, LOOK), frame), (slot, square.load));
+            planned.asked.push((tag(slot, LOOK), frame));
             self.work.reads.push(Read {
                 tag: tag(slot, LOOK),
                 source: Source::Averages,
@@ -444,8 +532,11 @@ impl SettleFeedback {
             square.asked_means = Some(frame);
             square.means = None;
             square.ground = None;
+            planned.means.push((slot, square.load));
             for kind in [MEANS, GROUND] {
-                self.asked.insert((tag(slot, kind), frame), (slot, square.load));
+                self.asked
+                    .insert((tag(slot, kind), frame), (slot, square.load));
+                planned.asked.push((tag(slot, kind), frame));
             }
             self.work.reads.push(Read {
                 tag: tag(slot, MEANS),
@@ -572,7 +663,8 @@ impl SettleFeedback {
         let Some(square) = self.squares[slot].take() else {
             return;
         };
-        let (Some(means), Some(ground)) = (square.means.as_deref(), square.ground.as_deref()) else {
+        let (Some(means), Some(ground)) = (square.means.as_deref(), square.ground.as_deref())
+        else {
             return;
         };
         let start = &square.start;
@@ -590,7 +682,8 @@ impl SettleFeedback {
             say_made(&square, &made);
         }
         for (input, water) in square.inputs.iter().zip(&made) {
-            self.made.push((input.to_vec(), Ok(engine_codec::encode(water))));
+            self.made
+                .push((input.to_vec(), Ok(engine_codec::encode(water))));
         }
     }
 }
@@ -794,7 +887,7 @@ pub(crate) fn hand_settles(mut state: ResMut<WaterState>, mut feedback: ResMut<S
 
 pub(crate) fn plan_settles(
     ground: Res<GroundTiles>,
-    (limits, cook, time): (Res<DeviceLimits>, Res<CookMode>, Res<FrameTime>),
+    (limits, cook, time, view): (Res<DeviceLimits>, Res<CookMode>, Res<FrameTime>, Res<View>),
     mut jobs: Jobs,
     mut state: ResMut<WaterState>,
     mut feedback: ResMut<SettleFeedback>,
@@ -807,7 +900,13 @@ pub(crate) fn plan_settles(
             .map(|&(_, index)| index)
     };
     let feedback = &mut *feedback;
-    feedback.prepare((cook.cooking, limits.storage_room, time.frame), &index_of);
+    let frame = (
+        cook.cooking,
+        limits.storage_room,
+        time.frame,
+        view.submitted(),
+    );
+    feedback.prepare(frame, &index_of);
     for (input, made) in std::mem::take(&mut feedback.made) {
         if let Ok(bytes) = &made {
             let kept = jobs.keep(&SETTLED, &input, bytes.clone());
@@ -904,8 +1003,15 @@ impl SettleGpu {
                 "water_settle_setup_live",
             ],
         );
-        let raise = cx.pass("water_settle_raise").id();
-        let pass = cx.pass("water_settle").after(raise).id();
+        let raise = cx
+            .pass("water_settle_raise")
+            .label("engine/water-settle-raise")
+            .id();
+        let pass = cx
+            .pass("water_settle")
+            .after(raise)
+            .label("engine/water-settle")
+            .id();
         let kernels = Kernels::install(cx, pass, &slots)?;
         let bound = crate::water::reached(cx, &[setup::SETUP_RAISE], setup_handles.bound(&slots));
         let raising = cx.compute_pipeline(raise, setup::SETUP_RAISE, &bound)?;
@@ -973,7 +1079,13 @@ impl SettleGpu {
         self.slots.write_frames(&layout, cx);
         cx.write(self.slots.squares, 0, &[squares(&work.squares)]);
         if work.steps > 0 {
-            self.run = Some((work.steps, work.sourced, work.blocks, work.stirring, layout.slots));
+            self.run = Some((
+                work.steps,
+                work.sourced,
+                work.blocks,
+                work.stirring,
+                layout.slots,
+            ));
             cx.run(self.pass);
         }
         for read in &work.reads {
@@ -985,23 +1097,29 @@ impl SettleGpu {
         }
     }
 
-    pub(crate) fn encode(&mut self, pass: Pass<WaterGpu>, cx: &mut Encode<'_, WaterGpu>) -> Option<u32> {
+    pub(crate) fn forget(&mut self) {
+        self.layout = None;
+        self.room = None;
+        self.loaded.clear();
+    }
+
+    pub(crate) fn encode(&mut self, pass: Pass<WaterGpu>, cx: &mut Encode<'_, WaterGpu>) -> bool {
         if pass == self.raise {
-            if self.raised == 0 {
-                return Some(0);
+            if self.raised > 0 {
+                let [groups_x, groups_z] = grid(self.raised);
+                cx.dispatch(&self.raising, Count::Groups([groups_x, groups_z, 1]));
             }
-            let [groups_x, groups_z] = grid(self.raised);
-            return Some(cx.dispatch(&self.raising, Count::Groups([groups_x, groups_z, 1])));
+            return true;
         }
         if pass != self.pass {
-            return None;
+            return false;
         }
         let Some((steps, sourced, blocks, stirring, slots)) = self.run else {
-            return Some(0);
+            return true;
         };
-        let run = self
-            .kernels
+        self.kernels
             .encode_steps(cx, (steps, sourced, true, stirring), (blocks, slots, None));
-        Some(run + self.kernels.encode_look(cx, (blocks, slots)))
+        self.kernels.encode_look(cx, (blocks, slots));
+        true
     }
 }

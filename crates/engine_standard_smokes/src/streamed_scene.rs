@@ -12,6 +12,10 @@ fn fixture() -> Value {
         "camera": {"position": [0, 60, 40], "target": [20, 20, 0], "fov_degrees": 60, "near": 0.5, "far": 20000},
         "materials": [{"id": "plain", "color": [0.8, 0.3, 0.2, 1]}],
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
+        "prefabs": [{"id": "lamp", "entities": [
+            {"id": "post", "mesh": "box", "material": "plain", "transform": {"translation": [0, 1, 0], "scale": [0.2, 2, 0.2]}},
+            {"id": "light", "light": {"color": [1, 0.7, 0.4], "intensity": 10, "range": 10}, "transform": {"translation": [0, 2.2, 0]}},
+        ]}],
         "entities": [
             {"id": "player", "mesh": "box", "material": "plain", "tags": ["player"],
              "collider": {"shape": cube["shape"], "memberships": 2, "filter": 1, "sensor": false},
@@ -19,25 +23,19 @@ fn fixture() -> Value {
             {"id": "ground", "terrain": {"origin": [-1024, 0, -1024], "tiles": [8, 8], "spacing": 1,
              "layers": [{"type": "noise", "seed": 5, "height": 40, "wavelength": 400}]}},
         ],
-        "environment": {"streamed": {
-            "objects": [
-                {"id": "crate-near", "mesh": "box", "material": "plain", "collider": cube, "grounded": {"offset": 0.5}, "transform": {"translation": [20, 0, 0]}},
-                {"id": "crate-mid", "mesh": "box", "material": "plain", "grounded": {"offset": 0.5}, "transform": {"translation": [900, 0, 0]}},
-                {"id": "spinner", "transform": {"translation": [-30, 30, 10]}},
-                {"id": "spinner-blade", "parent": "spinner", "mesh": "box", "material": "plain", "transform": {"scale": [3, 0.2, 0.4]}},
-                {"id": "lamp-far", "prefab": "lamp", "transform": {"translation": [1500, 0, 300]}},
-                {"id": "tower", "mesh": "box", "material": "plain", "transform": {"translation": [5000, 30, 0], "scale": [10, 60, 10]}},
-            ],
-            "prefabs": [{"id": "lamp", "entities": [
-                {"id": "post", "mesh": "box", "material": "plain", "transform": {"translation": [0, 1, 0], "scale": [0.2, 2, 0.2]}},
-                {"id": "light", "light": {"color": [1, 0.7, 0.4], "intensity": 10, "range": 10}, "transform": {"translation": [0, 2.2, 0]}},
-            ]}],
-        }},
+        "streamed": [
+            {"id": "crate-near", "mesh": "box", "material": "plain", "collider": cube, "grounded": {"offset": 0.5}, "transform": {"translation": [20, 0, 0]}},
+            {"id": "crate-mid", "mesh": "box", "material": "plain", "grounded": {"offset": 0.5}, "transform": {"translation": [900, 0, 0]}},
+            {"id": "spinner", "transform": {"translation": [-30, 30, 10]}},
+            {"id": "spinner-blade", "parent": "spinner", "mesh": "box", "material": "plain", "transform": {"scale": [3, 0.2, 0.4]}},
+            {"id": "lamp-far", "prefab": "lamp", "transform": {"translation": [1500, 0, 300]}},
+            {"id": "tower", "mesh": "box", "material": "plain", "transform": {"translation": [5000, 30, 0], "scale": [10, 60, 10]}},
+        ],
     })
 }
 
 fn objects(document: &mut Value) -> &mut Value {
-    &mut document["environment"]["streamed"]["objects"]
+    &mut document["streamed"]
 }
 
 pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
@@ -166,26 +164,18 @@ fn grounded(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
 
 fn refusals(session: &mut dyn SmokeSession, source: &Value) -> Result<(), SmokeFailure> {
     for (case, code, path) in [
-        (
-            "terrain",
-            "invalid_streamed",
-            "$.environment.streamed.objects[6].terrain",
-        ),
+        ("terrain", "invalid_streamed", "$.streamed[6].terrain"),
         (
             "parent_across_lists",
             "unknown_parent",
-            "$.environment.streamed.objects[5].parent",
+            "$.streamed[5].parent",
         ),
         (
             "grounded_child",
             "invalid_grounded",
-            "$.environment.streamed.objects[3].grounded",
+            "$.streamed[3].grounded",
         ),
-        (
-            "duplicate_id",
-            "duplicate_id",
-            "$.environment.streamed.objects[0].id",
-        ),
+        ("duplicate_id", "duplicate_id", "$.streamed[0].id"),
     ] {
         let mut broken = source.clone();
         let items = objects(&mut broken);

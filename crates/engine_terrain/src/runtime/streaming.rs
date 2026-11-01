@@ -1,7 +1,9 @@
 use super::*;
 use engine_core::{
     CookMode, DeviceLimits, FrameTime, GlobalTransforms, Joined, Projection, View, WorkClock,
+    WorkRemaining,
 };
+use engine_places::ground::GroundWork;
 use engine_places::streaming::StreamingFocus;
 use engine_places::terrain::TerrainLayers;
 use glam::UVec2;
@@ -125,7 +127,7 @@ impl Terrains {
         (size, device_tiles): (UVec2, Option<u32>),
         (focus, places): (&[Vec3], &[(Vec3, f32)]),
         asking: &mut Asking<'_, '_, '_>,
-    ) {
+    ) -> GroundWork {
         self.frame += 1;
         self.sync_surroundings();
         let retired = std::mem::take(&mut self.retired);
@@ -366,6 +368,11 @@ impl Terrains {
         for state in &self.entries {
             state.check();
         }
+        GroundWork {
+            slice: u64::from(settings.samples_per_frame),
+            millis: clock.map_or(0.0, |clock| work.end - clock()),
+            upload: work.upload.get(),
+        }
     }
 }
 
@@ -447,6 +454,7 @@ pub(crate) fn stream_terrains(
     mut jobs: Jobs,
     mut terrains: ResMut<Terrains>,
     mut stats: ResMut<TerrainStats>,
+    mut ground: ResMut<GroundWork>,
     mut streaming: Local<TerrainStreaming>,
 ) {
     let _profile = engine_core::profile::span("cpu", "terrain_stream");
@@ -503,7 +511,7 @@ pub(crate) fn stream_terrains(
         records: &records,
         kinds: &kinds,
     };
-    terrains.stream(
+    *ground = terrains.stream(
         &settings,
         (&*camera, clock.reading),
         (eye, ahead),
@@ -528,6 +536,7 @@ pub(crate) fn work_between_frames(
     kinds: Joined<TerrainLayers>,
     mut jobs: Jobs,
     mut terrains: ResMut<Terrains>,
+    mut remaining: ResMut<WorkRemaining>,
 ) {
     let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
     let mut asking = Asking {
@@ -536,7 +545,11 @@ pub(crate) fn work_between_frames(
         kinds: &kinds,
     };
     let milliseconds = f64::from(time.between_frames_micros) / 1000.0;
-    terrains.work_between_frames(&settings, (clock.reading, milliseconds), &mut asking);
+    remaining.report(terrains.work_between_frames(
+        &settings,
+        (clock.reading, milliseconds),
+        &mut asking,
+    ));
 }
 
 impl Terrains {

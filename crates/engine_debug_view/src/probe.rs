@@ -2,6 +2,7 @@ use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::{half, max};
 use engine_core::{Error, ErrorCode, Joined, Operation, Readback, View};
+use engine_places::meshes::Instances;
 use engine_render::debug::{
     DEBUG_CASTS, DEBUG_FADING, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS,
     DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN,
@@ -70,7 +71,12 @@ impl Probe {
         self.stage != Stage::Idle && self.bytes.is_none()
     }
 
-    fn result(&self, bytes: &[u8], modes: &Joined<'_, DebugModes>) -> Value {
+    fn result(
+        &self,
+        bytes: &[u8],
+        modes: &Joined<'_, DebugModes>,
+        instances: Option<&Instances>,
+    ) -> Value {
         let record = word(bytes, IDS);
         let kind = drawn_kind(record & 0xf);
         let object = word(bytes, IDS + 4);
@@ -99,6 +105,14 @@ impl Probe {
             Some(DrawnKind::Mesh | DrawnKind::Placed | DrawnKind::Card | DrawnKind::PlacedCard)
         );
         let with_detail = matches!(kind, Some(DrawnKind::Card | DrawnKind::PlacedCard));
+        let entity = instances
+            .filter(|_| matches!(kind, Some(DrawnKind::Mesh | DrawnKind::Card)))
+            .and_then(|instances| {
+                instances
+                    .slots
+                    .iter()
+                    .find_map(|&(entity, slot)| (slot == object).then_some(entity))
+            });
         let probe = PixelProbe {
             pixel: [self.pixel.0, self.pixel.1],
             kind,
@@ -131,6 +145,9 @@ impl Probe {
                     fields.entry(name).or_insert(value);
                 }
             }
+        }
+        if let Some(entity) = entity {
+            fields.insert(String::from("entity"), Value::from(entity.to_bits()));
         }
         Value::Object(fields)
     }
@@ -279,17 +296,21 @@ pub(crate) struct ProbedPixel;
 
 impl Operation for ProbedPixel {
     const NAME: &'static str = "probed_pixel";
-    type Params = (Res<'static, Probe>, Joined<'static, DebugModes>);
+    type Params = (
+        Res<'static, Probe>,
+        Joined<'static, DebugModes>,
+        Option<Res<'static, Instances>>,
+    );
     type Request = ProbedRequest;
 
     fn run(
-        (probe, modes): SystemParamItem<'_, '_, Self::Params>,
+        (probe, modes, instances): SystemParamItem<'_, '_, Self::Params>,
         _: ProbedRequest,
     ) -> Result<Value, Error> {
         let result = probe
             .bytes
             .as_deref()
-            .map(|bytes| probe.result(bytes, &modes));
+            .map(|bytes| probe.result(bytes, &modes, instances.as_deref()));
         Ok(json!({ "probing": probe.probing(), "probe": result }))
     }
 }
@@ -320,6 +341,7 @@ pub(crate) struct ProbeGpu {
     depth_texel: Pass<Self>,
     scene: Pass<Self>,
     canvas: Pass<Self>,
+    unread: Option<u32>,
 }
 
 impl GpuPart for ProbeGpu {
@@ -378,6 +400,7 @@ impl GpuPart for ProbeGpu {
             depth_texel,
             scene,
             canvas,
+            unread: None,
         })
     }
 
@@ -449,9 +472,15 @@ impl GpuPart for ProbeGpu {
                     cx.copy(self.canvas, &[texel(at, CANVAS)]);
                 }
                 cx.write(self.probed, CANVAS_ORDER, &[order]);
-                let _ = cx.read_back::<Probe>(0, self.probed, 0..PROBED_BYTES, AfterRead::Keep);
+                self.unread = Some(probe.armed);
             }
             Stage::Idle | Stage::Armed | Stage::Waiting => {}
+        }
+        if matches!(probe.stage, Stage::Shaded | Stage::Waiting)
+            && self.unread == Some(probe.armed)
+            && cx.read_back::<Probe>(0, self.probed, 0..PROBED_BYTES, AfterRead::Keep)
+        {
+            self.unread = None;
         }
     }
 }

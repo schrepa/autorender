@@ -4,7 +4,7 @@ use engine_core::glam::Vec3;
 use engine_core::{BrickList, Camera, Engine, Projection};
 use engine_registry::Registry;
 use engine_scene::{SceneDocument, SceneKinds};
-use engine_terrain::{TerrainSettings, Terrains};
+use engine_terrain::TileKey;
 use serde_json::{Map, Value, json};
 
 use crate::{Report, hash};
@@ -13,6 +13,7 @@ const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const ASPECT: f32 = 16.0 / 9.0;
 const FRAMES: u32 = 400;
 const SAMPLES_PER_FRAME: u32 = 1 << 18;
+const LISTING: &str = "terrain_listing";
 const SECTIONS: [&str; 3] = ["terrain_stats", "water_stats", "terrain_shading_stats"];
 const FIELDS: [&str; 30] = [
     "terrains",
@@ -55,9 +56,7 @@ pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
         engine.advance(1.0 / 60.0);
         let world = engine.extract_frame(ASPECT).world();
         let mut line = format!("{frame}: {}", stats(world)?);
-        let enabled = world.resource::<TerrainSettings>().enabled;
-        let listing = world.get_resource::<Terrains>().map(Terrains::listing);
-        for (surroundings, mut keys, drawn) in listing.into_iter().flatten() {
+        for (surroundings, mut keys, drawn) in listing(engine.app.world_mut())? {
             keys.sort_unstable();
             line.push_str(&format!(
                 " | {} tiles {} drawn {}",
@@ -67,7 +66,7 @@ pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
                     "terrain"
                 },
                 hash(format!("{keys:?}").as_bytes()),
-                enabled && drawn,
+                drawn,
             ));
         }
         lines.push(line);
@@ -112,6 +111,33 @@ fn stats(world: &bevy_ecs::world::World) -> Result<Value, String> {
         fields.insert(field.to_owned(), value.clone());
     }
     Ok(Value::Object(fields))
+}
+
+fn listing(world: &mut bevy_ecs::world::World) -> Result<Vec<(bool, Vec<TileKey>, bool)>, String> {
+    let listed = engine::host::run_operation(world, LISTING, json!({}))
+        .map_err(|error| format!("{LISTING}: {error}"))?;
+    let unread = || format!("{LISTING} answered {listed}");
+    listed["terrains"]
+        .as_array()
+        .ok_or_else(unread)?
+        .iter()
+        .map(|terrain| {
+            let tiles: Vec<[u16; 3]> =
+                serde_json::from_value(terrain["tiles"].clone()).map_err(|_| unread())?;
+            let keys: Vec<TileKey> = tiles
+                .into_iter()
+                .map(|[level, x, z]| {
+                    u8::try_from(level)
+                        .map(|level| TileKey::new(level, x, z))
+                        .map_err(|_| unread())
+                })
+                .collect::<Result<_, _>>()?;
+            match (terrain["surroundings"].as_bool(), terrain["drawn"].as_bool()) {
+                (Some(surroundings), Some(drawn)) => Ok((surroundings, keys, drawn)),
+                _ => Err(unread()),
+            }
+        })
+        .collect()
 }
 
 fn camera(frame: u32) -> Camera {

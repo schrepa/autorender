@@ -436,7 +436,9 @@ impl Impostors {
     }
 
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.atlases.values().map(Atlas::capacity_bytes).sum()
+        self.atlases
+            .get(&AtlasRole::Scene)
+            .map_or(0, Atlas::capacity_bytes)
     }
 
     pub(crate) fn frame_resource(&self, name: &str) -> Option<FrameResource<'_>> {

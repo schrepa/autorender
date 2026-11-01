@@ -5,8 +5,8 @@ use engine_render::{
 };
 
 use crate::gpu::{
-    SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_LIVE_LOOKS, SIM_SLOTS, WATER_SIM_SOURCE_GROUP, SimFrame,
-    SimSlot, SimSlots, SimTouches,
+    SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_LIVE_LOOKS, SIM_SLOTS, SimFrame, SimSlot, SimSlots,
+    SimTouches, WATER_SIM_SOURCE_GROUP,
 };
 use crate::shallow_water::CELL_MEANS;
 use crate::water::WaterGpu;
@@ -204,11 +204,6 @@ pub(crate) struct SlotHandles {
     layout: Option<Layout>,
 }
 
-fn zeroed(buffer: Buffer<WaterGpu>, bytes: u64, cx: &mut Prepare<'_, WaterGpu>) {
-    let words = (bytes.max(16).next_multiple_of(4) / 4) as usize;
-    cx.write(buffer, 0, &vec![0_u32; words]);
-}
-
 impl SlotHandles {
     pub(crate) fn install(cx: &mut Install<'_, WaterGpu>, labels: [&'static str; 12]) -> Self {
         let kept = |cx: &mut Install<'_, WaterGpu>, label| cx.buffer(label, Lifetime::Kept);
@@ -260,10 +255,10 @@ impl SlotHandles {
             .layout
             .is_some_and(|held| held.capacity.sources != layout.capacity.sources);
         for (at, (buffer, bytes)) in sizes.into_iter().enumerate() {
-            cx.allocate_buffer(buffer, bytes);
             if fresh || (at == 4 && inputs_grew) {
-                zeroed(buffer, bytes, cx);
+                cx.release_buffer(buffer);
             }
+            cx.allocate_buffer(buffer, bytes);
         }
         cx.allocate_buffer(self.squares, size_of::<SimSlots>() as u64);
         for frame in self.frames {
@@ -385,53 +380,51 @@ impl Kernels {
         cx: &mut Encode<'_, WaterGpu>,
         (steps, sourced, settling, bursting): (u32, u32, bool, bool),
         (blocks, slots, touched): (u32, u32, Option<[u32; 2]>),
-    ) -> u32 {
+    ) {
         let [cells_x, cells_z] = grid(blocks);
         let [blocks_x, blocks_z] = grid(blocks.div_ceil(BLOCK_CELLS as u32));
         let run = |cx: &mut Encode<'_, WaterGpu>, pipeline: &ComputePipeline<WaterGpu>, groups| {
-            cx.dispatch(pipeline, Count::Groups(groups))
+            cx.dispatch(pipeline, Count::Groups(groups));
         };
-        let mut dispatched = 0;
         for _ in 0..steps {
             if bursting {
-                dispatched += run(cx, &self.burst, [cells_x, cells_z, slots]);
-                dispatched += run(cx, &self.push, [cells_x, cells_z, slots]);
+                run(cx, &self.burst, [cells_x, cells_z, slots]);
+                run(cx, &self.push, [cells_x, cells_z, slots]);
             }
             if let Some([touched_x, touched_z]) = touched {
-                dispatched += run(cx, &self.touch, [touched_x, touched_z, 1]);
+                run(cx, &self.touch, [touched_x, touched_z, 1]);
             }
             if settling {
-                dispatched += run(cx, &self.activity, [blocks_x, blocks_z, slots]);
+                run(cx, &self.activity, [blocks_x, blocks_z, slots]);
             }
             for stage in 0..2 {
-                dispatched += run(cx, &self.exchange[stage], [cells_x, cells_z, slots]);
+                run(cx, &self.exchange[stage], [cells_x, cells_z, slots]);
                 if stage == 0 && settling {
-                    dispatched += run(cx, &self.waves, [cells_x, cells_z, slots]);
-                    dispatched += run(cx, &self.seconds, [cells_x, cells_z, slots]);
+                    run(cx, &self.waves, [cells_x, cells_z, slots]);
+                    run(cx, &self.seconds, [cells_x, cells_z, slots]);
                 }
-                dispatched += run(cx, &self.drain[stage], [cells_x, cells_z, slots]);
-                dispatched += run(cx, &self.update[stage], [cells_x, cells_z, slots]);
+                run(cx, &self.drain[stage], [cells_x, cells_z, slots]);
+                run(cx, &self.update[stage], [cells_x, cells_z, slots]);
             }
             if sourced > 0 {
                 let groups = [sourced.div_ceil(WATER_SIM_SOURCE_GROUP), 1, slots];
-                dispatched += run(cx, &self.source, groups);
+                run(cx, &self.source, groups);
             }
-            dispatched += run(cx, &self.ended, [cells_x, cells_z, slots]);
+            run(cx, &self.ended, [cells_x, cells_z, slots]);
             if settling {
-                dispatched += run(cx, &self.tally, [cells_x, cells_z, slots]);
+                run(cx, &self.tally, [cells_x, cells_z, slots]);
             }
         }
-        dispatched
     }
 
-    pub(crate) fn encode_look(&self, cx: &mut Encode<'_, WaterGpu>, (blocks, slots): (u32, u32)) -> u32 {
+    pub(crate) fn encode_look(&self, cx: &mut Encode<'_, WaterGpu>, (blocks, slots): (u32, u32)) {
         let [groups_x, groups_z] = grid(blocks);
-        cx.dispatch(&self.look, Count::Groups([groups_x, groups_z, slots]))
+        cx.dispatch(&self.look, Count::Groups([groups_x, groups_z, slots]));
     }
 
-    pub(crate) fn encode_drawn(&self, cx: &mut Encode<'_, WaterGpu>, blocks: u32) -> u32 {
+    pub(crate) fn encode_drawn(&self, cx: &mut Encode<'_, WaterGpu>, blocks: u32) {
         let [groups_x, groups_z] = grid(blocks);
-        cx.dispatch(&self.drawn, Count::Groups([groups_x, groups_z, 1]))
+        cx.dispatch(&self.drawn, Count::Groups([groups_x, groups_z, 1]));
     }
 }
 
@@ -449,14 +442,19 @@ impl SetupHandles {
         Self { frame, list, live }
     }
 
-    pub(crate) fn hold(&self, (room, live_room): (usize, usize), fresh: bool, cx: &mut Prepare<'_, WaterGpu>) {
+    pub(crate) fn hold(
+        &self,
+        (room, live_room): (usize, usize),
+        fresh: bool,
+        cx: &mut Prepare<'_, WaterGpu>,
+    ) {
+        if fresh {
+            cx.release_buffer(self.list);
+            cx.release_buffer(self.live);
+        }
         cx.allocate_buffer(self.frame, size_of::<crate::gpu::SimSetup>() as u64);
         cx.allocate_buffer(self.list, room as u64 * 16);
         cx.allocate_buffer(self.live, live_room as u64 * 4);
-        if fresh {
-            zeroed(self.list, room as u64 * 16, cx);
-            zeroed(self.live, live_room as u64 * 4, cx);
-        }
     }
 
     pub(crate) fn release(&self, cx: &mut Prepare<'_, WaterGpu>) {

@@ -8,6 +8,7 @@ pub mod lighting;
 pub mod macro_colors;
 mod settings;
 mod shading;
+mod shadings;
 mod state;
 mod terrain;
 mod terrain_bounce;
@@ -19,9 +20,9 @@ mod terrain_sky;
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, JobKind, Schedule, Source};
 use engine_places::ground::{Bounce, GroundTiles, Heightfield, Horizons};
-use engine_places::shadows::{ShadowCasters, ShadowMaps};
 use engine_places::probes::ProbeViews;
-use engine_render::{DebugMode, DebugModes, Layer, MainView, RenderBricks};
+use engine_places::shadows::{ShadowCasters, ShadowMaps};
+use engine_render::{DebugModes, Layer, MainView, RenderBricks};
 
 pub use gpu::HorizonsPiece;
 pub use settings::{MAX_BOUNCE_LEVELS, TerrainShading, TerrainShadingStats};
@@ -41,7 +42,7 @@ impl Brick for TerrainShadingBrick {
     ];
 
     fn register(bricks: &mut Bricks<'_>) {
-        use shaders::terrain_shading::faces;
+        use shaders::terrain_shading::{faces, modes};
         bricks
             .when(|shading: Res<TerrainShading>| shading.enabled)
             .settings::<TerrainShading>()
@@ -59,18 +60,17 @@ impl Brick for TerrainShadingBrick {
                     .within(bounce_on, |bricks| {
                         bricks.fill::<Bounce>(Some(faces::bounce::MODULE));
                     });
-            })
-            .join::<DebugModes>(
-                DebugMode {
-                    name: "terrain",
-                    decode: debug::terrain,
-                },
-                None,
-            )
+            });
+        for (index, (name, _)) in debug::MODES.into_iter().enumerate() {
+            let wgsl = (index == 0).then_some(modes::MODULE);
+            bricks.join::<DebugModes>(debug::member(name), wgsl);
+        }
+        bricks
             .systems(
                 Schedule::ViewSync,
                 (
                     state::bake,
+                    shadings::shade,
                     state::color,
                     state::place_tiles,
                     state::publish_changes,

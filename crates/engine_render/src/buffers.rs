@@ -3,90 +3,6 @@ use std::{
     rc::Rc,
 };
 
-pub fn storage(
-    device: &wgpu::Device,
-    label: &str,
-    bytes: u64,
-    extra: wgpu::BufferUsages,
-) -> wgpu::Buffer {
-    crate::memory::buffer(
-        device,
-        &wgpu::BufferDescriptor {
-            label: Some(label),
-            size: bytes.max(16).next_multiple_of(16),
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST | extra,
-            mapped_at_creation: false,
-        },
-    )
-}
-
-pub fn uniform(device: &wgpu::Device, label: &str, bytes: u64) -> wgpu::Buffer {
-    crate::memory::buffer(
-        device,
-        &wgpu::BufferDescriptor {
-            label: Some(label),
-            size: bytes,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        },
-    )
-}
-
-pub struct Growable {
-    buffer: crate::cached::Versioned<wgpu::Buffer>,
-    label: &'static str,
-    extra: wgpu::BufferUsages,
-    room: u64,
-}
-
-impl std::ops::Deref for Growable {
-    type Target = crate::cached::Versioned<wgpu::Buffer>;
-
-    fn deref(&self) -> &crate::cached::Versioned<wgpu::Buffer> {
-        &self.buffer
-    }
-}
-
-impl Growable {
-    pub fn new(
-        device: &wgpu::Device,
-        label: &'static str,
-        bytes: u64,
-        extra: wgpu::BufferUsages,
-    ) -> Self {
-        let limits = device.limits();
-        let room = limits
-            .max_storage_buffer_binding_size
-            .min(limits.max_buffer_size)
-            / 16
-            * 16;
-        Self {
-            buffer: crate::cached::Versioned::new(storage(device, label, bytes.min(room), extra)),
-            label,
-            extra,
-            room,
-        }
-    }
-
-    pub fn grow(&mut self, device: &wgpu::Device, bytes: u64) -> bool {
-        let size = bytes.next_power_of_two().min(self.room);
-        if bytes <= self.buffer.size() || size <= self.buffer.size() {
-            return false;
-        }
-        self.buffer
-            .replace(storage(device, self.label, size, self.extra));
-        true
-    }
-
-    pub fn room(&self) -> u64 {
-        self.room
-    }
-}
-
-pub fn entry<'a>(name: &'a str, buffer: &'a wgpu::Buffer) -> (&'a str, wgpu::BindingResource<'a>) {
-    (name, buffer.as_entire_binding())
-}
-
 pub const READBACKS: usize = 3;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -196,12 +112,6 @@ impl<T: Copy + 'static> ReadbackRing<T> {
                     state.set(State::Idle);
                 }),
             );
-        }
-    }
-
-    pub fn clear(&mut self) {
-        for slot in self.slots.get_mut().drain(..) {
-            crate::memory::release_buffer(&slot.buffer);
         }
     }
 }

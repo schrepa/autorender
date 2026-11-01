@@ -5,6 +5,7 @@ mod batches;
 mod casters;
 mod debug;
 mod draw;
+mod drawn;
 mod encode;
 mod gpu;
 mod layouts;
@@ -92,6 +93,8 @@ impl Brick for MeshesBrick {
             .resource::<casters::CasterPlan>()
             .resource::<presentation::PresentationTotals>()
             .resource::<presentation::CasterTotals>()
+            .resource::<drawn::WatchedSlot>()
+            .operation::<drawn::MeshDrawn>()
             .fill::<Instances>(Some(shaders::meshes::faces::instances::MODULE))
             .fill::<ImpostorPolicy>(None)
             .join::<SceneComponents>(

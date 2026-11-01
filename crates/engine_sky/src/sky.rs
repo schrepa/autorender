@@ -452,7 +452,7 @@ impl AirTables {
         });
         cx.frame(light::SKY_VIEW_TABLE, Bind::Texture(view))?;
         cx.frame(light::SKY_TABLE_SAMPLER, Bind::Sampler(sampler))?;
-        let pass = cx.pass("sky").id();
+        let pass = cx.pass("sky").label("engine/sky").span("sky").id();
         let building = cx.compute_pipeline(
             pass,
             tables::BUILD_SKY_VIEW,
@@ -493,6 +493,7 @@ impl AirTables {
         cx: &mut Install<'_, SkyGpu>,
         piece: Buffer<SkyGpu>,
         clouds: [Buffer<SkyGpu>; 2],
+        environment: Pass<SkyGpu>,
     ) {
         let [march, view] = clouds;
         self.copies = vec![
@@ -512,6 +513,9 @@ impl AirTables {
                 Copied::Buffer(view),
             ),
         ];
+        for &derived in &self.copies {
+            cx.after(environment, derived);
+        }
     }
 
     fn bindings(&self) -> (Texture<SkyGpu>, Sampler<SkyGpu>) {
@@ -637,7 +641,7 @@ impl GpuPart for SkyGpu {
         let mut tables = AirTables::install(cx)?;
         let environment = Environment::install(cx)?;
         let clouds = CloudPass::install(cx, tables.bindings(), environment.pass())?;
-        tables.connect(cx, piece_buffer, clouds.uniforms());
+        tables.connect(cx, piece_buffer, clouds.uniforms(), environment.pass());
         let haze = Haze::install(cx)?;
         let sky = |fragment, debug| RenderPipeline {
             vertex: draw::VS_SKY,

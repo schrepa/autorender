@@ -417,7 +417,5 @@ fn fs_sky(input: SkyOutput) -> ViewTargets {
     shaded.glow = glow_weight(light);
     shaded.across = 1.0;
     let previous = camera.previous_view_projection * vec4<f32>(ray, 0.0);
-    let clip = vec4<f32>((input.ndc.x + 1.0 + camera.jitter.x) / camera.jitter.z,
-        (1.0 - camera.jitter.y - input.ndc.y) / camera.jitter.w, 0.0, 1.0);
-    return view_targets(shaded, ViewPixel(clip, previous));
+    return view_targets(shaded, ViewPixel(vec4<f32>(input.ndc, 0.0, 1.0), previous));
 }

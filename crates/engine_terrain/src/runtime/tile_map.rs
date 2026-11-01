@@ -80,14 +80,4 @@ impl<V> TileMap<V> {
             .filter_map(|key| self.0.remove(&key))
             .collect()
     }
-
-    pub(super) fn retain(&mut self, mut keep: impl FnMut(&TileKey, &mut V) -> bool) {
-        for key in self.keys() {
-            if let Some(value) = self.0.get_mut(&key)
-                && !keep(&key, value)
-            {
-                self.0.remove(&key);
-            }
-        }
-    }
 }

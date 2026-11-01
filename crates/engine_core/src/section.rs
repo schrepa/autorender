@@ -1,6 +1,7 @@
 use bevy_ecs::component::Mutable;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{SystemParam, SystemParamItem};
+use engine_registry::{ExplainAsk, ExplainRecord};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
@@ -73,6 +74,14 @@ pub trait Operation: Send + Sync + 'static {
     fn result_schema() -> Option<Value> {
         None
     }
+}
+
+pub trait Explain: Send + Sync + 'static {
+    type Params: SystemParam + 'static;
+    fn explain(
+        params: SystemParamItem<'_, '_, Self::Params>,
+        ask: &ExplainAsk<'_>,
+    ) -> Option<ExplainRecord>;
 }
 
 pub trait Readback: Resource<Mutability = Mutable> + Default {

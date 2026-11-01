@@ -1,13 +1,15 @@
 import package::engine::impostors::{impostor_albedo, impostor_emissive, impostor_geometry,
-    impostor_records, impostor_sampler, impostor_surface};
+    impostor_records, impostor_sampler, impostor_surface, placed_impostor_albedo,
+    placed_impostor_emissive, placed_impostor_geometry, placed_impostor_records,
+    placed_impostor_surface};
 import package::engine::materials::MASK_MIP_SCALE;
 import package::engine::math::maximum_abs;
 import package::engine::mesh::impostor_frames::{IMPOSTOR_CUTOFF, IMPOSTOR_FADING,
-    IMPOSTOR_FADING_OUT, IMPOSTOR_FOLIAGE, IMPOSTOR_HEMISPHERE, IMPOSTOR_MASKED, impostor_basis,
-    impostor_facing, impostor_fade, impostor_frame_direction, impostor_frames, impostor_grid,
-    impostor_index, impostor_met, impostor_over};
-import package::engine::mesh::vertex::{origin_key, pose_matrix};
-import package::engine::shading::{BODY_SOLID, BODY_THIN, Shaded, SurfacePoint, ViewPixel};
+    IMPOSTOR_FADING_OUT, IMPOSTOR_FOLIAGE, IMPOSTOR_HEMISPHERE, IMPOSTOR_MASKED, ImpostorRecord,
+    impostor_basis, impostor_facing, impostor_fade, impostor_frame_direction, impostor_frames,
+    impostor_grid, impostor_index, impostor_met, impostor_over};
+import package::engine::mesh::vertex::origin_key;
+import package::engine::shading::{BODY_SOLID, BODY_THIN, SurfacePoint};
 import package::engine::view::{camera, fade_noise, material_detail, stable_normalize};
 import package::face::debug::DEBUG_FADING;
 import package::face::dither::stored;
@@ -16,11 +18,12 @@ import package::face::sun::sun_direction;
 import package::face::wind::slot_sway;
 import package::generated::targets::{DepthViewTargets, depth_view_targets};
 import package::meshes::debug::point_targets;
-import package::meshes::faces::instances::{instance_colors, instance_poses,
-    instance_previous_poses};
+import package::meshes::forward::drawn_pixel;
 import package::meshes::shade::{alpha_cutoff, fragment_pixel, leafiness, plant_tint, rippled};
-import package::meshes::vertex::slot_wind;
-import package::place::instances::MOVED_SLOT;
+import package::meshes::slots::{instance_colors, instance_poses, instance_previous_poses};
+import package::meshes::vertex::{posed, slot_wind};
+import package::place::instances::{AffinePose, CardDebugTargets, CardShaded, CardVertex,
+    MOVED_SLOT, SlotColor};
 
 struct CardInput {
     @builtin(vertex_index) vertex: u32,
@@ -65,13 +68,12 @@ fn toward_viewer(point: vec3<f32>) -> vec3<f32> {
 
 struct Card {
     local: vec3<f32>,
-    output: CardOutput,
+    output: CardVertex,
 }
 
-fn card(input: CardInput) -> Card {
-    let slot = input.slot & ~MOVED_SLOT;
-    let model = pose_matrix(instance_poses[slot]);
-    let record = impostor_records[impostor_index(input.batch)];
+fn posed_card(vertex: u32, batch: u32, pose: AffinePose, color: SlotColor,
+        record: ImpostorRecord) -> Card {
+    let model = posed(pose);
     let center = record.sphere.xyz;
     let radius = record.sphere.w;
     let inverse_scale = 1.0 / max(maximum_abs(model[0].xyz),
@@ -103,7 +105,7 @@ fn card(input: CardInput) -> Card {
     let half = record.extent;
     let support = dot(abs(dir), half);
     let outline = vec2<f32>(dot(abs(basis.right), half), dot(abs(basis.up), half));
-    let corner = IMPOSTOR_CARD[input.vertex];
+    let corner = IMPOSTOR_CARD[vertex];
     let across = basis.right * (corner.x * outline.x) + basis.up * (corner.y * outline.y);
     let local = center + dir * support + across;
     let world = model * vec4<f32>(local, 1.0);
@@ -122,13 +124,12 @@ fn card(input: CardInput) -> Card {
         crossings[k] = dot(across, d) / radius;
         packed_frames |= frame << (8u * k);
     }
-    let color = instance_colors[slot];
     var swayed = world.xyz;
     let sway = slot_sway(color.flags);
     if sway > 0.0 {
         swayed += slot_wind(model, world.xyz, sway, camera.position.w);
     }
-    var output: CardOutput;
+    var output: CardVertex;
     output.clip_position = camera.view_projection * vec4<f32>(swayed, 1.0);
     output.frames_ab = vec4<f32>(uvs[0], uvs[1]);
     output.frame_c = uvs[2];
@@ -140,37 +141,60 @@ fn card(input: CardInput) -> Card {
     output.depth_axis = vec4<f32>(axis * radius, support / radius);
     output.material = vec4<u32>(color.color, color.surface,
         packed_frames | (origin_key(model[3].xyz) & 0xff000000u));
-    output.batch = input.batch;
+    output.batch = batch;
     output.crossings = crossings;
     output.slopes_ab = vec4<f32>(slopes[0], slopes[1]);
     output.slope_c = slopes[2];
-    output.object = vec2<u32>(input.draw.x, slot);
     return Card(local, output);
+}
+
+fn card_previous(local: vec3<f32>, pose: AffinePose, color: SlotColor) -> vec3<f32> {
+    let point = vec4<f32>(local, 1.0);
+    var world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
+        dot(pose.row_2, point), 1.0);
+    let sway = slot_sway(color.flags);
+    if sway > 0.0 {
+        let model = posed(pose);
+        world = vec4<f32>(world.xyz + slot_wind(model, world.xyz, sway, camera.wind.w), 1.0);
+    }
+    return (camera.previous_view_projection * world).xyw;
+}
+
+fn placed_card(vertex: u32, batch: u32, pose: AffinePose, previous: AffinePose,
+        color: SlotColor) -> CardVertex {
+    let made = posed_card(vertex, batch, pose, color,
+        placed_impostor_records[impostor_index(batch)]);
+    var output = made.output;
+    output.previous = card_previous(made.local, previous, color);
+    return output;
 }
 
 @vertex
 fn vs_card(input: CardInput) -> CardOutput {
-    let made = card(input);
     let slot = input.slot & ~MOVED_SLOT;
-    let point = vec4<f32>(made.local, 1.0);
+    let color = instance_colors[slot];
+    let made = posed_card(input.vertex, input.batch, instance_poses[slot], color,
+        impostor_records[impostor_index(input.batch)]);
     var pose = instance_poses[slot];
     if (input.slot & MOVED_SLOT) != 0u {
         pose = instance_previous_poses[slot];
     }
-    var world = vec4<f32>(dot(pose.row_0, point), dot(pose.row_1, point),
-        dot(pose.row_2, point), 1.0);
-    let sway = slot_sway(instance_colors[slot].flags);
-    if sway > 0.0 {
-        let model = pose_matrix(pose);
-        world = vec4<f32>(world.xyz + slot_wind(model, world.xyz, sway, camera.wind.w), 1.0);
-    }
-    var output = made.output;
-    output.previous = (camera.previous_view_projection * world).xyw;
-    return output;
+    let card = made.output;
+    return CardOutput(card.clip_position, card.frames_ab, card.frame_c, card.world,
+        card.normal_x, card.normal_y, card.normal_z, card.depth_axis, card.material, card.batch,
+        card_previous(made.local, pose, color), card.crossings, card.slopes_ab, card.slope_c,
+        vec2<u32>(input.draw.x, slot));
 }
 
-fn card_point(input: CardOutput) -> SurfacePoint {
-    let record = impostor_records[impostor_index(input.batch)];
+fn card_vertex(input: CardOutput) -> CardVertex {
+    return CardVertex(input.clip_position, input.frames_ab, input.frame_c, input.world,
+        input.normal_x, input.normal_y, input.normal_z, input.depth_axis, input.material,
+        input.batch, input.previous, input.crossings, input.slopes_ab, input.slope_c);
+}
+
+fn card_point(input: CardVertex, record: ImpostorRecord, albedo_atlas: texture_2d_array<f32>,
+        emissive_atlas: texture_2d_array<f32>, geometry_atlas: texture_2d_array<f32>,
+        surface_atlas: texture_2d_array<f32>) -> SurfacePoint {
     let weights = vec3<f32>(input.normal_x.w, input.normal_y.w,
         1.0 - input.normal_x.w - input.normal_y.w);
     let packed = input.material.w;
@@ -196,7 +220,7 @@ fn card_point(input: CardOutput) -> SurfacePoint {
         cells[k] = vec2<f32>(f32(shown[k] % frames), f32(shown[k] / frames)) * span;
         facings[k] = impostor_facing(slopes[k]);
         uvs[k] = clamp(crossed[k], cells[k] + inset, cells[k] + span - inset);
-        covered[k] = textureSampleLevel(impostor_albedo, impostor_sampler, uvs[k],
+        covered[k] = textureSampleLevel(albedo_atlas, impostor_sampler, uvs[k],
             record.layer, level).a;
     }
     let probed = dot(weights, covered);
@@ -205,7 +229,7 @@ fn card_point(input: CardOutput) -> SurfacePoint {
     }
     var met = 0.0;
     for (var k = 0u; k < 3u; k++) {
-        let sampled = textureSampleLevel(impostor_geometry, impostor_sampler, uvs[k],
+        let sampled = textureSampleLevel(geometry_atlas, impostor_sampler, uvs[k],
             record.layer, level).w;
         met += weights[k] * impostor_met(sampled, covered[k], input.crossings[k], facings[k]);
     }
@@ -214,7 +238,7 @@ fn card_point(input: CardOutput) -> SurfacePoint {
     for (var k = 0u; k < 3u; k++) {
         uvs[k] = clamp(crossed[k] + slopes[k] * (0.5 * span * along), cells[k] + inset,
             cells[k] + span - inset);
-        let texel = textureSampleLevel(impostor_albedo, impostor_sampler, uvs[k], record.layer,
+        let texel = textureSampleLevel(albedo_atlas, impostor_sampler, uvs[k], record.layer,
             level);
         covered[k] = texel.a;
         albedo += weights[k] * texel;
@@ -239,13 +263,13 @@ fn card_point(input: CardOutput) -> SurfacePoint {
     var surface = vec4<f32>(0.0);
     var sight = 0.0;
     for (var k = 0u; k < 3u; k++) {
-        emissive += weights[k] * textureSampleLevel(impostor_emissive, impostor_sampler, uvs[k],
+        emissive += weights[k] * textureSampleLevel(emissive_atlas, impostor_sampler, uvs[k],
             record.layer, level);
-        let sampled = textureSampleLevel(impostor_geometry, impostor_sampler, uvs[k],
+        let sampled = textureSampleLevel(geometry_atlas, impostor_sampler, uvs[k],
             record.layer, level);
         geometry += weights[k] * sampled;
         sight += weights[k] * impostor_met(sampled.w, covered[k], input.crossings[k], facings[k]);
-        surface += weights[k] * textureSampleLevel(impostor_surface, impostor_sampler, uvs[k],
+        surface += weights[k] * textureSampleLevel(surface_atlas, impostor_sampler, uvs[k],
             record.layer, level);
     }
     let unpremultiply = 1.0 / max(coverage, 1.0e-4);
@@ -292,12 +316,18 @@ fn card_point(input: CardOutput) -> SurfacePoint {
     return widened(point, dpdx(point.normal), dpdy(point.normal));
 }
 
-struct CardShaded {
-    shaded: Shaded,
-    depth: f32,
+fn mesh_card_point(input: CardVertex) -> SurfacePoint {
+    return card_point(input, impostor_records[impostor_index(input.batch)], impostor_albedo,
+        impostor_emissive, impostor_geometry, impostor_surface);
 }
 
-fn card_shaded(input: CardOutput, point: SurfacePoint, light: vec3<f32>) -> CardShaded {
+fn placed_card_point(input: CardVertex) -> SurfacePoint {
+    return card_point(input, placed_impostor_records[impostor_index(input.batch)],
+        placed_impostor_albedo, placed_impostor_emissive, placed_impostor_geometry,
+        placed_impostor_surface);
+}
+
+fn card_shaded(input: CardVertex, point: SurfacePoint, light: vec3<f32>) -> CardShaded {
     if impostor_over(input.batch) {
         return CardShaded(finish(point, light), input.clip_position.z);
     }
@@ -305,30 +335,30 @@ fn card_shaded(input: CardOutput, point: SurfacePoint, light: vec3<f32>) -> Card
     return CardShaded(finish(point, light), saturate(clip.z / clip.w));
 }
 
-@fragment
-fn fs_card(input: CardOutput) -> DepthViewTargets {
-    let point = card_point(input);
-    let shaded = card_shaded(input, point, local_light(point, input.clip_position.xy));
-    var kept = shaded.shaded;
-    kept.color = stored(shaded.shaded.color, input.clip_position.xy);
-    let previous = input.previous;
-    return depth_view_targets(kept,
-        ViewPixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)), shaded.depth);
+fn card_lit(input: CardVertex, point: SurfacePoint) -> CardShaded {
+    return card_shaded(input, point, local_light(point, input.clip_position.xy));
 }
 
-struct DebugCardTargets {
-    @location(0) ids: vec4<u32>,
-    @location(1) count: f32,
-    @location(2) terrain: vec2<u32>,
-    @builtin(frag_depth) depth: f32,
-}
-
-@fragment
-fn fs_debug_card(input: CardOutput) -> DebugCardTargets {
-    let point = card_point(input);
+fn card_debug(input: CardVertex, point: SurfacePoint, record: u32, object: u32)
+        -> CardDebugTargets {
     let shaded = card_shaded(input, point, vec3<f32>(0.0));
     let fading = select(0u, DEBUG_FADING, (input.batch & IMPOSTOR_FADING) != 0u);
-    let targets = point_targets(input.object.x | fading, input.object.y,
-        impostor_index(input.batch), point);
-    return DebugCardTargets(targets.ids, targets.count, targets.terrain, shaded.depth);
+    let targets = point_targets(record | fading, object, impostor_index(input.batch), point);
+    return CardDebugTargets(targets.ids, targets.count, targets.terrain, shaded.depth);
+}
+
+@fragment
+fn fs_card(input: CardOutput) -> DepthViewTargets {
+    let card = card_vertex(input);
+    let shaded = card_lit(card, mesh_card_point(card));
+    var kept = shaded.shaded;
+    kept.color = stored(shaded.shaded.color, input.clip_position.xy);
+    return depth_view_targets(kept, drawn_pixel(input.clip_position, input.previous),
+        shaded.depth);
+}
+
+@fragment
+fn fs_debug_card(input: CardOutput) -> CardDebugTargets {
+    let card = card_vertex(input);
+    return card_debug(card, mesh_card_point(card), input.object.x, input.object.y);
 }

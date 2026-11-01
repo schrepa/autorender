@@ -62,19 +62,8 @@ impl ScanClock {
             .is_none_or(|last| now.get().wrapping_sub(last.get()) >= MAX_CHANGE_AGE)
     }
 
-    pub(crate) fn changed(self, stamp: Tick, now: Tick) -> bool {
-        match self.last {
-            Some(last) if !self.aged(now) => stamp.is_newer_than(last, now),
-            _ => true,
-        }
-    }
-
     pub fn scanned(&mut self, now: Tick) {
         self.last = Some(now);
-    }
-
-    pub(crate) fn forget(&mut self) {
-        self.last = None;
     }
 }
 

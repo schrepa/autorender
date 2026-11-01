@@ -1,11 +1,5 @@
-import package::generated::shadows::{CasterCull, MAX_MOVING_TILES, SKY_REFRESH};
+import package::generated::shadows::{CasterCull, Routes, SKY_REFRESH};
 import package::shadows::sample::shadow_tiles;
-
-struct Routes {
-    clips: array<mat4x4<f32>, MAX_MOVING_TILES>,
-    slots: array<vec4<f32>, MAX_MOVING_TILES>,
-    atlas: vec4<f32>,
-}
 
 @group(0) @binding(0) var<uniform> caster_cull: CasterCull;
 @group(0) @binding(0) var<storage, read> caster_routes: Routes;

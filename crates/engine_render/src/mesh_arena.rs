@@ -73,12 +73,6 @@ pub struct MeshDraw<'a> {
     pub index_count: u32,
 }
 
-impl MeshDraw<'_> {
-    pub fn index_range(&self) -> std::ops::Range<u32> {
-        self.first_index..self.first_index + self.index_count
-    }
-}
-
 struct Class {
     buffers: Vec<wgpu::Buffer>,
     strides: Vec<u64>,
@@ -227,7 +221,6 @@ pub struct GpuMesh {
     own: Option<OwnMesh>,
     pub extended: bool,
     pub index_count: u32,
-    pub byte_len: u64,
 }
 
 impl GpuMesh {
@@ -296,16 +289,8 @@ impl GpuMeshes {
         self.meshes.len()
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.meshes.is_empty()
-    }
-
     pub fn capacity_bytes(&self) -> u64 {
         self.arena.capacity_bytes()
-    }
-
-    pub fn layout(&self) -> u64 {
-        self.synced.unwrap_or(0)
     }
 
     pub fn sync(&mut self, device: &wgpu::Device, queue: &Queue, world: &World) -> u64 {
@@ -396,7 +381,6 @@ impl GpuMeshes {
                 })
             }
         };
-        let byte_len = resident.byte_len();
         self.meshes.insert(
             handle,
             GpuMesh {
@@ -404,9 +388,8 @@ impl GpuMeshes {
                 own,
                 extended: extras.is_some(),
                 index_count: resident.index_count(),
-                byte_len,
             },
         );
-        byte_len
+        resident.byte_len()
     }
 }

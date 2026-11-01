@@ -1,6 +1,6 @@
 use bevy_ecs::change_detection::{CheckChangeTicks, Res};
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::{BoxedSystem, ReadOnlySystem, RunSystemError, System};
+use bevy_ecs::system::{BoxedSystem, ReadOnlySystem, RunSystemError};
 use bevy_ecs::world::World;
 
 use crate::BrickId;

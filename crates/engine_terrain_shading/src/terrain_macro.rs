@@ -34,7 +34,11 @@ pub(crate) struct MacroMaps {
 impl MacroMaps {
     pub(crate) fn install(cx: &mut Install<'_, TerrainGpu>) -> Result<Self, Error> {
         Ok(Self {
-            texture: cx.texture("macro_colors", wgpu::TextureFormat::Rgba8Unorm, Lifetime::Kept),
+            texture: cx.texture(
+                "macro_colors",
+                wgpu::TextureFormat::Rgba8Unorm,
+                Lifetime::Kept,
+            ),
             shape: None,
             empty: false,
             held: Vec::new(),
@@ -77,7 +81,13 @@ impl MacroMaps {
                     },
                     1,
                 );
-                cx.write_level(self.texture, (0, 0), (1, 1), TextureFormat::Rgba8, &[128, 128, 128, 128]);
+                cx.write_level(
+                    self.texture,
+                    (0, 0),
+                    (1, 1),
+                    TextureFormat::Rgba8,
+                    &[128, 128, 128, 128],
+                );
             }
             return;
         };

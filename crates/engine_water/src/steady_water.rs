@@ -2093,8 +2093,7 @@ pub(crate) fn steadied(
     let stride = TILE_STRIDE as usize;
     let spacing = tile.spacing();
     let origin = pyramid.tile_origin(tile.key());
-    let place =
-        |x: usize, z: usize| origin + Vec2::new(x as f32 - 1.0, z as f32 - 1.0) * spacing;
+    let place = |x: usize, z: usize| origin + Vec2::new(x as f32 - 1.0, z as f32 - 1.0) * spacing;
     let ground = |point: Vec2| ground_at(tile, point - origin);
     let planes = Planes::of(
         place(0, 0),
@@ -2159,7 +2158,11 @@ pub(crate) fn steadied(
     TileWater::new(
         surface.into_boxed_slice(),
         info.into_boxed_slice(),
-        (tile.heights(), spacing, tile_origin(tile.key(), tile.spacing())),
+        (
+            tile.heights(),
+            spacing,
+            tile_origin(tile.key(), tile.spacing()),
+        ),
         solids,
     )
 }
@@ -2224,7 +2227,11 @@ pub(crate) fn flowing(
         }
     }
     stir(tile, &surface, &mut info, &flows, &stirred);
-    let tile = (tile.heights(), spacing, tile_origin(tile.key(), tile.spacing()));
+    let tile = (
+        tile.heights(),
+        spacing,
+        tile_origin(tile.key(), tile.spacing()),
+    );
     TileWater::new(surface, info, tile, own.solids())
 }
 

@@ -5,14 +5,15 @@ use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
     AssetLibrary, DeviceLimits, FrameTime, JobFailures, JobKind, Jobs, MakeSources, Readback,
-    RecordExchange, Records, Spawner, TextureHandle, TextureSet, TextureUsage, Ticket, View, codec,
-    content_hash,
+    RecordExchange, RecordKey, Records, Spawner, Stamp, TextureHandle, TextureSet, TextureUsage,
+    Ticket, View, codec, content_hash,
 };
 use engine_heightfield::tile::shaded_elsewhere;
 use engine_places::ground::{
-    GroundTiles, HeldTile, Heightfield, Pyramid, TerrainEntry, TerrainTiles, TileFace, TileKey,
+    GroundTiles, Heightfield, HeldTile, Pyramid, TerrainEntry, TerrainTiles, TileFace, TileKey,
 };
 use engine_places::shadows::ShadowChanges;
+use engine_render::DebugShown;
 use glam::{Vec2, Vec3};
 
 use crate::bounce::TerrainBounce;
@@ -21,9 +22,10 @@ use crate::jobs::{BOUNCE, BounceJob, LIGHTING, LightingJob, MACRO_COLORS, MacroJ
 use crate::lighting::TerrainLighting;
 use crate::settings::{TerrainShading, TerrainShadingStats};
 use crate::shading::TileShading;
+use crate::shadings::Shadings;
 use crate::{TerrainShadingBrick, terrain_bounce, terrain_horizons};
 
-const RETRY_AFTER: u64 = 120;
+pub(crate) const RETRY_AFTER: u64 = 120;
 const VIEW_PRIORITY: u32 = 0;
 const SKIRT_SPACINGS: f32 = 4.0;
 const MOST_PROBES: u32 = 512;
@@ -58,13 +60,23 @@ impl<T: engine_codec::Codec> Bake<T> {
         }
     }
 
-    fn take(&mut self, records: &Records, kind: &JobKind, (failures, frame): (&mut JobFailures, u64)) {
-        let Some(arrived) = self.asked.as_ref().and_then(|(ticket, _)| records.get(ticket)) else {
+    fn take(
+        &mut self,
+        (records, jobs): (&Records, &mut Jobs<'_, '_>),
+        kind: &JobKind,
+        (failures, frame): (&mut JobFailures, u64),
+    ) {
+        let Some(arrived) = self
+            .asked
+            .as_ref()
+            .and_then(|(ticket, _)| records.get(ticket))
+        else {
             return;
         };
-        let Some((_, input)) = self.asked.take() else {
+        let Some((ticket, input)) = self.asked.take() else {
             return;
         };
+        jobs.cancel(ticket);
         let made = match arrived {
             Ok(bytes) => codec::decode::<T>(&bytes)
                 .map_err(|error| format!("{}: its output does not decode: {error}", kind.name())),
@@ -91,7 +103,11 @@ impl<T: engine_codec::Codec> Bake<T> {
             self.drop_asked(jobs);
             return;
         }
-        if self.asked.as_ref().is_some_and(|(_, asked)| *asked == input) {
+        if self
+            .asked
+            .as_ref()
+            .is_some_and(|(_, asked)| *asked == input)
+        {
             return;
         }
         self.drop_asked(jobs);
@@ -126,14 +142,50 @@ impl Colors {
 pub(crate) struct TerrainBakes {
     pub(crate) lighting: Bake<TerrainLighting>,
     pub(crate) bounce: Bake<TerrainBounce>,
-    pub(crate) shadings: HashMap<TileKey, Arc<TileShading>>,
+    pub(crate) flow: Shadings,
+    attached: HashMap<TileKey, (Stamp, Arc<TileShading>)>,
     pub(crate) colors: Colors,
+}
+
+impl TerrainBakes {
+    pub(crate) fn shading(&self, key: &TileKey) -> Option<&Arc<TileShading>> {
+        self.attached.get(key).map(|(_, shading)| shading)
+    }
+
+    pub(crate) fn attach(&mut self, tile: &TileFace, shading: Arc<TileShading>) {
+        self.attached.insert(tile.key, (tile.stamp, shading));
+    }
+
+    pub(crate) fn attached(&self) -> u32 {
+        self.attached.len() as u32
+    }
+
+    pub(crate) fn prune(&mut self, entry: &TerrainEntry) {
+        let faces: HashMap<TileKey, Stamp> = entry
+            .tiles
+            .iter()
+            .map(|tile| (tile.key, tile.stamp))
+            .collect();
+        self.attached
+            .retain(|key, (stamp, _)| faces.get(key).is_some_and(|face| *face == *stamp));
+    }
+
+    fn forget(
+        mut self,
+        jobs: &mut Jobs<'_, '_>,
+        colors_gone: &mut Vec<TextureHandle>,
+    ) -> BTreeSet<RecordKey> {
+        self.lighting.drop_asked(jobs);
+        self.bounce.drop_asked(jobs);
+        colors_gone.extend(self.colors.handles());
+        self.flow.forget(jobs)
+    }
 }
 
 #[derive(Resource, Default)]
 pub(crate) struct Bakes {
     pub(crate) terrains: BTreeMap<Entity, TerrainBakes>,
-    failures: JobFailures,
+    pub(crate) failures: JobFailures,
     colors_gone: Vec<TextureHandle>,
 }
 
@@ -143,7 +195,11 @@ impl Bakes {
     }
 
     pub(crate) fn macro_map(&self, terrain: Entity) -> Option<TextureHandle> {
-        self.of(terrain)?.colors.shown.as_ref().map(|&(_, handle)| handle)
+        self.of(terrain)?
+            .colors
+            .shown
+            .as_ref()
+            .map(|&(_, handle)| handle)
     }
 }
 
@@ -161,6 +217,7 @@ pub(crate) struct Atlas {
     pub(crate) peaks: HashMap<TileId, Arc<[f32]>>,
     pub(crate) arrivals: HashMap<TileId, f32>,
     pub(crate) surfaced: HashMap<TileId, f32>,
+    shadings: HashMap<TileId, Arc<TileShading>>,
     pub(crate) holed: BTreeSet<TileId>,
     pub(crate) unplaced: BTreeSet<TileId>,
     pub(crate) free: Vec<u32>,
@@ -197,6 +254,7 @@ impl Atlas {
         self.peaks.remove(&id);
         self.arrivals.remove(&id);
         self.surfaced.remove(&id);
+        self.shadings.remove(&id);
         self.holed.remove(&id);
     }
 
@@ -205,7 +263,7 @@ impl Atlas {
         id: TileId,
         tile: &TileFace,
         replaced: Option<u32>,
-        (shades, program, shading): (bool, bool, bool),
+        (shades, program, shading): (bool, bool, Option<&Arc<TileShading>>),
     ) -> bool {
         let arriving = replaced.is_none();
         let layer = match replaced.or_else(|| self.free.pop()) {
@@ -245,10 +303,21 @@ impl Atlas {
             }
         }
         if shades {
-            if shading {
-                self.surfaced.insert(id, self.now);
-            } else {
-                self.surfaced.remove(&id);
+            let kept = !arriving && same_shading(self.shadings.get(&id), shading);
+            if !kept {
+                if shading.is_some() {
+                    self.surfaced.insert(id, self.now);
+                } else {
+                    self.surfaced.remove(&id);
+                }
+            }
+            match shading {
+                Some(shading) => {
+                    self.shadings.insert(id, Arc::clone(shading));
+                }
+                None => {
+                    self.shadings.remove(&id);
+                }
             }
         } else if program && tile.control.is_none() && (heights || rivers) {
             self.surfaced.insert(id, self.now);
@@ -259,7 +328,11 @@ impl Atlas {
         self.slots.insert(id, layer);
         self.held.insert(id, tile.clone());
         self.changed.push(id);
-        let upload = if arriving { Upload::Arrived } else { Upload::Replaced };
+        let upload = if arriving {
+            Upload::Arrived
+        } else {
+            Upload::Replaced
+        };
         self.uploads.push((id, layer, upload));
         if tile.holes.is_some() {
             self.holed.insert(id);
@@ -270,7 +343,17 @@ impl Atlas {
     }
 
     pub(crate) fn top(&self, id: TileId) -> f32 {
-        self.peaks.get(&id).map_or(-f32::MAX, |peaks| peaks_top(peaks))
+        self.peaks
+            .get(&id)
+            .map_or(-f32::MAX, |peaks| peaks_top(peaks))
+    }
+}
+
+pub(crate) fn same_shading(a: Option<&Arc<TileShading>>, b: Option<&Arc<TileShading>>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+        (None, None) => true,
+        (Some(_), None) | (None, Some(_)) => false,
     }
 }
 
@@ -331,10 +414,31 @@ pub(crate) fn place_tiles(
     atlas.changed.clear();
     atlas.ground_changes.clear();
     let shaded = shaded_changes(atlas, &tiles, &bakes);
-    if !tiles.is_changed() && atlas.unplaced.is_empty() && shaded.is_empty() {
+    let capacity = limits.texture_layers;
+    let unchanged = !tiles.is_changed() && capacity == atlas.capacity;
+    if unchanged && atlas.unplaced.is_empty() && shaded.is_empty() {
         return;
     }
-    atlas.capacity = limits.texture_layers;
+    let tables: Vec<(Entity, u32)> = tiles
+        .terrains
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| (entry.terrain, index as u32))
+        .collect();
+    if capacity == 0 {
+        let now = atlas.now;
+        *atlas = Atlas {
+            now,
+            ..Atlas::default()
+        };
+        ground.set_if_neq(GroundTiles {
+            held: Vec::new(),
+            layers: 0,
+            tables,
+        });
+        return;
+    }
+    atlas.capacity = capacity;
     atlas.dropped = 0;
     let listed = |terrain: &Entity| tiles.terrains.iter().any(|entry| entry.terrain == *terrain);
     let mut left: Vec<TileId> = atlas
@@ -359,7 +463,8 @@ pub(crate) fn place_tiles(
         }
         atlas.release(id);
     }
-    let mut missing: Vec<(TileId, Option<u32>)> = atlas.unplaced.iter().map(|&id| (id, None)).collect();
+    let mut missing: Vec<(TileId, Option<u32>)> =
+        atlas.unplaced.iter().map(|&id| (id, None)).collect();
     for entry in tiles.terrains.iter() {
         for tile in entry.tiles.iter() {
             let id = (entry.terrain, tile.key);
@@ -376,7 +481,11 @@ pub(crate) fn place_tiles(
                     let layer = atlas.slots.get(&id).copied();
                     let (stood, stands) = (ground_box(entry, held), ground_box(entry, tile));
                     if held.heights != tile.heights || stood.0 != stands.0 || stood.1 != stands.1 {
-                        atlas.ground_changes.push((stood.0.min(stands.0), stood.1.max(stands.1), stands.2));
+                        atlas.ground_changes.push((
+                            stood.0.min(stands.0),
+                            stood.1.max(stands.1),
+                            stands.2,
+                        ));
                     }
                     if same_ground {
                         atlas.held.insert(id, tile.clone());
@@ -411,10 +520,15 @@ pub(crate) fn place_tiles(
         }
     }
     atlas.programs.clear();
-    atlas
-        .programs
-        .extend(tiles.terrains.iter().map(|entry| (entry.terrain, entry.surface_program)));
-    missing.sort_unstable_by_key(|((terrain, key), _)| (std::cmp::Reverse(key.level), *terrain, key.x, key.z));
+    atlas.programs.extend(
+        tiles
+            .terrains
+            .iter()
+            .map(|entry| (entry.terrain, entry.surface_program)),
+    );
+    missing.sort_unstable_by_key(|((terrain, key), _)| {
+        (std::cmp::Reverse(key.level), *terrain, key.x, key.z)
+    });
     missing.dedup_by_key(|(id, _)| *id);
     for (id, replaced) in missing {
         let Some(entry) = tiles.terrains.iter().find(|entry| entry.terrain == id.0) else {
@@ -427,7 +541,7 @@ pub(crate) fn place_tiles(
             atlas.ground_changes.push(ground_box(entry, tile));
         }
         let shades = shaded_elsewhere(id.1.level, entry.surroundings);
-        let shading = bakes.of(id.0).is_some_and(|held| held.shadings.contains_key(&id.1));
+        let shading = bakes.of(id.0).and_then(|held| held.shading(&id.1));
         atlas.place(id, tile, replaced, (shades, entry.surface_program, shading));
     }
     atlas.synced.retain(|terrain, _| listed(terrain));
@@ -452,12 +566,6 @@ pub(crate) fn place_tiles(
         held.sort_unstable_by_key(|tile| (tile.terrain, tile.key.level, tile.key.x, tile.key.z));
         held
     };
-    let tables: Vec<(Entity, u32)> = tiles
-        .terrains
-        .iter()
-        .enumerate()
-        .map(|(index, entry)| (entry.terrain, index as u32))
-        .collect();
     let published = GroundTiles {
         held,
         layers: atlas.capacity,
@@ -471,12 +579,15 @@ fn shaded_changes(atlas: &Atlas, tiles: &TerrainTiles, bakes: &Bakes) -> BTreeSe
     for entry in tiles.terrains.iter() {
         for tile in entry.tiles.iter() {
             let id = (entry.terrain, tile.key);
-            if !shaded_elsewhere(tile.key.level, entry.surroundings) || !atlas.slots.contains_key(&id)
+            if !shaded_elsewhere(tile.key.level, entry.surroundings)
+                || !atlas.slots.contains_key(&id)
             {
                 continue;
             }
-            let shading = bakes.of(entry.terrain).is_some_and(|held| held.shadings.contains_key(&tile.key));
-            if shading != atlas.surfaced.contains_key(&id) {
+            let shading = bakes
+                .of(entry.terrain)
+                .and_then(|held| held.shading(&tile.key));
+            if !same_shading(shading, atlas.shadings.get(&id)) {
                 changed.insert(id);
             }
         }
@@ -548,7 +659,7 @@ pub(crate) fn probe_columns(pyramid: &Pyramid, settings: &TerrainShading) -> u32
     wanted.next_power_of_two().clamp(FEWEST_PROBES, MOST_PROBES)
 }
 
-fn tile_stamps(entry: &TerrainEntry, key: TileKey) -> Vec<engine_heightfield::Stamp> {
+pub(crate) fn tile_stamps(entry: &TerrainEntry, key: TileKey) -> Vec<engine_heightfield::Stamp> {
     entry
         .edits
         .iter()
@@ -557,14 +668,20 @@ fn tile_stamps(entry: &TerrainEntry, key: TileKey) -> Vec<engine_heightfield::St
         .collect()
 }
 
-fn ground_tiles(entry: &TerrainEntry, level: u32) -> Vec<(TileKey, Vec<engine_heightfield::Stamp>)> {
+fn ground_tiles(
+    entry: &TerrainEntry,
+    level: u32,
+) -> Vec<(TileKey, Vec<engine_heightfield::Stamp>)> {
     let pyramid = entry.pyramid;
     let cut = |key: TileKey| {
         let size = pyramid.tile_size(u32::from(key.level));
         let low = Vec2::new(f32::from(key.x), f32::from(key.z)) * size;
         entry.surroundings
             && entry.cutout.is_some_and(|(first, last)| {
-                low.x >= first.x && low.y >= first.y && low.x + size <= last.x && low.y + size <= last.y
+                low.x >= first.x
+                    && low.y >= first.y
+                    && low.x + size <= last.x
+                    && low.y + size <= last.y
             })
     };
     pyramid
@@ -593,12 +710,25 @@ pub(crate) fn bake(
     let frame = time.frame;
     let bakes = &mut *bakes;
     let listed: Vec<Entity> = tiles.terrains.iter().map(|entry| entry.terrain).collect();
-    let gone: Vec<Entity> = bakes.terrains.keys().filter(|terrain| !listed.contains(terrain)).copied().collect();
+    let gone: Vec<Entity> = bakes
+        .terrains
+        .keys()
+        .filter(|terrain| !listed.contains(terrain))
+        .copied()
+        .collect();
+    let mut released = BTreeSet::new();
     for terrain in gone {
-        if let Some(mut held) = bakes.terrains.remove(&terrain) {
-            held.lighting.drop_asked(&mut jobs);
-            held.bounce.drop_asked(&mut jobs);
-            bakes.colors_gone.extend(held.colors.handles());
+        if let Some(held) = bakes.terrains.remove(&terrain) {
+            released.extend(held.forget(&mut jobs, &mut bakes.colors_gone));
+        }
+    }
+    for key in released {
+        if !bakes
+            .terrains
+            .values()
+            .any(|held| held.flow.holds_share(&key))
+        {
+            jobs.unshare(key);
         }
     }
     for entry in tiles.terrains.iter() {
@@ -616,7 +746,8 @@ pub(crate) fn bake(
             held.lighting.drop_asked(&mut jobs);
             held.lighting = Bake::default();
         } else {
-            held.lighting.take(&records, &LIGHTING, (&mut *failures, frame));
+            held.lighting
+                .take((&records, &mut jobs), &LIGHTING, (&mut *failures, frame));
             let level = lighting_level(&entry.pyramid, entry.pinned_levels);
             let job = LightingJob {
                 recipe,
@@ -625,14 +756,16 @@ pub(crate) fn bake(
                 sky: settings.sky_resolution,
                 horizons: settings.shadow_resolution,
             };
-            held.lighting.ask(&mut jobs, &LIGHTING, codec::encode(&job), frame);
+            held.lighting
+                .ask(&mut jobs, &LIGHTING, codec::encode(&job), frame);
         }
         if !settings.bounces() || entry.surroundings {
             held.bounce.drop_asked(&mut jobs);
             held.bounce = Bake::default();
             continue;
         }
-        held.bounce.take(&records, &BOUNCE, (&mut *failures, frame));
+        held.bounce
+            .take((&records, &mut jobs), &BOUNCE, (&mut *failures, frame));
         if held.lighting.made.is_none() {
             continue;
         }
@@ -643,7 +776,8 @@ pub(crate) fn bake(
             tiles: ground_tiles(entry, level),
             probes: probe_columns(&entry.pyramid, &settings),
         };
-        held.bounce.ask(&mut jobs, &BOUNCE, codec::encode(&job), frame);
+        held.bounce
+            .ask(&mut jobs, &BOUNCE, codec::encode(&job), frame);
     }
 }
 
@@ -681,7 +815,10 @@ pub(crate) fn color(
         let colors = &mut held.colors;
         if let Some((job, Some(handle))) = &colors.asked
             && assets.texture(*handle).is_some()
-            && colors.shown.as_ref().is_none_or(|(_, shown)| shown != handle)
+            && colors
+                .shown
+                .as_ref()
+                .is_none_or(|(_, shown)| shown != handle)
             && let Some((_, replaced)) = colors.shown.replace((job.clone(), *handle))
         {
             bakes.colors_gone.push(replaced);
@@ -689,18 +826,27 @@ pub(crate) fn color(
         let Some(job) = colors.wanted.clone() else {
             continue;
         };
-        if colors.asked.as_ref().is_some_and(|(asked, _)| *asked == job) {
+        if colors
+            .asked
+            .as_ref()
+            .is_some_and(|(asked, _)| *asked == job)
+        {
             continue;
         }
         if let Some((_, Some(handle))) = colors.asked.take()
-            && colors.shown.as_ref().is_none_or(|(_, shown)| *shown != handle)
+            && colors
+                .shown
+                .as_ref()
+                .is_none_or(|(_, shown)| *shown != handle)
         {
             bakes.colors_gone.push(handle);
         }
         let asked = match records.textures(&mut *assets, colors_set(&job)) {
             Ok(handles) => handles.first().copied(),
             Err(error) => {
-                bakes.failures.record(frame, format!("macro colors: {error}"));
+                bakes
+                    .failures
+                    .record(frame, format!("macro colors: {error}"));
                 None
             }
         };
@@ -717,6 +863,7 @@ pub(crate) fn publish_piece(
     bakes: Res<Bakes>,
     view: Res<View>,
     limits: Res<DeviceLimits>,
+    shown: Res<DebugShown>,
     mut piece: ResMut<HorizonsPiece>,
     mut published: Local<Vec<[f32; 4]>>,
 ) {
@@ -732,15 +879,22 @@ pub(crate) fn publish_piece(
         ),
         limits.texture_layers,
     );
-    if *published == records && !piece.is_changed() {
+    let debug = [crate::debug::shown(&shown), 0, 0, 0];
+    if *published == records && piece.debug == debug && !piece.is_changed() {
         return;
     }
     let mut next = *piece;
+    next.debug = debug;
     next.records = [[0.0; 4]; HORIZON_RECORDS as usize + 1];
     next.records[..records.len()].copy_from_slice(&records);
     let count = records.len() as u32 / crate::gpu::HORIZON_RECORD_VECTORS;
-    let bounces = settings.bounces() && bakes.terrains.values().any(|held| held.bounce.made.is_some());
-    next.records[HORIZON_RECORDS as usize] = [count as f32, if bounces { 1.0 } else { 0.0 }, 0.0, 0.0];
+    let bounces = settings.bounces()
+        && bakes
+            .terrains
+            .values()
+            .any(|held| held.bounce.made.is_some());
+    next.records[HORIZON_RECORDS as usize] =
+        [count as f32, if bounces { 1.0 } else { 0.0 }, 0.0, 0.0];
     piece.set_if_neq(next);
     *published = records;
 }
@@ -774,9 +928,14 @@ impl Readback for SurfaceTotals {
             if epoch != self.epoch() {
                 return;
             }
-            let sum = if counters[crate::gpu::SUBDIVISION_MEASURE as usize] == 0 { 0 } else { 2 };
+            let sum = if counters[crate::gpu::SUBDIVISION_MEASURE as usize] == 0 {
+                0
+            } else {
+                2
+            };
             sums[sum] = sums[sum].saturating_add(counters[crate::gpu::SUBDIVISION_LEAVES as usize]);
-            sums[sum + 1] = sums[sum + 1].saturating_add(counters[crate::gpu::SUBDIVISION_REFUSED as usize]);
+            sums[sum + 1] =
+                sums[sum + 1].saturating_add(counters[crate::gpu::SUBDIVISION_REFUSED as usize]);
         }
         self.grounds = [sums[0], sums[1]];
         self.waters = [sums[2], sums[3]];
@@ -817,8 +976,17 @@ impl Readback for PartStats {
     }
 }
 
-pub(crate) fn rest_surface(tiles: Res<TerrainTiles>, atlas: Res<Atlas>, mut totals: ResMut<SurfaceTotals>) {
-    let held = tiles.terrains.iter().any(|entry| atlas.slots.keys().any(|(terrain, _)| *terrain == entry.terrain));
+pub(crate) fn rest_surface(
+    tiles: Res<TerrainTiles>,
+    atlas: Res<Atlas>,
+    mut totals: ResMut<SurfaceTotals>,
+) {
+    let held = tiles.terrains.iter().any(|entry| {
+        atlas
+            .slots
+            .keys()
+            .any(|(terrain, _)| *terrain == entry.terrain)
+    });
     if held {
         if totals.resting {
             totals.resting = false;
@@ -868,8 +1036,12 @@ fn records_left(settings: &TerrainShading, tiles: &TerrainTiles, bakes: &Bakes) 
         }
         let colors = &held.colors;
         left += u32::from(colors.wanted.as_ref().is_some_and(|wanted| {
-            colors.shown.as_ref().is_none_or(|(shown, _)| shown != wanted)
+            colors
+                .shown
+                .as_ref()
+                .is_none_or(|(shown, _)| shown != wanted)
         }));
+        left = left.saturating_add(u32::try_from(held.flow.left()).unwrap_or(u32::MAX));
     }
     left
 }
@@ -885,13 +1057,43 @@ pub(crate) fn count(
 ) {
     let drawn = part.drawn;
     let [leaves, refused] = totals.grounds;
-    let shaded_tiles = bakes.terrains.values().map(|held| held.shadings.len() as u32).sum();
-    let lit = bakes.terrains.values().filter(|held| held.lighting.made.is_some()).count() as u32;
-    let lighting = bakes.terrains.values().filter(|held| held.lighting.asked.is_some()).count() as u32;
-    let bounced = bakes.terrains.values().filter(|held| held.bounce.made.is_some()).count() as u32;
-    let bouncing = bakes.terrains.values().filter(|held| held.bounce.asked.is_some()).count() as u32;
-    let colored = bakes.terrains.values().filter(|held| held.colors.shown.is_some()).count() as u32;
-    let coloring = bakes.terrains.values().filter(|held| held.colors.asking()).count() as u32;
+    let (shaded_tiles, shading_records) = bakes
+        .terrains
+        .values()
+        .map(|held| held.flow.counts())
+        .fold((0, 0), |(shaded, asked), (more, asking)| {
+            (shaded + more, asked + asking)
+        });
+    let lit = bakes
+        .terrains
+        .values()
+        .filter(|held| held.lighting.made.is_some())
+        .count() as u32;
+    let lighting = bakes
+        .terrains
+        .values()
+        .filter(|held| held.lighting.asked.is_some())
+        .count() as u32;
+    let bounced = bakes
+        .terrains
+        .values()
+        .filter(|held| held.bounce.made.is_some())
+        .count() as u32;
+    let bouncing = bakes
+        .terrains
+        .values()
+        .filter(|held| held.bounce.asked.is_some())
+        .count() as u32;
+    let colored = bakes
+        .terrains
+        .values()
+        .filter(|held| held.colors.shown.is_some())
+        .count() as u32;
+    let coloring = bakes
+        .terrains
+        .values()
+        .filter(|held| held.colors.asking())
+        .count() as u32;
     let next = TerrainShadingStats {
         pending: records_left(&settings, &tiles, &bakes),
         triangles: leaves.saturating_mul(crate::gpu::SURFACE_MESHLET_INDICES / 3),
@@ -899,7 +1101,10 @@ pub(crate) fn count(
         shallow_subdivisions: drawn.shallow_subdivisions,
         shadow_patches: drawn.shadow_patches,
         tiles: atlas.slots.len() as u32,
-        tiles_dropped: engine_core::Cut::of(atlas.slots.len() as u32 + atlas.dropped, atlas.slots.len() as u32),
+        tiles_dropped: engine_core::Cut::of(
+            atlas.slots.len() as u32 + atlas.dropped,
+            atlas.slots.len() as u32,
+        ),
         gpu_controls: drawn.gpu_controls,
         horizons: drawn.horizons,
         sky_maps: drawn.sky_maps,
@@ -911,6 +1116,7 @@ pub(crate) fn count(
         macro_maps: drawn.macro_maps,
         dropped_materials: drawn.dropped_materials,
         shaded_tiles,
+        shading_records,
         surface_slots: engine_core::Cut::of(drawn.surface_wanted, drawn.surface_kept),
         lit,
         lighting,
@@ -937,10 +1143,11 @@ pub(crate) fn forget(
     }
     *atlas = Atlas::default();
     let bakes = &mut *bakes;
-    for held in bakes.terrains.values_mut() {
-        held.lighting.drop_asked(&mut jobs);
-        held.bounce.drop_asked(&mut jobs);
-        bakes.colors_gone.extend(held.colors.handles());
+    let mut released = BTreeSet::new();
+    for (_, held) in std::mem::take(&mut bakes.terrains) {
+        released.extend(held.forget(&mut jobs, &mut bakes.colors_gone));
     }
-    bakes.terrains.clear();
+    for key in released {
+        jobs.unshare(key);
+    }
 }

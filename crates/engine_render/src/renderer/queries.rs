@@ -21,7 +21,7 @@ impl Renderer {
         let Some(run) = self.run.as_ref() else {
             return false;
         };
-        let composite = std::any::type_name::<crate::shared::Composite>();
+        let composite = <crate::shared::Composite as crate::GpuPart>::NAME;
         run.machine
             .declared
             .parts

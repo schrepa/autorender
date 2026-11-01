@@ -1,10 +1,4 @@
 #[derive(Debug)]
-pub struct Mirror {
-    pub name: &'static str,
-    pub module: Option<&'static str>,
-}
-
-#[derive(Debug)]
 pub struct Field {
     pub name: &'static str,
     pub offset: usize,
@@ -13,9 +7,6 @@ pub struct Field {
 
 #[derive(Debug)]
 pub struct Layout {
-    pub rust: &'static str,
-    pub mirrors: &'static [Mirror],
-    pub size: usize,
     pub fields: &'static [Field],
 }
 
@@ -48,11 +39,9 @@ const fn same(a: &str, b: &str) -> bool {
 }
 
 macro_rules! gpu_structs {
-    (@module) => { None };
-    (@module $module:literal) => { Some($module) };
     ($(
         $(#[$meta:meta])*
-        $vis:vis struct $name:ident $(as [$($mirror:literal $(in $module:literal)?),* $(,)?])? {
+        $vis:vis struct $name:ident {
             $($(#[$field_meta:meta])* $field_vis:vis $field:ident: $ty:ty),* $(,)?
         }
     )*) => {
@@ -65,12 +54,6 @@ macro_rules! gpu_structs {
 
             impl $name {
                 pub const LAYOUT: $crate::gpu_layouts::Layout = $crate::gpu_layouts::Layout {
-                    rust: stringify!($name),
-                    mirrors: &[$($($crate::gpu_layouts::Mirror {
-                        name: $mirror,
-                        module: gpu_structs!(@module $($module)?),
-                    }),*)?],
-                    size: ::core::mem::size_of::<$name>(),
                     fields: &[$($crate::gpu_layouts::Field {
                         name: stringify!($field),
                         offset: ::core::mem::offset_of!($name, $field),

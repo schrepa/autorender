@@ -595,23 +595,42 @@ impl CloudPass {
         cx.frame(light::SKY_DOMES, Bind::Texture(domes))?;
         cx.frame(light::SKY_CLOUD_SAMPLER, Bind::Sampler(dome_sampler))?;
         cx.frame(cloud_shadows::CLOUD_SHADOWS, Bind::Buffer(shadows))?;
-        let light_pass = cx.pass("cloud_light").id();
+        let light_pass = cx
+            .pass("cloud_light")
+            .after(environment)
+            .label("engine/cloud-light")
+            .span("cloud_light")
+            .id();
         let march_pass = cx
             .pass("clouds")
             .after(environment)
             .after(light_pass)
+            .label("engine/cloud-march")
+            .span("clouds")
             .id();
-        let shadow_pass = cx.pass("cloud_shadows").after(march_pass).id();
+        let shadow_pass = cx
+            .pass("cloud_shadows")
+            .after(march_pass)
+            .label("engine/cloud-shadows")
+            .span("cloud_shadows")
+            .id();
         let shadow_copy = cx.copy(
             "cloud_shadow_copy",
             Copied::Buffer(shadow_cells),
             Copied::Buffer(shadows),
         );
-        let view_pass = cx.pass("cloud_view").at(Layer::Over).id();
+        let view_pass = cx
+            .pass("cloud_march")
+            .at(Layer::Over)
+            .label("engine/cloud-view")
+            .span("cloud_view")
+            .id();
         let composite_pass = cx
             .pass("cloud_composite")
             .at(Layer::Over)
             .after(view_pass)
+            .label("engine/cloud-composite")
+            .span("cloud_composite")
             .id();
         let noise = || {
             [

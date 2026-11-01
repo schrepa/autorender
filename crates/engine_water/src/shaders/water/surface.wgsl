@@ -12,7 +12,7 @@ import package::face::sky::{ambient, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::generated::targets::{ViewTargets, view_targets};
 import package::generated::water::{BREAK_THINNEST, NO_WATER_BLOCK, NO_WATER_SURFACE, SIM_LIVE_LOOKS,
-    SIM_RIM, WATER_LIVE_BLOCK, WaterUniform};
+    SIM_RIM, WATER_LEAF_FIRST, WATER_LIVE_BLOCK, WaterUniform};
 import package::place::water::{WATER_HELD, WaterAt};
 import package::water::faces::water::{water_at_level, water_cell, water_info_at, water_read,
     water_smooth, water_texel, water_words, water_words_add};
@@ -56,8 +56,6 @@ struct WaterOutput {
     @location(0) relative: vec3<f32>,
     @location(1) @interpolate(flat) terrain: u32,
 }
-
-const WATER_LEAF_FIRST: u32 = 5u;
 
 fn water_leaf_terrain(instance: u32) -> vec2<u32> {
     var terrain = 0u;

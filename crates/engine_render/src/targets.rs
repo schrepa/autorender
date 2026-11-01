@@ -1,8 +1,3 @@
-use crate::cached::Versioned;
-
-pub const RENDER_TARGET: wgpu::TextureUsages =
-    wgpu::TextureUsages::RENDER_ATTACHMENT.union(wgpu::TextureUsages::TEXTURE_BINDING);
-
 pub fn texture_2d(
     device: &wgpu::Device,
     label: &str,
@@ -134,75 +129,4 @@ impl FrameRegion {
 pub fn draw_within(pass: &mut wgpu::RenderPass<'_>, (width, height): (u32, u32)) {
     pass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
     pass.set_scissor_rect(0, 0, width, height);
-}
-
-pub fn fullscreen_pass<'e>(
-    encoder: &'e mut wgpu::CommandEncoder,
-    label: &str,
-    (view, drawn): (&wgpu::TextureView, (u32, u32)),
-    timestamp_writes: Option<wgpu::RenderPassTimestampWrites<'_>>,
-) -> wgpu::RenderPass<'e> {
-    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some(label),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Load,
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        depth_stencil_attachment: None,
-        timestamp_writes,
-        occlusion_query_set: None,
-        multiview_mask: None,
-    });
-    draw_within(&mut pass, drawn);
-    pass
-}
-
-pub struct ScreenTarget<T> {
-    made: Option<(FrameSize, Versioned<T>)>,
-    mark: u64,
-    created: Vec<u64>,
-}
-
-impl<T> Default for ScreenTarget<T> {
-    fn default() -> Self {
-        Self {
-            made: None,
-            mark: 0,
-            created: Vec::new(),
-        }
-    }
-}
-
-impl<T> ScreenTarget<T> {
-    pub fn resizes(&mut self, size: FrameSize) -> bool {
-        if self.size() == Some(size) {
-            return false;
-        }
-        self.release();
-        self.mark = crate::memory::created_count();
-        true
-    }
-
-    pub fn set(&mut self, size: FrameSize, targets: T) {
-        self.created = crate::memory::created_since(self.mark);
-        self.made = Some((size, Versioned::new(targets)));
-    }
-
-    pub fn get(&self) -> Option<&Versioned<T>> {
-        self.made.as_ref().map(|(_, targets)| targets)
-    }
-
-    pub fn size(&self) -> Option<FrameSize> {
-        self.made.as_ref().map(|(size, _)| *size)
-    }
-
-    pub fn release(&mut self) {
-        crate::memory::release_ids(&std::mem::take(&mut self.created));
-        self.made = None;
-    }
 }

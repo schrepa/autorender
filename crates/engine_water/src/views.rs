@@ -46,8 +46,9 @@ impl Operation for WaterFlowQuery {
                 }
             })
             .collect();
-        serde_json::to_value(flows)
-            .map_err(|error| Error::new(engine_core::ErrorCode::InvalidValue, "$").got(error.to_string()))
+        serde_json::to_value(flows).map_err(|error| {
+            Error::new(engine_core::ErrorCode::InvalidValue, "$").got(error.to_string())
+        })
     }
 }
 

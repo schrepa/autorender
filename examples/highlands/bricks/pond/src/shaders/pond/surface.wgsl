@@ -1,5 +1,5 @@
-import package::engine::shading::{BODY_WATER, Shaded, SurfacePoint, ViewPixel};
-import package::engine::view::{camera, stable_normalize};
+import package::engine::shading::{BODY_WATER, Shaded, SurfacePoint};
+import package::engine::view::{camera, stable_normalize, view_pixel};
 import package::face::dither::stored;
 import package::face::ground_tiles::{GroundTerrain, ground_height, terrain_info};
 import package::face::lighting::finish;
@@ -97,7 +97,7 @@ fn fs_pond(input: PondOutput) -> ViewTargets {
     let color = stored(shade.shaded.color, input.clip_position.xy);
     let previous = (camera.previous_view_projection * vec4<f32>(input.world, 1.0)).xyw;
     var targets = view_targets(shade.shaded,
-        ViewPixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
-    targets.scene = vec4<f32>(color * shade.cover, shade.cover);
+        view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
+    targets.color = vec4<f32>(color * shade.cover, shade.cover);
     return targets;
 }

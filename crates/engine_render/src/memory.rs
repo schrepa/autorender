@@ -55,35 +55,6 @@ pub fn release_buffer(buffer: &wgpu::Buffer) {
     not(any(feature = "dev", feature = "profiling")),
     expect(unused_variables, reason = "only measured builds keep a ledger")
 )]
-pub fn release_ids(ids: &[u64]) {
-    #[cfg(any(feature = "dev", feature = "profiling"))]
-    ids.iter().copied().for_each(ledger::released);
-}
-
-#[cfg(any(feature = "dev", feature = "profiling"))]
-pub fn created_count() -> u64 {
-    ledger::count()
-}
-
-#[cfg(not(any(feature = "dev", feature = "profiling")))]
-pub fn created_count() -> u64 {
-    0
-}
-
-#[cfg(any(feature = "dev", feature = "profiling"))]
-pub fn created_since(count: u64) -> Vec<u64> {
-    ledger::since(count)
-}
-
-#[cfg(not(any(feature = "dev", feature = "profiling")))]
-pub fn created_since(_count: u64) -> Vec<u64> {
-    Vec::new()
-}
-
-#[cfg_attr(
-    not(any(feature = "dev", feature = "profiling")),
-    expect(unused_variables, reason = "only measured builds keep a ledger")
-)]
 pub fn release_any(value: &dyn std::any::Any) {
     #[cfg(any(feature = "dev", feature = "profiling"))]
     ledger::released_any(value);
@@ -175,7 +146,7 @@ pub fn owned(_brick: &'static str, _index: u16) -> Owned {
 #[cfg(any(feature = "dev", feature = "profiling"))]
 mod ledger {
     use std::cell::{Cell, RefCell};
-    use std::collections::{BTreeMap, VecDeque};
+    use std::collections::BTreeMap;
     use std::hash::{BuildHasher, Hash};
 
     use engine_core::collections::{FixedState, HashMap};
@@ -184,14 +155,11 @@ mod ledger {
 
     type Owner = Option<&'static str>;
 
-    const RECENT: usize = 256;
     const UPLOADS: usize = 1 << 16;
 
     #[derive(Default)]
     struct Ledger {
         warm: bool,
-        count: u64,
-        recent: VecDeque<(u64, u64)>,
         live: HashMap<u64, (Owner, u64)>,
         bytes: BTreeMap<Owner, u64>,
         created: BTreeMap<Owner, u64>,
@@ -234,11 +202,6 @@ mod ledger {
         let owner = owner();
         LEDGER.with_borrow_mut(|ledger| {
             ledger.release(id);
-            ledger.count += 1;
-            ledger.recent.push_back((ledger.count, id));
-            if ledger.recent.len() > RECENT {
-                ledger.recent.pop_front();
-            }
             ledger.live.insert(id, (owner, bytes));
             *ledger.bytes.entry(owner).or_default() += bytes;
             if ledger.warm {
@@ -249,21 +212,6 @@ mod ledger {
 
     pub(super) fn released(id: u64) {
         LEDGER.with_borrow_mut(|ledger| ledger.release(id));
-    }
-
-    pub(super) fn count() -> u64 {
-        LEDGER.with_borrow(|ledger| ledger.count)
-    }
-
-    pub(super) fn since(count: u64) -> Vec<u64> {
-        LEDGER.with_borrow(|ledger| {
-            ledger
-                .recent
-                .iter()
-                .filter(|&&(created, _)| created > count)
-                .map(|&(_, id)| id)
-                .collect()
-        })
     }
 
     pub(super) fn released_any(value: &dyn std::any::Any) {

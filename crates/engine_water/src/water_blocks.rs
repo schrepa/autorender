@@ -1,9 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_core::DeviceLimits;
+use engine_core::{DeviceLimits, View};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::{PATCH_QUADS, PATCHES_PER_TILE, TILE_STRIDE, bed_at};
 use engine_places::ground::{GroundTiles, TileFace};
@@ -93,7 +93,12 @@ impl Blocks {
         self.next - self.free.len() as u32
     }
 
-    pub(crate) fn current(&self, terrain: Entity, key: TileKey, water: Option<&Arc<TileWater>>) -> bool {
+    pub(crate) fn current(
+        &self,
+        terrain: Entity,
+        key: TileKey,
+        water: Option<&Arc<TileWater>>,
+    ) -> bool {
         self.tiles.get(&(terrain, key)).is_some_and(|tile| {
             match (tile.held.water.as_ref(), water) {
                 (Some(a), Some(b)) => Arc::ptr_eq(a, b),
@@ -103,10 +108,12 @@ impl Blocks {
         })
     }
 
-    fn sync(&mut self, held: Vec<((Entity, TileKey), Held)>, max_layers: u32) {
+    fn sync(&mut self, held: Vec<((Entity, TileKey), Held)>, max_layers: u32, carried: bool) {
         self.uploads = 0;
         self.dropped = 0;
-        self.writes.clear();
+        if !carried {
+            self.writes.clear();
+        }
         let mut replaced = Vec::new();
         let mut arrived = Vec::new();
         let mut changed = false;
@@ -128,8 +135,12 @@ impl Blocks {
         }
         for (_, gone) in std::mem::replace(&mut self.tiles, kept) {
             changed = true;
-            self.free
-                .extend(gone.blocks.iter().copied().filter(|&block| block != NO_WATER_BLOCK));
+            self.free.extend(
+                gone.blocks
+                    .iter()
+                    .copied()
+                    .filter(|&block| block != NO_WATER_BLOCK),
+            );
         }
         self.free.sort_unstable_by(|a, b| b.cmp(a));
         for (slot, before, tile) in replaced {
@@ -159,17 +170,17 @@ impl Blocks {
         for pz in 0..patches {
             for px in 0..patches {
                 let index = pz * patches + px;
-                let holds = tile
-                    .water
-                    .as_deref()
-                    .zip(tile.mesh.as_deref())
-                    .is_some_and(|(water, mesh)| {
-                        let holds = water.patch_holds_water(px as u32, pz as u32);
-                        if holds {
-                            block_texels(&tile.face, water, mesh, (px, pz), &mut texels);
-                        }
-                        holds
-                    });
+                let holds =
+                    tile.water
+                        .as_deref()
+                        .zip(tile.mesh.as_deref())
+                        .is_some_and(|(water, mesh)| {
+                            let holds = water.patch_holds_water(px as u32, pz as u32);
+                            if holds {
+                                block_texels(&tile.face, water, mesh, (px, pz), &mut texels);
+                            }
+                            holds
+                        });
                 if !holds {
                     if blocks[index] != NO_WATER_BLOCK {
                         self.free.push(blocks[index]);
@@ -179,13 +190,12 @@ impl Blocks {
                 }
                 let same = blocks[index] != NO_WATER_BLOCK
                     && held.as_ref().is_some_and(|held| {
-                        held.water
-                            .as_deref()
-                            .zip(held.mesh.as_deref())
-                            .is_some_and(|(before, mesh)| {
+                        held.water.as_deref().zip(held.mesh.as_deref()).is_some_and(
+                            |(before, mesh)| {
                                 block_texels(&held.face, before, mesh, (px, pz), &mut kept);
                                 kept.same(&texels)
-                            })
+                            },
+                        )
                     });
                 if same {
                     continue;
@@ -238,16 +248,34 @@ impl Blocks {
                 if block == NO_WATER_BLOCK || written.contains(&block) {
                     continue;
                 }
-                block_texels(&tile.held.face, water, mesh, (index % patches, index / patches), &mut texels);
+                block_texels(
+                    &tile.held.face,
+                    water,
+                    mesh,
+                    (index % patches, index / patches),
+                    &mut texels,
+                );
                 self.writes.push((block, texels.clone()));
             }
         }
     }
 
-    fn write_directory(&mut self, ground: &GroundTiles) {
+    fn latest(&mut self) {
+        let mut seen = BTreeSet::new();
+        let mut writes: Vec<(u32, Texels)> = std::mem::take(&mut self.writes)
+            .into_iter()
+            .rev()
+            .filter(|(block, _)| seen.insert(*block))
+            .collect();
+        writes.reverse();
+        self.writes = writes;
+    }
+
+    fn write_directory(&mut self, ground: &GroundTiles, carried: bool) {
         let layers = ground.layers;
+        let before = if carried { self.written.clone() } else { 0..0 };
         if !self.stale && self.directory_layers == Some(layers) {
-            self.written = 0..0;
+            self.written = before;
             return;
         }
         self.stale = false;
@@ -264,12 +292,13 @@ impl Blocks {
         }
         let whole = self.directory_layers != Some(layers);
         self.directory_layers = Some(layers);
-        self.written = if whole {
+        let run = if whole {
             self.directory_generation += 1;
             0..words.len()
         } else {
             changed_run(&self.directory, &words)
         };
+        self.written = joined(before, run);
         self.directory = words;
     }
 
@@ -283,6 +312,16 @@ impl Blocks {
         holding.dedup();
         holding
     }
+}
+
+fn joined(before: Range<usize>, run: Range<usize>) -> Range<usize> {
+    if before.is_empty() {
+        return run;
+    }
+    if run.is_empty() {
+        return before;
+    }
+    before.start.min(run.start)..before.end.max(run.end)
 }
 
 fn changed_run(was: &[u32], now: &[u32]) -> Range<usize> {
@@ -340,13 +379,17 @@ fn block_texels(
 
 pub(crate) fn place_blocks(
     ground: Res<GroundTiles>,
-    limits: Res<DeviceLimits>,
+    (limits, view): (Res<DeviceLimits>, Res<View>),
     mut state: ResMut<WaterState>,
 ) {
     let state = &mut *state;
+    let carried = !view.submitted();
     let mut held = Vec::with_capacity(ground.held.len());
     for tile in &ground.held {
-        let Some(terrain) = state.terrains.iter().find(|terrain| terrain.entity == tile.terrain)
+        let Some(terrain) = state
+            .terrains
+            .iter()
+            .find(|terrain| terrain.entity == tile.terrain)
         else {
             continue;
         };
@@ -368,11 +411,14 @@ pub(crate) fn place_blocks(
     }
     held.sort_unstable_by_key(|(slot, _)| *slot);
     let generation = state.blocks.generation;
-    state.blocks.sync(held, limits.texture_layers);
+    state.blocks.sync(held, limits.texture_layers, carried);
     if state.blocks.generation != generation {
         state.blocks.rewrite();
     }
-    state.blocks.write_directory(&ground);
+    if carried {
+        state.blocks.latest();
+    }
+    state.blocks.write_directory(&ground, carried);
     state.watered = state.blocks.holding();
 }
 
@@ -395,6 +441,10 @@ impl BlocksGpu {
             directory,
             directory_generation: None,
         }
+    }
+
+    pub(crate) fn forget(&mut self) {
+        self.directory_generation = None;
     }
 
     pub(crate) fn prepare(&mut self, blocks: &Blocks, cx: &mut Prepare<'_, WaterGpu>) {
@@ -451,7 +501,11 @@ impl BlocksGpu {
         };
         self.directory_generation = Some(blocks.directory_generation);
         if !run.is_empty() {
-            cx.write(self.directory, (run.start * 4) as u64, &blocks.directory[run]);
+            cx.write(
+                self.directory,
+                (run.start * 4) as u64,
+                &blocks.directory[run],
+            );
         }
     }
 }

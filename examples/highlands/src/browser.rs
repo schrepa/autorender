@@ -81,8 +81,7 @@ engine::__if_dev! {
                 Highlands::played(options.clone(), source, engine)
             };
             let bricks = highlands_bricks::bricks(engine::BrickList::default());
-            let mut smokes = engine::smokes::registered(&bricks).map_err(js_error)?;
-            smokes.extend(crate::smokes().map_err(js_error)?);
+            let smokes = crate::smokes(&bricks).map_err(js_error)?;
             engine::smokes::page::run::<Highlands>(
                 canvas,
                 &names,

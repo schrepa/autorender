@@ -7,8 +7,8 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, Expected, Parent, Placed, Rule, SceneComponents,
-    Schedule, Setting, Source, Transform,
+    Brick, Bricks, ComponentKind, Error, ErrorCode, Expected, Parent, Placed, Placement, Rule,
+    SceneComponents, Schedule, Setting, Source, Transform,
 };
 use engine_places::ground::{Ground, Grounded, GroundedAt, HeightHeld};
 use glam::Vec2;
@@ -27,6 +27,7 @@ impl Brick for GroundingBrick {
             .join::<SceneComponents>(
                 ComponentKind::of::<Grounded>("grounded")
                     .check(check_grounded)
+                    .placement(Placement::Roots(ErrorCode::InvalidGrounded))
                     .check_placed(placed_grounded)
                     .schema(grounded_schema)
                     .example(grounded_example)
@@ -37,7 +38,7 @@ impl Brick for GroundingBrick {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct GroundedView {
     pub offset: f32,
     pub level: Option<u32>,

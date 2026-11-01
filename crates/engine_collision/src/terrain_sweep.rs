@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, Operation, bounds, stated};
+use engine_core::{Error, ErrorCode, Filled, Operation, Slot, bounds, stated};
 use engine_places::ground::Ground;
 use engine_places::physics::{Collide, Collision, CollisionRay, QueryFilter};
 use glam::{Vec2, Vec3};
@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::queries::{bounded, reply, schema_of};
+use crate::types::missing_brick;
 use crate::world::{CollisionWorld, world_of};
 
 const PLACED_RAY_HITS: usize = 16;
@@ -25,11 +26,15 @@ pub(crate) struct TerrainSweepQuery {
 
 impl Operation for TerrainSweepQuery {
     const NAME: &'static str = "terrain_sweep";
-    type Params = (Res<'static, Collision>, Res<'static, Ground>);
+    type Params = (
+        Res<'static, Collision>,
+        Res<'static, Ground>,
+        Filled<'static, Ground>,
+    );
     type Request = Self;
 
     fn run(
-        (collision, ground): SystemParamItem<'_, '_, Self::Params>,
+        (collision, ground, grounded): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
         let Self {
@@ -53,7 +58,7 @@ impl Operation for TerrainSweepQuery {
         )?;
         sweep(
             world_of(&collision),
-            &ground,
+            grounded.on().then_some(&*ground),
             Vec2::new(cx, cz),
             half_extent as f32,
             samples,
@@ -83,11 +88,14 @@ fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
 
 fn sweep(
     collision: Option<&CollisionWorld>,
-    ground: &Ground,
+    ground: Option<&Ground>,
     center: Vec2,
     half_extent: f32,
     samples: u32,
 ) -> Result<Value, Error> {
+    let Some(ground) = ground else {
+        return Err(missing_brick(Ground::NAME, "$.op"));
+    };
     let grounds: Vec<Entity> = collision
         .into_iter()
         .flat_map(|collision| collision.terrain.owners())

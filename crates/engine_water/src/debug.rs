@@ -96,7 +96,7 @@ fn water_probe((object, detail): (u32, u32), (froudes, state): (u32, u32)) -> Wa
 fn probe(ids: [u32; 4], color: [f32; 4]) -> Value {
     let [record, object, detail, froudes] = ids;
     let state = color[0].to_bits();
-    let water = (record & 0xf == DEBUG_KIND_WATER)
-        .then(|| water_probe((object, detail), (froudes, state)));
+    let water =
+        (record & 0xf == DEBUG_KIND_WATER).then(|| water_probe((object, detail), (froudes, state)));
     serde_json::to_value(Probed { water }).unwrap_or(Value::Null)
 }

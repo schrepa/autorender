@@ -21,7 +21,6 @@ engine_sky.workspace = true
 engine_terrain.workspace = true
 engine_terrain_shading.workspace = true
 engine_water.workspace = true
-engine_world_streaming.workspace = true
 engine_navigation.workspace = true
 engine_worker.workspace = true
 zstd.workspace = true

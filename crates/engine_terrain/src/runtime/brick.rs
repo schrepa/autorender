@@ -7,7 +7,7 @@ use crate::expr_layer::EXPRESSION;
 use crate::jobs::GROUND_GRID;
 use crate::scene::{prefetch_kind, terrain_kind};
 use engine_core::{Brick, Bricks, GpuStruct, JobKind, SceneComponents, Schedule, Source};
-use engine_places::ground::{Ground, GroundSurface, TerrainTiles};
+use engine_places::ground::{Ground, GroundSurface, GroundWork, TerrainTiles};
 use engine_places::terrain::TerrainLayers;
 use engine_places::water::Hydrology;
 use engine_render::RenderBricks;
@@ -31,6 +31,7 @@ impl Brick for TerrainBrick {
             .fill::<Ground>(None)
             .fill::<TerrainTiles>(None)
             .fill::<Hydrology>(None)
+            .fill::<GroundWork>(None)
             .fill::<GroundSurface>(Some(crate::shaders::terrain::faces::surface::MODULE))
             .join::<SceneComponents>(terrain_kind(), None)
             .join::<SceneComponents>(prefetch_kind(), None)
@@ -57,6 +58,8 @@ impl Brick for TerrainBrick {
             .observation::<TerrainHeightQuery>()
             .observation::<TerrainRouteQuery>()
             .observation::<TerrainInspect>()
+            .observation::<TerrainLayerSweep>()
+            .observation::<TerrainListing>()
             .part::<SurfaceProgramGpu>();
     }
 }

@@ -4,9 +4,7 @@ use std::path::Path;
 
 use bevy_ecs::world::World;
 use engine::{AssetBudget, AssetLibrary, Engine, EngineConfig, Error, ErrorCode};
-use engine_core::Section;
 use engine_scene::{MAX_SOURCE_BYTES, SceneDocument, SceneFiles, SceneKinds};
-use engine_world_streaming::StreamedScene;
 use serde_json::{Value, json};
 
 use super::Observations;
@@ -144,7 +142,7 @@ fn round_trip(name: &str, source: &str, kinds: &SceneKinds, observed: &mut Obser
                 format!("document {name} counts"),
                 json!({
                     "entities": document.entities.len(),
-                    "streamed": streamed(&document),
+                    "streamed": document.streamed.len(),
                     "prefabs": document.prefabs.len(),
                     "materials": document.materials.len(),
                     "meshes": document.meshes.len(),
@@ -161,15 +159,6 @@ fn round_trip(name: &str, source: &str, kinds: &SceneKinds, observed: &mut Obser
             )
         }),
     }
-}
-
-fn streamed(document: &SceneDocument) -> usize {
-    document
-        .environment
-        .as_ref()
-        .and_then(|environment| environment.sections.get(StreamedScene::KEY))
-        .and_then(|section| section["streamed"].as_array())
-        .map_or(0, Vec::len)
 }
 
 fn refuse(

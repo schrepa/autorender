@@ -201,7 +201,7 @@ impl DevTools {
             if inspectors.contains_key(key) {
                 continue;
             }
-            let schema = match kind.json_schema() {
+            let schema = match kind.json_schema_in(&engine_core::SceneCx::of(world)) {
                 Value::Null => json!({ "type": "object" }),
                 schema => schema,
             };

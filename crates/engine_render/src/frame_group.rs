@@ -41,13 +41,6 @@ pub(crate) struct FramePlan {
     pub(crate) of_pipeline: Vec<u32>,
 }
 
-impl FramePlan {
-    pub(crate) fn variant(&self, pipeline: u32) -> Option<&Variant> {
-        let index = *self.of_pipeline.get(pipeline as usize)?;
-        self.variants.get(index as usize)
-    }
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Counted {
     uniform_buffers: u32,

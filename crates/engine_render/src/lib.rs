@@ -22,7 +22,6 @@ use crate::draws::{DrawMember, RawDraw};
 pub use wgpu;
 
 mod bindings;
-mod cached;
 mod draws;
 mod encode;
 mod fixed_linker;
@@ -51,9 +50,13 @@ mod mipmaps;
 mod platform;
 mod profiling;
 mod renderer;
+mod staging;
 mod targets;
 
-pub use gpu_data::{mip_levels, pixel_angle, pixels_per_meter, planes};
+pub use gpu_data::{
+    ground_data, mip_levels, pack_color, pack_surface, pixel_angle, pixels_per_meter, planes,
+    pyramid_extents,
+};
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
 pub use materials::{MATERIAL_ANISOTROPY, material_variant};
@@ -75,6 +78,7 @@ pub use renderer::{
 #[doc(hidden)]
 pub use shaders::core_modules;
 pub use shaders::FULLSCREEN;
+pub use staging::MIN_STAGED_BYTES;
 
 pub const IMPOSTOR_VERTICES: u32 = 6;
 
@@ -129,6 +133,9 @@ engine_core::settings! {
 
 pub trait GpuPart: Sized + Send + Sync + 'static {
     type Reads: Read + 'static;
+    const NAME: &'static str = "";
+    const LAZY: bool = false;
+    const LABELS: &'static [&'static str] = &[];
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error>;
     fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>);
     fn encode(&mut self, _pass: Pass<Self>, _cx: &mut Encode<'_, Self>) -> u32 {
@@ -176,7 +183,7 @@ impl RenderBricks for Bricks<'_> {
             .push(Box::new(registration::PartRecord::of::<P>(scope)));
         record
             .render
-            .push(Box::new(registration::DrawAny::of::<P, D>(scope, layer, draw)));
+            .push(Box::new(registration::DrawAny::of::<P, D>(layer, draw)));
         self
     }
 
@@ -778,6 +785,21 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.write(buffer.0, offset, bytemuck::cast_slice(data));
     }
 
+    pub fn write_staged<T: bytemuck::Pod>(
+        &mut self,
+        buffer: Buffer<P>,
+        records: &[T],
+        ranges: &[Range<usize>],
+    ) -> bool {
+        let stride = size_of::<T>();
+        self.core
+            .write_staged(buffer.0, (bytemuck::cast_slice(records), stride), ranges)
+    }
+
+    pub fn count_upload(&mut self, bytes: u64) {
+        self.core.uploads.counted += bytes;
+    }
+
     pub fn write_texture(
         &mut self,
         texture: Texture<P>,
@@ -914,7 +936,7 @@ impl<P: GpuPart> Encode<'_, P> {
         self.core.point = None;
         let part = self.core.part;
         Draw {
-            raw: RawDraw::new(&mut *self.core, part),
+            raw: RawDraw::new(&mut *self.core, part, self.timer),
             part: PhantomData,
         }
     }
@@ -945,6 +967,26 @@ fn streams<P, S>(streams: &[(DrawInput<P, S>, u64)]) -> Vec<(u32, u64)> {
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
     pub fn draw(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>) {
+        self.issue(pipeline, shape, None);
+    }
+
+    pub fn draw_timed<'l>(
+        &mut self,
+        pipeline: &Pipeline<P, S>,
+        shape: Shape<'_, P, S>,
+        label: impl FnOnce() -> String + 'l,
+    ) {
+        let timer = self.raw.timer();
+        let label: Box<dyn FnOnce() -> String + 'l> = Box::new(label);
+        self.issue(pipeline, shape, Some((timer, label)));
+    }
+
+    fn issue(
+        &mut self,
+        pipeline: &Pipeline<P, S>,
+        shape: Shape<'_, P, S>,
+        timed: encode::TimedDraw<'_>,
+    ) {
         let shape = match shape {
             Shape::Pulled {
                 vertices,
@@ -1014,7 +1056,7 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         let part = self.raw.part();
         let run = self.raw.run();
         let point = run.point;
-        run.draw(part, point, pipeline.0, shape);
+        run.draw(part, point, pipeline.0, shape, timed);
     }
 }
 

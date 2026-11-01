@@ -14,13 +14,13 @@ use engine_heightfield::{Layers, Pyramid, Reach, TILE_QUADS, TILE_SAMPLES, TileK
 use engine_places::ground::TileFace;
 use glam::Vec2;
 
+use crate::gpu::WATER_SPAN_STEPS as SPAN_STEPS;
 pub use crate::gpu::{
     BREAK_FULL, BREAK_ONSET, BREAK_THINNEST, TURBULENT_SPEED, TURBULENT_SWIRL, WATER_FLOW_RANGE,
     WATER_SHEAR_RANGE, WATER_SPAN_LEAST, WATER_SPAN_MOST,
 };
 use crate::shallow_water::DENSITY;
 
-const SPAN_STEPS: f32 = 126.0;
 pub(crate) const NONE: u32 = u32::MAX;
 pub const WATER_REACH: u32 = 4;
 const NO_RING: u8 = u8::MAX;
@@ -187,12 +187,6 @@ impl TileWater {
     pub(crate) fn sample_state(&self, x: i32, z: i32) -> PointState {
         let stride = TILE_STRIDE as i32;
         unpack_state(self.info[((z + 1) * stride + x + 1) as usize][1])
-    }
-
-    pub(crate) fn bed_word(&self, x: i32, z: i32) -> u32 {
-        let stride = TILE_STRIDE as i32;
-        let [packed, state] = self.info[((z + 1) * stride + x + 1) as usize];
-        state >> 24 | (packed >> 24) << 8
     }
 }
 

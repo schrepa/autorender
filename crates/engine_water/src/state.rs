@@ -68,7 +68,6 @@ impl HeldWater {
         self.mesh = mesh.map(Arc::new);
         self.water = water.map(Arc::new);
     }
-
 }
 
 pub(crate) struct WaterTerrain {
@@ -205,7 +204,12 @@ impl WaterTerrain {
         }
     }
 
-    fn take_bases(&mut self, (records, jobs): (&Records, &mut Jobs), failures: &mut JobFailures, frame: u64) {
+    fn take_bases(
+        &mut self,
+        (records, jobs): (&Records, &mut Jobs),
+        failures: &mut JobFailures,
+        frame: u64,
+    ) {
         let asked: Vec<TileKey> = self
             .held
             .iter()
@@ -226,13 +230,11 @@ impl WaterTerrain {
                 continue;
             };
             jobs.cancel(ticket);
-            let made = output
-                .map_err(|error| error.to_string())
-                .and_then(|bytes| {
-                    tile_water_output(&bytes).map_err(|error| {
-                        format!("{}: its output does not decode: {error}", TILE_WATER.name())
-                    })
-                });
+            let made = output.map_err(|error| error.to_string()).and_then(|bytes| {
+                tile_water_output(&bytes).map_err(|error| {
+                    format!("{}: its output does not decode: {error}", TILE_WATER.name())
+                })
+            });
             match made {
                 Ok(water) => {
                     held.hold(water);
@@ -275,7 +277,10 @@ pub(crate) struct SettleQueue {
 
 impl SettleQueue {
     pub(crate) fn take(&mut self, input: &[u8]) -> Option<Result<Vec<u8>, String>> {
-        let at = self.settled.iter().position(|(held, _)| held[..] == *input)?;
+        let at = self
+            .settled
+            .iter()
+            .position(|(held, _)| held[..] == *input)?;
         Some(self.settled.swap_remove(at).1)
     }
 }
@@ -351,7 +356,11 @@ impl WaterState {
                     .as_ref()
                     .map_or(0, |window| Arc::as_ptr(window) as usize);
                 let falls = Arc::as_ptr(&terrain.falls).cast::<u8>() as usize;
-                (terrain.entity, terrain.revision, window ^ falls.rotate_left(17))
+                (
+                    terrain.entity,
+                    terrain.revision,
+                    window ^ falls.rotate_left(17),
+                )
             })
             .collect()
     }
@@ -465,12 +474,16 @@ pub(crate) fn publish_waterline(
         .terrains
         .iter()
         .flat_map(|terrain| {
-            terrain.held.values().filter(|held| held.resident()).map(|held| WaterTileErrors {
-                terrain: terrain.entity,
-                key: held.face.key,
-                stamp: held.face.stamp,
-                errors: held.errors.clone().unwrap_or_else(|| Arc::clone(&dry)),
-            })
+            terrain
+                .held
+                .values()
+                .filter(|held| held.resident())
+                .map(|held| WaterTileErrors {
+                    terrain: terrain.entity,
+                    key: held.face.key,
+                    stamp: held.face.stamp,
+                    errors: held.errors.clone().unwrap_or_else(|| Arc::clone(&dry)),
+                })
         })
         .collect();
     let same = line.subdivision_error == water.subdivision_error

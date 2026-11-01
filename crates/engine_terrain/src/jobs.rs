@@ -4,7 +4,7 @@ use std::sync::Arc;
 use engine_core::{Error, ErrorCode, Expected, Job, JobCx, JobKind, RecordKey};
 use engine_heightfield::layer::LayerKind;
 use engine_heightfield::reaches;
-use engine_heightfield::tile::{Recipe, shaded_elsewhere, stamped};
+use engine_heightfield::tile::{Recipe, TerrainRecipe, TileJob, shaded_elsewhere, stamped};
 use engine_places::ground::{GroundBridge, GroundGrid};
 use engine_places::terrain::TerrainLayers;
 use glam::Vec2;
@@ -13,8 +13,6 @@ use crate::codec::{self, Reader, Writer, record};
 use crate::{
     Generator, Layers, Pyramid, SOURCE, Stamp, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, Tile, TileKey,
 };
-
-pub use engine_heightfield::tile::{StackView, TerrainRecipe, TileJob};
 
 pub static TILE_BUILD: JobKind = JobKind::new("terrain::tile", &SOURCE, start_tile);
 pub static BAKE: JobKind = JobKind::new("terrain::bake", &SOURCE, start_bake);

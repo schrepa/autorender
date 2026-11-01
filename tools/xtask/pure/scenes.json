@@ -15,11 +15,7 @@
         "bloom": {"intensity": 0.4},
         "haze": {"forward": 0.7, "reach": 200, "spread": 0.4, "size": 50},
         "clouds": {"enabled": true},
-        "time_of_day": {"enabled": true},
-        "streamed": {"streamed": [
-          {"id": "crate", "mesh": "box", "material": "plain", "transform": {"translation": [12, 0.5, 0]}},
-          {"id": "crate-lid", "parent": "crate", "mesh": "box", "material": "plain", "transform": {"translation": [0, 0.6, 0], "scale": [1, 0.2, 1]}}
-        ]}
+        "time_of_day": {"enabled": true}
       },
       "textures": [{"id": "checker", "width": 2, "height": 2, "rgba8": "/////wAAAP8AAAD//////w=="}],
       "materials": [
@@ -46,6 +42,10 @@
         {"id": "walker", "nav_agent": {}, "grounded": {"offset": 0.5}},
         {"id": "lookout", "transform": {"translation": [30, 0, 30]}, "prefetch": {}},
         {"id": "lamp-1", "prefab": "lamp", "transform": {"translation": [4, 0, 4]}}
+      ],
+      "streamed": [
+        {"id": "crate", "mesh": "box", "material": "plain", "transform": {"translation": [12, 0.5, 0]}},
+        {"id": "crate-lid", "parent": "crate", "mesh": "box", "material": "plain", "transform": {"translation": [0, 0.6, 0], "scale": [1, 0.2, 1]}}
       ]
     }
   },
@@ -82,10 +82,10 @@
     {"rule": "invalid_value", "path": "$.entities[0].tags", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "tags": ["t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11", "t12", "t13", "t14", "t15", "t16"]}]}},
     {"rule": "invalid_value", "path": "$.prefabs[0].entities", "prefab": 10001},
     {"rule": "invalid_terrain", "path": "$.entities[0].terrain.layers", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": []}}]}},
-    {"rule": "invalid_streamed", "path": "$.environment.streamed.streamed[0].terrain", "stage": "instantiate", "world": "standard", "document": {"id": "a", "revision": 1, "environment": {"streamed": {"streamed": [{"id": "s", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"type": "noise", "seed": 1, "height": 1, "wavelength": 10}]}}]}}, "materials": [], "meshes": [], "entities": []}},
+    {"rule": "invalid_streamed", "path": "$.streamed[0].terrain", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [], "streamed": [{"id": "s", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"type": "noise", "seed": 1, "height": 1, "wavelength": 10}]}}]}},
     {"rule": "unreadable_map", "path": "$.entities[0].terrain.surface.biomes[0].layers[0].mask.map", "document": {"id": "a", "revision": 1, "materials": [{"id": "plain", "color": [1, 1, 1, 1]}], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": [{"id": "e", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"type": "noise", "seed": 1, "height": 1, "wavelength": 400}], "surface": {"materials": [{"id": "m", "color": [0.1, 0.1, 0.1]}], "biomes": [{"id": "b", "layers": [{"material": "m", "mask": {"map": "custom"}}]}]}}}]}},
     {"rule": "unknown_map", "path": "$.entities[0].terrain.surface.placements[0].mask.map", "document": {"id": "a", "revision": 1, "materials": [{"id": "plain", "color": [1, 1, 1, 1]}], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": [{"id": "e", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"type": "noise", "seed": 1, "height": 1, "wavelength": 400}], "surface": {"materials": [{"id": "m", "color": [0.1, 0.1, 0.1]}], "biomes": [{"id": "b", "layers": [{"material": "m"}]}], "assets": [{"id": "a", "mesh": "box", "material": "plain"}], "placements": [{"id": "p", "assets": [{"asset": "a"}], "density": 1, "footprint": 4, "materials": ["m"], "mask": {"map": "custom"}}]}}}]}},
-    {"rule": "out_of_range", "path": "$.environment.streamed.along[0].every", "stage": "instantiate", "world": "standard", "document": {"id": "a", "revision": 1, "environment": {"streamed": {"along": [{"id": "l", "prefab": "p", "terrain": "e", "layer": "road", "every": 0.01}]}}, "materials": [{"id": "plain", "color": [1, 1, 1, 1]}], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "prefabs": [{"id": "p", "entities": [{"id": "x", "mesh": "box", "material": "plain"}]}], "entities": [{"id": "e", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"type": "noise", "seed": 1, "height": 1, "wavelength": 400}, {"type": "path", "id": "road", "points": [[10, 10], [240, 10]], "width": 4, "shoulder": 2, "smoothing": 10, "bridge_fill": 4, "tunnel_cut": 25}]}}]}},
+    {"rule": "out_of_range", "path": "$.along[0].every", "document": {"id": "a", "revision": 1, "materials": [{"id": "plain", "color": [1, 1, 1, 1]}], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "prefabs": [{"id": "p", "entities": [{"id": "x", "mesh": "box", "material": "plain"}]}], "entities": [{"id": "e", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"type": "noise", "seed": 1, "height": 1, "wavelength": 400}, {"type": "path", "id": "road", "points": [[10, 10], [240, 10]], "width": 4, "shoulder": 2, "smoothing": 10, "bridge_fill": 4, "tunnel_cut": 25}]}}], "along": [{"id": "l", "prefab": "p", "terrain": "e", "layer": "road", "every": 0.01}]}},
     {"rule": "invalid_nav_agent", "path": "$.entities[1].nav_agent", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "nav_agent": {}}]}},
     {"rule": "invalid_grounded", "path": "$.entities[1].grounded", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "grounded": {}}]}},
     {"rule": "invalid_rigid_body", "path": "$.entities[1].rigid_body", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p", "rigid_body": {}}]}},

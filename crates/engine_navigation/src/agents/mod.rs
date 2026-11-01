@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    CookMode, Error, FixedTime, GAMEPLAY_JOBS, IDLE_JOBS, JobFailures, JobKind, JobRef, Jobs,
-    Parent, Records, Ticket, Transform, fields, job_output, job_priority, settings, stats,
+    CookMode, Error, ErrorCode, FixedTime, GAMEPLAY_JOBS, IDLE_JOBS, JobFailures, JobKind, JobRef,
+    Jobs, Parent, Records, Ticket, Transform, fields, job_output, job_priority, settings, stats,
 };
 use engine_math::{clamp, max};
 use engine_places::ground::{
@@ -16,6 +16,7 @@ use engine_places::ground::{
 use engine_places::navigation::{NavAgent, NavStatus, NavWalk};
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::jobs::{
     GroundJob, PORTALS, PORTALS_NAME, PortalsJob, WALK_GROUND, WALK_GROUND_NAME, portals_output,
@@ -376,40 +377,48 @@ fn made<T>(
     output: Result<Arc<[u8]>, Error>,
     decode: impl FnOnce(&[u8]) -> Result<T, Error>,
 ) -> Result<T, String> {
-    let output = output
-        .map(|bytes| bytes.to_vec())
-        .map_err(|error| error.to_string());
-    job_output(kind, output, decode)
+    job_output(kind, output.map_err(worker_message), decode)
+}
+
+fn worker_message(error: Error) -> String {
+    if error.code == ErrorCode::InvalidRecord
+        && let Some(Value::String(message)) = &error.detail.got
+    {
+        return message.clone();
+    }
+    error.to_string()
 }
 
 pub(crate) fn walk_agents(
     (time, settings, cook): (Res<FixedTime>, Res<Navigation>, Res<CookMode>),
     (ground, records): (Res<Ground>, Res<Records>),
-    mut jobs: Jobs,
+    (mut jobs, mut cooks): (Jobs, Jobs),
     mut navigation: ResMut<NavAgents>,
     mut stats: ResMut<NavStats>,
     mut agents: Agents,
 ) {
     *stats = walk(
         (&*settings, *time, cook.cooking),
-        (&*ground, &*records, &mut jobs),
+        (&*ground, &*records, (&mut jobs, &mut cooks)),
         &mut navigation,
         &mut agents,
     );
 }
 
 pub(crate) fn stop_walks(
+    time: Res<FixedTime>,
     mut navigation: ResMut<NavAgents>,
     mut jobs: Jobs,
     mut stats: ResMut<NavStats>,
 ) {
+    navigation.tick = time.tick;
     navigation.stop(&mut jobs);
     *stats = NavStats::default();
 }
 
 fn walk(
     (settings, time, cooking): (&Navigation, FixedTime, bool),
-    (ground, records, jobs): (&Ground, &Records, &mut Jobs),
+    (ground, records, (jobs, cooks)): (&Ground, &Records, (&mut Jobs, &mut Jobs)),
     navigation: &mut NavAgents,
     agents: &mut Agents,
 ) -> NavStats {
@@ -443,7 +452,7 @@ fn walk(
         agents,
     );
     if cooking {
-        let left = navigation.cook(ground, agents, (records, &mut *jobs));
+        let left = navigation.cook(ground, agents, (records, &mut *cooks));
         stats.cooking = u32::try_from(left).unwrap_or(u32::MAX);
     }
     let (grounds, portals) = navigation.records.held();

@@ -4,33 +4,33 @@ use std::sync::Arc;
 
 use engine_codec as codec;
 use engine_core::{JobRef, RecordKey};
-use engine_heightfield::Layers;
 use engine_heightfield::layer::LayerKind;
+use engine_heightfield::tile::{
+    BiomeRules, Generator, PATCH_QUADS, PATCHES_PER_TILE, StackView, TerrainRecipe, Tile, TileJob,
+    shaded_elsewhere,
+};
+use engine_heightfield::{
+    Layers, Pyramid, Stamp, StampOp, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey,
+};
 use engine_navigation::{
     Gait, NavOptions, NavPath, PORTALS, PortalsJob, TilePortals, WalkData, WalkGround, WalkSearch,
 };
 use engine_places::ground::{GroundBridge, GroundGrid, GroundObstacle};
 use engine_places::terrain::TerrainLayers;
 use engine_scene::{SceneDocument, SceneKinds};
-use engine_terrain::jobs::{
-    self, BAKE, BakeJob, GROUND_GRID, GroundIdentity, StackView, TILE_BUILD, TerrainRecipe,
-    TileJob,
-};
-use engine_terrain::{
-    BiomeRules, Generator, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, Stamp, StampOp, TILE_QUADS,
-    Terrain, TerrainScene, Tile, TileKey,
-};
+use engine_terrain::jobs::{self, BAKE, BakeJob, GROUND_GRID, GroundIdentity, TILE_BUILD};
+use engine_terrain::{Terrain, TerrainScene};
 use engine_terrain_shading::jobs::{
     BOUNCE, BounceJob, LIGHTING, LightingJob, MACRO_COLORS, MacroJob,
 };
 use engine_terrain_shading::lighting::{self, Ground};
-use engine_terrain_shading::{TileShading, bounce, macro_colors};
+use engine_terrain_shading::{bounce, macro_colors};
 use engine_water::jobs::{PARTS, WaterJob};
 use engine_water::{SettleRegion, SettleStart, WaterPart};
 use glam::Vec2;
 use serde_json::json;
 
-use super::{JobLog, Observations, hash};
+use super::{JobLog, Observations};
 
 const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const ENTITY: &str = "ground";
@@ -587,8 +587,8 @@ fn portals(
 }
 
 fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> GroundGrid {
-    let side = engine_terrain::TILE_SAMPLES as usize;
-    let stride = engine_terrain::TILE_STRIDE as usize;
+    let side = TILE_SAMPLES as usize;
+    let stride = TILE_STRIDE as usize;
     let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
     let key = tile.key();
     let spacing = pyramid.spacing(u32::from(key.level));
@@ -601,7 +601,7 @@ fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> GroundGrid {
     let first = pyramid.first_sample(key);
     let at =
         |x: i64, z: i64| glam::Vec2::new((first[0] + x) as f32, (first[1] + z) as f32) * spacing;
-    let quads = i64::from(engine_terrain::TILE_QUADS);
+    let quads = i64::from(TILE_QUADS);
     let mut holes = None;
     if layers.holes_reach(at(0, 0), at(quads, quads)) {
         let mut bits = vec![0_u64; (side * side).div_ceil(64)];
@@ -637,8 +637,8 @@ fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> GroundGrid {
 }
 
 fn walk_water(tile: &Tile) -> Option<Box<[f32]>> {
-    let side = engine_terrain::TILE_SAMPLES as usize;
-    let stride = engine_terrain::TILE_STRIDE as usize;
+    let side = TILE_SAMPLES as usize;
+    let stride = TILE_STRIDE as usize;
     let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
     let surfaces = tile.water_surfaces()?;
     let mut water = vec![f32::NAN; side * side].into_boxed_slice();
@@ -769,7 +769,7 @@ impl Recipe {
                     .map_err(|error| error.to_string())?,
             )
         };
-        let materials = !TileShading::shades(key.level, self.around);
+        let materials = !shaded_elsewhere(key.level, self.around);
         let mut generator = Generator::new(layers, &self.pyramid, key)
             .with_surface(self.rules.clone())
             .with_materials(materials);

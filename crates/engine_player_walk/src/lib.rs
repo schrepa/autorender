@@ -2,8 +2,8 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, FixedTime, InterpolateTransform, MoveInput, SceneComponents,
-    Schedule, Source, Transform, stats,
+    Brick, Bricks, ComponentKind, Filled, FixedTime, InterpolateTransform, MoveInput,
+    SceneComponents, Schedule, Source, Transform, stats,
 };
 use engine_places::navigation::NavAgent;
 use engine_places::physics::{
@@ -46,9 +46,13 @@ fn walk(
     time: Res<FixedTime>,
     input: Res<MoveInput>,
     collision: Res<Collision>,
+    collides: Filled<Collision>,
     mut stats: ResMut<PlayerWalkStats>,
     mut walkers: Query<(Entity, &Collider, &mut Transform, &mut Walker), Without<NavAgent>>,
 ) {
+    if !collides.on() {
+        return;
+    }
     let dt = time.delta_seconds;
     for (entity, collider, mut transform, mut walker) in &mut walkers {
         walker.vertical_speed -= 20.0 * dt;

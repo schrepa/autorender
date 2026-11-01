@@ -301,26 +301,6 @@ pub(crate) fn ground_data(
     ]
 }
 
-pub(crate) fn planes(view_projection: Mat4) -> [[f32; 4]; 6] {
-    let rows = [
-        view_projection.row(0),
-        view_projection.row(1),
-        view_projection.row(2),
-        view_projection.row(3),
-    ];
-    [
-        rows[3] + rows[0],
-        rows[3] - rows[0],
-        rows[3] + rows[1],
-        rows[3] - rows[1],
-        rows[2],
-        rows[3] - rows[2],
-    ]
-    .map(|plane: glam::Vec4| {
-        (plane / engine_math::max(plane.truncate().length(), 1.0e-12)).to_array()
-    })
-}
-
 pub(crate) fn pose_rows(model: Mat4) -> PoseData {
     let rows = model.transpose();
     [

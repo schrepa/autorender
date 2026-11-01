@@ -1055,6 +1055,7 @@ version = "0.1.0"
 dependencies = [
  "engine_core",
  "engine_ecs",
+ "engine_places",
  "engine_render",
  "engine_sources",
  "serde",
@@ -1431,6 +1432,7 @@ dependencies = [
  "glam 0.30.9",
  "schemars",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5182,7 +5184,6 @@ dependencies = [
  "engine_textures",
  "engine_water",
  "engine_worker",
- "engine_world_streaming",
  "glam 0.30.9",
  "gltf",
  "naga",

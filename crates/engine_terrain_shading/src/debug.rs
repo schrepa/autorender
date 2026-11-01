@@ -1,13 +1,41 @@
+use std::any::TypeId;
+
 use engine_render::debug::{DEBUG_KIND_TERRAIN, DEBUG_NO_MATERIAL};
+use engine_render::{DebugMode, DebugShown};
 use serde_json::{Value, json};
 
-use crate::gpu::DEBUG_PATCH_SHIFT;
+use crate::TerrainShadingBrick;
+use crate::gpu::{
+    DEBUG_PATCH_SHIFT, DEBUG_SHOWN_DETAIL, DEBUG_SHOWN_MATERIALS, DEBUG_SHOWN_SKY,
+    DEBUG_SHOWN_TILES,
+};
 
-pub(crate) fn terrain([record, object, detail, tiles]: [u32; 4], color: [f32; 4]) -> Value {
+pub(crate) const MODES: [(&str, u32); 4] = [
+    ("tiles", DEBUG_SHOWN_TILES),
+    ("materials", DEBUG_SHOWN_MATERIALS),
+    ("sky", DEBUG_SHOWN_SKY),
+    ("detail", DEBUG_SHOWN_DETAIL),
+];
+
+pub(crate) fn member(name: &'static str) -> DebugMode {
+    DebugMode {
+        name,
+        decode: terrain,
+    }
+}
+
+pub(crate) fn shown(shown: &DebugShown) -> u32 {
+    if shown.owner != Some(TypeId::of::<TerrainShadingBrick>()) {
+        return 0;
+    }
+    MODES.get(shown.local as usize).map_or(0, |(_, code)| *code)
+}
+
+fn terrain([record, object, detail, tiles]: [u32; 4], [ids, ..]: [f32; 4]) -> Value {
     if record & 0xf != DEBUG_KIND_TERRAIN {
         return json!({ "terrain": null });
     }
-    let ids = color[0].to_bits();
+    let ids = ids.to_bits();
     let share = |word: u32, byte: u32| f32::from(((word >> (byte * 8)) & 0xff) as u8) / 255.0;
     let mut materials: Vec<(u32, f32)> = (0..4)
         .map(|slot| ((ids >> (slot * 8)) & 0xff, share(detail, slot)))

@@ -12,9 +12,7 @@ fn point_targets(record: u32, object: u32, detail: u32, point: SurfacePoint) -> 
 
 fn debug_mesh(extended: ExtendedOutput, object: vec4<u32>, front: bool, tested: bool)
         -> DebugTargets {
-    let values = extended_fragment(extended);
-    let point = surface_point(values.color, values.normal, values.world, values.uv, values.uv1,
-        values.surface, front, tested);
+    let point = surface_point(extended_fragment(extended), front, tested);
     return point_targets(object.x, object.y, object.z, point);
 }
 

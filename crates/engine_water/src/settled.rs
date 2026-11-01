@@ -638,10 +638,7 @@ fn ask(
     let mut alone = Vec::new();
     for (place, key, record) in making {
         let Some(record) = record else {
-            if cx.settles
-                && !cooking
-                && is_near(key)
-                && terrain.settled.records.contains_key(&key)
+            if cx.settles && !cooking && is_near(key) && terrain.settled.records.contains_key(&key)
             {
                 alone.push((place, key));
             }
@@ -662,11 +659,7 @@ fn ask(
             alone
                 .into_iter()
                 .map(|(place, key)| {
-                    let alone = terrain
-                        .settled
-                        .records
-                        .get(&key)
-                        .map(|keys| keys.alone.key);
+                    let alone = terrain.settled.records.get(&key).map(|keys| keys.alone.key);
                     let warm = terrain
                         .settled
                         .held
@@ -910,7 +903,9 @@ fn arrive(
     {
         settled.release(jobs, (before, SUMMARY_TAG));
     }
-    settled.share(jobs, (record, SUMMARY_TAG), || share_summary(&bytes[..length]));
+    settled.share(jobs, (record, SUMMARY_TAG), || {
+        share_summary(&bytes[..length])
+    });
     if whole.binary_search(&key).is_ok() {
         if let Some(before) = settled.shared.insert(key, record)
             && before != record
@@ -941,9 +936,8 @@ fn take_parts(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u6
             cx.jobs.cancel(ticket);
         }
         let made = output.map_err(|error| error.to_string()).and_then(|bytes| {
-            crate::jobs::water_output(&bytes).map_err(|error| {
-                format!("{}: its output does not decode: {error}", PARTS.name())
-            })
+            crate::jobs::water_output(&bytes)
+                .map_err(|error| format!("{}: its output does not decode: {error}", PARTS.name()))
         });
         match made {
             Ok(part) if part.key == key && part.cell == settled.cell => {
@@ -986,9 +980,10 @@ fn take_parts(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u6
         match start {
             Ok(start) => {
                 for (&key, record) in making.region.kept.iter().zip(&making.records) {
-                    let starting = settled.asked.get(&key).is_some_and(|asked| {
-                        asked.starting() && asked.record.key == record.key
-                    });
+                    let starting = settled
+                        .asked
+                        .get(&key)
+                        .is_some_and(|asked| asked.starting() && asked.record.key == record.key);
                     if starting {
                         let asked = Asked {
                             phase: Phase::Settling,
@@ -1000,7 +995,11 @@ fn take_parts(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u6
                 }
                 cx.queue.asked.push(SettleAsk {
                     terrain: entity,
-                    inputs: making.records.iter().map(|record| record.bytes.clone()).collect(),
+                    inputs: making
+                        .records
+                        .iter()
+                        .map(|record| record.bytes.clone())
+                        .collect(),
                     start: Arc::new(start),
                 });
             }
@@ -1253,7 +1252,10 @@ fn ask_waters(
         {
             continue;
         }
-        if let Some(Watering { job: Some(ticket), .. }) = settled.waters.remove(&key) {
+        if let Some(Watering {
+            job: Some(ticket), ..
+        }) = settled.waters.remove(&key)
+        {
             cx.jobs.cancel(ticket);
         }
         let priority = job_priority(VIEW_JOBS, place);

@@ -10,15 +10,7 @@ import package::engine::view::stable_normalize;
 @group(1) @binding(7) var occlusion_sampler: sampler;
 @group(1) @binding(8) var emissive_texture: texture_2d<f32>;
 @group(1) @binding(9) var emissive_sampler: sampler;
-struct MaterialMaps {
-    transforms: array<vec4<f32>, 10>,
-    emissive: vec4<f32>,
-    params: vec4<f32>,
-    variant: vec4<f32>,
-    top: vec4<f32>,
-    layer: vec4<f32>,
-}
-@group(1) @binding(10) var<uniform> material_maps: MaterialMaps;
+@group(1) @binding(10) var<uniform> material_maps: MaterialUniform;
 
 override MATERIAL_MAPS: bool = false;
 override NORMAL_MAP: bool = false;

@@ -5,13 +5,17 @@ use engine_places::shadows::SHADOW_REGIONS;
 
 use crate::constants::{MAX_MOVING_TILES, MAX_SHADOW_LEVELS, SKY_LAYERS};
 
-const MOVING_TILES: usize = MAX_MOVING_TILES as usize;
-const LAYERS: usize = SKY_LAYERS as usize;
-
 const _: () = assert!(MAX_SHADOW_LEVELS == 20, "piece_and_cull_hold_every_level");
 const _: () = assert!(SHADOW_REGIONS == 7, "cull_holds_every_region");
+const _: () = assert!(MAX_MOVING_TILES == 256, "routes_hold_every_moving_tile");
+const _: () = assert!(SKY_LAYERS == 26, "sky_views_hold_every_layer");
 
-pub(crate) const GENERATED: &[&str] = &[crate::constants::WGSL, CasterCull::WGSL];
+pub(crate) const GENERATED: &[&str] = &[
+    crate::constants::WGSL,
+    CasterCull::WGSL,
+    Routes::WGSL,
+    SkyViews::WGSL,
+];
 
 gpu_struct! {
     #[derive(Resource)]
@@ -40,12 +44,12 @@ gpu_struct! {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
-#[repr(C)]
-pub(crate) struct Routes {
-    pub clips: [[[f32; 4]; 4]; MOVING_TILES],
-    pub slots: [[f32; 4]; MOVING_TILES],
-    pub atlas: [f32; 4],
+gpu_struct! {
+    pub(crate) struct Routes {
+        pub clips: [[[f32; 4]; 4]; 256],
+        pub slots: [[f32; 4]; 256],
+        pub atlas: [f32; 4],
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
@@ -55,11 +59,11 @@ pub(crate) struct ComposeData {
     pub source: [i32; 4],
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-#[repr(C)]
-pub(crate) struct SkyViews {
-    pub clips: [[[f32; 4]; 4]; LAYERS],
-    pub directions: [[f32; 4]; LAYERS],
-    pub counts: [f32; 4],
-    pub occlusion: [f32; 4],
+gpu_struct! {
+    pub(crate) struct SkyViews {
+        pub clips: [[[f32; 4]; 4]; 26],
+        pub directions: [[f32; 4]; 26],
+        pub counts: [f32; 4],
+        pub occlusion: [f32; 4],
+    }
 }

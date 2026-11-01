@@ -13,7 +13,7 @@ use engine_core::{
 };
 
 use crate::bindings::MATERIAL;
-use crate::gpu_data::{mip_chain_bytes, mip_levels};
+use crate::gpu_data::{level_copy, mip_chain_bytes, mip_levels};
 use crate::gpu_layouts::constants;
 use crate::gpu_layouts::scene::MaterialUniform;
 use crate::mipmaps::MipGenerator;
@@ -457,13 +457,7 @@ pub fn write_level(
     format: TextureFormat,
     bytes: &[u8],
 ) {
-    let (width, height) = ((width >> level).max(1), (height >> level).max(1));
-    let (bytes_per_row, rows, extent) = if format.is_compressed() {
-        let blocks = [width.div_ceil(4), height.div_ceil(4)];
-        (blocks[0] * 16, blocks[1], (blocks[0] * 4, blocks[1] * 4))
-    } else {
-        (width * 4, height, (width, height))
-    };
+    let (layout, extent) = level_copy(format, (width, height), level);
     queue.write_texture(
         wgpu::TexelCopyTextureInfo {
             texture,
@@ -476,16 +470,8 @@ pub fn write_level(
             aspect: wgpu::TextureAspect::All,
         },
         bytes,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(bytes_per_row),
-            rows_per_image: Some(rows),
-        },
-        wgpu::Extent3d {
-            width: extent.0,
-            height: extent.1,
-            depth_or_array_layers: 1,
-        },
+        layout,
+        extent,
     );
 }
 
@@ -659,7 +645,6 @@ impl Variant {
     const GROUNDING: u32 = 16384;
     const FADING: u32 = 32768;
     const FOLIAGE: u32 = constants::VARIANT_FOLIAGE;
-    const PREPASS: u32 = 131072;
     const PRETESTED: u32 = 262144;
 
     pub fn of(material: &Material) -> Self {
@@ -746,32 +731,6 @@ impl Variant {
         self.0 & Self::DOUBLE_SIDED != 0
     }
 
-    pub fn alpha_mask(self) -> bool {
-        self.0 & Self::ALPHA_MASK != 0
-    }
-
-    #[must_use]
-    pub fn opaque(self) -> Self {
-        if self.alpha_mask() {
-            Self(self.0 | Self::PRETESTED)
-        } else {
-            self
-        }
-    }
-
-    #[must_use]
-    pub fn prepass(self) -> Self {
-        Self(self.0 & !Self::PRETESTED | Self::PREPASS)
-    }
-
-    pub fn depth_only(self) -> bool {
-        self.0 & Self::PREPASS != 0
-    }
-
-    pub fn pretested(self) -> bool {
-        self.0 & Self::PRETESTED != 0
-    }
-
     #[must_use]
     pub fn with_extended(self, extended: bool) -> Self {
         Self(if extended {
@@ -783,23 +742,5 @@ impl Variant {
 
     pub fn extended(self) -> bool {
         self.0 & Self::EXTENDED != 0
-    }
-
-    #[must_use]
-    pub fn with_fading(self, fading: bool) -> Self {
-        Self(if fading {
-            self.0 | Self::FADING
-        } else {
-            self.0 & !Self::FADING
-        })
-    }
-
-    #[must_use]
-    pub fn with_grounding(self, grounding: bool) -> Self {
-        Self(if grounding {
-            self.0 | Self::GROUNDING
-        } else {
-            self.0 & !Self::GROUNDING
-        })
     }
 }

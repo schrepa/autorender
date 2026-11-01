@@ -38,15 +38,24 @@ impl TerrainTables {
         atlas.capacity.div_ceil(2).max(1)
     }
 
-    pub(super) fn write_holes(&mut self, cx: &mut Prepare<'_, TerrainGpu>, handles: &Handles, atlas: &Atlas) {
+    pub(super) fn write_holes(
+        &mut self,
+        cx: &mut Prepare<'_, TerrainGpu>,
+        handles: &Handles,
+        atlas: &Atlas,
+    ) {
         let max_layers = atlas.capacity;
         let fade_words = Self::fade_words(atlas);
-        let edited = atlas.uploads.iter().any(|(id, _, _)| atlas.holed.contains(id));
+        let edited = atlas
+            .uploads
+            .iter()
+            .any(|(id, _, _)| atlas.holed.contains(id));
         let unchanged = !edited
             && fade_words == self.fade_words
             && atlas.holed.len() == self.hole_offsets.len()
             && atlas.holed.iter().all(|key| {
-                self.hole_offsets.contains_key(key) && atlas.slots.get(key) == self.hole_layers.get(key)
+                self.hole_offsets.contains_key(key)
+                    && atlas.slots.get(key) == self.hole_layers.get(key)
             });
         if unchanged {
             return;
@@ -94,7 +103,11 @@ impl TerrainTables {
         if words.is_empty() {
             return;
         }
-        let run = if self.fades_stale { 0..words.len() } else { dirty };
+        let run = if self.fades_stale {
+            0..words.len()
+        } else {
+            dirty
+        };
         self.fades_stale = false;
         if let Some(changed) = words.get(run.clone()).filter(|changed| !changed.is_empty()) {
             cx.write(handles.holes, (run.start * 4) as u64, changed);
@@ -109,11 +122,9 @@ impl TerrainTables {
         atlas: &Atlas,
     ) {
         let same = self.directory_layout.len() == tiles.terrains.len()
-            && self
-                .directory_layout
-                .iter()
-                .zip(tiles.terrains.iter())
-                .all(|(&(id, pyramid), terrain)| id == terrain.terrain && pyramid == terrain.pyramid);
+            && self.directory_layout.iter().zip(tiles.terrains.iter()).all(
+                |(&(id, pyramid), terrain)| id == terrain.terrain && pyramid == terrain.pyramid,
+            );
         if !same {
             self.lay_out_directory(cx, handles, tiles, atlas);
             return;
@@ -127,7 +138,11 @@ impl TerrainTables {
             }
         }
         for &(id, key) in &atlas.changed {
-            let Some(index) = tiles.terrains.iter().position(|terrain| terrain.terrain == id) else {
+            let Some(index) = tiles
+                .terrains
+                .iter()
+                .position(|terrain| terrain.terrain == id)
+            else {
                 continue;
             };
             let (pyramid, level) = (&tiles.terrains[index].pyramid, u32::from(key.level));
@@ -138,7 +153,10 @@ impl TerrainTables {
             if u32::from(key.x) >= tiles_x || u32::from(key.z) >= tiles_z {
                 continue;
             }
-            let header = self.directory_bases.get(index).map(|&base| base as usize + 4 * level as usize);
+            let header = self
+                .directory_bases
+                .get(index)
+                .map(|&base| base as usize + 4 * level as usize);
             let Some(&first) = header.and_then(|header| self.directory_written.get(header)) else {
                 continue;
             };
@@ -152,11 +170,19 @@ impl TerrainTables {
             self.directory_bytes = bytes;
         }
         cx.allocate_buffer(handles.directory, self.directory_bytes.max(16));
-        let run = if grown { 0..self.directory_written.len() } else { dirty };
+        let run = if grown {
+            0..self.directory_written.len()
+        } else {
+            dirty
+        };
         if self.directory_written.is_empty() || run.is_empty() {
             return;
         }
-        cx.write(handles.directory, (run.start * 4) as u64, &self.directory_written[run]);
+        cx.write(
+            handles.directory,
+            (run.start * 4) as u64,
+            &self.directory_written[run],
+        );
     }
 
     fn lay_out_directory(
@@ -191,8 +217,12 @@ impl TerrainTables {
             }
         }
         self.directory_layout.clear();
-        self.directory_layout
-            .extend(tiles.terrains.iter().map(|terrain| (terrain.terrain, terrain.pyramid)));
+        self.directory_layout.extend(
+            tiles
+                .terrains
+                .iter()
+                .map(|terrain| (terrain.terrain, terrain.pyramid)),
+        );
         let bytes = (words.len() * 4) as u64;
         let grown = bytes > self.directory_bytes;
         if grown {
@@ -245,7 +275,9 @@ impl TerrainTables {
 
     pub(super) fn palette_of(&self, index: usize, materials: usize) -> &[PaletteEntry] {
         let base = self.palette_bases.get(index).copied().unwrap_or(0) as usize;
-        self.palette_written.get(base..base + materials).unwrap_or_default()
+        self.palette_written
+            .get(base..base + materials)
+            .unwrap_or_default()
     }
 
     pub(super) fn holes_of(&self, id: TileId) -> u32 {
@@ -279,16 +311,20 @@ fn palette_entry(
         SurfaceProjection::Top => 0.0,
         SurfaceProjection::Biplanar => 1.0,
     };
-    let material = terrain_maps
-        .as_ref()
-        .and_then(|terrain_maps| Some((terrain_maps, TerrainMaps::material(terrain_maps, assets)?)));
+    let material = terrain_maps.as_ref().and_then(|terrain_maps| {
+        Some((terrain_maps, TerrainMaps::material(terrain_maps, assets)?))
+    });
     let (color, roughness, layer, scale, occlusion, metalness) = match material {
         Some((terrain_maps, material)) => (
             material.color,
             material.roughness,
             maps.layer(terrain_maps, assets),
             material.normal_scale,
-            if material.packed { material.occlusion_strength } else { 0.0 },
+            if material.packed {
+                material.occlusion_strength
+            } else {
+                0.0
+            },
             material.metalness,
         ),
         None => (look.color, look.roughness, None, 1.0, 0.0, 0.0),

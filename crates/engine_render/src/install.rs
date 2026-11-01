@@ -139,7 +139,6 @@ pub(crate) struct DrawInputDecl {
 
 #[derive(Clone, Debug)]
 pub(crate) struct FrameBind {
-    pub(crate) part: u32,
     pub(crate) var: Var,
     pub(crate) bound: Bound,
 }
@@ -147,7 +146,6 @@ pub(crate) struct FrameBind {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Claim {
     pub(crate) point: TypeId,
-    pub(crate) pass: u32,
     pub(crate) part: u32,
 }
 
@@ -156,8 +154,8 @@ pub(crate) struct PartInfo {
     pub(crate) ty: TypeId,
     pub(crate) package: &'static str,
     pub(crate) name: &'static str,
-    pub(crate) brick: u32,
-    pub(crate) registered: u32,
+    pub(crate) lazy: bool,
+    pub(crate) labels: &'static [&'static str],
     pub(crate) owner: &'static str,
     pub(crate) profile: u16,
 }
@@ -182,7 +180,6 @@ pub(crate) struct Declared {
 }
 
 pub(crate) struct DrawEntry {
-    pub(crate) package: &'static str,
     pub(crate) part: u32,
     pub(crate) record: std::sync::Arc<dyn Any + Send + Sync>,
 }
@@ -283,11 +280,7 @@ impl InstallCore {
             let usage = self.linker.buffer_usage(var);
             self.use_buffer(buffer, usage);
         }
-        self.declared.frame.push(FrameBind {
-            part: self.part,
-            var,
-            bound,
-        });
+        self.declared.frame.push(FrameBind { var, bound });
         Ok(())
     }
 
@@ -425,7 +418,6 @@ impl InstallCore {
         declared.claims.push(point);
         self.declared.claims.push(Claim {
             point,
-            pass,
             part: self.part,
         });
         Ok(())

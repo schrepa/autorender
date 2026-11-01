@@ -4,37 +4,17 @@ use std::{
     sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc},
 };
 
-pub enum Recorded {
-    Encoder(wgpu::CommandEncoder),
-    Buffer(wgpu::CommandBuffer),
-}
-
-#[derive(Default)]
-pub struct Handover(Vec<Recorded>);
+pub struct Handover(wgpu::CommandEncoder);
 
 impl Handover {
-    pub fn push(&mut self, recorded: Recorded) {
-        self.0.push(recorded);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
     fn finish(self) -> Vec<wgpu::CommandBuffer> {
-        self.0
-            .into_iter()
-            .map(|recorded| match recorded {
-                Recorded::Encoder(encoder) => encoder.finish(),
-                Recorded::Buffer(buffer) => buffer,
-            })
-            .collect()
+        vec![self.0.finish()]
     }
 }
 
 impl From<wgpu::CommandEncoder> for Handover {
     fn from(encoder: wgpu::CommandEncoder) -> Self {
-        Self(vec![Recorded::Encoder(encoder)])
+        Self(encoder)
     }
 }
 

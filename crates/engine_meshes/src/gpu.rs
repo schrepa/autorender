@@ -14,8 +14,9 @@ use engine_render::{
 use crate::assets::MeshAssets;
 use crate::batches::BatchPlan;
 use crate::casters::CasterPlan;
+use crate::drawn::WatchedSlot;
 use crate::order::{BatchLook, DrawOrder, MeshPlan};
-use crate::presentation::FrameState;
+use crate::presentation::{FrameState, PresentationTotals};
 use crate::retained::RetainedRender;
 use crate::settings::Impostors;
 use crate::debug::RECORD_STREAM;
@@ -89,7 +90,6 @@ pub(crate) struct Instances {
     pub poses: Buffer<MeshesGpu>,
     pub previous_poses: Buffer<MeshesGpu>,
     pub colors: Buffer<MeshesGpu>,
-    pub grounds: Buffer<MeshesGpu>,
     pub still_frames: Buffer<MeshesGpu>,
     pub slots: Buffer<MeshesGpu>,
 }
@@ -205,7 +205,11 @@ pub(crate) struct MeshesGpu {
 
 pub(crate) type MeshReads = (
     FrameReads,
-    (Query<'static, 'static, &'static ImpostorRecords, With<MeshAssets>>,),
+    (
+        Query<'static, 'static, &'static ImpostorRecords, With<MeshAssets>>,
+        Res<'static, WatchedSlot>,
+        Res<'static, PresentationTotals>,
+    ),
 );
 
 pub(crate) type FrameReads = (
@@ -282,21 +286,19 @@ impl GpuPart for MeshesGpu {
 }
 
 fn install_instances(cx: &mut Install<'_, MeshesGpu>) -> Result<Instances, Error> {
-    use crate::shaders::meshes::faces::instances as face;
+    use crate::shaders::meshes::slots;
     let instances = Instances {
         records: cx.buffer("debug_view_records", Lifetime::Kept),
         poses: cx.buffer("poses", Lifetime::Kept),
         previous_poses: cx.buffer("previous_poses", Lifetime::Previous),
         colors: cx.buffer("colors", Lifetime::Kept),
-        grounds: cx.buffer("grounds", Lifetime::Kept),
         still_frames: cx.buffer("still_frames", Lifetime::Kept),
         slots: cx.buffer("slots", Lifetime::Kept),
     };
-    cx.frame(face::INSTANCE_POSES, Bind::Buffer(instances.poses))?;
-    cx.frame(face::INSTANCE_PREVIOUS_POSES, Bind::Buffer(instances.previous_poses))?;
-    cx.frame(face::INSTANCE_COLORS, Bind::Buffer(instances.colors))?;
-    cx.frame(face::INSTANCE_GROUNDS, Bind::Buffer(instances.grounds))?;
-    cx.frame(face::INSTANCE_STILL, Bind::Buffer(instances.still_frames))?;
+    cx.frame(slots::INSTANCE_POSES, Bind::Buffer(instances.poses))?;
+    cx.frame(slots::INSTANCE_PREVIOUS_POSES, Bind::Buffer(instances.previous_poses))?;
+    cx.frame(slots::INSTANCE_COLORS, Bind::Buffer(instances.colors))?;
+    cx.frame(slots::INSTANCE_STILL, Bind::Buffer(instances.still_frames))?;
     Ok(instances)
 }
 
@@ -577,6 +579,7 @@ fn install_computes(
                 (p::FRAME, Bind::Buffer(frame)),
                 (p::SCAN, Bind::Buffer(presented.scan)),
                 (p::OCCLUSION_COUNTS, Bind::Buffer(presented.counts)),
+                (p::LOD_STATES, Bind::Buffer(presented.lod_states)),
                 (p::TOTALS, Bind::Buffer(presented.totals)),
             ],
         )
@@ -817,7 +820,7 @@ fn install_pipelines(cx: &mut Install<'_, MeshesGpu>) -> Result<Pipelines, Error
             ProbeViews,
             &mesh_pipeline(
                 (view_vertex, view, None),
-                (view_streams, double_sided, true),
+                (view_streams, double_sided, engine_places::probes::MIRRORED),
                 write,
                 wgpu::ColorWrites::ALL,
             ),

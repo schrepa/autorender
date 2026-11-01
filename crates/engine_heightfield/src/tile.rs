@@ -7,11 +7,11 @@ use glam::{Mat3, Vec2, Vec3};
 use crate::bed::{Bed, Reach};
 use crate::errors::ErrorPyramid;
 use crate::grid::{Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
-use crate::hydrology::{HydrologySample, RIVER_FAR};
+use crate::hydrology::{HydrologySample, RIVER_FAR, WaterGrid};
 use crate::layer::{Below, LayerTile, Row, TileFrame};
 use crate::layers::{Layers, Stamp};
 use crate::path::PathSample;
-use crate::rivers::RiverRaster;
+use crate::rivers::{RiverRaster, RiverWater};
 
 mod beds;
 mod expr;
@@ -553,7 +553,8 @@ impl Tile {
         if !surface.iter().zip(&self.heights[..]).any(|(s, h)| s > h) {
             return self;
         }
-        extend_lake(&mut surface, &self.heights);
+        let mut words = vec![(); surface.len()];
+        extend_water(&mut surface, &mut words, &self.heights, ((), &|_, _| ()));
         self.lake = Some(Arc::from(surface));
         self
     }
@@ -735,12 +736,53 @@ impl Tile {
     }
 }
 
-const LAKE_REACH: u8 = 4;
+pub const LAKE_REACH: u8 = 4;
 const NO_RING: u8 = u8::MAX;
 const QUEUED: u8 = u8::MAX - 1;
 const STOPPED: u8 = u8::MAX - 2;
 
-fn extend_lake(surface: &mut [f32], heights: &[f32]) {
+pub fn water_rows<W>(
+    lakes: &WaterGrid,
+    river: &dyn Fn(usize, usize) -> Option<RiverWater>,
+    (rows, columns): (Range<usize>, &dyn Fn(usize) -> Range<usize>),
+    (xs, zs): (&[f32], &[f32]),
+    shown: &dyn Fn(f32, f32) -> f32,
+    (surface, words): (&mut [f32], &mut [W]),
+    (lake, flowing): (&dyn Fn(f32) -> W, &dyn Fn(&RiverWater) -> W),
+) {
+    let stride = TILE_STRIDE as usize;
+    let first = rows.start;
+    for row in rows {
+        let z = zs[row];
+        for column in columns(row) {
+            let x = xs[column];
+            if shown(x, z) < 1.0 {
+                continue;
+            }
+            let water = river(row, column);
+            let at = (row - first) * stride + column;
+            match lakes.lake_reach(x, z) {
+                Some((level, span)) if !water.is_some_and(|water| water.surface > level) => {
+                    surface[at] = level;
+                    words[at] = lake(span);
+                }
+                _ => {
+                    if let Some(water) = water {
+                        surface[at] = water.surface;
+                        words[at] = flowing(&water);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn extend_water<W: Copy>(
+    surface: &mut [f32],
+    words: &mut [W],
+    heights: &[f32],
+    (dry, mixed): (W, &dyn Fn(&[usize], &[W]) -> W),
+) {
     let stride = TILE_STRIDE as usize;
     let mut rings: Vec<u8> = surface
         .iter()
@@ -750,6 +792,7 @@ fn extend_lake(surface: &mut [f32], heights: &[f32]) {
     for (at, &ring) in rings.iter().enumerate() {
         if ring == NO_RING {
             surface[at] = f32::NAN;
+            words[at] = dry;
         }
     }
     let mut inside: Vec<usize> = (0..rings.len()).filter(|&at| rings[at] == 0).collect();
@@ -767,13 +810,14 @@ fn extend_lake(surface: &mut [f32], heights: &[f32]) {
                 }
             }
         }
-        let made: Vec<(f32, bool)> = queued
+        let made: Vec<(f32, W, bool)> = queued
             .iter()
-            .map(|&at| continued_level(at, ring - 1, (&*surface, heights), &rings))
+            .map(|&at| continued(at, ring - 1, (&*surface, &*words, heights), &rings, mixed))
             .collect();
         inside.clear();
-        for (&at, &(level, stops)) in queued.iter().zip(&made) {
+        for (&at, &(level, word, stops)) in queued.iter().zip(&made) {
             surface[at] = level;
+            words[at] = word;
             rings[at] = if stops { STOPPED } else { ring };
             if !stops {
                 inside.push(at);
@@ -782,23 +826,25 @@ fn extend_lake(surface: &mut [f32], heights: &[f32]) {
     }
 }
 
-fn continued_level(
+fn continued<W>(
     at: usize,
     inner: u8,
-    (surface, heights): (&[f32], &[f32]),
+    (surface, words, heights): (&[f32], &[W], &[f32]),
     rings: &[u8],
-) -> (f32, bool) {
+    mixed: &dyn Fn(&[usize], &[W]) -> W,
+) -> (f32, W, bool) {
     let stride = TILE_STRIDE as usize;
     let (x, z) = (at % stride, at / stride);
-    let (mut level, mut apart, mut count) = (0.0, 0.0, 0);
+    let (mut level, mut apart, mut near, mut count) = (0.0, 0.0, [0_usize; 9], 0);
     for nz in z.saturating_sub(1)..(z + 2).min(stride) {
         for nx in x.saturating_sub(1)..(x + 2).min(stride) {
-            let near = nz * stride + nx;
-            if rings[near] != inner {
+            let next = nz * stride + nx;
+            if rings[next] != inner {
                 continue;
             }
-            level += surface[near];
-            apart += (surface[near] - heights[near]).abs();
+            level += surface[next];
+            apart += (surface[next] - heights[next]).abs();
+            near[count] = next;
             count += 1;
         }
     }
@@ -810,7 +856,7 @@ fn continued_level(
     } else {
         level
     };
-    (standing, stops)
+    (standing, mixed(&near[..count], words), stops)
 }
 
 struct Prepared(Mutex<Box<dyn LayerTile>>);
@@ -1224,28 +1270,16 @@ impl Generator {
         let (index, hydrology) = self.layers.hydrology_layer()?;
         let raster = rasters.get(index).and_then(Option::as_ref);
         let count = stride * stride;
-        let mut surface = vec![f32::NAN; count];
-        for row in 0..stride {
-            let z = self.zs[row];
-            for column in 0..stride {
-                let x = self.xs[column];
-                if self.layers.shown(x, z) < 1.0 {
-                    continue;
-                }
-                let water = raster.and_then(|raster| raster.water(&hydrology.rivers, row, column));
-                let at = row * stride + column;
-                match hydrology.water.lake_reach(x, z) {
-                    Some((level, _)) if !water.is_some_and(|water| water.surface > level) => {
-                        surface[at] = level;
-                    }
-                    _ => {
-                        if let Some(water) = water {
-                            surface[at] = water.surface;
-                        }
-                    }
-                }
-            }
-        }
+        let (mut surface, mut words) = (vec![f32::NAN; count], vec![(); count]);
+        water_rows(
+            &hydrology.water,
+            &|row, column| raster?.water(&hydrology.rivers, row, column),
+            (0..stride, &|_| 0..stride),
+            (&self.xs, &self.zs),
+            &|x, z| self.layers.shown(x, z),
+            (&mut surface, &mut words),
+            (&|_| (), &|_| ()),
+        );
         *budget = budget.saturating_sub(count as u64);
         Some(surface)
     }

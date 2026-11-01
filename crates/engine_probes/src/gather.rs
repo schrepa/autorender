@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{GlobalTransforms, TransformIndex, View};
+use engine_core::{GlobalTransforms, Nearest, TransformIndex, View};
 use engine_places::probes::{Interior, ReflectionProbe};
 use glam::Vec3;
 
@@ -75,44 +75,4 @@ pub(crate) fn gather_probes(
     gathered
         .list
         .extend(ranked.map(|position| candidates[position].1));
-}
-
-#[derive(Default)]
-struct Nearest {
-    keys: Vec<u64>,
-}
-
-const POSITION: u64 = u32::MAX as u64;
-
-impl Nearest {
-    fn nearest_first(
-        &mut self,
-        distances: impl IntoIterator<Item = f32>,
-        kept: usize,
-    ) -> impl ExactSizeIterator<Item = usize> + '_ {
-        self.keys.clear();
-        self.keys.extend(
-            distances
-                .into_iter()
-                .enumerate()
-                .map(|(position, distance)| {
-                    u64::from(total_order(distance)) << 32 | position as u64
-                }),
-        );
-        if kept < self.keys.len() {
-            self.keys.select_nth_unstable(kept);
-            self.keys.truncate(kept);
-        }
-        self.keys.sort_unstable();
-        self.keys.iter().map(|key| (key & POSITION) as usize)
-    }
-}
-
-fn total_order(value: f32) -> u32 {
-    let bits = value.to_bits();
-    if bits >> 31 == 1 {
-        !bits
-    } else {
-        bits | 1 << 31
-    }
 }

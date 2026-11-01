@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use engine_core::{
@@ -204,8 +203,19 @@ fn half() -> f32 {
 }
 
 pub struct TerrainAssets<'a> {
-    pub materials: &'a BTreeMap<String, MaterialHandle>,
-    pub meshes: &'a BTreeMap<String, MeshHandle>,
+    pub materials: Vec<(&'a str, MaterialHandle)>,
+    pub meshes: Vec<(&'a str, MeshHandle)>,
+}
+
+fn handle_of<H: Copy>(table: &[(&str, H)], id: &str) -> Option<H> {
+    table
+        .iter()
+        .find(|(candidate, _)| *candidate == id)
+        .map(|&(_, handle)| handle)
+}
+
+fn ids_of<'a, H>(table: &'a [(&'a str, H)]) -> impl Iterator<Item = &'a str> {
+    table.iter().map(|&(id, _)| id)
 }
 
 const LAYER_DEFINITION: &str = "SceneTerrainLayer";
@@ -431,9 +441,8 @@ impl SceneTerrain {
             return Ok(TerrainSurface::default());
         };
         let material_index = |id: &str, field: String| {
-            assets.materials.get(id).copied().ok_or_else(|| {
-                unknown(invalid(field), id, assets.materials.keys().map(String::as_str))
-            })
+            handle_of(&assets.materials, id)
+                .ok_or_else(|| unknown(invalid(field), id, ids_of(&assets.materials)))
         };
         let mut looks = Vec::with_capacity(surface.materials.len());
         for (index, material) in surface.materials.iter().enumerate() {
@@ -461,11 +470,11 @@ impl SceneTerrain {
         let mut placed = Vec::with_capacity(surface.assets.len());
         for (index, asset) in surface.assets.iter().enumerate() {
             let at = format!("assets[{index}]");
-            let mesh = assets.meshes.get(&asset.mesh).copied().ok_or_else(|| {
+            let mesh = handle_of(&assets.meshes, &asset.mesh).ok_or_else(|| {
                 unknown(
                     invalid(format!("{at}.mesh")),
                     &asset.mesh,
-                    assets.meshes.keys().map(String::as_str),
+                    ids_of(&assets.meshes),
                 )
             })?;
             let material = material_index(&asset.material, format!("{at}.material"))?;
@@ -510,11 +519,11 @@ impl SceneTerrain {
             .bridge
             .as_ref()
             .map(|id| {
-                assets.materials.get(id).copied().ok_or_else(|| {
+                handle_of(&assets.materials, id).ok_or_else(|| {
                     unknown(
                         Error::new(ErrorCode::InvalidTerrain, format!("{path}.surface.bridge")),
                         id,
-                        assets.materials.keys().map(String::as_str),
+                        ids_of(&assets.materials),
                     )
                 })
             })
@@ -670,15 +679,24 @@ fn prepare_terrain(
     path: &str,
 ) -> Result<TerrainScene, Error> {
     let kinds = listed(cx);
-    let empty = (BTreeMap::new(), BTreeMap::new());
     let assets = match cx.scene() {
         Some(scene) => TerrainAssets {
-            materials: &scene.assets.materials,
-            meshes: &scene.assets.meshes,
+            materials: scene
+                .assets
+                .materials
+                .iter()
+                .map(|(id, &handle)| (id.as_str(), handle))
+                .collect(),
+            meshes: scene
+                .assets
+                .meshes
+                .iter()
+                .map(|(id, &handle)| (id.as_str(), handle))
+                .collect(),
         },
         None => TerrainAssets {
-            materials: &empty.0,
-            meshes: &empty.1,
+            materials: Vec::new(),
+            meshes: Vec::new(),
         },
     };
     let built = scene

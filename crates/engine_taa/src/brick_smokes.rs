@@ -10,6 +10,7 @@ const QUIET_FRAMES: u32 = 13;
 const SETTLE_LIMIT: u32 = 600;
 const SECTION: &str = "temporal_antialiasing";
 const STATS: &str = "temporal_antialiasing_stats";
+const DITHER: &str = "dither";
 const SHADOWS: &str = "shadow_stats";
 const PAINTS: [[f32; 4]; 4] = [
     [0.85, 0.35, 0.2, 1.0],
@@ -264,9 +265,32 @@ pub(crate) fn temporal_antialiasing(session: &mut dyn SmokeSession) -> Result<()
     control(session, "environment", on, "turns_taa_on_again")?;
     let rendering = frames(session, 30, "runs_temporal_frames_again")?;
     smoke_eq!(active(&rendering), json!(true), "resolves_again");
+    dither(session)?;
     sturdier(session)?;
     let after = exact(session, "captures_after_taa")?;
     smoke_eq!(after, with, "captures_exact_after_temporal_frames");
+    Ok(())
+}
+
+fn dither(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+    let inspect = "inspects_dither";
+    smoke_eq!(
+        inspected(session, DITHER, inspect)?,
+        json!({ "enabled": true }),
+        "dither_on_by_default"
+    );
+    let off = json!({ "dither": { "enabled": false } });
+    let reply = control(session, "environment", off, "turns_dither_off")?;
+    smoke_eq!(changed(&reply), json!([DITHER]), "dither_controlled");
+    smoke_eq!(
+        inspected(session, DITHER, inspect)?,
+        json!({ "enabled": false }),
+        "dither_off_inspected"
+    );
+    frames(session, 60, "runs_undithered_frames")?;
+    let on = json!({ "dither": { "enabled": true } });
+    control(session, "environment", on, "turns_dither_on")?;
+    frames(session, 60, "runs_dithered_frames")?;
     Ok(())
 }
 

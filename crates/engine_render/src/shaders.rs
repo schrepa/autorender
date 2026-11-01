@@ -30,7 +30,6 @@ shader_modules! {
     "engine::mesh::declarations" = "meshes/declarations.wgsl";
     "engine::mesh::vertex" = "meshes/vertex.wgsl";
     "engine::pyramid" = "depth_pyramid.wgsl";
-    "engine::impostors" = "impostors/atlas.wgsl";
     "engine::impostor_bake" = "impostors/bake.wgsl";
     "engine::post::pixel" = "post/pixel.wgsl";
     "engine::post::frame" = "effects.wgsl";
@@ -110,6 +109,7 @@ pub fn debug_source() -> String {
 pub fn materials_source() -> String {
     use crate::gpu_layouts::constants::{WGSL_FLOAT, WGSL_UNSIGNED};
     let mut source = String::from(include_str!("meshes/materials.wgsl"));
+    source.push_str(<crate::gpu_layouts::scene::MaterialUniform as engine_core::GpuStruct>::WGSL);
     for (name, value) in WGSL_UNSIGNED {
         unsigned(&mut source, name, value);
     }
@@ -121,6 +121,9 @@ pub fn materials_source() -> String {
 
 pub fn impostor_frames_source() -> String {
     let mut source = String::from(include_str!("impostor_frames.wgsl"));
+    for (name, value) in crate::gpu_layouts::constants::CARD_FLAGS {
+        unsigned(&mut source, name, value);
+    }
     source.push_str(&crate::impostors::layout_source());
     source
 }
@@ -137,12 +140,13 @@ pub fn view_source() -> String {
     source
 }
 
-pub fn generated_core() -> [(&'static str, String); 6] {
+pub fn generated_core() -> [(&'static str, String); 7] {
     [
         (PRESENTATION_MODULE, presentation_source()),
         (DEBUG_MODULE, debug_source()),
         (MATERIALS_MODULE, materials_source()),
         (IMPOSTOR_FRAMES_MODULE, impostor_frames_source()),
+        (IMPOSTORS_MODULE, crate::impostors::atlas_source()),
         (MATH_MODULE, math_source()),
         (VIEW_MODULE, view_source()),
     ]
@@ -173,7 +177,6 @@ pub fn core_modules() -> Vec<(&'static str, String)> {
 pub enum Stage {
     Vertex,
     Fragment,
-    Compute,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -189,9 +192,6 @@ macro_rules! entry_stage {
     };
     (fragment) => {
         Stage::Fragment
-    };
-    (compute) => {
-        Stage::Compute
     };
 }
 

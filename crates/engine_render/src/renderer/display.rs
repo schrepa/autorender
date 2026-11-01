@@ -14,7 +14,6 @@ pub struct Display {
     target: RenderTarget,
     configuration: wgpu::SurfaceConfiguration,
     pub(crate) max_dimension: u32,
-    pub max_layers: u32,
     pub(crate) suspended: bool,
     reconfigure_next_frame: bool,
     pub region: FrameRegion,
@@ -27,7 +26,7 @@ impl Display {
         surface: Option<wgpu::Surface<'static>>,
         target: RenderTarget,
         adapter: &wgpu::Adapter,
-        (max_dimension, max_layers): (u32, u32),
+        max_dimension: u32,
     ) -> Result<Self, Error> {
         let (width, height) = target.size();
         let extent = clamped_extent(width, height, max_dimension);
@@ -58,7 +57,6 @@ impl Display {
             target,
             configuration,
             max_dimension,
-            max_layers,
             suspended: extent.is_none(),
             reconfigure_next_frame: false,
             region: FrameRegion::whole(FrameSize { width, height }),

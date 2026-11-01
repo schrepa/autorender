@@ -200,11 +200,7 @@ pub(crate) fn place_water_windows(
     }
 }
 
-fn follow(
-    state: &mut WaterTerrain,
-    (reach, cell, budget): (f32, f32, u32),
-    eye: Vec3,
-) {
+fn follow(state: &mut WaterTerrain, (reach, cell, budget): (f32, f32, u32), eye: Vec3) {
     let side = BLOCK_SIDE as f32;
     let snap_blocks = max((SNAP / (cell * side)).round(), 1.0);
     let snap = snap_blocks * side * cell;
@@ -292,11 +288,7 @@ fn sample_height(state: &WaterTerrain, local: Vec2) -> Option<f32> {
     })
 }
 
-fn lowest(
-    state: &WaterTerrain,
-    first: [i64; 2],
-    (cells, cell): (u32, f32),
-) -> Option<f32> {
+fn lowest(state: &WaterTerrain, first: [i64; 2], (cells, cell): (u32, f32)) -> Option<f32> {
     let size = cells as f32 * cell;
     let steps = max((size / PROBED).ceil(), 1.0) as u32;
     let apart = size / steps as f32;
@@ -312,11 +304,7 @@ fn lowest(
     Some(state.origin.y + lowest)
 }
 
-fn reads(
-    state: &WaterTerrain,
-    first: [i64; 2],
-    (cells, cell): (u32, f32),
-) -> Vec<WaterRead> {
+fn reads(state: &WaterTerrain, first: [i64; 2], (cells, cell): (u32, f32)) -> Vec<WaterRead> {
     let pyramid = &state.pyramid;
     let size = pyramid.tile_size(0);
     let [columns, rows] = pyramid.tiles(0);

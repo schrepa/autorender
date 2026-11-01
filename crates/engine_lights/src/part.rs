@@ -157,8 +157,6 @@ fn first_index_bytes(room: u64) -> u64 {
 }
 
 pub(crate) struct LightsGpu {
-    clear_counts: Pass<Self>,
-    clear_totals: Pass<Self>,
     binning: Pass<Self>,
     counting: ComputePipeline<Self>,
     scanning: ComputePipeline<Self>,
@@ -291,12 +289,10 @@ impl GpuPart for LightsGpu {
         let totals = cx.buffer("light_totals", Lifetime::Frame);
         cx.frame(clusters::CLUSTERS, Bind::Buffer(cluster_views))?;
         cx.frame(clusters::LIGHT_DATA, Bind::Buffer(data))?;
-        let clear_counts = cx.clear("light_counts_clear", counts);
-        let clear_totals = cx.clear("light_totals_clear", totals);
         let binning_pass = cx
-            .pass("light_bins")
-            .after(clear_counts)
-            .after(clear_totals)
+            .pass("lights")
+            .label("engine/light-binning")
+            .span("light_bins")
             .id();
         let visits = || {
             [
@@ -318,8 +314,6 @@ impl GpuPart for LightsGpu {
             ],
         )?;
         Ok(Self {
-            clear_counts,
-            clear_totals,
             binning: binning_pass,
             counting,
             scanning,
@@ -401,8 +395,6 @@ impl GpuPart for LightsGpu {
         if count == 0 {
             return;
         }
-        cx.run(self.clear_counts);
-        cx.run(self.clear_totals);
         cx.run(self.binning);
         cx.read_back::<LightTotals>(self.epoch, self.totals, 0..TOTALS_BYTES, AfterRead::Keep);
     }
@@ -411,6 +403,8 @@ impl GpuPart for LightsGpu {
         if pass != self.binning {
             return 0;
         }
+        cx.clear(self.counts);
+        cx.clear(self.totals);
         let workgroups = self.count.div_ceil(GROUP_LIGHTS);
         let (columns, rows) = (workgroups.min(65_535), workgroups.div_ceil(65_535));
         cx.dispatch(&self.counting, Count::Groups([columns, rows, self.views]));

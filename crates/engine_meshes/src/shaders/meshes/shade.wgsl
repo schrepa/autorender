@@ -1,5 +1,5 @@
 import package::engine::materials::{ALPHA_MASK, DOUBLE_SIDED, EMISSIVE_MAP, FADE_LIST, FOLIAGE,
-    GROUNDING, MASK_MIP_SCALE, MATERIAL_MAPS, METALLIC_ROUGHNESS_MAP, NORMAL_MAP, OCCLUSION_MAP,
+    MASK_MIP_SCALE, MATERIAL_MAPS, METALLIC_ROUGHNESS_MAP, NORMAL_MAP, OCCLUSION_MAP,
     PACKED_OCCLUSION, TOP_LAYER, VARIANT_DOUBLE_SIDED, VARIANT_EMISSIVE_MAP, VARIANT_FOLIAGE,
     VARIANT_MAPS, VARIANT_METALLIC_ROUGHNESS_MAP, VARIANT_NORMAL_MAP, VARIANT_OCCLUSION_MAP,
     VARIANT_PACKED_OCCLUSION, VARIANT_TOP_LAYER, VARIANT_WORLD_MAPPING, WORLD_MAPPING,
@@ -14,8 +14,8 @@ import package::engine::view::{camera, fade_noise, material_bias, material_detai
     stable_normalize};
 import package::face::lighting::{finish, local_light, widened};
 import package::face::foliage::foliage;
-import package::meshes::faces::instances::{instance_grounds, instance_poses};
 import package::meshes::vertex::{ExtendedOutput, ExtendedTemporalOutput};
+import package::place::instances::SlotFragment;
 
 fn rippled(normal: vec3<f32>, world: vec3<f32>, strength: f32) -> vec3<f32> {
     let time = camera.position.w;
@@ -31,7 +31,6 @@ fn rippled(normal: vec3<f32>, world: vec3<f32>, strength: f32) -> vec3<f32> {
 
 var<private> fragment_plant: u32;
 var<private> fragment_pixel: vec2<f32>;
-var<private> fragment_slot: u32;
 
 fn leafiness(albedo: vec3<f32>) -> f32 {
     return saturate(4.0 * (albedo.g - max(albedo.r, albedo.b)) / max(albedo.g, 1.0e-4));
@@ -372,15 +371,15 @@ fn surface_opacity(color: vec4<f32>, texels: MaterialTexels) -> f32 {
     return color.a;
 }
 
-fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
-        uv: vec2<f32>, uv1: vec2<f32>, packed: u32, front: bool, tested: bool) -> SurfacePoint {
-    let world_dx = dpdx(world);
-    let world_dy = dpdy(world);
-    let texels = surface_texels(surface_normal, world, world_dx, world_dy, uv, uv1);
-    var point = textured_point(color, surface_normal, world, world_dx, world_dy, texels, packed,
-        front);
-    if GROUNDING {
-        point = grounded(point);
+fn surface_point(input: SlotFragment, front: bool, tested: bool) -> SurfacePoint {
+    let world_dx = dpdx(input.world);
+    let world_dy = dpdy(input.world);
+    let texels = surface_texels(input.normal, input.world, world_dx, world_dy, input.uv,
+        input.uv1);
+    var point = textured_point(input.color, input.normal, input.world, world_dx, world_dy, texels,
+        input.surface, front);
+    if input.ground.z != 0u {
+        point = grounded(point, input.ground, input.origin);
     }
     let result = widened(point, dpdx(point.normal), dpdy(point.normal));
     if ALPHA_MASK && !tested && masked_out(result.opacity, texels.coverage) {
@@ -389,14 +388,11 @@ fn surface_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     return result;
 }
 
-fn grounded(point: SurfacePoint) -> SurfacePoint {
-    let ground = instance_grounds[fragment_slot];
+fn grounded(point: SurfacePoint, ground: vec4<u32>, origin: vec3<f32>) -> SurfacePoint {
     let reach = bitcast<f32>(ground.z);
     if !(reach > 0.0) || ground.w == 0u {
         return point;
     }
-    let pose = instance_poses[fragment_slot];
-    let origin = vec3<f32>(pose.row_0.w, pose.row_1.w, pose.row_2.w);
     let tilt = unpack2x16snorm(ground.x);
     let up = sqrt(max(1.0 - dot(tilt, tilt), 0.01));
     let above = point.world.y - origin.y - bitcast<f32>(ground.y)
@@ -418,59 +414,58 @@ fn grounded(point: SurfacePoint) -> SurfacePoint {
     return result;
 }
 
-struct Fragment {
-    color: vec4<f32>,
-    normal: vec3<f32>,
-    world: vec3<f32>,
-    uv: vec2<f32>,
-    uv1: vec2<f32>,
-    surface: u32,
-    pixel: vec2<f32>,
-}
-
-fn fragment_color(material: vec4<u32>) -> vec4<f32> {
-    if GROUNDING {
-        fragment_slot = material.y;
+fn fragment_color(material: vec4<u32>, ground: vec4<u32>) -> vec4<f32> {
+    if ground.z != 0u {
         return unpack4x8unorm(material.x);
     }
     return output_color(material);
 }
 
-fn fragment(input: VertexOutput) -> Fragment {
-    if FADE_LIST && fade_hidden(input.material.w, input.clip_position.xy) {
-        discard;
-    }
-    fragment_plant = input.material.w;
-    fragment_pixel = input.clip_position.xy;
-    var values: Fragment;
-    values.color = fragment_color(input.material);
-    values.normal = input.normal_u.xyz;
-    values.world = input.world_v.xyz;
-    values.uv = vec2<f32>(input.normal_u.w, input.world_v.w);
+fn fragment_values(clip_position: vec4<f32>, normal_u: vec4<f32>, world_v: vec4<f32>,
+        material: vec4<u32>, ground: vec4<u32>, origin: vec3<f32>) -> SlotFragment {
+    fragment_plant = material.w;
+    fragment_pixel = clip_position.xy;
+    var values: SlotFragment;
+    values.color = fragment_color(material, ground);
+    values.normal = normal_u.xyz;
+    values.world = world_v.xyz;
+    values.uv = vec2<f32>(normal_u.w, world_v.w);
     values.uv1 = values.uv;
-    values.surface = input.material.z;
-    values.pixel = input.clip_position.xy;
+    values.surface = material.z;
+    values.pixel = clip_position.xy;
+    values.ground = ground;
+    values.origin = origin;
     return values;
 }
 
-fn extended_fragment(input: ExtendedOutput) -> Fragment {
+fn fragment(input: VertexOutput) -> SlotFragment {
     if FADE_LIST && fade_hidden(input.material.w, input.clip_position.xy) {
         discard;
     }
-    fragment_plant = input.material.w;
-    fragment_pixel = input.clip_position.xy;
-    var values: Fragment;
-    values.color = fragment_color(input.material) * input.color;
-    values.normal = input.normal_u.xyz;
-    values.world = input.world_v.xyz;
-    values.uv = vec2<f32>(input.normal_u.w, input.world_v.w);
+    return fragment_values(input.clip_position, input.normal_u, input.world_v, input.material,
+        vec4<u32>(0u), vec3<f32>(0.0));
+}
+
+fn extended_fragment(input: ExtendedOutput) -> SlotFragment {
+    if FADE_LIST && fade_hidden(input.material.w, input.clip_position.xy) {
+        discard;
+    }
+    var values = fragment_values(input.clip_position, input.normal_u, input.world_v,
+        input.material, vec4<u32>(0u), vec3<f32>(0.0));
+    values.color *= input.color;
     values.uv1 = input.uv1;
-    values.surface = input.material.z;
-    values.pixel = input.clip_position.xy;
     return values;
 }
 
-fn masked_depth(input: Fragment) {
+fn placed_fragment(clip_position: vec4<f32>, normal_u: vec4<f32>, world_v: vec4<f32>,
+        material: vec4<u32>, ground: vec4<u32>, origin: vec3<f32>) -> SlotFragment {
+    if fade_hidden(material.w, clip_position.xy) {
+        discard;
+    }
+    return fragment_values(clip_position, normal_u, world_v, material, ground, origin);
+}
+
+fn masked_depth(input: SlotFragment) {
     let texels = surface_texels(input.normal, input.world, dpdx(input.world),
         dpdy(input.world), input.uv, input.uv1);
     if masked_out(surface_opacity(input.color, texels), texels.coverage) {
@@ -478,9 +473,8 @@ fn masked_depth(input: Fragment) {
     }
 }
 
-fn shade(input: Fragment, front: bool, tested: bool) -> Shaded {
-    let point = surface_point(input.color, input.normal, input.world, input.uv, input.uv1,
-        input.surface, front, tested);
+fn shade(input: SlotFragment, front: bool, tested: bool) -> Shaded {
+    let point = surface_point(input, front, tested);
     return finish(point, local_light(point, input.pixel));
 }
 

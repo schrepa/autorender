@@ -1,8 +1,8 @@
 import package::cover::faces::cover::{COVER_FAR_SIDE, COVER_ROUGHNESS};
 import package::cover::laws::{COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION, STRAIGHT_FIRST_VERTEX,
     STRAIGHT_JOINTS};
-import package::engine::shading::{BODY_THIN, SurfacePoint, ViewPixel};
-import package::engine::view::{PI, camera, stable_normalize};
+import package::engine::shading::{BODY_THIN, SurfacePoint};
+import package::engine::view::{PI, camera, stable_normalize, view_pixel};
 import package::face::dither::stored;
 import package::face::lighting::{finish, local_light, widened};
 import package::face::foliage::foliage;
@@ -210,5 +210,5 @@ fn fs_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> ViewTarge
     let point = cover_surface(input, front);
     var shaded = finish(point, local_light(point, input.clip_position.xy));
     shaded.color = stored(shaded.color, input.clip_position.xy);
-    return view_targets(shaded, ViewPixel(input.clip_position, input.previous));
+    return view_targets(shaded, view_pixel(input.clip_position, input.previous));
 }

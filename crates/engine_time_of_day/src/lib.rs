@@ -10,7 +10,7 @@ use glam::Vec3;
 
 use engine_core::{Brick, Bricks, FrameTime, Schedule, Source, settings};
 use engine_math::{max, sin_cos};
-use engine_places::sun::SunPath;
+use engine_places::sun::{SunPath, north_axis, star_turn, stepped_hours};
 
 settings! {
     #[section("time_of_day")]
@@ -30,11 +30,6 @@ settings! {
 }
 
 impl TimeOfDay {
-    fn stepped_hours(&self) -> f32 {
-        let step = self.step / 60.0;
-        (self.hours / step).floor() * step
-    }
-
     fn sun_direction(&self) -> Vec3 {
         let (declination, hour_angle) = self.sun_place();
         self.sky_direction(declination, hour_angle)
@@ -47,38 +42,12 @@ impl TimeOfDay {
         self.sky_direction(declination * cos_turn, hour_angle - turn)
     }
 
-    fn star_turn(&self) -> glam::Quat {
-        let (sin_latitude, cos_latitude) = sin_cos(self.latitude.to_radians());
-        let (sin_north, cos_north) = sin_cos(self.north.to_radians());
-        let north = self.north_axis();
-        let east = Vec3::new(cos_north, 0.0, -sin_north);
-        let meridian = Vec3::Y * cos_latitude - north * sin_latitude;
-        let pole = Vec3::Y * sin_latitude + north * cos_latitude;
-        let sidereal = (self.stepped_hours() - 12.0) / 24.0 + (self.day - 80.0) / 365.25;
-        let (sin_turn, cos_turn) = sin_cos(std::f32::consts::TAU * sidereal);
-        let equatorial = [
-            meridian * cos_turn - east * sin_turn,
-            meridian * sin_turn + east * cos_turn,
-            pole,
-        ];
-        let galactic = galactic_axes()
-            .map(|axis| equatorial[0] * axis.x + equatorial[1] * axis.y + equatorial[2] * axis.z);
-        glam::Quat::from_mat3(
-            &glam::Mat3::from_cols(galactic[0], galactic[1], galactic[2]).transpose(),
-        )
-    }
-
     fn sun_place(&self) -> (f32, f32) {
         let (_, year) = sin_cos(std::f32::consts::TAU / 365.0 * (self.day + 10.0));
         (
             (-23.44 * year).to_radians(),
-            (15.0 * (self.stepped_hours() - 12.0)).to_radians(),
+            (15.0 * (stepped_hours(self.hours, self.step) - 12.0)).to_radians(),
         )
-    }
-
-    fn north_axis(&self) -> Vec3 {
-        let (sin_north, cos_north) = sin_cos(self.north.to_radians());
-        Vec3::new(-sin_north, 0.0, -cos_north)
     }
 
     fn sky_direction(&self, declination: f32, hour_angle: f32) -> Vec3 {
@@ -90,24 +59,8 @@ impl TimeOfDay {
         let east = -cos_declination * sin_hour;
         let (sin_north, cos_north) = sin_cos(self.north.to_radians());
         let east_axis = Vec3::new(cos_north, 0.0, -sin_north);
-        (Vec3::Y * up + self.north_axis() * north + east_axis * east).normalize_or(Vec3::Y)
+        (Vec3::Y * up + north_axis(self.north) * north + east_axis * east).normalize_or(Vec3::Y)
     }
-}
-
-fn galactic_axes() -> [Vec3; 3] {
-    let toward = |right_ascension: f32, declination: f32| {
-        let (sin_ascension, cos_ascension) = sin_cos(right_ascension.to_radians());
-        let (sin_declination, cos_declination) = sin_cos(declination.to_radians());
-        Vec3::new(
-            cos_declination * cos_ascension,
-            cos_declination * sin_ascension,
-            sin_declination,
-        )
-    };
-    let pole = toward(192.859_48, 27.128_25);
-    let centre = toward(266.405, -28.936_17);
-    let centre = (centre - pole * centre.dot(pole)).normalize_or(Vec3::X);
-    [centre, pole.cross(centre), pole]
 }
 
 #[derive(Resource, Default)]
@@ -146,7 +99,12 @@ fn publish_path(settings: Res<TimeOfDay>, mut day: ResMut<DayTime>, mut path: Re
         direction: Some(clock.sun_direction()),
         hours: Some(clock.hours),
         moon: Some(clock.moon_direction()),
-        stars: clock.star_turn(),
+        stars: star_turn(
+            stepped_hours(clock.hours, clock.step),
+            clock.latitude,
+            clock.day,
+            clock.north,
+        ),
     });
 }
 

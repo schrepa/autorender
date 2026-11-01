@@ -13,13 +13,14 @@ use bevy_ecs::system::{
 };
 use bevy_ecs::world::World;
 use engine_registry::{
-    BrickRecord, GateFn, Gates, JobList, MembersOf, NamedField, OperationEntry, OperationScene,
-    Registry, Removal, SceneEntity, SettingsEntry, Settle, SpawnedBy, StatsEntry,
+    BrickRecord, ExplainAsk, ExplainEntry, ExplainRecord, GateFn, Gates, JobList, MembersOf,
+    NamedField, OperationEntry, OperationScene, Registry, Removal, SceneEntity, SettingsEntry,
+    Settle, SpawnedBy, StatsEntry,
 };
 use serde_json::Value;
 
 use crate::{
-    Authored, Error, ErrorCode, GpuStruct, JobKind, List, Module, Operation, PlaceDecl,
+    Authored, Error, ErrorCode, Explain, GpuStruct, JobKind, List, Module, Operation, PlaceDecl,
     SceneContext, SceneIds, Section, Slot, Smoke, Source,
 };
 
@@ -167,6 +168,16 @@ impl Bricks<'_> {
         self
     }
 
+    #[track_caller]
+    pub fn explain<E: Explain>(&mut self) -> &mut Self
+    where
+        E::Params: Read,
+    {
+        self.record
+            .explain(ExplainEntry::of::<E::Params>(run_explain::<E>));
+        self
+    }
+
     pub fn on_remove<C: Component, M>(
         &mut self,
         system: impl IntoSystem<In<Entity>, (), M> + Send + Sync + 'static,
@@ -257,6 +268,12 @@ fn run_settled<O: Operation>(world: &mut World, request: Value) -> Result<Value,
     world.run_schedule(crate::schedules::TransformPropagation);
     engine_registry::run_settles(world, O::NAME);
     answer::<O>(world, request)
+}
+
+fn run_explain<E: Explain>(world: &mut World, ask: &ExplainAsk<'_>) -> Option<ExplainRecord> {
+    let mut state = SystemState::<E::Params>::new(world);
+    let params = state.get_mut(world).ok()?;
+    E::explain(params, ask)
 }
 
 fn answer<O: Operation>(world: &mut World, request: O::Request) -> Result<Value, Error> {

@@ -5,8 +5,8 @@ use engine_codec::closest;
 use engine_core::__private::schemars::{JsonSchema, Schema};
 use engine_core::{
     ComponentKind, Error, ErrorCode, Expected, InvalidSetting, MAX_HIERARCHY_DEPTH as MAX_DEPTH,
-    MAX_ID_BYTES, Placed, Rule, SceneContext, ScenePath, Section, Setting, Transform, fields,
-    is_id, parse_value_at, state, valid_global_matrix,
+    MAX_ID_BYTES, Placed, Placement, Rule, SceneContext, ScenePath, Section, Setting, Transform,
+    fields, is_id, parse_value_at, state, valid_global_matrix,
 };
 use engine_places::ground::Grounded;
 use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
@@ -49,7 +49,11 @@ impl Section for StreamedScene {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[schemars(crate = "engine_core::__private::schemars", transform = object_rules)]
+#[schemars(
+    crate = "engine_core::__private::schemars",
+    rename = "SceneObject",
+    transform = object_rules
+)]
 pub struct StreamedObject {
     #[schemars(transform = engine_core::stated(engine_core::fields::id()))]
     pub id: String,
@@ -98,7 +102,7 @@ impl StreamedObject {
 fields! {
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
     #[serde(default, deny_unknown_fields)]
-    #[schemars(crate = "engine_core::__private::schemars")]
+    #[schemars(crate = "engine_core::__private::schemars", rename = "SceneTransform")]
     pub struct StreamedTransform {
         pub translation: [f32; 3] = [0.0; 3] => range(-1.0e6, 1.0e6),
         pub rotation_degrees: [f32; 3] = [0.0; 3] => range(-360_000.0, 360_000.0),
@@ -128,7 +132,11 @@ fn standing() -> Option<Grounded> {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[schemars(crate = "engine_core::__private::schemars", transform = along_rules)]
+#[schemars(
+    crate = "engine_core::__private::schemars",
+    rename = "SceneAlong",
+    transform = along_rules
+)]
 pub struct StreamedAlong {
     pub id: String,
     pub prefab: String,
@@ -178,7 +186,7 @@ fn along_rules(schema: &mut Schema) {
 fields! {
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
     #[serde(deny_unknown_fields)]
-    #[schemars(crate = "engine_core::__private::schemars")]
+    #[schemars(crate = "engine_core::__private::schemars", rename = "SceneAlongStreamed")]
     pub struct AlongStreamed {
         pub reach: f32 = 0.0 => range(0.0, MAX_REACH),
     }
@@ -355,6 +363,9 @@ impl StreamedScene {
                 );
             }
         }
+        for entity in &streamed.entities {
+            check_streamed(&entity.source, &entity.path, kinds)?;
+        }
         Ok(Expanded { streamed, kept })
     }
 
@@ -500,6 +511,7 @@ fn expand_list(
                     .got(&entity.source.id),
             );
         }
+        check_placement(&entity.source, &entity.path, kinds)?;
     }
     validate_graph(
         entities
@@ -571,6 +583,45 @@ fn validate_object(
         }
     }
     Ok(entity.transform.transform())
+}
+
+fn check_placement(
+    entity: &StreamedObject,
+    path: &str,
+    kinds: &[ComponentKind],
+) -> Result<(), Error> {
+    if entity.parent.is_none() {
+        return Ok(());
+    }
+    refused_placement(entity, path, kinds, |placement| match placement {
+        Placement::Roots(code) => Some(code),
+        Placement::Anywhere | Placement::Entities(_) => None,
+    })
+}
+
+fn check_streamed(
+    entity: &StreamedObject,
+    path: &str,
+    kinds: &[ComponentKind],
+) -> Result<(), Error> {
+    refused_placement(entity, path, kinds, |placement| match placement {
+        Placement::Entities(code) => Some(code),
+        Placement::Anywhere | Placement::Roots(_) => None,
+    })
+}
+
+fn refused_placement(
+    entity: &StreamedObject,
+    path: &str,
+    kinds: &[ComponentKind],
+    refused: fn(Placement) -> Option<ErrorCode>,
+) -> Result<(), Error> {
+    for (name, _) in entity.authored() {
+        if let Some(code) = kind(kinds, name).and_then(|kind| refused(kind.placement())) {
+            return Err(Error::new(code, format!("{path}.{name}")).expected(Expected::Absent));
+        }
+    }
+    Ok(())
 }
 
 fn validate_graph<'a>(

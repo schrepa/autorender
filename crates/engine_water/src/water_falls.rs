@@ -1,9 +1,9 @@
 use std::ops::Range;
 
-use glam::{Vec2, Vec3};
 use engine_core::math::{clamp, exp, max, min, pow};
 use engine_heightfield::Fall;
 use engine_render::wgpu;
+use glam::{Vec2, Vec3};
 
 use crate::gpu::FallVertex;
 

@@ -22,6 +22,7 @@ const EDITS_BEFORE_TICK: usize = 24;
 const EDITS_AFTER_TICK: usize = 6;
 const ASPECT: f32 = 16.0 / 9.0;
 const SHOWN: usize = 8;
+const RETAINED: &str = "meshes_listing";
 
 struct Assets {
     meshes: Vec<MeshHandle>,
@@ -206,7 +207,7 @@ fn spawn(world: &mut World, assets: &Assets, authored: &Authored) -> Entity {
         entity.insert(Tint(tint));
     }
     if authored.interpolate {
-        entity.insert(InterpolateTransform);
+        entity.insert(InterpolateTransform::default());
     }
     if let Some(drift) = authored.drift {
         entity.insert(drift);
@@ -305,7 +306,7 @@ fn apply(
                 return None;
             };
             if on {
-                held.insert(InterpolateTransform);
+                held.insert(InterpolateTransform::default());
             } else {
                 held.remove::<InterpolateTransform>();
             }
@@ -406,7 +407,7 @@ fn bits(matrix: engine_core::glam::Mat4) -> [u32; 16] {
     matrix.to_cols_array().map(f32::to_bits)
 }
 
-fn frame(engine: &mut Engine) -> Frame {
+fn frame(engine: &mut Engine) -> Result<Frame, String> {
     let world = engine.extract_frame(ASPECT).world();
     let globals = world
         .resource::<GlobalTransforms>()
@@ -418,27 +419,28 @@ fn frame(engine: &mut Engine) -> Frame {
         .iter()
         .map(|(entity, pose)| (entity, pose.matrix().map(bits)))
         .collect();
-    let (listed, counts) = engine_meshes::retained_instances(world).unwrap_or_default();
-    let mut instances: Vec<String> = listed
+    let retained = engine::host::run_operation(engine.app.world_mut(), RETAINED, json!({}))
+        .map_err(|error| format!("{RETAINED}: {error}"))?;
+    let unread = || format!("{RETAINED} answered {retained}");
+    let mut instances: Vec<String> = retained["instances"]
+        .as_array()
+        .ok_or_else(unread)?
         .iter()
-        .map(|instance| {
-            format!(
-                "{} {:?} {:?} {:?} {:?}",
-                instance.mesh.slot(),
-                instance.material.map(MaterialHandle::slot),
-                bits(instance.model),
-                instance.color.map(f32::to_bits),
-                instance.surface,
-            )
-        })
+        .map(Value::to_string)
         .collect();
     instances.sort_unstable();
-    Frame {
+    let count = |field: &str| {
+        retained[field]
+            .as_u64()
+            .and_then(|count| usize::try_from(count).ok())
+            .ok_or_else(unread)
+    };
+    Ok(Frame {
         globals,
         presented,
+        counts: [instances.len(), count("dropped")?, count("missing")?],
         instances,
-        counts,
-    }
+    })
 }
 
 fn readable(bits: &Option<[u32; 16]>) -> String {
@@ -580,12 +582,12 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
             ("after", tick),
         );
         let Some((mut engine, _, map)) = fresh else {
-            frame(&mut living);
+            living.extract_frame(ASPECT);
             continue;
         };
         checks += 1;
-        let living_frame = frame(&mut living);
-        let fresh_frame = frame(&mut engine);
+        let living_frame = frame(&mut living)?;
+        let fresh_frame = frame(&mut engine)?;
         let found = differences(&living_frame, &fresh_frame, &map);
         if !found.is_empty() {
             mismatches += 1;

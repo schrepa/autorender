@@ -27,7 +27,7 @@ pub(crate) struct Built {
     pub(crate) passes: Vec<&'static str>,
     pub(crate) linked: engine_core::LinkedStats,
     pub(crate) placed: Placed,
-    pub(crate) resolve: Option<crate::PassNames>,
+    pub(crate) resolve: Option<(crate::PassNames, &'static str)>,
 }
 
 #[derive(Default)]
@@ -399,14 +399,14 @@ fn install_with(device: &wgpu::Device, world: &mut World, registry: &Registry) -
     let (pieces, placed, piece_texts) = pieces(registry, &mut linker, &mut problems);
     let resolve = registry.iter().find_map(|(_, record)| {
         let fills = record.fills().iter().any(|filled| filled.slot == TypeId::of::<crate::Resolve>());
-        record.render_entries::<ResolvePass>().next().filter(|_| fills).map(|entry| entry.0)
+        record.render_entries::<ResolvePass>().next().filter(|_| fills).map(|entry| (entry.0, record.package))
     });
     let core_fills = vec![TypeId::of::<crate::MainView>()];
     let mut listed: Vec<Listed> = vec![
         Listed { record: core_part::<crate::shared::Layers>(), package: CORE_PACKAGE, brick: None, fills: core_fills.clone() },
         Listed { record: core_part::<crate::shared::Composite>(), package: CORE_PACKAGE, brick: None, fills: core_fills },
     ];
-    let mut draws: Vec<(TypeId, &'static str, &DrawAny)> = Vec::new();
+    let mut draws: Vec<(TypeId, &DrawAny)> = Vec::new();
     for (brick, record) in registry.iter() {
         let fills: Vec<TypeId> = record.fills().iter().map(|filled| filled.slot).collect();
         for entry in &record.render {
@@ -415,32 +415,39 @@ fn install_with(device: &wgpu::Device, world: &mut World, registry: &Registry) -
                     continue;
                 }
                 listed.push(Listed {
-                    record: PartRecord { part: part.part, name: part.name, scope: part.scope, install: part.install },
+                    record: PartRecord {
+                        part: part.part,
+                        name: part.name,
+                        lazy: part.lazy,
+                        labels: part.labels,
+                        scope: part.scope,
+                        install: part.install,
+                    },
                     package: record.package,
                     brick: Some(brick),
                     fills: fills.clone(),
                 });
             }
             if let Some(draw) = entry.downcast_ref::<DrawAny>() {
-                draws.push((draw.part, record.package, draw));
+                draws.push((draw.part, draw));
             }
         }
     }
     let mut core = InstallCore::new(linker, device.features());
-    for (index, entry) in listed.iter().enumerate() {
+    for entry in &listed {
         core.declared.parts.push(PartInfo {
             ty: entry.record.part,
             package: entry.package,
             name: entry.record.name,
-            brick: entry.brick.map_or(u32::MAX, |brick| brick.index() as u32),
-            registered: index as u32,
+            lazy: entry.record.lazy,
+            labels: entry.record.labels,
             owner: entry.brick.map_or(engine_registry::CORE_ROW, |_| entry.package),
             profile: entry.brick.map_or(0, engine_registry::BrickId::profile_index),
         });
     }
-    for (part, package, draw) in &draws {
+    for (part, draw) in &draws {
         if let Some(index) = listed.iter().position(|entry| entry.record.part == *part) {
-            core.draws.push(DrawEntry { package: *package, part: index as u32, record: std::sync::Arc::clone(&draw.record) });
+            core.draws.push(DrawEntry { part: index as u32, record: std::sync::Arc::clone(&draw.record) });
         }
     }
     let mut parts: Vec<Option<Box<dyn Installed>>> = Vec::with_capacity(listed.len());
@@ -532,10 +539,11 @@ impl Renderer {
         run.gates = installed.gates;
         run.piece_layout = installed.pieces;
         run.surface = self.core.display.format();
-        run.resolve = installed.resolve.map(|names| {
+        run.resolve = installed.resolve.map(|(names, _)| {
             let stage: &'static str = Box::leak(format!("stage_{}", names.pass).into_boxed_str());
             (names, stage)
         });
+        self.resolver = installed.resolve.map(|(names, package)| (names.pass, package));
         run.switches = switches_of(&run.machine, world, &[]);
         let scope = crate::gpu_calls::validation_scope(&self.core.device);
         run.warm();

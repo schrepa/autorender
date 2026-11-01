@@ -24,8 +24,12 @@ pub(super) fn out_of_range(invalid: InvalidSetting, path: impl Into<String>) -> 
 }
 
 pub(super) fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
-    match Setting::check(&value, "value", bounds::COORDINATE) {
-        Ok(()) => Ok(value as f32),
+    within(value, bounds::COORDINATE, path).map(|value| value as f32)
+}
+
+pub(super) fn within(value: f64, rule: Rule, path: &str) -> Result<f64, Error> {
+    match Setting::check(&value, "value", rule) {
+        Ok(()) => Ok(value),
         Err(invalid) => Err(out_of_range(invalid, path)),
     }
 }

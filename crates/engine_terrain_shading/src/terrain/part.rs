@@ -1,13 +1,13 @@
 use bevy_ecs::prelude::*;
 use engine_core::{AssetLibrary, Camera, DeviceLimits, Error, View};
 use engine_places::ground::{Cover, TerrainTiles};
-use engine_places::probes::{ProbeCaptures, ProbeView, ProbeViews};
+use engine_places::probes::{MIRRORED, ProbeCaptures, ProbeView, ProbeViews};
 use engine_places::shadows::{CasterView, KeptRefresh, Refresh, ShadowCasters, ShadowMaps};
 use engine_places::water::Waterline;
 use engine_render::{
     Attach, Bind, Buffer, ComputePipeline, Count, DebugShown, DepthUse, Draw, DrawInput, Encode,
     GpuPart, Install, Layer, Lifetime, MainView, Own, Pass, Pipeline, Prepare, RenderPipeline,
-    Resolve, Sampler, SamplerDesc, Shape, Texture, VertexLayout, wgpu,
+    Resolve, Sampler, SamplerDesc, Shape, Texture, VertexLayout, pixels_per_meter, wgpu,
 };
 use glam::{Mat4, Vec3};
 
@@ -19,7 +19,9 @@ use super::tables::TerrainTables;
 use super::{IDS_FORMAT, SURFACE_SLOTS, TerrainFrame};
 use crate::gpu::HEIGHT_FORMAT;
 use crate::settings::TerrainShading;
-use crate::state::{Atlas, Bakes, DrawnStats, PART_STATS, PartStats, SURFACE_TOTALS, SurfaceTotals};
+use crate::state::{
+    Atlas, Bakes, DrawnStats, PART_STATS, PartStats, SURFACE_TOTALS, SurfaceTotals,
+};
 use crate::terrain_bounce::{Bounce, BounceSources};
 use crate::terrain_horizons::Horizons;
 use crate::terrain_macro::MacroMaps;
@@ -145,12 +147,17 @@ type Frame = (
 );
 
 impl GpuPart for TerrainGpu {
-    type Reads = (Lists, Neighbors, Frame, (Res<'static, DeviceLimits>, Res<'static, AssetLibrary>));
+    type Reads = (
+        Lists,
+        Neighbors,
+        Frame,
+        (Res<'static, DeviceLimits>, Res<'static, AssetLibrary>),
+    );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::terrain_shading::{
-            bounce, control, debug, draw, faces, field, horizons, normals, shadow, sky, subdivision,
-            surface,
+            bounce, control, debug, draw, faces, field, horizons, normals, shadow, sky,
+            subdivision, surface,
         };
         let handles = Handles {
             heights: cx.texture("heights", HEIGHT_FORMAT, Lifetime::Kept),
@@ -158,7 +165,11 @@ impl GpuPart for TerrainGpu {
             control: cx.texture("control", super::CONTROL_FORMAT, Lifetime::Kept),
             rivers: cx.texture("rivers", super::RIVER_FORMAT, Lifetime::Kept),
             errors: cx.texture("errors", wgpu::TextureFormat::R16Float, Lifetime::Kept),
-            water_errors: cx.texture("water_errors", wgpu::TextureFormat::R16Float, Lifetime::Kept),
+            water_errors: cx.texture(
+                "water_errors",
+                wgpu::TextureFormat::R16Float,
+                Lifetime::Kept,
+            ),
             ids: cx.texture("terrain_ids", IDS_FORMAT, Lifetime::Frame),
             terrains: cx.buffer("terrains", Lifetime::Kept),
             views: cx.buffer("terrain_views", Lifetime::Kept),
@@ -190,14 +201,23 @@ impl GpuPart for TerrainGpu {
         let horizon_maps = Horizons::install(cx)?;
         cx.frame(faces::heightfield::TERRAIN_VIEWS, Bind::Buffer(h.views))?;
         cx.frame(faces::heightfield::TERRAINS, Bind::Buffer(h.terrains))?;
-        cx.frame(faces::heightfield::TERRAIN_SURFACE_LEAVES, Bind::Buffer(h.leaves))?;
-        cx.frame(faces::heightfield::TERRAIN_SURFACE_ARGS, Bind::Buffer(h.counters))?;
+        cx.frame(
+            faces::heightfield::TERRAIN_SURFACE_LEAVES,
+            Bind::Buffer(h.leaves),
+        )?;
+        cx.frame(
+            faces::heightfield::TERRAIN_SURFACE_ARGS,
+            Bind::Buffer(h.counters),
+        )?;
         cx.frame(field::TERRAIN_HEIGHTS, Bind::Texture(h.heights))?;
         cx.frame(field::TERRAIN_DIRECTORY, Bind::Buffer(h.directory))?;
         cx.frame(draw::TERRAIN_HOLES, Bind::Buffer(h.holes))?;
         cx.frame(draw::TERRAIN_NORMALS, Bind::Texture(h.normals))?;
         cx.frame(draw::TERRAIN_CONTROL, Bind::Texture(h.control))?;
-        cx.frame(draw::TERRAIN_CONTROL_SAMPLER, Bind::Sampler(h.control_sampler))?;
+        cx.frame(
+            draw::TERRAIN_CONTROL_SAMPLER,
+            Bind::Sampler(h.control_sampler),
+        )?;
         cx.frame(draw::TERRAIN_PALETTE, Bind::Buffer(h.palette))?;
         cx.frame(draw::TERRAIN_ALBEDO, Bind::Texture(maps.albedo))?;
         cx.frame(draw::TERRAIN_MATERIAL_DATA, Bind::Texture(maps.data))?;
@@ -207,32 +227,67 @@ impl GpuPart for TerrainGpu {
         cx.frame(sky::TERRAIN_SKY_SAMPLER, Bind::Sampler(h.linear))?;
         cx.frame(surface::TERRAIN_ERRORS, Bind::Texture(h.errors))?;
         cx.frame(surface::WATER_ERRORS, Bind::Texture(h.water_errors))?;
-        cx.frame(horizons::TERRAIN_HORIZONS, Bind::Texture(horizon_maps.texture))?;
+        cx.frame(
+            horizons::TERRAIN_HORIZONS,
+            Bind::Texture(horizon_maps.texture),
+        )?;
         cx.frame(horizons::TERRAIN_HORIZON_SAMPLER, Bind::Sampler(h.linear))?;
-        cx.frame(bounce::TERRAIN_BOUNCE_PROBES, Bind::Texture(horizon_maps.probes))?;
+        cx.frame(
+            bounce::TERRAIN_BOUNCE_PROBES,
+            Bind::Texture(horizon_maps.probes),
+        )?;
         cx.frame(faces::ground_tiles::HEIGHTS, Bind::Texture(h.heights))?;
         cx.frame(faces::ground_tiles::DIRECTORY, Bind::Buffer(h.directory))?;
         cx.frame(faces::ground_tiles::CONTROL, Bind::Texture(h.control))?;
         cx.frame(faces::ground_tiles::NORMALS, Bind::Texture(h.normals))?;
-        cx.frame(faces::ground_tiles::MACRO_MAPS, Bind::Texture(macro_maps.texture))?;
+        cx.frame(
+            faces::ground_tiles::MACRO_MAPS,
+            Bind::Texture(macro_maps.texture),
+        )?;
         cx.frame(faces::ground_tiles::PALETTE, Bind::Buffer(h.palette))?;
-        cx.frame(faces::ground_tiles::GROUND_TERRAINS, Bind::Buffer(h.terrains))?;
-        cx.frame(faces::ground_tiles::GROUND_SKY_MAP, Bind::Texture(sky_maps.texture))?;
-        cx.frame(faces::ground_tiles::GROUND_SKY_SAMPLER, Bind::Sampler(h.linear))?;
+        cx.frame(
+            faces::ground_tiles::GROUND_TERRAINS,
+            Bind::Buffer(h.terrains),
+        )?;
+        cx.frame(
+            faces::ground_tiles::GROUND_SKY_MAP,
+            Bind::Texture(sky_maps.texture),
+        )?;
+        cx.frame(
+            faces::ground_tiles::GROUND_SKY_SAMPLER,
+            Bind::Sampler(h.linear),
+        )?;
 
         let normals_pass = cx.pass("tile_normals").id();
         let control_pass = cx.pass("tile_control").id();
         let clear_counters = cx.clear("clear_surface_counters", h.counters);
-        let begin = cx.pass("subdivision_begin").after(clear_counters).after(control_pass).after(normals_pass).id();
+        let begin = cx
+            .pass("subdivision_begin")
+            .after(clear_counters)
+            .after(control_pass)
+            .after(normals_pass)
+            .id();
         let copy_args = cx.copy(
             "subdivision_args",
             engine_render::Copied::Buffer(h.counters),
             engine_render::Copied::Buffer(h.args),
         );
-        let subdivide = cx.pass("terrain_subdivision").after(copy_args).after(begin).id();
+        let subdivide = cx
+            .pass("terrain_subdivision")
+            .after(copy_args)
+            .after(begin)
+            .id();
         let bounce_pass = cx.pass("bounce").id();
-        let ids_pass = cx.pass("terrain_ids").at(Layer::Opaque).color(h.ids, engine_render::Access::Clear).id();
-        let resolve_pass = cx.pass("terrain_resolve").at(Layer::Opaque).after(ids_pass).id();
+        let ids_pass = cx
+            .pass("terrain_ids")
+            .at(Layer::Opaque)
+            .color(h.ids, engine_render::Access::Clear)
+            .id();
+        let resolve_pass = cx
+            .pass("terrain_resolve")
+            .at(Layer::Opaque)
+            .after(ids_pass)
+            .id();
 
         let normals_pipeline = cx.compute_pipeline(
             normals_pass,
@@ -265,9 +320,21 @@ impl GpuPart for TerrainGpu {
         let mut decides = Vec::with_capacity(SURFACE_SLOTS);
         let mut applies = Vec::with_capacity(SURFACE_SLOTS);
         for slot in 0..SURFACE_SLOTS {
-            begins.push(cx.compute_pipeline(begin, subdivision::SUBDIVIDE_BEGIN, &slot_binds(slot))?);
-            decides.push(cx.compute_pipeline(subdivide, subdivision::SUBDIVIDE_DECIDE, &slot_binds(slot))?);
-            applies.push(cx.compute_pipeline(subdivide, subdivision::SUBDIVIDE_APPLY, &slot_binds(slot))?);
+            begins.push(cx.compute_pipeline(
+                begin,
+                subdivision::SUBDIVIDE_BEGIN,
+                &slot_binds(slot),
+            )?);
+            decides.push(cx.compute_pipeline(
+                subdivide,
+                subdivision::SUBDIVIDE_DECIDE,
+                &slot_binds(slot),
+            )?);
+            applies.push(cx.compute_pipeline(
+                subdivide,
+                subdivision::SUBDIVIDE_APPLY,
+                &slot_binds(slot),
+            )?);
         }
         let surface = |fragment, debug_fragment, front_face| RenderPipeline {
             vertex: draw::VS_TERRAIN,
@@ -284,7 +351,11 @@ impl GpuPart for TerrainGpu {
         let ccw = wgpu::FrontFace::Ccw;
         let ids = [
             cx.render_pipeline(ids_pass, &surface(draw::FS_TERRAIN_IDS, None, ccw), &[])?,
-            cx.render_pipeline(ids_pass, &surface(draw::FS_TERRAIN_IDS_HOLES, None, ccw), &[])?,
+            cx.render_pipeline(
+                ids_pass,
+                &surface(draw::FS_TERRAIN_IDS_HOLES, None, ccw),
+                &[],
+            )?,
         ];
         let resolve = |fragment| RenderPipeline {
             vertex: draw::VS_TERRAIN_RESOLVE,
@@ -298,8 +369,16 @@ impl GpuPart for TerrainGpu {
         };
         let resolve_bound = [(draw::TERRAIN_IDS_TEXTURE, Bind::Texture(h.ids))];
         let resolves = [
-            cx.render_pipeline(resolve_pass, &resolve(draw::FS_TERRAIN_RESOLVE_POST), &resolve_bound)?,
-            cx.render_pipeline(resolve_pass, &resolve(draw::FS_TERRAIN_RESOLVE_TEMPORAL), &resolve_bound)?,
+            cx.render_pipeline(
+                resolve_pass,
+                &resolve(draw::FS_TERRAIN_RESOLVE_POST),
+                &resolve_bound,
+            )?,
+            cx.render_pipeline(
+                resolve_pass,
+                &resolve(draw::FS_TERRAIN_RESOLVE_TEMPORAL),
+                &resolve_bound,
+            )?,
         ];
         let debugs = [
             cx.render_pipeline(
@@ -309,14 +388,30 @@ impl GpuPart for TerrainGpu {
             )?,
             cx.render_pipeline(
                 MainView,
-                &surface(debug::FS_DEBUG_TERRAIN_HOLES, Some(debug::FS_DEBUG_TERRAIN_HOLES), ccw),
+                &surface(
+                    debug::FS_DEBUG_TERRAIN_HOLES,
+                    Some(debug::FS_DEBUG_TERRAIN_HOLES),
+                    ccw,
+                ),
                 &[],
             )?,
         ];
-        let mirrored = wgpu::FrontFace::Cw;
+        let mirrored = if MIRRORED {
+            wgpu::FrontFace::Cw
+        } else {
+            wgpu::FrontFace::Ccw
+        };
         let probes = [
-            cx.render_pipeline(ProbeViews, &surface(draw::FS_TERRAIN_PROBE, None, mirrored), &[])?,
-            cx.render_pipeline(ProbeViews, &surface(draw::FS_TERRAIN_PROBE_HOLES, None, mirrored), &[])?,
+            cx.render_pipeline(
+                ProbeViews,
+                &surface(draw::FS_TERRAIN_PROBE, None, mirrored),
+                &[],
+            )?,
+            cx.render_pipeline(
+                ProbeViews,
+                &surface(draw::FS_TERRAIN_PROBE_HOLES, None, mirrored),
+                &[],
+            )?,
         ];
         let caster = cx.render_pipeline(
             ShadowCasters,
@@ -415,7 +510,11 @@ impl GpuPart for TerrainGpu {
             self.horizons.rest();
             self.drawn = false;
             self.deferred = false;
-            cx.deliver::<PartStats>(PART_STATS, bytemuck::bytes_of(&DrawnStats::default()).to_vec());
+            cx.release(self.handles.ids);
+            cx.deliver::<PartStats>(
+                PART_STATS,
+                bytemuck::bytes_of(&DrawnStats::default()).to_vec(),
+            );
             return;
         }
         let h = &self.handles;
@@ -445,7 +544,8 @@ impl GpuPart for TerrainGpu {
             cover: canopy,
         };
         let watered = water.is_changed();
-        self.atlas.upload(cx, h, (&tiles, &atlas, &bakes), (&water, watered));
+        self.atlas
+            .upload(cx, h, (&tiles, &atlas, &bakes), (&water, watered));
         if self.atlas.normal_jobs() > 0 {
             cx.run(self.passes.normals);
         }
@@ -453,39 +553,89 @@ impl GpuPart for TerrainGpu {
             cx.run(self.passes.control);
         }
         self.tables.write_holes(cx, h, &atlas);
-        let fades = self.atlas.fade((&atlas, &tiles), !view.exact(), TerrainTables::fade_words(&atlas));
+        let fades = self.atlas.fade(
+            (&atlas, &tiles),
+            !view.exact(),
+            TerrainTables::fade_words(&atlas),
+        );
         self.tables.write_fades(cx, h, fades);
         self.tables.write_directory(cx, h, &tiles, &atlas);
         self.maps.prepare(cx, (&tiles, &assets));
-        self.tables.write_palette(cx, h, (&tiles, &self.maps, &assets));
-        self.sky.prepare(cx, (&tiles, &bakes, &settings, limits.texture_layers));
-        self.macro_maps.prepare(cx, (&tiles, &bakes, &assets, limits.texture_layers));
+        self.tables
+            .write_palette(cx, h, (&tiles, &self.maps, &assets));
+        self.sky
+            .prepare(cx, (&tiles, &bakes, &settings, limits.texture_layers));
+        self.macro_maps
+            .prepare(cx, (&tiles, &bakes, &assets, limits.texture_layers));
         let (_, slots) = crate::terrain_horizons::room(limits.texture_layers, tiles.terrains.len());
-        self.horizons.prepare(cx, (&tiles, &bakes, &settings, shadows.on, limits.texture_layers), slots);
+        self.horizons.prepare(
+            cx,
+            (&tiles, &bakes, &settings, shadows.on, limits.texture_layers),
+            slots,
+        );
         let relit = self.bounce.prepare(
             cx,
-            (&tiles, &bakes, &settings, view.detail_eye(), (limits.texture_layers, limits.storage_room)),
-            (&self.horizons, &self.sky, &self.macro_maps, &self.tables.palette_bases[..]),
+            (
+                &tiles,
+                &bakes,
+                &settings,
+                view.detail_eye(),
+                (limits.texture_layers, limits.storage_room),
+            ),
+            (
+                &self.horizons,
+                &self.sky,
+                &self.macro_maps,
+                &self.tables.palette_bases[..],
+            ),
         );
         if relit {
             cx.run(self.passes.bounce);
         }
-        let held = tiles.terrains.iter().any(|entry| atlas.slots.keys().any(|(terrain, _)| *terrain == entry.terrain));
+        let held = tiles.terrains.iter().any(|entry| {
+            atlas
+                .slots
+                .keys()
+                .any(|(terrain, _)| *terrain == entry.terrain)
+        });
         self.drawn = held;
         if !held {
             self.surface.rest();
             self.frame = TerrainFrame::default();
             self.deferred = false;
+            cx.release(h.ids);
             self.deliver_stats(cx);
             return;
         }
         let drawn: Vec<bool> = tiles
             .terrains
             .iter()
-            .map(|entry| atlas.slots.keys().any(|(terrain, _)| *terrain == entry.terrain))
+            .map(|entry| {
+                atlas
+                    .slots
+                    .keys()
+                    .any(|(terrain, _)| *terrain == entry.terrain)
+            })
             .collect();
-        self.surface.prepare(cx, h, (&tiles, &views, limits.storage_room, &drawn), totals.epoch());
-        self.frame = self.patches.lay_out(cx, h, (&tiles, &atlas, &self.tables, &self.surface, &self.sky, &self.macro_maps), &views);
+        self.surface.prepare(
+            cx,
+            h,
+            (&tiles, &views, limits.storage_room, &drawn),
+            totals.epoch(),
+        );
+        self.frame = self.patches.lay_out(
+            cx,
+            h,
+            (
+                &tiles,
+                &atlas,
+                &self.tables,
+                &self.surface,
+                &self.sky,
+                &self.macro_maps,
+            ),
+            &views,
+        );
         self.patches.write_views(cx, h, &views, &captures);
         if self.surface.any() {
             cx.run(self.passes.clear_counters);
@@ -501,18 +651,33 @@ impl GpuPart for TerrainGpu {
         }
         self.deferred = !self.debug && !self.frame.terrains.is_empty();
         if self.deferred {
+            let display = view.display_size();
+            let size = wgpu::Extent3d {
+                width: display.x,
+                height: display.y,
+                depth_or_array_layers: 1,
+            };
+            cx.allocate(h.ids, size, 1);
             cx.run(self.passes.ids);
             cx.run(self.passes.resolve);
+        } else {
+            cx.release(h.ids);
         }
         self.deliver_stats(cx);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
         if pass == self.passes.normals {
-            return cx.dispatch(&self.pipelines.normals, Count::Groups(self.atlas.normal_groups()));
+            return cx.dispatch(
+                &self.pipelines.normals,
+                Count::Groups(self.atlas.normal_groups()),
+            );
         }
         if pass == self.passes.control {
-            return cx.dispatch(&self.pipelines.control, Count::Groups(self.atlas.control_groups()));
+            return cx.dispatch(
+                &self.pipelines.control,
+                Count::Groups(self.atlas.control_groups()),
+            );
         }
         if pass == self.passes.begin {
             let mut dispatched = 0;
@@ -525,8 +690,14 @@ impl GpuPart for TerrainGpu {
             let mut dispatched = 0;
             for slot in self.surface.slots() {
                 let offset = self.surface.args_offset(slot);
-                dispatched += cx.dispatch(&self.pipelines.decide[slot], Count::Indirect(self.inputs.subdivision_args, offset));
-                dispatched += cx.dispatch(&self.pipelines.apply[slot], Count::Indirect(self.inputs.subdivision_args, offset));
+                dispatched += cx.dispatch(
+                    &self.pipelines.decide[slot],
+                    Count::Indirect(self.inputs.subdivision_args, offset),
+                );
+                dispatched += cx.dispatch(
+                    &self.pipelines.apply[slot],
+                    Count::Indirect(self.inputs.subdivision_args, offset),
+                );
             }
             return dispatched;
         }
@@ -570,7 +741,12 @@ impl TerrainGpu {
     fn draw_ids(&self, draw: &mut Draw<'_, Self, Own>) -> u32 {
         let mut draws = 0;
         for holes in [false, true] {
-            for terrain in self.frame.terrains.iter().filter(|terrain| terrain.holes == holes) {
+            for terrain in self
+                .frame
+                .terrains
+                .iter()
+                .filter(|terrain| terrain.holes == holes)
+            {
                 let Some(offset) = self.surface.draw_offset(terrain.terrain) else {
                     continue;
                 };
@@ -616,7 +792,12 @@ impl TerrainGpu {
         }
         let mut draws = 0;
         for holes in [false, true] {
-            for terrain in self.frame.terrains.iter().filter(|terrain| terrain.holes == holes) {
+            for terrain in self
+                .frame
+                .terrains
+                .iter()
+                .filter(|terrain| terrain.holes == holes)
+            {
                 let Some(offset) = self.surface.draw_offset(terrain.terrain) else {
                     continue;
                 };
@@ -635,7 +816,11 @@ impl TerrainGpu {
         draws
     }
 
-    pub(crate) fn draw_casters(&self, at: &CasterView, draw: &mut Draw<'_, Self, ShadowCasters>) -> u32 {
+    pub(crate) fn draw_casters(
+        &self,
+        at: &CasterView,
+        draw: &mut Draw<'_, Self, ShadowCasters>,
+    ) -> u32 {
         if !self.drawn {
             return 0;
         }
@@ -660,7 +845,12 @@ impl TerrainGpu {
         }
         let mut draws = 0;
         for holes in [false, true] {
-            for terrain in self.frame.terrains.iter().filter(|terrain| terrain.holes == holes) {
+            for terrain in self
+                .frame
+                .terrains
+                .iter()
+                .filter(|terrain| terrain.holes == holes)
+            {
                 let Some(offset) = self.surface.draw_offset(terrain.terrain) else {
                     continue;
                 };
@@ -678,10 +868,6 @@ impl TerrainGpu {
         }
         draws
     }
-}
-
-fn pixels_per_meter(culling: Mat4, height: f32) -> f32 {
-    culling.row(1).truncate().length() * height * 0.5
 }
 
 fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {

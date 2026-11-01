@@ -15,7 +15,7 @@ use super::part::{Handles, TerrainGpu};
 use super::{ARRIVAL_SECONDS, LAYER_SIZE, widen};
 use crate::gpu::{CONTROL_GROUP, ControlJob, NORMALS_GROUP, NormalJob, SURFACE_ERROR_MIPS};
 use crate::shading::TileShading;
-use crate::state::{Atlas, Bakes, TileId, Upload};
+use crate::state::{Atlas, Bakes, TerrainBakes, TileId, Upload, same_shading};
 
 const HEIGHT_MIPS: u32 = 1 + SURFACE_ERROR_MIPS;
 const ERROR_CELLS: u32 = engine_heightfield::TILE_QUADS / 2;
@@ -133,14 +133,20 @@ impl TileAtlas {
                 .iter()
                 .map(|(&id, &layer)| (id, layer, Upload::Arrived))
                 .collect();
-            all.sort_unstable_by_key(|((terrain, key), _, _)| (std::cmp::Reverse(key.level), *terrain, key.x, key.z));
+            all.sort_unstable_by_key(|((terrain, key), _, _)| {
+                (std::cmp::Reverse(key.level), *terrain, key.x, key.z)
+            });
             all
         } else {
             atlas.uploads.clone()
         };
         let found = water_errors(line, watered || !uploads.is_empty());
         for (id, layer, upload) in uploads {
-            let Some(index) = tiles.terrains.iter().position(|entry| entry.terrain == id.0) else {
+            let Some(index) = tiles
+                .terrains
+                .iter()
+                .position(|entry| entry.terrain == id.0)
+            else {
                 continue;
             };
             let entry = &tiles.terrains[index];
@@ -168,13 +174,27 @@ impl TileAtlas {
                 }
                 let shading = before.and_then(|held| held.shading);
                 let (tile, water) = (tile.clone(), water.cloned());
-                self.uploaded.insert(id, Uploaded { tile, shading, water });
+                self.uploaded.insert(
+                    id,
+                    Uploaded {
+                        tile,
+                        shading,
+                        water,
+                    },
+                );
                 continue;
             }
             let shades = shaded_elsewhere(id.1.level, entry.surroundings);
-            let heights = before.as_ref().is_none_or(|held| held.tile.heights != tile.heights);
+            let heights = before
+                .as_ref()
+                .is_none_or(|held| held.tile.heights != tile.heights);
             if heights {
-                write_layer(cx, handles.heights, layer, (bytemuck::cast_slice(&tile.heights[..]), 4));
+                write_layer(
+                    cx,
+                    handles.heights,
+                    layer,
+                    (bytemuck::cast_slice(&tile.heights[..]), 4),
+                );
                 write_errors(cx, handles.errors, layer, &tile.ground_errors);
                 if let Some(peaks) = atlas.peaks.get(&id) {
                     write_peaks(cx, handles.heights, layer, peaks);
@@ -193,12 +213,20 @@ impl TileAtlas {
             let (control, shading) = if shades {
                 self.shade(cx, handles, &placing, before.as_ref(), bakes)
             } else {
-                let control = self.give_control(cx, handles, &placing, before.as_ref(), (heights, bakes));
+                let control =
+                    self.give_control(cx, handles, &placing, before.as_ref(), (heights, bakes));
                 (control, None)
             };
             self.uploads += u32::from(heights || control);
             let (tile, water) = (tile.clone(), water.cloned());
-            self.uploaded.insert(id, Uploaded { tile, shading, water });
+            self.uploaded.insert(
+                id,
+                Uploaded {
+                    tile,
+                    shading,
+                    water,
+                },
+            );
         }
         if watered {
             self.rewater(cx, handles, atlas, &found);
@@ -223,8 +251,11 @@ impl TileAtlas {
         atlas: &Atlas,
         found: &WaterErrors<'_>,
     ) {
-        let mut resident: Vec<(TileId, u32)> =
-            atlas.slots.iter().map(|(&id, &layer)| (id, layer)).collect();
+        let mut resident: Vec<(TileId, u32)> = atlas
+            .slots
+            .iter()
+            .map(|(&id, &layer)| (id, layer))
+            .collect();
         resident.sort_unstable();
         for (id, layer) in resident {
             let held = (atlas.tile(id.0, id.1), self.uploaded.get_mut(&id));
@@ -260,7 +291,12 @@ impl TileAtlas {
         });
         if gpu && (heights || rivers) {
             if let Some(texels) = &tile.rivers {
-                write_layer(cx, handles.rivers, layer, (bytemuck::cast_slice(&texels[..]), 8));
+                write_layer(
+                    cx,
+                    handles.rivers,
+                    layer,
+                    (bytemuck::cast_slice(&texels[..]), 8),
+                );
             }
             let spacing = tile.spacing;
             self.control_jobs.push(ControlJob {
@@ -273,7 +309,8 @@ impl TileAtlas {
             });
         }
         let control = !gpu
-            && (tile.control.is_none() || before.is_none_or(|held| held.tile.control != tile.control));
+            && (tile.control.is_none()
+                || before.is_none_or(|held| held.tile.control != tile.control));
         if control {
             let values = match &tile.control {
                 Some(values) => Box::from(&values[..]),
@@ -283,7 +320,12 @@ impl TileAtlas {
                     ancestor_texels(listing, id.1, |held| held_control(held, shadings))
                 }
             };
-            write_layer(cx, handles.control, layer, (bytemuck::cast_slice(&values[..]), 4));
+            write_layer(
+                cx,
+                handles.control,
+                layer,
+                (bytemuck::cast_slice(&values[..]), 4),
+            );
         }
         control
     }
@@ -300,7 +342,7 @@ impl TileAtlas {
             id, layer, entry, ..
         } = *placing;
         let shadings = bakes.of(id.0);
-        let shading = shadings.and_then(|held| held.shadings.get(&id.1)).cloned();
+        let shading = shadings.and_then(|held| held.shading(&id.1)).cloned();
         if before.is_some_and(|held| same_shading(held.shading.as_ref(), shading.as_ref())) {
             return (false, shading);
         }
@@ -314,8 +356,18 @@ impl TileAtlas {
                 )
             }
         };
-        write_layer(cx, handles.control, layer, (bytemuck::cast_slice(&control[..]), 4));
-        write_layer(cx, handles.normals, layer, (bytemuck::cast_slice(&gradients[..]), 4));
+        write_layer(
+            cx,
+            handles.control,
+            layer,
+            (bytemuck::cast_slice(&control[..]), 4),
+        );
+        write_layer(
+            cx,
+            handles.normals,
+            layer,
+            (bytemuck::cast_slice(&gradients[..]), 4),
+        );
         (true, shading)
     }
 
@@ -326,7 +378,9 @@ impl TileAtlas {
         count: u32,
     ) -> (&[u32], Range<usize>) {
         let whole = self.fades.len() != count as usize
-            || self.faded_with.is_none_or(|(faded, then)| faded != fades || atlas.now < then);
+            || self
+                .faded_with
+                .is_none_or(|(faded, then)| faded != fades || atlas.now < then);
         self.faded_with = Some((fades, atlas.now));
         self.fades_dirty = 0..0;
         let mut touched: Vec<TileId> = Vec::new();
@@ -425,10 +479,19 @@ fn first_sample(entry: &TerrainEntry, key: TileKey, spacing: f32) -> [i32; 2] {
     ]
 }
 
-fn write_layer(cx: &mut Prepare<'_, TerrainGpu>, texture: Texture<TerrainGpu>, layer: u32, (texels, bytes): (&[u8], u32)) {
+fn write_layer(
+    cx: &mut Prepare<'_, TerrainGpu>,
+    texture: Texture<TerrainGpu>,
+    layer: u32,
+    (texels, bytes): (&[u8], u32),
+) {
     cx.write_texture(
         texture,
-        wgpu::Origin3d { x: 0, y: 0, z: layer },
+        wgpu::Origin3d {
+            x: 0,
+            y: 0,
+            z: layer,
+        },
         texels,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
@@ -443,7 +506,12 @@ fn write_layer(cx: &mut Prepare<'_, TerrainGpu>, texture: Texture<TerrainGpu>, l
     );
 }
 
-fn write_errors(cx: &mut Prepare<'_, TerrainGpu>, texture: Texture<TerrainGpu>, layer: u32, pyramid: &[u16]) {
+fn write_errors(
+    cx: &mut Prepare<'_, TerrainGpu>,
+    texture: Texture<TerrainGpu>,
+    layer: u32,
+    pyramid: &[u16],
+) {
     let mut start = 0;
     for mip in 0..SURFACE_ERROR_MIPS {
         let side = ERROR_CELLS >> mip;
@@ -453,7 +521,11 @@ fn write_errors(cx: &mut Prepare<'_, TerrainGpu>, texture: Texture<TerrainGpu>, 
         cx.write_texture_level(
             texture,
             mip,
-            wgpu::Origin3d { x: 0, y: 0, z: layer },
+            wgpu::Origin3d {
+                x: 0,
+                y: 0,
+                z: layer,
+            },
             bytemuck::cast_slice(texels),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
@@ -478,13 +550,22 @@ fn write_water(
     write_errors(cx, texture, layer, water_halves(water));
 }
 
-fn write_peaks(cx: &mut Prepare<'_, TerrainGpu>, texture: Texture<TerrainGpu>, layer: u32, peaks: &[f32]) {
+fn write_peaks(
+    cx: &mut Prepare<'_, TerrainGpu>,
+    texture: Texture<TerrainGpu>,
+    layer: u32,
+    peaks: &[f32],
+) {
     for mip in 0..SURFACE_ERROR_MIPS {
         let side = ERROR_CELLS >> mip;
         cx.write_texture_level(
             texture,
             mip + 1,
-            wgpu::Origin3d { x: 0, y: 0, z: layer },
+            wgpu::Origin3d {
+                x: 0,
+                y: 0,
+                z: layer,
+            },
             bytemuck::cast_slice(peaks_mip(peaks, mip)),
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
@@ -537,25 +618,17 @@ fn water_halves(errors: Option<&Arc<[u16]>>) -> &[u16] {
     errors.map_or(ErrorPyramid::dry().halves(), |held| &held[..])
 }
 
-fn same_shading(a: Option<&Arc<TileShading>>, b: Option<&Arc<TileShading>>) -> bool {
-    match (a, b) {
-        (Some(a), Some(b)) => Arc::ptr_eq(a, b),
-        (None, None) => true,
-        (Some(_), None) | (None, Some(_)) => false,
-    }
-}
-
-fn held_control(tile: &TileFace, shadings: Option<&crate::state::TerrainBakes>) -> Option<Box<[u32]>> {
+fn held_control(tile: &TileFace, shadings: Option<&TerrainBakes>) -> Option<Box<[u32]>> {
     tile.control.as_deref().map(Box::from).or_else(|| {
         shadings
-            .and_then(|held| held.shadings.get(&tile.key))
+            .and_then(|held| held.shading(&tile.key))
             .map(|shading| shading.control_texels())
     })
 }
 
-fn held_gradients(tile: &TileFace, shadings: Option<&crate::state::TerrainBakes>) -> Option<Box<[u32]>> {
+fn held_gradients(tile: &TileFace, shadings: Option<&TerrainBakes>) -> Option<Box<[u32]>> {
     shadings
-        .and_then(|held| held.shadings.get(&tile.key))
+        .and_then(|held| held.shading(&tile.key))
         .map(|shading| shading.gradient_texels())
 }
 

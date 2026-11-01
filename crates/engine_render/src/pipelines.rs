@@ -17,9 +17,7 @@ use std::{
     },
 };
 
-use crate::bindings::{
-    Format, Kind, ResolvedBinding, ResolvedLayout, Sample, Sampling, Stages, Table, View,
-};
+use crate::bindings::{Kind, ResolvedBinding, ResolvedLayout, Sample, Sampling, Stages, Table, View};
 use crate::fixed_linker::{Composed, Linker};
 use crate::pipeline_layouts::{PIPELINE_LAYOUTS, PipelineLayout, StageLimits};
 
@@ -474,11 +472,6 @@ impl Registry {
     fn keys(&self) -> BTreeSet<&String> {
         self.render.keys().chain(self.compute.keys()).collect()
     }
-
-    fn forget_pipelines(&mut self) {
-        self.render.clear();
-        self.compute.clear();
-    }
 }
 
 fn with_registry<R>(device: &wgpu::Device, act: impl FnOnce(&mut Registry) -> R) -> R {
@@ -495,27 +488,6 @@ fn with_registry<R>(device: &wgpu::Device, act: impl FnOnce(&mut Registry) -> R)
         };
         act(&mut registries[index])
     })
-}
-
-pub fn install(device: &wgpu::Device, layouts: impl IntoIterator<Item = Layouts>) {
-    with_registry(device, |registry| {
-        let mut listed = vec![PIPELINE_LAYOUTS];
-        for layouts in layouts {
-            if !listed.iter().any(|known| std::ptr::eq(*known, layouts)) {
-                listed.push(layouts);
-            }
-        }
-        registry.layouts_listed = listed;
-    });
-}
-
-pub fn link(device: &wgpu::Device, linker: Linker) {
-    with_registry(device, |registry| {
-        if registry.linker.sources_hash() != linker.sources_hash() {
-            registry.linker = linker;
-            registry.forget_pipelines();
-        }
-    });
 }
 
 pub fn layout_of(device: &wgpu::Device, declared: &PipelineLayout) -> wgpu::PipelineLayout {
@@ -798,57 +770,19 @@ fn binding_type(kind: Kind) -> wgpu::BindingType {
         Kind::Uniform { min_size, dynamic } => {
             buffer(wgpu::BufferBindingType::Uniform, min_size, dynamic)
         }
-        Kind::Read { min_size } => buffer(
-            wgpu::BufferBindingType::Storage { read_only: true },
-            min_size,
-            false,
-        ),
-        Kind::Write => buffer(
-            wgpu::BufferBindingType::Storage { read_only: false },
-            0,
-            false,
-        ),
         Kind::Texture { sample, view } => wgpu::BindingType::Texture {
             sample_type: match sample {
                 Sample::Float => wgpu::TextureSampleType::Float { filterable: true },
-                Sample::Unfilterable => wgpu::TextureSampleType::Float { filterable: false },
                 Sample::Depth => wgpu::TextureSampleType::Depth,
-                Sample::Uint => wgpu::TextureSampleType::Uint,
             },
             view_dimension: match view {
                 View::D2 => wgpu::TextureViewDimension::D2,
-                View::D2Array => wgpu::TextureViewDimension::D2Array,
-                View::D3 => wgpu::TextureViewDimension::D3,
-                View::Cube => wgpu::TextureViewDimension::Cube,
-                View::CubeArray => wgpu::TextureViewDimension::CubeArray,
             },
             multisampled: false,
         },
-        Kind::Storage(format) => wgpu::BindingType::StorageTexture {
-            access: wgpu::StorageTextureAccess::WriteOnly,
-            format: texture_format(format),
-            view_dimension: wgpu::TextureViewDimension::D2,
-        },
-        Kind::StorageArray(format) => wgpu::BindingType::StorageTexture {
-            access: wgpu::StorageTextureAccess::WriteOnly,
-            format: texture_format(format),
-            view_dimension: wgpu::TextureViewDimension::D2Array,
-        },
         Kind::Sampler(sampling) => wgpu::BindingType::Sampler(match sampling {
             Sampling::Filtering => wgpu::SamplerBindingType::Filtering,
-            Sampling::NonFiltering => wgpu::SamplerBindingType::NonFiltering,
-            Sampling::Comparison => wgpu::SamplerBindingType::Comparison,
         }),
-    }
-}
-
-fn texture_format(format: Format) -> wgpu::TextureFormat {
-    match format {
-        Format::R32Float => wgpu::TextureFormat::R32Float,
-        Format::R32Uint => wgpu::TextureFormat::R32Uint,
-        Format::Rgba8Snorm => wgpu::TextureFormat::Rgba8Snorm,
-        Format::Rgba8Unorm => wgpu::TextureFormat::Rgba8Unorm,
-        Format::Rgba16Float => wgpu::TextureFormat::Rgba16Float,
     }
 }
 
@@ -933,172 +867,12 @@ impl std::ops::Deref for GroupLayout {
     }
 }
 
-pub fn pipeline_layout(
-    device: &wgpu::Device,
-    declared: &PipelineLayout,
-    groups: &[&GroupLayout],
-) -> wgpu::PipelineLayout {
-    assert!(
-        groups.len() == declared.groups.len()
-            && groups
-                .iter()
-                .zip(declared.groups)
-                .all(|(group, &declared)| group.key == GroupKey::of(declared)),
-        "groups_as_declared {}",
-        declared.label
-    );
-    layout_of(device, declared)
-}
-
-pub struct Family {
-    group: GroupLayout,
-    pub pipeline: wgpu::PipelineLayout,
-}
-
-impl Family {
-    pub fn new(device: &wgpu::Device, declared: &PipelineLayout, more: &[&GroupLayout]) -> Self {
-        let group = layout(device, declared.groups[0]);
-        let groups: Vec<&GroupLayout> = std::iter::once(&group)
-            .chain(more.iter().copied())
-            .collect();
-        let pipeline = pipeline_layout(device, declared, &groups);
-        Self { group, pipeline }
-    }
-
-    pub fn group(
-        &self,
-        device: &wgpu::Device,
-        label: &str,
-        resources: &[(&str, wgpu::BindingResource<'_>)],
-        fillers: &Fillers,
-    ) -> wgpu::BindGroup {
-        fill(device, label, &self.group, resources, fillers)
-    }
-}
-
 pub fn view(view: &wgpu::TextureView) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::TextureView(view)
 }
 
 pub fn sampler(sampler: &wgpu::Sampler) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::Sampler(sampler)
-}
-
-const WRITE_FILLERS: u64 = 32;
-const FILLER_BYTES: u64 = 256;
-
-const UNIFORM_FILLER_BYTES: u64 = 4096;
-
-pub struct Fillers {
-    uniform: wgpu::Buffer,
-    read: wgpu::Buffer,
-    write: wgpu::Buffer,
-    texture: wgpu::TextureView,
-    unsigned: wgpu::TextureView,
-    depth: wgpu::TextureView,
-    depth_array: wgpu::TextureView,
-    sampler: wgpu::Sampler,
-    comparison: wgpu::Sampler,
-}
-
-impl Fillers {
-    pub fn new(device: &wgpu::Device) -> Self {
-        let buffer = |label, size, usage| {
-            crate::memory::buffer(
-                device,
-                &wgpu::BufferDescriptor {
-                    label: Some(label),
-                    size,
-                    usage,
-                    mapped_at_creation: false,
-                },
-            )
-        };
-        let texture = |label, format| {
-            crate::targets::texture_2d(
-                device,
-                label,
-                (1, 1),
-                1,
-                1,
-                format,
-                wgpu::TextureUsages::TEXTURE_BINDING,
-            )
-        };
-        let depth = texture("engine/filler-depth", wgpu::TextureFormat::Depth32Float);
-        Self {
-            uniform: buffer(
-                "engine/filler-uniform",
-                UNIFORM_FILLER_BYTES,
-                wgpu::BufferUsages::UNIFORM,
-            ),
-            read: buffer(
-                "engine/filler-read",
-                FILLER_BYTES,
-                wgpu::BufferUsages::STORAGE,
-            ),
-            write: buffer(
-                "engine/filler-write",
-                WRITE_FILLERS * FILLER_BYTES,
-                wgpu::BufferUsages::STORAGE,
-            ),
-            texture: texture("engine/filler-texture", wgpu::TextureFormat::Rgba8Unorm)
-                .create_view(&Default::default()),
-            unsigned: texture("engine/filler-unsigned", wgpu::TextureFormat::Rgba16Uint)
-                .create_view(&Default::default()),
-            depth_array: depth.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("engine/filler-depth-array"),
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            }),
-            depth: depth.create_view(&Default::default()),
-            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("engine/filler-sampler"),
-                ..Default::default()
-            }),
-            comparison: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("engine/filler-comparison"),
-                compare: Some(wgpu::CompareFunction::LessEqual),
-                ..Default::default()
-            }),
-        }
-    }
-
-    fn resource(&self, kind: Kind, written: u64) -> wgpu::BindingResource<'_> {
-        match kind {
-            Kind::Uniform { .. } => self.uniform.as_entire_binding(),
-            Kind::Read { .. } => self.read.as_entire_binding(),
-            Kind::Write => wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                buffer: &self.write,
-                offset: written % WRITE_FILLERS * FILLER_BYTES,
-                size: wgpu::BufferSize::new(FILLER_BYTES),
-            }),
-            Kind::Texture {
-                sample: Sample::Depth,
-                view: View::D2,
-            } => wgpu::BindingResource::TextureView(&self.depth),
-            Kind::Texture {
-                sample: Sample::Depth,
-                view: View::D2Array,
-            } => wgpu::BindingResource::TextureView(&self.depth_array),
-            Kind::Texture {
-                sample: Sample::Uint,
-                view: View::D2,
-            } => wgpu::BindingResource::TextureView(&self.unsigned),
-            Kind::Texture {
-                sample: Sample::Float | Sample::Unfilterable,
-                view: View::D2,
-            } => wgpu::BindingResource::TextureView(&self.texture),
-            Kind::Sampler(Sampling::Filtering) => wgpu::BindingResource::Sampler(&self.sampler),
-            Kind::Sampler(Sampling::Comparison) => wgpu::BindingResource::Sampler(&self.comparison),
-            kind @ (Kind::Texture { .. }
-            | Kind::Storage(_)
-            | Kind::StorageArray(_)
-            | Kind::Sampler(_)) => {
-                panic!("filler_missing {kind:?}")
-            }
-        }
-    }
 }
 
 pub fn group(
@@ -1129,56 +903,6 @@ pub fn group(
     bind_group(device, label, layout, &entries)
 }
 
-pub fn filled_group(
-    device: &wgpu::Device,
-    label: &str,
-    table: &Table,
-    layout: &GroupLayout,
-    resources: &[(&str, wgpu::BindingResource<'_>)],
-    fillers: &Fillers,
-) -> wgpu::BindGroup {
-    debug_assert_eq!(
-        layout.key,
-        GroupKey::Own(table.label),
-        "layout_matches {label}"
-    );
-    fill(device, label, layout, resources, fillers)
-}
-
-fn fill(
-    device: &wgpu::Device,
-    label: &str,
-    layout: &GroupLayout,
-    resources: &[(&str, wgpu::BindingResource<'_>)],
-    fillers: &Fillers,
-) -> wgpu::BindGroup {
-    for (name, _) in resources {
-        layout.number(name);
-    }
-    let mut written = 0;
-    let entries: Vec<wgpu::BindGroupEntry<'_>> = layout
-        .bindings
-        .iter()
-        .map(|binding| {
-            let resource = resources
-                .iter()
-                .find(|(name, _)| *name == binding.name)
-                .map(|(_, resource)| resource.clone())
-                .unwrap_or_else(|| {
-                    let filler = fillers.resource(binding.kind, written);
-                    written += u64::from(binding.kind == Kind::Write);
-                    filler
-                });
-            wgpu::BindGroupEntry {
-                binding: binding.number,
-                resource,
-            }
-        })
-        .collect();
-    debug_assert!(written <= WRITE_FILLERS, "fillers_within_ranges");
-    bind_group(device, label, layout, &entries)
-}
-
 #[expect(clippy::disallowed_methods, reason = "the one way to make bind groups")]
 fn bind_group(
     device: &wgpu::Device,
@@ -1190,34 +914,6 @@ fn bind_group(
         label: Some(label),
         layout,
         entries,
-    })
-}
-
-pub fn compute_entry(
-    device: &wgpu::Device,
-    layout: &wgpu::PipelineLayout,
-    entry: Entry,
-) -> wgpu::ComputePipeline {
-    with_registry(device, |registry| {
-        let key = Key {
-            label: entry.name.to_owned(),
-            layout: registry.label(layout).to_owned(),
-            stages: KeyStages::Compute {
-                module: entry.module.to_owned(),
-                entry: entry.name.to_owned(),
-            },
-        };
-        let text = key.text();
-        if let Some(pipeline) = registry.compute.get(&text) {
-            return pipeline.clone();
-        }
-        registry.creating(&text);
-        let modules = registry.modules_for(&key);
-        let Created::Compute(pipeline) = key.create(device, layout, &modules) else {
-            unreachable!("compute_key_compute_pipeline");
-        };
-        registry.compute.insert(text, pipeline.clone());
-        pipeline
     })
 }
 

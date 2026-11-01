@@ -67,6 +67,10 @@ fn document(hiker: bool) -> Value {
             {"id": "grain", "color": [1.0, 1.0, 1.0, 1.0]},
         ],
         "meshes": [{"id": "cube", "source": {"kind": "cube"}}, ball()],
+        "environment": {
+            "ground_cover": {"looks": {"meadow": {"density": 60.0}}},
+            "scatter": {"looks": [{"mesh": "cube", "lods": [{"mesh": "cube", "error": 0.0625}], "sway": 0.5}]},
+        },
         "entities": entities,
     })
 }
@@ -137,7 +141,7 @@ fn surface() -> Value {
         |map: &str, from: f32, to: f32| json!({"ramp": {"map": map, "from": from, "to": to}});
     json!({
         "materials": [
-            {"id": "meadow", "color": [0.12, 0.2, 0.06], "cover": {"density": 60.0}},
+            {"id": "meadow", "color": [0.12, 0.2, 0.06]},
             {"id": "rock", "color": [0.3, 0.28, 0.26], "roughness": 0.8},
             {"id": "snow", "color": [0.85, 0.87, 0.9], "roughness": 0.5},
             {"id": "gravel", "material": "grain", "color": [0.36, 0.33, 0.28], "roughness": 0.9, "depth": 0.1},
@@ -151,8 +155,8 @@ fn surface() -> Value {
             {"id": "summit", "fitness": ramp("height", 110.0, 130.0), "layers": [{"material": "snow"}]},
         ],
         "assets": [
-            {"id": "crate", "mesh": "cube", "material": "plain", "lods": [{"mesh": "cube", "error": 0.0625}],
-             "sway": 0.5, "collider": {"shape": {"kind": "cuboid", "half_extents": [0.5, 0.5, 0.5]}}},
+            {"id": "crate", "mesh": "cube", "material": "plain",
+             "collider": {"shape": {"kind": "cuboid", "half_extents": [0.5, 0.5, 0.5]}}},
             {"id": "ball", "mesh": "ball", "material": "plain",
              "collider": {"shape": {"kind": "sphere", "radius": 1.0}}},
         ],

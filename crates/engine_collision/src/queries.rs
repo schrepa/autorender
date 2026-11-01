@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::bounds::{self, MAX_SCAN_ENTITIES, default_limit};
 use engine_core::rule::range;
-use engine_core::{Error, ErrorCode, Expected, Operation, Rule, SceneIds, Setting, stated};
+use engine_core::{Error, ErrorCode, Expected, Filled, Operation, Rule, SceneIds, Setting, stated};
 use engine_places::physics::{
     Collide, ColliderShape, Collision, CollisionLayers, CollisionRay, MAX_COLLIDER_EXTENT,
     MIN_COLLIDER_EXTENT, PlacedPart, QueryFilter, SensorEvent, SensorEventKind, SensorFilter,
@@ -15,7 +15,9 @@ use crate::results::{
     CastHit, CollisionEventsResult, HitEntity, OverlapResult, PlacedHit, RayHit, RaycastResult,
     SensorEventKindView, SensorEventRow, ShapeCastResult,
 };
-use crate::types::{validate_collider_transform, validate_ray, validate_shape, validate_shape_cast};
+use crate::types::{
+    Fault, validate_collider_transform, validate_ray, validate_shape, validate_shape_cast,
+};
 use crate::world::{CollisionWorld, SensorEvents, world_of};
 
 type Seen = (
@@ -209,11 +211,11 @@ pub(crate) struct CollisionEventsQuery {
 
 impl Operation for CollisionEventsQuery {
     const NAME: &'static str = "collision_events";
-    type Params = Seen;
+    type Params = (Seen, Filled<'static, Collision>);
     type Request = Self;
 
     fn run(
-        (collision, ids, entities): SystemParamItem<'_, '_, Seen>,
+        ((collision, ids, entities), slot): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
         scan(&ids)?;
@@ -233,6 +235,9 @@ impl Operation for CollisionEventsQuery {
             .as_deref()
             .map(|id| resolve_entity(&ids, &entities, id, false, "$.entity"))
             .transpose()?;
+        if !slot.on() {
+            return Err(Fault::MissingPlugin.error());
+        }
         let unsynced = SensorEvents::default();
         let events = world_of(&collision).map_or(&unsynced, |world| &world.sensors);
         let matches = |event: &&SensorEvent| {
@@ -346,7 +351,7 @@ pub(crate) fn bounded<T: Setting>(
 }
 
 pub(crate) fn filled(collision: &Collision) -> Result<&CollisionWorld, Error> {
-    world_of(collision).ok_or_else(|| Error::new(ErrorCode::MissingResource, "$.collision"))
+    world_of(collision).ok_or_else(|| Fault::MissingPlugin.error())
 }
 
 fn scan(ids: &SceneIds) -> Result<(), Error> {

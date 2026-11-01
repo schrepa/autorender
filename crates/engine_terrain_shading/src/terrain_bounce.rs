@@ -107,8 +107,9 @@ impl Bounce {
     ) -> Result<Self, Error> {
         use crate::shaders::terrain_shading::bounce_maps;
         let frame = cx.buffer("bounce_frame", Lifetime::Kept);
-        let terrains: Vec<Buffer<TerrainGpu>> =
-            (0..MOST_LEVELS).map(|_| cx.buffer("bounce_terrains", Lifetime::Kept)).collect();
+        let terrains: Vec<Buffer<TerrainGpu>> = (0..MOST_LEVELS)
+            .map(|_| cx.buffer("bounce_terrains", Lifetime::Kept))
+            .collect();
         let blocks = cx.buffer("bounce_blocks", Lifetime::Kept);
         let probes = cx.buffer("bounce_records", Lifetime::Kept);
         let scratch = cx.buffer("bounce_scratch", Lifetime::Kept);
@@ -122,7 +123,9 @@ impl Bounce {
             mips: mip..mip + 1,
             layers: 0..u32::MAX,
         };
-        let shared = |records: Buffer<TerrainGpu>, light_in: Bind<TerrainGpu>, light_out: Bind<TerrainGpu>| {
+        let shared = |records: Buffer<TerrainGpu>,
+                      light_in: Bind<TerrainGpu>,
+                      light_out: Bind<TerrainGpu>| {
             [
                 (bounce_maps::BOUNCE_FRAME, Bind::Buffer(frame)),
                 (bounce_maps::BOUNCE_TERRAINS, Bind::Buffer(records)),
@@ -132,10 +135,16 @@ impl Bounce {
                 (bounce_maps::BOUNCE_RECORDS, Bind::Buffer(probes)),
                 (bounce_maps::BOUNCE_LIGHT_IN, light_in),
                 (bounce_maps::BOUNCE_LIGHT_OUT, light_out),
-                (bounce_maps::BOUNCE_PROBES, Bind::Texture(sources.horizons.probes)),
+                (
+                    bounce_maps::BOUNCE_PROBES,
+                    Bind::Texture(sources.horizons.probes),
+                ),
                 (bounce_maps::BOUNCE_SAMPLER, Bind::Sampler(sampler)),
                 (bounce_maps::BOUNCE_PALETTE, Bind::Buffer(sources.palette)),
-                (bounce_maps::BOUNCE_MACRO, Bind::Texture(sources.colors.texture)),
+                (
+                    bounce_maps::BOUNCE_MACRO,
+                    Bind::Texture(sources.colors.texture),
+                ),
                 (bounce_maps::BOUNCE_SCRATCH, Bind::Buffer(scratch)),
             ]
         };
@@ -205,13 +214,25 @@ impl Bounce {
     pub(crate) fn prepare(
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,
-        (tiles, bakes, settings, eye, limits): (&TerrainTiles, &Bakes, &TerrainShading, Vec3, (u32, u64)),
+        (tiles, bakes, settings, eye, limits): (
+            &TerrainTiles,
+            &Bakes,
+            &TerrainShading,
+            Vec3,
+            (u32, u64),
+        ),
         (horizons, sky, colors, palette): (&Horizons, &SkyMaps, &MacroMaps, &[u32]),
     ) -> bool {
         if !self.framed {
             self.framed = true;
             cx.allocate_buffer(self.frame, size_of::<BounceFrame>() as u64);
-            cx.write(self.frame, 0, &[BounceFrame { bins: bin_moments() }]);
+            cx.write(
+                self.frame,
+                0,
+                &[BounceFrame {
+                    bins: bin_moments(),
+                }],
+            );
             for stand_in in self.stand_ins {
                 cx.allocate(
                     stand_in,
@@ -243,7 +264,9 @@ impl Bounce {
             let Some(slot) = slot else {
                 continue;
             };
-            let made = bakes.of(terrain.terrain).and_then(|held| held.bounce.made.as_ref());
+            let made = bakes
+                .of(terrain.terrain)
+                .and_then(|held| held.bounce.made.as_ref());
             let wanted = made.filter(|_| window.is_some());
             let held = &mut self.held[slot as usize];
             match (wanted, &*held) {
@@ -340,12 +363,13 @@ impl Bounce {
         let on = settings.sun_shadows && settings.bounce;
         let mut next = 0;
         self.slots.clear();
-        self.slots.extend(terrains.iter().enumerate().map(|(index, terrain)| {
-            let relit = on && !terrain.surroundings && index < casting && next < slots;
-            let slot = relit.then_some(next);
-            next += u32::from(relit);
-            slot
-        }));
+        self.slots
+            .extend(terrains.iter().enumerate().map(|(index, terrain)| {
+                let relit = on && !terrain.surroundings && index < casting && next < slots;
+                let slot = relit.then_some(next);
+                next += u32::from(relit);
+                slot
+            }));
         self.windows = windows(terrains, bakes, (eye, settings), limits);
         self.dropped = self
             .slots
@@ -355,7 +379,9 @@ impl Bounce {
             .filter(|((slot, window), terrain)| {
                 slot.is_some()
                     && window.is_none()
-                    && bakes.of(terrain.terrain).is_some_and(|held| held.bounce.made.is_some())
+                    && bakes
+                        .of(terrain.terrain)
+                        .is_some_and(|held| held.bounce.made.is_some())
             })
             .count() as u32;
     }
@@ -370,7 +396,11 @@ impl Bounce {
             .iter()
             .zip(&self.windows)
             .filter_map(|(terrain, window)| {
-                window.and(bakes.of(terrain.terrain).and_then(|held| held.bounce.made.as_ref()))
+                window.and(
+                    bakes
+                        .of(terrain.terrain)
+                        .and_then(|held| held.bounce.made.as_ref()),
+                )
             })
             .map(|bounce| bounce.texels())
             .max();
@@ -422,8 +452,14 @@ impl Bounce {
                 probes.extend_from_slice(means);
             }
         }
-        cx.allocate_buffer(self.blocks, ((words.len() * 4) as u64).next_power_of_two().max(16));
-        cx.allocate_buffer(self.probes, (probes.len() as u64).next_power_of_two().max(16));
+        cx.allocate_buffer(
+            self.blocks,
+            ((words.len() * 4) as u64).next_power_of_two().max(16),
+        );
+        cx.allocate_buffer(
+            self.probes,
+            (probes.len() as u64).next_power_of_two().max(16),
+        );
         if !words.is_empty() {
             cx.write(self.blocks, 0, &words);
         }
@@ -445,13 +481,19 @@ impl Bounce {
         let mips = (u32::BITS - side.leading_zeros()) as usize;
         for (index, pipeline) in self.pipelines.downs.iter().take(mips - 1).enumerate() {
             let side = side >> (index + 1);
-            dispatched += cx.dispatch(pipeline, Count::Groups([groups(side), groups(side), layers]));
+            dispatched += cx.dispatch(
+                pipeline,
+                Count::Groups([groups(side), groups(side), layers]),
+            );
         }
         for (pipeline, &widest) in self.pipelines.gathers.iter().zip(&self.widest) {
             if widest == 0 {
                 continue;
             }
-            dispatched += cx.dispatch(pipeline, Count::Groups([groups(widest), groups(widest), layers]));
+            dispatched += cx.dispatch(
+                pipeline,
+                Count::Groups([groups(widest), groups(widest), layers]),
+            );
         }
         dispatched
     }
@@ -638,7 +680,12 @@ fn mean_of(four: [&[u8]; 4]) -> [u8; PROBE_BYTES] {
     mean
 }
 
-fn write_ground(cx: &mut Prepare<'_, TerrainGpu>, ground: Texture<TerrainGpu>, index: usize, bounce: &TerrainBounce) {
+fn write_ground(
+    cx: &mut Prepare<'_, TerrainGpu>,
+    ground: Texture<TerrainGpu>,
+    index: usize,
+    bounce: &TerrainBounce,
+) {
     let side = bounce.texels();
     cx.write_texture(
         ground,

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use engine_codec::{Expected, Reader, record};
 use engine_core::{Error, ErrorCode, Job, JobCx, JobKind, RecordKey, codec};
 use engine_heightfield::layer::LayerKind;
@@ -100,12 +102,18 @@ fn kinds(cx: &JobCx<'_>) -> Vec<&'static LayerKind> {
     cx.members::<TerrainLayers>().copied().collect()
 }
 
-fn recipe(cx: &JobCx<'_>, shared: [u8; 32], kinds: &[&'static LayerKind]) -> Result<Recipe, Error> {
-    let key = RecordKey::from_hash(shared);
-    let bytes = cx
-        .share(key)
-        .ok_or_else(|| unshared("$.recipe", &key.hex()))?;
-    Recipe::read(bytes, &|stack| cx.share(RecordKey::from_hash(stack)), kinds)
+fn recipe(
+    cx: &JobCx<'_>,
+    shared: [u8; 32],
+    kinds: &[&'static LayerKind],
+) -> Result<Arc<Recipe>, Error> {
+    cx.held(shared, || {
+        let key = RecordKey::from_hash(shared);
+        let bytes = cx
+            .share(key)
+            .ok_or_else(|| unshared("$.recipe", &key.hex()))?;
+        Recipe::read(bytes, &|stack| cx.share(RecordKey::from_hash(stack)), kinds)
+    })
 }
 
 fn start_tile_water(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
@@ -127,7 +135,9 @@ fn start_tile_water(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Er
 impl Job for BaseWater {
     fn step(&mut self, budget: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
         let mut budget = budget;
-        Ok(self.advance(&mut budget)?.map(|water| codec::encode(&water)))
+        Ok(self
+            .advance(&mut budget)?
+            .map(|water| codec::encode(&water)))
     }
 }
 
@@ -206,7 +216,9 @@ fn start_steadied(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Erro
 impl Job for Steadying {
     fn step(&mut self, budget: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
         let mut budget = budget;
-        Ok(self.advance(&mut budget)?.map(|water| codec::encode(&water)))
+        Ok(self
+            .advance(&mut budget)?
+            .map(|water| codec::encode(&water)))
     }
 }
 

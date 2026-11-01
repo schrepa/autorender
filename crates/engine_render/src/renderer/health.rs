@@ -25,6 +25,19 @@ impl Reports {
     }
 }
 
+fn named_by(parts: &[crate::install::PartInfo], message: &str) -> Option<usize> {
+    let mut named = None;
+    for (index, part) in parts.iter().enumerate() {
+        if part.labels.iter().any(|label| message.contains(label)) {
+            if named.is_some() {
+                return None;
+            }
+            named = Some(index);
+        }
+    }
+    named
+}
+
 impl Renderer {
     pub(super) fn check_health(&mut self) -> Result<(), Error> {
         let installed = self.installing.as_mut().map(|validation| {
@@ -40,17 +53,21 @@ impl Renderer {
             }
             Some(Poll::Pending) | None => {}
         }
+        let linked = self.core.pipeline_counts.take_errors();
         if let Ok(mut reports) = self.core.health.lock() {
+            if let Some(error) = linked.into_iter().next() {
+                reports.fatal.get_or_insert(error);
+            }
             for message in std::mem::take(&mut reports.messages) {
-                let named = self.run.as_ref().and_then(|run| {
-                    run.machine
-                        .declared
-                        .parts
-                        .iter()
-                        .position(|part| message.contains(part.name))
-                });
+                let named = self
+                    .run
+                    .as_ref()
+                    .and_then(|run| named_by(&run.machine.declared.parts, &message));
                 match (named, self.run.as_mut()) {
                     (Some(part), Some(run)) => {
+                        if !run.machine.declared.parts[part].lazy {
+                            continue;
+                        }
                         let saved = run.part;
                         run.part = part as u32;
                         let error = failed("$.gpu").got(&message);
@@ -90,14 +107,15 @@ impl Renderer {
     }
 
     #[cfg(feature = "dev")]
-    pub fn inject_fault(&mut self, part: &str) -> Result<(), Error> {
+    pub fn inject_fault(&mut self, feature: &str) -> Result<(), Error> {
         let Some(run) = self.run.as_mut() else {
-            return Err(Error::new(engine_core::ErrorCode::UnknownVariant, "$.part").got(part));
+            return Err(Error::new(engine_core::ErrorCode::UnknownVariant, "$.feature").got(feature));
         };
-        let Some(index) = run.machine.declared.parts.iter().position(|known| known.name == part) else {
-            let names: Vec<&str> = run.machine.declared.parts.iter().map(|known| known.name).collect();
-            return Err(Error::new(engine_core::ErrorCode::UnknownVariant, "$.part")
-                .got(part)
+        let parts = &run.machine.declared.parts;
+        let Some(index) = parts.iter().position(|known| known.lazy && known.name == feature) else {
+            let names: Vec<&str> = parts.iter().filter(|known| known.lazy).map(|known| known.name).collect();
+            return Err(Error::new(engine_core::ErrorCode::UnknownVariant, "$.feature")
+                .got(feature)
                 .variants(names));
         };
         let saved = run.part;

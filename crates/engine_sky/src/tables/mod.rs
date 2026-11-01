@@ -1,4 +1,5 @@
 mod bytes;
+pub use bytes::f16_value;
 pub mod clouds;
 pub mod sky;
 

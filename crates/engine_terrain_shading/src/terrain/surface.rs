@@ -45,7 +45,6 @@ struct Tree {
 #[derive(Clone, Copy)]
 struct Subdivided {
     slot: usize,
-    measure: Measure,
     terrain: usize,
     first: u32,
     finest: f32,
@@ -98,7 +97,10 @@ impl SurfaceTrees {
     }
 
     pub(super) fn slots(&self) -> impl Iterator<Item = usize> + '_ {
-        self.frame.iter().flatten().map(|subdivided| subdivided.slot)
+        self.frame
+            .iter()
+            .flatten()
+            .map(|subdivided| subdivided.slot)
     }
 
     pub(super) fn args_offset(&self, slot: usize) -> u64 {
@@ -125,7 +127,10 @@ impl SurfaceTrees {
     ) {
         if !self.indexed {
             let indices = meshlet_indices();
-            cx.allocate_buffer(handles.meshlet, std::mem::size_of_val(indices.as_slice()) as u64);
+            cx.allocate_buffer(
+                handles.meshlet,
+                std::mem::size_of_val(indices.as_slice()) as u64,
+            );
             cx.write(handles.meshlet, 0, &indices);
             self.indexed = true;
         }
@@ -148,7 +153,8 @@ impl SurfaceTrees {
             share.min(u64::from(settings.subdivision_leaves)) as u32,
             share.min(u64::from(water.subdivision_leaves)) as u32,
         ];
-        let leaves = count as u64 * u64::from(rooms[0]) + watered.len() as u64 * u64::from(rooms[1]);
+        let leaves =
+            count as u64 * u64::from(rooms[0]) + watered.len() as u64 * u64::from(rooms[1]);
         self.leaves_bytes = self.leaves_bytes.max(leaves * LEAF_BYTES);
         cx.allocate_buffer(handles.leaves, self.leaves_bytes.max(LEAF_BYTES));
         cx.allocate_buffer(handles.nodes, (leaves * NODE_BYTES).max(NODE_BYTES));
@@ -173,9 +179,12 @@ impl SurfaceTrees {
             let tree = (&tiles.terrains[index], index, Measure::Water);
             self.lay_out(cx, handles, (tree, room), (depth, leaves), (planes, epoch));
         }
-        let held: Vec<(Entity, Measure)> = self.frame.iter().flatten().filter_map(|subdivided| {
-            self.trees[subdivided.slot].map(|tree| tree.owner)
-        }).collect();
+        let held: Vec<(Entity, Measure)> = self
+            .frame
+            .iter()
+            .flatten()
+            .filter_map(|subdivided| self.trees[subdivided.slot].map(|tree| tree.owner))
+            .collect();
         for tree in &mut self.trees {
             if tree.is_some_and(|tree| !held.contains(&tree.owner)) {
                 *tree = None;
@@ -188,7 +197,12 @@ impl SurfaceTrees {
             .iter()
             .position(|tree| tree.is_some_and(|tree| tree.owner == owner))
             .or_else(|| {
-                let taken: Vec<usize> = self.frame.iter().flatten().map(|subdivided| subdivided.slot).collect();
+                let taken: Vec<usize> = self
+                    .frame
+                    .iter()
+                    .flatten()
+                    .map(|subdivided| subdivided.slot)
+                    .collect();
                 (0..SURFACE_SLOTS).find(|slot| self.trees[*slot].is_none() && !taken.contains(slot))
             })
     }
@@ -206,7 +220,13 @@ impl SurfaceTrees {
             self.frame.push(None);
             return;
         };
-        let (side, depth) = self.tree(cx, handles, slot, (terrain, measure), (depth, capacity, room));
+        let (side, depth) = self.tree(
+            cx,
+            handles,
+            slot,
+            (terrain, measure),
+            (depth, capacity, room),
+        );
         let target = match measure {
             Measure::Ground => self.targets[0],
             Measure::Water => self.targets[1],
@@ -232,7 +252,6 @@ impl SurfaceTrees {
         }
         self.frame.push(Some(Subdivided {
             slot,
-            measure,
             terrain: index,
             first,
             finest: finest_spacing(side, depth),
@@ -258,7 +277,12 @@ impl SurfaceTrees {
         let side = pyramid.tile_size(0) * tiles_x.max(tiles_z).next_power_of_two() as f32;
         let owner = (terrain.terrain, measure);
         match &mut self.trees[slot] {
-            Some(tree) if tree.owner == owner && tree.depth == depth && tree.side == side && tree.room <= capacity => {
+            Some(tree)
+                if tree.owner == owner
+                    && tree.depth == depth
+                    && tree.side == side
+                    && tree.room <= capacity =>
+            {
                 tree.room = capacity;
             }
             held => {

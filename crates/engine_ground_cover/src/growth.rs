@@ -3,6 +3,7 @@ use engine_core::glam::{Mat4, Vec3};
 use engine_core::{Cut, DeviceLimits, FrameTime, Readback, View};
 use engine_places::ground::{Foliage, GroundTiles, TerrainEntry, TerrainTiles};
 use engine_places::wind::Wind;
+use engine_render::{pixels_per_meter, planes};
 
 use crate::covers::{CoverTable, CoverTerms};
 use crate::layouts::{COVER_LEAVES, COVER_LUSH_RATIO, CoverBlade, CoverFrame, Grow};
@@ -230,30 +231,6 @@ fn turn_share(culling: Mat4) -> f32 {
 
 fn lushest() -> f32 {
     COVER_LUSH_RATIO.sqrt()
-}
-
-fn planes(view_projection: Mat4) -> [[f32; 4]; 6] {
-    let rows = [
-        view_projection.row(0),
-        view_projection.row(1),
-        view_projection.row(2),
-        view_projection.row(3),
-    ];
-    [
-        rows[3] + rows[0],
-        rows[3] - rows[0],
-        rows[3] + rows[1],
-        rows[3] - rows[1],
-        rows[2],
-        rows[3] - rows[2],
-    ]
-    .map(|plane: engine_core::glam::Vec4| {
-        (plane / engine_core::math::max(plane.truncate().length(), 1.0e-12)).to_array()
-    })
-}
-
-fn pixels_per_meter(culling: Mat4, height: f32) -> f32 {
-    culling.row(1).truncate().length() * height * 0.5
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

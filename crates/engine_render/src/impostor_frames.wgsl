@@ -2,10 +2,6 @@ fn impostor_frames(flags: u32) -> u32 {
     return (flags >> IMPOSTOR_FRAMES_SHIFT) & 31u;
 }
 
-const IMPOSTOR_FADING: u32 = 0x80000000u;
-const IMPOSTOR_FADING_OUT: u32 = 0x40000000u;
-const IMPOSTOR_OVER: u32 = 0x8000u;
-
 fn impostor_index(batch: u32) -> u32 {
     return select(batch, batch & 0x7fffu, (batch & IMPOSTOR_FADING) != 0u);
 }

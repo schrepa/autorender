@@ -1,7 +1,5 @@
 use std::ops::Range;
 
-use glam::{Mat4, Vec3};
-
 mod atlas;
 mod part;
 mod patches;
@@ -10,16 +8,19 @@ mod surface;
 mod tables;
 
 pub(crate) use part::TerrainGpu;
-pub(crate) use patches::{planes, visible};
+pub(crate) use patches::planes;
 pub(crate) use surface::meshlet_indices;
 
 const LAYER_SIZE: u32 = crate::gpu::TILE_STRIDE;
 const SLOT: u64 = 256;
 const VIEWS: u64 = 7;
 const SURFACE_SLOTS: usize = 8;
-const NORMAL_FORMAT: engine_render::wgpu::TextureFormat = engine_render::wgpu::TextureFormat::R32Uint;
-const CONTROL_FORMAT: engine_render::wgpu::TextureFormat = engine_render::wgpu::TextureFormat::R32Uint;
-const RIVER_FORMAT: engine_render::wgpu::TextureFormat = engine_render::wgpu::TextureFormat::Rgba16Uint;
+const NORMAL_FORMAT: engine_render::wgpu::TextureFormat =
+    engine_render::wgpu::TextureFormat::R32Uint;
+const CONTROL_FORMAT: engine_render::wgpu::TextureFormat =
+    engine_render::wgpu::TextureFormat::R32Uint;
+const RIVER_FORMAT: engine_render::wgpu::TextureFormat =
+    engine_render::wgpu::TextureFormat::Rgba16Uint;
 const IDS_FORMAT: engine_render::wgpu::TextureFormat = engine_render::wgpu::TextureFormat::Rg32Uint;
 
 const ARRIVAL_SECONDS: f32 = 0.4;
@@ -54,7 +55,6 @@ fn changed_run<T: bytemuck::Pod>(was: &[T], now: &[T]) -> Range<usize> {
 
 pub(crate) struct FrameTerrain {
     pub terrain: usize,
-    pub uniform: u32,
     pub holes: bool,
     pub maps: Vec<(usize, Range<u32>)>,
     pub screen: Option<[f32; 4]>,

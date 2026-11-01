@@ -282,6 +282,13 @@ impl GpuPart for ShadowsGpu {
         (maps, plan, view): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        if cx.fresh() {
+            let table = std::mem::take(&mut self.written.table);
+            self.written = Written {
+                table,
+                ..Written::default()
+            };
+        }
         self.allocate(&plan, cx);
         self.upload(&plan, cx);
         self.at.clear();

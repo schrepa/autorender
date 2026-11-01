@@ -5,8 +5,8 @@ import package::face::caster_routes::{caster_box, caster_in_region, caster_in_sk
 import package::face::wind::{slot_sway, wind_sway};
 import package::generated::meshes::{BatchData as Batch, CULL_GROUP, CandidateData as Candidate,
     CasterFrame, MOVING_MAP, MOVING_PAIRS, SKY_MAP, STILLNESS};
-import package::meshes::faces::instances::{instance_colors, instance_poses};
 import package::meshes::presentation::{Rows, VALID};
+import package::meshes::slots::{instance_colors, instance_poses};
 
 struct DrawArgs {
     index_count: u32,

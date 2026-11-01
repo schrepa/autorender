@@ -46,7 +46,7 @@ impl CookTiles {
 }
 
 impl Terrains {
-    pub(crate) fn cook(
+    pub(super) fn cook(
         &mut self,
         settings: &TerrainSettings,
         asking: &mut Asking<'_, '_, '_>,

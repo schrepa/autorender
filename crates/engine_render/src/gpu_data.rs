@@ -1,4 +1,4 @@
-use engine_core::{MeshVertex, glam::Mat4};
+use engine_core::{MeshVertex, Surface, glam::Mat4};
 
 use crate::targets::FrameRegion;
 
@@ -59,6 +59,61 @@ impl CameraUniform {
 pub fn pixel_angle(view_projection: Mat4, height: u32) -> f32 {
     let row = view_projection.row(1).truncate().length() * height.max(1) as f32;
     2.0 / engine_core::math::max(row, 1.0e-12)
+}
+
+pub fn pack_surface(surface: Surface) -> u32 {
+    let unit = |value: f32, fallback: f32, max: f32| {
+        let value = if value.is_nan() { fallback } else { value };
+        (engine_core::math::clamp(value / max, 0.0, 1.0) * 255.0).round() as u32
+    };
+    let matte = Surface::MATTE;
+    unit(surface.roughness, matte.roughness, 1.0)
+        | unit(surface.metalness, matte.metalness, 1.0) << 8
+        | unit(surface.emission, matte.emission, Surface::MAX_EMISSION) << 16
+        | unit(surface.ripples, matte.ripples, 1.0) << 24
+}
+
+pub fn pack_color(color: [f32; 4]) -> [u32; 2] {
+    let unit = |value: f32, fallback: f32| {
+        let value = if value.is_nan() { fallback } else { value };
+        (engine_core::math::clamp(value, 0.0, 1.0) * 65535.0).round() as u32
+    };
+    [
+        unit(color[0], 0.0) | unit(color[1], 0.0) << 16,
+        unit(color[2], 0.0) | unit(color[3], 1.0) << 16,
+    ]
+}
+
+pub fn ground_data(
+    grounding: Option<engine_core::Grounding>,
+    normal: [f32; 2],
+    sink: f32,
+    scale: f32,
+) -> [u32; 4] {
+    let Some(grounding) = grounding else {
+        return [0; 4];
+    };
+    let snorm = |value: f32| {
+        u32::from((engine_core::math::clamp(value, -1.0, 1.0) * 32767.0).round() as i16 as u16)
+    };
+    [
+        snorm(normal[0]) | snorm(normal[1]) << 16,
+        sink.to_bits(),
+        (grounding.height * scale).to_bits(),
+        0,
+    ]
+}
+
+pub fn pyramid_extents((width, height): (u32, u32), count: u32) -> Vec<[u32; 4]> {
+    let mut source = (width.max(1), height.max(1));
+    (0..count)
+        .map(|_| {
+            let written = (source.0.div_ceil(2), source.1.div_ceil(2));
+            let extent = [written.0, written.1, source.0 - 1, source.1 - 1];
+            source = written;
+            extent
+        })
+        .collect()
 }
 
 pub fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {

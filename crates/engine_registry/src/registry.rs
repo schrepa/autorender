@@ -6,7 +6,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::{
     Chain, InternedScheduleLabel, IntoScheduleConfigs, ScheduleConfigs, Schedules, SystemSet,
 };
-use bevy_ecs::system::{IntoSystem, ScheduleSystem, System};
+use bevy_ecs::system::{IntoSystem, ScheduleSystem};
 use bevy_ecs::world::World;
 use engine_place::{Error, ErrorCode, PlaceDecl, PlaceKind, Slot, Smoke};
 use serde_json::Value;
@@ -14,6 +14,7 @@ use serde_json::Value;
 use crate::access::AccessRule;
 use crate::attribution::CORE_ROW;
 use crate::entries::{OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
+use crate::explain::ExplainEntry;
 use crate::gates::{Gate, GateDriver, GateId, Gates, Off, Scope, gate_on};
 use crate::hooks::{Named, add_removal, add_settle};
 use crate::jobs::JobQueue;
@@ -270,6 +271,29 @@ impl Registry {
             .map(|record| record.package)
     }
 
+    pub fn place_members(&self, place: &str) -> Vec<&'static str> {
+        let named = |decl: &PlaceDecl| decl.name() == place;
+        self.bricks
+            .iter()
+            .filter(|record| {
+                record.fills().iter().any(|filled| named(&filled.place))
+                    || record.joins().iter().any(|joined| named(&joined.place))
+            })
+            .map(|record| record.package)
+            .collect()
+    }
+
+    pub fn each_slot(&self, world: &World, slot: TypeId, each: &mut dyn FnMut(&dyn Any)) {
+        if let Some(decl) = self
+            .core_fills
+            .iter()
+            .chain(&self.catalog)
+            .find(|decl| decl.kind() == PlaceKind::Slot && PlaceDecl::type_id(decl) == slot)
+        {
+            decl.read(world, each);
+        }
+    }
+
     pub fn sections(&self) -> impl Iterator<Item = &SettingsEntry> + '_ {
         self.core_sections.iter().chain(
             self.bricks
@@ -298,6 +322,10 @@ impl Registry {
 
     pub fn operation(&self, name: &str) -> Option<&OperationEntry> {
         self.operations().find(|entry| entry.name == name)
+    }
+
+    pub fn explainers(&self) -> impl Iterator<Item = &ExplainEntry> + '_ {
+        self.bricks.iter().flat_map(|record| record.explainers())
     }
 
     pub fn check_named(&self, key: &str, value: &Value, path: &str) -> Result<(), Error> {
@@ -771,6 +799,15 @@ impl Registry {
             let access = entry.access(world);
             self.rule
                 .check_into(brick, entry.name, &access, world, &mut self.problems);
+        }
+        let explainers: Vec<(BrickId, ExplainEntry)> = self
+            .iter()
+            .flat_map(|(id, record)| record.explainers().iter().map(move |entry| (id, *entry)))
+            .collect();
+        for (brick, entry) in explainers {
+            let access = entry.access(world);
+            self.rule
+                .check_into(brick, "explain", &access, world, &mut self.problems);
         }
     }
 }

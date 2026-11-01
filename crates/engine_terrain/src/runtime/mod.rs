@@ -42,13 +42,12 @@ pub use lookups::{
 pub use operations::{TerrainKey, terrain_key};
 use plan::*;
 pub use programs::*;
-pub use publish::*;
 pub use queries::*;
 pub use residency::*;
 pub use settings::*;
 pub use stats::*;
 use store::*;
-pub use streaming::*;
+use streaming::*;
 pub use surroundings::*;
 use tile_map::TileMap;
 

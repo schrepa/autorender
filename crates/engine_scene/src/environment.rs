@@ -71,12 +71,19 @@ impl SceneEnvironment {
     }
 
     pub fn unlisted(&self, world: &World, path: &str) -> Vec<Error> {
-        self.keys()
-            .filter(|key| listed(world, key).is_none())
-            .map(|key| {
+        self.sections
+            .iter()
+            .filter(|(key, value)| {
+                !value.is_null() && (key.as_str() == STREAMED || listed(world, key).is_none())
+            })
+            .map(|(key, _)| {
                 Error::new(ErrorCode::SectionUnlisted, format!("{path}.{key}"))
                     .got(key)
-                    .variants(registered(world).map(|section| section.key))
+                    .variants(
+                        registered(world)
+                            .filter(|section| section.key != STREAMED)
+                            .map(|section| section.key),
+                    )
             })
             .collect()
     }

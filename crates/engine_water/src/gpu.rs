@@ -10,6 +10,7 @@ gpu_consts! {
     pub const WATER_GRADIENT_RANGE: f32 = 4.0;
     pub const WATER_SPAN_LEAST: f32 = 0.25;
     pub const WATER_SPAN_MOST: f32 = 4096.0;
+    pub const WATER_SPAN_STEPS: f32 = 126.0;
     pub const BLOCK_SIDE: u32 = 8;
     pub const BLOCK_GROUND: u32 = (BLOCK_SIDE + 1) * (BLOCK_SIDE + 1) + 4 * BLOCK_SIDE * BLOCK_SIDE;
     pub const NO_BLOCK: u32 = 0xffffffff;
@@ -87,15 +88,13 @@ gpu_consts! {
     pub const BREAK_ONSET: f32 = 0.6;
     pub const BREAK_FULL: f32 = 1.2;
     pub const BREAK_THINNEST: f32 = 0.02;
-    pub const WATER_BLOCK: u32 = 19;
+    pub const WATER_BLOCK: u32 = PATCH_QUADS + 3;
     pub const WATER_BLOCKS_SIDE: u32 = 16;
-    pub const WATER_TILE_PATCHES: u32 = 16;
+    pub const WATER_TILE_PATCHES: u32 = PATCHES_PER_TILE;
     pub const WATER_TILE_WORDS: u32 = WATER_TILE_PATCHES * WATER_TILE_PATCHES;
+    pub const WATER_LEAF_FIRST: u32 = 5;
     pub const DEBUG_SPAN_STEPS: f32 = 254.0;
 }
-
-const _: () = assert!(WATER_BLOCK == PATCH_QUADS + 3);
-const _: () = assert!(WATER_TILE_PATCHES == PATCHES_PER_TILE);
 
 gpu_struct! {
     pub(crate) struct WaterUniform {
