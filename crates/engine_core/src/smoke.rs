@@ -1,7 +1,9 @@
+use std::any::{Any, TypeId};
+
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::{SmokeFailure, SmokeSession};
+use crate::{List, SmokeFailure, SmokeSession};
 
 macro_rules! check {
     ($condition:expr, $check:expr, $got:expr, $expected:expr $(,)?) => {
@@ -175,4 +177,12 @@ pub fn near(value: impl Serialize, within: f64) -> Value {
 
 pub fn not(value: impl Serialize) -> Value {
     json!({ "not": value })
+}
+
+pub fn members<L: List>(session: &mut dyn SmokeSession, mut each: impl FnMut(&L::Member)) {
+    session.joined(TypeId::of::<L>(), &mut |member: &dyn Any| {
+        if let Some(member) = member.downcast_ref::<L::Member>() {
+            each(member);
+        }
+    });
 }

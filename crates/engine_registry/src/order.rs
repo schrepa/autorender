@@ -25,6 +25,7 @@ pub(crate) struct PlaceRules {
     pub(crate) schedule: InternedScheduleLabel,
     pub(crate) bricks: Box<[(InternedSystemSet, BrickId)]>,
     pub(crate) slots: Box<[(ComponentId, Option<BrickId>)]>,
+    pub(crate) firsts: Box<[ComponentId]>,
     pub(crate) rule: AccessRule,
 }
 
@@ -93,6 +94,18 @@ impl ScheduleBuildPass for PlaceRules {
             for (writer, _, _) in writers {
                 let readers = found.iter().filter(|(_, brick, access)| {
                     *brick != filler && access.combined_access().has_read(slot)
+                });
+                for (reader, _, _) in readers {
+                    flat.add_edge(*writer, *reader);
+                }
+            }
+        }
+        for &first in &*self.firsts {
+            let writes = |access: &FilteredAccessSet| access.combined_access().has_write(first);
+            let reads = |access: &FilteredAccessSet| access.combined_access().has_read(first);
+            for (writer, writing, _) in found.iter().filter(|(_, _, access)| writes(access)) {
+                let readers = found.iter().filter(|(_, reading, access)| {
+                    reading != writing && !writes(access) && reads(access)
                 });
                 for (reader, _, _) in readers {
                     flat.add_edge(*writer, *reader);

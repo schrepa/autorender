@@ -270,7 +270,7 @@ fn missing_asset(
             .got(entity)
     })?;
     let world = engine.app.world_mut();
-    let mesh = crate::inspect::authored_entity(scene, entity)
+    let mesh = crate::inspect::authored_entity(world, scene, entity)
         .and_then(|entity| world.get::<Mesh3d>(entity))
         .map(|mesh3d| mesh3d.mesh)
         .ok_or_else(|| {

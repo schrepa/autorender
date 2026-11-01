@@ -20,6 +20,8 @@ use crate::mipmaps::MipGenerator;
 
 const COLOR_MAPS: [bool; 5] = [true, false, false, false, true];
 
+pub const MATERIAL_ANISOTROPY: u16 = 16;
+
 pub(crate) struct GpuTexture {
     _texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -357,7 +359,7 @@ fn sampler<'a>(
             } else {
                 0.0
             },
-            anisotropy_clamp: if trilinear { 16 } else { 1 },
+            anisotropy_clamp: if trilinear { MATERIAL_ANISOTROPY } else { 1 },
             ..Default::default()
         })
     })

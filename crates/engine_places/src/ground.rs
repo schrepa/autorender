@@ -61,6 +61,8 @@ pub trait GroundQuery: Send + Sync + 'static {
     fn source(&self, from: Vec2, to: Vec2) -> GroundRead<GroundSource>;
 
     fn grid(&self) -> Option<JobRef>;
+
+    fn revision(&self) -> u64;
 }
 
 struct NoGround;
@@ -81,6 +83,10 @@ impl GroundQuery for NoGround {
     fn grid(&self) -> Option<JobRef> {
         None
     }
+
+    fn revision(&self) -> u64 {
+        0
+    }
 }
 
 #[derive(Resource, Clone)]
@@ -93,6 +99,10 @@ impl Ground {
 
     pub fn sample(&self, at: Vec2) -> Option<GroundPoint> {
         self.0.point(at).filter(|point| !point.hole)
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.0.revision()
     }
 }
 
@@ -283,13 +293,13 @@ pub struct TileFace {
     pub control: Option<Arc<[u32]>>,
     pub river_edges: Option<Arc<[u16]>>,
     pub river_beds: Option<Arc<[u16]>>,
+    pub rivers: Option<Arc<[[u16; 4]]>>,
     pub patch_bounds: Arc<[[f32; 2]]>,
     pub patch_holes: Arc<[u64]>,
     pub ground_errors: Arc<[u16]>,
-    pub water_errors: Arc<[u16]>,
-    pub errors: Arc<[f32]>,
     pub stamps: Arc<[engine_heightfield::Stamp]>,
     pub placed: Arc<[Placed]>,
+    pub current: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -303,6 +313,9 @@ pub struct TerrainEntry {
     pub may_hole: bool,
     pub reach: Arc<[f32]>,
     pub recipe: Option<[u8; 32]>,
+    pub edits: Arc<[engine_heightfield::Stamp]>,
+    pub solids: Arc<[Option<engine_heightfield::tile::Solid>]>,
+    pub relief: u128,
     pub pinned_levels: u32,
     pub pixel_error: f32,
     pub level_errors: Arc<[f32]>,
@@ -341,13 +354,28 @@ impl Slot for GroundSurface {
     const WGSL: Option<&'static str> = Some(include_str!("places/ground_surface.wgsl"));
 }
 
-#[derive(Resource, Default)]
-pub struct Heightfield;
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct Heightfield {
+    pub leaf_indices: Arc<[u32]>,
+    pub subdivision_error: f32,
+    pub water_leaves: [u32; 2],
+}
 
 impl Slot for Heightfield {
     const NAME: &'static str = "heightfield";
     const WGSL: Option<&'static str> = Some(include_str!("places/heightfield.wgsl"));
     const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::HEIGHTFIELD];
+}
+
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct GroundWork {
+    pub slice: u64,
+    pub millis: f64,
+    pub upload: u64,
+}
+
+impl Slot for GroundWork {
+    const NAME: &'static str = "ground_work";
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -406,6 +434,7 @@ pub struct PooledTile {
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct PlacedTiles {
     pub tiles: Vec<PooledTile>,
+    pub groups: Vec<([f32; 4], [f32; 3])>,
 }
 
 impl Slot for PlacedTiles {
@@ -441,7 +470,7 @@ pub struct FarCover;
 impl List for FarCover {
     const NAME: &'static str = "far_cover";
     type Member = ();
-    const WGSL: Option<&'static str> = Some(include_str!("places/far_cover.wgsl"));
+    const WGSL: Option<&'static str> = Some(contract!("places/far_cover.wgsl", PALETTE_ENTRIES));
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]

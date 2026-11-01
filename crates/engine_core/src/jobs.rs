@@ -147,6 +147,11 @@ impl RecordKey {
     }
 
     #[doc(hidden)]
+    pub fn shared(bytes: &[u8]) -> Self {
+        share_key(bytes)
+    }
+
+    #[doc(hidden)]
     pub fn hash(&self) -> [u8; 32] {
         self.0
     }
@@ -228,6 +233,17 @@ impl Jobs<'_, '_> {
         Ticket::new(key)
     }
 
+    pub fn look(&mut self, kind: &'static JobKind, input: &[u8], priority: u32) -> Ticket {
+        let key = self.listed_key(kind, input);
+        self.orders.orders.push(JobOrder::Look {
+            key: key.0,
+            kind: kind.name,
+            source: kind.source.hash(),
+            priority,
+        });
+        Ticket::new(key)
+    }
+
     pub fn cancel(&mut self, ticket: Ticket) {
         self.orders
             .orders
@@ -238,6 +254,17 @@ impl Jobs<'_, '_> {
         let key = share_key(&bytes);
         self.orders.orders.push(JobOrder::Share { key: key.0, bytes });
         key
+    }
+
+    pub fn share_record(&mut self, ticket: &Ticket) -> RecordKey {
+        self.orders
+            .orders
+            .push(JobOrder::ShareRecord { key: ticket.key.0 });
+        ticket.key
+    }
+
+    pub fn unshare(&mut self, key: RecordKey) {
+        self.orders.orders.push(JobOrder::Unshare { key: key.0 });
     }
 
     pub fn keep(&mut self, kind: &'static JobKind, input: &[u8], bytes: Vec<u8>) -> Ticket {
@@ -466,6 +493,7 @@ struct Flight {
     priority: u32,
     job: JobId,
     fetching: bool,
+    making: bool,
 }
 
 struct Asked {
@@ -475,6 +503,7 @@ struct Asked {
     input: Vec<u8>,
     priority: u32,
     fetching: bool,
+    making: bool,
 }
 
 struct Shared<'a>(&'a [(RecordKey, Arc<[u8]>)]);
@@ -789,6 +818,7 @@ impl JobExchange {
                         input,
                         priority,
                         fetching: false,
+                        making: true,
                     });
                 }
                 JobOrder::Fetch {
@@ -806,6 +836,24 @@ impl JobExchange {
                         input,
                         priority,
                         fetching: true,
+                        making: true,
+                    });
+                }
+                JobOrder::Look {
+                    key,
+                    kind,
+                    source,
+                    priority,
+                } => {
+                    store.want(key);
+                    self.asked.push(Asked {
+                        batch,
+                        key: RecordKey(key),
+                        kind: JobRef::named(kind, source),
+                        input: Vec::new(),
+                        priority,
+                        fetching: true,
+                        making: false,
                     });
                 }
                 JobOrder::Cancel { key } => {
@@ -814,6 +862,12 @@ impl JobExchange {
                     }
                 }
                 JobOrder::Share { key, bytes } => self.share(RecordKey(key), bytes),
+                JobOrder::ShareRecord { key } => {
+                    if let Some(Ok(bytes)) = store.get(&key) {
+                        self.share(RecordKey(key), bytes);
+                    }
+                }
+                JobOrder::Unshare { key } => self.unshare(RecordKey(key)),
                 JobOrder::Keep {
                     key,
                     kind,
@@ -860,15 +914,7 @@ impl JobExchange {
                 self.asked.push(asked);
                 continue;
             }
-            let Asked {
-                key,
-                kind,
-                input,
-                priority,
-                fetching,
-                ..
-            } = asked;
-            self.begin(key, kind, input, priority, fetching);
+            self.begin(asked);
         }
     }
 
@@ -876,14 +922,16 @@ impl JobExchange {
         store.waiting(&key.0) && !self.flights.iter().any(|flight| flight.key == key)
     }
 
-    fn begin(
-        &mut self,
-        key: RecordKey,
-        kind: JobRef,
-        input: Vec<u8>,
-        priority: u32,
-        fetching: bool,
-    ) {
+    fn begin(&mut self, asked: Asked) {
+        let Asked {
+            key,
+            kind,
+            input,
+            priority,
+            fetching,
+            making,
+            ..
+        } = asked;
         let (job, input) = if fetching {
             (self.fetch(Some(kind.clone()), key, priority), input)
         } else {
@@ -899,6 +947,7 @@ impl JobExchange {
             priority,
             job,
             fetching,
+            making,
         });
     }
 
@@ -917,7 +966,7 @@ impl JobExchange {
                 at += 1;
                 continue;
             };
-            if output.is_err() && self.flights[at].fetching {
+            if output.is_err() && self.flights[at].fetching && self.flights[at].making {
                 let flight = &mut self.flights[at];
                 let input = std::mem::take(&mut flight.input);
                 let (kind, priority, key) = (flight.kind.clone(), flight.priority, flight.key);
@@ -977,13 +1026,13 @@ fn next_id() -> JobId {
     JobId(SUBMITTED.fetch_add(1, Ordering::Relaxed) + 1)
 }
 
-pub fn job_output<T, E: std::fmt::Display>(
+pub fn job_output<T, B: AsRef<[u8]>, F: std::fmt::Display, E: std::fmt::Display>(
     kind: &str,
-    output: Result<Vec<u8>, String>,
+    output: Result<B, F>,
     decode: impl FnOnce(&[u8]) -> Result<T, E>,
 ) -> Result<T, String> {
     let bytes = output.map_err(|error| format!("{kind}: {error}"))?;
-    decode(&bytes).map_err(|error| format!("{kind}: its output does not decode: {error}"))
+    decode(bytes.as_ref()).map_err(|error| format!("{kind}: its output does not decode: {error}"))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

@@ -45,6 +45,7 @@ mod contract {
     const LEAD: &[u8] = b"const ";
     const TYPED: &[u8] = b": u32 = ";
     const END: &[u8] = b"u;\n";
+    const IMPORT: &[u8] = b"import ";
 
     const fn digits(value: u32) -> usize {
         let mut count = 1;
@@ -67,6 +68,40 @@ mod contract {
         total
     }
 
+    const fn opens(text: &[u8], at: usize) -> bool {
+        let mut index = 0;
+        while index < IMPORT.len() {
+            if at + index >= text.len() || text[at + index] != IMPORT[index] {
+                return false;
+            }
+            index += 1;
+        }
+        true
+    }
+
+    const fn imports_end(text: &[u8]) -> usize {
+        let mut at = 0;
+        loop {
+            let mut next = at;
+            while next < text.len() && text[next].is_ascii_whitespace() {
+                next += 1;
+            }
+            if !opens(text, next) {
+                return at;
+            }
+            at = next;
+            while at < text.len() && text[at] != b';' {
+                at += 1;
+            }
+            while at < text.len() && text[at] != b'\n' {
+                at += 1;
+            }
+            if at < text.len() {
+                at += 1;
+            }
+        }
+    }
+
     const fn put<const N: usize>(out: &mut [u8; N], mut end: usize, bytes: &[u8]) -> usize {
         let mut at = 0;
         while at < bytes.len() {
@@ -78,8 +113,9 @@ mod contract {
     }
 
     pub(crate) const fn written<const N: usize>(constants: &[(&str, u32)], text: &str) -> [u8; N] {
+        let (imports, rest) = text.as_bytes().split_at(imports_end(text.as_bytes()));
         let mut out = [0; N];
-        let mut end = 0;
+        let mut end = put(&mut out, 0, imports);
         let mut at = 0;
         while at < constants.len() {
             let (name, value) = constants[at];
@@ -97,7 +133,7 @@ mod contract {
             end = put(&mut out, end, END);
             at += 1;
         }
-        put(&mut out, end, text.as_bytes());
+        put(&mut out, end, rest);
         out
     }
 
@@ -142,6 +178,7 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<ground::TerrainTiles>(),
     PlaceDecl::slot::<ground::GroundSurface>(),
     PlaceDecl::slot::<ground::Heightfield>(),
+    PlaceDecl::slot::<ground::GroundWork>(),
     PlaceDecl::slot::<ground::GroundTiles>(),
     PlaceDecl::slot::<ground::Horizons>(),
     PlaceDecl::slot::<ground::Bounce>(),
@@ -167,7 +204,5 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<solids::SolidSource>("solid_source"),
     PlaceDecl::component::<splines::SplineMesh>("spline_mesh"),
     PlaceDecl::component::<streaming::StreamingFocus>("streaming_focus"),
-    PlaceDecl::slot::<streaming::StreamingPaths>(),
     PlaceDecl::list::<terrain::TerrainLayers>(),
-    PlaceDecl::slot::<terrain::DrawnRivers>(),
 ];

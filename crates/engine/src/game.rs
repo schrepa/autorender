@@ -13,7 +13,11 @@ pub(crate) fn listed(list: BrickList) -> crate::Result<Engine> {
     engine
         .operation::<SceneViewControl>()
         .operation::<SceneLookControl>();
-    limit(&mut engine, &wgpu::Limits::default(), wgpu::Features::empty());
+    let unwired = wgpu::Limits {
+        max_texture_array_layers: 0,
+        ..wgpu::Limits::default()
+    };
+    limit(&mut engine, &unwired, wgpu::Features::empty());
     Ok(engine)
 }
 

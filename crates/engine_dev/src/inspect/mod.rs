@@ -131,6 +131,7 @@ pub struct DevTools {
     pub(crate) inspectors: BTreeMap<String, Inspector>,
     builtins: Option<usize>,
     pub(crate) schemas: Value,
+    pub(crate) standard: crate::bricks::StandardBricks,
 }
 
 impl DevTools {
@@ -139,6 +140,7 @@ impl DevTools {
             inspectors: BTreeMap::new(),
             builtins: None,
             schemas: Value::Null,
+            standard: crate::bricks::StandardBricks::default(),
         }
     }
 
@@ -148,6 +150,7 @@ impl DevTools {
         tools.register_components(schemas);
         tools.builtins = Some(tools.inspectors.len());
         tools.schemas = schemas.clone();
+        tools.standard = crate::bricks::StandardBricks::of(schemas);
         tools
     }
 
@@ -334,7 +337,7 @@ impl DevTools {
             Verb::Query => {
                 let name = envelope.name()?;
                 let args = envelope.args()?;
-                if let Some(name) = self.query_operation(engine.app.world(), name) {
+                if let Some(name) = self.query_operation(engine.app.world(), name)? {
                     if wrong_world(engine) {
                         return Err(refused());
                     }
@@ -445,6 +448,9 @@ impl DevTools {
             culling_enabled: frustum_culling(world),
             features: registry.map(|registry| registry.names().collect()),
             presentation: presentation_view(engine.presentation()),
+            collision: registry
+                .and_then(|registry| registry.stats_section("collision_stats"))
+                .map(|stats| stats.read(world)),
             fixed_delta_seconds: world
                 .get_resource::<FixedTime>()
                 .map(|time| time.delta_seconds),
@@ -544,6 +550,14 @@ impl DevTools {
                 schema: stats_schema(name),
             });
         }
+        if let Some(brick) = self
+            .standard
+            .of_inspector(name)
+            .or_else(|| self.standard.of_operation(name))
+            && !crate::bricks::added(world, brick)
+        {
+            return Err(crate::bricks::missing_brick(brick, "$.name"));
+        }
         Err(Error::new(ErrorCode::UnknownInspector, "$.name")
             .got(name)
             .variants(self.describable(world, &bricks)))
@@ -608,12 +622,18 @@ impl DevTools {
 
     fn inspector<'a>(
         &'a self,
+        world: &World,
         bricks: &'a BrickInspectors,
         name: &str,
     ) -> Result<&'a Inspector, Error> {
         validate_name(name, "$.component")?;
         if let Some(inspector) = self.inspectors.get(name).or_else(|| bricks.get(name)) {
             return Ok(inspector);
+        }
+        if let Some(brick) = self.standard.of_inspector(name)
+            && !crate::bricks::added(world, brick)
+        {
+            return Err(crate::bricks::missing_brick(brick, "$.component"));
         }
         let known: Vec<String> = self
             .all_inspectors(bricks)
@@ -655,7 +675,7 @@ impl DevTools {
         }
         let bricks = self.brick_inspectors(world);
         let inspector = component
-            .map(|name| self.inspector(&bricks, name))
+            .map(|name| self.inspector(world, &bricks, name))
             .transpose()?;
         if let Some(inspector) =
             inspector.filter(|inspector| inspector.kind == InspectorKind::Resource)
@@ -845,8 +865,8 @@ pub(crate) fn encode(value: &impl Serialize, limit: usize) -> Result<String, ser
     Ok(String::from_utf8(output.bytes).expect("json_utf8"))
 }
 
-pub(crate) fn authored_entity(scene: &SceneInstance, id: &str) -> Option<Entity> {
-    scene.entity(id)
+pub(crate) fn authored_entity(world: &World, scene: &SceneInstance, id: &str) -> Option<Entity> {
+    scene.authored_entity(world, id)
 }
 
 pub fn frustum_culling(world: &World) -> bool {

@@ -1,16 +1,25 @@
 use std::sync::Arc;
 
 use bevy_ecs::prelude::{Component, Entity, Resource};
-use engine_heightfield::HydrologyBake;
-use engine_place::Slot;
+use engine_heightfield::{HydrologyBake, TileKey};
+use engine_place::{Slot, Stamp};
 use glam::{Mat3, Vec3};
 use serde::Serialize;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct WaterTileErrors {
+    pub terrain: Entity,
+    pub key: TileKey,
+    pub stamp: Stamp,
+    pub errors: Arc<[u16]>,
+}
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct Waterline {
     pub subdivision_error: f32,
     pub subdivision_leaves: u32,
     pub watered: Vec<Entity>,
+    pub errors: Vec<WaterTileErrors>,
 }
 
 impl Slot for Waterline {

@@ -60,6 +60,8 @@ pub const DEBUG_MODULE: &str = "engine::debug";
 pub const MATERIALS_MODULE: &str = "engine::materials";
 pub const IMPOSTOR_FRAMES_MODULE: &str = "engine::mesh::impostor_frames";
 pub const IMPOSTORS_MODULE: &str = "engine::impostors";
+pub const MATH_MODULE: &str = "engine::math";
+pub const VIEW_MODULE: &str = "engine::view";
 
 fn unsigned(source: &mut String, name: &str, value: u32) {
     let _ = writeln!(source, "const {name}: u32 = {value}u;");
@@ -79,6 +81,7 @@ pub fn presentation_source() -> String {
         ("NODE_ACTIVE", engine_core::NODE_ACTIVE),
         ("NODE_PARENT_ACTIVE", engine_core::NODE_PARENT_ACTIVE),
         ("IMPOSTOR_VERTICES", crate::IMPOSTOR_VERTICES),
+        ("POSE_FLOATS", (size_of::<engine_core::NodePose>() / 4) as u32),
     ] {
         unsigned(&mut source, name, value);
     }
@@ -122,12 +125,26 @@ pub fn impostor_frames_source() -> String {
     source
 }
 
-pub fn generated_core() -> [(&'static str, String); 4] {
+pub fn math_source() -> String {
+    let mut source = String::from(include_str!("math.wgsl"));
+    float(&mut source, "GRAVITY", engine_core::math::GRAVITY);
+    source
+}
+
+pub fn view_source() -> String {
+    let mut source = String::from(include_str!("frame/view.wgsl"));
+    float(&mut source, "DETAIL_ANISOTROPY", f32::from(crate::MATERIAL_ANISOTROPY));
+    source
+}
+
+pub fn generated_core() -> [(&'static str, String); 6] {
     [
         (PRESENTATION_MODULE, presentation_source()),
         (DEBUG_MODULE, debug_source()),
         (MATERIALS_MODULE, materials_source()),
         (IMPOSTOR_FRAMES_MODULE, impostor_frames_source()),
+        (MATH_MODULE, math_source()),
+        (VIEW_MODULE, view_source()),
     ]
 }
 
@@ -141,12 +158,15 @@ pub fn fixed_linker() -> crate::fixed_linker::Linker {
 
 #[doc(hidden)]
 pub fn core_modules() -> Vec<(&'static str, String)> {
-    TEXTS
+    let generated = generated_core();
+    let mut modules: Vec<(&'static str, String)> = TEXTS
         .iter()
         .filter(|text| !text.text().is_empty())
+        .filter(|text| !generated.iter().any(|(path, _)| *path == text.path()))
         .map(|text| (text.path(), text.text().to_owned()))
-        .chain(generated_core())
-        .collect()
+        .collect();
+    modules.extend(generated);
+    modules
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

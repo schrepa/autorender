@@ -493,6 +493,15 @@ pub fn face_source(place: &str, contract: &Contract, answered: &Answered) -> Str
                 let _ = writeln!(imports, "{import}");
             }
             shared_imports(&mut imports, &module, contract);
+            let constants: Vec<&str> = contract
+                .answers
+                .iter()
+                .filter(|answer| answer.constant)
+                .map(|answer| answer.name.as_str())
+                .collect();
+            if !constants.is_empty() {
+                let _ = writeln!(imports, "import package::{module}::{{{}}};", constants.join(", "));
+            }
             folds(&mut imports, &mut body, contract, members);
         }
     }

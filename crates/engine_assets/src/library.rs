@@ -53,17 +53,58 @@ impl engine_settings::Setting for MaterialHandle {}
 impl engine_settings::Setting for TextureHandle {}
 
 thread_local! {
-    static SCOPE: RefCell<Option<Arc<SceneAssets>>> = const { RefCell::new(None) };
+    static SCOPE: RefCell<Option<(Arc<SceneAssets>, bool)>> = const { RefCell::new(None) };
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SceneTable<H> {
+    names: BTreeMap<String, H>,
+    order: Vec<String>,
+}
+
+impl<H> Default for SceneTable<H> {
+    fn default() -> Self {
+        Self {
+            names: BTreeMap::new(),
+            order: Vec::new(),
+        }
+    }
+}
+
+impl<H> std::ops::Deref for SceneTable<H> {
+    type Target = BTreeMap<String, H>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.names
+    }
+}
+
+impl<H> FromIterator<(String, H)> for SceneTable<H> {
+    fn from_iter<I: IntoIterator<Item = (String, H)>>(entries: I) -> Self {
+        let mut table = Self::default();
+        for (name, handle) in entries {
+            if table.names.insert(name.clone(), handle).is_none() {
+                table.order.push(name);
+            }
+        }
+        table
+    }
+}
+
+impl<H> SceneTable<H> {
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &H)> + '_ {
+        self.order.iter().map(|name| (name, &self.names[name]))
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SceneAssets {
-    pub meshes: BTreeMap<String, MeshHandle>,
-    pub materials: BTreeMap<String, MaterialHandle>,
-    pub textures: BTreeMap<String, TextureHandle>,
+    pub meshes: SceneTable<MeshHandle>,
+    pub materials: SceneTable<MaterialHandle>,
+    pub textures: SceneTable<TextureHandle>,
 }
 
-struct Restore(Option<Arc<SceneAssets>>);
+struct Restore(Option<(Arc<SceneAssets>, bool)>);
 
 impl Drop for Restore {
     fn drop(&mut self) {
@@ -74,7 +115,15 @@ impl Drop for Restore {
 
 impl SceneAssets {
     pub fn scope<R>(self: &Arc<Self>, run: impl FnOnce() -> R) -> R {
-        let previous = SCOPE.with(|scope| scope.borrow_mut().replace(Arc::clone(self)));
+        self.within(false, run)
+    }
+
+    pub fn lenient<R>(self: &Arc<Self>, run: impl FnOnce() -> R) -> R {
+        self.within(true, run)
+    }
+
+    fn within<R>(self: &Arc<Self>, lenient: bool, run: impl FnOnce() -> R) -> R {
+        let previous = SCOPE.with(|scope| scope.borrow_mut().replace((Arc::clone(self), lenient)));
         let _restore = Restore(previous);
         run()
     }
@@ -82,13 +131,13 @@ impl SceneAssets {
 
 fn named<H: Copy + PartialEq>(
     handle: H,
-    table: fn(&SceneAssets) -> &BTreeMap<String, H>,
+    table: fn(&SceneAssets) -> &SceneTable<H>,
     kind: &str,
 ) -> Result<String, String> {
     SCOPE.with(|scope| {
         let scope = scope.borrow();
-        let assets = scope
-            .as_deref()
+        let (assets, _) = scope
+            .as_ref()
             .ok_or_else(|| format!("a {kind} handle is written only within its scene's assets"))?;
         table(assets)
             .iter()
@@ -98,20 +147,38 @@ fn named<H: Copy + PartialEq>(
     })
 }
 
-fn handle<H: Copy>(
+fn handle<H: Copy + Default>(
     name: &str,
-    table: fn(&SceneAssets) -> &BTreeMap<String, H>,
+    table: fn(&SceneAssets) -> &SceneTable<H>,
     kind: &str,
 ) -> Result<H, String> {
     SCOPE.with(|scope| {
         let scope = scope.borrow();
-        let assets = scope
-            .as_deref()
+        let (assets, lenient) = scope
+            .as_ref()
             .ok_or_else(|| format!("a {kind} handle is read only within its scene's assets"))?;
-        table(assets)
-            .get(name)
-            .copied()
-            .ok_or_else(|| format!("the scene names no {kind} {name}"))
+        match reference(name, table(assets)) {
+            Ok(handle) => Ok(handle),
+            Err(_) if *lenient => Ok(H::default()),
+            Err(error) => Err(error.to_string()),
+        }
+    })
+}
+
+fn reference<H: Copy>(name: &str, names: &SceneTable<H>) -> Result<H, Error> {
+    if !engine_settings::is_id(name) {
+        return Err(Error::new(ErrorCode::InvalidId, "$")
+            .expected(Expected::Id)
+            .at_most(engine_settings::MAX_ID_BYTES as u64)
+            .got(name));
+    }
+    names.get(name).copied().ok_or_else(|| {
+        let known: Vec<String> = names.keys().cloned().collect();
+        let error = Error::new(ErrorCode::UnknownReference, "$").got(name);
+        match engine_settings::closest(name, &known) {
+            Some(nearest) => error.nearest(nearest),
+            None => error,
+        }
     })
 }
 

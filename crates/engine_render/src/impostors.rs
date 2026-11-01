@@ -6,6 +6,8 @@
 pub(crate) mod bake;
 mod records;
 
+pub(crate) use bake::ImpostorBake;
+
 use std::collections::BTreeMap;
 
 use bevy_ecs::world::World;
@@ -59,7 +61,15 @@ pub(crate) fn layout_source() -> String {
     [
         engine_core::impostor_flags::WGSL,
         <ImpostorRecord as engine_core::GpuStruct>::WGSL,
-        <bake::ImpostorBake as engine_core::GpuStruct>::WGSL,
+        <ImpostorBake as engine_core::GpuStruct>::WGSL,
+    ]
+    .concat()
+}
+
+pub(crate) fn atlas_source() -> String {
+    [
+        include_str!("impostors/atlas.wgsl"),
+        engine_core::impostor_atlas::WGSL,
     ]
     .concat()
 }
@@ -385,16 +395,33 @@ pub(crate) struct Impostors {
     unbaked: Vec<(AtlasRole, ImpostorIdentity)>,
     done: u64,
     generation: u64,
+    _stand_in: wgpu::Texture,
+    stand_in: wgpu::TextureView,
 }
 
 impl Impostors {
     pub(crate) fn new(device: &wgpu::Device) -> Self {
+        let stand_in = crate::targets::texture_2d(
+            device,
+            "engine/post-world-frames",
+            (1, 1),
+            KINDS,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let view = stand_in.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
         Self {
             pipelines: ImpostorPipelines::new(device),
             atlases: BTreeMap::new(),
             unbaked: Vec::new(),
             done: 0,
             generation: 0,
+            _stand_in: stand_in,
+            stand_in: view,
         }
     }
 
@@ -420,11 +447,18 @@ impl Impostors {
             Some(name) => (AtlasRole::Placed, name),
             None => (AtlasRole::Scene, name),
         };
-        let atlas = self.atlases.get(&role)?;
+        let atlas = self.atlases.get(&role);
         if name == "impostor_records" {
-            return Some(FrameResource::Buffer(&atlas.records));
+            return atlas.map(|atlas| FrameResource::Buffer(&atlas.records));
         }
-        let arrays = atlas.arrays.as_ref()?;
+        let Some(arrays) = atlas.and_then(|atlas| atlas.arrays.as_ref()) else {
+            return match (role, name) {
+                (AtlasRole::Placed, "impostor_albedo" | "impostor_atlas") => {
+                    Some(FrameResource::View(&self.stand_in))
+                }
+                (AtlasRole::Scene | AtlasRole::Placed, _) => None,
+            };
+        };
         let view = match name {
             "impostor_albedo" => &arrays.views[0],
             "impostor_emissive" => &arrays.views[1],

@@ -139,7 +139,7 @@ impl GpuPart for Composite {
     type Reads = ();
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let pass = cx.pass(COMPOSITE).id();
+        let pass = cx.pass(COMPOSITE).label("engine/post-composite").span("post_composite").id();
         let pipeline = cx.render_pipeline(pass, &fullscreen(crate::shaders::FS_COMPOSITE), &[])?;
         let plain = cx.render_pipeline(pass, &fullscreen(crate::shaders::FS_COMPOSITE_PLAIN), &[])?;
         let debug_pass = cx.pass(DEBUG_VIEW).after(pass).id();

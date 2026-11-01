@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{FixedTime, InterpolateTransform, Parent, Transform};
+use engine_core::{FixedTime, Filled, InterpolateTransform, Parent, Transform};
 use engine_places::ground::Ground;
 use engine_places::physics::{BodyMotion, Collider, RigidBody};
 use engine_places::water::{WaterBody, WaterObstacle};
@@ -460,6 +460,7 @@ pub(crate) fn step(
     settings: Res<Physics>,
     time: Res<FixedTime>,
     wind: Res<Wind>,
+    wind_on: Filled<Wind>,
     ground: Res<Ground>,
     solids: Res<Solids>,
     waters: Query<&WaterBody>,
@@ -486,7 +487,7 @@ pub(crate) fn step(
     let around = Surroundings {
         settings: &settings,
         time: &time,
-        wind: wind.filled.then_some(&*wind),
+        wind: wind_on.on().then_some(&*wind),
         ground: &ground,
         solids: &solids,
         waters: &waters,

@@ -10,6 +10,7 @@ use engine_registry::Scope;
 use crate::draws::{DrawMember, RawDraw};
 use crate::encode::{EncodeCore, FrameCore};
 use crate::install::InstallCore;
+use crate::profiling::GpuProfiler;
 use crate::{Draw, Encode, GpuPart, Install, Pass, Prepare};
 
 pub(crate) type InstallFn = fn(&mut World, &mut InstallCore) -> Result<Box<dyn Installed>, Error>;
@@ -33,6 +34,8 @@ impl PartRecord {
 }
 
 pub(crate) struct Generated(pub(crate) &'static [&'static str]);
+
+pub(crate) struct ResolvePass(pub(crate) crate::PassNames);
 
 pub(crate) struct DrawAny {
     pub(crate) part: TypeId,
@@ -99,7 +102,7 @@ pub(crate) trait Installed: Send + Sync {
 
     fn prepare(&mut self, world: &World, core: &mut FrameCore) -> Result<(), Error>;
 
-    fn encode(&mut self, pass: u32, core: &mut EncodeCore) -> u32;
+    fn encode(&mut self, pass: u32, core: &mut EncodeCore, timer: &GpuProfiler) -> u32;
 
     fn refresh(&mut self, world: &mut World);
 }
@@ -107,6 +110,7 @@ pub(crate) trait Installed: Send + Sync {
 struct Held<P: GpuPart> {
     part: P,
     reads: SystemState<P::Reads>,
+    fresh: bool,
 }
 
 fn install<P: GpuPart>(world: &mut World, core: &mut InstallCore) -> Result<Box<dyn Installed>, Error> {
@@ -115,7 +119,11 @@ fn install<P: GpuPart>(world: &mut World, core: &mut InstallCore) -> Result<Box<
         core,
         part: PhantomData,
     })?;
-    Ok(Box::new(Held { part, reads }))
+    Ok(Box::new(Held {
+        part,
+        reads,
+        fresh: true,
+    }))
 }
 
 impl<P: GpuPart> Installed for Held<P> {
@@ -134,17 +142,20 @@ impl<P: GpuPart> Installed for Held<P> {
             reads,
             &mut Prepare {
                 core,
+                fresh: self.fresh,
                 part: PhantomData,
             },
         );
+        self.fresh = false;
         Ok(())
     }
 
-    fn encode(&mut self, pass: u32, core: &mut EncodeCore) -> u32 {
+    fn encode(&mut self, pass: u32, core: &mut EncodeCore, timer: &GpuProfiler) -> u32 {
         self.part.encode(
             Pass(pass, PhantomData),
             &mut Encode {
                 core,
+                timer,
                 part: PhantomData,
             },
         )
@@ -152,5 +163,6 @@ impl<P: GpuPart> Installed for Held<P> {
 
     fn refresh(&mut self, world: &mut World) {
         self.reads = SystemState::new(world);
+        self.fresh = true;
     }
 }

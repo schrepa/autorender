@@ -1,8 +1,9 @@
 use bevy_ecs::world::World;
 use engine_core::Error;
 use engine_registry::Registry;
+use engine_settings::ErrorCode;
 
-use crate::{SceneDocument, SceneKinds};
+use crate::{SceneDocument, SceneKinds, environment::STREAMED};
 
 impl SceneDocument {
     pub(crate) fn admit(&self, world: &World, kinds: &SceneKinds) -> Result<Vec<Error>, Error> {
@@ -27,6 +28,19 @@ impl SceneDocument {
         if let Some(environment) = &self.environment {
             environment.check_in(registry, "$.environment")?;
             skipped.extend(environment.unlisted(world, "$.environment"));
+        }
+        if kinds.streamed().is_none() {
+            for (field, values) in [("streamed", &self.streamed), ("along", &self.along)] {
+                if !values.is_empty() {
+                    skipped.push(
+                        Error::new(ErrorCode::SectionUnlisted, format!("$.{field}"))
+                            .got(STREAMED)
+                            .variants(registry.into_iter().flat_map(|registry| {
+                                registry.sections().map(|section| section.key)
+                            })),
+                    );
+                }
+            }
         }
         Ok(skipped)
     }

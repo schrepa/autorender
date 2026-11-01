@@ -4,7 +4,7 @@ use bevy_ecs::system::{SystemParam, SystemParamItem};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
-use crate::Error;
+use crate::{Error, SceneContext};
 
 pub trait Section:
     Resource + Clone + Default + PartialEq + Serialize + DeserializeOwned + schemars::JsonSchema
@@ -12,6 +12,10 @@ pub trait Section:
     const KEY: &'static str;
 
     fn check(&self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn check_scene(&self, _: &SceneContext) -> Result<(), Error> {
         Ok(())
     }
 
@@ -54,12 +58,21 @@ impl Cut {
 
 pub trait Operation: Send + Sync + 'static {
     const NAME: &'static str;
+    const CONTROL: bool = true;
     type Params: SystemParam + 'static;
     type Request: DeserializeOwned + 'static;
     fn run(
         params: SystemParamItem<'_, '_, Self::Params>,
         request: Self::Request,
     ) -> Result<Value, Error>;
+
+    fn schema() -> Value {
+        serde_json::json!({ "type": "object" })
+    }
+
+    fn result_schema() -> Option<Value> {
+        None
+    }
 }
 
 pub trait Readback: Resource<Mutability = Mutable> + Default {

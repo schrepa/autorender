@@ -15,6 +15,7 @@ struct DebugShade {
 
 const DEBUG_OTHER: vec3<f32> = vec3<f32>(0.4, 0.4, 0.42);
 const DEBUG_SKY: vec3<f32> = vec3<f32>(0.12, 0.13, 0.16);
+const DEBUG_CARDS: vec3<f32> = vec3<f32>(0.95, 0.25, 0.85);
 
 fn debug_targets(record: u32, object: u32, detail: u32, normal: vec3<f32>, sun: u32) -> DebugTargets {
     var targets: DebugTargets;

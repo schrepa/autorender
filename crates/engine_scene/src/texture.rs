@@ -1,9 +1,9 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use engine_core::{Error, MAX_TEXTURE_DIMENSION, Texture};
-use engine_settings::{ErrorCode, Expected};
+use engine_settings::{ErrorCode, Expected, valid_uri};
 use serde::{Deserialize, Serialize};
 
-use crate::{SceneFiles, files::valid_uri, validation::identifier};
+use crate::{SceneFiles, validation::identifier};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

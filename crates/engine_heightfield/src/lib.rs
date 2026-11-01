@@ -4,6 +4,7 @@
 )]
 
 pub mod bed;
+pub mod errors;
 pub mod gather;
 pub mod given;
 pub mod grid;
@@ -18,6 +19,7 @@ pub mod sights;
 pub mod tile;
 
 pub use bed::{Bed, NARROWEST, Reach};
+pub use errors::ErrorPyramid;
 pub use gather::{Gather, StartTile, TileHeights};
 pub use given::GivenRiver;
 pub use grid::{MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey, covers, reaches};
@@ -28,6 +30,10 @@ pub use path::{Bridge, PathSample};
 pub use rivers::{Given, RIVER_STEP, River, RiverLine, Rivers};
 pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverListing, RiverSight};
 pub use tile::{Control, SampleShape, smooth_gradient};
+
+pub fn bound(value: f32) -> f64 {
+    value.to_string().parse().unwrap_or(f64::from(value))
+}
 
 pub fn schema<T: schemars::JsonSchema>() -> serde_json::Value {
     serde_json::to_value(schemars::schema_for!(T)).unwrap_or(serde_json::Value::Null)

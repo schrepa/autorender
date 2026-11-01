@@ -3,6 +3,8 @@ use engine_place::{DrawPoint, Slot};
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
+pub const MIRRORED: bool = true;
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Interior {
@@ -17,17 +19,45 @@ impl Default for Interior {
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "AuthoredProbe", into = "AuthoredProbe")]
 pub struct ReflectionProbe {
     pub extent: Vec3,
-    #[serde(default = "full_blend")]
     pub blend: f32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interior: Option<Interior>,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthoredProbe {
+    extent: [f32; 3],
+    #[serde(default = "full_blend")]
+    blend: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    interior: Option<Interior>,
 }
 
 fn full_blend() -> f32 {
     1.0
+}
+
+impl From<AuthoredProbe> for ReflectionProbe {
+    fn from(authored: AuthoredProbe) -> Self {
+        Self {
+            extent: Vec3::from_array(authored.extent),
+            blend: authored.blend,
+            interior: authored.interior,
+        }
+    }
+}
+
+impl From<ReflectionProbe> for AuthoredProbe {
+    fn from(probe: ReflectionProbe) -> Self {
+        Self {
+            extent: probe.extent.to_array(),
+            blend: probe.blend,
+            interior: probe.interior,
+        }
+    }
 }
 
 impl ReflectionProbe {
@@ -83,6 +113,7 @@ pub struct ProbeFace {
 pub struct ProbeCaptures {
     pub faces: Vec<ProbeFace>,
     pub size: u32,
+    pub views: bool,
     pub still: bool,
 }
 

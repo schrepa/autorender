@@ -22,15 +22,13 @@ pub use document::{
     MAX_SOURCE_BYTES, MeshSource, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
     SceneSurface, SceneTransform, SceneVertex,
 };
+pub use engine_assets::{MeshStreams, encode_mesh_buffer_with};
 pub use engine_registry::SceneEntity;
 pub use engine_settings::{parse_json, parse_value};
 pub use environment::SceneEnvironment;
 #[cfg(feature = "schema")]
 pub use environment::section_schemas;
-pub use files::{
-    MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshStreams, SceneFile, SceneFileKind, SceneFiles,
-    decode_mesh_buffer, encode_mesh_buffer, encode_mesh_buffer_with, valid_uri,
-};
+pub use files::{SceneFile, SceneFileKind, SceneFiles};
 pub use instance::{MeshOrigin, SceneInstance, TextureOrigin};
 pub use material::{
     SceneAlphaMode, SceneFilter, SceneGrounding, SceneMap, SceneMaterial, SceneMipmapFilter,

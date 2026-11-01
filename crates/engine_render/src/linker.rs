@@ -340,11 +340,23 @@ impl Linker {
     }
 
     pub(crate) fn compose_named(&mut self, module: &str, entry: &str) -> Result<Arc<Composed>, Error> {
+        self.link(module, Some(entry))
+    }
+
+    pub(crate) fn compose_module(&mut self, module: &str) -> Result<Arc<Composed>, Error> {
+        self.link(module, None)
+    }
+
+    fn link(&mut self, module: &str, kept: Option<&str>) -> Result<Arc<Composed>, Error> {
+        let entry = kept.unwrap_or_default();
         let key = (module.to_owned(), entry.to_owned());
         if let Some(composed) = self.composed.get(&key) {
             return Ok(Arc::clone(composed));
         }
-        let path = format!("$.shaders.{module}.{entry}");
+        let path = match kept {
+            Some(entry) => format!("$.shaders.{module}.{entry}"),
+            None => format!("$.shaders.{module}"),
+        };
         if self.module(module).is_none() {
             return Err(Error::new(ErrorCode::UnknownModule, path).got(module));
         }
@@ -372,8 +384,8 @@ impl Linker {
             sourcemap: false,
             mangler: wesl::ManglerKind::Escape,
             mangle_main: false,
-            keep: Some(vec![entry.to_owned()]),
-            keep_main: false,
+            keep: kept.map(|entry| vec![entry.to_owned()]),
+            keep_main: kept.is_none(),
             features,
             ..Default::default()
         };

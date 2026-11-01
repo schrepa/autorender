@@ -12,6 +12,7 @@ pub use error::js_error;
 pub use error::{JS_ERROR_NAME, parse_json, parse_value, parse_value_at};
 pub use fields::{
     ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, is_id, state, stated,
+    valid_uri,
 };
 
 pub mod rule {

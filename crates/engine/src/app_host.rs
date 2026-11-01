@@ -70,7 +70,7 @@ fn wire(
         jobs.set_workers(workers);
         jobs.set_verifying(verifying);
     }
-    crate::game::limit(engine, &renderer.device_limits(), renderer.device_features());
+    crate::game::limit(engine, &renderer.limits(), renderer.features());
 }
 
 pub(crate) struct AppHost {
@@ -88,6 +88,7 @@ pub(crate) struct AppHost {
     refresh_ms: Option<f64>,
     dynamic: crate::host::DynamicScale,
     gpu_ms: Option<f32>,
+    submitted: bool,
     #[cfg(feature = "profiling")]
     profile_frame: u64,
     #[cfg(any(feature = "dev", feature = "profiling"))]
@@ -148,6 +149,7 @@ impl AppHost {
             refresh_ms: None,
             dynamic: crate::host::DynamicScale::default(),
             gpu_ms: None,
+            submitted: true,
             #[cfg(feature = "profiling")]
             profile_frame: 0,
             #[cfg(any(feature = "dev", feature = "profiling"))]
@@ -669,12 +671,14 @@ impl AppHost {
         }
         let display = matches!(kind, FrameKind::Display { .. });
         let world = self.engine.app.world();
-        let debug = world
+        let shown = world
             .get_resource::<engine_render::DebugShown>()
-            .is_some_and(|shown| shown.owner.is_some());
+            .copied()
+            .unwrap_or_default();
+        let debug = shown.next_debug;
         let post = self.renderer.post(world);
         let display_size = self.display_size((width, height));
-        let render_size = if display && !debug && post {
+        let render_size = if display && !debug && !shown.next_whole && post {
             glam::UVec2::new(render_width, render_height)
                 .clamp(glam::UVec2::ONE, display_size.max(glam::UVec2::ONE))
         } else {
@@ -684,10 +688,11 @@ impl AppHost {
             display,
             exact: !gpu,
             temporal: display && gpu && !debug && post && self.renderer.motion(world),
-            capture: false,
+            capture: shown.next_whole,
             debug,
             display_size,
             render_size,
+            submitted: self.submitted,
         };
         self.engine.set_frame(facts);
         let frame = match kind {
@@ -698,10 +703,12 @@ impl AppHost {
         };
         let after_extraction = now_ms();
         let rendered = if let FrameKind::Display { .. } = kind {
-            self.renderer.render_display_frame(frame)?
+            self.renderer.render_display_frame(frame)
         } else {
-            self.renderer.render_frame(frame)?
+            self.renderer.render_frame(frame)
         };
+        self.submitted = rendered.as_ref().is_ok_and(|rendered| rendered.submitted);
+        let rendered = rendered?;
         if frame.gpu().is_some() {
             self.gpu_inputs_stale = !rendered.submitted;
         }

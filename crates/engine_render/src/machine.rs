@@ -13,9 +13,9 @@ use crate::install::{Bound, Copied, Declared, PassDecl, PipelineDecl, Program, S
 use crate::linker::{Composed, Linker, Ty};
 use crate::{Access, DepthUse, Layer, Lifetime, ViewTarget};
 
-pub(crate) const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+pub const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 pub(crate) const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
-pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub(crate) const DEBUG_FORMATS: [wgpu::TextureFormat; 3] = [
     wgpu::TextureFormat::Rgba32Uint,
     wgpu::TextureFormat::R16Float,
@@ -887,6 +887,7 @@ fn graph_of(
                     Copied::Buffer(buffer) => ids.buffers.get(buffer as usize).copied(),
                     Copied::Texture(texture) => ids.textures.get(texture as usize).copied(),
                     Copied::Target(view) => ids.target(final_target(view)),
+                    Copied::Canvas => ids.target(Target::Canvas),
                 };
                 reads.extend(id(from));
                 writes.extend(id(to));

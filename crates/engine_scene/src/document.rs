@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use engine_core::{Camera, Error, Mesh, MeshVertex, Projection, Surface, Transform, glam};
-use engine_settings::{ErrorCode, Expected, InvalidSetting, Rule, Setting, fields};
+use engine_settings::{ErrorCode, Expected, InvalidSetting, Rule, Setting, fields, valid_uri};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{SceneEnvironment, SceneFiles, SceneMaterial, SceneTexture, files::valid_uri};
+use crate::{SceneEnvironment, SceneFiles, SceneMaterial, SceneTexture};
 
 pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 
@@ -30,6 +30,10 @@ pub struct SceneDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prefabs: Vec<ScenePrefab>,
     pub entities: Vec<SceneObject>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub streamed: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub along: Vec<Value>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub views: Vec<crate::SceneView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -96,9 +100,41 @@ impl SceneDocument {
                 object.insert("additionalProperties".to_owned(), Value::Bool(false));
             }
         }
+        if let Some(section) = registry.section(crate::environment::STREAMED) {
+            let mut streamed = serde_json::to_value(section.schema()).expect("schema_serializes");
+            if let (Some(Value::Object(nested)), Some(definitions)) = (
+                streamed
+                    .as_object_mut()
+                    .and_then(|fields| fields.remove("$defs")),
+                schema.get_mut("$defs").and_then(Value::as_object_mut),
+            ) {
+                for (name, definition) in nested {
+                    definitions.entry(name).or_insert(definition);
+                }
+            }
+            if let (Some(fields), Some(properties)) = (
+                streamed.get("properties").and_then(Value::as_object),
+                schema.get_mut("properties").and_then(Value::as_object_mut),
+            ) {
+                for field in ["streamed", "along"] {
+                    if let Some(property) = fields.get(field) {
+                        properties.insert(field.to_owned(), property.clone());
+                    }
+                }
+            }
+        }
         let mut source = serde_json::to_string_pretty(&schema).expect("schema_serializes");
         source.push('\n');
         source
+    }
+}
+
+impl SceneDocument {
+    pub(crate) fn streamed_section(&self) -> Option<Value> {
+        if self.streamed.is_empty() && self.along.is_empty() {
+            return None;
+        }
+        Some(serde_json::json!({ "streamed": self.streamed, "along": self.along }))
     }
 }
 

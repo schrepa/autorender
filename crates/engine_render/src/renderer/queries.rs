@@ -1,5 +1,4 @@
 use bevy_ecs::world::World;
-use engine_core::{AtlasRole, IMPOSTOR_MIN_TRIANGLES, ImpostorBooks, MaterialHandle, MeshHandle};
 
 use super::*;
 
@@ -88,23 +87,6 @@ impl Renderer {
     pub fn is_texture_resident(&self, handle: engine_core::TextureHandle) -> bool {
         self.held_assets()
             .is_some_and(|assets| assets.materials.is_texture_resident(handle))
-    }
-
-    pub fn mesh_levels(&self, world: &World, handle: MeshHandle) -> Option<Vec<(u32, f32)>> {
-        if !self.held_assets()?.meshes.contains(handle) {
-            return None;
-        }
-        let mesh = world.get_resource::<engine_core::AssetResidency>()?.mesh(handle)?;
-        Some(mesh.lods().iter().map(|&(_, count, error)| (count, error)).collect())
-    }
-
-    pub fn impostor_resident(&self, world: &World, mesh: MeshHandle, material: MaterialHandle) -> Option<bool> {
-        let gpu = self.held_assets()?.meshes.get(mesh)?;
-        if (gpu.index_count as usize) / 3 < IMPOSTOR_MIN_TRIANGLES {
-            return None;
-        }
-        let books = world.get_resource::<ImpostorBooks>()?;
-        Some(books.contains(AtlasRole::Scene, mesh, Some(material)))
     }
 
     pub fn pipelines_compiling(&self) -> bool {

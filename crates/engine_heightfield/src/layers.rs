@@ -5,11 +5,12 @@ use engine_math::{max, min};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
+use crate::bound;
 use crate::given::GivenRiver;
 use crate::grid::Pyramid;
 use crate::hydrology::HydrologyBake;
 use crate::layer::{
-    Below, ChangeMap, DrawRivers, LayerKind, Place, SamplePoint, TerrainLayer, read_entry,
+    Below, ChangeMap, LayerKind, NoFiles, Place, SamplePoint, TerrainLayer, read_entry,
     write_entry,
 };
 use crate::noise::smooth;
@@ -113,10 +114,6 @@ impl Stamp {
         held(self.falloff, spread, "$.falloff".to_owned())?;
         self.op.validate()
     }
-}
-
-fn bound(value: f32) -> f64 {
-    value.to_string().parse().unwrap_or(f64::from(value))
 }
 
 fn held(value: f32, [low, high]: [f64; 2], path: String) -> Result<(), Error> {
@@ -497,7 +494,7 @@ impl Layers {
         &self,
         drawn: &[GivenRiver],
         baked: Option<&Self>,
-        make: Option<DrawRivers>,
+        kinds: &[&'static LayerKind],
     ) -> Self {
         let Some(first) = self.layers.iter().position(|layer| layer.makes_water()) else {
             return self.clone();
@@ -511,7 +508,7 @@ impl Layers {
             }
         }
         if !drawn.is_empty()
-            && let Some(rivers) = make.and_then(|make| make(drawn).ok())
+            && let Some(rivers) = drawn_rivers(drawn, kinds)
         {
             layers.insert(first, rivers);
         }
@@ -680,8 +677,21 @@ impl Layers {
 
 const STAMP: &str = "stamp";
 
+const RIVERS: &str = "rivers";
+
 fn unbaked(layer: &Arc<dyn TerrainLayer>) -> Arc<dyn TerrainLayer> {
     layer.unbaked().unwrap_or_else(|| layer.clone())
+}
+
+fn drawn_rivers(
+    drawn: &[GivenRiver],
+    kinds: &[&'static LayerKind],
+) -> Option<Arc<dyn TerrainLayer>> {
+    let kind = kinds.iter().find(|kind| kind.name == RIVERS)?;
+    let lines = serde_json::to_value(drawn).ok()?;
+    let mut settings = serde_json::Map::new();
+    settings.insert("lines".to_owned(), lines);
+    (kind.from_json)(&serde_json::Value::Object(settings), &NoFiles).ok()
 }
 
 pub fn nearest_path(layers: &[Arc<dyn TerrainLayer>], point: Vec2) -> PathSample {

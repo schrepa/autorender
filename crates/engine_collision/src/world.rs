@@ -474,6 +474,10 @@ impl CollisionWorld {
 }
 
 impl Collide for CollisionWorld {
+    fn colliders(&self) -> Option<usize> {
+        Some(self.config.colliders())
+    }
+
     fn raycast(&self, ray: CollisionRay, filter: QueryFilter) -> Result<Option<RayHit>, Error> {
         self.nearest_ray(ray, filter).map_err(Fault::error)
     }

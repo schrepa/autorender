@@ -113,7 +113,10 @@ fn failure_of(error: &serde_json::Error, mut path: String, found: Option<&Value>
         Category::Data if message.starts_with("invalid type") => {
             Error::new(ErrorCode::InvalidType, path)
         }
-        Category::Data => Error::new(ErrorCode::InvalidValue, path),
+        Category::Data => match carried(&message) {
+            Some(refusal) => return refusal.within(&path),
+            None => Error::new(ErrorCode::InvalidValue, path),
+        },
     };
     let failure = match wanted(&message) {
         Some(expected) => failure.expected(expected),
@@ -123,6 +126,15 @@ fn failure_of(error: &serde_json::Error, mut path: String, found: Option<&Value>
         Some(value) => failure.got(value),
         None => failure,
     }
+}
+
+fn carried(message: &str) -> Option<Error> {
+    let end = message.rfind('}')?;
+    let line = message.get(..=end)?;
+    if !line.starts_with('{') {
+        return None;
+    }
+    serde_json::from_str(line).ok()
 }
 
 fn wanted(message: &str) -> Option<Expected> {

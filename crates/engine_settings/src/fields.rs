@@ -101,6 +101,28 @@ pub fn is_id(text: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
 }
 
+const MAX_URI_BYTES: usize = 256;
+
+pub fn valid_uri(uri: &str, path: &str) -> Result<(), Error> {
+    let valid = !uri.is_empty()
+        && uri.len() <= MAX_URI_BYTES
+        && uri
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_./-".contains(&byte))
+        && !uri.starts_with(['/', '.'])
+        && uri
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..");
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::new(ErrorCode::InvalidUri, path)
+            .expected(Expected::Uri)
+            .at_most(MAX_URI_BYTES as u64)
+            .got(uri))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Rule {
     Any,

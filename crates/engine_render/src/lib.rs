@@ -12,8 +12,8 @@ use std::ops::Range;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
-    Bricks, DrawPoint, Entry, Error, List, MaterialHandle, MeshHandle, Read, Readback, Slot,
-    TextureHandle, Var, gpu_struct,
+    Bricks, DrawPoint, Entry, Error, List, MaterialHandle, MeshHandle, Read, Readback, Runs, Slot,
+    Smoke, SmokeFailure, SmokeSession, TextureHandle, Var, gpu_struct, smoke_eq,
 };
 use engine_registry::RecordExt;
 
@@ -53,7 +53,10 @@ mod profiling;
 mod renderer;
 mod targets;
 
-pub use materials::material_variant;
+pub use gpu_data::{mip_levels, pixel_angle, pixels_per_meter, planes};
+pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
+pub use materials::gpu_format as texture_format;
+pub use materials::{MATERIAL_ANISOTROPY, material_variant};
 #[doc(hidden)]
 pub use memory::GpuMemory;
 #[doc(hidden)]
@@ -74,6 +77,21 @@ pub use shaders::core_modules;
 pub use shaders::FULLSCREEN;
 
 pub const IMPOSTOR_VERTICES: u32 = 6;
+
+pub fn level_region(view: &engine_core::View, level: u32) -> (u32, u32) {
+    let (display, render) = (view.display_size(), view.render_size());
+    targets::FrameRegion::new(
+        targets::FrameSize {
+            width: display.x,
+            height: display.y,
+        },
+        targets::FrameSize {
+            width: render.x,
+            height: render.y,
+        },
+    )
+    .level_region(level)
+}
 
 pub mod debug {
     macro_rules! debug_consts {
@@ -126,6 +144,14 @@ pub trait RenderBricks {
         draw: fn(&P, &D::Args, &mut Draw<'_, P, D>) -> u32,
     ) -> &mut Self;
     fn generated(&mut self, wgsl: &'static [&'static str]) -> &mut Self;
+    fn resolve_pass(&mut self, names: PassNames) -> &mut Self;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PassNames {
+    pub pass: &'static str,
+    pub label: &'static str,
+    pub span: &'static str,
 }
 
 impl RenderBricks for Bricks<'_> {
@@ -158,6 +184,13 @@ impl RenderBricks for Bricks<'_> {
         self.record()
             .render
             .push(Box::new(registration::Generated(wgsl)));
+        self
+    }
+
+    fn resolve_pass(&mut self, names: PassNames) -> &mut Self {
+        self.record()
+            .render
+            .push(Box::new(registration::ResolvePass(names)));
         self
     }
 }
@@ -273,6 +306,7 @@ pub enum Copied<P> {
     Buffer(Buffer<P>),
     Texture(Texture<P>),
     Target(ViewTarget),
+    Canvas,
 }
 
 pub enum CopyRegion {
@@ -291,6 +325,11 @@ pub enum CopyRegion {
         to: (u32, wgpu::Origin3d),
         size: wgpu::Extent3d,
     },
+    ToBuffer {
+        from: wgpu::Origin3d,
+        to: wgpu::TexelCopyBufferLayout,
+        size: wgpu::Extent3d,
+    },
 }
 
 pub enum Attach<P> {
@@ -304,6 +343,7 @@ pub enum Attach<P> {
         mip: u32,
         layers: Range<u32>,
     },
+    Colors(Vec<(Texture<P>, u32)>),
 }
 
 pub enum Count<P> {
@@ -324,6 +364,12 @@ pub enum Shape<'a, P, S> {
     },
     Indirect {
         vertices: &'a [DrawInput<P, S>],
+        indices: Option<DrawInput<P, S>>,
+        args: DrawInput<P, S>,
+        offset: u64,
+    },
+    IndirectAt {
+        vertices: &'a [(DrawInput<P, S>, u64)],
         indices: Option<DrawInput<P, S>>,
         args: DrawInput<P, S>,
         offset: u64,
@@ -446,6 +492,7 @@ fn copied<P>(copied: Copied<P>) -> install::Copied {
         Copied::Buffer(buffer) => install::Copied::Buffer(buffer.0),
         Copied::Texture(texture) => install::Copied::Texture(texture.0),
         Copied::Target(view) => install::Copied::Target(view),
+        Copied::Canvas => install::Copied::Canvas,
     }
 }
 
@@ -499,6 +546,16 @@ impl<P: GpuPart> Install<'_, P> {
 
     pub fn clear(&mut self, name: &'static str, buffer: Buffer<P>) -> Pass<P> {
         Pass(self.core.pass(name, install::Work::Clear(buffer.0)), PhantomData)
+    }
+
+    pub fn after(&mut self, pass: Pass<P>, earlier: Pass<P>) {
+        if let Some(declared) = self.core.pass_mut(pass.0) {
+            declared.after.push(earlier.0);
+        }
+    }
+
+    pub fn reaches(&mut self, entry: Entry, var: Var) -> bool {
+        self.core.reaches(entry, var)
     }
 
     pub fn render_pipeline<S: Scope<P>>(
@@ -592,6 +649,22 @@ impl<P: GpuPart> PassBuilder<'_, P> {
         self
     }
 
+    #[must_use]
+    pub fn span(self, name: &'static str) -> Self {
+        if let Some(declared) = self.core.pass_mut(self.pass) {
+            declared.span = Some(name);
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn label(self, label: &'static str) -> Self {
+        if let Some(declared) = self.core.pass_mut(self.pass) {
+            declared.label = Some(label);
+        }
+        self
+    }
+
     pub fn color(self, target: Texture<P>, access: Access) -> Self {
         if let Some(pass) = self.core.pass_mut(self.pass) {
             pass.colors.push((target.0, access));
@@ -629,6 +702,7 @@ impl<P: GpuPart> PassBuilder<'_, P> {
 
 pub struct Prepare<'f, P> {
     core: &'f mut encode::FrameCore,
+    fresh: bool,
     part: PhantomData<fn() -> P>,
 }
 
@@ -653,6 +727,11 @@ fn region_of(region: &CopyRegion) -> CopyRegion {
             to: *to,
             size: *size,
         },
+        CopyRegion::ToBuffer { from, to, size } => CopyRegion::ToBuffer {
+            from: *from,
+            to: *to,
+            size: *size,
+        },
     }
 }
 
@@ -661,12 +740,38 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.run_pass(pass.0);
     }
 
+    pub fn fresh(&self) -> bool {
+        self.fresh
+    }
+
     pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) {
         self.core.allocate(texture.0, size, mips);
     }
 
+    pub fn allocate_as(
+        &mut self,
+        texture: Texture<P>,
+        format: wgpu::TextureFormat,
+        size: wgpu::Extent3d,
+        mips: u32,
+    ) {
+        self.core.allocate_as(texture.0, format, size, mips);
+    }
+
+    pub fn grow(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) {
+        self.core.grow(texture.0, size, mips);
+    }
+
+    pub fn release(&mut self, texture: Texture<P>) {
+        self.core.release(texture.0);
+    }
+
     pub fn allocate_buffer(&mut self, buffer: Buffer<P>, bytes: u64) {
         self.core.allocate_buffer(buffer.0, bytes);
+    }
+
+    pub fn release_buffer(&mut self, buffer: Buffer<P>) {
+        self.core.release_buffer(buffer.0);
     }
 
     pub fn write<T: bytemuck::Pod>(&mut self, buffer: Buffer<P>, offset: u64, data: &[T]) {
@@ -694,6 +799,27 @@ impl<P: GpuPart> Prepare<'_, P> {
         size: wgpu::Extent3d,
     ) {
         self.core.write_texture(texture.0, level, at, bytes, layout, size);
+    }
+
+    pub fn write_level(
+        &mut self,
+        texture: Texture<P>,
+        (level, layer): (u32, u32),
+        size: (u32, u32),
+        format: engine_core::TextureFormat,
+        bytes: &[u8],
+    ) {
+        let (layout, extent) = gpu_data::level_copy(format, size, level);
+        let at = wgpu::Origin3d {
+            x: 0,
+            y: 0,
+            z: layer,
+        };
+        self.core.write_texture(texture.0, level, at, bytes, layout, extent);
+    }
+
+    pub fn mipmaps(&mut self, texture: Texture<P>, layers: Range<u32>) {
+        self.core.mipmaps(texture.0, layers);
     }
 
     pub fn copy(&mut self, pass: Pass<P>, regions: &[CopyRegion]) {
@@ -728,14 +854,40 @@ impl<P: GpuPart> Prepare<'_, P> {
             deliver: delivered::<R>,
         })
     }
+
+    pub fn deliver<R: Readback>(&mut self, tag: u32, bytes: Vec<u8>) {
+        self.core.deliver_bytes(tag, bytes, delivered::<R>);
+    }
+
+    pub fn refuse(&mut self, error: Error) {
+        self.core.refuse(error);
+    }
+
+    pub fn canvas(&self) -> Option<wgpu::TextureFormat> {
+        self.core
+            .canvas_texture
+            .as_ref()
+            .filter(|texture| texture.usage().contains(wgpu::TextureUsages::COPY_SRC))
+            .map(wgpu::Texture::format)
+    }
 }
 
 pub struct Encode<'f, P> {
     core: &'f mut encode::EncodeCore,
+    timer: &'f profiling::GpuProfiler,
     part: PhantomData<fn() -> P>,
 }
 
 impl<P: GpuPart> Encode<'_, P> {
+    pub fn span(&mut self, name: &'static str) {
+        self.core.close_encode_span(self.timer);
+        self.core.timed.asked = Some(name);
+    }
+
+    pub fn clear(&mut self, buffer: Buffer<P>) {
+        self.core.clear_buffer(buffer.0);
+    }
+
     pub fn render(&mut self, attach: Attach<P>, view: Option<u32>) -> Draw<'_, P, Own> {
         let raw = match attach {
             Attach::Declared => encode::AttachRaw::Declared,
@@ -748,7 +900,14 @@ impl<P: GpuPart> Encode<'_, P> {
                 mip,
                 layers,
             } => encode::AttachRaw::Color(texture.0, mip, layers),
+            Attach::Colors(colors) => encode::AttachRaw::Colors(
+                colors
+                    .iter()
+                    .map(|(texture, layer)| (texture.0, *layer))
+                    .collect(),
+            ),
         };
+        self.core.open_encode_span(self.timer);
         if !self.core.begin_render(raw, view) {
             self.core.end_render();
         }
@@ -765,6 +924,7 @@ impl<P: GpuPart> Encode<'_, P> {
             Count::Groups(groups) => encode::CountRaw::Groups(groups),
             Count::Indirect(input, offset) => encode::CountRaw::Indirect(input.0, offset),
         };
+        self.core.open_encode_span(self.timer);
         let part = self.core.part;
         self.core.dispatch(part, pipeline.0, count)
     }
@@ -811,6 +971,17 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
                 offset,
             } => encode::RawShape::Indirect {
                 vertices: inputs(vertices),
+                indices: indices.map(|input| input.0),
+                args: args.0,
+                offset,
+            },
+            Shape::IndirectAt {
+                vertices,
+                indices,
+                args,
+                offset,
+            } => encode::RawShape::IndirectAt {
+                vertices: streams(vertices),
                 indices: indices.map(|input| input.0),
                 args: args.0,
                 offset,
@@ -932,12 +1103,26 @@ impl Slot for Resolve {
     const WGSL: Option<&'static str> = Some(include_str!("places/resolve.wgsl"));
 }
 
+const fn frames(name: &'static str) -> Smoke {
+    Smoke {
+        name,
+        runs: Runs::Gpu,
+        run: drawn,
+    }
+}
+
+fn drawn(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+    smoke_eq!(session.frame(), true, "frame_drawn");
+    Ok(())
+}
+
 pub struct PostScene;
 
 impl List for PostScene {
     const NAME: &'static str = "post_scene";
     type Member = ();
     const WGSL: Option<&'static str> = Some(include_str!("places/post_scene.wgsl"));
+    const SMOKES: &'static [Smoke] = &[frames("list_post_scene")];
 }
 
 pub struct PostLight;
@@ -946,6 +1131,7 @@ impl List for PostLight {
     const NAME: &'static str = "post_light";
     type Member = ();
     const WGSL: Option<&'static str> = Some(include_str!("places/post_light.wgsl"));
+    const SMOKES: &'static [Smoke] = &[frames("list_post_light")];
 }
 
 pub struct PostDisplay;
@@ -954,17 +1140,21 @@ impl List for PostDisplay {
     const NAME: &'static str = "post_display";
     type Member = ();
     const WGSL: Option<&'static str> = Some(include_str!("places/post_display.wgsl"));
+    const SMOKES: &'static [Smoke] = &[frames("list_post_display")];
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DebugShown {
     pub owner: Option<TypeId>,
     pub local: u32,
+    pub next_debug: bool,
+    pub next_whole: bool,
 }
 
 impl Slot for DebugShown {
     const NAME: &'static str = "debug";
     const WGSL: Option<&'static str> = Some(include_str!("places/debug.wgsl"));
+    const SMOKES: &'static [Smoke] = &[frames("list_debug_view")];
 }
 
 pub struct DebugMode {

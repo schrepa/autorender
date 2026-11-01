@@ -64,6 +64,11 @@ pub struct StatusResult {
     pub culling_enabled: bool,
     pub features: Option<Vec<&'static str>>,
     pub presentation: PresentationStateView,
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        schemars(with = "Option<serde_json::Map<String, Value>>")
+    )]
+    pub collision: Option<Value>,
     pub fixed_delta_seconds: Option<f32>,
     pub limits: StatusLimits,
 }

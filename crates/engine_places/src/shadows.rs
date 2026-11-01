@@ -97,4 +97,5 @@ impl Slot for CasterRoutes {
 pub struct ShadowChanges {
     pub boxes: Vec<(Vec3, Vec3, f32)>,
     pub all: bool,
+    pub casters: bool,
 }

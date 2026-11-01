@@ -52,12 +52,12 @@ impl ChangeWindow {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct ScanClock {
+pub struct ScanClock {
     last: Option<Tick>,
 }
 
 impl ScanClock {
-    pub(crate) fn aged(self, now: Tick) -> bool {
+    pub fn aged(self, now: Tick) -> bool {
         self.last
             .is_none_or(|last| now.get().wrapping_sub(last.get()) >= MAX_CHANGE_AGE)
     }
@@ -69,7 +69,7 @@ impl ScanClock {
         }
     }
 
-    pub(crate) fn scanned(&mut self, now: Tick) {
+    pub fn scanned(&mut self, now: Tick) {
         self.last = Some(now);
     }
 

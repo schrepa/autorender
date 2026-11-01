@@ -1,4 +1,5 @@
 import package::engine::math::maximum_abs;
+import package::engine::shading::ViewPixel;
 
 struct Camera {
     view_projection: mat4x4<f32>,
@@ -22,7 +23,10 @@ fn eye_world(relative: vec3<f32>) -> vec3<f32> {
 
 const DETAIL_EDGE_ON: f32 = 0.0625;
 
-const DETAIL_ANISOTROPY: f32 = 16.0;
+fn view_pixel(position: vec4<f32>, previous: vec4<f32>) -> ViewPixel {
+    let current = vec2<f32>(position.x * camera.jitter.z - 1.0, 1.0 - position.y * camera.jitter.w) - camera.jitter.xy;
+    return ViewPixel(vec4<f32>(current, 0.0, 1.0), previous);
+}
 
 fn detail_distance(world: vec3<f32>) -> f32 {
     return length(world - camera.detail.xyz);

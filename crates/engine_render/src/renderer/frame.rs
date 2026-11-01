@@ -1,3 +1,5 @@
+use std::any::TypeId;
+
 use bevy_ecs::world::World;
 use engine_core::{AssetResidency, FrameTime, RenderFrame, RenderStats, View};
 
@@ -7,7 +9,7 @@ use crate::gpu_calls::Handover;
 use crate::graph::Bits;
 use crate::install::Work;
 use crate::machine::Target;
-use crate::profiling::Span;
+use crate::profiling::{GpuProfiler, Span};
 
 const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
 const RAN_ORDERS: usize = 256;
@@ -29,11 +31,17 @@ fn mark_between(encoder: &mut wgpu::CommandEncoder, end: Option<Span<'_>>, begin
     }
 }
 
+fn mark_span(profiler: &GpuProfiler, encoder: Option<&mut wgpu::CommandEncoder>, name: &'static str, end: bool) {
+    if let (Some(encoder), Some(span)) = (encoder, profiler.span(name)) {
+        span.mark(encoder, end);
+    }
+}
+
 fn camera_of(
     viewed: &Viewed,
     temporal: Option<(crate::Resolve, Mat4)>,
     region: crate::targets::FrameRegion,
-    previous_seconds: f32,
+    (previous_seconds, wind): (f32, engine_core::ViewWind),
 ) -> CameraUniform {
     let mut camera = match temporal {
         Some((resolve, previous)) => {
@@ -56,9 +64,9 @@ fn camera_of(
     camera.set_region(viewed.view_projection, region);
     camera.set_detail(viewed.detail);
     camera.wind = [
-        0.0,
-        0.0,
-        0.0,
+        wind.velocity[0],
+        wind.velocity[1],
+        wind.gusts,
         if temporal.is_some() {
             previous_seconds
         } else {
@@ -83,6 +91,13 @@ impl Renderer {
         };
         run.deliver(world);
         run.assets.impostors.deliver(world);
+        let mut draws = engine_core::PartDraws::default();
+        for (part, drawn) in run.machine.declared.parts.iter().zip(&run.part_draws) {
+            draws.add(part.ty, *drawn);
+        }
+        if world.get_resource::<engine_core::PartDraws>() != Some(&draws) {
+            world.insert_resource(draws);
+        }
         let gates = world.get_resource::<engine_registry::Gates>();
         let live: Vec<bool> = run
             .gates
@@ -95,6 +110,9 @@ impl Renderer {
                 && let Some(Some(held)) = run.parts.get_mut(index)
             {
                 held.refresh(world);
+            }
+            if !*on && was {
+                run.release_part(index as u32);
             }
         }
         run.live = live;
@@ -158,12 +176,20 @@ impl Renderer {
         run.debug = debug;
         run.temporal = temporal_frame;
         run.drawn = 0;
+        run.part_draws.fill(0);
         run.region = region.upscales().then(|| region.render.pixels());
         run.asked_frame = world.get_resource::<FrameTime>().map_or(run.frame, |time| time.frame);
         let settings = world.get_resource::<crate::RenderSettings>().cloned().unwrap_or_default();
         run.readback_slots = settings.readback_slots.max(1) as usize;
         run.readback_slot_bytes = settings.readback_slot_bytes;
-        run.switches = super::install::switches_of(&run.machine, world);
+        let faulted: Vec<engine_registry::GateId> = run
+            .faulted
+            .iter()
+            .zip(&run.gates)
+            .filter(|(fault, _)| fault.is_some())
+            .filter_map(|(_, gate)| *gate)
+            .collect();
+        run.switches = super::install::switches_of(&run.machine, world, &faulted);
         run.drop_unfilled();
         let viewed = match view {
             Some(view) => Viewed {
@@ -191,7 +217,8 @@ impl Renderer {
                 .map_or(viewed.view_projection, |(previous, _, _)| previous);
             (resolve, previous)
         });
-        run.cameras[0] = camera_of(&viewed, temporal, region, previous_seconds);
+        let wind = world.get_resource::<engine_core::ViewWind>().copied().unwrap_or_default();
+        run.cameras[0] = camera_of(&viewed, temporal, region, (previous_seconds, wind));
         self.previous = temporal.map(|_| (viewed.view_projection, size, viewed.scene));
         run.post = crate::shared::post_uniform(
             viewed.view_projection,
@@ -204,13 +231,8 @@ impl Renderer {
             .texture()
             .create_view(&wgpu::TextureViewDescriptor::default());
         run.size_targets(region.display.pixels(), Some(canvas));
+        run.canvas_texture = Some(surface.texture().clone());
         let profile_writes = engine_profile::span("render", "queue_writes");
-        self.core.profiler.begin_frame(&device);
-        let capturing = self.core.profiler.capturing();
-        let Some(run) = self.run.as_mut() else {
-            return Ok(RenderStats::default());
-        };
-        run.merge = !capturing;
         run.runs = Bits::of(run.machine.graph.passes());
         for at in run.machine.declared.passes.len()..run.machine.graph.passes() {
             run.runs.insert(at);
@@ -240,12 +262,24 @@ impl Renderer {
         if let Some(encoder) = mips {
             self.core.queue.hand(Handover::from(encoder));
         }
+        if let Some(encoder) = run.queued.before.take() {
+            self.core.queue.hand(Handover::from(encoder));
+        }
+        if let Some(error) = run.queued.refused.take() {
+            return Err(error);
+        }
         run.write_cameras();
         run.write_post();
         let bytes = piece_bytes(world, &run.piece_layout);
         run.write_pieces(bytes);
         run.refresh_groups();
         drop(profile_writes);
+        self.core.profiler.begin_frame(&device);
+        let capturing = self.core.profiler.capturing();
+        let Some(run) = self.run.as_mut() else {
+            return Ok(RenderStats::default());
+        };
+        run.merge = !capturing;
         let mut outputs = Bits::of(run.machine.graph.resources());
         if let Some(canvas) = run.machine.ids.target(Target::Canvas) {
             outputs.insert(canvas.index());
@@ -268,6 +302,7 @@ impl Renderer {
         run.encoder = Some(encoder);
         let mut batch = 0;
         let mut timed: Option<&'static str> = None;
+        let mut parted: Option<(&'static str, u32)> = None;
         let mut ran: Vec<&'static str> = Vec::new();
         let declared = run.machine.declared.passes.len();
         for planned in &plan.passes {
@@ -294,34 +329,59 @@ impl Renderer {
                 continue;
             }
             let pass = &run.machine.declared.passes[index];
-            let (part, work, name) = (pass.part, pass.work, pass.name);
+            let (part, work) = (pass.part, pass.work);
+            let elsewhere = pass.claims.iter().any(|point| *point != TypeId::of::<crate::MainView>());
             if !run.drawable(part) {
                 continue;
             }
-            ran.push(name);
+            ran.push(run.group_of(index as u32));
             run.part = part;
             run.pass = index as u32;
             run.planned = Some(planned.clone());
+            if let Work::Clear(buffer) = work {
+                run.queued.cleared.push(buffer);
+                continue;
+            }
+            let wanted = run.span_of(index as u32);
+            let keeps = match (parted, wanted) {
+                (Some((open, owner)), Some(name)) => open == name && owner == part,
+                (Some((_, owner)), None) => owner == part && matches!(work, Work::Copy { .. }),
+                (None, _) => false,
+            };
             if run.enter(index as u32) {
-                let span = self.spans.get(index).copied();
-                let Some(run) = self.run.as_mut() else { break };
+                let span = run.stage_of(index as u32).or_else(|| self.spans.get(index).copied());
                 let mut encoder = run.encoder.take();
+                if !keeps && let Some((open, _)) = parted.take() {
+                    mark_span(&self.core.profiler, encoder.as_mut(), open, true);
+                }
                 self.mark(encoder.as_mut(), timed, span);
                 timed = span;
+                if !keeps && let Some(began) = wanted {
+                    mark_span(&self.core.profiler, encoder.as_mut(), began, false);
+                    parted = Some((began, part));
+                }
                 let Some(run) = self.run.as_mut() else { break };
                 run.encoder = encoder;
                 run.group(index as u32);
             }
             let Some(run) = self.run.as_mut() else { break };
+            run.flush_clears();
             let _owner = run.machine.declared.parts.get(part as usize).map(crate::install::PartInfo::owned);
             match work {
                 Work::Copy { .. } => run.copy(index as u32),
-                Work::Clear(buffer) => run.clear_buffer(buffer),
+                Work::Clear(_) => {}
                 Work::Render | Work::Shared(_) => {
                     let Some(mut held) = run.parts[part as usize].take() else {
                         continue;
                     };
-                    run.drawn += held.encode(index as u32, run);
+                    let drawn = held.encode(index as u32, run, &self.core.profiler);
+                    run.close_encode_span(&self.core.profiler);
+                    if let Some(sum) = run.part_draws.get_mut(part as usize) {
+                        *sum += drawn;
+                    }
+                    if !elsewhere {
+                        run.drawn += drawn;
+                    }
                     run.parts[part as usize] = Some(held);
                 }
             }
@@ -329,12 +389,16 @@ impl Renderer {
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
         };
+        run.flush_clears();
         run.leave();
         let mut encoder = run.encoder.take().unwrap_or_else(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("engine/frame-encoder"),
             })
         });
+        if let Some((open, _)) = parted.take() {
+            mark_span(&self.core.profiler, Some(&mut encoder), open, true);
+        }
         self.mark(Some(&mut encoder), timed, None);
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());

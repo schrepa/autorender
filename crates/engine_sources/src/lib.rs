@@ -523,16 +523,26 @@ fn wgsl_type(ty: &str) -> Option<String> {
     if ty == "[[f32;4];4]" {
         return Some("mat4x4<f32>".to_owned());
     }
+    if named(ty) {
+        return Some(ty.to_owned());
+    }
     let (element, count) = ty.strip_prefix('[')?.strip_suffix(']')?.rsplit_once(';')?;
     match element {
         "f32" | "u32" | "i32" if matches!(count, "2" | "3" | "4") => {
             Some(format!("vec{count}<{element}>"))
         }
+        "[[f32;4];4]" => Some(format!("array<mat4x4<f32>, {count}>")),
         "[f32;4]" | "[u32;4]" | "[i32;4]" => {
             Some(format!("array<vec4<{}>, {count}>", &element[1..4]))
         }
+        _ if named(element) => Some(format!("array<{element}, {count}>")),
         _ => None,
     }
+}
+
+fn named(ty: &str) -> bool {
+    ty.chars().next().is_some_and(|first| first.is_alphabetic() || first == '_')
+        && ty.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
 fn consts_wgsl(body: &str) -> Option<String> {
@@ -545,8 +555,21 @@ fn consts_wgsl(body: &str) -> Option<String> {
         let rest = declaration.strip_prefix("const")?;
         let (name, rest) = rest.split_once(':')?;
         let (ty, value) = rest.split_once('=')?;
-        let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+        for (rust, written) in LIMITS {
+            value = value.replace(rust, written);
+        }
+        if value.contains("::") {
+            return None;
+        }
         wgsl.push_str(&format!("const {}: {} = {value};\n", name.trim(), ty.trim()));
     }
     Some(wgsl)
 }
+
+const LIMITS: [(&str, &str); 4] = [
+    ("u32::MAX", "4294967295"),
+    ("u32::MIN", "0"),
+    ("i32::MAX", "2147483647"),
+    ("i32::MIN", "(-2147483648)"),
+];

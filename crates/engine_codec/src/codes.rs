@@ -70,7 +70,6 @@ error_codes! {
     UnknownVariant => "unknown_variant",
     UnknownValue => "unknown_value",
     InvalidValue => "invalid_value",
-    Undecodable => "undecodable",
     OutOfRange => "out_of_range",
     InvalidRequest => "invalid_request",
     RequestTooLarge => "request_too_large",
@@ -146,6 +145,7 @@ error_codes! {
     InvalidRigidBody => "invalid_rigid_body",
     InvalidEnvironment => "invalid_environment",
 
+    MissingPlugin => "missing_plugin",
     DuplicateBrick => "duplicate_brick",
 
     CollisionInvalidShape => "collision_invalid_shape",

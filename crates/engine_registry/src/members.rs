@@ -112,6 +112,14 @@ pub(crate) fn add_member<L: List>(
     }
 }
 
+pub(crate) fn each_member<L: List>(world: &World, each: &mut dyn FnMut(&dyn Any)) {
+    if let Some(members) = world.get_resource::<MembersOf<L>>() {
+        for member in members.live() {
+            each(member);
+        }
+    }
+}
+
 pub(crate) fn init_members<L: List>(world: &mut World) {
     world.init_resource::<MembersOf<L>>();
 }

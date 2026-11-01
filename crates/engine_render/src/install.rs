@@ -26,6 +26,7 @@ pub(crate) enum Copied {
     Buffer(u32),
     Texture(u32),
     Target(ViewTarget),
+    Canvas,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +62,8 @@ pub(crate) struct BufferDecl {
 #[derive(Clone, Debug)]
 pub(crate) struct PassDecl {
     pub(crate) name: &'static str,
+    pub(crate) label: Option<&'static str>,
+    pub(crate) span: Option<&'static str>,
     pub(crate) part: u32,
     pub(crate) work: Work,
     pub(crate) layer: Option<Layer>,
@@ -150,6 +153,7 @@ pub(crate) struct Claim {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PartInfo {
+    pub(crate) ty: TypeId,
     pub(crate) package: &'static str,
     pub(crate) name: &'static str,
     pub(crate) brick: u32,
@@ -297,6 +301,8 @@ impl InstallCore {
     pub(crate) fn pass(&mut self, name: &'static str, work: Work) -> u32 {
         self.declared.passes.push(PassDecl {
             name,
+            label: None,
+            span: None,
             part: self.part,
             work,
             layer: None,
@@ -379,6 +385,16 @@ impl InstallCore {
         }
         self.declared.pipelines.push(decl);
         Ok((self.declared.pipelines.len() - 1) as u32)
+    }
+
+    pub(crate) fn reaches(&mut self, entry: Entry, var: Var) -> bool {
+        self.linker.add_source(entry.module().source());
+        self.linker.add_source(var.module().source());
+        let Ok(composed) = self.linker.compose(entry) else {
+            return true;
+        };
+        let (path, name) = crate::linker::path_of((var.module(), var.name()));
+        self.linker.reaches(&composed, path, &name)
     }
 
     pub(crate) fn draw_input(&mut self, scope: Scoped, buffer: u32) -> u32 {

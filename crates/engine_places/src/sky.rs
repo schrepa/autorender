@@ -11,6 +11,7 @@ pub struct SkyLight {
     pub sun_intensity: f32,
     pub sun_size: f32,
     pub adaptation: f32,
+    pub environment: u64,
 }
 
 impl Slot for SkyLight {

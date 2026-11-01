@@ -186,6 +186,7 @@ fn expand_list(
                     .got(&entity.source.id),
             );
         }
+        kinds.check_placement(&entity.source, &entity.path)?;
     }
     validate_graph(
         entities
@@ -258,7 +259,7 @@ fn validate_object(
 fn validate_graph<'a>(
     entries: impl Iterator<Item = (&'a SceneObject, String)>,
     transforms: &[Transform],
-    (kinds, local): (&SceneKinds, bool),
+    (kinds, prefab): (&SceneKinds, bool),
 ) -> Result<(), Error> {
     let entries: Vec<_> = entries.collect();
     let ids: BTreeMap<_, _> = entries
@@ -349,7 +350,7 @@ fn validate_graph<'a>(
             kinds.check_placed(
                 entries[index].0,
                 Placed {
-                    root: entries[index].0.parent.is_none(),
+                    root: prefab || entries[index].0.parent.is_none(),
                     streamed: false,
                     world: matrix,
                 },

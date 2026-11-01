@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::World;
-use engine_core::{Error, ErrorCode};
+use engine_core::{Error, ErrorCode, SceneContext};
 use engine_settings::Expected;
 use serde_json::Value;
 
@@ -112,28 +112,78 @@ fn overlaid(entry: &str) -> Result<(String, Value), Error> {
     Ok((key.to_owned(), value))
 }
 
-pub fn apply_setting(world: &mut World, key: &str, value: &Value) -> Result<(), Error> {
-    let (section, field) = match key.split_once('.') {
+fn scoped<R>(world: &mut World, run: impl FnOnce(&mut World) -> R) -> R {
+    match world.get_resource::<SceneContext>().cloned() {
+        Some(context) => context.scope(|| run(world)),
+        None => run(world),
+    }
+}
+
+fn split(key: &str) -> (&str, Option<&str>) {
+    match key.split_once('.') {
         Some((section, field)) => (section, Some(field)),
         None => (key, None),
-    };
+    }
+}
+
+fn not_object(section: &str) -> Error {
+    Error::new(ErrorCode::InvalidType, format!("$.{section}")).expected(Expected::Object)
+}
+
+fn unknown_field(key: &str, field: &str, fields: &serde_json::Map<String, Value>) -> Error {
+    Error::new(ErrorCode::UnknownField, format!("$.{key}"))
+        .got(field)
+        .variants(fields.keys().cloned())
+}
+
+pub fn has_setting(world: &World, key: &str) -> bool {
+    let (section, _) = split(key);
+    engine_registry::settings(world, section).is_ok()
+}
+
+pub fn apply_setting(world: &mut World, key: &str, value: &Value) -> Result<(), Error> {
+    let (section, field) = split(key);
     let entry = engine_registry::settings(world, section)?;
     let Some(field) = field else {
-        return entry.set(world, value);
+        return scoped(world, |world| entry.set(world, value));
     };
-    let mut current = entry.current(world);
-    let Some(fields) = current.as_object_mut() else {
-        return Err(
-            Error::new(ErrorCode::InvalidType, format!("$.{section}")).expected(Expected::Object)
-        );
+    scoped(world, |world| {
+        let mut current = entry.current(world);
+        let Some(fields) = current.as_object_mut() else {
+            return Err(not_object(section));
+        };
+        if !fields.contains_key(field) {
+            return Err(unknown_field(key, field, fields));
+        }
+        fields.insert(field.to_owned(), value.clone());
+        entry.set(world, &current)
+    })
+}
+
+pub fn reset_setting(world: &mut World, key: &str) -> Result<(), Error> {
+    let (section, field) = split(key);
+    let entry = engine_registry::settings(world, section)?;
+    let Some(field) = field else {
+        entry.reset(world);
+        return Ok(());
     };
-    if !fields.contains_key(field) {
-        return Err(Error::new(ErrorCode::UnknownField, format!("$.{key}"))
-            .got(field)
-            .variants(fields.keys().cloned()));
-    }
-    fields.insert(field.to_owned(), value.clone());
-    entry.set(world, &current)
+    scoped(world, |world| {
+        let defaults = entry.default_value();
+        let mut current = entry.current(world);
+        let Some(fields) = current.as_object_mut() else {
+            return Err(not_object(section));
+        };
+        match defaults.get(field) {
+            Some(default) => {
+                fields.insert(field.to_owned(), default.clone());
+            }
+            None if fields.contains_key(field) => {
+                fields.remove(field);
+            }
+            None => return Err(unknown_field(key, field, fields)),
+        }
+        entry.set(world, &current)
+    })
 }
 
 pub fn run_operation(world: &mut World, name: &str, request: Value) -> Result<Value, Error> {

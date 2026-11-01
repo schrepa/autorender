@@ -12,6 +12,8 @@ pub const STILL_FRAMES: u32 = 16;
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct Instances {
     pub slots: Vec<(Entity, u32)>,
+    pub capacity: u32,
+    pub candidates: u32,
 }
 
 impl Instances {

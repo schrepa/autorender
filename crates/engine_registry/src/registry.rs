@@ -15,6 +15,7 @@ use crate::access::AccessRule;
 use crate::attribution::CORE_ROW;
 use crate::entries::{OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
 use crate::gates::{Gate, GateDriver, GateId, Gates, Off, Scope, gate_on};
+use crate::hooks::{Named, add_removal, add_settle};
 use crate::jobs::JobQueue;
 use crate::order::{self, PlaceRules};
 use crate::record::{BrickRecord, crate_segment, is_package};
@@ -46,8 +47,13 @@ pub struct Registry {
     listed: Vec<&'static str>,
     left_out: Vec<&'static str>,
     rule: AccessRule,
+    named: Vec<Named>,
+    eachers: Vec<(TypeId, MemberEach)>,
+    firsts: Vec<TypeId>,
     problems: Vec<Error>,
 }
+
+type MemberEach = fn(&World, &mut dyn FnMut(&dyn Any));
 
 impl Registry {
     pub fn add(&mut self, mut record: BrickRecord) {
@@ -125,6 +131,13 @@ impl Registry {
             return;
         }
         self.core_operations.push(entry);
+    }
+
+    pub fn writers_first<T: 'static>(&mut self) {
+        let type_id = TypeId::of::<T>();
+        if !self.firsts.contains(&type_id) {
+            self.firsts.push(type_id);
+        }
     }
 
     pub fn profile_names(&self) -> Vec<&'static str> {
@@ -287,6 +300,54 @@ impl Registry {
         self.operations().find(|entry| entry.name == name)
     }
 
+    pub fn check_named(&self, key: &str, value: &Value, path: &str) -> Result<(), Error> {
+        self.named
+            .iter()
+            .filter(|named| named.section == key)
+            .try_for_each(|named| named.check(value, path))
+    }
+
+    pub fn check_section(&self, key: &str, value: &Value, path: &str) -> Result<(), Error> {
+        let Some(entry) = self.section(key) else {
+            return Ok(());
+        };
+        if self.named.iter().any(|named| named.section == key) {
+            entry.parse(value, path)?;
+            self.check_named(key, value, path)?;
+        }
+        entry.check(value, path)
+    }
+
+    pub fn section_schema(&self, key: &str) -> Option<schemars::Schema> {
+        let mut schema = self.section(key)?.schema();
+        for named in self.named.iter().filter(|named| named.section == key) {
+            named.schema(&mut schema);
+        }
+        Some(schema)
+    }
+
+    pub fn slot_on(&self, gates: &Gates, slot: TypeId) -> bool {
+        if self.core_fills.iter().any(|decl| decl.type_id() == slot) {
+            return true;
+        }
+        self.iter()
+            .find_map(|(brick, record)| {
+                record
+                    .fills()
+                    .iter()
+                    .find(|filled| filled.slot == slot)
+                    .map(|filled| (brick, filled.scope))
+            })
+            .and_then(|(brick, scope)| self.gate(brick, scope))
+            .is_some_and(|gate| gates.on(gate))
+    }
+
+    pub fn each_member(&self, world: &World, list: TypeId, each: &mut dyn FnMut(&dyn Any)) {
+        if let Some((_, members)) = self.eachers.iter().find(|(known, _)| *known == list) {
+            members(world, each);
+        }
+    }
+
     pub fn smokes(&self) -> impl Iterator<Item = (&'static str, &'static Smoke)> + '_ {
         let bricks = self.bricks.iter().flat_map(|record| {
             let package = record.package;
@@ -337,6 +398,7 @@ impl Registry {
             }
         }
         let refresh = self.join_members(world);
+        self.resolve_named(world);
         world.insert_resource(self.gates());
         if !world.contains_resource::<JobQueue>() {
             world.init_resource::<JobQueue>();
@@ -344,6 +406,7 @@ impl Registry {
         self.order_schedules(world, schedules);
         self.add_systems(world);
         let driver = self.driver(world, refresh);
+        self.add_hooks(world);
         self.check_operations(world);
         let mut refused = order::build(world, schedules);
         self.problems.append(&mut refused);
@@ -505,10 +568,63 @@ impl Registry {
                 }
                 if !lists.iter().any(|(list, _)| *list == joined.list) {
                     lists.push((joined.list, joined.refresh));
+                    self.eachers.push((joined.list, joined.each));
                 }
             }
         }
         lists.into_iter().map(|(_, refresh)| refresh).collect()
+    }
+
+    fn resolve_named(&mut self, world: &World) {
+        for record in &mut self.bricks {
+            for named in std::mem::take(&mut record.named) {
+                if !record
+                    .settings_entries()
+                    .iter()
+                    .any(|entry| entry.key == named.section)
+                {
+                    let path = format!("$.bricks.{}.named.{}", record.package, named.section);
+                    self.problems
+                        .push(Error::new(ErrorCode::ForeignAccess, path).got(named.section));
+                    continue;
+                }
+                let variants = named
+                    .kept
+                    .iter()
+                    .copied()
+                    .chain((named.names)(world))
+                    .collect();
+                self.named.push(Named {
+                    section: named.section,
+                    field: named.field,
+                    variants,
+                });
+            }
+        }
+    }
+
+    fn add_hooks(&mut self, world: &mut World) {
+        for (index, record) in self.bricks.iter_mut().enumerate() {
+            let brick = BrickId(index as u32);
+            let root = GateId(self.bases[index]);
+            let package = record.package;
+            for mut removal in record.removals.drain(..) {
+                let access = removal.system.initialize(world);
+                let name = removal.system.name();
+                self.rule
+                    .check_into(brick, &name, &access, world, &mut self.problems);
+                if let Err(error) = add_removal(world, package, root, removal) {
+                    self.problems.push(error);
+                }
+            }
+            for mut settle in record.settles.drain(..) {
+                let access = settle.system.initialize(world);
+                let name = settle.system.name();
+                self.rule
+                    .check_into(brick, &name, &access, world, &mut self.problems);
+                add_settle(world, package, root, settle);
+            }
+        }
     }
 
     fn gates(&self) -> Gates {
@@ -539,12 +655,18 @@ impl Registry {
                 Some((id, self.filler_id(decl.type_id())))
             })
             .collect();
+        let firsts: Box<[ComponentId]> = self
+            .firsts
+            .iter()
+            .filter_map(|&type_id| world.components().get_id(type_id))
+            .collect();
         let mut all = world.get_resource_or_init::<Schedules>();
         for &schedule in schedules {
             let rules = PlaceRules {
                 schedule,
                 bricks: bricks.clone(),
                 slots: slots.clone(),
+                firsts: firsts.clone(),
                 rule: self.rule.clone(),
             };
             order::order(all.entry(schedule), rules);

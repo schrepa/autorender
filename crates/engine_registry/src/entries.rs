@@ -12,7 +12,7 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::gates::{GateId, Scope};
-use crate::members::{add_member, init_members, refresh_members};
+use crate::members::{add_member, each_member, init_members, refresh_members};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Owned {
@@ -74,6 +74,7 @@ pub struct JoinEntry {
     pub(crate) add: fn(&mut World, Box<dyn Any + Send + Sync>, GateId, (&'static str, TypeId)),
     pub(crate) init: fn(&mut World),
     pub(crate) refresh: fn(&mut World),
+    pub(crate) each: fn(&World, &mut dyn FnMut(&dyn Any)),
 }
 
 impl JoinEntry {
@@ -91,6 +92,7 @@ impl JoinEntry {
             add: add_member::<L>,
             init: init_members::<L>,
             refresh: refresh_members::<L>,
+            each: each_member::<L>,
         }
     }
 
@@ -111,6 +113,7 @@ pub struct SettingsEntry {
     pub type_name: &'static str,
     pub at: &'static Location<'static>,
     init: fn(&mut World),
+    parse: fn(&Value, &str) -> Result<(), Error>,
     check: fn(&Value, &str) -> Result<(), Error>,
     set: fn(&mut World, &Value, &str) -> Result<(), Error>,
     reset: fn(&mut World),
@@ -118,6 +121,7 @@ pub struct SettingsEntry {
     default: fn() -> Value,
     present: fn(&World) -> bool,
     schema: fn() -> schemars::Schema,
+    scene: fn(&Value, &str, &dyn Any) -> Result<(), Error>,
 }
 
 impl SettingsEntry {
@@ -129,7 +133,7 @@ impl SettingsEntry {
         schema: fn() -> schemars::Schema,
     ) -> Self
     where
-        T: Resource + Clone + Default + Serialize,
+        T: Resource + Clone + Default + Serialize + DeserializeOwned,
     {
         Self {
             key,
@@ -138,6 +142,7 @@ impl SettingsEntry {
             type_name: std::any::type_name::<T>(),
             at: Location::caller(),
             init: init_of::<T>,
+            parse: parse_of::<T>,
             check,
             set,
             reset: reset_of::<T>,
@@ -145,7 +150,14 @@ impl SettingsEntry {
             default: default_of::<T>,
             present: present_of::<T>,
             schema,
+            scene: no_scene_check,
         }
+    }
+
+    #[must_use]
+    pub fn scene_check(mut self, scene: fn(&Value, &str, &dyn Any) -> Result<(), Error>) -> Self {
+        self.scene = scene;
+        self
     }
 
     pub fn owned(&self) -> Owned {
@@ -156,8 +168,16 @@ impl SettingsEntry {
         }
     }
 
+    pub fn parse(&self, value: &Value, path: &str) -> Result<(), Error> {
+        (self.parse)(value, path)
+    }
+
     pub fn check(&self, value: &Value, path: &str) -> Result<(), Error> {
         (self.check)(value, path)
+    }
+
+    pub fn check_scene(&self, value: &Value, path: &str, scene: &dyn Any) -> Result<(), Error> {
+        (self.scene)(value, path, scene)
     }
 
     pub fn set(&self, world: &mut World, value: &Value) -> Result<(), Error> {
@@ -254,6 +274,8 @@ pub struct OperationEntry {
     pub at: &'static Location<'static>,
     run: fn(&mut World, Value) -> Result<Value, Error>,
     access: fn(&mut World) -> FilteredAccessSet,
+    schema: fn() -> Value,
+    result_schema: fn() -> Option<Value>,
 }
 
 impl OperationEntry {
@@ -270,7 +292,16 @@ impl OperationEntry {
             at: Location::caller(),
             run,
             access: access_of::<P>,
+            schema: object_schema,
+            result_schema: no_schema,
         }
+    }
+
+    #[must_use]
+    pub fn schemas(mut self, schema: fn() -> Value, result_schema: fn() -> Option<Value>) -> Self {
+        self.schema = schema;
+        self.result_schema = result_schema;
+        self
     }
 
     pub fn run(&self, world: &mut World, request: Value) -> Result<Value, Error> {
@@ -280,6 +311,26 @@ impl OperationEntry {
     pub fn access(&self, world: &mut World) -> FilteredAccessSet {
         (self.access)(world)
     }
+
+    pub fn schema(&self) -> Value {
+        (self.schema)()
+    }
+
+    pub fn result_schema(&self) -> Option<Value> {
+        (self.result_schema)()
+    }
+}
+
+fn no_scene_check(_: &Value, _: &str, _: &dyn Any) -> Result<(), Error> {
+    Ok(())
+}
+
+fn object_schema() -> Value {
+    serde_json::json!({ "type": "object" })
+}
+
+fn no_schema() -> Option<Value> {
+    None
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -362,6 +413,10 @@ fn current_of<T: Resource + Default + Serialize>(world: &World) -> Value {
         Some(value) => to_json(value),
         None => to_json(&T::default()),
     }
+}
+
+fn parse_of<T: DeserializeOwned>(value: &Value, path: &str) -> Result<(), Error> {
+    engine_settings::parse_value_at::<T>(value.clone(), path).map(drop)
 }
 
 fn default_of<T: Default + Serialize>() -> Value {

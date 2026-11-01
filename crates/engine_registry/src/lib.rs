@@ -2,6 +2,7 @@ mod access;
 mod attribution;
 mod entries;
 mod gates;
+mod hooks;
 mod jobs;
 #[cfg(feature = "profiling")]
 mod measured;
@@ -22,6 +23,7 @@ pub use entries::{
     parse_section, set_section,
 };
 pub use gates::{GateDriver, GateFn, GateId, Gates, Scope, gate_on};
+pub use hooks::{BrickHooks, NamedField, Removal, Settle, run_settles};
 pub use jobs::{
     JobBatch, JobKindRef, JobList, JobListed, JobMember, JobOrder, JobOrders, JobQueue,
     RecordParity, RecordStore, Shares,

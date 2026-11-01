@@ -4,13 +4,13 @@ pub mod prelude {
     pub use bevy_ecs::entity::Entity;
     pub use bevy_ecs::query::{Added, Changed, Has, Or, With, Without};
     pub use bevy_ecs::resource::Resource;
-    pub use bevy_ecs::system::{Local, Query, SystemParamItem};
+    pub use bevy_ecs::system::{In, Local, Query, SystemParamItem};
 }
 
 pub use prelude::*;
 
 pub mod system {
-    pub use bevy_ecs::system::{Local, Query, SystemParamItem};
+    pub use bevy_ecs::system::{In, Local, Query, SystemChangeTick, SystemParamItem};
 }
 
 #[doc(hidden)]

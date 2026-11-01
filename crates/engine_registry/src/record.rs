@@ -10,6 +10,7 @@ use crate::entries::{
     Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry, init_of,
 };
 use crate::gates::{GateFn, Scope};
+use crate::hooks::{NamedField, Removal, Settle};
 use crate::jobs::JobMember;
 
 pub trait RecordExt {
@@ -50,6 +51,9 @@ pub struct BrickRecord {
     stats: Vec<StatsEntry>,
     operations: Vec<OperationEntry>,
     piece: Option<PieceEntry>,
+    pub(crate) removals: Vec<Removal>,
+    pub(crate) settles: Vec<Settle>,
+    pub(crate) named: Vec<NamedField>,
     problems: Vec<Error>,
 }
 
@@ -83,6 +87,9 @@ impl BrickRecord {
             stats: Vec::new(),
             operations: Vec::new(),
             piece: None,
+            removals: Vec::new(),
+            settles: Vec::new(),
+            named: Vec::new(),
             problems: Vec::new(),
         }
     }
@@ -309,6 +316,18 @@ impl BrickRecord {
             return;
         }
         self.operations.push(entry);
+    }
+
+    pub fn on_remove(&mut self, removal: Removal) {
+        self.removals.push(removal);
+    }
+
+    pub fn settle(&mut self, settle: Settle) {
+        self.settles.push(settle);
+    }
+
+    pub fn named(&mut self, named: NamedField) {
+        self.named.push(named);
     }
 
     pub(crate) fn take_problems(&mut self) -> Vec<Error> {

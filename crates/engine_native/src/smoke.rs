@@ -1,3 +1,4 @@
+use std::any::{Any, TypeId};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
@@ -6,7 +7,7 @@ use engine::Game;
 use engine::bricks::BrickList;
 use engine::smokes::{
     Build, FRAME_MS, Headless, LIST, SmokeEntry, SmokeFailure, SmokeRecord, SmokeSession, answered,
-    engine_of, fault, listed, routed, select, step_lines,
+    engine_of, fault, idle, joined, listed, routed, select, step_lines,
 };
 use serde_json::Value;
 
@@ -78,21 +79,53 @@ impl<G: Game> Runner<'_, G> {
         }
         let started = Instant::now();
         let elapsed = || started.elapsed().as_secs_f64() * 1000.0;
-        let backend = match self.open(entry.bricks(self.bricks)) {
-            Ok(backend) => backend,
+        let mut faults = Vec::new();
+        let first = match entry.restart {
+            Some(restart) => {
+                let mut session = match self.session(entry, self.bricks.clone()) {
+                    Ok(Some(session)) => session,
+                    Ok(None) => return SmokeRecord::skipped(entry),
+                    Err(error) => {
+                        return SmokeRecord::failed(entry, elapsed(), fault("session", &error));
+                    }
+                };
+                let first = (restart.first)(&mut session);
+                faults = session.faults;
+                match first {
+                    Ok(value) => Some((restart.then, value)),
+                    Err(failure) => return SmokeRecord::of(entry, elapsed(), Err(failure), faults),
+                }
+            }
+            None => None,
+        };
+        let mut session = match self.session(entry, entry.bricks(self.bricks)) {
+            Ok(Some(session)) => session,
+            Ok(None) => return SmokeRecord::skipped(entry),
             Err(error) => return SmokeRecord::failed(entry, elapsed(), fault("session", &error)),
         };
+        let outcome = match first {
+            Some((then, value)) => then(&mut session, value),
+            None => entry.run_in(&mut session),
+        };
+        faults.extend(session.faults);
+        SmokeRecord::of(entry, elapsed(), outcome, faults)
+    }
+
+    fn session(
+        &mut self,
+        entry: &SmokeEntry,
+        bricks: BrickList,
+    ) -> engine::Result<Option<Native<G>>> {
+        let backend = self.open(bricks)?;
         if entry.gpu() && matches!(backend, Backend::Headless(_)) {
-            return SmokeRecord::skipped(entry);
+            return Ok(None);
         }
-        let mut session = Native {
+        Ok(Some(Native {
             backend,
             clock: 0.0,
+            loaded: false,
             faults: Vec::new(),
-        };
-        let outcome = entry.run_in(&mut session);
-        let faults = session.faults;
-        SmokeRecord::of(entry, elapsed(), outcome, faults)
+        }))
     }
 
     fn open(&mut self, bricks: BrickList) -> engine::Result<Backend<G>> {
@@ -134,6 +167,7 @@ impl<G: Game> Runner<'_, G> {
 struct Native<G: Game> {
     backend: Backend<G>,
     clock: f64,
+    loaded: bool,
     faults: Vec<SmokeFailure>,
 }
 
@@ -185,9 +219,23 @@ impl<G: Game> SmokeSession for Native<G> {
             Backend::Gpu(session) => session.play(document),
             Backend::Headless(headless) => headless.source(document),
         };
-        if let Err(error) = loaded {
-            self.faults.push(fault("source", &error));
+        match loaded {
+            Ok(()) => self.loaded = true,
+            Err(_) if self.loaded => {}
+            Err(error) => self.faults.push(fault("source", &error)),
         }
+    }
+
+    fn idle(&mut self, milliseconds: f64) {
+        idle(milliseconds);
+    }
+
+    fn joined(&mut self, list: TypeId, each: &mut dyn FnMut(&dyn Any)) {
+        let world = match &self.backend {
+            Backend::Headless(headless) => headless.engine.app.world(),
+            Backend::Gpu(session) => session.game.host().engine().app.world(),
+        };
+        joined(world, list, each);
     }
 
     fn file(&mut self, name: &str, bytes: &[u8]) {

@@ -123,6 +123,56 @@ pub fn mip_levels(width: u32, height: u32) -> u32 {
     u32::BITS - width.max(height).max(1).leading_zeros()
 }
 
+pub(crate) fn level_copy(
+    format: engine_core::TextureFormat,
+    (width, height): (u32, u32),
+    level: u32,
+) -> (wgpu::TexelCopyBufferLayout, wgpu::Extent3d) {
+    let (width, height) = ((width >> level).max(1), (height >> level).max(1));
+    let (bytes_per_row, rows, extent) = if format.is_compressed() {
+        let blocks = [width.div_ceil(4), height.div_ceil(4)];
+        (blocks[0] * 16, blocks[1], (blocks[0] * 4, blocks[1] * 4))
+    } else {
+        (width * 4, height, (width, height))
+    };
+    (
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(bytes_per_row),
+            rows_per_image: Some(rows),
+        },
+        wgpu::Extent3d {
+            width: extent.0,
+            height: extent.1,
+            depth_or_array_layers: 1,
+        },
+    )
+}
+
+pub fn planes(view_projection: Mat4) -> [[f32; 4]; 6] {
+    let rows = [
+        view_projection.row(0),
+        view_projection.row(1),
+        view_projection.row(2),
+        view_projection.row(3),
+    ];
+    [
+        rows[3] + rows[0],
+        rows[3] - rows[0],
+        rows[3] + rows[1],
+        rows[3] - rows[1],
+        rows[2],
+        rows[3] - rows[2],
+    ]
+    .map(|plane: glam::Vec4| {
+        (plane / engine_core::math::max(plane.truncate().length(), 1.0e-12)).to_array()
+    })
+}
+
+pub fn pixels_per_meter(culling: Mat4, height: f32) -> f32 {
+    culling.row(1).truncate().length() * height * 0.5
+}
+
 pub fn mip_chain_bytes(width: u32, height: u32) -> u64 {
     (1..mip_levels(width, height))
         .map(|level| u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * 4)

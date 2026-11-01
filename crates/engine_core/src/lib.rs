@@ -19,6 +19,7 @@ mod jobs;
 pub mod math;
 mod mesh_lods;
 pub use engine_math::collections;
+mod nearest;
 pub mod presentation_bounds;
 mod provided;
 mod records;
@@ -37,7 +38,7 @@ mod sources {
 }
 
 pub mod profile {
-    pub use engine_profile::{Span, span};
+    pub use engine_profile::{Aggregate, Span, active, counter, span};
 }
 
 pub use assets::*;
@@ -58,7 +59,7 @@ pub use engine_place::{
 pub use engine_registry::{AuthoredId, FrameFacts, RecordParity};
 pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting,
-    fields, is_id, parse_value, parse_value_at, settings, state, stated, stats,
+    fields, is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
 };
 pub use frame_stats::*;
 pub use glam;
@@ -66,17 +67,19 @@ pub use hierarchy::*;
 pub use input::*;
 pub use interpolation::*;
 pub use jobs::*;
+pub use nearest::Nearest;
 pub use provided::*;
 pub use records::*;
 pub use scene::*;
 pub use section::{Cut, Operation, Readback, Section};
 pub use services::{
-    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, Placed, Poses, Reach,
-    SceneComponents, SceneContext, SceneIds, ScenePath, View, WorkClock, scene_component,
-    scene_components,
+    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, Placed, Placement,
+    Poses, Prepared, Reach, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneIds,
+    ScenePath, View, ViewWind, WorkClock, WorkRemaining, scene_component, scene_components,
 };
 pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
+pub use ticks::ScanClock;
 pub use transform_edits::*;
 
 pub mod codec {
@@ -110,11 +113,13 @@ use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules, Single
 use bevy_ecs::system::ResMut;
 use bevy_ecs::world::World;
 use clock::FixedClock;
-use engine_registry::{GateDriver, JobList, JobListed, MembersOf, OperationEntry, Registry};
+use engine_registry::{
+    BrickHooks, GateDriver, JobList, JobListed, MembersOf, OperationEntry, Registry,
+};
 use interpolation::{InterpolationState, ResetWatch};
 use schedules::{
     BetweenFrames, FixedMove, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
-    Presentation, TransformPropagation, ViewSync, Waiting, WorldSync,
+    Presentation, Stream, TransformPropagation, ViewSync, Waiting, WorldSync,
 };
 
 pub const MAX_DEV_TICKS: u32 = 120;
@@ -122,6 +127,7 @@ pub const MAX_DEV_TICKS: u32 = 120;
 static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::list::<SceneComponents>(),
     PlaceDecl::slot::<ImpostorPolicy>(),
+    PlaceDecl::slot::<ViewWind>(),
 ];
 
 #[cfg(feature = "dev")]
@@ -222,6 +228,12 @@ fn core_entries(registry: &mut Registry) {
         true,
         bricks::run_operation::<services::ViewControl>,
     ));
+    registry.core_operation(OperationEntry::of::<()>(
+        transform_edits::EDIT_TRANSFORM,
+        true,
+        transform_edits::run_edit_transform,
+    ));
+    registry.writers_first::<Camera>();
 }
 
 fn refused(problems: &[Error]) -> Result<(), Error> {
@@ -317,6 +329,8 @@ impl Engine {
             .insert_resource(Poses::empty())
             .insert_resource(DeviceLimits::without_device(cores))
             .init_resource::<WorkClock>()
+            .init_resource::<PartDraws>()
+            .init_resource::<WorkRemaining>()
             .init_resource::<mesh_lods::MeshLevels>()
             .init_resource::<Viewport>()
             .init_resource::<MoveInput>()
@@ -366,7 +380,7 @@ impl Engine {
         let world = self.app.world_mut();
         world.insert_resource(JobListed::of(&jobs));
         world.resource_mut::<JobExchange>().set_list(jobs);
-        let labels: [InternedScheduleLabel; 9] = Schedule::ALL.map(Schedule::label);
+        let labels: [InternedScheduleLabel; 10] = Schedule::ALL.map(Schedule::label);
         self.gates = Some(registry.install(world, &labels));
         let twice = world
             .get_resource::<MembersOf<SceneComponents>>()
@@ -392,7 +406,9 @@ impl Engine {
 
     #[track_caller]
     pub fn operation<O: Operation>(&mut self) -> &mut Self {
-        let entry = OperationEntry::of::<O::Params>(O::NAME, true, bricks::run_operation::<O>);
+        let entry =
+            OperationEntry::of::<O::Params>(O::NAME, O::CONTROL, bricks::run_operation::<O>)
+                .schemas(O::schema, O::result_schema);
         if let Some(mut registry) = self.app.world_mut().get_resource_mut::<Registry>() {
             registry.core_operation(entry);
         }
@@ -402,13 +418,6 @@ impl Engine {
     #[doc(hidden)]
     pub fn set_frame(&mut self, facts: FrameFacts) {
         self.facts = Some(facts);
-    }
-
-    #[doc(hidden)]
-    pub fn new_scene(&mut self) {
-        modify(self.app.world_mut(), |view: &mut View| {
-            view.state_mut().new_scene();
-        });
     }
 
     #[doc(hidden)]
@@ -464,12 +473,15 @@ impl Engine {
         })
     }
 
-    pub fn between_frames(&mut self, micros: u32) {
+    pub fn between_frames(&mut self, micros: u32) -> bool {
         self.finalize();
         let world = self.app.world_mut();
         modify(world, |frame: &mut FrameTime| {
             frame.between_frames_micros = micros;
         });
+        if world.resource::<WorkRemaining>().remaining() {
+            world.resource_mut::<WorkRemaining>().clear();
+        }
         if has_systems(world, BetweenFrames) {
             {
                 let _profile = engine_profile::span("ecs", "BetweenFrames");
@@ -477,6 +489,7 @@ impl Engine {
             }
             jobs::admit_orders(world);
         }
+        world.resource::<WorkRemaining>().remaining()
     }
 
     pub fn stream_now(&mut self) {
@@ -521,6 +534,11 @@ impl Engine {
             return;
         }
         let check = world.resource_mut::<TickCheck>().0.take();
+        if let Some(check) = check
+            && let Some(mut hooks) = world.get_resource_mut::<BrickHooks>()
+        {
+            hooks.check_change_ticks(check);
+        }
         if let (Some(check), Some(gates)) = (check, self.gates.as_mut()) {
             gates.check_change_ticks(check);
         }
@@ -737,6 +755,9 @@ impl Engine {
         records::exchange(self.app.world_mut());
         jobs::exchange_orders(self.app.world_mut());
         mesh_lods::settle(self.app.world_mut());
+        if has_systems(self.app.world(), Stream) {
+            self.app.world_mut().run_schedule(Stream);
+        }
         self.app.world_mut().run_schedule(WorldSync);
     }
 

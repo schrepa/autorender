@@ -7,6 +7,8 @@ use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub(crate) const STREAMED: &str = "streamed";
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SceneEnvironment {
@@ -18,7 +20,7 @@ impl SceneEnvironment {
         let context = crate::loading::kept(world);
         crate::loading::within(context.as_ref(), || {
             let mut sections = BTreeMap::new();
-            for section in registered(world) {
+            for section in registered(world).filter(|section| section.key != STREAMED) {
                 sections.insert(section.key.to_owned(), section.current(world));
             }
             Self { sections }
@@ -28,7 +30,7 @@ impl SceneEnvironment {
     pub fn keys(&self) -> impl Iterator<Item = &str> {
         self.sections
             .iter()
-            .filter(|(_, value)| !value.is_null())
+            .filter(|(key, value)| !value.is_null() && key.as_str() != STREAMED)
             .map(|(key, _)| key.as_str())
     }
 
@@ -48,7 +50,7 @@ impl SceneEnvironment {
     }
 
     pub fn value(&self, key: &str) -> Option<&Value> {
-        self.sections.get(key).filter(|value| !value.is_null())
+        self.sections.get(key).filter(|value| key != STREAMED && !value.is_null())
     }
 
     pub fn check(&self, world: &World, path: &str) -> Result<(), Error> {
@@ -59,10 +61,11 @@ impl SceneEnvironment {
     }
 
     pub(crate) fn check_in(&self, registry: Option<&Registry>, path: &str) -> Result<(), Error> {
+        let Some(registry) = registry else {
+            return Ok(());
+        };
         for key in self.keys() {
-            if let Some(section) = registry.and_then(|registry| registry.section(key)) {
-                section.check(&self.sections[key], &format!("{path}.{key}"))?;
-            }
+            registry.check_section(key, &self.sections[key], &format!("{path}.{key}"))?;
         }
         Ok(())
     }
@@ -104,7 +107,7 @@ impl SceneEnvironment {
         applies: impl Fn(&str) -> bool,
     ) -> Result<(), Error> {
         let sections: Vec<SettingsEntry> = registered(world)
-            .filter(|section| applies(section.key))
+            .filter(|section| section.key != STREAMED && applies(section.key))
             .copied()
             .collect();
         for section in sections {
@@ -130,6 +133,19 @@ fn listed(world: &World, key: &str) -> Option<SettingsEntry> {
     world.get_resource::<Registry>()?.section(key).copied()
 }
 
+pub(crate) fn apply_streamed(world: &mut World, value: Option<Value>) -> Result<(), Error> {
+    let Some(section) = listed(world, STREAMED) else {
+        return Ok(());
+    };
+    match value {
+        Some(value) => section.set_at(world, &value, "$"),
+        None => {
+            section.reset(world);
+            Ok(())
+        }
+    }
+}
+
 #[cfg(feature = "schema")]
 impl schemars::JsonSchema for SceneEnvironment {
     fn schema_name() -> std::borrow::Cow<'static, str> {
@@ -151,8 +167,9 @@ pub fn section_schemas(
     definitions: &mut serde_json::Map<String, Value>,
 ) -> serde_json::Map<String, Value> {
     let mut properties = serde_json::Map::new();
-    for section in registry.sections() {
-        let mut schema = serde_json::to_value(section.schema()).expect("schema_serializes");
+    for section in registry.sections().filter(|section| section.key != STREAMED) {
+        let mut schema = serde_json::to_value(registry.section_schema(section.key))
+            .expect("schema_serializes");
         let Some(fields) = schema.as_object_mut() else {
             continue;
         };

@@ -1,20 +1,20 @@
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::marker::PhantomData;
 
 use bevy_ecs::bundle::Bundle;
-use bevy_ecs::component::{Immutable, Mutable};
+use bevy_ecs::component::{Component, Immutable, Mutable};
 use bevy_ecs::entity::Entity;
 use bevy_ecs::query::{QueryFilter, ReadOnlyQueryData};
 use bevy_ecs::resource::{IsResource, Resource};
 use bevy_ecs::schedule::IntoScheduleConfigs;
 use bevy_ecs::system::{
-    Commands, IntoSystem, IsFunctionSystem, Query, ReadOnlySystemParam, Res, ScheduleSystem,
+    Commands, In, IntoSystem, IsFunctionSystem, Query, ReadOnlySystemParam, Res, ScheduleSystem,
     SystemParam, SystemParamFunction, SystemState,
 };
 use bevy_ecs::world::World;
 use engine_registry::{
-    BrickRecord, GateFn, JobList, OperationEntry, OperationScene, Registry, SceneEntity,
-    SettingsEntry, SpawnedBy, StatsEntry,
+    BrickRecord, GateFn, Gates, JobList, MembersOf, NamedField, OperationEntry, OperationScene,
+    Registry, Removal, SceneEntity, SettingsEntry, Settle, SpawnedBy, StatsEntry,
 };
 use serde_json::Value;
 
@@ -129,11 +129,10 @@ impl Bricks<'_> {
 
     #[track_caller]
     pub fn operation<O: Operation>(&mut self) -> &mut Self {
-        self.record.operation(OperationEntry::of::<O::Params>(
-            O::NAME,
-            true,
-            run_operation::<O>,
-        ));
+        self.record.operation(
+            OperationEntry::of::<O::Params>(O::NAME, O::CONTROL, run_operation::<O>)
+                .schemas(O::schema, O::result_schema),
+        );
         self
     }
 
@@ -142,11 +141,53 @@ impl Bricks<'_> {
     where
         O::Params: Read,
     {
-        self.record.operation(OperationEntry::of::<O::Params>(
+        self.record.operation(
+            OperationEntry::of::<O::Params>(O::NAME, false, run_operation::<O>)
+                .schemas(O::schema, O::result_schema),
+        );
+        self
+    }
+
+    #[track_caller]
+    pub fn settled<O: Operation, M: 'static>(
+        &mut self,
+        settle: impl IntoSystem<(), (), M> + Send + Sync + 'static,
+    ) -> &mut Self
+    where
+        O::Params: Read,
+    {
+        self.record.settle(Settle::of(
             O::NAME,
-            false,
-            run_operation::<O>,
+            Box::new(IntoSystem::into_system(settle)),
         ));
+        self.record.operation(
+            OperationEntry::of::<O::Params>(O::NAME, false, run_settled::<O>)
+                .schemas(O::schema, O::result_schema),
+        );
+        self
+    }
+
+    pub fn on_remove<C: Component, M>(
+        &mut self,
+        system: impl IntoSystem<In<Entity>, (), M> + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.record
+            .on_remove(Removal::of::<C>(Box::new(IntoSystem::into_system(system))));
+        self
+    }
+
+    pub fn named<S: Section, L: List>(
+        &mut self,
+        field: &'static str,
+        kept: &'static [&'static str],
+        name: fn(&L::Member) -> &'static str,
+    ) -> &mut Self {
+        self.record
+            .named(NamedField::of(S::KEY, field, kept, move |world: &World| {
+                world
+                    .get_resource::<MembersOf<L>>()
+                    .map_or_else(Vec::new, |members| members.all().iter().map(name).collect())
+            }));
         self
     }
 }
@@ -165,7 +206,7 @@ fn boxed_module(module: Module) -> Box<dyn Any + Send + Sync> {
 
 #[track_caller]
 pub(crate) fn settings_entry<S: Section>() -> SettingsEntry {
-    SettingsEntry::of::<S>(S::KEY, check_of::<S>, set_of::<S>, S::schema)
+    SettingsEntry::of::<S>(S::KEY, check_of::<S>, set_of::<S>, S::schema).scene_check(scene_of::<S>)
 }
 
 fn check_of<S: Section>(value: &Value, path: &str) -> Result<(), Error> {
@@ -173,7 +214,30 @@ fn check_of<S: Section>(value: &Value, path: &str) -> Result<(), Error> {
 }
 
 fn set_of<S: Section>(world: &mut World, value: &Value, path: &str) -> Result<(), Error> {
-    engine_registry::set_section::<S>(world, value, path, S::check)
+    let section: S = engine_settings::parse_value_at(value.clone(), path)?;
+    if let Some(registry) = world.get_resource::<Registry>() {
+        registry.check_named(S::KEY, value, path)?;
+    }
+    section.check().map_err(|error| error.within(path))?;
+    if let Some(scene) = world.get_resource::<SceneContext>() {
+        scene
+            .scope(|| section.check_scene(scene))
+            .map_err(|error| error.within(path))?;
+    }
+    world.insert_resource(section);
+    Ok(())
+}
+
+fn scene_of<S: Section>(value: &Value, path: &str, scene: &dyn Any) -> Result<(), Error> {
+    let Some(scene) = scene.downcast_ref::<SceneContext>() else {
+        return Ok(());
+    };
+    scene.scope(|| {
+        let section: S = engine_settings::parse_value_at(value.clone(), path)?;
+        section
+            .check_scene(scene)
+            .map_err(|error| error.within(path))
+    })
 }
 
 fn pending_of<S: Section>(world: &World) -> u32 {
@@ -185,6 +249,17 @@ pub(crate) fn run_operation<O: Operation>(
     request: Value,
 ) -> Result<Value, Error> {
     let request: O::Request = engine_settings::parse_value(request)?;
+    answer::<O>(world, request)
+}
+
+fn run_settled<O: Operation>(world: &mut World, request: Value) -> Result<Value, Error> {
+    let request: O::Request = engine_settings::parse_value(request)?;
+    world.run_schedule(crate::schedules::TransformPropagation);
+    engine_registry::run_settles(world, O::NAME);
+    answer::<O>(world, request)
+}
+
+fn answer<O: Operation>(world: &mut World, request: O::Request) -> Result<Value, Error> {
     let mut state = SystemState::<O::Params>::new(world);
     let params = state.get_mut(world).map_err(|refused| {
         Error::new(ErrorCode::MissingResource, format!("$.operations.{}", O::NAME))
@@ -259,6 +334,7 @@ fn record_of<B: Brick>() -> BrickRecord {
 #[derive(Clone, Default)]
 pub struct BrickList {
     bricks: Vec<Listed>,
+    left: Vec<Listed>,
     places: Vec<&'static [PlaceDecl]>,
     left_out: Vec<&'static str>,
     core: Vec<fn(&mut Registry)>,
@@ -305,7 +381,13 @@ impl BrickList {
             .iter_mut()
             .flat_map(BrickRecord::take_members)
             .collect();
-        crate::job_list_with(&self.jobs(), members)
+        let mut kinds = self.jobs();
+        kinds.extend(
+            self.left
+                .iter()
+                .flat_map(|left| left.jobs().iter().copied()),
+        );
+        crate::job_list_with(&kinds, members)
     }
 
     #[must_use]
@@ -316,16 +398,27 @@ impl BrickList {
 
     #[must_use]
     pub fn without_package(mut self, package: &str) -> Self {
-        let left = self
-            .bricks
-            .iter()
-            .map(Listed::package)
-            .find(|&listed| listed == package);
-        self.bricks.retain(|listed| listed.package() != package);
-        if let Some(left) = left
-            && !self.left_out.contains(&left)
-        {
-            self.left_out.push(left);
+        let (out, kept) = std::mem::take(&mut self.bricks)
+            .into_iter()
+            .partition::<Vec<_>, _>(|listed| listed.package() == package);
+        self.bricks = kept;
+        self.leave(out)
+    }
+
+    #[must_use]
+    fn leave(mut self, out: Vec<Listed>) -> Self {
+        for listed in out {
+            let package = listed.package();
+            if !self.left_out.contains(&package) {
+                self.left_out.push(package);
+            }
+            if !self
+                .left
+                .iter()
+                .any(|left| std::ptr::eq(left.source, listed.source))
+            {
+                self.left.push(listed);
+            }
         }
         self
     }
@@ -335,19 +428,18 @@ impl Listing for BrickList {
     fn with<B: Brick>(mut self) -> Self {
         let package = B::SOURCE.package();
         self.left_out.retain(|&left| left != package);
+        self.left
+            .retain(|left| !std::ptr::eq(left.source, B::SOURCE));
         self.bricks.push(Listed::of::<B>());
         self
     }
 
     fn without<B: Brick>(mut self) -> Self {
-        let before = self.bricks.len();
-        self.bricks
-            .retain(|listed| !std::ptr::eq(listed.source, B::SOURCE));
-        let package = B::SOURCE.package();
-        if self.bricks.len() < before && !self.left_out.contains(&package) {
-            self.left_out.push(package);
-        }
-        self
+        let (out, kept) = std::mem::take(&mut self.bricks)
+            .into_iter()
+            .partition::<Vec<_>, _>(|listed| std::ptr::eq(listed.source, B::SOURCE));
+        self.bricks = kept;
+        self.leave(out)
     }
 
     fn places(mut self, places: &'static [PlaceDecl]) -> Self {
@@ -364,6 +456,8 @@ pub trait Read: ReadOnlySystemParam + sealed::Sealed {}
 
 impl<T: Resource> sealed::Sealed for Res<'_, T> {}
 impl<T: Resource> Read for Res<'_, T> {}
+impl<T: Resource> sealed::Sealed for Option<Res<'_, T>> {}
+impl<T: Resource> Read for Option<Res<'_, T>> {}
 impl<D: ReadOnlyQueryData + 'static, F: QueryFilter + 'static> sealed::Sealed
     for Query<'_, '_, D, F>
 {
@@ -373,6 +467,8 @@ impl<L: List> sealed::Sealed for Joined<'_, L> {}
 impl<L: List> Read for Joined<'_, L> {}
 impl sealed::Sealed for SceneIds<'_, '_> {}
 impl Read for SceneIds<'_, '_> {}
+impl<S: Slot> sealed::Sealed for Filled<'_, S> {}
+impl<S: Slot> Read for Filled<'_, S> {}
 
 macro_rules! read_tuples {
     ($($param:ident),*) => {
@@ -411,6 +507,26 @@ impl<L: List> Joined<'_, L> {
 
     pub fn owned(&self) -> impl Iterator<Item = (std::any::TypeId, u32, &L::Member)> + '_ {
         self.members.iter().flat_map(|members| members.owned())
+    }
+
+    pub fn all(&self) -> impl Iterator<Item = &L::Member> + '_ {
+        self.members.iter().flat_map(|members| members.all().iter())
+    }
+}
+
+#[derive(SystemParam)]
+pub struct Filled<'w, S: Slot> {
+    registry: Option<Res<'w, Registry>>,
+    gates: Option<Res<'w, Gates>>,
+    slot: PhantomData<fn() -> S>,
+}
+
+impl<S: Slot> Filled<'_, S> {
+    pub fn on(&self) -> bool {
+        self.registry
+            .as_ref()
+            .zip(self.gates.as_ref())
+            .is_some_and(|(registry, gates)| registry.slot_on(gates, TypeId::of::<S>()))
     }
 }
 
@@ -461,6 +577,16 @@ impl<B: Brick> Spawner<'_, '_, B> {
     pub fn set_parents(&mut self, changes: Vec<(Entity, Option<Entity>)>) {
         self.commands
             .queue(move |world: &mut World| parented::<B>(world, &changes));
+    }
+
+    pub fn set_parents_then<R: Resource<Mutability = Mutable>>(
+        &mut self,
+        changes: Vec<(Entity, Option<Entity>)>,
+        then: impl FnOnce(&mut R, Result<(), Error>) + Send + 'static,
+    ) {
+        self.commands.queue(move |world: &mut World| {
+            parented_then::<B, R>(world, &changes, then);
+        });
     }
 }
 
@@ -567,6 +693,35 @@ fn parented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
     }
 }
 
+fn parented_then<B: Brick, R: Resource<Mutability = Mutable>>(
+    world: &mut World,
+    changes: &[(Entity, Option<Entity>)],
+    then: impl FnOnce(&mut R, Result<(), Error>),
+) {
+    let stranger = changes
+        .iter()
+        .find(|&&(child, _)| !owned::<B>(world, child));
+    if let Some(&(child, _)) = stranger {
+        foreign::<B>(world, child);
+        return;
+    }
+    let package = B::SOURCE.package();
+    let holds = world
+        .get_resource::<Registry>()
+        .and_then(|registry| registry.brick(package))
+        .is_some_and(|record| record.owns(TypeId::of::<R>()));
+    if !holds {
+        let name = std::any::type_name::<R>();
+        let path = format!("$.bricks.{package}.spawner.{name}");
+        report(world, Error::new(ErrorCode::ForeignAccess, path).got(name));
+        return;
+    }
+    let parented = crate::set_parents(world, changes);
+    if let Some(mut held) = world.get_resource_mut::<R>() {
+        then(&mut held, parented);
+    }
+}
+
 fn owned<B: Brick>(world: &World, entity: Entity) -> bool {
     world.get::<SpawnedBy<B>>(entity).is_some()
 }
@@ -606,4 +761,5 @@ pub enum Schedule {
     ViewSync,
     BetweenFrames,
     Waiting,
+    Stream,
 }

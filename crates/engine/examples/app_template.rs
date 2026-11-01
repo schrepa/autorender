@@ -1,4 +1,5 @@
 use engine::prelude::*;
+use engine_fly_camera::FlyCameraBrick;
 
 pub struct Template;
 
@@ -9,7 +10,7 @@ impl Game for Template {
 }
 
 pub fn bricks<L: Listing>(list: L) -> L {
-    engine_standard::standard(list)
+    engine_standard::standard(list).with::<FlyCameraBrick>()
 }
 
 const DAY: [&str; 4] = [

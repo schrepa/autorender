@@ -1,13 +1,184 @@
-use glam::Vec2;
+use engine_math::{max, min};
+use glam::{Mat3, Vec2, Vec3};
 
-use crate::grid::{TILE_QUADS, TILE_SAMPLES};
+use crate::bed::{Bed, Reach};
+use crate::grid::{TILE_QUADS, TILE_SAMPLES, TileKey};
+use crate::hydrology::RIVER_FAR;
+use crate::layers::Stamp;
 
 pub use crate::grid::TILE_STRIDE;
 
 pub const PATCH_QUADS: u32 = 16;
 pub const PATCHES_PER_TILE: u32 = TILE_QUADS / PATCH_QUADS;
 
+pub const RIVER_EDGE_STEP: f32 = 0.0625;
+pub const RIVER_EDGE_ZERO: u16 = 32_768;
+pub const RIVER_EDGE_FAR: u16 = u16::MAX;
+
 const HOLE_CELLS: usize = TILE_SAMPLES as usize;
+
+const SAMPLES: usize = (TILE_STRIDE * TILE_STRIDE) as usize;
+
+const GRAIN: usize = 0;
+const POWER: usize = 1;
+const FLOOD: usize = 2;
+const FORM: usize = 3;
+
+const RATIO_STEP: f32 = 1.0 / 512.0;
+
+pub fn shaded_elsewhere(level: u8, around: bool) -> bool {
+    level > 0 && !around
+}
+
+pub fn river_meters(step: u16) -> f32 {
+    if step == RIVER_EDGE_FAR {
+        RIVER_FAR
+    } else {
+        (f32::from(step) - f32::from(RIVER_EDGE_ZERO)) * RIVER_EDGE_STEP
+    }
+}
+
+fn from_half(code: u16) -> f32 {
+    f32::from_bits(u32::from(code) << 16)
+}
+
+fn reach(form: u16) -> Reach {
+    match form & 7 {
+        0 => Reach::Pool,
+        1 => Reach::Plane,
+        2 => Reach::Steps,
+        3 => Reach::Cascade,
+        _ => Reach::Falls,
+    }
+}
+
+pub fn bed_at(beds: &[u16], heights: &[f32], spacing: f32, local: Vec2) -> Option<Bed> {
+    let (i, j, fu, fv) = tile_cell(spacing, local)?;
+    let (x, z) = (i + i32::from(fu >= 0.5), j + i32::from(fv >= 0.5));
+    let at = (z as usize + 1) * TILE_STRIDE as usize + x as usize + 1;
+    let step = beds[FLOOD * SAMPLES + at];
+    if step == RIVER_EDGE_FAR {
+        return None;
+    }
+    let form = beds[FORM * SAMPLES + at];
+    let d50 = from_half(beds[GRAIN * SAMPLES + at]);
+    Some(Bed {
+        reach: reach(form),
+        d50,
+        d84: d50 * (1.0 + f32::from(form >> 4) * RATIO_STEP),
+        power: from_half(beds[POWER * SAMPLES + at]),
+        flood: heights[at] + river_meters(step),
+        carved: form & 8 != 0,
+    })
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Solid {
+    pub center: [f32; 3],
+    pub half: [f32; 3],
+    pub round: bool,
+}
+
+impl Solid {
+    pub fn valid(&self) -> bool {
+        self.center.iter().all(|value| value.is_finite())
+            && self.half.iter().all(|&half| half.is_finite() && half > 0.0)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Footprint {
+    pub center: [f32; 3],
+    pub axes: [f32; 9],
+    pub round: bool,
+}
+
+impl Footprint {
+    fn axes(&self) -> Mat3 {
+        Mat3::from_cols_array(&self.axes)
+    }
+
+    pub fn middle(&self) -> Vec2 {
+        Vec2::new(self.center[0], self.center[2])
+    }
+
+    pub fn reach(&self) -> Vec2 {
+        let rows = self.axes().transpose();
+        let along = |row: Vec3| {
+            if self.round {
+                row.length()
+            } else {
+                row.abs().element_sum()
+            }
+        };
+        Vec2::new(along(rows.x_axis), along(rows.z_axis))
+    }
+
+    pub fn span(&self, point: Vec2) -> Option<[f32; 2]> {
+        let inverse = self.axes().inverse();
+        let at = inverse * (Vec3::new(point.x, 0.0, point.y) - Vec3::from_array(self.center));
+        let up = inverse.y_axis;
+        if self.round {
+            let rise = up.dot(up);
+            let along = at.dot(up);
+            let reach = along * along - rise * (at.dot(at) - 1.0);
+            if !(rise > 0.0 && reach >= 0.0) {
+                return None;
+            }
+            let root = reach.sqrt();
+            return Some([(-along - root) / rise, (-along + root) / rise]);
+        }
+        let mut span = [f32::NEG_INFINITY, f32::INFINITY];
+        for k in 0..3 {
+            if up[k] != 0.0 {
+                let (a, b) = ((-1.0 - at[k]) / up[k], (1.0 - at[k]) / up[k]);
+                span = [max(span[0], min(a, b)), min(span[1], max(a, b))];
+            } else if at[k].abs() > 1.0 {
+                return None;
+            }
+        }
+        (span[0] <= span[1]).then_some(span)
+    }
+
+    pub fn valid(&self) -> bool {
+        self.center
+            .iter()
+            .chain(&self.axes)
+            .all(|value| value.is_finite())
+            && self.axes().determinant() != 0.0
+    }
+}
+
+engine_codec::record!(Solid {
+    center,
+    half,
+    round
+});
+
+engine_codec::record!(Footprint {
+    center,
+    axes,
+    round
+});
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TileJob {
+    pub recipe: [u8; 32],
+    pub key: TileKey,
+    pub stamps: Vec<Stamp>,
+}
+
+engine_codec::record!(TileJob {
+    recipe,
+    key,
+    stamps,
+});
+
+impl TileJob {
+    pub fn identity(&self) -> Vec<u8> {
+        engine_codec::encode(self)
+    }
+}
 
 pub fn hole_at(holes: &[u64], x: u32, z: u32) -> bool {
     if x as usize >= HOLE_CELLS || z as usize >= HOLE_CELLS {

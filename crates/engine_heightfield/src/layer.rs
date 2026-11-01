@@ -37,8 +37,6 @@ pub mod maps {
 
 pub type Made = Result<Arc<dyn TerrainLayer>, Error>;
 
-pub type DrawRivers = fn(&[GivenRiver]) -> Made;
-
 pub struct LayerKind {
     pub name: &'static str,
     pub source: [u8; 32],

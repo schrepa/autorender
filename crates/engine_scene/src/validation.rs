@@ -1,7 +1,9 @@
 use engine_settings::{ErrorCode, Expected};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
-use engine_core::{Error, Mesh, Texture, Transform};
+use bevy_ecs::entity::Entity;
+use engine_core::{Error, Mesh, ScenePath, Texture, Transform};
 
 use crate::{
     MeshSource, SceneDocument, SceneFile, SceneFileKind, SceneFiles, SceneKinds,
@@ -15,6 +17,7 @@ pub(crate) struct PreparedScene {
     pub textures: Vec<Texture>,
     pub transforms: Vec<Transform>,
     pub entities: Vec<ExpandedObject>,
+    pub paths: Vec<ScenePath>,
 }
 
 struct CpuAssets {
@@ -65,9 +68,10 @@ impl SceneDocument {
             .entities
             .iter()
             .chain(self.prefabs.iter().flat_map(|prefab| &prefab.entities));
-        crate::loading::named(self).scope(|| {
+        let cx = kinds.cx(None, None);
+        crate::loading::named(self).lenient(|| {
             for entity in entities {
-                for uri in kinds.files(entity) {
+                for uri in kinds.files(entity, &cx) {
                     add(&uri, SceneFileKind::Buffer);
                 }
             }
@@ -101,8 +105,33 @@ impl SceneDocument {
                 )?;
             }
         }
-        let expanded = crate::loading::named(self)
-            .scope(|| self.expand(&mesh_ids, &material_ids, kinds))?;
+        let named = crate::loading::named(self);
+        let expanded = named.lenient(|| self.expand(&mesh_ids, &material_ids, kinds))?;
+        let paths = crate::loading::paths(self, kinds)?;
+        let entities = expanded
+            .entities
+            .iter()
+            .map(|entity| (entity.source.id.clone(), Entity::PLACEHOLDER))
+            .collect();
+        let context = crate::loading::context(
+            self,
+            (named, BTreeMap::new()),
+            paths.clone(),
+            Arc::new(entities),
+            kinds,
+            files.map(SceneFiles::buffers),
+        );
+        if let (Some(section), Some(value)) = (kinds.streamed(), self.streamed_section()) {
+            section.check(&value, "$")?;
+            section.check_scene(&value, "$", &context)?;
+        }
+        let cx = kinds.cx(Some(&context), None);
+        context.scope(|| {
+            expanded
+                .entities
+                .iter()
+                .try_for_each(|entity| kinds.prepare(&entity.source, &entity.path, &cx))
+        })?;
         let CpuAssets {
             textures,
             meshes,
@@ -115,6 +144,7 @@ impl SceneDocument {
             textures,
             transforms: expanded.transforms,
             entities: expanded.entities,
+            paths,
         })
     }
 

@@ -32,9 +32,9 @@ impl ColliderShape {
         {
             Ok(())
         } else {
-            Err(Error::new(ErrorCode::InvalidShape, "$.collision").range(
-                f64::from(MIN_COLLIDER_EXTENT),
-                f64::from(MAX_COLLIDER_EXTENT),
+            Err(Error::new(ErrorCode::CollisionInvalidShape, "$.collision").range(
+                engine_heightfield::bound(MIN_COLLIDER_EXTENT),
+                engine_heightfield::bound(MAX_COLLIDER_EXTENT),
             ))
         }
     }
@@ -77,9 +77,38 @@ pub struct Collider {
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum AuthoredShape {
+    Cuboid { half_extents: [f32; 3] },
+    Sphere { radius: f32 },
+}
+
+impl From<AuthoredShape> for ColliderShape {
+    fn from(authored: AuthoredShape) -> Self {
+        match authored {
+            AuthoredShape::Cuboid { half_extents } => Self::Cuboid {
+                half_extents: Vec3::from_array(half_extents),
+            },
+            AuthoredShape::Sphere { radius } => Self::Sphere { radius },
+        }
+    }
+}
+
+impl From<ColliderShape> for AuthoredShape {
+    fn from(shape: ColliderShape) -> Self {
+        match shape {
+            ColliderShape::Cuboid { half_extents } => Self::Cuboid {
+                half_extents: half_extents.to_array(),
+            },
+            ColliderShape::Sphere { radius } => Self::Sphere { radius },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AuthoredCollider {
-    shape: ColliderShape,
+    shape: AuthoredShape,
     #[serde(default = "one_membership")]
     memberships: u32,
     #[serde(default = "every_filter")]
@@ -99,7 +128,7 @@ fn every_filter() -> u32 {
 impl From<AuthoredCollider> for Collider {
     fn from(authored: AuthoredCollider) -> Self {
         Self {
-            shape: authored.shape,
+            shape: authored.shape.into(),
             layers: CollisionLayers {
                 memberships: authored.memberships,
                 filter: authored.filter,
@@ -112,7 +141,7 @@ impl From<AuthoredCollider> for Collider {
 impl From<Collider> for AuthoredCollider {
     fn from(collider: Collider) -> Self {
         Self {
-            shape: collider.shape,
+            shape: collider.shape.into(),
             memberships: collider.layers.memberships,
             filter: collider.layers.filter,
             sensor: collider.sensor,
@@ -342,6 +371,8 @@ pub trait Collide: Any + Send + Sync + 'static {
     fn events(&self) -> &[SensorEvent];
 
     fn pairs(&self) -> &[SensorPair];
+
+    fn colliders(&self) -> Option<usize>;
 }
 
 struct NoCollision;
@@ -389,6 +420,10 @@ impl Collide for NoCollision {
 
     fn pairs(&self) -> &[SensorPair] {
         &[]
+    }
+
+    fn colliders(&self) -> Option<usize> {
+        None
     }
 }
 

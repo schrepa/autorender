@@ -70,9 +70,14 @@ impl PipelineList {
                 identity.push(0);
                 identity.extend(brick.source());
             }
+            let context = world.get_resource::<engine_core::SceneContext>();
             for section in registry.sections() {
                 identity.extend(section.key.bytes());
-                identity.extend(section.current(world).to_string().bytes());
+                let current = match context {
+                    Some(context) => context.scope(|| section.current(world)),
+                    None => section.current(world),
+                };
+                identity.extend(current.to_string().bytes());
             }
         }
         let key = key_of(&identity);

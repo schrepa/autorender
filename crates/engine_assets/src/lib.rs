@@ -8,12 +8,13 @@ mod library;
 mod lod;
 mod material;
 mod mesh;
+mod record;
 mod texture;
 
 pub use cards::{AlphaImage, trim_cards};
 pub use engine_lodbuild::{LodInput, LodLevel, MeshLods, MeshVertex};
 pub use library::{
-    AssetBudget, AssetLibrary, MaterialHandle, MeshHandle, SceneAssets, TextureHandle,
+    AssetBudget, AssetLibrary, MaterialHandle, MeshHandle, SceneAssets, SceneTable, TextureHandle,
 };
 pub use lod::{lod_input, takes_levels};
 pub use material::{
@@ -21,6 +22,9 @@ pub use material::{
     MaterialBinding, Sampler, Surface, TextureRef, TopLayer, UvTransform, Wrap,
 };
 pub use mesh::{Aabb, Mesh};
+pub use record::{
+    MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshBuffer, MeshStreams, encode_mesh_buffer_with,
+};
 pub use texture::{
     MAX_TEXTURE_DIMENSION, Texture, TextureFormat, TextureSummary, full_chain, srgb_decoded,
 };

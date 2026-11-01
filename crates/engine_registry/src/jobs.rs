@@ -149,12 +149,24 @@ pub enum JobOrder {
         input: Vec<u8>,
         priority: u32,
     },
+    Look {
+        key: [u8; 32],
+        kind: &'static str,
+        source: [u8; 32],
+        priority: u32,
+    },
     Cancel {
         key: [u8; 32],
     },
     Share {
         key: [u8; 32],
         bytes: Arc<[u8]>,
+    },
+    ShareRecord {
+        key: [u8; 32],
+    },
+    Unshare {
+        key: [u8; 32],
     },
     Keep {
         key: [u8; 32],

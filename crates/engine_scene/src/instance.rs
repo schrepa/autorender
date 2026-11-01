@@ -1,5 +1,5 @@
 use engine_settings::ErrorCode;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use bevy_ecs::entity::Entity;
@@ -250,11 +250,28 @@ impl SceneInstance {
         {
             world.remove_resource::<SceneContext>();
         }
+        self.remove_streamed(world);
         for &entity in self.entities.values() {
             world.despawn(entity);
         }
         if let Some(mut assets) = world.get_resource_mut::<AssetLibrary>() {
             self.owned.remove(&mut assets);
+        }
+    }
+
+    fn remove_streamed(&self, world: &mut World) {
+        let mut kept: BTreeSet<Entity> = self.entities.values().copied().collect();
+        if let Some(current) = world.get_resource::<OperationScene>() {
+            kept.extend(current.entities.values().copied());
+        }
+        let streamed: Vec<Entity> = world
+            .query::<(Entity, &SceneEntity)>()
+            .iter(world)
+            .filter(|(entity, authored)| authored.scene_id == self.id && !kept.contains(entity))
+            .map(|(entity, _)| entity)
+            .collect();
+        for entity in streamed {
+            let _ = world.try_despawn(entity);
         }
     }
 }
@@ -271,23 +288,33 @@ impl SceneDocument {
     ) -> Result<SceneInstance, Error> {
         let kinds = SceneKinds::of(world);
         let mut prepared = self.prepare(Some(files), &kinds)?;
-        let paths = crate::loading::paths(self, &kinds)?;
         let skipped = crate::loading::named(self).scope(|| self.admit(world, &kinds))?;
+        let bounds = crate::loading::bounds(self, &prepared.meshes);
         let (assets, owned) = self.insert_assets(world, &mut prepared)?;
         let table = Arc::new(self.table(&assets));
-        let spawned = match self.spawn(world, &prepared, &table, &kinds) {
-            Ok(spawned) => spawned,
-            Err(error) => {
-                owned.remove(&mut world.resource_mut::<AssetLibrary>());
-                return Err(error);
-            }
-        };
+        let spawned = self.spawn(world, &prepared, &table);
         let entities: BTreeMap<String, Entity> = prepared
             .entities
             .iter()
             .zip(&spawned)
             .map(|(expanded, &entity)| (expanded.source.id.clone(), entity))
             .collect();
+        let entities = Arc::new(entities);
+        let context = crate::loading::context(
+            self,
+            (table, bounds),
+            std::mem::take(&mut prepared.paths),
+            entities.clone(),
+            &kinds,
+            Some(files.buffers()),
+        );
+        if let Err(error) = read(world, &prepared, &spawned, &context, &kinds) {
+            for &entity in &spawned {
+                world.despawn(entity);
+            }
+            owned.remove(&mut world.resource_mut::<AssetLibrary>());
+            return Err(error);
+        }
         let parents: Vec<_> = prepared
             .entities
             .iter()
@@ -310,15 +337,17 @@ impl SceneDocument {
                 .coded(ErrorCode::HierarchyInstallFailed)
                 .within("$.entities"));
         }
-        let entities = Arc::new(entities);
         propagate_transforms(world);
         world.insert_resource(self.camera.camera());
-        let context = crate::loading::context(self, table, paths, entities.clone());
-        world.insert_resource(context.clone());
+        world.insert_resource(SceneContext {
+            files: None,
+            ..context.clone()
+        });
         if let Some(environment) = &prepared.environment {
             context.scope(|| environment.apply_all(world, "$.environment"))?;
         }
         world.insert_resource(crate::SceneViews::of(self));
+        context.scope(|| crate::environment::apply_streamed(world, self.streamed_section()))?;
         let instance = SceneInstance {
             id: self.id.clone(),
             revision: self.revision,
@@ -425,23 +454,16 @@ impl SceneDocument {
         &self,
         world: &mut World,
         prepared: &PreparedScene,
-        table: &Arc<SceneAssets>,
-        kinds: &SceneKinds,
-    ) -> Result<Vec<Entity>, Error> {
-        let mut spawned = Vec::with_capacity(prepared.entities.len());
-        for (expanded, &transform) in prepared.entities.iter().zip(&prepared.transforms) {
-            let scene = (self.id.as_str(), table);
-            match spawn_entity(world, scene, kinds, expanded, transform) {
-                Ok(entity) => spawned.push(entity),
-                Err(error) => {
-                    for entity in spawned {
-                        world.despawn(entity);
-                    }
-                    return Err(error);
-                }
-            }
-        }
-        Ok(spawned)
+        table: &SceneAssets,
+    ) -> Vec<Entity> {
+        prepared
+            .entities
+            .iter()
+            .zip(&prepared.transforms)
+            .map(|(expanded, &transform)| {
+                spawn_entity(world, (self.id.as_str(), table), expanded, transform)
+            })
+            .collect()
     }
 }
 
@@ -470,13 +492,31 @@ impl SceneDocument {
     }
 }
 
+fn read(
+    world: &mut World,
+    prepared: &PreparedScene,
+    spawned: &[Entity],
+    context: &SceneContext,
+    kinds: &SceneKinds,
+) -> Result<(), Error> {
+    let cx = kinds.cx(Some(context), None);
+    context.scope(|| {
+        prepared
+            .entities
+            .iter()
+            .zip(spawned)
+            .try_for_each(|(expanded, &entity)| {
+                kinds.read(world, entity, &expanded.source, &expanded.path, &cx)
+            })
+    })
+}
+
 fn spawn_entity(
     world: &mut World,
-    (scene_id, table): (&str, &Arc<SceneAssets>),
-    kinds: &SceneKinds,
+    (scene_id, table): (&str, &SceneAssets),
     expanded: &ExpandedObject,
     transform: Transform,
-) -> Result<Entity, Error> {
+) -> Entity {
     let source = &expanded.source;
     let mut entity = world.spawn((
         transform,
@@ -497,11 +537,5 @@ fn spawn_entity(
             material: table.materials[material.as_str()],
         });
     }
-    let entity = entity.id();
-    let read = table.scope(|| kinds.read(world, entity, source, &expanded.path));
-    if let Err(error) = read {
-        world.despawn(entity);
-        return Err(error);
-    }
-    Ok(entity)
+    entity.id()
 }

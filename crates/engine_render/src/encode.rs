@@ -14,8 +14,9 @@ use crate::machine::{
     CAMERA_STRIDE, DEBUG_COUNT, DEBUG_FORMATS, DEPTH_FORMAT, Machine, Target, final_target,
     own_colors_only, pass_layer, reads_depth_direct, set_formats, shared, target_read,
 };
+use crate::profiling::GpuProfiler;
 use crate::registration::Installed;
-use crate::{AfterRead, CameraUniform, DepthUse, VertexLayout, ViewTarget};
+use crate::{AfterRead, CameraUniform, DepthUse, PassNames, VertexLayout, ViewTarget};
 
 pub(crate) type FrameCore = Run;
 pub(crate) type EncodeCore = Run;
@@ -193,6 +194,27 @@ pub(crate) struct Assets {
     pub(crate) impostors: crate::impostors::Impostors,
 }
 
+pub(crate) struct Delivered {
+    frame: u64,
+    tag: u32,
+    bytes: Vec<u8>,
+    deliver: fn(&mut World, u64, u32, &[u8]),
+}
+
+#[derive(Default)]
+pub(crate) struct Queued {
+    pub(crate) before: Option<wgpu::CommandEncoder>,
+    pub(crate) delivered: Vec<Delivered>,
+    pub(crate) refused: Option<Error>,
+    pub(crate) cleared: Vec<u32>,
+}
+
+#[derive(Default)]
+pub(crate) struct Timed {
+    pub(crate) asked: Option<&'static str>,
+    pub(crate) open: Option<&'static str>,
+}
+
 pub(crate) struct Run {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
@@ -217,6 +239,7 @@ pub(crate) struct Run {
     pub(crate) previous_targets: Vec<(Target, Allocated)>,
     pub(crate) debug_targets: Vec<Allocated>,
     pub(crate) canvas: Option<wgpu::TextureView>,
+    pub(crate) canvas_texture: Option<wgpu::Texture>,
     pub(crate) runs: Bits,
     pub(crate) asked: Vec<Asked>,
     pub(crate) copies: Vec<(u32, Vec<crate::CopyRegion>)>,
@@ -237,6 +260,10 @@ pub(crate) struct Run {
     pub(crate) placeholders: Vec<(Ty, Placeholder)>,
     pub(crate) encoder: Option<wgpu::CommandEncoder>,
     pub(crate) open: Option<Open>,
+    pub(crate) computing: Option<(u32, wgpu::ComputePass<'static>)>,
+    pub(crate) timed: Timed,
+    pub(crate) queued: Queued,
+    pub(crate) resolve: Option<(PassNames, &'static str)>,
     pub(crate) labelled: Option<u32>,
     pub(crate) merge: bool,
     pub(crate) planned: Option<Planned>,
@@ -252,6 +279,7 @@ pub(crate) struct Run {
     pub(crate) post_written: Option<crate::shared::PostUniform>,
     pub(crate) linear: wgpu::Sampler,
     pub(crate) drawn: u32,
+    pub(crate) part_draws: Vec<u32>,
     pub(crate) compiled: Vec<Compiled>,
     pub(crate) listed: Option<Vec<Compiled>>,
     pub(crate) up_front: u32,
@@ -268,6 +296,7 @@ pub(crate) enum RawShape {
     Pulled { vertices: Range<u32>, instances: Range<u32> },
     Buffers { vertices: Vec<u32>, indices: Option<u32>, elements: Range<u32>, instances: Range<u32> },
     Indirect { vertices: Vec<u32>, indices: Option<u32>, args: u32, offset: u64 },
+    IndirectAt { vertices: Vec<(u32, u64)>, indices: Option<u32>, args: u32, offset: u64 },
     Mesh { mesh: MeshHandle, material: Option<MaterialHandle>, instances: Range<u32>, streams: Vec<(u32, u64)> },
     MeshIndirect { mesh: MeshHandle, material: Option<MaterialHandle>, args: u32, offset: u64, streams: Vec<(u32, u64)> },
 }
@@ -426,6 +455,7 @@ impl Run {
             previous_targets: Vec::new(),
             debug_targets: Vec::new(),
             canvas: None,
+            canvas_texture: None,
             runs,
             asked: Vec::new(),
             copies: Vec::new(),
@@ -446,6 +476,10 @@ impl Run {
             placeholders: Vec::new(),
             encoder: None,
             open: None,
+            computing: None,
+            timed: Timed::default(),
+            queued: Queued::default(),
+            resolve: None,
             labelled: None,
             merge: true,
             planned: None,
@@ -461,6 +495,7 @@ impl Run {
             post_written: None,
             linear,
             drawn: 0,
+            part_draws: vec![0; count],
             compiled: Vec::new(),
             listed: None,
             up_front: 0,
@@ -562,26 +597,172 @@ impl Run {
     }
 
     pub(crate) fn allocate(&mut self, texture: u32, size: wgpu::Extent3d, mips: u32) {
+        self.allocate_with(texture, None, size, mips);
+    }
+
+    pub(crate) fn allocate_as(&mut self, texture: u32, format: wgpu::TextureFormat, size: wgpu::Extent3d, mips: u32) {
+        self.allocate_with(texture, Some(format), size, mips);
+    }
+
+    fn allocate_with(&mut self, texture: u32, format: Option<wgpu::TextureFormat>, size: wgpu::Extent3d, mips: u32) {
         let Some(decl) = self.machine.declared.textures.get(texture as usize) else {
             return;
         };
         let at = texture as usize;
-        if self.sizes[at] == Some((size, mips)) && self.textures[at][0].is_some() {
+        let wanted = format.unwrap_or(decl.format);
+        let same = self.textures[at][0].as_ref().is_some_and(|made| made.texture.format() == wanted);
+        if self.sizes[at] == Some((size, mips)) && same {
             return;
+        }
+        let mut usage = texture_usage(&self.machine, texture);
+        if format.is_some() {
+            if mips > 1 {
+                usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
+            }
+            usage &= wanted.guaranteed_format_features(self.device.features()).allowed_usages;
         }
         let made = Made {
             label: decl.label,
-            format: decl.format,
-            usage: texture_usage(&self.machine, texture),
+            format: wanted,
+            usage,
             dimension: self.dimensions.get(at).copied().unwrap_or(wgpu::TextureDimension::D2),
         };
         let doubled = self.doubled(texture);
+        for held in self.textures[at].iter().flatten() {
+            crate::memory::release_any(&held.texture);
+        }
         self.textures[at] = [
             Some(Allocated::new(&self.device, &made, size, mips)),
             doubled.then(|| Allocated::new(&self.device, &made, size, mips)),
         ];
         self.sizes[at] = Some((size, mips));
         self.generation += 1;
+    }
+
+    pub(crate) fn grow(&mut self, texture: u32, size: wgpu::Extent3d, mips: u32) {
+        let at = texture as usize;
+        let Some(Some((known, levels))) = self.sizes.get(at).copied() else {
+            self.allocate(texture, size, mips);
+            return;
+        };
+        if (known, levels) == (size, mips) {
+            self.allocate(texture, size, mips);
+            return;
+        }
+        let previous = std::mem::replace(&mut self.textures[at], [None, None]);
+        self.sizes[at] = None;
+        self.allocate(texture, size, mips);
+        if levels == mips {
+            let device = &self.device;
+            let encoder = self.queued.before.get_or_insert_with(|| {
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("engine/part-grow"),
+                })
+            });
+            for (old, new) in previous.iter().zip(&self.textures[at]) {
+                let (Some(old), Some(new)) = (old, new) else {
+                    continue;
+                };
+                for level in 0..old.mips.min(new.mips) {
+                    let extent = wgpu::Extent3d {
+                        width: (known.width.min(size.width) >> level).max(1),
+                        height: (known.height.min(size.height) >> level).max(1),
+                        depth_or_array_layers: old.layers().min(new.layers()),
+                    };
+                    encoder.copy_texture_to_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &old.texture,
+                            mip_level: level,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &new.texture,
+                            mip_level: level,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        extent,
+                    );
+                }
+            }
+        }
+        for held in previous.iter().flatten() {
+            crate::memory::release_any(&held.texture);
+        }
+    }
+
+    pub(crate) fn release(&mut self, texture: u32) {
+        let at = texture as usize;
+        let Some(held) = self.textures.get_mut(at) else {
+            return;
+        };
+        if held.iter().all(Option::is_none) {
+            return;
+        }
+        for made in held.iter().flatten() {
+            crate::memory::release_any(&made.texture);
+        }
+        *held = [None, None];
+        self.sizes[at] = None;
+        self.generation += 1;
+    }
+
+    pub(crate) fn release_buffer(&mut self, buffer: u32) {
+        let Some(held) = self.buffers.get_mut(buffer as usize) else {
+            return;
+        };
+        if let Some((made, _)) = held.take() {
+            crate::memory::release_buffer(&made);
+            self.generation += 1;
+        }
+    }
+
+    pub(crate) fn release_part(&mut self, part: u32) {
+        let textures: Vec<u32> = (0..self.machine.declared.textures.len() as u32)
+            .filter(|&texture| self.machine.declared.textures[texture as usize].part == part)
+            .collect();
+        for texture in textures {
+            self.release(texture);
+        }
+        let buffers: Vec<u32> = (0..self.machine.declared.buffers.len() as u32)
+            .filter(|&buffer| self.machine.declared.buffers[buffer as usize].part == part)
+            .collect();
+        for buffer in buffers {
+            self.release_buffer(buffer);
+        }
+    }
+
+    pub(crate) fn mipmaps(&mut self, texture: u32, layers: Range<u32>) {
+        let Some(made) = self.written_texture(texture).map(|made| made.texture.clone()) else {
+            let error = fault(self.path("mipmaps"), ErrorCode::InvalidValue);
+            self.fault(error);
+            return;
+        };
+        let device = &self.device;
+        let encoder = self.queued.before.get_or_insert_with(|| {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("engine/part-mips"),
+            })
+        });
+        for layer in layers {
+            self.assets.materials.mips().record_layer(device, encoder, &made, layer);
+        }
+    }
+
+    pub(crate) fn deliver_bytes(&mut self, tag: u32, bytes: Vec<u8>, deliver: fn(&mut World, u64, u32, &[u8])) {
+        self.queued.delivered.push(Delivered {
+            frame: self.asked_frame,
+            tag,
+            bytes,
+            deliver,
+        });
+    }
+
+    pub(crate) fn refuse(&mut self, error: Error) {
+        if self.queued.refused.is_none() {
+            self.queued.refused = Some(error);
+        }
     }
 
     pub(crate) fn allocate_buffer(&mut self, buffer: u32, bytes: u64) {
@@ -592,6 +773,9 @@ impl Run {
         let bytes = bytes.max(16).next_multiple_of(4);
         if self.buffers[at].as_ref().is_some_and(|(_, known)| *known == bytes) {
             return;
+        }
+        if let Some((held, _)) = &self.buffers[at] {
+            crate::memory::release_buffer(held);
         }
         let usage = decl.usage | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
         let made = crate::memory::buffer(
@@ -1099,11 +1283,79 @@ impl Run {
         true
     }
 
+    fn resolving(&self, pass: u32) -> Option<PassNames> {
+        let declared = self.machine.declared.passes.get(pass as usize)?;
+        let (names, _) = self.resolve?;
+        (self.temporal && declared.name == crate::shared::COMPOSITE).then_some(names)
+    }
+
+    pub(crate) fn label_of(&self, pass: u32) -> Option<&'static str> {
+        if let Some(names) = self.resolving(pass) {
+            return Some(names.label);
+        }
+        let declared = self.machine.declared.passes.get(pass as usize)?;
+        Some(declared.label.unwrap_or(declared.name))
+    }
+
+    pub(crate) fn group_of(&self, pass: u32) -> &'static str {
+        if let Some(names) = self.resolving(pass) {
+            return names.pass;
+        }
+        self.machine.declared.passes.get(pass as usize).map_or("", |declared| declared.name)
+    }
+
+    pub(crate) fn stage_of(&self, pass: u32) -> Option<&'static str> {
+        self.resolving(pass).and(self.resolve).map(|(_, stage)| stage)
+    }
+
+    pub(crate) fn span_of(&self, pass: u32) -> Option<&'static str> {
+        if let Some(names) = self.resolving(pass) {
+            return Some(names.span);
+        }
+        self.machine.declared.passes.get(pass as usize)?.span
+    }
+
+    pub(crate) fn open_encode_span(&mut self, timer: &GpuProfiler) {
+        let Some(name) = self.timed.asked.take() else {
+            return;
+        };
+        self.end_render();
+        let group = self.group_of(self.pass);
+        if let (Some(span), Some(encoder)) = (timer.span_in(group, name), self.encoder.as_mut()) {
+            span.mark(encoder, false);
+        }
+        self.timed.open = Some(name);
+    }
+
+    pub(crate) fn close_encode_span(&mut self, timer: &GpuProfiler) {
+        self.timed.asked = None;
+        let Some(name) = self.timed.open.take() else {
+            return;
+        };
+        self.end_render();
+        let group = self.group_of(self.pass);
+        if let (Some(span), Some(encoder)) = (timer.span_in(group, name), self.encoder.as_mut()) {
+            span.mark(encoder, true);
+        }
+    }
+
+    pub(crate) fn flush_clears(&mut self) {
+        if self.queued.cleared.is_empty() {
+            return;
+        }
+        self.end_render();
+        for buffer in std::mem::take(&mut self.queued.cleared) {
+            if let (Some(Some((made, _))), Some(encoder)) = (self.buffers.get(buffer as usize), self.encoder.as_mut()) {
+                encoder.clear_buffer(made, 0, None);
+            }
+        }
+    }
+
     pub(crate) fn group(&mut self, pass: u32) {
         if !GROUPED || self.labelled == Some(pass) {
             return;
         }
-        let name = self.machine.declared.passes.get(pass as usize).map_or("", |declared| declared.name);
+        let name = self.group_of(pass);
         if let Some(encoder) = self.encoder.as_mut() {
             if self.labelled.is_some() {
                 encoder.pop_debug_group();
@@ -1253,6 +1505,19 @@ impl Run {
                     return self.mismatch(pass.name);
                 }
             }
+            AttachRaw::Colors(ref attached) => {
+                for &(texture, at) in attached {
+                    let Some(&(_, access)) = pass.colors.iter().find(|(known, _)| *known == texture) else {
+                        return self.mismatch(pass.name);
+                    };
+                    let id = self.machine.ids.textures.get(texture as usize).copied();
+                    let planned = ops_of(id).unwrap_or_else(|| declared_ops(access, pass.clear_of(texture), Clear::Color(crate::graph::TRANSPARENT)));
+                    let ops = Ops { store: true, ..planned };
+                    let format = self.machine.declared.textures[texture as usize].format;
+                    let view = self.attachment_view(texture, 0, at);
+                    colors.push(((u64::from(texture) * 4_096 + u64::from(at)) * 64 + 10_000, view, format, ops));
+                }
+            }
         }
         let attachments: Vec<u64> = colors.iter().map(|(key, ..)| *key).chain(depth.as_ref().map(|(key, ..)| *key)).collect();
         if let Some(open) = &mut self.open
@@ -1277,6 +1542,7 @@ impl Run {
         self.end_render();
         let current = self.pass;
         self.group(current);
+        let label = self.label_of(current).unwrap_or(pass.name);
         let Some(encoder) = self.encoder.as_mut() else {
             return false;
         };
@@ -1298,7 +1564,7 @@ impl Run {
         });
         let mut render = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some(pass.name),
+                label: Some(label),
                 color_attachments: &color_attachments,
                 depth_stencil_attachment: depth_attachment,
                 timestamp_writes: None,
@@ -1379,6 +1645,11 @@ impl Run {
     }
 
     pub(crate) fn end_render(&mut self) {
+        self.computing = None;
+        self.end_open();
+    }
+
+    fn end_open(&mut self) {
         if let Some(mut open) = self.open.take()
             && GROUPED
             && open.label.is_some()
@@ -1610,6 +1881,15 @@ impl Run {
                 continue;
             }
             for pass in self.scope_passes(pipeline) {
+                let lazy = self
+                    .machine
+                    .declared
+                    .passes
+                    .get(pass as usize)
+                    .is_some_and(|declared| declared.name == crate::shared::DEBUG_VIEW);
+                if lazy {
+                    continue;
+                }
                 let (formats, depth, main) = self.pass_formats(pass);
                 let _ = self.compile(pipeline as u32, (&formats, depth), (false, main), None);
             }
@@ -1670,7 +1950,7 @@ impl Run {
                     (variant.bits(), variant.constants())
                 })
             }
-            RawShape::Pulled { .. } | RawShape::Buffers { .. } | RawShape::Indirect { .. } => None,
+            RawShape::Pulled { .. } | RawShape::Buffers { .. } | RawShape::Indirect { .. } | RawShape::IndirectAt { .. } => None,
         };
         let Some((key, made)) = self.render_pipeline(pipeline, variant) else {
             return;
@@ -1698,18 +1978,20 @@ impl Run {
             RawShape::Buffers { vertices, .. } | RawShape::Indirect { vertices, .. } => {
                 vertices.iter().map(|input| self.input(part, *input)).collect()
             }
-            RawShape::Pulled { .. } | RawShape::Mesh { .. } | RawShape::MeshIndirect { .. } => Vec::new(),
+            RawShape::Pulled { .. } | RawShape::IndirectAt { .. } | RawShape::Mesh { .. } | RawShape::MeshIndirect { .. } => Vec::new(),
         };
         let index_input = match &shape {
-            RawShape::Buffers { indices, .. } | RawShape::Indirect { indices, .. } => indices.and_then(|input| self.input(part, input)),
+            RawShape::Buffers { indices, .. } | RawShape::Indirect { indices, .. } | RawShape::IndirectAt { indices, .. } => {
+                indices.and_then(|input| self.input(part, input))
+            }
             RawShape::Pulled { .. } | RawShape::Mesh { .. } | RawShape::MeshIndirect { .. } => None,
         };
         let args_input = match &shape {
-            RawShape::Indirect { args, .. } | RawShape::MeshIndirect { args, .. } => self.input(part, *args),
+            RawShape::Indirect { args, .. } | RawShape::IndirectAt { args, .. } | RawShape::MeshIndirect { args, .. } => self.input(part, *args),
             RawShape::Pulled { .. } | RawShape::Buffers { .. } | RawShape::Mesh { .. } => None,
         };
         let stream_inputs: Vec<(Option<wgpu::Buffer>, u64)> = match &shape {
-            RawShape::Mesh { streams, .. } | RawShape::MeshIndirect { streams, .. } => {
+            RawShape::Mesh { streams, .. } | RawShape::MeshIndirect { streams, .. } | RawShape::IndirectAt { vertices: streams, .. } => {
                 streams.iter().map(|(input, offset)| (self.input(part, *input), *offset)).collect()
             }
             RawShape::Pulled { .. } | RawShape::Buffers { .. } | RawShape::Indirect { .. } => Vec::new(),
@@ -1728,7 +2010,7 @@ impl Run {
                 };
                 Some((draw.vertices.clone(), draw.extras.cloned(), draw.indices.clone(), draw.first_index, draw.base_vertex, draw.index_count, group))
             }
-            RawShape::Pulled { .. } | RawShape::Buffers { .. } | RawShape::Indirect { .. } => None,
+            RawShape::Pulled { .. } | RawShape::Buffers { .. } | RawShape::Indirect { .. } | RawShape::IndirectAt { .. } => None,
         };
         let Some(open) = self.open.as_mut() else {
             return;
@@ -1781,6 +2063,21 @@ impl Run {
                     None => render.draw_indirect(&args, offset),
                 }
             }
+            RawShape::IndirectAt { offset, .. } => {
+                for (slot, (buffer, start)) in stream_inputs.iter().enumerate() {
+                    if let Some(buffer) = buffer {
+                        render.set_vertex_buffer(slot as u32, buffer.slice(*start..));
+                    }
+                }
+                let Some(args) = args_input else { return };
+                match index_input {
+                    Some(indices) => {
+                        render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+                        render.draw_indexed_indirect(&args, offset);
+                    }
+                    None => render.draw_indirect(&args, offset),
+                }
+            }
             RawShape::Mesh { instances, .. } => {
                 let Some((vertices, extras, indices, first, base, count, group)) = mesh else { return };
                 render.set_bind_group(1, &group, &[]);
@@ -1817,7 +2114,6 @@ impl Run {
                 render.draw_indexed_indirect(&args, offset);
             }
         }
-        self.drawn += 1;
     }
 
     fn fill_groups(&mut self, pipeline: u32, filled: Option<usize>) {
@@ -1869,7 +2165,7 @@ impl Run {
     }
 
     pub(crate) fn dispatch(&mut self, part: u32, handle: u32, count: CountRaw) -> u32 {
-        self.end_render();
+        self.end_open();
         let Some(built) = self.machine.pipelines.get(handle as usize) else {
             return 0;
         };
@@ -1881,7 +2177,7 @@ impl Run {
         let Some(compute) = built.compute.clone() else {
             return 0;
         };
-        let label = self.machine.declared.passes.get(self.pass as usize).map_or("engine/part-dispatch", |pass| pass.name);
+        let label = self.label_of(self.pass).unwrap_or("engine/part-dispatch");
         let parity = self.parity;
         let frame_group = self.frame_groups.get(built.variant as usize).and_then(|groups| groups.0[parity].clone());
         let own: Vec<(u32, Option<wgpu::BindGroup>)> = built
@@ -1898,14 +2194,23 @@ impl Run {
             CountRaw::Groups(_) => None,
         };
         let current = self.pass;
-        self.group(current);
-        let Some(encoder) = self.encoder.as_mut() else {
+        if self.computing.as_ref().is_none_or(|(known, _)| *known != current) {
+            self.computing = None;
+            self.group(current);
+            let Some(encoder) = self.encoder.as_mut() else {
+                return 0;
+            };
+            let begun = encoder
+                .begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some(label),
+                    timestamp_writes: None,
+                })
+                .forget_lifetime();
+            self.computing = Some((current, begun));
+        }
+        let Some((_, pass)) = self.computing.as_mut() else {
             return 0;
         };
-        let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some(label),
-            timestamp_writes: None,
-        });
         pass.set_pipeline(&compute);
         if let Some(group) = &frame_group {
             pass.set_bind_group(0, group, &[0]);
@@ -1935,6 +2240,7 @@ impl Run {
                     }
                 }
             }
+            Copied::Canvas => self.canvas_texture.clone(),
             Copied::Buffer(_) => None,
         }
     }
@@ -1959,7 +2265,7 @@ impl Run {
         let (source, target) = (self.copied_texture(from), self.copied_texture(to));
         let buffer = |copied: Copied| match copied {
             Copied::Buffer(buffer) => self.buffers.get(buffer as usize).and_then(Option::as_ref).map(|(made, _)| made.clone()),
-            Copied::Texture(_) | Copied::Target(_) => None,
+            Copied::Texture(_) | Copied::Target(_) | Copied::Canvas => None,
         };
         let (from_buffer, to_buffer) = (buffer(from), buffer(to));
         self.group(pass);
@@ -1987,6 +2293,20 @@ impl Run {
                         encoder.copy_texture_to_texture(
                             wgpu::TexelCopyTextureInfo { texture: source, mip_level: *from_mip, origin: *at, aspect: wgpu::TextureAspect::All },
                             wgpu::TexelCopyTextureInfo { texture: target, mip_level: *to_mip, origin: *into, aspect: wgpu::TextureAspect::All },
+                            *size,
+                        );
+                    }
+                }
+                crate::CopyRegion::ToBuffer { from: at, to: layout, size } => {
+                    if let (Some(source), Some(target)) = (&source, &to_buffer) {
+                        let aspect = if source.format().has_depth_aspect() {
+                            wgpu::TextureAspect::DepthOnly
+                        } else {
+                            wgpu::TextureAspect::All
+                        };
+                        encoder.copy_texture_to_buffer(
+                            wgpu::TexelCopyTextureInfo { texture: source, mip_level: 0, origin: *at, aspect },
+                            wgpu::TexelCopyBufferInfo { buffer: target, layout: *layout },
                             *size,
                         );
                     }
@@ -2096,6 +2416,9 @@ impl Run {
     }
 
     pub(crate) fn deliver(&mut self, world: &mut World) {
+        for delivered in std::mem::take(&mut self.queued.delivered) {
+            (delivered.deliver)(world, delivered.frame, delivered.tag, &delivered.bytes);
+        }
         #[cfg(not(target_arch = "wasm32"))]
         crate::platform::run_arrived_maps();
         for ring in &mut self.rings {
@@ -2165,6 +2488,7 @@ pub(crate) enum AttachRaw {
     Depth(u32, Option<u32>),
     Color(u32, u32, Range<u32>),
     ColorDepth(u32, Option<u32>, u32),
+    Colors(Vec<(u32, u32)>),
 }
 
 #[derive(Clone, Copy, Debug)]

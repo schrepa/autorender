@@ -321,7 +321,11 @@ impl StaticGraph {
                             before[early].insert(late);
                         }
                     } else if reads.contains(resource) {
-                        before[late].insert(early);
+                        let kept_after = entry.life == Life::Kept
+                            && after[early].contains(&PassId::new(late));
+                        if !kept_after {
+                            before[late].insert(early);
+                        }
                     }
                 }
                 if reader.entry.layer.is_some() && writer.entry.layer.is_some() {

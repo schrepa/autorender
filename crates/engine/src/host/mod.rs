@@ -30,7 +30,10 @@ pub use resolution::{render_size, view_size};
 pub use scene_load::{
     FileRead, IMAGE_FORMATS, Image, ImageFormat, SceneLoad, decode_image, image_format,
 };
-pub use settings::{HostSettings, OVERLAY, SETTINGS, Setting, apply_setting, run_operation};
+pub use settings::{
+    HostSettings, OVERLAY, SETTINGS, Setting, apply_setting, has_setting, reset_setting,
+    run_operation,
+};
 pub use views::{show_look, show_view};
 
 #[cfg(all(feature = "schema", not(target_arch = "wasm32")))]

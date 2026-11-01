@@ -19,7 +19,7 @@ fn registry(world: &World) -> Result<&Registry, String> {
         .ok_or_else(|| "the schemas' engine lists no bricks: list the game's bricks".to_owned())
 }
 
-fn serialized(schema: schemars::Schema) -> Value {
+fn serialized(schema: impl serde::Serialize) -> Value {
     serde_json::to_value(schema).expect("schema_serializes")
 }
 
@@ -42,7 +42,7 @@ fn definition_of(mut schema: Value, definitions: &mut Map<String, Value>) -> (St
 }
 
 pub fn reply(world: &World) -> Result<Value, String> {
-    registry(world)?;
+    let registry = registry(world)?;
     let mut reply = serialized(schemars::schema_for!(crate::Reply));
     let mut definitions = reply["$defs"].as_object().cloned().unwrap_or_default();
     for schema in [
@@ -63,8 +63,14 @@ pub fn reply(world: &World) -> Result<Value, String> {
         definitions.insert(name, schema);
     }
     let mut results = Map::new();
-    for (op, schema) in crate::results::result_schemas() {
-        let (name, schema) = definition_of(serialized(schema), &mut definitions);
+    let typed = crate::results::result_schemas()
+        .into_iter()
+        .map(|(op, schema)| (op, serialized(schema)))
+        .chain(registry.operations().filter_map(|operation| {
+            Some((operation.name, serialized(operation.result_schema()?)))
+        }));
+    for (op, schema) in typed {
+        let (name, schema) = definition_of(schema, &mut definitions);
         if name.is_empty() {
             return Err(format!("{op}'s result schema names no type"));
         }
@@ -136,6 +142,7 @@ pub fn generated(world: &World) -> Result<Generated, String> {
     }
     if let Some(all) = schemas.as_object_mut() {
         all.extend(sections);
+        all.insert("bricks".to_owned(), bricks_summary(registry));
     }
     let scene_schema = engine_scene::SceneDocument::schema_json(
         registry,
@@ -201,6 +208,35 @@ pub fn generated(world: &World) -> Result<Generated, String> {
         frame_stats: schemas["FrameStats"].clone(),
         inspectors: schemas,
     })
+}
+
+fn bricks_summary(registry: &Registry) -> Value {
+    registry
+        .names()
+        .map(|brick| {
+            let operations: Vec<&str> = registry
+                .operations()
+                .filter(|operation| operation.brick == brick)
+                .map(|operation| operation.name)
+                .collect();
+            let inspectors: Vec<&str> = registry
+                .sections()
+                .filter(|section| section.brick == brick)
+                .map(|section| section.key)
+                .chain(
+                    registry
+                        .stats()
+                        .filter(|stats| stats.brick == brick)
+                        .map(|stats| stats.key),
+                )
+                .collect();
+            json!({
+                "name": brick,
+                "operations": operations,
+                "inspectors": inspectors,
+            })
+        })
+        .collect()
 }
 
 fn core_names(
@@ -364,10 +400,19 @@ fn named_variant(verb: Verb, name: &str, args: Value) -> Value {
     })
 }
 
+fn operation_args(schema: Value, definitions: &mut Map<String, Value>) -> Value {
+    let (_, mut args) = definition_of(schema, definitions);
+    if let Some(fields) = args.as_object_mut() {
+        fields.remove("title");
+        fields.insert("type".to_owned(), json!("object"));
+    }
+    args
+}
+
 fn named_schema(registry: &Registry, verb: Verb, core: schemars::Schema) -> Value {
     let control = verb == Verb::Control;
     let mut core = serialized(core);
-    let definitions = core["$defs"].as_object().cloned().unwrap_or_default();
+    let mut definitions = core["$defs"].as_object().cloned().unwrap_or_default();
     let mut variants: Vec<Value> = core["oneOf"]
         .as_array()
         .into_iter()
@@ -379,7 +424,10 @@ fn named_schema(registry: &Registry, verb: Verb, core: schemars::Schema) -> Valu
         registry
             .operations()
             .filter(|operation| operation.control == control)
-            .map(|operation| named_variant(verb, operation.name, json!({ "type": "object" }))),
+            .map(|operation| {
+                let args = operation_args(serialized(operation.schema()), &mut definitions);
+                named_variant(verb, operation.name, args)
+            }),
     );
     let mut schema = json!({
         "$schema": core["$schema"].take(),
@@ -614,8 +662,6 @@ const DOCUMENT: &[(&str, &str)] = &[
     ("revision", "structure"),
     ("entities", "structure"),
     ("prefabs", "structure"),
-    ("streamed", "structure"),
-    ("along", "structure"),
     ("views", "structure"),
     ("looks", "structure"),
     ("environment", "Environment"),

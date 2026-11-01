@@ -225,6 +225,8 @@ pub trait SmokeSession {
     fn frame(&mut self) -> bool;
     fn source(&mut self, document: &str);
     fn file(&mut self, name: &str, bytes: &[u8]);
+    fn idle(&mut self, milliseconds: f64);
+    fn joined(&mut self, list: TypeId, each: &mut dyn FnMut(&dyn std::any::Any));
 }
 
 #[macro_export]

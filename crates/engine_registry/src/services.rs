@@ -10,6 +10,7 @@ pub struct FrameFacts {
     pub debug: bool,
     pub display_size: UVec2,
     pub render_size: UVec2,
+    pub submitted: bool,
 }
 
 impl Default for FrameFacts {
@@ -22,6 +23,7 @@ impl Default for FrameFacts {
             debug: false,
             display_size: UVec2::new(1920, 1080),
             render_size: UVec2::new(1920, 1080),
+            submitted: true,
         }
     }
 }
@@ -48,6 +50,13 @@ impl Default for ViewState {
 }
 
 impl ViewState {
+    pub fn identified(scene: u64) -> Self {
+        Self {
+            scene,
+            ..Self::default()
+        }
+    }
+
     pub fn facts(&self) -> FrameFacts {
         self.facts
     }
@@ -84,10 +93,6 @@ impl ViewState {
         self.facts = facts;
         self.view_projection = view_projection;
         self.eye = eye;
-    }
-
-    pub fn new_scene(&mut self) {
-        self.scene = self.scene.wrapping_add(1);
     }
 
     pub fn freeze(&mut self, at: Option<Vec3>) {
