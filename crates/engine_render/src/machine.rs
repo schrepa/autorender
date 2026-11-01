@@ -4,7 +4,7 @@ use std::sync::Arc;
 use engine_core::{Entry, Error, ErrorCode};
 
 use crate::bindings::Stages;
-use crate::frame_group::{Class, FramePlan, FrameVariable, Reach};
+use crate::frame_group::{Class, FrameVariable, Reach};
 use crate::graph::{
     Access as GraphAccess, Clear, Declared as GraphPass, FAR, Life, PassEntry, PassId, ResourceEntry,
     ResourceId, SCENE_CLEAR, StaticGraph, TRANSPARENT,
@@ -499,9 +499,9 @@ impl Machine {
         };
         let plan = match crate::frame_group::plan(&variables, &reaches, limits, &conflict) {
             Ok(plan) => plan,
-            Err(error) => {
-                problems.push(error);
-                FramePlan::default()
+            Err(mut refused) => {
+                problems.append(&mut refused);
+                return None;
             }
         };
         let variants: Vec<FrameVariant> = plan

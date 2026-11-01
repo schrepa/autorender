@@ -3,12 +3,15 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_places::ground::{
-    Cover, GroundTiles, PlacedTiles, PooledTile, TerrainEntry, TerrainTiles, TileKey,
+    Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, PooledTile, TerrainEntry, TerrainTiles,
+    TileKey,
 };
 use engine_render::{Buffer, Prepare};
 
 use crate::gpu::{NO_PLACED, TraceTerrain};
 use crate::part::TraceGpu;
+
+const CANOPY_WORDS: u32 = 4 * PALETTE_ENTRIES;
 
 type TileId = (Entity, TileKey);
 
@@ -120,8 +123,13 @@ impl WorldTrace {
         }
         self.pooled = true;
         self.tabled = true;
-        self.upload(cx, placed, frame.room);
+        let canopies = traced(frame.tiles, frame.ground).count() as u32 * CANOPY_WORDS;
+        self.upload(cx, placed, (frame.room, canopies));
         self.write_terrains(cx, terrains, frame);
+    }
+
+    pub(crate) fn terrains(&self) -> u32 {
+        self.written.len() as u32
     }
 
     fn hold(&mut self, ground: &GroundTiles) {
@@ -275,8 +283,13 @@ impl WorldTrace {
         self.dirty.push(words);
     }
 
-    fn upload(&mut self, cx: &mut Prepare<'_, TraceGpu>, buffer: Buffer<TraceGpu>, room: u64) {
-        let bytes = (self.words.len() * 4) as u64;
+    fn upload(
+        &mut self,
+        cx: &mut Prepare<'_, TraceGpu>,
+        buffer: Buffer<TraceGpu>,
+        (room, canopies): (u64, u32),
+    ) {
+        let bytes = (self.words.len() as u64 + u64::from(canopies)) * 4;
         let mut dirty = std::mem::take(&mut self.dirty);
         if let Some(size) = grown(self.placed, bytes, room) {
             self.placed = size;
@@ -308,6 +321,7 @@ impl WorldTrace {
         } else {
             0.0
         };
+        let words = self.words.len() as u32;
         for (terrain, table) in traced(frame.tiles, frame.ground) {
             let ground = self
                 .tops
@@ -326,11 +340,12 @@ impl WorldTrace {
                         )
                     },
                 );
+            let canopy = words + records.len() as u32 * CANOPY_WORDS;
             records.push(TraceTerrain {
                 cutout: terrain
                     .cutout
                     .map_or([0.0; 4], |(low, high)| [low.x, low.y, high.x, high.y]),
-                maps: [table, levels, 0, 0],
+                maps: [table, levels, canopy, 0],
                 reach: [apron, cover, highest, 0.0],
             });
         }

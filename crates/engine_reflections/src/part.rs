@@ -1,14 +1,14 @@
 use bevy_ecs::prelude::*;
 use engine_core::{DeviceLimits, Entry, Error, View};
-use engine_places::ground::{Cover, GroundTiles, PlacedTiles, TerrainTiles};
+use engine_places::ground::{Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, TerrainTiles};
 use engine_render::{
     Access, Attach, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Encode,
     FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
     SCENE_FORMAT, SamplerDesc, Shape, Texture, ViewTarget, level_region, mip_levels, wgpu,
 };
 
-use crate::gpu::{PYRAMID_GROUP, PyramidExtent};
-use crate::shaders::reflections::{apply, levels, nearest, trace};
+use crate::gpu::{CANOPY_GROUP, PYRAMID_GROUP, PyramidExtent};
+use crate::shaders::reflections::{apply, canopy, levels, nearest, trace};
 use crate::world_trace::{TraceFrame, WorldTrace};
 
 const SCENE_LEVELS: u32 = 6;
@@ -29,6 +29,7 @@ pub(crate) struct TraceGpu {
     placed: Buffer<Self>,
     extents: Vec<Buffer<Self>>,
     reductions: Vec<ComputePipeline<Self>>,
+    canopies: ComputePipeline<Self>,
     downs: Vec<Pipeline<Self, Own>>,
     tracing: Pipeline<Self, Own>,
     world: WorldTrace,
@@ -109,6 +110,14 @@ impl GpuPart for TraceGpu {
             };
             reductions.push(reduction);
         }
+        let canopies = cx.compute_pipeline(
+            reduce,
+            canopy::CS_CANOPY,
+            &[
+                (canopy::WORLD_TERRAINS, Bind::Buffer(terrains)),
+                (canopy::WORLD_PLACED, Bind::Buffer(placed)),
+            ],
+        )?;
         let mut downs = Vec::new();
         for level in 1..=SCENE_LEVELS {
             let fragment = if level == 1 {
@@ -144,6 +153,7 @@ impl GpuPart for TraceGpu {
             placed,
             extents,
             reductions,
+            canopies,
             downs,
             tracing,
             world: WorldTrace::default(),
@@ -230,6 +240,11 @@ impl GpuPart for TraceGpu {
                 let [width, height] = written.size;
                 let groups = [width.div_ceil(PYRAMID_GROUP), height.div_ceil(PYRAMID_GROUP), 1];
                 cx.dispatch(reduction, Count::Groups(groups));
+            }
+            let terrains = self.world.terrains();
+            if terrains > 0 {
+                let groups = [PALETTE_ENTRIES.div_ceil(CANOPY_GROUP), terrains, 1];
+                cx.dispatch(&self.canopies, Count::Groups(groups));
             }
             return 0;
         }

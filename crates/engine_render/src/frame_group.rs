@@ -35,7 +35,7 @@ pub(crate) struct Variant {
     pub(crate) members: Vec<u32>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct FramePlan {
     pub(crate) variants: Vec<Variant>,
     pub(crate) of_pipeline: Vec<u32>,
@@ -181,8 +181,9 @@ pub(crate) fn plan(
     reaches: &[Reach],
     limits: &StageLimits,
     conflict: &dyn Fn(u32, u32) -> bool,
-) -> Result<FramePlan, Error> {
+) -> Result<FramePlan, Vec<Error>> {
     let mut exact: Vec<Variant> = Vec::new();
+    let mut over = Vec::new();
     for (index, reach) in reaches.iter().enumerate() {
         let pipeline = index as u32;
         let entries = joined(&[], &reach.reached);
@@ -190,17 +191,16 @@ pub(crate) fn plan(
             .iter()
             .find(|&&(variable, _)| conflict(pipeline, variable))
         {
-            return Err(Error::new(
+            over.push(Error::new(
                 ErrorCode::UsageConflict,
-                format!(
-                    "$.pipelines.{}.{}",
-                    reach.label, variables[variable as usize].name
-                ),
+                format!("{}.{}", reach.label, variables[variable as usize].name),
             ));
+            continue;
         }
-        fits(reach, &entries, variables, limits).map_err(|(stage, what)| {
-            refused(ErrorCode::BindingLimit, reach, variables, stage, what)
-        })?;
+        if let Err((stage, what)) = fits(reach, &entries, variables, limits) {
+            over.push(refused(ErrorCode::BindingLimit, reach, variables, stage, what));
+            continue;
+        }
         let same = exact.iter_mut().find(|variant| {
             variant.entries.len() == entries.len()
                 && variant
@@ -274,6 +274,9 @@ pub(crate) fn plan(
         for &member in &variant.members {
             of_pipeline[member as usize] = index as u32;
         }
+    }
+    if !over.is_empty() {
+        return Err(over);
     }
     Ok(FramePlan {
         variants: merged,

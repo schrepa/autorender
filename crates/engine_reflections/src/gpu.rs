@@ -34,4 +34,5 @@ gpu_struct! {
 gpu_consts! {
     pub(crate) const NO_PLACED: u32 = u32::MAX;
     pub(crate) const PYRAMID_GROUP: u32 = 8;
+    pub(crate) const CANOPY_GROUP: u32 = 64;
 }

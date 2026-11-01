@@ -10,9 +10,9 @@ import package::engine::screen_points::{depth_normal, world_at};
 import package::engine::shading::{BODY_SOLID, BODY_THIN, BODY_WATER};
 import package::engine::view::{camera, stable_normalize};
 import package::face::bounce::bounce_light;
-import package::face::cover::{cover_growth, cover_seen, cover_tint, material_canopy};
+import package::face::cover::{cover_growth, cover_seen, cover_tint};
 import package::face::ground_tiles::{
-    LevelTile, NOT_RESIDENT, PEAK_CELLS, PEAK_MIPS, TILE_QUADS, ground_colors,
+    LevelTile, NOT_RESIDENT, PALETTE_ENTRIES, PEAK_CELLS, PEAK_MIPS, TILE_QUADS, ground_colors,
     ground_colors_mip, ground_extent, ground_of, ground_sky, ground_tile, level_tiles,
     macro_color, material_look, terrain_info, tile_height, tile_layer, tile_material, tile_peak,
     triangle_height,
@@ -735,6 +735,12 @@ fn world_trace(p: vec3<f32>, direction: vec3<f32>, nearest: f32, farthest: f32,
     return hit;
 }
 
+fn trace_canopy(terrain: TraceTerrain, material: u32) -> vec4<f32> {
+    let at = terrain.maps.z + 4u * min(material, PALETTE_ENTRIES - 1u);
+    return bitcast<vec4<f32>>(vec4<u32>(world_placed[at], world_placed[at + 1u],
+        world_placed[at + 2u], world_placed[at + 3u]));
+}
+
 fn ground_albedo(terrain: TraceTerrain, local: vec2<f32>, normal: vec3<f32>, toward: vec3<f32>,
         footprint: f32, finest: u32) -> vec3<f32> {
     let info = terrain_info(terrain.maps.x);
@@ -757,7 +763,7 @@ fn ground_albedo(terrain: TraceTerrain, local: vec2<f32>, normal: vec3<f32>, tow
         let weight = select(share, 1.0 - share, slot == 0u);
         let index = select(material.first, material.second, slot == 1u);
         let entry = material_look(info.levels.z, index);
-        let canopy = material_canopy(terrain.maps.x, index);
+        let canopy = trace_canopy(terrain, index);
         var color = entry.far.rgb;
         if canopy.w > 0.0 {
             let depth = 0.5 * canopy.w * growth.height * growth.density * terrain.reach.y / sine;
