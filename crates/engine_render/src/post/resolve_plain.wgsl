@@ -25,7 +25,8 @@ fn upscaled_scene(pixel: vec2<f32>) -> vec4<f32> {
         + scene_tap(vec2<f32>(before.x, middle.y)) * weights.y
         + scene_tap(vec2<f32>(after.x, middle.y)) * weights.z
         + scene_tap(vec2<f32>(middle.x, after.y)) * weights.w;
-    return clamp(color / sum, vec4<f32>(0.0), vec4<f32>(1.0));
+    let filtered = color / sum;
+    return vec4<f32>(max(filtered.rgb, vec3<f32>(0.0)), saturate(filtered.a));
 }
 
 fn scene_tap(pixel: vec2<f32>) -> vec4<f32> {

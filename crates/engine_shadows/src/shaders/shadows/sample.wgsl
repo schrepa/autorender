@@ -1,7 +1,7 @@
 import package::engine::view::{DetailLevel, PI, detail_across, detail_level, fade_noise};
 import package::generated::pieces::shadows::piece;
 import package::generated::shadows::SHADOW_APRON;
-import package::place::shadows::KeptLift;
+import package::place::sun_blockers::SunAt;
 
 @group(0) @binding(0) var shadow_atlas: texture_depth_2d;
 @group(0) @binding(0) var shadow_tiles: texture_2d<u32>;
@@ -17,10 +17,12 @@ struct MapPoint {
     soft: f32,
 }
 
-var<private> crown_light: f32;
+fn sun_shadowed() -> bool {
+    return piece().state.x != 0.0;
+}
 
-fn crown_softness(per_meter: f32) -> f32 {
-    return crown_light * piece().state.y * abs(per_meter);
+fn crown_softness(softness: f32, per_meter: f32) -> f32 {
+    return softness * piece().state.y * abs(per_meter);
 }
 
 fn texel_slope(map_dx: vec4<f32>, map_dy: vec4<f32>, scale: vec2<f32>, limit: f32) -> vec2<f32> {
@@ -101,13 +103,11 @@ fn slot_texel(slot: u32, across: vec2<f32>) -> vec2<f32> {
     return corner + vec2<f32>(f32(SHADOW_APRON)) + vec2<f32>(across.x, 1.0 - across.y) * texels;
 }
 
-var<private> kept_lift: KeptLift;
-
-fn level_lift(level: u32) -> f32 {
-    if level < kept_lift.first || level - kept_lift.first >= 4u {
+fn level_lift(level: u32, at: SunAt) -> f32 {
+    if level < at.lift_first || level - at.lift_first >= 4u {
         return 0.0;
     }
-    return kept_lift.lifts[level - kept_lift.first];
+    return at.lifts[level - at.lift_first];
 }
 
 const CROWN_TAPS: u32 = 4u;
@@ -143,13 +143,12 @@ fn crown_spread(level: u32, light: vec3<f32>, point: MapPoint, center: LevelPoin
     return lit;
 }
 
-fn level_visibility(level: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
-        dy: vec3<f32>, spread: bool) -> f32 {
+fn level_visibility(level: u32, sun: SunAt, spread: bool) -> f32 {
     let window = piece().windows[level];
     let band = piece().bands[level];
     let up = vec3<f32>(piece().light[0].y, piece().light[1].y,
         piece().light[2].y);
-    let light = light_space(world + normal * band.z) + up * level_lift(level);
+    let light = light_space(sun.world + sun.normal * band.z) + up * level_lift(level, sun);
     let at = level_point(level, light);
     if !at.inside {
         return -1.0;
@@ -162,9 +161,10 @@ fn level_visibility(level: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec3<f3
     point.texel = slot_texel(slots.x - 1u, at.across);
     point.depth = at.depth;
     let per_world = vec3<f32>(1.0, 1.0, band.y);
-    point.slope = texel_slope(vec4<f32>(light_space(dx) * per_world, 0.0),
-        vec4<f32>(light_space(dy) * per_world, 0.0), vec2<f32>(1.0, -1.0) / window.w, band.w);
-    point.soft = crown_softness(band.y);
+    point.slope = texel_slope(vec4<f32>(light_space(sun.world_dx) * per_world, 0.0),
+        vec4<f32>(light_space(sun.world_dy) * per_world, 0.0), vec2<f32>(1.0, -1.0) / window.w,
+        band.w);
+    point.soft = crown_softness(sun.softness, band.y);
     var visible = plane_visibility(atlas_depths(point), point);
     if spread && point.soft > 0.0 && visible < 1.0 {
         visible = crown_spread(level, light, point, at, slots.x, visible);
@@ -177,11 +177,11 @@ fn level_visibility(level: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec3<f3
     return visible;
 }
 
-fn map_lookup(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>) -> vec2<f32> {
-    let pick = shadow_level(world);
+fn map_lookup(sun: SunAt) -> vec2<f32> {
+    let pick = shadow_level(sun.world);
     let count = u32(piece().level_state.x);
     for (var level = pick.level; level < count; level++) {
-        let visible = level_visibility(level, world, normal, dx, dy, true);
+        let visible = level_visibility(level, sun, true);
         if visible < 0.0 {
             continue;
         }
@@ -189,7 +189,7 @@ fn map_lookup(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>)
             return vec2<f32>(visible, f32(level));
         }
         for (var next = level + 1u; next < count; next++) {
-            let coarser = level_visibility(next, world, normal, dx, dy, false);
+            let coarser = level_visibility(next, sun, false);
             if coarser >= 0.0 {
                 return vec2<f32>(mix(visible, coarser, pick.blend), f32(level));
             }
@@ -199,8 +199,8 @@ fn map_lookup(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>)
     return vec2<f32>(1.0, -1.0);
 }
 
-fn map_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>) -> f32 {
-    return map_lookup(world, normal, dx, dy).x;
+fn map_visibility(sun: SunAt) -> f32 {
+    return map_lookup(sun).x;
 }
 
 fn air_visibility(world: vec3<f32>) -> f32 {

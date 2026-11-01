@@ -15,8 +15,9 @@ mod smokes;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source};
+use engine_places::lighting::SunBlockers;
 use engine_places::shadows::{CasterRoutes, ShadowCasters, ShadowMaps};
-use engine_render::{DebugModes, RenderBricks};
+use engine_render::{DebugModes, PostScene, RenderBricks};
 
 pub use constants::{MAX_MOVING_TILES, MAX_SHADOW_LEVELS};
 pub use settings::{ShadowSettings, ShadowStats, SkyOcclusion};
@@ -42,7 +43,9 @@ impl Brick for ShadowsBrick {
             .piece::<gpu_layouts::ShadowPiece>()
             .fill::<ShadowMaps>(Some(shaders::shadows::faces::shadows::MODULE))
             .fill::<CasterRoutes>(Some(shaders::shadows::faces::routes::MODULE))
-            .fill::<ShadowCasters>(None);
+            .fill::<ShadowCasters>(None)
+            .join::<SunBlockers>((), Some(shaders::shadows::blockers::MODULE))
+            .join::<PostScene>((), Some(shaders::shadows::sky_open::MODULE));
         for (index, (name, _)) in debug::MODES.into_iter().enumerate() {
             let wgsl = (index == 0).then_some(shaders::shadows::debug::MODULE);
             bricks.join::<DebugModes>(debug::member(name), wgsl);

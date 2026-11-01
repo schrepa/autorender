@@ -16,3 +16,7 @@ fn surface(shaded: Shaded, at: ViewPixel) -> vec4<u32> {
     return vec4<u32>(normal & 0xffffu, normal >> 16u, roughness,
         mirrored | (shaded.body << MIRRORED_BITS));
 }
+
+fn reflectivity(shaded: Shaded, at: ViewPixel) -> f32 {
+    return shaded.reflect;
+}

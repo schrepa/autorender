@@ -17,6 +17,7 @@ mod systems;
 
 use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source};
 use engine_places::ground::{FarCover, Foliage, Occupancy, PlacedTiles};
+use engine_places::lighting::Ambient;
 use engine_places::shadows::ShadowCasters;
 use engine_render::{Layer, MainView, RenderBricks};
 
@@ -56,7 +57,8 @@ impl Brick for ScatterBrick {
             .generated(layouts::GENERATED)
             .fill::<Foliage>(Some(shaders::scatter::faces::foliage::MODULE))
             .fill::<PlacedTiles>(Some(shaders::scatter::faces::placed_tiles::MODULE))
-            .fill::<Occupancy>(Some(shaders::scatter::faces::occupancy::MODULE))
+            .fill::<Occupancy>(None)
+            .join::<Ambient>((), Some(shaders::scatter::ambient::MODULE))
             .join::<FarCover>((), Some(shaders::scatter::faces::far_cover::MODULE))
             .systems(
                 Schedule::ViewSync,

@@ -1,13 +1,11 @@
 import package::engine::color::luminance;
 import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::view::{PI, camera};
-import package::face::bloom::glow_weight;
+import package::face::ambient::{EnvironmentAt, EnvironmentLight, environment};
 import package::face::lights::{cluster_light, light_cluster, lights_on};
-import package::face::shadows::{DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_LEVEL, DEBUG_SUN_NONE,
-    shadow_lookup, sun_shadow, sun_shadowed};
-import package::face::sky::{ambient, atmospheric, sky_average};
+import package::face::sky::atmospheric;
 import package::face::sun::{sun_color, sun_direction};
-import package::face::tonemap::tonemap;
+import package::face::sun_blockers::{DEBUG_SUN_NONE, SunAt, SunOpen, sun_flags, sun_open};
 import package::toon_lighting::bands::{TOON_DARK, TOON_HIGHLIGHTS, TOON_NEAREST, TOON_RIM,
     TOON_SHADOW_EDGE, TOON_SHARPEST, TOON_SPECULAR, TOON_UP, TOON_VISIBILITY, TOON_WIDEST,
     banded};
@@ -43,25 +41,27 @@ fn environment_brdf(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32> {
     return fresnel(f0, n_v) * (1.0 - roughness);
 }
 
-fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
-        distance: f32, on_terrain: bool, crown: f32) -> f32 {
-    if !sun_shadowed() {
-        return 1.0;
-    }
-    return step(TOON_SHADOW_EDGE, sun_shadow(world, normal, dx, dy, crown));
+fn surface_sun(point: SurfacePoint) -> SunAt {
+    return SunAt(point.world + point.shadow_offset, point.geometric, point.world_dx,
+        point.world_dy, point.shadow_softness, point.ground, point.shadow_lift_first,
+        point.shadow_lifts);
 }
 
-fn sun_debug(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
-        on_terrain: bool) -> u32 {
-    if !sun_shadowed() {
-        return DEBUG_SUN_NONE;
-    }
-    let found = shadow_lookup(world, normal, dx, dy);
-    if found.y < 0.0 {
-        return DEBUG_SUN_BEYOND;
-    }
-    return (DEBUG_SUN_LEVEL + u32(found.y))
-        | select(0u, DEBUG_SHADOWED, found.x < TOON_SHADOW_EDGE);
+fn sun_visibility(at: SunAt) -> f32 {
+    let open = sun_open(SunOpen(1.0, 1.0), at);
+    return step(TOON_SHADOW_EDGE, open.blocked * open.passing);
+}
+
+fn sun_debug(at: SunAt) -> u32 {
+    return sun_flags(DEBUG_SUN_NONE, at);
+}
+
+fn toon_environment() -> EnvironmentLight {
+    var light: EnvironmentLight;
+    light.near_open = 1.0;
+    light.open = 1.0;
+    light.inside = vec2<f32>(1.0);
+    return light;
 }
 
 fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
@@ -101,25 +101,19 @@ fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
         * (1.0 - point.sun_shade);
     var shown = 1.0;
     if any(sunlit != vec3<f32>(0.0)) {
-        shown = sun_visibility(point.world + point.shadow_offset, point.geometric,
-            point.world_dx, point.world_dy, point.distance, point.on_terrain, point.crown);
+        shown = sun_visibility(surface_sun(point));
     }
-    let skylight = point.diffuse_color * sky_average(TOON_UP) * (ambient() * point.occlusion);
+    let around = environment(toon_environment(), EnvironmentAt(point.world, point.normal,
+        TOON_UP, point.normal, point.roughness, point.alpha, point.ground));
+    let skylight = point.diffuse_color * around.sky * point.occlusion;
     let lit = skylight + sunlit * shown + point.albedo * point.emission + point.emissive
         + local;
     let through = atmospheric(lit, camera.position.xyz, point.world, -point.view);
     var shaded: Shaded;
-    shaded.color = tonemap(through.rgb);
     shaded.linear = through.rgb;
     shaded.ambient = saturate(luminance(skylight) / max(luminance(lit), TOON_DARK))
         * (1.0 - through.a);
-    shaded.glow = glow_weight(through.rgb);
     shaded.normal = point.normal;
     shaded.roughness = point.roughness;
-    shaded.body = point.body;
     return shaded;
-}
-
-fn finish_ground(point: SurfacePoint, local: vec3<f32>) -> Shaded {
-    return finish(point, local);
 }

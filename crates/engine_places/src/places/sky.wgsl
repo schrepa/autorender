@@ -19,15 +19,7 @@ fn cloud_passing(world: vec3<f32>) -> f32 {
     return 1.0;
 }
 
-fn mirrored_along(start: vec3<f32>, direction: vec3<f32>) -> vec3<f32> {
-    return vec3<f32>(0.0);
-}
-
 fn environment_levels() -> u32 {
-    return 1u;
-}
-
-fn environment_size() -> u32 {
     return 1u;
 }
 

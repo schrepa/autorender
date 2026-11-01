@@ -1,10 +1,12 @@
-import package::engine::post::frame::{depth_texture, linear, post, scene};
+import package::engine::post::frame::{depth_texture, linear, post};
 import package::engine::post::pixel::{PostPixel, SceneLight};
-import package::face::dither::dithering;
-import package::face::post_scene::apply as scene_light;
+import package::face::tonemap::exposure;
 import package::face::transparency::revealed;
 import package::generated::pieces::taa::piece;
 import package::generated::targets::{output_history, output_motion};
+import package::taa::lit::turn;
+
+@group(0) @binding(0) var lit: texture_2d<f32>;
 
 const STILL_PIXELS: f32 = 0.015625f;
 
@@ -26,6 +28,14 @@ fn ycocg(color: vec3<f32>) -> vec3<f32> {
 
 fn rgb(color: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(color.x + color.y - color.z, color.x + color.z, color.x - color.y - color.z);
+}
+
+fn weighed(color: vec3<f32>) -> vec3<f32> {
+    return color / (1.0 + max(color.r, max(color.g, color.b)) * exposure());
+}
+
+fn unweighed(color: vec3<f32>) -> vec3<f32> {
+    return color / max(1.0 - max(color.r, max(color.g, color.b)) * exposure(), 1.0e-6);
 }
 
 fn sample_history(uv: vec2<f32>) -> vec3<f32> {
@@ -69,29 +79,19 @@ fn nearest_motion(pixel: vec2<i32>, last: vec2<i32>) -> vec2<f32> {
     return textureLoad(output_motion, nearest, 0).xy;
 }
 
-fn turn() -> f32 {
-    return select(0.0, piece().options.x, dithering());
-}
-
-fn taa_at(position: vec2<f32>, pixel: vec2<i32>) -> PostPixel {
-    return PostPixel(position, position / post.size.xy, pixel, turn(), 2u);
-}
-
-fn neighbor(pixel: vec2<i32>, offset: vec2<i32>, last: vec2<i32>, ambient: f32) -> vec3<f32> {
+fn neighbor(pixel: vec2<i32>, offset: vec2<i32>, last: vec2<i32>) -> vec3<f32> {
     let at = clamp(pixel + offset, vec2<i32>(0), last);
-    let texel = textureLoad(scene, at, 0);
-    let light = SceneLight(texel.rgb, ambient);
-    return ycocg(scene_light(light, taa_at(vec2<f32>(at) + 0.5, pixel)).color);
+    return ycocg(weighed(textureLoad(lit, at, 0).rgb));
 }
 
 fn upsampled(position: vec2<f32>, last: vec2<i32>) -> vec3<f32> {
     let base = position - 0.5;
     let first = vec2<i32>(floor(base));
     let f = base - floor(base);
-    let a = textureLoad(scene, clamp(first, vec2<i32>(0), last), 0).rgb;
-    let b = textureLoad(scene, clamp(first + vec2<i32>(1, 0), vec2<i32>(0), last), 0).rgb;
-    let c = textureLoad(scene, clamp(first + vec2<i32>(0, 1), vec2<i32>(0), last), 0).rgb;
-    let d = textureLoad(scene, clamp(first + vec2<i32>(1, 1), vec2<i32>(0), last), 0).rgb;
+    let a = textureLoad(lit, clamp(first, vec2<i32>(0), last), 0).rgb;
+    let b = textureLoad(lit, clamp(first + vec2<i32>(1, 0), vec2<i32>(0), last), 0).rgb;
+    let c = textureLoad(lit, clamp(first + vec2<i32>(0, 1), vec2<i32>(0), last), 0).rgb;
+    let d = textureLoad(lit, clamp(first + vec2<i32>(1, 1), vec2<i32>(0), last), 0).rgb;
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
@@ -111,16 +111,13 @@ fn resolve(at: PostPixel, light: SceneLight) -> SceneLight {
     let jittered = tap.jittered;
     let last = tap.last;
     let pixel = tap.pixel;
-    let texel = textureLoad(scene, pixel, 0);
-    let current = scene_light(SceneLight(texel.rgb, texel.a),
-        taa_at(vec2<f32>(pixel) + 0.5, pixel)).color;
+    let current = weighed(textureLoad(lit, pixel, 0).rgb);
     let away = (vec2<f32>(pixel) + 0.5 - piece().offset - rendered)
         / (post.size.xy * post.extent.zw);
     let near = saturate(2.0 - 2.0 * max(abs(away.x), abs(away.y)));
     var color = current;
     if near < 1.0 {
-        color = scene_light(SceneLight(upsampled(jittered, last), texel.a),
-            taa_at(jittered, pixel)).color;
+        color = weighed(upsampled(jittered, last));
     }
     var offset = textureLoad(output_motion, pixel, 0).xy;
     if piece().options.y != 0.0 {
@@ -129,17 +126,17 @@ fn resolve(at: PostPixel, light: SceneLight) -> SceneLight {
     let uv = screen + offset;
     if piece().history_valid != 0u && all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0)) {
         let center = ycocg(current);
-        let left = neighbor(pixel, vec2<i32>(-1, 0), last, texel.a);
-        let right = neighbor(pixel, vec2<i32>(1, 0), last, texel.a);
-        let up = neighbor(pixel, vec2<i32>(0, -1), last, texel.a);
-        let down = neighbor(pixel, vec2<i32>(0, 1), last, texel.a);
+        let left = neighbor(pixel, vec2<i32>(-1, 0), last);
+        let right = neighbor(pixel, vec2<i32>(1, 0), last);
+        let up = neighbor(pixel, vec2<i32>(0, -1), last);
+        let down = neighbor(pixel, vec2<i32>(0, 1), last);
         var low = min(center, min(min(left, right), min(up, down)));
         var high = max(center, max(max(left, right), max(up, down)));
         if piece().options.z != 0.0 {
-            let a = neighbor(pixel, vec2<i32>(-1, -1), last, texel.a);
-            let b = neighbor(pixel, vec2<i32>(1, -1), last, texel.a);
-            let c = neighbor(pixel, vec2<i32>(-1, 1), last, texel.a);
-            let d = neighbor(pixel, vec2<i32>(1, 1), last, texel.a);
+            let a = neighbor(pixel, vec2<i32>(-1, -1), last);
+            let b = neighbor(pixel, vec2<i32>(1, -1), last);
+            let c = neighbor(pixel, vec2<i32>(-1, 1), last);
+            let d = neighbor(pixel, vec2<i32>(1, 1), last);
             low = 0.5 * (low + min(low, min(min(a, b), min(c, d))));
             high = 0.5 * (high + max(high, max(max(a, b), max(c, d))));
         }
@@ -149,6 +146,7 @@ fn resolve(at: PostPixel, light: SceneLight) -> SceneLight {
         } else {
             past = sample_history(uv);
         }
+        past = weighed(max(past, vec3<f32>(0.0)));
         var weight = piece().current_weight * near;
         if piece().options.w > 0.0 {
             let particles = 1.0 - revealed(pixel).y;
@@ -156,7 +154,7 @@ fn resolve(at: PostPixel, light: SceneLight) -> SceneLight {
         }
         color = mix(rgb(clamp(ycocg(past), low, high)), current, weight);
     }
-    color = max(color, vec3<f32>(0.0));
+    color = unweighed(max(color, vec3<f32>(0.0)));
     return SceneLight(color, light.ambient);
 }
 

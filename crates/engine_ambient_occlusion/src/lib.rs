@@ -11,7 +11,6 @@ mod settings;
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Schedule, Source, gpu_struct};
 use engine_places::ground::Occupancy;
-use engine_places::shadows::ShadowMaps;
 use engine_render::{DebugShown, PostScene, RenderBricks};
 
 pub use settings::{AmbientOcclusion, AmbientOcclusionStats};
@@ -31,9 +30,7 @@ impl Brick for AmbientOcclusionBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|ambient: Res<AmbientOcclusion>, maps: Res<ShadowMaps>| {
-                ambient.enabled() || maps.sky_darkens
-            })
+            .when(|ambient: Res<AmbientOcclusion>| ambient.enabled())
             .settings::<AmbientOcclusion>()
             .stats::<AmbientOcclusionStats>()
             .piece::<AmbientPiece>()

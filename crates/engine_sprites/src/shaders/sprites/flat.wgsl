@@ -24,7 +24,6 @@ fn vs_sprite(@builtin(vertex_index) vertex: u32) -> SpriteOutput {
 fn fs_sprite(input: SpriteOutput) -> ViewTargets {
     let texel = textureSample(checker, checker_sampler, input.uv);
     var shaded: Shaded;
-    shaded.color = texel.rgb;
     shaded.linear = texel.rgb;
     shaded.normal = vec3<f32>(0.0, 0.0, 1.0);
     let at = vec4<f32>(input.ndc, 0.0, 1.0);

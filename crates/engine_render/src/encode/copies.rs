@@ -8,7 +8,7 @@ impl Run {
                 let target = final_target(view);
                 match target {
                     Target::Debug(index) => self.debug_targets.get(index as usize).map(|made| made.texture.clone()),
-                    Target::Scene | Target::Glow | Target::Depth | Target::Output(_) | Target::Canvas | Target::Copy(..) => {
+                    Target::Scene | Target::Depth | Target::Output(_) | Target::Canvas | Target::Copy(..) => {
                         self.targets.iter().find(|(known, _)| *known == target).map(|(_, made)| made.texture.clone())
                     }
                 }

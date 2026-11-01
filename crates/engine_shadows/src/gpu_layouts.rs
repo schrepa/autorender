@@ -26,6 +26,7 @@ gpu_struct! {
         pub atlas: [f32; 4],
         pub windows: [[f32; 4]; 20],
         pub bands: [[f32; 4]; 20],
+        pub sky: [f32; 4],
     }
 }
 

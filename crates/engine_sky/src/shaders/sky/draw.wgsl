@@ -1,10 +1,8 @@
 import package::engine::color::{dither_hash, luminance};
 import package::engine::shading::{ViewPixel, flat};
 import package::engine::view::{camera, stable_normalize};
-import package::face::bloom::glow_weight;
-import package::face::dither::{dithering, stored};
 import package::face::sun::{sun_color, sun_direction};
-import package::face::tonemap::{exposure, tonemap};
+import package::face::tonemap::exposure;
 import package::generated::targets::{ViewTargets, view_targets};
 import package::sky::air::sun_disc;
 import package::sky::common::{air_disc, air_radius, air_transmittance, sunlight_over};
@@ -387,34 +385,20 @@ fn fs_probe_sky(input: SkyOutput) -> @location(0) vec4<f32> {
 
 @group(1) @binding(46) var view_clouds: texture_2d<f32>;
 
-fn view_cloud_layer(position: vec2<f32>) -> vec4<f32> {
-    let cloud = textureLoad(view_clouds, vec2<i32>(position), 0);
-    let covering = 1.0 - cloud.a;
-    if covering <= 1.0e-4 {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    }
-    return vec4<f32>(tonemap(cloud.rgb / covering) * covering, cloud.a);
-}
-
 @fragment
 fn fs_view_clouds_post(input: SkyOutput) -> @location(0) vec4<f32> {
-    let layer = view_cloud_layer(input.clip_position.xy);
+    let layer = textureLoad(view_clouds, vec2<i32>(input.clip_position.xy), 0);
     if layer.a >= 1.0 - 1.0e-4 {
         discard;
     }
-    if !dithering() {
-        return layer;
-    }
-    let covering = 1.0 - layer.a;
-    return vec4<f32>(stored(layer.rgb / covering, input.clip_position.xy) * covering, layer.a);
+    return layer;
 }
 
 @fragment
 fn fs_sky(input: SkyOutput) -> ViewTargets {
     let ray = sky_ray(input.ndc);
     let light = clouded_sky(ray);
-    var shaded = flat(vec4<f32>(stored(tonemap(light), input.clip_position.xy), 0.0));
-    shaded.glow = glow_weight(light);
+    var shaded = flat(vec4<f32>(light, 0.0));
     shaded.across = 1.0;
     let previous = camera.previous_view_projection * vec4<f32>(ray, 0.0);
     return view_targets(shaded, ViewPixel(vec4<f32>(input.ndc, 0.0, 1.0), previous));

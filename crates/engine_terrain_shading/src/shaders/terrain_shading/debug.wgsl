@@ -1,4 +1,5 @@
 import package::face::lighting::sun_debug;
+import package::face::sun_blockers::SunAt;
 import package::engine::view::eye_world;
 import package::face::debug::{DEBUG_KIND_TERRAIN, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL, DebugTargets,
     debug_targets};
@@ -44,7 +45,7 @@ fn debug_terrain(input: TerrainOutput, holes: bool) -> DebugTargets {
         | ((within.x | (within.y << 4u)) << DEBUG_PATCH_SHIFT);
     let made = pack4x8unorm(vec4<f32>(sky, ground.detailed, ground.averaged, ground.canopy));
     var targets = debug_targets(record, made, pack4x8unorm(shares.weights), normal,
-        sun_debug(world, normal, world_dx, world_dy, true));
+        sun_debug(SunAt(world, normal, world_dx, world_dy, 0.0, true, 0u, vec4<f32>(0.0))));
     let ids = min(shares.ids, vec4<u32>(DEBUG_NO_MATERIAL));
     let tiles = bitcast<vec2<u32>>(tile) & vec2<u32>(0xffffu);
     targets.terrain = vec2<u32>(tiles.x | (tiles.y << 16u),

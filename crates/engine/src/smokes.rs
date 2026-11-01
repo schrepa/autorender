@@ -1,4 +1,5 @@
 mod host;
+mod proofs;
 
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
@@ -173,6 +174,18 @@ pub fn registered(bricks: &BrickList) -> Result<Vec<SmokeEntry>> {
             .names()
             .map(|package| SmokeEntry::left_out(registry, package)),
     );
+    if proofs::room_listed(registry) {
+        smokes.push(SmokeEntry {
+            list: Some(proofs::room),
+            ..SmokeEntry::of(HOST, &proofs::LIT_ROOM)
+        });
+    }
+    if proofs::outdoor_listed(registry) {
+        smokes.push(SmokeEntry {
+            list: Some(proofs::outdoor),
+            ..SmokeEntry::of(HOST, &proofs::OUTDOOR_WITHOUT_TREES)
+        });
+    }
     Ok(smokes)
 }
 

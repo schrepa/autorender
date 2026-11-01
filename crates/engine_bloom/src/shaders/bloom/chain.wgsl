@@ -1,13 +1,15 @@
 import package::engine::color::luminance;
-import package::engine::post::frame::{drawn_texels, drawn_uv, glow, linear, post, scene};
+import package::engine::post::frame::{drawn_texels, drawn_uv, linear, post, scene};
 import package::engine::post::levels::{halved, level_tap};
+import package::face::tonemap::exposure;
+import package::generated::pieces::bloom::piece;
 
 @group(1) @binding(0) var source: texture_2d<f32>;
 
 fn glow_light(uv: vec2<f32>) -> vec3<f32> {
     let color = textureSampleLevel(scene, linear, uv, 0.0).rgb;
-    let weight = min(textureSampleLevel(glow, linear, uv, 0.0).r, 0.98);
-    return color * (weight / (1.0 - weight));
+    let bright = luminance(color) * exposure();
+    return color * (max(bright - piece().threshold.x, 0.0) / max(bright, 1.0e-6));
 }
 
 @fragment

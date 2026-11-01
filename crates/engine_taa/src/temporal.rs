@@ -10,7 +10,7 @@ const CURRENT_WEIGHT: f32 = 0.1;
 
 pub(crate) const HISTORY: Output = Output {
     name: "history",
-    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+    format: wgpu::TextureFormat::Rgba16Float,
     layers: &[],
 };
 

@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec4};
-use engine_core::math::{half, max};
+use engine_core::math::{clamp, half, max, pow};
 use engine_core::{Error, ErrorCode, Joined, Operation, Readback, View};
 use engine_places::meshes::Instances;
 use engine_render::debug::{
@@ -126,7 +126,7 @@ impl Probe {
             fragments: max(fragments.round(), 0.0) as u32,
             depth,
             world: (depth > 0.0 && point.w != 0.0).then(|| (point.truncate() / point.w).to_array()),
-            shaded: Some(color(SCENE, false)),
+            shaded: Some(scene_texel(bytes, SCENE)),
             displayed: (canvas != 0).then(|| color(CANVAS, canvas == BLUE_FIRST)),
         };
         let Ok(Value::Object(mut fields)) = serde_json::to_value(probe) else {
@@ -200,6 +200,21 @@ fn word(bytes: &[u8], offset: u64) -> u32 {
     bytes.get(start..start + 4).map_or(0, |word| {
         u32::from_le_bytes([word[0], word[1], word[2], word[3]])
     })
+}
+
+fn scene_texel(bytes: &[u8], offset: u64) -> [u8; 3] {
+    let (first, second) = (word(bytes, offset), word(bytes, offset + 4));
+    [first & 0xffff, first >> 16, second & 0xffff].map(|bits| encoded(half(bits as u16)))
+}
+
+fn encoded(light: f32) -> u8 {
+    let light = clamp(light, 0.0, 1.0);
+    let shown = if light <= 0.003_130_8 {
+        light * 12.92
+    } else {
+        1.055 * pow(light, 1.0 / 2.4) - 0.055
+    };
+    (shown * 255.0).round() as u8
 }
 
 fn unpacked_normal(packed: u32) -> [f32; 3] {

@@ -9,7 +9,7 @@ import package::engine::materials::{ALPHA_MASK, DOUBLE_SIDED, EMISSIVE_MAP, FADE
 import package::engine::mesh::declarations::{TemporalOutput, VertexOutput, fade_hidden};
 import package::engine::mesh::vertex::output_color;
 import package::engine::noise::variety_noise;
-import package::engine::shading::{BODY_THIN, Shaded, SurfacePoint, world_plane};
+import package::engine::shading::{BODY_SOLID, BODY_THIN, Shaded, SurfacePoint, world_plane};
 import package::engine::view::{camera, fade_noise, material_bias, material_detail,
     stable_normalize};
 import package::face::lighting::{finish, local_light, widened};
@@ -301,10 +301,10 @@ fn textured_point(color: vec4<f32>, surface_normal: vec3<f32>, world: vec3<f32>,
     point.roughness = max(roughness, 0.03);
     point.alpha = point.roughness * point.roughness;
     if ALPHA_MASK || material_flag(VARIANT_FOLIAGE, FOLIAGE) {
-        point.leaf = leafiness(point.albedo);
-        point.crown = point.leaf;
-        point.albedo *= plant_tint(fragment_plant, point.leaf);
-        point.body = BODY_THIN;
+        let leaf = leafiness(point.albedo);
+        point.transmission = foliage().x * leaf;
+        point.shadow_softness = leaf;
+        point.albedo *= plant_tint(fragment_plant, leaf);
     }
     point.f0 = mix(vec3<f32>(0.04), point.albedo, metalness);
     point.diffuse_color = point.albedo * (1.0 - metalness);
@@ -475,7 +475,10 @@ fn masked_depth(input: SlotFragment) {
 
 fn shade(input: SlotFragment, front: bool, tested: bool) -> Shaded {
     let point = surface_point(input, front, tested);
-    return finish(point, local_light(point, input.pixel));
+    var shaded = finish(point, local_light(point, input.pixel));
+    shaded.body = select(BODY_SOLID, BODY_THIN,
+        ALPHA_MASK || material_flag(VARIANT_FOLIAGE, FOLIAGE));
+    return shaded;
 }
 
 fn temporal_output(input: TemporalOutput) -> VertexOutput {

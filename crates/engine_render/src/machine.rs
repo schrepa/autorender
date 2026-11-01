@@ -13,8 +13,7 @@ use crate::install::{Bound, Copied, Declared, PassDecl, PipelineDecl, Program, S
 use crate::linker::{Composed, Linker, Ty};
 use crate::{Access, DepthUse, Layer, Lifetime, ViewTarget};
 
-pub const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
-pub(crate) const GLOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Unorm;
+pub const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub(crate) const DEBUG_FORMATS: [wgpu::TextureFormat; 3] = [
     wgpu::TextureFormat::Rgba32Uint,
@@ -35,7 +34,6 @@ pub(crate) struct OutputDecl {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Target {
     Scene,
-    Glow,
     Depth,
     Output(u32),
     Canvas,
@@ -278,7 +276,6 @@ fn handle_of(bound: &Bound) -> Option<Handle> {
 pub(crate) fn core_target(name: &str, outputs: &[OutputDecl]) -> Option<Target> {
     match name {
         crate::shared::SCENE => Some(Target::Scene),
-        crate::shared::GLOW => Some(Target::Glow),
         crate::shared::DEPTH => Some(Target::Depth),
         _ => match crate::shared::DEBUG_TARGETS.iter().position(|known| *known == name) {
             Some(index) => Some(Target::Debug(index as u32)),
@@ -782,10 +779,7 @@ fn graph_access(access: Access, clear: Clear) -> GraphAccess {
 }
 
 pub(crate) fn set_formats(outputs: &[OutputDecl], layer: Option<Layer>) -> Vec<(Target, wgpu::TextureFormat, Clear, bool)> {
-    let mut set = vec![
-        (Target::Scene, SCENE_FORMAT, Clear::Color(SCENE_CLEAR), true),
-        (Target::Glow, GLOW_FORMAT, Clear::Color(TRANSPARENT), true),
-    ];
+    let mut set = vec![(Target::Scene, SCENE_FORMAT, Clear::Color(SCENE_CLEAR), true)];
     for (index, output) in outputs.iter().enumerate() {
         let written = match layer {
             Some(_) if output.layers.is_empty() => continue,
@@ -844,7 +838,6 @@ fn graph_of(
         });
     };
     target(Target::Scene, "scene", true, Life::Output, &mut ids);
-    target(Target::Glow, "glow", true, Life::Output, &mut ids);
     target(Target::Depth, "depth", true, Life::Output, &mut ids);
     for (index, output) in outputs.iter().enumerate() {
         target(Target::Output(index as u32), output.name, !output.layers.is_empty(), Life::Output, &mut ids);
@@ -964,7 +957,7 @@ fn graph_of(
         canvas,
     ) {
         passes[at].colors.insert(0, (canvas, GraphAccess::Clear(Clear::Color(crate::graph::BLACK))));
-        for target in [Target::Scene, Target::Glow, Target::Depth] {
+        for target in [Target::Scene, Target::Depth] {
             passes[at].reads.extend(ids.target(target));
         }
         for (index, output) in outputs.iter().enumerate() {

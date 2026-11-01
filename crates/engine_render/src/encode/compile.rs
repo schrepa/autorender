@@ -201,7 +201,7 @@ impl Run {
             formats.insert(0, Some(self.surface));
         }
         if pass.name == crate::shared::COMPOSITE {
-            for (_, format, _, written) in set_formats(&self.machine.outputs, None).into_iter().skip(2) {
+            for (_, format, _, written) in set_formats(&self.machine.outputs, None).into_iter().skip(1) {
                 if written {
                     formats.push(Some(format));
                 }

@@ -20,6 +20,7 @@ mod terrain_sky;
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, JobKind, Schedule, Source};
 use engine_places::ground::{Bounce, GroundTiles, Heightfield, Horizons};
+use engine_places::lighting::{Ambient, SunBlockers};
 use engine_places::probes::ProbeViews;
 use engine_places::shadows::{ShadowCasters, ShadowMaps};
 use engine_render::{DebugModes, Layer, MainView, RenderBricks};
@@ -42,7 +43,7 @@ impl Brick for TerrainShadingBrick {
     ];
 
     fn register(bricks: &mut Bricks<'_>) {
-        use shaders::terrain_shading::{faces, modes};
+        use shaders::terrain_shading::{ambient, blockers, faces, modes};
         bricks
             .when(|shading: Res<TerrainShading>| shading.enabled)
             .settings::<TerrainShading>()
@@ -57,8 +58,11 @@ impl Brick for TerrainShadingBrick {
             .within(horizons_on, |bricks| {
                 bricks
                     .fill::<Horizons>(Some(faces::horizons::MODULE))
+                    .join::<SunBlockers>((), Some(blockers::MODULE))
                     .within(bounce_on, |bricks| {
-                        bricks.fill::<Bounce>(Some(faces::bounce::MODULE));
+                        bricks
+                            .fill::<Bounce>(Some(faces::bounce::MODULE))
+                            .join::<Ambient>((), Some(ambient::MODULE));
                     });
             });
         for (index, (name, _)) in debug::MODES.into_iter().enumerate() {

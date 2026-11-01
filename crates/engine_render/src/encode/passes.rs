@@ -179,7 +179,7 @@ impl Run {
                     }
                 }
                 if pass.name == crate::shared::COMPOSITE {
-                    for (target, format, _, _) in set_formats(&self.machine.outputs, None).into_iter().skip(2).filter(|(_, _, _, written)| *written) {
+                    for (target, format, _, _) in set_formats(&self.machine.outputs, None).into_iter().skip(1).filter(|(_, _, _, written)| *written) {
                         let id = self.machine.ids.target(target);
                         let ops = ops_of(id).unwrap_or(Ops { load: Load::Load, store: true });
                         colors.push((key(target), self.view_of(target, true).cloned(), format, ops));

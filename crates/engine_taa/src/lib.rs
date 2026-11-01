@@ -9,6 +9,7 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod antialiasing;
 mod brick_smokes;
+mod lit;
 mod previous;
 mod temporal;
 
@@ -40,6 +41,7 @@ impl Brick for TaaBrick {
             .join::<ViewOutputs>(temporal::HISTORY, Some(shaders::taa::history::MODULE))
             .systems(Schedule::ViewSync, temporal::publish)
             .off(previous::forget)
-            .resolve_pass(temporal::PASS);
+            .resolve_pass(temporal::PASS)
+            .part::<lit::LitGpu>();
     }
 }

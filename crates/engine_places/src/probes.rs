@@ -120,12 +120,3 @@ pub struct ProbeCaptures {
 impl Slot for ProbeCaptures {
     const NAME: &'static str = "probe_captures";
 }
-
-#[derive(Resource, Default)]
-pub struct ProbeLight;
-
-impl Slot for ProbeLight {
-    const NAME: &'static str = "probe_light";
-    const WGSL: Option<&'static str> = Some(include_str!("places/probe_light.wgsl"));
-    const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::PROBE_LIGHT];
-}

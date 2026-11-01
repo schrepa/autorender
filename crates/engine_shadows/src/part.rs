@@ -2,9 +2,10 @@ use bevy_ecs::prelude::*;
 use engine_core::{Error, View};
 use engine_places::shadows::{CasterMap, CasterView, SHADOW_REGIONS, ShadowCasters, ShadowMaps};
 use engine_render::{
-    Access, AfterRead, Attach, Bind, Buffer, CameraUniform, ComputePipeline, Count, DepthUse,
-    DrawInput, Draws, Encode, GpuPart, Install, Layer, Lifetime, Own, Pass, Pipeline, Prepare,
-    RenderPipeline, SamplerDesc, Shape, Texture, VertexLayout, ViewTarget, wgpu,
+    Access, AfterRead, Attach, Bind, Buffer, CameraUniform, ComputePipeline, Count, DebugShown,
+    DepthUse, DrawInput, Draws, Encode, FULLSCREEN, GpuPart, Install, Layer, Lifetime, Own, Pass,
+    Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, VertexLayout, ViewTarget,
+    wgpu,
 };
 
 use crate::constants::{MARK_GROUP, SKY_LAYERS};
@@ -16,6 +17,7 @@ use crate::sky::RESOLUTION;
 
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 const TABLE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
+const SKY_OPEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 const COMPOSE_ATTRIBUTES: [wgpu::VertexAttribute; 2] = [
     wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Float32x4,
@@ -48,9 +50,11 @@ struct Written {
 pub(crate) struct ShadowsGpu {
     maps: Pass<Self>,
     marks: Pass<Self>,
+    opening: Pass<Self>,
     regions: Texture<Self>,
     atlas: Texture<Self>,
     sky: Texture<Self>,
+    sky_open: Texture<Self>,
     tiles: Texture<Self>,
     map_marks: Buffer<Self>,
     depth_marks: Buffer<Self>,
@@ -60,6 +64,7 @@ pub(crate) struct ShadowsGpu {
     composes: Buffer<Self>,
     composing: Pipeline<Self, Own>,
     clearing: Pipeline<Self, Own>,
+    sky_opening: Pipeline<Self, Own>,
     compose_vertices: DrawInput<Self, Own>,
     marking: ComputePipeline<Self>,
     casters: Draws<ShadowCasters>,
@@ -68,6 +73,7 @@ pub(crate) struct ShadowsGpu {
     composed: u32,
     moving: u32,
     marked: Option<[u32; 3]>,
+    opened: Option<(u32, u32)>,
     made: Option<u64>,
     written: Written,
 }
@@ -154,6 +160,29 @@ impl ShadowsGpu {
         }
     }
 
+    fn open_sky(
+        &mut self,
+        plan: &ShadowPlan,
+        view: &View,
+        shown: DebugShown,
+        cx: &mut Prepare<'_, Self>,
+    ) {
+        self.opened = None;
+        if !plan.sky.live {
+            cx.release(self.sky_open);
+            return;
+        }
+        if shown.owner.is_some() {
+            return;
+        }
+        let display = view.display_size();
+        let render = view.render_size();
+        cx.allocate(self.sky_open, extent(display.x.max(1), display.y.max(1), 1), 1);
+        let within = |size: u32, whole: u32| size.clamp(1, whole.max(1));
+        self.opened = Some((within(render.x, display.x), within(render.y, display.y)));
+        cx.run(self.opening);
+    }
+
     fn allocate(&mut self, plan: &ShadowPlan, cx: &mut Prepare<'_, Self>) {
         let Some(key) = plan.key else {
             return;
@@ -184,16 +213,22 @@ impl ShadowsGpu {
 }
 
 impl GpuPart for ShadowsGpu {
-    type Reads = (Res<'static, ShadowMaps>, Res<'static, ShadowPlan>, Res<'static, View>);
+    type Reads = (
+        Res<'static, ShadowMaps>,
+        Res<'static, ShadowPlan>,
+        Res<'static, View>,
+        Res<'static, DebugShown>,
+    );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use shaders::shadows::faces::routes as face_routes;
         use shaders::shadows::{
-            maps as map_shaders, marks as mark_shaders, sample, sky as sky_shaders,
+            maps as map_shaders, marks as mark_shaders, sample, sky as sky_shaders, sky_open,
         };
         let regions = cx.texture("shadow_regions", SHADOW_FORMAT, Lifetime::Kept);
         let atlas = cx.texture("shadow_atlas", SHADOW_FORMAT, Lifetime::Kept);
         let sky = cx.texture("sky_maps", SHADOW_FORMAT, Lifetime::Kept);
+        let opened = cx.texture("sky_open", SKY_OPEN_FORMAT, Lifetime::Frame);
         let tiles = cx.texture("shadow_tiles", TABLE_FORMAT, Lifetime::Kept);
         let map_marks = cx.buffer("caster_marks", Lifetime::Kept);
         let depth_marks = cx.buffer("shadow_marks", Lifetime::Kept);
@@ -210,6 +245,7 @@ impl GpuPart for ShadowsGpu {
         cx.frame(sky_shaders::SKY_MAPS, Bind::Texture(sky))?;
         cx.frame(sky_shaders::SKY_SAMPLER, Bind::Sampler(compare))?;
         cx.frame(sky_shaders::SKY_VIEWS, Bind::Buffer(sky_views))?;
+        cx.frame(sky_open::SKY_OPEN, Bind::Texture(opened))?;
         cx.frame(face_routes::CASTER_CULL, Bind::Buffer(cull))?;
         cx.frame(face_routes::CASTER_ROUTES, Bind::Buffer(routes))?;
         cx.frame(face_routes::CASTER_MARKS, Bind::Buffer(map_marks))?;
@@ -220,6 +256,10 @@ impl GpuPart for ShadowsGpu {
             .depth_cleared(sky, 1.0)
             .id();
         let marks = cx.pass("shadow_marks").at(Layer::Backdrop).id();
+        let opening = cx
+            .pass("sky_occlusion")
+            .color_cleared(opened, wgpu::Color::WHITE)
+            .id();
         let compose_vertices = cx.draw_input(maps, composes);
         let composing = cx.render_pipeline(
             maps,
@@ -235,6 +275,20 @@ impl GpuPart for ShadowsGpu {
             &compose_pipeline(map_shaders::VS_CLEAR_MOVING, None, &[]),
             &[],
         )?;
+        let sky_opening = cx.render_pipeline(
+            opening,
+            &RenderPipeline {
+                vertex: FULLSCREEN,
+                fragment: Some(sky_shaders::FS_SKY_OCCLUSION),
+                debug: None,
+                vertices: &[],
+                primitive: wgpu::PrimitiveState::default(),
+                depth: DepthUse::None,
+                blend: None,
+                writes: wgpu::ColorWrites::ALL,
+            },
+            &[],
+        )?;
         let marking = cx.compute_pipeline(
             marks,
             mark_shaders::MARK_SHADOW_TILES,
@@ -247,9 +301,11 @@ impl GpuPart for ShadowsGpu {
         Ok(Self {
             maps,
             marks,
+            opening,
             regions,
             atlas,
             sky,
+            sky_open: opened,
             tiles,
             map_marks,
             depth_marks,
@@ -259,6 +315,7 @@ impl GpuPart for ShadowsGpu {
             composes,
             composing,
             clearing,
+            sky_opening,
             compose_vertices,
             marking,
             casters,
@@ -267,6 +324,7 @@ impl GpuPart for ShadowsGpu {
             composed: 0,
             moving: 0,
             marked: None,
+            opened: None,
             made: None,
             written: Written::default(),
         })
@@ -274,9 +332,10 @@ impl GpuPart for ShadowsGpu {
 
     fn prepare(
         &mut self,
-        (maps, plan, view): SystemParamItem<'_, '_, Self::Reads>,
+        (maps, plan, view, shown): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        self.open_sky(&plan, &view, *shown, cx);
         if cx.fresh() {
             let table = std::mem::take(&mut self.written.table);
             self.written = Written {
@@ -326,6 +385,20 @@ impl GpuPart for ShadowsGpu {
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+        if pass == self.opening {
+            if let Some(drawn) = self.opened {
+                let mut draw = cx.render(Attach::Declared, None);
+                draw.within(drawn);
+                draw.draw(
+                    &self.sky_opening,
+                    Shape::Pulled {
+                        vertices: 0..3,
+                        instances: 0..1,
+                    },
+                );
+            }
+            return 0;
+        }
         if pass == self.marks {
             if let Some(groups) = self.marked {
                 cx.dispatch(&self.marking, Count::Groups(groups));

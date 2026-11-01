@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 engine_ecs.workspace = true
 engine_core.workspace = true
-engine_places.workspace = true
 engine_render.workspace = true
 serde_json.workspace = true
 

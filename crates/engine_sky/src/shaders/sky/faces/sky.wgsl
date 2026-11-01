@@ -1,8 +1,6 @@
 import package::face::sky_cloud_shadows::cloud_shadow;
-import package::generated::sky::MIRROR_LAYER;
-import package::sky::air::{air_light, behind_clouds, fog, height_depth, marched_reach};
+import package::sky::air::{air_light, fog, height_depth, marched_reach};
 import package::sky::environment::{environment_maps, environment_sampler};
-import package::sky::light::{sky_air_light, sky_cloud};
 import package::sky::piece::sky_piece;
 
 fn sky_average(normal: vec3<f32>) -> vec3<f32> {
@@ -54,17 +52,8 @@ fn cloud_passing(world: vec3<f32>) -> f32 {
     return cloud_shadow(world);
 }
 
-fn mirrored_along(start: vec3<f32>, direction: vec3<f32>) -> vec3<f32> {
-    return behind_clouds(sky_air_light(direction), sky_cloud(MIRROR_LAYER, start, direction),
-        direction);
-}
-
 fn environment_levels() -> u32 {
     return textureNumLevels(environment_maps);
-}
-
-fn environment_size() -> u32 {
-    return textureDimensions(environment_maps).x;
 }
 
 fn environment_sample(direction: vec3<f32>, layer: u32, level: f32) -> vec3<f32> {

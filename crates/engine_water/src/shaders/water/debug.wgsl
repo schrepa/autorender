@@ -3,6 +3,7 @@ import package::engine::view::eye_world;
 import package::face::debug::{DEBUG_KIND_FALLS, DEBUG_KIND_WATER, DebugTargets, debug_targets};
 import package::face::heightfield::use_terrain;
 import package::face::lighting::sun_debug;
+import package::face::sun_blockers::SunAt;
 import package::generated::pieces::water::piece;
 import package::generated::water::{DEBUG_SPAN_STEPS, DRY, WATER_SPAN_LEAST, WATER_SPAN_MOST};
 import package::place::water::WaterAt;
@@ -20,6 +21,11 @@ fn debug_span_code(span: f32) -> f32 {
     return (steps + 1.0) / (DEBUG_SPAN_STEPS + 1.0);
 }
 
+fn water_sun(world: vec3<f32>, normal: vec3<f32>) -> u32 {
+    return sun_debug(SunAt(world, normal, dpdx(world), dpdy(world), 0.0, false, 0u,
+        vec4<f32>(0.0)));
+}
+
 fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets {
     let shade = shade_water(point, pixel, at, false);
     if shade.coverage < 0.5 && piece().debug.x == 0u { // optics: water covers as its shading sees it
@@ -33,7 +39,7 @@ fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets 
     let eddies = water_eddy_froude(speed, length(at.slope), depth);
     var targets = debug_targets(DEBUG_KIND_WATER, pack2x16float(vec2<f32>(depth, speed)),
         pack4x8unorm(vec4<f32>(debug_span_code(at.words.span), shade.shaded.roughness,
-            0.0, 0.0)), normal, sun_debug(world, normal, dpdx(world), dpdy(world), false));
+            0.0, 0.0)), normal, water_sun(world, normal));
     targets.terrain = vec2<u32>(pack2x16float(vec2<f32>(froude, eddies)),
         pack4x8unorm(vec4<f32>(at.words.state.xy, 0.0, 0.0))
             | (min(at.words.reach, 0xffu) << 24u));
@@ -57,5 +63,5 @@ fn fs_debug_fall(input: FallOutput) -> DebugTargets {
     let world = eye_world(input.relative);
     let normal = shade.shaded.normal;
     return debug_targets(DEBUG_KIND_FALLS, 0u, 0u, normal,
-        sun_debug(world, normal, dpdx(world), dpdy(world), false));
+        water_sun(world, normal));
 }

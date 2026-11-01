@@ -1177,6 +1177,15 @@ impl List for PostLight {
     const SMOKES: &'static [Smoke] = &[frames("list_post_light")];
 }
 
+#[derive(Resource, Default)]
+pub struct PostTone;
+
+impl Slot for PostTone {
+    const NAME: &'static str = "post_tone";
+    const WGSL: Option<&'static str> = Some(include_str!("places/post_tone.wgsl"));
+    const SMOKES: &'static [Smoke] = &[frames("slot_post_tone")];
+}
+
 pub struct PostDisplay;
 
 impl List for PostDisplay {

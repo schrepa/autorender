@@ -1,7 +1,7 @@
 import package::engine::mesh::declarations::AffineVertexInput;
 import package::engine::shading::{Shaded, ViewPixel};
 import package::face::debug::DebugTargets;
-import package::meshes::cards::{card_debug, card_lit, placed_card, placed_card_point};
+import package::meshes::cards::{card_debug, placed_card, placed_card_lit, placed_card_point};
 import package::meshes::debug::point_targets;
 import package::meshes::forward::drawn_pixel;
 import package::meshes::shade::{masked_depth, placed_fragment, shade, surface_point};
@@ -73,7 +73,7 @@ fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: Affin
 }
 
 fn placed_card_shade(input: CardVertex) -> CardShaded {
-    return card_lit(input, placed_card_point(input));
+    return placed_card_lit(input);
 }
 
 fn placed_card_pixel(input: CardVertex) -> ViewPixel {

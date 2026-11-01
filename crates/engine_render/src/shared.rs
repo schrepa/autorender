@@ -6,7 +6,7 @@ use crate::install::Work;
 use crate::machine::OutputDecl;
 use crate::{
     DebugModes, DebugShown, Draws, GpuPart, Install, Layer, MainView, Pass, PostDisplay, PostLight,
-    PostScene, Prepare, Resolve, ViewOutputs,
+    PostScene, PostTone, Prepare, Resolve, ViewOutputs,
 };
 
 pub(crate) const COMPOSITE: &str = "composite";
@@ -16,7 +16,6 @@ pub(crate) const OUTPUT_PREFIX: &str = "output_";
 pub(crate) const POST: &str = "post";
 pub(crate) const LINEAR: &str = "linear";
 pub(crate) const SCENE: &str = "scene";
-pub(crate) const GLOW: &str = "glow";
 pub(crate) const DEPTH: &str = "depth_texture";
 pub(crate) const TARGETS_MODULE: &str = "generated::targets";
 pub(crate) const COMPOSITE_MODULE: &str = "generated::composite";
@@ -35,6 +34,7 @@ pub(crate) static PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<Resolve>(),
     PlaceDecl::list::<PostScene>(),
     PlaceDecl::list::<PostLight>(),
+    PlaceDecl::slot::<PostTone>(),
     PlaceDecl::list::<PostDisplay>(),
     PlaceDecl::slot::<DebugShown>(),
     PlaceDecl::list::<DebugModes>(),
@@ -259,9 +259,9 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
     }
     for depth in [false, true] {
         let name = if depth { "DepthViewTargets" } else { "ViewTargets" };
-        let _ = writeln!(body, "\nstruct {name} {{\n    @location(0) color: vec4<f32>,\n    @location(1) glow: vec2<f32>,");
+        let _ = writeln!(body, "\nstruct {name} {{\n    @location(0) color: vec4<f32>,");
         for (index, output) in outputs.iter().filter(|output| !output.layers.is_empty()).enumerate() {
-            let _ = writeln!(body, "    @location({}) {}: {},", index + 2, output.name, output_type(output.format));
+            let _ = writeln!(body, "    @location({}) {}: {},", index + 1, output.name, output_type(output.format));
         }
         if depth {
             let _ = writeln!(body, "    @builtin(frag_depth) depth: f32,");
@@ -269,14 +269,14 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
         let _ = writeln!(body, "}}");
     }
     let _ = writeln!(body, "\nfn view_targets(shaded: Shaded, at: ViewPixel) -> ViewTargets {{");
-    let _ = writeln!(body, "    var targets: ViewTargets;\n    targets.color = vec4<f32>(shaded.color, shaded.ambient);\n    targets.glow = vec2<f32>(shaded.glow, shaded.reflect);");
+    let _ = writeln!(body, "    var targets: ViewTargets;\n    targets.color = vec4<f32>(shaded.linear, shaded.ambient);");
     for (index, output) in outputs.iter().enumerate() {
         if !output.layers.is_empty() && output.module.is_some() {
             let _ = writeln!(body, "    targets.{} = member_{index}(shaded, at);", output.name);
         }
     }
     let _ = writeln!(body, "    return targets;\n}}\n\nfn depth_view_targets(shaded: Shaded, at: ViewPixel, depth: f32) -> DepthViewTargets {{");
-    let _ = writeln!(body, "    let targets = view_targets(shaded, at);\n    var out: DepthViewTargets;\n    out.color = targets.color;\n    out.glow = targets.glow;");
+    let _ = writeln!(body, "    let targets = view_targets(shaded, at);\n    var out: DepthViewTargets;\n    out.color = targets.color;");
     for output in outputs.iter().filter(|output| !output.layers.is_empty()) {
         let _ = writeln!(body, "    out.{name} = targets.{name};", name = output.name);
     }
@@ -303,6 +303,7 @@ import package::engine::color::encode_srgb;
 import package::face::post_scene::apply as post_scene;
 import package::face::resolve::{resolve, resolved_at};
 import package::face::post_light::apply as post_light;
+import package::face::post_tone::apply as post_tone;
 import package::face::post_display::apply as post_display;
 import package::generated::targets::{CompositeOut, composite_out};
 import package::face::debug::{DebugShade, DebugTargets, shown};
@@ -326,10 +327,9 @@ fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f3
 @fragment
 fn fs_composite(@builtin(position) position: vec4<f32>) -> CompositeOut {
     let started = scene_light(position);
-    var light = post_scene(started.light, started.at);
-    light = resolve(started.at, light);
+    let light = resolve(started.at, started.light);
     let at = resolved_at(started.at);
-    let color = post_light(light.color, at);
+    let color = post_tone(post_light(light.color, at), at);
     var encoded = encode_srgb(color);
     encoded = post_display(encoded, at);
     return composite_out(vec4<f32>(encoded, 1.0), light, at);
@@ -339,7 +339,7 @@ fn fs_composite(@builtin(position) position: vec4<f32>) -> CompositeOut {
 fn fs_composite_plain(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let started = scene_light(position);
     let light = post_scene(started.light, started.at);
-    let color = post_light(light.color, started.at);
+    let color = post_tone(post_light(light.color, started.at), started.at);
     var encoded = encode_srgb(color);
     encoded = post_display(encoded, started.at);
     return vec4<f32>(encoded, 1.0);

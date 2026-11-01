@@ -1,6 +1,5 @@
 import package::engine::mesh::declarations::AffineVertexInput;
 import package::face::debug::DebugTargets;
-import package::face::dither::stored;
 import package::face::instances::{
     AffinePose, FADE_SLOT, FADE_WORD_ON, SlotColor, SlotExtras, SlotVertex, SlotVertexExtended,
     slot_debug, slot_fragment, slot_fragment_extended, slot_masked_depth, slot_pixel,
@@ -70,15 +69,12 @@ fn placed_extended_vertex(input: AffineVertexInput, extras: SlotExtras, slot: u3
 }
 
 fn lit(vertex: SlotVertex, front: bool, pretested: bool) -> ViewTargets {
-    var kept = slot_shade(slot_fragment(vertex), front, pretested);
-    kept.color = stored(kept.color, vertex.clip_position.xy);
-    return view_targets(kept, slot_pixel(vertex));
+    return view_targets(slot_shade(slot_fragment(vertex), front, pretested), slot_pixel(vertex));
 }
 
 fn lit_extended(vertex: SlotVertexExtended, front: bool, pretested: bool) -> ViewTargets {
-    var kept = slot_shade(slot_fragment_extended(vertex), front, pretested);
-    kept.color = stored(kept.color, vertex.clip_position.xy);
-    return view_targets(kept, slot_pixel_extended(vertex));
+    return view_targets(slot_shade(slot_fragment_extended(vertex), front, pretested),
+        slot_pixel_extended(vertex));
 }
 
 @vertex

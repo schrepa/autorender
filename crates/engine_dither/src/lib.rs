@@ -9,7 +9,6 @@ mod brick_smokes;
 
 use bevy_ecs::prelude::Res;
 use engine_core::{Brick, Bricks, Runs, Smoke, Source, settings};
-use engine_places::dither::DitherPlace;
 use engine_render::PostDisplay;
 
 settings! {
@@ -36,7 +35,6 @@ impl Brick for DitherBrick {
         bricks
             .when(|dither: Res<Dither>| dither.enabled)
             .settings::<Dither>()
-            .fill::<DitherPlace>(Some(shaders::dither::faces::dither::MODULE))
             .join::<PostDisplay>((), Some(shaders::dither::apply::MODULE));
     }
 }

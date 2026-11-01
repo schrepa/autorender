@@ -3,7 +3,6 @@ import package::cover::laws::{COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION, STRAIGHT_F
     STRAIGHT_JOINTS};
 import package::engine::shading::{BODY_THIN, SurfacePoint};
 import package::engine::view::{PI, camera, stable_normalize, view_pixel};
-import package::face::dither::stored;
 import package::face::lighting::{finish, local_light, widened};
 import package::face::foliage::foliage;
 import package::face::sun::sun_direction;
@@ -186,8 +185,7 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
     let albedo = input.color * select(1.0, COVER_FAR_SIDE, through);
     var point: SurfacePoint;
     point.albedo = albedo;
-    point.leaf = 1.0;
-    point.body = BODY_THIN;
+    point.transmission = foliage().x;
     point.opacity = 1.0;
     point.occlusion = mix(COVER_ROOT_OCCLUSION, 1.0, input.along);
     point.roughness = COVER_ROUGHNESS;
@@ -209,6 +207,6 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
 fn fs_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> ViewTargets {
     let point = cover_surface(input, front);
     var shaded = finish(point, local_light(point, input.clip_position.xy));
-    shaded.color = stored(shaded.color, input.clip_position.xy);
+    shaded.body = BODY_THIN;
     return view_targets(shaded, view_pixel(input.clip_position, input.previous));
 }

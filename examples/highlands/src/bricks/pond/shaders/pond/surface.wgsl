@@ -1,6 +1,5 @@
 import package::engine::shading::{BODY_WATER, Shaded, SurfacePoint};
 import package::engine::view::{camera, stable_normalize, view_pixel};
-import package::face::dither::stored;
 import package::face::ground_tiles::{GroundTerrain, ground_height, terrain_info};
 import package::face::lighting::finish;
 import package::generated::pond::{POND_MOST, PondShape};
@@ -82,9 +81,9 @@ fn shade_pond(input: PondOutput) -> PondShade {
     point.world_dx = world_dx;
     point.world_dy = world_dy;
     point.distance = length(toward);
-    point.body = BODY_WATER;
     var shade: PondShade;
     shade.shaded = finish(point, vec3<f32>(0.0));
+    shade.shaded.body = BODY_WATER;
     shade.cover = 1.0 - exp(-depth / (POND_CLEAR * n_v));
     shade.shaded.reflect *= shade.cover;
     shade.shaded.mirrored *= shade.cover;
@@ -94,10 +93,9 @@ fn shade_pond(input: PondOutput) -> PondShade {
 @fragment
 fn fs_pond(input: PondOutput) -> ViewTargets {
     let shade = shade_pond(input);
-    let color = stored(shade.shaded.color, input.clip_position.xy);
     let previous = (camera.previous_view_projection * vec4<f32>(input.world, 1.0)).xyw;
     var targets = view_targets(shade.shaded,
         view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
-    targets.color = vec4<f32>(color * shade.cover, shade.cover);
+    targets.color = vec4<f32>(shade.shaded.linear * shade.cover, shade.cover);
     return targets;
 }

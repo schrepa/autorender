@@ -1,3 +1,4 @@
+import package::engine::screen_points::{depth_normal, world_at};
 import package::generated::shadows::{SKY_DIRECTIONS, SkyViews};
 
 @group(0) @binding(0) var sky_maps: texture_depth_2d_array;
@@ -41,4 +42,19 @@ fn sky_occlusion(p: vec3<f32>, normal: vec3<f32>) -> f32 {
     }
     let visible = max(sum / total, sky_views.occlusion.y);
     return 1.0 - sky_views.occlusion.x * (1.0 - visible);
+}
+
+@fragment
+fn fs_sky_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) f32 {
+    let pixel = vec2<i32>(position.xy);
+    let center = world_at(pixel);
+    if center.w == 0.0 {
+        return 1.0;
+    }
+    let p = center.xyz;
+    let normal = depth_normal(pixel, p);
+    if all(normal == vec3<f32>(0.0)) {
+        return 1.0;
+    }
+    return sky_occlusion(p, normal);
 }

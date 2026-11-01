@@ -1,6 +1,5 @@
 import package::engine::mesh::declarations::TemporalOutput;
 import package::engine::shading::{Shaded, ViewPixel};
-import package::face::dither::stored;
 import package::generated::targets::{ViewTargets, view_targets};
 import package::meshes::shade::{extended_fragment, extended_temporal_output, fragment,
     masked_depth, shade, temporal_output};
@@ -11,9 +10,7 @@ fn drawn_pixel(clip_position: vec4<f32>, previous: vec3<f32>) -> ViewPixel {
 }
 
 fn mesh_targets(shaded: Shaded, clip_position: vec4<f32>, previous: vec3<f32>) -> ViewTargets {
-    var kept = shaded;
-    kept.color = stored(shaded.color, clip_position.xy);
-    return view_targets(kept, drawn_pixel(clip_position, previous));
+    return view_targets(shaded, drawn_pixel(clip_position, previous));
 }
 
 @fragment

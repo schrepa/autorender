@@ -400,7 +400,6 @@ fn sampler_of(device: &wgpu::Device, desc: &crate::SamplerDesc) -> wgpu::Sampler
 fn target_format(target: Target, outputs: &[crate::machine::OutputDecl]) -> Option<wgpu::TextureFormat> {
     match target {
         Target::Scene | Target::Copy(_, ViewTarget::Scene) => Some(crate::machine::SCENE_FORMAT),
-        Target::Glow => Some(crate::machine::GLOW_FORMAT),
         Target::Depth | Target::Copy(_, ViewTarget::Depth) => Some(DEPTH_FORMAT),
         Target::Output(index) => outputs.get(index as usize).map(|output| output.format),
         Target::Debug(index) | Target::Copy(_, ViewTarget::Debug(index)) => DEBUG_FORMATS.get(index as usize).copied(),

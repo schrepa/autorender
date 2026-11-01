@@ -17,7 +17,8 @@ use engine_core::{
     Brick, Bricks, ComponentKind, Cut, SceneComponents, Schedule, Source, gpu_consts, settings,
     stats,
 };
-use engine_places::probes::{ProbeCaptures, ProbeLight, ProbeViews, ReflectionProbe};
+use engine_places::lighting::{Ambient, Interiors};
+use engine_places::probes::{ProbeCaptures, ProbeViews, ReflectionProbe};
 use engine_render::RenderBricks;
 
 pub use component::{SceneInterior, SceneReflectionProbe};
@@ -71,7 +72,8 @@ impl Brick for ReflectionProbesBrick {
                     .example(component::example),
                 None,
             )
-            .fill::<ProbeLight>(Some(shaders::probes::faces::probe_light::MODULE))
+            .join::<Ambient>((), Some(shaders::probes::ambient::MODULE))
+            .join::<Interiors>((), Some(shaders::probes::interior::MODULE))
             .fill::<ProbeCaptures>(None)
             .fill::<ProbeViews>(None)
             .systems(

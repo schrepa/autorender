@@ -2,10 +2,10 @@ import package::engine::color::luminance;
 import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::view::{camera, detail_resolved, detail_span, eye_world, stable_normalize,
     view_pixel};
-import package::face::dither::stored;
 import package::face::heightfield::{terrain_uniform, use_terrain};
 import package::face::lighting::{environment_brdf, finish, sun_visibility};
 import package::face::sun::{sun_color, sun_direction};
+import package::face::sun_blockers::SunAt;
 import package::generated::targets::{ViewTargets, view_targets};
 import package::place::water::WATER_HELD;
 import package::water::footprint::WATER_SMOOTHEST;
@@ -145,8 +145,8 @@ fn shade_fall(input: FallOutput) -> FallShade {
     let backlit = dot(sun, seen) < 0.0;
     var sunlight = vec3<f32>(0.0);
     if sun.y > 0.0 {
-        sunlight = sun_color() * sun_visibility(world, select(seen, -seen, backlit),
-            world_dx, world_dy, length(input.relative), false, 0.0);
+        sunlight = sun_color() * sun_visibility(SunAt(world, select(seen, -seen, backlit),
+            world_dx, world_dy, 0.0, false, 0u, vec4<f32>(0.0)));
     }
     var glow = vec3<f32>(0.0);
     if backlit {
@@ -158,7 +158,7 @@ fn shade_fall(input: FallOutput) -> FallShade {
     point.emission = 0.0;
     point.emissive = vec3<f32>(0.0);
     point.occlusion = input.sky;
-    point.bounce = vec3<f32>(0.0);
+    point.indirect = vec3<f32>(0.0);
     point.roughness = WATER_SMOOTHEST;
     point.alpha = point.roughness * point.roughness;
     point.f0 = vec3<f32>(0.02 * (1.0 - white));
@@ -172,7 +172,7 @@ fn shade_fall(input: FallOutput) -> FallShade {
     point.world_dx = world_dx;
     point.world_dy = world_dy;
     point.shadow_offset = vec3<f32>(0.0);
-    point.on_terrain = false;
+    point.ground = false;
     point.sun_shade = 0.0;
     let reflectance = luminance(environment_brdf(point.f0, point.roughness, point.n_v));
     let body = water_body(0.0) * (vec3<f32>(1.0) - clarity)
@@ -187,7 +187,7 @@ fn shade_fall(input: FallOutput) -> FallShade {
 
 fn fall_mirroring(shade: FallShade, pixel: vec2<f32>) -> FallShade {
     var result = shade;
-    let own = luminance(shade.shaded.color) * shade.shown;
+    let own = luminance(shade.shaded.linear) * shade.shown;
     let behind = luminance(textureLoad(water_scene, vec2<i32>(pixel), 0).rgb)
         * (1.0 - shade.coverage);
     result.shaded.mirrored *= own / max(own + behind, 1.0e-6);
@@ -203,6 +203,6 @@ fn fs_fall(input: FallTemporalOutput) -> ViewTargets {
     let previous = input.previous;
     var targets = view_targets(shade.shaded,
         view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
-    targets.color = vec4<f32>(stored(shade.shaded.color, pixel) * shade.shown, shade.coverage);
+    targets.color = vec4<f32>(shade.shaded.linear * shade.shown, shade.coverage);
     return targets;
 }

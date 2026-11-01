@@ -171,7 +171,7 @@ impl Run {
             Target::Canvas => self.canvas.as_ref(),
             Target::Debug(index) => self.debug_targets.get(index as usize).map(|made| &made.view),
             Target::Output(index) => self.output_view(index, writing),
-            Target::Scene | Target::Glow | Target::Depth | Target::Copy(..) => {
+            Target::Scene | Target::Depth | Target::Copy(..) => {
                 self.targets.iter().find(|(known, _)| *known == target).map(|(_, made)| &made.view)
             }
         }
@@ -447,7 +447,6 @@ impl Run {
         };
         let mut targets = vec![
             (Target::Scene, made("engine/scene", crate::machine::SCENE_FORMAT)),
-            (Target::Glow, made("engine/glow", crate::machine::GLOW_FORMAT)),
             (Target::Depth, made("engine/depth", DEPTH_FORMAT)),
         ];
         let mut previous = Vec::new();

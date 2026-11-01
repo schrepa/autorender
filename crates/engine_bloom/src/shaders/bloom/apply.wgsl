@@ -10,9 +10,8 @@ fn glowing(color: vec3<f32>, bloom: texture_2d<f32>, linear: sampler, uv: vec2<f
     if applied.y == 0.0 {
         return color;
     }
-    let glow = max(textureSampleLevel(bloom, linear, uv, 0.0).rgb * applied.x, vec3<f32>(0.0));
-    let light = glow / (vec3<f32>(1.0) + glow);
-    return vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - light);
+    return color
+        + max(textureSampleLevel(bloom, linear, uv, 0.0).rgb * applied.x, vec3<f32>(0.0));
 }
 
 fn apply(color: vec3<f32>, at: PostPixel) -> vec3<f32> {

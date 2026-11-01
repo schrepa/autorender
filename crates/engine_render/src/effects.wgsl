@@ -12,7 +12,6 @@ struct Post {
 @group(0) @binding(0) var<uniform> post: Post;
 @group(0) @binding(1) var depth_texture: texture_depth_2d;
 @group(0) @binding(2) var scene: texture_2d<f32>;
-@group(0) @binding(3) var glow: texture_2d<f32>;
 @group(0) @binding(7) var linear: sampler;
 
 fn drawn_uv(pixel: vec2<f32>, settings: Post) -> vec2<f32> {

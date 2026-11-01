@@ -15,8 +15,6 @@ macro_rules! contract {
     }};
 }
 
-pub mod bloom;
-pub mod dither;
 pub mod exposure;
 pub mod ground;
 pub mod lighting;
@@ -26,7 +24,6 @@ pub mod navigation;
 pub mod particles;
 pub mod physics;
 pub mod probes;
-pub mod reflections;
 pub mod shadows;
 pub mod sky;
 mod smokes;
@@ -156,6 +153,9 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<exposure::Exposure>(),
     PlaceDecl::slot::<tonemap::Display>(),
     PlaceDecl::slot::<lighting::Lighting>(),
+    PlaceDecl::list::<lighting::SunBlockers>(),
+    PlaceDecl::list::<lighting::Ambient>(),
+    PlaceDecl::list::<lighting::Interiors>(),
     PlaceDecl::slot::<lights::Lights>(),
     PlaceDecl::component::<lights::LocalLight>("local_light"),
     PlaceDecl::slot::<shadows::ShadowMaps>(),
@@ -164,11 +164,7 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<shadows::ShadowChanges>("shadow_changes"),
     PlaceDecl::slot::<probes::ProbeViews>(),
     PlaceDecl::slot::<probes::ProbeCaptures>(),
-    PlaceDecl::slot::<probes::ProbeLight>(),
     PlaceDecl::component::<probes::ReflectionProbe>("reflection_probe"),
-    PlaceDecl::slot::<bloom::Glow>(),
-    PlaceDecl::slot::<reflections::Reflected>(),
-    PlaceDecl::slot::<dither::DitherPlace>(),
     PlaceDecl::slot::<meshes::Instances>(),
     PlaceDecl::component::<meshes::Cube>("cube"),
     PlaceDecl::component::<meshes::Tint>("tint"),

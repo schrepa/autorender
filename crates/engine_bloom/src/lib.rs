@@ -10,7 +10,6 @@ mod settings;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Schedule, Source, View, gpu_struct};
-use engine_places::bloom::Glow;
 use engine_render::{PostLight, RenderBricks};
 
 pub use settings::{Bloom, BloomStats};
@@ -34,7 +33,6 @@ impl Brick for BloomBrick {
             .settings::<Bloom>()
             .stats::<BloomStats>()
             .piece::<BloomPiece>()
-            .fill::<Glow>(Some(shaders::bloom::faces::bloom::MODULE))
             .join::<PostLight>((), Some(shaders::bloom::apply::MODULE))
             .systems(Schedule::ViewSync, publish_bloom)
             .off(forget_bloom)

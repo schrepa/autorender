@@ -1,8 +1,6 @@
 struct Shaded {
-    color: vec3<f32>,
     linear: vec3<f32>,
     ambient: f32,
-    glow: f32,
     reflect: f32,
     mirrored: f32,
     normal: vec3<f32>,
@@ -31,13 +29,14 @@ struct SurfacePoint {
     world_dy: vec3<f32>,
     distance: f32,
     shadow_offset: vec3<f32>,
-    on_terrain: bool,
-    bounce: vec3<f32>,
+    ground: bool,
+    indirect: vec3<f32>,
     sky_turn: vec3<f32>,
     sun_shade: f32,
-    leaf: f32,
-    crown: f32,
-    body: u32,
+    transmission: f32,
+    shadow_softness: f32,
+    shadow_lift_first: u32,
+    shadow_lifts: vec4<f32>,
 }
 
 const BODY_SOLID: u32 = 0u;
@@ -55,10 +54,8 @@ struct ViewPixel {
 
 fn flat(color: vec4<f32>) -> Shaded {
     var shaded: Shaded;
-    shaded.color = color.rgb;
     shaded.linear = color.rgb;
     shaded.ambient = 0.0;
-    shaded.glow = 0.0;
     shaded.reflect = 0.0;
     shaded.mirrored = 0.0;
     shaded.normal = vec3<f32>(0.0, 0.0, 1.0);

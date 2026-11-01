@@ -44,49 +44,33 @@ const ACCUMULATION: [(Option<wgpu::BlendState>, wgpu::ColorWrites); 2] = [
     ),
 ];
 
-const ADDITIVE: [(Option<wgpu::BlendState>, wgpu::ColorWrites); 2] = [
-    (
-        Some(wgpu::BlendState {
-            color: ADD,
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::Zero,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Add,
-            },
-        }),
-        wgpu::ColorWrites::ALL,
-    ),
-    (
-        Some(wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::One,
-                dst_factor: wgpu::BlendFactor::One,
-                operation: wgpu::BlendOperation::Max,
-            },
-            alpha: wgpu::BlendComponent::REPLACE,
-        }),
-        wgpu::ColorWrites::ALL,
-    ),
-];
+const ADDITIVE: [(Option<wgpu::BlendState>, wgpu::ColorWrites); 1] = [(
+    Some(wgpu::BlendState {
+        color: ADD,
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        },
+    }),
+    wgpu::ColorWrites::ALL,
+)];
 
-const OVER: [(Option<wgpu::BlendState>, wgpu::ColorWrites); 2] = [
-    (
-        Some(wgpu::BlendState {
-            color: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::SrcAlpha,
-                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                operation: wgpu::BlendOperation::Add,
-            },
-            alpha: wgpu::BlendComponent {
-                src_factor: wgpu::BlendFactor::Zero,
-                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                operation: wgpu::BlendOperation::Add,
-            },
-        }),
-        wgpu::ColorWrites::ALL,
-    ),
-    (None, wgpu::ColorWrites::empty()),
-];
+const OVER: [(Option<wgpu::BlendState>, wgpu::ColorWrites); 1] = [(
+    Some(wgpu::BlendState {
+        color: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::SrcAlpha,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        },
+        alpha: wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::Zero,
+            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+            operation: wgpu::BlendOperation::Add,
+        },
+    }),
+    wgpu::ColorWrites::ALL,
+)];
 
 gpu_struct! {
     pub(crate) struct Particles {

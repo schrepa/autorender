@@ -14,9 +14,7 @@ fn with_haze(color: vec3<f32>, light: vec3<f32>) -> vec3<f32> {
     if sky_piece.haze.w == 0.0 {
         return color;
     }
-    let share = light / (vec3<f32>(1.0) + abs(light));
-    let added = vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - share);
-    return select(color * (vec3<f32>(1.0) + share), added, share >= vec3<f32>(0.0));
+    return color + light;
 }
 
 fn apply(color: vec3<f32>, at: PostPixel) -> vec3<f32> {

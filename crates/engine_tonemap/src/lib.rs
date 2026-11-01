@@ -12,6 +12,7 @@ mod tonemap;
 
 use engine_core::{Brick, Bricks, Schedule, Source};
 use engine_places::tonemap::Display;
+use engine_render::PostTone;
 
 pub use light::Grading;
 
@@ -25,6 +26,7 @@ impl Brick for TonemapBrick {
             .settings::<Grading>()
             .piece::<Display>()
             .fill::<Display>(Some(shaders::tonemap::faces::tonemap::MODULE))
+            .fill::<PostTone>(Some(shaders::tonemap::tone::MODULE))
             .systems(Schedule::ViewSync, tonemap::publish_display);
     }
 }

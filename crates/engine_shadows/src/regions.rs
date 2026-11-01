@@ -213,7 +213,7 @@ impl FrameRegions<'_> {
     pub(crate) fn lookup_piece(
         &self,
         (tile_texels, crown_depth): (u32, f32),
-        shown: u32,
+        (shown, sky): (u32, [f32; 4]),
     ) -> ShadowPiece {
         let (width, height) = self.layout.size();
         let levels = self.clipmap.len();
@@ -248,6 +248,7 @@ impl FrameRegions<'_> {
             ],
             windows,
             bands,
+            sky,
         }
     }
 }

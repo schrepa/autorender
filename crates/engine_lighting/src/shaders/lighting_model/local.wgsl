@@ -1,6 +1,6 @@
 import package::engine::shading::SurfacePoint;
+import package::face::interior::interior;
 import package::face::lights::{LIGHT_EXTERIOR, LIGHT_INTERIOR, Light};
-import package::face::probe_light::in_interior;
 import package::generated::pieces::lighting_model::piece;
 import package::lighting_model::faces::lighting::{distribution, fresnel, visibility};
 import package::lighting_model::surface::{cap_share, disk_energy, dominant_direction};
@@ -13,7 +13,7 @@ fn shaped_light(point: SurfacePoint, light: Light, shaped: bool, kept: bool,
         inside: ptr<function, f32>) -> vec3<f32> {
     if kept && light.region != 0u {
         if *inside < 0.0 {
-            *inside = select(0.0, 1.0, in_interior(point.world));
+            *inside = select(0.0, 1.0, interior(false, point.world));
         }
         let in_box = *inside > 0.0;
         if (light.region == LIGHT_INTERIOR && !in_box)

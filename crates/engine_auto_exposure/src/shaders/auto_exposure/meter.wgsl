@@ -2,7 +2,6 @@ import package::engine::color::luminance;
 import package::engine::view::PI;
 import package::face::sky::{horizon, zenith};
 import package::face::sun::{sun_color, sun_direction};
-import package::face::tonemap::unfilmic;
 import package::generated::auto_exposure::{EXPOSURE_BINS, EXPOSURE_GRID, EXPOSURE_GROUP, ExposureState, ExposureUniform};
 
 @group(1) @binding(0) var<uniform> settings: ExposureUniform;
@@ -31,8 +30,7 @@ fn meter_exposure(
     let size = max(vec2<u32>(settings.drawn.xy), vec2<u32>(1u));
     let place = (vec2<f32>(id.xy) + 0.5) / f32(EXPOSURE_GRID);
     let pixel = min(vec2<u32>(place * vec2<f32>(size)), size - 1u);
-    let shown = clamp(luminance(textureLoad(scene_color, pixel, 0).rgb), 1.5e-4, 1.0);
-    let light = unfilmic(shown) / max(state.exposure, 1.0e-6);
+    let light = luminance(textureLoad(scene_color, pixel, 0).rgb);
     let out = 2.0 * dot(place - 0.5, place - 0.5);
     var weight = mix(settings.meter.z, 1.0, out);
     if textureLoad(scene_depth, pixel, 0) <= 0.0 {

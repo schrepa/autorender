@@ -17,6 +17,7 @@ mod views;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, JobKind, Schedule, Slot, Source};
+use engine_places::lighting::{Ambient, SunBlockers};
 use engine_places::probes::ProbeViews;
 use engine_places::sky::SkyLight;
 use engine_render::{Layer, MainView, PostLight, RenderBricks};
@@ -52,6 +53,8 @@ impl Brick for SkyBrick {
             .resource::<under_eye::SurfaceUnderEye>()
             .resource::<sky::SkyPlan>()
             .fill::<SkyLight>(Some(shaders::sky::faces::sky::MODULE))
+            .join::<SunBlockers>((), Some(shaders::sky::blockers::MODULE))
+            .join::<Ambient>((), Some(shaders::sky::ambient::MODULE))
             .within(casts_cloud_shadows, |bricks| {
                 bricks.fill::<CloudShadows>(Some(shaders::sky::faces::cloud_shadows::MODULE));
             })

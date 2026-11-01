@@ -892,7 +892,7 @@ impl GpuPart for ScatterGpu {
         reason = "longer than the line ceiling; it may only shrink"
     )]
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        use crate::shaders::scatter::{casters, cull, faces, snap};
+        use crate::shaders::scatter::{ambient, casters, cull, faces, snap};
         let snap_uniform = cx.buffer("snap", Lifetime::Kept);
         let frame = cx.buffer("frame", Lifetime::Kept);
         let views = cx.buffer("views", Lifetime::Kept);
@@ -921,9 +921,9 @@ impl GpuPart for ScatterGpu {
         cx.frame(faces::placed_tiles::PLACED_POSES, Bind::Buffer(poses))?;
         cx.frame(faces::placed_tiles::PLACED_GROUPS, Bind::Buffer(placed_groups))?;
         cx.frame(faces::placed_tiles::PLACED_FRAMES_SAMPLER, Bind::Sampler(linear))?;
-        cx.frame(faces::occupancy::OCCUPANCY_COVERAGE, Bind::Texture(coverage))?;
-        cx.frame(faces::occupancy::OCCUPANCY_HEIGHTS, Bind::Texture(heights))?;
-        cx.frame(faces::occupancy::OCCUPANCY_SAMPLER, Bind::Sampler(linear))?;
+        cx.frame(ambient::OCCUPANCY_COVERAGE, Bind::Texture(coverage))?;
+        cx.frame(ambient::OCCUPANCY_HEIGHTS, Bind::Texture(heights))?;
+        cx.frame(ambient::OCCUPANCY_SAMPLER, Bind::Sampler(linear))?;
         cx.frame(faces::far_cover::PLACED_FAR, Bind::Buffer(placed_far))?;
         let scatter = cx.pass("scatter").id();
         let occupancy = cx

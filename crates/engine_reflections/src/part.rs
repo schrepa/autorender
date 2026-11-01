@@ -14,7 +14,7 @@ use crate::world_trace::{TraceFrame, WorldTrace};
 const SCENE_LEVELS: u32 = 6;
 const PYRAMID_LEVELS: u32 = 15;
 const SPAN: &str = "reflections";
-const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const NEAREST_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
 pub(crate) struct TraceGpu {

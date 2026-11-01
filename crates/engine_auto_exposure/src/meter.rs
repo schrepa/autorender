@@ -105,7 +105,6 @@ impl GpuPart for MeterGpu {
                 (meter::SCENE_COLOR, Bind::Target(ViewTarget::Scene)),
                 (meter::SCENE_DEPTH, Bind::Target(ViewTarget::Depth)),
                 (meter::BINS, Bind::Buffer(bins)),
-                (meter::STATE, Bind::Buffer(state)),
             ],
         )?;
         let adapting = cx.compute_pipeline(

@@ -5,7 +5,7 @@ import package::engine::mesh::impostor_frames::{
     impostor_frame_direction, impostor_frames, impostor_grid, impostor_met,
 };
 import package::engine::mesh::vertex::octahedral_normal;
-import package::engine::post::frame::{depth_texture, drawn_uv, glow, linear, post};
+import package::engine::post::frame::{depth_texture, drawn_uv, linear, post};
 import package::engine::screen_points::{depth_normal, world_at};
 import package::engine::shading::{BODY_SOLID, BODY_THIN, BODY_WATER};
 import package::engine::view::{camera, stable_normalize};
@@ -17,20 +17,17 @@ import package::face::ground_tiles::{
     macro_color, material_look, terrain_info, tile_height, tile_layer, tile_material, tile_peak,
     triangle_height,
 };
-import package::face::horizons::terrain_visibility;
+import package::face::lighting::sun_visibility;
 import package::face::placed_tiles::{
     Pose, placed_color, placed_frame, placed_frame_layers, placed_impostor, placed_pose,
     placed_record, placed_shown,
 };
-import package::face::shadows::sun_shadowed;
-import package::face::sky::{
-    ambient as sky_ambient, atmospheric, cloud_passing, sky_above, sky_average,
-};
+import package::face::sky::{ambient as sky_ambient, atmospheric, sky_above, sky_average};
 import package::face::sun::{sun_color, sun_direction};
-import package::face::tonemap::tonemap;
+import package::face::sun_blockers::SunAt;
 import package::generated::pieces::reflections::piece;
 import package::generated::reflections::{NO_PLACED, TraceTerrain};
-import package::generated::targets::output_surface;
+import package::generated::targets::{output_reflectivity, output_surface};
 import package::reflections::surface::MIRRORED_BITS;
 
 @group(1) @binding(0) var nearest_depth: texture_2d<f32>;
@@ -47,6 +44,7 @@ const REFLECTION_LOBE_EDGE: f32 = 0.244;
 const REFLECTION_TAPS: u32 = 8u;
 const REFLECTION_FACING: f32 = 0.05;
 const REFLECTION_END: f32 = 0.1;
+const REFLECTION_FADE: f32 = 0.2;
 const FLOAT_MAX: f32 = 3.4028235e38f;
 
 fn nearest_depth_at(cell: vec2<i32>, mip: i32) -> f32 {
@@ -835,14 +833,12 @@ fn world_light(hit: WorldHit, p: vec3<f32>, direction: vec3<f32>, footprint: f32
     let wrapped = max((dot(normal, sun) + 0.25) / 1.25, 0.0);
     var sun_light = vec3<f32>(0.0);
     if wrapped > 0.0 {
-        var visible = cloud_passing(world) * unshaded;
-        if sun_shadowed() {
-            visible *= terrain_visibility(world, hit.ground);
-        }
+        let visible = sun_visibility(SunAt(world, normal, vec3<f32>(0.0), vec3<f32>(0.0), 0.0,
+            hit.ground, 0u, vec4<f32>(0.0))) * unshaded;
         sun_light = albedo * sun_color() * (wrapped * visible);
     }
     let eye = camera.position.xyz;
-    return tonemap(atmospheric(sky_light + sun_light, eye, world, stable_normalize(world - eye)).rgb);
+    return atmospheric(sky_light + sun_light, eye, world, stable_normalize(world - eye)).rgb;
 }
 
 fn reach_fade(travelled: f32, reach: f32) -> f32 {
@@ -852,16 +848,23 @@ fn reach_fade(travelled: f32, reach: f32) -> f32 {
 @fragment
 fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(position.xy);
-    let reflectivity = textureLoad(glow, pixel, 0).g;
+    let stored = textureLoad(output_reflectivity, pixel, 0).x;
+    if stored < 0.01 {
+        return vec4<f32>(0.0);
+    }
+    let mirroring = mirroring_at(pixel);
+    let smooth_enough = saturate((1.0 - mirroring.roughness.y / piece().surface.x)
+        / REFLECTION_FADE);
+    let reflectivity = stored * smooth_enough;
     if reflectivity < 0.01 {
         return vec4<f32>(0.0);
     }
+    let mirrored = mirroring.mirrored * smooth_enough;
     let center = world_at(pixel);
     if center.w == 0.0 {
         return vec4<f32>(0.0);
     }
     let p = center.xyz;
-    let mirroring = mirroring_at(pixel);
     let to_eye = normalize(post.eye.xyz - p);
     let plane = depth_normal(pixel, p);
     let facing = min(REFLECTION_FACING, max(dot(plane, to_eye), 0.0));
@@ -895,7 +898,7 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
         let lengths = REFLECTION_CONE * pixels
             * vec2<f32>(alphas.x, alphas.y * max(dot(normal, to_eye), 0.0));
         let color = lobe_light(walk.point.xy, ray.xy, lengths, p, plane);
-        return vec4<f32>(color * (reflectivity * weight), mirroring.mirrored * weight);
+        return vec4<f32>(color * (reflectivity * weight), mirrored * weight);
     }
     let clear = origin + ray * walk.clear;
     let nearest = distance(world_point(clear.xy, clear.z), p);
@@ -909,5 +912,5 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     }
     let weight = reach_fade(hit.s, reach);
     let color = world_light(hit, p, direction, ray_footprint(spread, hit.s));
-    return vec4<f32>(color * (reflectivity * weight), mirroring.mirrored * weight);
+    return vec4<f32>(color * (reflectivity * weight), mirrored * weight);
 }

@@ -1,16 +1,12 @@
 import package::engine::shading::{SPECULAR_LIMIT, SPECULAR_VARIANCE, Shaded, SurfacePoint};
 import package::engine::view::PI;
-import package::face::horizons::terrain_visibility;
 import package::face::lights::{cluster_light, kept_regions, light_cluster, lights_on,
     shaped_lights};
-import package::face::shadows::{DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON,
-    DEBUG_SUN_LEVEL, DEBUG_SUN_NONE, shadow_lookup, sun_shadow, sun_shadowed};
-import package::face::sky::cloud_passing;
+import package::face::sun_blockers::{DEBUG_SUN_NONE, SunAt, SunOpen, sun_flags, sun_open};
 import package::generated::pieces::lighting_model::piece;
-import package::lighting_model::debug::debug_shadowed;
+import package::lighting_model::inputs::sun_seen;
 import package::lighting_model::local::shaped_light;
-import package::lighting_model::surface::{environment_lobe, finish_reflecting, mirrored_sky,
-    sky_map_light};
+import package::lighting_model::surface::shade_surface;
 
 fn highlights() -> vec4<f32> {
     return piece().highlights;
@@ -44,35 +40,18 @@ fn environment_brdf(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32> {
     return f0 * ab.x + ab.y;
 }
 
-fn sun_visibility(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
-        distance: f32, on_terrain: bool, crown: f32) -> f32 {
-    if !sun_shadowed() {
-        return cloud_passing(world);
-    }
-    let terrain = terrain_visibility(world, on_terrain);
-    if terrain <= 0.0 {
-        return 0.0;
-    }
-    let visible = min(terrain, sun_shadow(world, normal, dx, dy, crown));
-    if visible == 0.0 {
-        return 0.0;
-    }
-    return visible * cloud_passing(world);
+fn surface_sun(point: SurfacePoint) -> SunAt {
+    return SunAt(point.world + point.shadow_offset, point.geometric, point.world_dx,
+        point.world_dy, point.shadow_softness, point.ground, point.shadow_lift_first,
+        point.shadow_lifts);
 }
 
-fn sun_debug(world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>, dy: vec3<f32>,
-        on_terrain: bool) -> u32 {
-    if !sun_shadowed() {
-        return DEBUG_SUN_NONE;
-    }
-    if terrain_visibility(world, on_terrain) <= 0.0 {
-        return DEBUG_SUN_HORIZON | DEBUG_SHADOWED;
-    }
-    let found = shadow_lookup(world, normal, dx, dy);
-    if found.y < 0.0 {
-        return DEBUG_SUN_BEYOND;
-    }
-    return debug_shadowed(DEBUG_SUN_LEVEL + u32(found.y), found.x);
+fn sun_visibility(at: SunAt) -> f32 {
+    return sun_seen(sun_open(SunOpen(1.0, 1.0), at));
+}
+
+fn sun_debug(at: SunAt) -> u32 {
+    return sun_flags(DEBUG_SUN_NONE, at);
 }
 
 fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
@@ -137,11 +116,5 @@ fn widened(point: SurfacePoint, turn_dx: vec3<f32>, turn_dy: vec3<f32>) -> Surfa
 }
 
 fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
-    let lobe = environment_lobe(point);
-    return finish_reflecting(point, local, lobe, mirrored_sky(lobe, point.world));
-}
-
-fn finish_ground(point: SurfacePoint, local: vec3<f32>) -> Shaded {
-    let lobe = environment_lobe(point);
-    return finish_reflecting(point, local, lobe, sky_map_light(lobe));
+    return shade_surface(point, local);
 }

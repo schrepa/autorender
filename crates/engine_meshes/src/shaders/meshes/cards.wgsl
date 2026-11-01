@@ -12,7 +12,7 @@ import package::engine::mesh::vertex::origin_key;
 import package::engine::shading::{BODY_SOLID, BODY_THIN, SurfacePoint};
 import package::engine::view::{camera, fade_noise, material_detail, stable_normalize};
 import package::face::debug::DEBUG_FADING;
-import package::face::dither::stored;
+import package::face::foliage::foliage;
 import package::face::lighting::{finish, local_light, widened};
 import package::face::sun::sun_direction;
 import package::face::wind::slot_sway;
@@ -289,9 +289,8 @@ fn card_point(input: CardVertex, record: ImpostorRecord, albedo_atlas: texture_2
     let metalness = slot_surface.y * surface.y * unpremultiply;
     var point: SurfacePoint;
     point.albedo = albedo_color;
-    point.leaf = leaf;
-    point.crown = leaf;
-    point.body = select(BODY_SOLID, BODY_THIN, (record.flags & IMPOSTOR_FOLIAGE) != 0u);
+    point.transmission = foliage().x * leaf;
+    point.shadow_softness = leaf;
     point.opacity = color.a;
     point.emission = slot_surface.z * 16.0 * emissive.a * unpremultiply;
     point.emissive = record.emissive * emissive.rgb * unpremultiply;
@@ -335,8 +334,24 @@ fn card_shaded(input: CardVertex, point: SurfacePoint, light: vec3<f32>) -> Card
     return CardShaded(finish(point, light), saturate(clip.z / clip.w));
 }
 
-fn card_lit(input: CardVertex, point: SurfacePoint) -> CardShaded {
-    return card_shaded(input, point, local_light(point, input.clip_position.xy));
+fn card_body(record: ImpostorRecord) -> u32 {
+    return select(BODY_SOLID, BODY_THIN, (record.flags & IMPOSTOR_FOLIAGE) != 0u);
+}
+
+fn card_lit(input: CardVertex, point: SurfacePoint, body: u32) -> CardShaded {
+    var lit = card_shaded(input, point, local_light(point, input.clip_position.xy));
+    lit.shaded.body = body;
+    return lit;
+}
+
+fn mesh_card_lit(input: CardVertex) -> CardShaded {
+    return card_lit(input, mesh_card_point(input),
+        card_body(impostor_records[impostor_index(input.batch)]));
+}
+
+fn placed_card_lit(input: CardVertex) -> CardShaded {
+    return card_lit(input, placed_card_point(input),
+        card_body(placed_impostor_records[impostor_index(input.batch)]));
 }
 
 fn card_debug(input: CardVertex, point: SurfacePoint, record: u32, object: u32)
@@ -350,10 +365,8 @@ fn card_debug(input: CardVertex, point: SurfacePoint, record: u32, object: u32)
 @fragment
 fn fs_card(input: CardOutput) -> DepthViewTargets {
     let card = card_vertex(input);
-    let shaded = card_lit(card, mesh_card_point(card));
-    var kept = shaded.shaded;
-    kept.color = stored(shaded.shaded.color, input.clip_position.xy);
-    return depth_view_targets(kept, drawn_pixel(input.clip_position, input.previous),
+    let shaded = mesh_card_lit(card);
+    return depth_view_targets(shaded.shaded, drawn_pixel(input.clip_position, input.previous),
         shaded.depth);
 }
 

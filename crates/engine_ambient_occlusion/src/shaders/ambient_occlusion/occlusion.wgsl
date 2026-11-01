@@ -1,7 +1,6 @@
 import package::engine::math::TAU;
 import package::engine::screen_points::{depth_normal, world_at};
 import package::engine::post::frame::post;
-import package::face::shadows::sky_visibility;
 import package::generated::pieces::ambient_occlusion::piece;
 
 @group(1) @binding(0) var raw_occlusion: texture_2d<f32>;
@@ -72,11 +71,7 @@ fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec2<f32
         return vec2<f32>(1.0, distance);
     }
     let noise = fract(52.9829189 * fract(dot(position.xy, vec2<f32>(0.06711056, 0.00583715))));
-    var visible = sky_visibility(p, normal);
-    if piece().occlusion.w != 0.0 {
-        visible *= ambient_visibility(pixel, p, normal, distance, noise);
-    }
-    return vec2<f32>(visible, distance);
+    return vec2<f32>(ambient_visibility(pixel, p, normal, distance, noise), distance);
 }
 
 const OCCLUSION_PLANE: f32 = 0.01;

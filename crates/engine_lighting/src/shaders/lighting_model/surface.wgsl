@@ -1,25 +1,20 @@
 import package::engine::color::luminance;
 import package::engine::shading::{Shaded, SurfacePoint};
-import package::engine::view::{PI, camera};
-import package::face::bloom::glow_weight;
-import package::face::bounce::bounce_light;
-import package::face::foliage::foliage;
-import package::face::occupancy::occupancy_visibility;
-import package::face::probe_light::environment_light;
-import package::face::reflections::{max_roughness, reflects};
-import package::face::sky::{ambient as sky_ambient, atmospheric, environment_levels,
-    environment_sample, environment_size, horizon, mirrored_along, sky_above, sky_average};
+import package::engine::view::camera;
+import package::face::ambient::{EnvironmentAt, environment};
+import package::face::sky::atmospheric;
 import package::face::sun::{sun_color, sun_direction};
-import package::face::tonemap::{exposure, tonemap};
+import package::face::tonemap::exposure;
 import package::generated::pieces::lighting_model::piece;
 import package::lighting_model::faces::lighting::{distribution, environment_brdf, fresnel,
-    sun_visibility, visibility};
+    sun_visibility, surface_sun, visibility};
+import package::lighting_model::inputs::{ambient_light, environment_specular, no_environment};
 
 const TRANSMISSION_BEND: f32 = 0.3;
 const TRANSMISSION_POWER: f32 = 4.0;
 
 fn transmitted(point: SurfacePoint) -> vec3<f32> {
-    let strength = foliage().x * point.leaf;
+    let strength = point.transmission;
     if strength <= 0.0 {
         return vec3<f32>(0.0);
     }
@@ -28,43 +23,8 @@ fn transmitted(point: SurfacePoint) -> vec3<f32> {
     return point.diffuse_color * (strength * pow(through, TRANSMISSION_POWER));
 }
 
-fn foliage_occlusion(point: SurfacePoint) -> f32 {
-    return 1.0 - 0.5 * saturate(foliage().x) * point.leaf;
-}
-
-struct EnvironmentLobe {
-    direction: vec3<f32>,
-    level: f32,
-    texels: f32,
-}
-
-fn environment_lobe(point: SurfacePoint) -> EnvironmentLobe {
-    let levels = environment_levels();
-    return EnvironmentLobe(dominant_direction(point), point.roughness * f32(levels - 1u),
-        lobe_texels(point.alpha));
-}
-
-fn lobe_texels(alpha: f32) -> f32 {
-    let size = f32(environment_size());
-    let lobe = 4.0 * PI * alpha * alpha;
-    let texel = 4.0 * PI / (6.0 * size * size);
-    return 0.5 * log2(max(lobe / texel, 1.0e-12));
-}
-
-fn sky_map_light(lobe: EnvironmentLobe) -> vec3<f32> {
-    return environment_sample(lobe.direction, 0u, lobe.level);
-}
-
-fn mirrored_sky(lobe: EnvironmentLobe, world: vec3<f32>) -> vec3<f32> {
-    let share = saturate(lobe.texels);
-    if share >= 1.0 {
-        return sky_map_light(lobe);
-    }
-    let exact = mirrored_along(world, lobe.direction);
-    if share <= 0.0 {
-        return exact;
-    }
-    return mix(exact, sky_map_light(lobe), share);
+fn transmission_occlusion(point: SurfacePoint) -> f32 {
+    return 1.0 - 0.5 * saturate(point.transmission);
 }
 
 fn sized_highlights() -> bool {
@@ -111,10 +71,7 @@ fn sun_highlight(point: SurfacePoint, sun: vec3<f32>, n_l: f32) -> vec3<f32> {
     return fresnel(point.f0, max(dot(point.view, half_vector), 0.0)) * (lobe * n_l);
 }
 
-const REFLECTION_FADE: f32 = 0.2;
-
-fn finish_reflecting(point: SurfacePoint, local: vec3<f32>, lobe: EnvironmentLobe,
-        reflected_sky: vec3<f32>) -> Shaded {
+fn shade_surface(point: SurfacePoint, local: vec3<f32>) -> Shaded {
     let normal = point.normal;
     let view = point.view;
     let sun = sun_direction();
@@ -123,7 +80,7 @@ fn finish_reflecting(point: SurfacePoint, local: vec3<f32>, lobe: EnvironmentLob
     var facing = 1.0;
     let face = cross(point.world_dx, point.world_dy); // filter: none, the face's own plane across the pixel, a direction
     if dot(face, face) > 1.0e-20 && all(point.shadow_offset == vec3<f32>(0.0))
-        && !point.on_terrain {
+        && !point.ground {
         let toward = select(-1.0, 1.0, dot(face, point.geometric) >= 0.0);
         facing = smoothstep(-0.05, 0.1, dot(normalize(face) * toward, sun));
     }
@@ -140,33 +97,27 @@ fn finish_reflecting(point: SurfacePoint, local: vec3<f32>, lobe: EnvironmentLob
                 * (distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha) * n_l);
         }
     }
-    let environment = environment_light(lobe.direction, lobe.level, point.world, reflected_sky);
+    let skyward = normalize(normal + point.sky_turn);
+    let light = environment(no_environment(), EnvironmentAt(point.world, normal, skyward,
+        dominant_direction(point), point.roughness, point.alpha, point.ground));
     let brdf = environment_brdf(point.f0, point.roughness, point.n_v);
-    let reflection = environment.reflected * brdf * specular;
+    let reflection = environment_specular(light) * brdf * specular;
     let grazing = 1.0 - max(dot(point.geometric, view), 0.0);
     let rim = (grazing * grazing) * (grazing * grazing) * piece().model.x
         * (1.0 - abs(point.geometric.y));
-    let covered_sky = occupancy_visibility(point.world);
-    let interior = environment.interior;
-    let skyward = normalize(normal + point.sky_turn);
-    var ambient = sky_average(skyward);
-    var bounce = point.bounce;
-    if !point.on_terrain {
-        let around = bounce_light(point.world, normal, false);
-        ambient = mix(ambient, sky_above(skyward) * around.sky, around.weight);
-        bounce += around.light * (around.weight * point.occlusion);
-    }
-    let sky_light = (point.diffuse_color * (ambient * sky_ambient()
-        + horizon() * rim) * interior.x + reflection) * point.occlusion
-        * covered_sky + point.diffuse_color * bounce * covered_sky * interior.x;
+    let inside = light.inside;
+    let open = light.open;
+    let bounce = point.indirect + light.bounce * point.occlusion;
+    let sky_light = (point.diffuse_color * (ambient_light(light) + light.horizon * rim)
+        * inside.x + reflection) * point.occlusion * open
+        + point.diffuse_color * bounce * open * inside.x;
     let sunlit = (point.diffuse_color * wrapped + highlight * specular + transmitted(point))
         * sun_color();
     var visible = 1.0;
-    if any(sunlit != vec3<f32>(0.0)) && point.sun_shade != 1.0 && interior.y != 0.0 {
-        visible = sun_visibility(point.world + point.shadow_offset, point.geometric,
-            point.world_dx, point.world_dy, point.distance, point.on_terrain, point.crown);
+    if any(sunlit != vec3<f32>(0.0)) && point.sun_shade != 1.0 && inside.y != 0.0 {
+        visible = sun_visibility(surface_sun(point));
     }
-    let sun_light = sunlit * visible * (1.0 - point.sun_shade) * interior.y;
+    let sun_light = sunlit * visible * (1.0 - point.sun_shade) * inside.y;
     let emitted = (point.albedo * point.emission + point.emissive) * piece().model.y;
     let lit = sky_light + sun_light + emitted + local;
     let through = atmospheric(lit, camera.position.xyz, point.world, -view);
@@ -176,19 +127,11 @@ fn finish_reflecting(point: SurfacePoint, local: vec3<f32>, lobe: EnvironmentLob
     shaded.normal = normal;
     shaded.roughness = point.roughness;
     shaded.across = point.roughness - point.smoother_across;
-    shaded.body = point.body;
     shaded.linear = fogged;
-    shaded.color = tonemap(fogged);
     shaded.ambient = saturate(luminance(sky_light) / max(luminance(lit), 1.0e-6)) * (1.0 - covered)
-        * foliage_occlusion(point);
-    shaded.glow = glow_weight(fogged);
-    if reflects() {
-        let smooth_enough = saturate((1.0 - shaded.across / max_roughness())
-            / REFLECTION_FADE);
-        let faded = smooth_enough * (1.0 - covered);
-        shaded.reflect = saturate(luminance(brdf) * specular) * faded;
-        shaded.mirrored = saturate(luminance(reflection * (point.occlusion * covered_sky))
-            / max(luminance(lit), 1.0e-6)) * faded;
-    }
+        * transmission_occlusion(point);
+    shaded.reflect = saturate(luminance(brdf) * specular) * (1.0 - covered);
+    shaded.mirrored = saturate(luminance(reflection * (point.occlusion * open))
+        / max(luminance(sky_light), 1.0e-6));
     return shaded;
 }

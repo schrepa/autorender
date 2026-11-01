@@ -470,7 +470,6 @@ pub struct Occupancy {
 
 impl Slot for Occupancy {
     const NAME: &'static str = "occupancy";
-    const WGSL: Option<&'static str> = Some(include_str!("places/occupancy.wgsl"));
     const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::OCCUPANCY];
 }
 

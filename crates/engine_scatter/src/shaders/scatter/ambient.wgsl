@@ -1,5 +1,6 @@
 import package::engine::view::{detail_distance, detail_level};
 import package::generated::pieces::scatter::piece;
+import package::place::ambient::{EnvironmentAt, EnvironmentLight};
 
 @group(0) @binding(0) var occupancy_coverage: texture_2d_array<f32>;
 @group(0) @binding(0) var occupancy_heights: texture_2d_array<f32>;
@@ -79,4 +80,10 @@ fn occupancy_visibility(world: vec3<f32>) -> f32 {
         }
     }
     return 1.0 - strength * hidden;
+}
+
+fn environment(light: EnvironmentLight, at: EnvironmentAt) -> EnvironmentLight {
+    var result = light;
+    result.open = light.open * occupancy_visibility(at.world);
+    return result;
 }

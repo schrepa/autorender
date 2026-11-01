@@ -3,13 +3,13 @@ import package::engine::math::GRAVITY;
 import package::engine::shading::{BODY_WATER, Shaded, SurfacePoint};
 import package::engine::view::{PI, camera, detail_across, detail_level, eye_world,
     stable_normalize, view_pixel};
-import package::face::dither::stored;
 import package::face::heightfield::{SURFACE_LEAF_INDICES, surface_leaf, surface_leaf_count,
     surface_vertex, terrain_level_height, terrain_uniform, terrain_view_uniform, use_terrain};
 import package::face::lighting::{distribution, environment_brdf, finish, fresnel, highlights,
     specular, sun_visibility, visibility};
 import package::face::sky::{ambient, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
+import package::face::sun_blockers::SunAt;
 import package::generated::targets::{ViewTargets, view_targets};
 import package::generated::water::{BREAK_THINNEST, NO_WATER_BLOCK, NO_WATER_SURFACE, SIM_LIVE_LOOKS,
     SIM_RIM, WATER_LEAF_FIRST, WATER_LIVE_BLOCK, WaterUniform};
@@ -442,7 +442,8 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     var sunlight = vec3<f32>(0.0);
     if sun.y > 0.0 {
         sunlight = sun_color()
-            * sun_visibility(world, up, surface.world_dx, surface.world_dy, distance, false, 0.0);
+            * sun_visibility(SunAt(world, up, surface.world_dx, surface.world_dy, 0.0, false, 0u,
+                vec4<f32>(0.0)));
     }
     var glint = vec3<f32>(0.0);
     let n_l = dot(normal, sun);
@@ -482,7 +483,7 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     point.emission = 0.0;
     point.emissive = vec3<f32>(0.0);
     point.occlusion = 1.0;
-    point.bounce = vec3<f32>(0.0);
+    point.indirect = vec3<f32>(0.0);
     point.roughness = roughness.x;
     point.alpha = alphas.x;
     point.smoother_across = roughness.x - roughness.y;
@@ -497,11 +498,11 @@ fn water_light(surface: WaterSurface) -> WaterLit {
     point.world_dx = surface.world_dx;
     point.world_dy = surface.world_dy;
     point.shadow_offset = vec3<f32>(0.0);
-    point.on_terrain = false;
+    point.ground = false;
     point.sun_shade = 1.0;
-    point.body = BODY_WATER;
     var lit: WaterLit;
     lit.shaded = finish(point, mix(body + glint, foam, surface.foam));
+    lit.shaded.body = BODY_WATER;
     lit.reflectance = reflectance;
     let sunlit = luminance(sunlight) * max(sun.y, 0.0);
     lit.sunny = sunlit / max(sunlit + luminance(sky), 1.0e-6);
@@ -516,8 +517,8 @@ struct WaterShade {
     flow: vec2<f32>,
 }
 
-fn water_covering(shade: WaterShade, pixel: vec2<f32>) -> vec4<f32> {
-    return vec4<f32>(stored(shade.shaded.color + shade.behind, pixel) * shade.fade, shade.fade);
+fn water_covering(shade: WaterShade) -> vec4<f32> {
+    return vec4<f32>((shade.shaded.linear + shade.behind) * shade.fade, shade.fade);
 }
 
 const WATER_CAUSTIC_CONTRAST: f32 = 0.3;
@@ -646,7 +647,7 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, refracts: bool)
 
 fn water_mirroring(shade: WaterShade) -> WaterShade {
     var result = shade;
-    let own = luminance(shade.shaded.color);
+    let own = luminance(shade.shaded.linear);
     result.shaded.mirrored *= shade.fade * own / max(own + luminance(shade.behind), 1.0e-6);
     result.shaded.reflect *= shade.fade;
     return result;
@@ -664,7 +665,7 @@ fn fs_water(input: WaterOutput) -> ViewTargets {
     let previous = water_previous(input.relative, shade.flow, saturate(shade.coverage));
     var targets = view_targets(shade.shaded,
         view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
-    targets.color = water_covering(shade, input.clip_position.xy);
+    targets.color = water_covering(shade);
     return targets;
 }
 

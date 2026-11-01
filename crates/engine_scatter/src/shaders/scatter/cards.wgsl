@@ -1,4 +1,3 @@
-import package::face::dither::stored;
 import package::face::instances::{
     AffinePose, CardDebugTargets, CardVertex, SlotColor, placed_card_debug, placed_card_pixel,
     placed_card_shade, placed_card_vertex
@@ -46,9 +45,7 @@ fn vs_placed_card(@builtin(vertex_index) vertex: u32, @location(2) slot: u32,
 fn fs_placed_card(input: PlacedCardVertex) -> DepthViewTargets {
     let card = card_of(input);
     let shaded = placed_card_shade(card);
-    var kept = shaded.shaded;
-    kept.color = stored(kept.color, input.clip_position.xy);
-    return depth_view_targets(kept, placed_card_pixel(card), shaded.depth);
+    return depth_view_targets(shaded.shaded, placed_card_pixel(card), shaded.depth);
 }
 
 @fragment

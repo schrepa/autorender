@@ -1,9 +1,8 @@
 import package::engine::math::{pcg, unit};
 import package::engine::view::{PI, camera, eye_world, pixel_noise};
 import package::face::horizons::open_sky;
-import package::face::shadows::{air_shadow, sun_shadowed};
+import package::face::shadows::air_shadow;
 import package::face::sun::{sun_color, sun_direction};
-import package::face::tonemap::exposure;
 import package::sky::air::air_light;
 import package::sky::faces::sky::cloud_passing;
 import package::sky::haze_view::{depth_texture, inverse_distance_at, post};
@@ -87,7 +86,6 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let direction = ray / ray_length;
     let jitter = fract(pixel_noise(position.xy) + sky_piece.haze.x);
     let fog_most = -log(max(1.0 - sky_piece.fog.w, 1.0e-6));
-    let shadowed = sun_shadowed();
     var through = 1.0;
     var fogged = 0.0;
     var sunlit = 0.0;
@@ -120,7 +118,7 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
             let covered = haze_covered(step_depth);
             let scattered = through * covered / step_depth;
             var visible = cloud_passing(point);
-            if shadowed && visible > 0.0 {
+            if visible > 0.0 {
                 visible *= air_shadow(point);
             }
             sunlit += scattered * step_depth * visible;
@@ -147,5 +145,5 @@ fn fs_haze(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let sun = sun_color() * (PI * phase * sunlit);
     let lights = air_light(direction);
     let sky_light = lights.fog * (fog_sky - mean_fog_sky) + lights.air * (air_sky - mean_air_sky);
-    return vec4<f32>((sun + sky_light) * exposure(), inverse);
+    return vec4<f32>(sun + sky_light, inverse);
 }

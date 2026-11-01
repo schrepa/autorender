@@ -1,12 +1,11 @@
 import package::engine::shading::SurfacePoint;
 import package::face::debug::{DebugTargets, debug_targets};
-import package::face::lighting::sun_debug;
+import package::face::lighting::{sun_debug, surface_sun};
 import package::meshes::shade::{extended_fragment, surface_point};
 import package::meshes::vertex::{ExtendedMeshOutput, ExtendedOutput, MeshOutput};
 
 fn point_targets(record: u32, object: u32, detail: u32, point: SurfacePoint) -> DebugTargets {
-    let sun = sun_debug(point.world + point.shadow_offset, point.geometric, point.world_dx,
-        point.world_dy, point.on_terrain);
+    let sun = sun_debug(surface_sun(point));
     return debug_targets(record, object, detail, point.normal, sun);
 }
 

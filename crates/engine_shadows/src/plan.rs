@@ -254,22 +254,23 @@ pub(crate) fn plan_shadows(
     regions.routes(&mut plan.routes);
     regions.composes(settings.tile_texels, &mut plan.composes);
     plan.cull = regions.cull(plan.sky_draw.as_ref());
+    let open = [
+        sky.strength,
+        sky.floor,
+        0.0,
+        if sky.darkens() { 1.0 } else { 0.0 },
+    ];
     piece.set_if_neq(regions.lookup_piece(
         (settings.tile_texels, foliage.crown_depth),
-        crate::debug::shown(*shown),
+        (crate::debug::shown(*shown), open),
     ));
     plan.moving = plan.plan.moving.len() as u32;
     plan.table();
-    let darkens = sky.darkens();
-    if maps.regions != plan.views
-        || maps.sky_darkens != darkens
-        || maps.levels != settings.levels
-        || !maps.on
-    {
+    if maps.regions != plan.views || maps.levels != settings.levels || !maps.on {
         let maps = &mut *maps;
         maps.regions.clear();
         maps.regions.extend_from_slice(&plan.views);
-        (maps.levels, maps.sky_darkens, maps.on) = (settings.levels, darkens, true);
+        (maps.levels, maps.on) = (settings.levels, true);
     }
 }
 

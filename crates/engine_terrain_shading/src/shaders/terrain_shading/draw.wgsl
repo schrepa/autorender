@@ -2,11 +2,11 @@ import package::face::cover::{COVER_FAR_SIDE, COVER_ROUGHNESS, CoverLaw, cover_c
     cover_clump_spacing, cover_clumped, cover_growth, cover_seen, cover_share, cover_shown,
     cover_tint, material_canopy};
 import package::face::far_cover::{GroundAt, far_color};
-import package::face::dither::stored;
 import package::face::ground_tiles::macro_color;
 import package::face::bounce::bounce_light;
-import package::face::lighting::{finish_ground, local_light, widened};
-import package::face::shadows::{KeptLift, keep_lift, kept_level, kept_texels};
+import package::face::foliage::foliage;
+import package::face::lighting::{finish, local_light, widened};
+import package::face::shadows::{kept_level, kept_texels};
 import package::face::sun::sun_direction;
 import package::engine::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail_distance, detail_level,
     detail_resolved, detail_span, eye_world, fade_noise, material_detail, stable_normalize, view_pixel};
@@ -211,9 +211,14 @@ fn terrain_pixel_shading(world: vec3<f32>) -> TerrainShadingLevel {
     return terrain_shading_level(detail_across(world));
 }
 
-fn terrain_kept_lift(world: vec3<f32>, local: vec2<f32>) -> KeptLift {
+struct KeptHeights {
+    first: u32,
+    lifts: vec4<f32>,
+}
+
+fn terrain_kept_lift(world: vec3<f32>, local: vec2<f32>) -> KeptHeights {
     let kept = kept_texels(world);
-    var lift: KeptLift;
+    var lift: KeptHeights;
     lift.first = kept.first;
     let count = kept.count;
     let levels = terrain.directory.y;
@@ -1275,7 +1280,7 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     let world = eye_world(relative);
     let local = world.xz - terrain.origin.xz;
     let geometric = site.geometric;
-    keep_lift(terrain_kept_lift(world, local));
+    let lift = terrain_kept_lift(world, local);
     var surface = site;
     let held = terrain_level_height(site.world.xz - terrain.origin.xz, 0u);
     if held.found {
@@ -1306,7 +1311,7 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     point.emission = 0.0;
     point.emissive = vec3<f32>(0.0);
     point.occlusion = occlusion * sky;
-    point.bounce = bounce_light(world, normal, true).light * occlusion;
+    point.indirect = bounce_light(world, normal, true).light * occlusion;
     point.sky_turn = sky_map.gba * 2.0 - 1.0;
     point.roughness = roughness;
     point.alpha = roughness * roughness;
@@ -1322,9 +1327,10 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     point.world_dx = select(site.world_dx / detail, look.world_dx, look.raw.x);
     point.world_dy = select(site.world_dy / detail, look.world_dy, look.raw.y);
     point.shadow_offset = vec3<f32>(0.0);
-    point.on_terrain = true;
-    point.body = BODY_GROUND;
-    point.leaf = ground.canopy;
+    point.ground = true;
+    point.transmission = foliage().x * ground.canopy;
+    point.shadow_lift_first = lift.first;
+    point.shadow_lifts = lift.lifts;
     return point;
 }
 
@@ -1420,8 +1426,8 @@ fn terrain_resolve_targets(input: TerrainResolveInput, dither: f32) -> DepthView
     let position = input.position;
     let resolved = terrain_resolved(position, dither);
     let point = resolved.point;
-    var shaded = finish_ground(point, local_light(point, position.xy));
-    shaded.color = stored(shaded.color, position.xy);
+    var shaded = finish(point, local_light(point, position.xy));
+    shaded.body = BODY_GROUND;
     let previous = vec4<f32>(resolved.previous.xy, 0.0, resolved.previous.z);
     return depth_view_targets(shaded, view_pixel(position, previous), resolved.depth);
 }
@@ -1440,7 +1446,9 @@ fn shade_terrain(input: TerrainOutput, holes: bool) -> Shaded {
     use_terrain(input.terrain);
     let point = terrain_point(input.relative.xyz);
     terrain_holes_test(input.cell, holes);
-    return finish_ground(point, local_light(point, input.clip_position.xy));
+    var shaded = finish(point, local_light(point, input.clip_position.xy));
+    shaded.body = BODY_GROUND;
+    return shaded;
 }
 
 @fragment
