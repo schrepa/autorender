@@ -124,29 +124,6 @@ impl GroundFace for TerrainGround {
     }
 }
 
-#[derive(Resource)]
-pub(crate) struct LiveWaterChecked;
-
-pub(crate) fn check_live_water(world: &mut World) {
-    if world.contains_resource::<LiveWaterChecked>() {
-        return;
-    }
-    world.insert_resource(LiveWaterChecked);
-    let live = section_in::<Water>(world).enabled;
-    let heightfield = world
-        .get_resource::<Ground>()
-        .is_some_and(|ground| ground.face().heightfield());
-    if live && !heightfield {
-        let error = Error::new(ErrorCode::MissingPlugin, "$.environment.water")
-            .expected(Expected::Present)
-            .got("heightfield");
-        eprintln!(
-            "{}",
-            serde_json::json!({"event": "live_water_refused", "error": error})
-        );
-    }
-}
-
 struct GroundIdentity {
     stack: String,
     pyramid: Pyramid,
@@ -165,46 +142,6 @@ struct TerrainRegions {
     edits: Vec<Stamp>,
     layers: Arc<Layers>,
     bridges: Arc<[GroundBridge]>,
-}
-
-impl GroundRegions for TerrainRegions {
-    fn record(&self, key: TileKey) -> GroundRecord {
-        let job = TileJob {
-            recipe: self.recipe.clone(),
-            key,
-            stamps: reaching(&self.edits, &self.pyramid, key),
-        };
-        let input = job.identity();
-        let record = RecordKey::new(&crate::SOURCE, TileJob::KIND.name(), &input);
-        GroundRecord {
-            kind: TileJob::KIND.name(),
-            input,
-            key: record,
-        }
-    }
-
-    fn grid(&self, key: TileKey, output: &[u8]) -> Result<GroundGrid, Error> {
-        let tile = keyed_tile(key, output)?;
-        Ok(ground_grid(
-            &tile,
-            &self.layers,
-            &self.pyramid,
-            self.bridges.clone(),
-        ))
-    }
-}
-
-impl GroundWorker for TerrainWorker {
-    fn grid(&self, identity: &[u8], key: TileKey) -> Result<GroundGrid, Error> {
-        let (tile, layers, pyramid) = walked_tile(self, identity, key)?;
-        let grid = ground_grid(&tile, &layers, &pyramid, ground_bridges(&layers));
-        *self.last_walk() = Some(WalkedTile {
-            identity: identity.into(),
-            key,
-            tile,
-        });
-        Ok(grid)
-    }
 }
 
 pub(super) fn keyed_tile(key: TileKey, output: &[u8]) -> Result<Tile, Error> {

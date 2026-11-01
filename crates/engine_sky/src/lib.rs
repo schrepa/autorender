@@ -6,12 +6,19 @@
 mod bindings;
 mod clouds;
 mod environment;
+mod from_core {
+    mod clouds;
+    mod sky;
+}
 mod gpu_layouts;
 mod haze;
+mod light;
 mod pipeline_layouts;
 pub mod shaders;
 mod sky;
+mod tables;
 mod under_eye;
+mod views;
 
 use engine_core::{Brick, Bricks, Fill, Join, Member};
 use engine_faces::places::SkySlot;

@@ -66,6 +66,7 @@ mod app_host;
 #[cfg(feature = "dev")]
 mod dev_host;
 mod game_host;
+mod resolution;
 pub use engine_render::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine_render::{GpuMark, GpuPreference, NativeWindow, start_native_instances_with};

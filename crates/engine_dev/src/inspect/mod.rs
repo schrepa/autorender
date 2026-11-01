@@ -1,6 +1,5 @@
 mod components;
 mod poses;
-mod terrain;
 
 use poses::presentation_view;
 
@@ -38,7 +37,7 @@ use crate::{
     views::{
         CameraView, GlobalTransformView, HierarchyView, InputView, InterpolateTransformView,
         LodLevelView, Mesh3dView, MeshBoundsView, MeshRenderView, MeshView, PresentationModeView,
-        PresentationStateView, SplineMeshView, TextureView, TransformView,
+        PresentationStateView, TextureView, TransformView,
     },
 };
 

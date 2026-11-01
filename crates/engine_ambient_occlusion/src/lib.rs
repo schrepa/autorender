@@ -7,6 +7,7 @@ use engine_core::{Brick, Bricks, Join};
 use engine_faces::places::PostEffectsList;
 use engine_render::render_bricks::AddRenderParts;
 
+mod effects;
 pub mod layouts;
 mod part;
 pub mod shaders;

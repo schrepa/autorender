@@ -5,9 +5,12 @@
     clippy::expect_used
 )]
 
+mod antialiasing;
 mod bindings;
+pub mod brick_smokes;
 mod gpu_layouts;
 mod pipeline_layouts;
+mod previous;
 pub mod shaders;
 mod temporal;
 

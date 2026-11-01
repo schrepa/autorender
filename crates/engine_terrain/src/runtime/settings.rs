@@ -1,7 +1,5 @@
 use super::*;
 
-pub const MAX_BOUNCE_LEVELS: u32 = 8;
-
 settings! {
     #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(

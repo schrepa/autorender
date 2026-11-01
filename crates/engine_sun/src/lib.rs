@@ -8,6 +8,7 @@ use engine_faces::places::SunSlot;
 use engine_render::render_bricks::AddRenderParts;
 
 mod gpu_layouts;
+mod light;
 mod part;
 mod shaders;
 

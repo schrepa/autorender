@@ -4,10 +4,24 @@
 )]
 
 mod bindings;
+pub mod bounce;
+mod constants;
 mod entries;
 pub mod gpu_layouts;
+pub mod jobs;
+pub mod lighting;
+pub mod macro_colors;
 mod pipeline_layouts;
+mod residency;
+mod runtime {
+    mod bounce;
+    mod lighting;
+    mod macro_colors;
+    mod shading;
+}
+mod settings;
 pub mod shaders;
+mod shading;
 mod terrain;
 mod terrain_bounce;
 mod terrain_horizons;

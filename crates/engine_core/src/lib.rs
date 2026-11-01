@@ -5,62 +5,39 @@
 
 extern crate self as engine_core;
 
-mod antialiasing;
 pub mod bounds;
-pub mod brick_smokes;
 mod bricks;
 mod clock;
-mod clouds;
 pub mod command_line;
-mod debug_view;
-pub mod debug_view_smoke;
 mod effects;
 mod entity_indices;
 mod extraction;
-mod foliage;
 mod frame_stats;
-mod gpu_culling;
 mod grid;
 mod hierarchy;
-mod highlights;
 mod input;
 mod interpolation;
 mod jobs;
-mod level_of_detail;
-mod light;
-mod lights;
 pub mod math;
 mod mesh_lods;
 pub use engine_math::collections;
-mod particles;
 pub mod presentation_bounds;
-mod probes;
 mod provided;
 mod records;
-mod resolution;
 mod retained_render;
 mod scene;
 mod schedules;
 mod section;
 mod services;
-mod sky;
-mod sky_occlusion;
 pub mod smoke;
 mod source;
-mod spline_mesh;
 mod statistics;
-mod tables;
 mod ticks;
 mod transform_edits;
-mod wind;
 
-pub use antialiasing::*;
 pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
-pub use clouds::*;
-pub use debug_view::*;
-pub use effects::*;
 pub use engine_assets::{
     Aabb, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, Filter, Grounding, LOD_RECORD,
     LodInput, LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding, Mesh, MeshLods,
@@ -73,38 +50,24 @@ pub use engine_place::{
     TextureHandle, gpu_consts, smoke_eq,
 };
 pub use engine_settings::{settings, stats};
-pub use foliage::*;
 pub use frame_stats::*;
 pub use glam;
-pub use gpu_culling::*;
 pub use grid::*;
 pub use hierarchy::*;
-pub use highlights::*;
 pub use input::*;
 pub use interpolation::*;
 pub use jobs::*;
-pub use level_of_detail::*;
-pub use light::*;
-pub use lights::*;
-pub use particles::*;
-pub use probes::*;
 pub use provided::*;
 pub use records::*;
-pub use resolution::*;
 pub use retained_render::*;
 pub use scene::*;
 pub use section::{Cut, Operation, Readback, Section};
 pub use services::{
     AssetResidency, ComponentKind, Detail, DeviceLimits, Poses, SceneComponents, View,
 };
-pub use sky::*;
-pub use sky_occlusion::*;
 pub use source::{Entry, Module, ShaderText, Source, Var};
-pub use spline_mesh::*;
 pub use statistics::{Distribution, median};
-pub use tables::*;
 pub use transform_edits::*;
-pub use wind::*;
 
 pub mod codec {
     pub use engine_codec::{decode, encode};
@@ -126,7 +89,6 @@ macro_rules! gpu_struct {
 }
 
 use bevy_ecs::change_detection::Ref;
-use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::lifecycle::Add;
@@ -152,9 +114,6 @@ type RenderQuery = QueryState<
     ),
     Or<(With<Cube>, With<Mesh3d>)>,
 >;
-
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct StreamingFocus;
 
 pub const MAX_DEV_TICKS: u32 = 120;
 
@@ -240,7 +199,6 @@ impl Engine {
                 propagate_transforms(world);
             })
             .edit_schedule(TransformPropagation, single_threaded)
-            .add_systems(WorldSync, spline_mesh::build)
             .insert_resource(FixedTime {
                 delta_seconds: clock.step_seconds() as f32,
                 elapsed_seconds: 0.0,
@@ -258,7 +216,6 @@ impl Engine {
             .insert_resource(Poses::empty())
             .insert_resource(AssetResidency::empty())
             .init_resource::<mesh_lods::MeshLevels>()
-            .init_resource::<StaticTables>()
             .init_resource::<Viewport>()
             .init_resource::<InputState>()
             .init_resource::<ActionInput>()
@@ -553,7 +510,6 @@ impl Engine {
         let _profile = engine_profile::span("ecs", "ViewSync");
         let world = self.app.world_mut();
         world.run_schedule(ViewSync);
-        tables::update_tables(world);
     }
 
     fn mark_presented_time(&mut self, alpha: Option<f32>) {

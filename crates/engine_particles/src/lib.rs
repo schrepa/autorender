@@ -5,10 +5,14 @@
     clippy::expect_used
 )]
 
+mod from_core {
+    mod particles;
+}
 pub mod gpu_layouts;
 pub mod particles;
 pub mod pipeline_layouts;
 pub mod shaders;
+mod transparent;
 
 use engine_core::{
     Brick, Bricks, DetailConsumer, DetailConsumersList, Join, ParticleExtractor, ParticleSettings,

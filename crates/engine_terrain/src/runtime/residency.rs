@@ -348,13 +348,6 @@ pub struct Terrains {
 }
 
 #[derive(Default)]
-pub(super) struct Whole {
-    pub(super) lighting: Lighting,
-    pub(super) bounce: Bounce,
-    pub(super) colors: MacroColors,
-}
-
-#[derive(Default)]
 pub(super) struct Retired {
     pub(super) jobs: Vec<JobId>,
     pub(super) shares: Vec<String>,

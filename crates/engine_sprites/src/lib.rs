@@ -1,5 +1,6 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
+mod flat;
 mod smokes;
 
 use std::ops::Range;

@@ -12,6 +12,9 @@ mod bindings;
 pub mod gpu_layouts;
 mod ground_cover;
 pub mod pipeline_layouts;
+mod runtime {
+    mod ground_cover;
+}
 pub mod shaders;
 
 pub struct GroundCoverBrick;

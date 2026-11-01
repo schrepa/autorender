@@ -13,17 +13,38 @@ use engine_terrain::Water;
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
 mod bindings;
+mod constants;
 mod debug;
 mod entries;
+pub mod flow;
 pub mod gpu_layouts;
+mod ground_face;
+pub mod jobs;
 pub mod pipeline_layouts;
+mod rewater;
+mod runtime {
+    mod flow;
+    mod water;
+    mod water_sim;
+}
+mod settled;
 pub mod shaders;
+pub mod shallow_water;
+mod sights;
+mod steady_water;
+mod tile_water;
+mod views;
 mod water;
+mod water_blocks;
+mod water_body;
 mod water_falls;
 mod water_kernels;
 mod water_particles;
 mod water_settle;
 mod water_sim;
+mod water_source;
+mod waterfalls;
+mod white_water;
 
 pub struct WaterBrick;
 

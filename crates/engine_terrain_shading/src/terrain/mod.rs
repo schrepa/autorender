@@ -42,7 +42,6 @@ mod patches;
 mod pipelines;
 mod surface;
 mod tables;
-mod water_blocks;
 
 use atlas::TileAtlas;
 use part::{Slots, TerrainIds};

@@ -3,8 +3,25 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+mod batches;
+pub mod brick_smokes;
+mod depth_pyramid;
 mod entries;
+mod extra_views;
+mod frame;
+mod from_render {
+    mod meshes;
+}
+mod gpu_culling;
+mod gpu_presentation;
+mod impostor_draws;
+mod instances;
+mod level_of_detail;
+mod meshes;
+mod opaque;
 mod part;
+mod previous;
+mod retained_uploads;
 pub mod shaders;
 
 use engine_core::{Brick, Bricks, Fill};

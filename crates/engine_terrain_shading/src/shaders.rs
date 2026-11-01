@@ -3,7 +3,6 @@ engine_render::shader_modules! {
     "terrain::faces::heightfield" in "terrain_shading" = "faces/heightfield.wgsl";
     "terrain::faces::horizons" in "terrain_shading" = "faces/horizons.wgsl";
     "terrain::field" in "terrain_shading" = "terrain/field.wgsl";
-    "terrain::water_blocks" in "terrain_shading" = "terrain/water_blocks.wgsl";
     "terrain::piece" in "terrain_shading" = "terrain/piece.wgsl";
     "terrain::horizons" in "terrain_shading" = "terrain/horizons.wgsl";
     "terrain::bounce" in "terrain_shading" = "terrain/bounce.wgsl";

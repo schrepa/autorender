@@ -4,7 +4,9 @@
 )]
 
 mod dev;
+mod instance;
 mod smoke;
+mod views;
 
 pub use dev::{
     MAX_CHANGES, StreamedCellView, StreamingGridView, WorldCellsView, WorldChangesControl,

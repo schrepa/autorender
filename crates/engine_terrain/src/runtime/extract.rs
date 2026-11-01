@@ -135,52 +135,9 @@ impl RenderPlacementLayer {
 }
 
 #[derive(Clone, Debug)]
-pub struct RenderTerrain {
-    pub id: u64,
-    pub origin: Vec3,
-    pub pyramid: Pyramid,
-    pub surface: Vec<SurfaceMaterial>,
-    pub steep: Option<crate::Steep>,
-    pub maps: Vec<Option<RenderSurfaceMaps>>,
-    pub assets: Vec<Option<RenderPlacementAsset>>,
-    pub layers: Vec<RenderPlacementLayer>,
-    pub tiles: Arc<[Arc<Tile>]>,
-    pub tiles_revision: u64,
-    pub drawn: bool,
-    pub reach: Vec<f32>,
-    pub errors: Vec<f32>,
-    pub surroundings: bool,
-    pub cutout: Option<(Vec2, Vec2)>,
-    pub may_hole: bool,
-    pub hydrology: bool,
-    pub gpu_surface: Option<Arc<crate::gpu::SurfaceData>>,
-    pub falls: Arc<[Fall]>,
-    pub water_window: Option<Arc<WaterWindow>>,
-    pub water_touches: Vec<engine_places::WaterObstacle>,
-    pub water_touches_beyond: u32,
-    pub lighting: Option<Arc<TerrainLighting>>,
-    pub bounce: Option<Arc<TerrainBounce>>,
-    pub macro_map: Option<MacroMap>,
-}
-
-#[derive(Clone, Debug)]
 pub struct MacroMap {
     pub texture: Arc<engine_assets::Texture>,
     pub identity: u128,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct RenderTerrains {
-    pub terrains: Vec<RenderTerrain>,
-    pub relative_view_projection: Mat4,
-    pub stats: TerrainStats,
-}
-
-impl RenderTerrains {
-    pub fn of(snapshot: &RenderSnapshot) -> &Self {
-        static NONE: LazyLock<RenderTerrains> = LazyLock::new(RenderTerrains::default);
-        snapshot.extracted.get::<Self>().unwrap_or(&*NONE)
-    }
 }
 
 impl From<Reach> for WaterReach {

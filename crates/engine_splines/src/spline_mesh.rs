@@ -1,0 +1,253 @@
+use bevy_ecs::{lifecycle::HookContext, prelude::*, world::DeferredWorld};
+use engine_assets::{AssetLibrary, Mesh, MeshHandle, MeshVertex};
+use engine_settings::{Error, ErrorCode, Expected};
+use glam::Vec3;
+
+use engine_core::hierarchy::set_parents;
+use engine_core::math::max;
+use engine_core::{Mesh3d, Transform};
+
+pub const CHUNK_LENGTH: f32 = 256.0;
+pub const MAX_SPLINE_POINTS: usize = 4096;
+const STEP: f32 = 0.5;
+
+#[derive(Component, Clone, Debug, Default)]
+pub struct SplineChunks {
+    pub entities: Vec<Entity>,
+    pub meshes: Vec<MeshHandle>,
+    pub length: f32,
+    pub copies: u32,
+    pub vertices: u32,
+    pub error: Option<Error>,
+    built: Option<SplineMesh>,
+}
+
+fn release(mut world: DeferredWorld, context: HookContext) {
+    let Some(chunks) = world.get::<SplineChunks>(context.entity) else {
+        return;
+    };
+    let (entities, meshes) = (chunks.entities.clone(), chunks.meshes.clone());
+    world.commands().queue(move |world: &mut World| {
+        discard(world, &entities, &meshes);
+    });
+}
+
+fn discard(world: &mut World, entities: &[Entity], meshes: &[MeshHandle]) {
+    for &entity in entities {
+        if let Ok(entity) = world.get_entity_mut(entity) {
+            entity.despawn();
+        }
+    }
+    let mut assets = world.resource_mut::<AssetLibrary>();
+    for &mesh in meshes {
+        assets.remove_mesh(mesh);
+    }
+}
+
+pub(crate) fn build(world: &mut World) {
+    let mut query = world.query::<(Entity, &SplineMesh, Option<&SplineChunks>)>();
+    let stale: Vec<(Entity, SplineMesh)> = query
+        .iter(world)
+        .filter(|(_, spline, chunks)| {
+            chunks.is_none_or(|chunks| chunks.built.as_ref() != Some(*spline))
+        })
+        .map(|(entity, spline, _)| (entity, spline.clone()))
+        .collect();
+    for (entity, spline) in stale {
+        if let Some(old) = world.get::<SplineChunks>(entity) {
+            let (entities, meshes) = (old.entities.clone(), old.meshes.clone());
+            discard(world, &entities, &meshes);
+        }
+        let built = match bend(world.resource::<AssetLibrary>(), &spline) {
+            Ok(built) => built,
+            Err(error) => {
+                world.entity_mut(entity).insert(SplineChunks {
+                    error: Some(error),
+                    built: Some(spline),
+                    ..SplineChunks::default()
+                });
+                continue;
+            }
+        };
+        let mut chunks = SplineChunks {
+            length: built.length,
+            copies: built.copies,
+            vertices: built
+                .meshes
+                .iter()
+                .map(|mesh| mesh.vertices().len() as u32)
+                .sum(),
+            built: Some(spline.clone()),
+            ..SplineChunks::default()
+        };
+        let parented = world.get::<Transform>(entity).is_some();
+        for mesh in built.meshes {
+            let handle = match world.resource_mut::<AssetLibrary>().insert_mesh(mesh) {
+                Ok(handle) => handle,
+                Err(error) => {
+                    chunks.error = Some(error);
+                    break;
+                }
+            };
+            chunks.meshes.push(handle);
+            let child = world
+                .spawn((
+                    Transform::default(),
+                    Mesh3d {
+                        mesh: handle,
+                        material: spline.material,
+                    },
+                ))
+                .id();
+            chunks.entities.push(child);
+        }
+        if parented {
+            let changes: Vec<_> = chunks
+                .entities
+                .iter()
+                .map(|&child| (child, Some(entity)))
+                .collect();
+            if let Err(error) = set_parents(world, &changes) {
+                chunks.error = Some(error);
+            }
+        }
+        world.entity_mut(entity).insert(chunks);
+    }
+}
+
+struct Bent {
+    meshes: Vec<Mesh>,
+    length: f32,
+    copies: u32,
+}
+
+pub(crate) fn curve(points: &[Vec3]) -> (Vec<Vec3>, Vec<f32>) {
+    let count = points.len();
+    let at = |index: isize| -> Vec3 {
+        if index < 0 {
+            2.0 * points[0] - points[1]
+        } else if index as usize >= count {
+            2.0 * points[count - 1] - points[count - 2]
+        } else {
+            points[index as usize]
+        }
+    };
+    let mut samples = vec![points[0]];
+    for segment in 0..count - 1 {
+        let index = segment as isize;
+        let [p0, p1, p2, p3] = [at(index - 1), at(index), at(index + 1), at(index + 2)];
+        let knot = |a: Vec3, b: Vec3| max(a.distance(b).sqrt(), 1.0e-4);
+        let t1 = knot(p0, p1);
+        let t2 = t1 + knot(p1, p2);
+        let t3 = t2 + knot(p2, p3);
+        let steps = max((p1.distance(p2) / STEP).ceil(), 1.0) as usize;
+        for step in 1..=steps {
+            let t = t1 + (t2 - t1) * step as f32 / steps as f32;
+            let a1 = p0 * ((t1 - t) / t1) + p1 * (t / t1);
+            let a2 = p1 * ((t2 - t) / (t2 - t1)) + p2 * ((t - t1) / (t2 - t1));
+            let a3 = p2 * ((t3 - t) / (t3 - t2)) + p3 * ((t - t2) / (t3 - t2));
+            let b1 = a1 * ((t2 - t) / t2) + a2 * (t / t2);
+            let b2 = a2 * ((t3 - t) / (t3 - t1)) + a3 * ((t - t1) / (t3 - t1));
+            samples.push(b1 * ((t2 - t) / (t2 - t1)) + b2 * ((t - t1) / (t2 - t1)));
+        }
+    }
+    let mut along = Vec::with_capacity(samples.len());
+    let mut length = 0.0;
+    for (index, &sample) in samples.iter().enumerate() {
+        if index > 0 {
+            length += samples[index - 1].distance(sample);
+        }
+        along.push(length);
+    }
+    (samples, along)
+}
+
+pub(crate) fn point_at(samples: &[Vec3], along: &[f32], distance: f32) -> (Vec3, Vec3) {
+    let last = samples.len() - 1;
+    let index = along
+        .partition_point(|&value| value <= distance)
+        .saturating_sub(1)
+        .min(last - 1);
+    let (a, b) = (samples[index], samples[index + 1]);
+    let run = along[index + 1] - along[index];
+    let t = if run > 0.0 {
+        engine_core::math::clamp((distance - along[index]) / run, 0.0, 1.0)
+    } else {
+        0.0
+    };
+    let back = samples[index.saturating_sub(1)];
+    let ahead = samples[(index + 2).min(last)];
+    let direction = (b - a) * 2.0 + (ahead - back);
+    (a + (b - a) * t, direction.normalize_or(b - a))
+}
+
+fn bend(assets: &AssetLibrary, spline: &SplineMesh) -> Result<Bent, Error> {
+    let invalid = |path: &str| Error::new(ErrorCode::InvalidSpline, path);
+    if !(2..=MAX_SPLINE_POINTS).contains(&spline.points.len()) {
+        return Err(invalid("$.points")
+            .expected(Expected::Array)
+            .range(2.0, MAX_SPLINE_POINTS as f64)
+            .got(spline.points.len()));
+    }
+    if let Some(index) = spline.points.iter().position(|point| !point.is_finite()) {
+        return Err(invalid(&format!("$.points[{index}]"))
+            .expected(Expected::Finite)
+            .got(spline.points[index].to_array()));
+    }
+    let mesh = assets
+        .mesh(spline.mesh)
+        .ok_or_else(|| invalid("$.mesh").expected(Expected::Live))?
+        .clone();
+    let bounds = mesh.bounds();
+    let (start, span) = (bounds.min().x, bounds.max().x - bounds.min().x);
+    if span <= 1.0e-3 {
+        return Err(invalid("$.mesh")
+            .expected(Expected::Above)
+            .range(1.0e-3, f64::MAX)
+            .got(span));
+    }
+    let (samples, along) = curve(&spline.points);
+    let length = *along.last().expect("curve_has_samples");
+    if length <= 1.0e-3 {
+        return Err(invalid("$.points")
+            .expected(Expected::Above)
+            .range(1.0e-3, f64::MAX)
+            .got(length));
+    }
+    let copies = max((length / span).round(), 1.0) as u32;
+    let copy = length / copies as f32;
+    let stretch = copy / span;
+    let per_chunk = max((CHUNK_LENGTH / copy).floor(), 1.0) as u32;
+    let mut meshes = Vec::new();
+    let mut first = 0;
+    while first < copies {
+        let end = (first + per_chunk).min(copies);
+        let mut vertices = Vec::with_capacity(mesh.vertices().len() * (end - first) as usize);
+        let mut indices = Vec::with_capacity(mesh.indices().len() * (end - first) as usize);
+        for index in first..end {
+            let base = vertices.len() as u32;
+            for vertex in mesh.vertices() {
+                let [x, y, z] = vertex.position;
+                let distance = index as f32 * copy + (x - start) * stretch;
+                let (point, tangent) = point_at(&samples, &along, distance);
+                let up = (Vec3::Y - tangent * Vec3::Y.dot(tangent)).normalize_or(Vec3::Z);
+                let across = tangent.cross(up);
+                let [nx, ny, nz] = vertex.normal;
+                let normal = (tangent * (nx / stretch) + up * ny + across * nz).normalize_or(up);
+                vertices.push(MeshVertex {
+                    position: (point + up * y + across * z).to_array(),
+                    normal: normal.to_array(),
+                    uv: vertex.uv,
+                });
+            }
+            indices.extend(mesh.indices().iter().map(|&vertex| base + vertex));
+        }
+        meshes.push(Mesh::new(vertices, indices)?);
+        first = end;
+    }
+    Ok(Bent {
+        meshes,
+        length,
+        copies,
+    })
+}

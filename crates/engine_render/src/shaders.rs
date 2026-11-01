@@ -12,7 +12,6 @@ shader_modules! {
     "engine::color" in "core" = "color.wgsl";
     "engine::math" in "core" = "math.wgsl";
     "engine::fullscreen" in "core" = "fullscreen.wgsl";
-    "engine::wind" in "core" = "wind.wgsl";
     "engine::screen_points" in "core" = "screen_points.wgsl";
     "engine::mipmaps" in "core" = "mipmaps.wgsl";
     "engine::noise" in "core" = "noise.wgsl";
@@ -21,12 +20,7 @@ shader_modules! {
     "meshes::declarations" in "core" = "meshes/declarations.wgsl";
     "meshes::vertex" in "core" = "meshes/vertex.wgsl";
     "meshes::surface" in "core" = "meshes/surface.wgsl";
-    "meshes::debug" in "core" = "meshes/debug.wgsl";
     "meshes::impostor_frames" in "core" = "impostor_frames.wgsl";
-    "transparent::weighted" in "core" = "transparent/weighted.wgsl";
-    "transparent::composite" in "core" = "transparent.wgsl";
-    "presentation::cull" in "core" = "presentation.wgsl";
-    "presentation::screen_cull" in "core" = "screen_cull.wgsl";
     "engine::pyramid" in "core" = "depth_pyramid.wgsl";
     "engine::post::pixel" in "core" = "post/pixel.wgsl";
     "engine::post::frame" in "core" = "effects.wgsl";

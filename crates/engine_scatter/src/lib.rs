@@ -4,9 +4,14 @@
 )]
 
 mod bindings;
+pub mod brick_smokes;
+mod foliage;
 mod gpu_layouts;
 mod occupancy;
 mod pipeline_layouts;
+mod runtime {
+    mod occupancy;
+}
 mod scatter;
 mod scatter_draws;
 mod scatter_pool;

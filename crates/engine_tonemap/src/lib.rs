@@ -6,6 +6,7 @@
 )]
 
 mod gpu_layouts;
+mod light;
 pub mod shaders;
 mod tonemap;
 

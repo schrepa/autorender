@@ -27,8 +27,6 @@ mod gpu_calls;
 mod gpu_data;
 mod pipeline_layouts;
 
-mod batches;
-mod debug_targets;
 mod depth_pyramid;
 mod entries;
 mod faces;
@@ -44,12 +42,10 @@ mod pieces;
 mod pipelines;
 mod places;
 mod registration;
-mod retained_uploads;
 mod shaders;
 mod uploads;
 
 mod buffers;
-mod gpu_presentation;
 mod materials;
 mod memory;
 mod mesh_arena;
@@ -60,7 +56,6 @@ mod profiling;
 mod renderer;
 mod staging;
 mod targets;
-mod transparent;
 
 #[doc(hidden)]
 pub use memory::GpuMemory;

@@ -5,9 +5,15 @@
     clippy::expect_used
 )]
 
+mod debug_targets;
 pub mod debug_view;
+mod from_core {
+    mod debug_view;
+}
 pub mod gpu_layouts;
 pub mod pipeline_layouts;
+#[cfg(feature = "dev")]
+mod probe;
 pub mod shaders;
 
 use engine_core::{Brick, Bricks, DebugView, Join};

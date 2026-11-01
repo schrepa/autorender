@@ -8,6 +8,8 @@ use engine_faces::places::LightingSlot;
 use engine_render::render_bricks::AddRenderParts;
 
 mod gpu_layouts;
+mod highlights;
+mod light;
 mod part;
 mod shaders;
 

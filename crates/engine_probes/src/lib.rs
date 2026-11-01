@@ -6,6 +6,9 @@
 )]
 
 mod captures;
+mod from_core {
+    mod probes;
+}
 pub mod gpu_layouts;
 pub mod probes;
 pub mod shaders;

@@ -8,6 +8,8 @@ use engine_faces::places::{DitherSlot, PostEffectsList};
 use engine_render::composite::PostDisplay;
 use engine_render::render_bricks::AddRenderParts;
 
+pub mod brick_smokes;
+mod effects;
 pub mod gpu_layouts;
 mod part;
 pub mod shaders;

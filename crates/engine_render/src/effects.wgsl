@@ -37,17 +37,3 @@ fn inverse_distance_at(depth: texture_depth_2d, pixel: vec2<i32>, settings: Post
         * vec4<f32>(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, value, 1.0);
     return 1.0 / max(length(point.xyz / point.w - settings.eye.xyz), 1.0e-4);
 }
-
-fn occlusion_at(occlusion: texture_2d<f32>, pixel: vec2<i32>, settings: Post) -> f32 {
-    if settings.occlusion.w == 0.0 && settings.sky.w == 0.0 {
-        return 1.0;
-    }
-    return textureLoad(occlusion, pixel, 0).x;
-}
-
-fn effect_shade(ambient: f32, visible: f32, settings: Post) -> f32 {
-    if settings.occlusion.w == 0.0 && settings.sky.w == 0.0 {
-        return 1.0;
-    }
-    return 1.0 - ambient * (1.0 - visible);
-}

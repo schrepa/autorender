@@ -42,20 +42,13 @@ mod attribution;
 mod camera;
 mod core_state;
 mod display;
-mod extra_views;
 mod frame;
 mod frame_stats;
 mod health;
-mod impostor_draws;
 mod install;
-mod instances;
-mod meshes;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 mod opaque;
-mod previous;
-#[cfg(feature = "dev")]
-mod probe;
 mod queries;
 mod records;
 mod startup;
@@ -65,17 +58,9 @@ pub use camera::CameraBindings;
 pub(crate) use core_state::Core;
 pub(crate) use display::DisplayFrame;
 pub use display::{DepthTarget, Display};
-pub use extra_views::CasterDraw;
-pub use impostor_draws::ImpostorDraws;
-pub use instances::FramePoses;
-pub use instances::Instances;
-pub use meshes::{BatchBinds, DrawOrder, MeshPipelines, ShadingSet};
-pub use meshes::{extra_layout, vertex_layout};
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::GpuMark;
 pub(crate) use opaque::{OPAQUE_PART, OpaqueReads, encode_phase};
-pub(crate) use previous::{History, PreviousFrame};
-pub use previous::{MOTION_FORMAT, Motion};
 pub use startup::StartingRenderer;
 
 const INITIAL_CAPACITY: usize = 1_024;
