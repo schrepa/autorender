@@ -630,7 +630,6 @@ struct Book {
     generation: u64,
     contents: Contents,
     key: Option<SettleKey>,
-    records: ImpostorRecords,
     work: Vec<(u64, AtlasWork)>,
 }
 
@@ -667,7 +666,6 @@ impl Book {
             generation: 0,
             contents: Contents::default(),
             key: None,
-            records: ImpostorRecords::default(),
             work: Vec::new(),
         }
     }
