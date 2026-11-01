@@ -137,7 +137,7 @@ impl Bounce {
                 (bounce_maps::BOUNCE_LIGHT_OUT, light_out),
                 (
                     bounce_maps::BOUNCE_PROBES,
-                    Bind::Texture(sources.horizons.probes),
+                    Bind::Texture(sources.horizons.texture),
                 ),
                 (bounce_maps::BOUNCE_SAMPLER, Bind::Sampler(sampler)),
                 (bounce_maps::BOUNCE_PALETTE, Bind::Buffer(sources.palette)),
@@ -299,6 +299,8 @@ impl Bounce {
             records.resize(count, BounceTerrain::default());
         }
         let mut scratch = 0_u32;
+        let (casting, _) = crate::terrain_horizons::room(limits.0, tiles.terrains.len());
+        let horizon_layers = (crate::lighting::HORIZON_LAYERS * casting) as u32;
         let listed = tiles.terrains.iter().zip(&self.windows).enumerate();
         for (index, (terrain, window)) in listed {
             let Some(window) = window else {
@@ -316,7 +318,7 @@ impl Bounce {
             let shared = terrain_record(
                 terrain,
                 bounce,
-                (window, index),
+                (window, index, horizon_layers),
                 self.bases[slot],
                 (
                     (sky.layer(index), colors.layer(index)),
@@ -505,7 +507,7 @@ impl Bounce {
 fn terrain_record(
     terrain: &TerrainEntry,
     bounce: &TerrainBounce,
-    (window, index): (&BounceLevels, usize),
+    (window, index, horizon_layers): (&BounceLevels, usize, u32),
     bases: [u32; 3],
     ((sky, colors), palette): ((u32, u32), u32),
 ) -> BounceTerrain {
@@ -514,7 +516,12 @@ fn terrain_record(
     BounceTerrain {
         place: [terrain.origin.x, terrain.origin.z, extent.x, extent.y],
         grid: [bounce.probes, bounce.texels(), palette, colors],
-        layers: [GROUND_LAYERS * slot, slot, BOUNCE_LAYERS as u32 * slot, sky],
+        layers: [
+            GROUND_LAYERS * slot,
+            slot,
+            horizon_layers + BOUNCE_LAYERS as u32 * slot,
+            sky,
+        ],
         sources: [bases[0], bases[1], bases[2], index as u32],
         level: [0; 4],
         kept: [0; 4],

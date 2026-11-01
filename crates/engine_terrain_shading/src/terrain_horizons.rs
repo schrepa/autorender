@@ -27,7 +27,6 @@ const NO_RECORD: [[f32; 4]; HORIZON_RECORD_VECTORS as usize] = {
 
 pub(crate) struct Horizons {
     pub(crate) texture: Texture<TerrainGpu>,
-    pub(crate) probes: Texture<TerrainGpu>,
     shape: Option<(u32, usize, u32)>,
     held: Vec<Option<Arc<TerrainLighting>>>,
     pub(crate) uploaded: u32,
@@ -37,7 +36,6 @@ impl Horizons {
     pub(crate) fn install(cx: &mut Install<'_, TerrainGpu>) -> Result<Self, Error> {
         Ok(Self {
             texture: cx.texture("horizons", FORMAT, Lifetime::Kept),
-            probes: cx.texture("bounce_probes", FORMAT, Lifetime::Kept),
             shape: None,
             held: Vec::new(),
             uploaded: 0,
@@ -79,22 +77,13 @@ impl Horizons {
             self.shape = Some((size, count, slots));
             self.held = vec![None; count];
         }
-        let horizons = (HORIZON_LAYERS * count) as u32;
+        let total = (HORIZON_LAYERS * count) as u32 + BOUNCE_LAYERS as u32 * slots;
         cx.allocate(
             self.texture,
             wgpu::Extent3d {
                 width: size,
                 height: size,
-                depth_or_array_layers: horizons.max(1),
-            },
-            1,
-        );
-        cx.allocate(
-            self.probes,
-            wgpu::Extent3d {
-                width: size,
-                height: size,
-                depth_or_array_layers: (BOUNCE_LAYERS as u32 * slots).max(1),
+                depth_or_array_layers: total.max(1),
             },
             1,
         );
@@ -162,6 +151,7 @@ pub(crate) fn records(
                 let window = windows.get(index).copied().flatten().filter(|_| bounces);
                 let place = Place {
                     index,
+                    count,
                     size,
                     window,
                 };
@@ -189,6 +179,7 @@ fn max_extent(terrain: &TerrainEntry) -> f32 {
 
 struct Place {
     index: usize,
+    count: usize,
     size: u32,
     window: Option<BounceLevels>,
 }
@@ -216,7 +207,7 @@ fn record(
     ];
     if let Some(window) = place.window {
         record[2] = [
-            (BOUNCE_LAYERS * window.slot as usize) as f32,
+            (HORIZON_LAYERS * place.count + BOUNCE_LAYERS * window.slot as usize) as f32,
             window.probes as f32,
             window.levels as f32,
             window.columns as f32,

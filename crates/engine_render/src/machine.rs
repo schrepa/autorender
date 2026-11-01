@@ -229,11 +229,30 @@ pub(crate) fn reads_depth_direct(pass: &PassDecl, depth_writes: bool) -> bool {
     !shared(pass) && pass.layer.is_some() && !depth_writes
 }
 
+const EVERY: [u32; 2] = [0, u32::MAX];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Handle {
-    Texture(u32),
+    Texture { texture: u32, mips: [u32; 2], layers: [u32; 2] },
     Buffer(u32),
     Target(Target),
+}
+
+impl Handle {
+    fn whole(texture: u32) -> Self {
+        Self::Texture { texture, mips: EVERY, layers: EVERY }
+    }
+
+    fn overlaps(self, other: Self) -> bool {
+        let meet = |[start, end]: [u32; 2], [low, high]: [u32; 2]| start < high && low < end;
+        match (self, other) {
+            (
+                Self::Texture { texture, mips, layers },
+                Self::Texture { texture: known, mips: known_mips, layers: known_layers },
+            ) => texture == known && meet(mips, known_mips) && meet(layers, known_layers),
+            _ => self == other,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -244,7 +263,12 @@ enum Usage {
 
 fn handle_of(bound: &Bound) -> Option<Handle> {
     match bound {
-        Bound::Texture(texture) | Bound::Slice { texture, .. } => Some(Handle::Texture(*texture)),
+        Bound::Texture(texture) => Some(Handle::whole(*texture)),
+        Bound::Slice { texture, mips, layers } => Some(Handle::Texture {
+            texture: *texture,
+            mips: [mips.start, mips.end],
+            layers: [layers.start, layers.end],
+        }),
         Bound::Buffer(buffer) => Some(Handle::Buffer(*buffer)),
         Bound::Target(view) => Some(Handle::Target(final_target(*view))),
         Bound::Sampler(_) | Bound::Asset => None,
@@ -290,7 +314,7 @@ fn attachments(
     let mut found = Vec::new();
     for &(texture, _) in pass.colors.iter().chain(&pass.depths) {
         if !doubled.get(texture as usize).copied().unwrap_or(false) {
-            found.push(Handle::Texture(texture));
+            found.push(Handle::whole(texture));
         }
     }
     if let Some(layer) = pass_layer(pass) {
@@ -480,7 +504,7 @@ impl Machine {
                     None => None,
                 };
                 let handle = handle.filter(|handle| match handle {
-                    Handle::Texture(texture) => !doubled.get(*texture as usize).copied().unwrap_or(false),
+                    Handle::Texture { texture, .. } => !doubled.get(*texture as usize).copied().unwrap_or(false),
                     Handle::Target(Target::Output(index)) => outputs.get(*index as usize).is_none_or(|output| !output.layers.is_empty()),
                     Handle::Buffer(_) | Handle::Target(_) => true,
                 });
@@ -494,7 +518,7 @@ impl Machine {
             writes.get(pipeline as usize).is_some_and(|written| {
                 written
                     .iter()
-                    .any(|(known, usage)| known == handle && !(*usage == Usage::Stored && ty.writes()))
+                    .any(|(known, usage)| known.overlaps(*handle) && !(*usage == Usage::Stored && ty.writes()))
             })
         };
         let plan = match crate::frame_group::plan(&variables, &reaches, limits, &conflict) {
@@ -522,6 +546,11 @@ impl Machine {
                     }
                     if let wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable }, .. } = &mut entry.ty {
                         *filterable = filterable_bound(frame_bound.get(&entry.binding), &declared);
+                    }
+                    if entry.ty == wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
+                        && !filterable_bound(frame_bound.get(&entry.binding), &declared)
+                    {
+                        entry.ty = wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering);
                     }
                 }
                 FrameVariant {
@@ -736,6 +765,11 @@ fn doubled_of(
 }
 
 fn filterable_bound(bound: Option<&Bound>, declared: &Declared) -> bool {
+    if let Some(Bound::Sampler(sampler)) = bound {
+        return declared.samplers.get(*sampler as usize).is_none_or(|desc| {
+            desc.filter == wgpu::FilterMode::Linear || desc.mipmap == wgpu::MipmapFilterMode::Linear
+        });
+    }
     let format = match bound {
         Some(Bound::Texture(texture) | Bound::Slice { texture, .. }) => {
             declared.textures.get(*texture as usize).map(|texture| texture.format)

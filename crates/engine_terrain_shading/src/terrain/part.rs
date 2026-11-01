@@ -153,8 +153,8 @@ impl GpuPart for TerrainGpu {
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::terrain_shading::{
-            bounce, control, debug, draw, faces, field, horizons, normals, shadow, sky,
-            subdivision, surface, tables,
+            control, debug, draw, faces, field, horizons, normals, shadow, sky, subdivision,
+            surface, tables,
         };
         let handles = Handles {
             heights: cx.texture("heights", HEIGHT_FORMAT, Lifetime::Kept),
@@ -223,10 +223,6 @@ impl GpuPart for TerrainGpu {
             Bind::Texture(horizon_maps.texture),
         )?;
         cx.frame(horizons::TERRAIN_HORIZON_SAMPLER, Bind::Sampler(h.linear))?;
-        cx.frame(
-            bounce::TERRAIN_BOUNCE_PROBES,
-            Bind::Texture(horizon_maps.probes),
-        )?;
         cx.frame(faces::ground_tiles::HEIGHTS, Bind::Texture(h.heights))?;
         cx.frame(faces::ground_tiles::CONTROL, Bind::Texture(h.control))?;
         cx.frame(faces::ground_tiles::NORMALS, Bind::Texture(h.normals))?;
