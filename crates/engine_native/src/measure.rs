@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use engine::host::HostSettings;
-use engine::{Engine, Error, ErrorCode, Expected, Game};
+use engine::{BrickList, Engine, Error, ErrorCode, Expected, Game};
 use serde_json::{Map, Value, json};
 
 use crate::Offscreen;
@@ -149,11 +149,12 @@ pub fn run<G: Game, E: Into<engine::Error>>(
     gpu: engine::GpuPreference,
     jobs: JobOptions,
     settings: HostSettings,
-    build: impl FnOnce() -> Result<(Engine, G), E>,
+    bricks: impl FnOnce(BrickList) -> BrickList,
+    build: impl FnOnce(&mut Engine) -> Result<G, E>,
 ) -> engine::Result<()> {
     let launched = Instant::now();
-    let mut game = Offscreen::launch(size, gpu, &jobs, build)?;
-    settings.apply(game.host_mut());
+    let mut game = Offscreen::launch(size, gpu, &jobs, bricks, build)?;
+    settings.apply(game.host_mut())?;
     game.prepare(0.0)?;
     let prepare_ms = launched.elapsed().as_secs_f64() * 1000.0;
     let (held, after_ms) = settle(&mut game, &method.settle, launched)?;

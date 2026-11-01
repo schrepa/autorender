@@ -60,7 +60,7 @@ impl DevHost {
 
     pub fn submits_frame(
         &self,
-        world: &engine_core::bevy_ecs::prelude::World,
+        world: &bevy_ecs::prelude::World,
         source: &str,
         paused: bool,
     ) -> bool {

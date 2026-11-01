@@ -3,14 +3,6 @@ use bevy_ecs::prelude::Resource;
 pub const CORE_ROW: &str = "core";
 pub const UNATTRIBUTED_ROW: &str = "unattributed";
 pub const GPU_IDLE_ROW: &str = "gpu_idle";
-pub const CORE_PASSES: &[&str] = &[
-    "presentation",
-    "opaque",
-    "opaque_late",
-    "transparent",
-    "transparent_composite",
-    "composite",
-];
 pub const WARMUP_FRAMES: u64 = 120;
 
 #[derive(Resource, Clone, Debug, Default, PartialEq, serde::Serialize)]
@@ -128,7 +120,7 @@ impl BrickCosts {
 }
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
-pub(crate) fn under<T>(brick: &'static str, run: impl FnOnce() -> T) -> T {
+pub fn under<T>(brick: &'static str, run: impl FnOnce() -> T) -> T {
     let _span = engine_profile::span("brick", brick);
     let _scope = engine_profile::enter(engine_profile::brick_index(brick));
     run()
@@ -136,7 +128,7 @@ pub(crate) fn under<T>(brick: &'static str, run: impl FnOnce() -> T) -> T {
 
 #[cfg(not(any(feature = "dev", feature = "profiling")))]
 #[inline(always)]
-pub(crate) fn under<T>(_brick: &'static str, run: impl FnOnce() -> T) -> T {
+pub fn under<T>(_brick: &'static str, run: impl FnOnce() -> T) -> T {
     run()
 }
 

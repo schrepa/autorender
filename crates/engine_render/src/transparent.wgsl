@@ -1,5 +1,5 @@
 import package::engine::color::decode_srgb;
-import package::post::pixel::PostPixel;
+import package::engine::post::pixel::PostPixel;
 
 @group(0) @binding(0) var accumulated: texture_2d<f32>;
 @group(0) @binding(1) var revealed: texture_2d<f32>;

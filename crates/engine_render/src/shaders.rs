@@ -1,7 +1,6 @@
-#[macro_export]
 macro_rules! shader_modules {
     ($($path:literal in $brick:literal = $file:literal;)*) => {
-        pub const MODULES: &[$crate::linker::ShaderModule] = &[$($crate::linker::ShaderModule {
+        pub const MODULES: &[crate::linker::ShaderModule] = &[$(crate::linker::ShaderModule {
             path: $path,
             brick: $brick,
             source: include_str!($file),
@@ -9,7 +8,7 @@ macro_rules! shader_modules {
     };
 }
 
-crate::shader_modules! {
+shader_modules! {
     "engine::color" in "core" = "color.wgsl";
     "engine::math" in "core" = "math.wgsl";
     "engine::fullscreen" in "core" = "fullscreen.wgsl";
@@ -17,7 +16,8 @@ crate::shader_modules! {
     "engine::screen_points" in "core" = "screen_points.wgsl";
     "engine::mipmaps" in "core" = "mipmaps.wgsl";
     "engine::noise" in "core" = "noise.wgsl";
-    "frame::view" in "core" = "frame/view.wgsl";
+    "engine::view" in "core" = "frame/view.wgsl";
+    "engine::shading" in "core" = "shading.wgsl";
     "meshes::declarations" in "core" = "meshes/declarations.wgsl";
     "meshes::vertex" in "core" = "meshes/vertex.wgsl";
     "meshes::surface" in "core" = "meshes/surface.wgsl";
@@ -27,11 +27,11 @@ crate::shader_modules! {
     "transparent::composite" in "core" = "transparent.wgsl";
     "presentation::cull" in "core" = "presentation.wgsl";
     "presentation::screen_cull" in "core" = "screen_cull.wgsl";
-    "culling::pyramid" in "culling" = "depth_pyramid.wgsl";
-    "post::pixel" in "core" = "post/pixel.wgsl";
-    "post::frame" in "core" = "effects.wgsl";
-    "post::resolve_plain" in "core" = "post/resolve_plain.wgsl";
-    "post::levels" in "core" = "post/levels.wgsl";
+    "engine::pyramid" in "core" = "depth_pyramid.wgsl";
+    "engine::post::pixel" in "core" = "post/pixel.wgsl";
+    "engine::post::frame" in "core" = "effects.wgsl";
+    "engine::post::resolve_plain" in "core" = "post/resolve_plain.wgsl";
+    "engine::post::levels" in "core" = "post/levels.wgsl";
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,21 +48,18 @@ pub struct Entry {
     pub stage: Stage,
 }
 
-#[doc(hidden)]
-#[macro_export]
 macro_rules! entry_stage {
     (vertex) => {
-        $crate::shaders::Stage::Vertex
+        Stage::Vertex
     };
     (fragment) => {
-        $crate::shaders::Stage::Fragment
+        Stage::Fragment
     };
     (compute) => {
-        $crate::shaders::Stage::Compute
+        Stage::Compute
     };
 }
 
-#[macro_export]
 macro_rules! entry_points {
     ($($rust:ident {
         $($stage:ident: [$($name:ident @ $module:literal),* $(,)?]),* $(,)?
@@ -71,22 +68,23 @@ macro_rules! entry_points {
             $(
                 #[expect(non_upper_case_globals, reason = "named as their WGSL functions")]
                 pub mod $rust {
+                    use super::super::{Entry, Stage};
                     $($(
-                        pub const $name: $crate::shaders::Entry = $crate::shaders::Entry {
+                        pub const $name: Entry = Entry {
                             module: $module,
                             name: stringify!($name),
-                            stage: $crate::entry_stage!($stage),
+                            stage: entry_stage!($stage),
                         };
                     )*)*
                 }
             )*
         }
 
-        pub const ENTRIES: &[$crate::shaders::Entry] = &[$($($(entry::$rust::$name,)*)*)*];
+        pub const ENTRIES: &[Entry] = &[$($($(entry::$rust::$name,)*)*)*];
     };
 }
 
-crate::entry_points! {
+entry_points! {
     meshes {
         vertex: [
             vs_affine @ "meshes::vertex",
@@ -114,10 +112,10 @@ crate::entry_points! {
     }
     depth_pyramid {
         compute: [
-            pyramid_first @ "culling::pyramid",
-            pyramid_down @ "culling::pyramid",
-            pyramid_first_nearest @ "culling::pyramid",
-            pyramid_down_nearest @ "culling::pyramid",
+            pyramid_first @ "engine::pyramid",
+            pyramid_down @ "engine::pyramid",
+            pyramid_first_nearest @ "engine::pyramid",
+            pyramid_down_nearest @ "engine::pyramid",
         ],
     }
     mipmaps {
@@ -129,6 +127,6 @@ crate::entry_points! {
     }
     post {
         vertex: [vs_fullscreen @ "engine::fullscreen"],
-        fragment: [fs_levels_down @ "post::levels"],
+        fragment: [fs_levels_down @ "engine::post::levels"],
     }
 }

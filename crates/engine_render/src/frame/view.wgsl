@@ -10,6 +10,7 @@ struct Camera {
     wind: vec4<f32>,
     region: vec4<f32>,
     detail: vec4<f32>,
+    view: vec4<u32>,
 }
 @group(0) @binding(0) var<uniform> camera: Camera;
 

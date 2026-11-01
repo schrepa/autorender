@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use engine::command_line::CommandOption;
-use engine::host::{HostSettings, SETTINGS, policy};
-use engine::{Engine, Error, ErrorCode, Expected, Game, GpuPreference};
+use engine::host::{HostSettings, JobRef, OVERLAY, SETTINGS, policy};
+use engine::{BrickList, Engine, Error, ErrorCode, Expected, Game, GpuPreference};
 use serde_json::json;
 
 use crate::{
@@ -47,6 +47,7 @@ pub fn options() -> Vec<CommandOption> {
             .defaults_to(setting.default_value())
     }));
     options.extend([
+        CommandOption::taking(&format!("--{OVERLAY}"), "KEY=JSON"),
         CommandOption::taking("--frames", "N"),
         CommandOption::taking("--settle-ms", "MS")
             .defaults_to(defaults.settle_ms)
@@ -509,13 +510,14 @@ impl HostOptions {
     pub fn run<G: Game, E: Into<engine::Error>>(
         &self,
         title: &str,
-        build: impl FnOnce() -> Result<(Engine, G), E>,
+        bricks: impl FnOnce(BrickList) -> BrickList,
+        build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> engine::Result<()> {
         if self.shader_hash {
-            println!("{}", json!({ "shader_hash": shader_hash() }));
+            println!("{}", json!({ "shader_hash": shader_hash(bricks)? }));
             return Ok(());
         }
-        let build = move || self.shown(build);
+        let build = move |engine: &mut Engine| self.shown(engine, build);
         #[cfg(feature = "dev")]
         if let Some(names) = &self.smoke {
             if names == engine::smokes::LIST {
@@ -530,10 +532,10 @@ impl HostOptions {
         }
         if self.dev {
             #[cfg(feature = "dev")]
-            return self.session(build)?.run();
+            return self.session(bricks, build)?.run();
         }
         if let Some(pack) = &self.cook {
-            return self.run_cook(pack, build);
+            return self.run_cook(pack, bricks, build);
         }
         if let Some(method) = &self.measure {
             let size = self.size.unwrap_or((1280, 720));
@@ -542,12 +544,13 @@ impl HostOptions {
                 size,
                 self.gpu,
                 self.jobs.clone(),
-                self.settings,
+                self.settings.clone(),
+                bricks,
                 build,
             );
         }
         match self.offscreen {
-            Some(frames) => self.run_offscreen(frames, build),
+            Some(frames) => self.run_offscreen(frames, bricks, build),
             None => {
                 let report = crate::run(
                     Window {
@@ -555,13 +558,14 @@ impl HostOptions {
                         gpu: self.gpu,
                         jobs: self.jobs.clone(),
                         vsync: self.vsync,
-                        settings: self.settings,
+                        settings: self.settings.clone(),
                         measure: self.frames.map(|frames| Measure {
                             settle: Duration::from_millis(self.settle_ms),
                             frames,
                         }),
                         ..Window::new(title)
                     },
+                    bricks,
                     build,
                 )?;
                 if let Some(report) = report {
@@ -575,17 +579,19 @@ impl HostOptions {
     #[cfg(feature = "dev")]
     pub fn dev_session<G: Game, E: Into<engine::Error>>(
         &self,
-        build: impl FnOnce() -> Result<(Engine, G), E>,
+        bricks: impl FnOnce(BrickList) -> BrickList,
+        build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> engine::Result<crate::dev::DevSession<G>> {
         self.start_tools()?;
-        self.session(move || self.shown(build))
+        self.session(bricks, move |engine: &mut Engine| self.shown(engine, build))
     }
 
     fn shown<G: Game, E: Into<engine::Error>>(
         &self,
-        build: impl FnOnce() -> Result<(Engine, G), E>,
-    ) -> engine::Result<(Engine, G)> {
-        let (mut engine, game) = build().map_err(Into::<engine::Error>::into)?;
+        engine: &mut Engine,
+        build: impl FnOnce(&mut Engine) -> Result<G, E>,
+    ) -> engine::Result<G> {
+        let game = build(engine).map_err(Into::<engine::Error>::into)?;
         let world = engine.app.world_mut();
         if let Some(look) = &self.look {
             engine::host::show_look(world, look, "--look")?;
@@ -593,18 +599,19 @@ impl HostOptions {
         if let Some(view) = &self.view {
             engine::host::show_view(world, view, "--view")?;
         }
-        Ok((engine, game))
+        Ok(game)
     }
 
     #[cfg(feature = "dev")]
     fn session<G: Game, E: Into<engine::Error>>(
         &self,
-        build: impl FnOnce() -> Result<(Engine, G), E>,
+        bricks: impl FnOnce(BrickList) -> BrickList,
+        build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> engine::Result<crate::dev::DevSession<G>> {
         let size = self.size.unwrap_or((1280, 720));
         let pix = self.loads_pix().then(Pix::load).flatten();
-        let mut game = Offscreen::launch(size, self.gpu, &self.jobs, build)?;
-        self.settings.apply(game.host_mut());
+        let mut game = Offscreen::launch(size, self.gpu, &self.jobs, bricks, build)?;
+        self.settings.apply(game.host_mut())?;
         let artifacts = self.dev_artifacts.clone().unwrap_or_else(default_artifacts);
         Ok(crate::dev::DevSession::new(game, artifacts)
             .pix(pix)
@@ -632,7 +639,8 @@ impl HostOptions {
     fn run_cook<G: Game, E: Into<engine::Error>>(
         &self,
         path: &Path,
-        build: impl FnOnce() -> Result<(Engine, G), E>,
+        bricks: impl FnOnce(BrickList) -> BrickList,
+        build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> engine::Result<()> {
         let size = self.size.unwrap_or((320, 180));
         let started = Instant::now();
@@ -641,8 +649,8 @@ impl HostOptions {
             let cores = std::thread::available_parallelism().map_or(1, usize::from);
             jobs.workers = policy::cook_workers(u32::try_from(cores).unwrap_or(u32::MAX)) as usize;
         }
-        let mut game = Offscreen::launch_with(size, self.gpu, jobs.pool(true), build)?;
-        self.settings.apply(game.host_mut());
+        let mut game = Offscreen::launch_with(size, self.gpu, jobs.pool(true), bricks, build)?;
+        self.settings.apply(game.host_mut())?;
         game.host_mut().cook();
         let read = game.jobs_mut().packed();
         let (mut frame, mut settled, mut said) = (0_u32, 0, Instant::now());
@@ -717,13 +725,14 @@ impl HostOptions {
     fn run_offscreen<G: Game, E: Into<engine::Error>>(
         &self,
         frames: u32,
-        build: impl FnOnce() -> Result<(Engine, G), E>,
+        bricks: impl FnOnce(BrickList) -> BrickList,
+        build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> engine::Result<()> {
         let size = self.size.unwrap_or((1280, 720));
         let pix = self.loads_pix().then(Pix::load).flatten();
         let started = Instant::now();
-        let mut game = Offscreen::launch(size, self.gpu, &self.jobs, build)?;
-        self.settings.apply(game.host_mut());
+        let mut game = Offscreen::launch(size, self.gpu, &self.jobs, bricks, build)?;
+        self.settings.apply(game.host_mut())?;
         game.prepare(0.0)?;
         let prepared_ms = started.elapsed().as_secs_f64() * 1000.0;
         let record = Record {
@@ -762,7 +771,7 @@ impl HostOptions {
             .jobs_mut()
             .mismatched()
             .iter()
-            .map(|(kind, key)| json!({ "kind": kind, "key": key }))
+            .map(|(kind, key)| json!({ "kind": kind.as_ref().map(JobRef::name), "key": key }))
             .collect();
         let adapter = game.host().adapter();
         let report = json!({
@@ -819,19 +828,20 @@ const COOK_SETTLE: u32 = 8;
 
 const COOK_STALL: Duration = Duration::from_secs(600);
 
-fn shader_hash() -> String {
+fn shader_hash(bricks: impl FnOnce(BrickList) -> BrickList) -> engine::Result<String> {
     use sha2::Digest;
     let mut hash = sha2::Sha256::new();
-    for module in engine::shader_modules() {
+    for module in engine::shader_modules(bricks)? {
         for part in [module.path, module.source] {
             hash.update(part.as_bytes());
             hash.update([0]);
         }
     }
-    hash.finalize()
+    Ok(hash
+        .finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect()
+        .collect())
 }
 
 fn program() -> String {

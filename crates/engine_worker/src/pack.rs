@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use engine_settings::{Error, ErrorCode, Expected};
+use sha2::{Digest, Sha256};
 
 pub const PACK_HEADER: usize = 32;
 pub const LISTING_KIND: &str = "pack_listing";
@@ -177,7 +178,11 @@ pub fn key_from_hex(hex: &str) -> Option<[u8; 32]> {
 }
 
 pub fn listing_key() -> [u8; 32] {
-    engine_sources::record_key(&[0; 32], LISTING_KIND, &[])
+    let mut hash = Sha256::new();
+    hash.update([0; 32]);
+    hash.update(LISTING_KIND.as_bytes());
+    hash.update([0]);
+    hash.finalize().into()
 }
 
 pub fn listing_bytes<'a>(records: impl IntoIterator<Item = (&'a [u8; 32], &'a str)>) -> Vec<u8> {
@@ -205,6 +210,6 @@ pub fn read_listing(bytes: &[u8]) -> Result<BTreeMap<[u8; 32], String>, Error> {
     Ok(listed)
 }
 
-fn hex(key: &[u8; 32]) -> String {
+pub(crate) fn hex(key: &[u8]) -> String {
     key.iter().map(|byte| format!("{byte:02x}")).collect()
 }

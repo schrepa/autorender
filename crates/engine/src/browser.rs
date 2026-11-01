@@ -1,7 +1,7 @@
 use crate::GameHost;
 use crate::game::Game;
 use crate::host::JobOrder;
-use engine_core::{Engine, JobId, JobShare};
+use engine_core::{BrickList, Engine, JobId, JobShare};
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
@@ -120,11 +120,12 @@ impl<G: Game> std::ops::DerefMut for PageHost<G> {
 impl<G: Game> PageHost<G> {
     pub async fn launch<E: Into<crate::Error>>(
         canvas: HtmlCanvasElement,
-        build: impl FnOnce() -> Result<(Engine, G), E>,
+        bricks: impl FnOnce(BrickList) -> BrickList,
+        build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> Result<Self, JsValue> {
         let target = engine_render::RenderTarget::Canvas(canvas);
         Ok(Self {
-            host: GameHost::launch(target, build).await?,
+            host: GameHost::launch(target, bricks, build).await?,
         })
     }
 
@@ -153,16 +154,23 @@ impl<G: Game> PageHost<G> {
             match order {
                 JobOrder::Share(JobShare::Clear) => set(&object, "clear", &JsValue::TRUE),
                 JobOrder::Share(JobShare::Set { key, bytes: shared }) => {
-                    set(&object, "share", &JsValue::from_str(&key));
+                    set(&object, "share", &JsValue::from_str(&key.hex()));
                     set(&object, "bytes", &bytes(&shared));
                 }
                 JobOrder::Share(JobShare::Remove { key }) => {
-                    set(&object, "unshare", &JsValue::from_str(&key));
+                    set(&object, "unshare", &JsValue::from_str(&key.hex()));
                 }
                 JobOrder::Run { worker, request } => {
+                    let source: String = request
+                        .kind
+                        .source()
+                        .iter()
+                        .map(|byte| format!("{byte:02x}"))
+                        .collect();
                     set(&object, "run", &id(request.id));
                     set(&object, "worker", &JsValue::from(worker));
-                    set(&object, "kind", &JsValue::from_str(request.kind));
+                    set(&object, "kind", &JsValue::from_str(request.kind.name()));
+                    set(&object, "source", &JsValue::from_str(&source));
                     set(&object, "input", &bytes(&request.input));
                     set(&object, "priority", &JsValue::from(request.priority));
                 }
@@ -221,6 +229,12 @@ impl<G: Game> PageHost<G> {
         Ok(self.host.reload_scene(source, files.files())?)
     }
 
+    pub fn set_setting(&mut self, key: &str, value: &str) -> Result<(), JsValue> {
+        let value = engine_settings::parse_json::<serde_json::Value>(value)
+            .map_err(|error| error.within("$.value"))?;
+        Ok(self.host.set_setting(key, value)?)
+    }
+
     pub fn apply_host_settings(&mut self, query: &str) -> Result<(), JsValue> {
         let parameters = web_sys::UrlSearchParams::new_with_str(query)?;
         let mut settings = crate::host::HostSettings::default();
@@ -231,6 +245,13 @@ impl<G: Game> PageHost<G> {
                     .map_err(|error| error.within(&format!("?{}", setting.name)))?;
             }
         }
+        let overlay = crate::host::OVERLAY;
+        for entry in parameters.get_all(overlay).iter() {
+            let entry = entry.as_string().unwrap_or_default();
+            settings
+                .set(overlay, &entry)
+                .map_err(|error| error.within(&format!("?{overlay}")))?;
+        }
         let world = self.host.engine_mut().app.world_mut();
         if let Some(look) = parameters.get("look") {
             crate::host::show_look(world, &look, "?look")?;
@@ -238,7 +259,7 @@ impl<G: Game> PageHost<G> {
         if let Some(view) = parameters.get("view") {
             crate::host::show_view(world, &view, "?view")?;
         }
-        settings.apply(&mut self.host);
+        settings.apply(&mut self.host)?;
         Ok(())
     }
 

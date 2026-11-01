@@ -73,18 +73,6 @@ pub fn check(
             }
         }
     }
-    for forbidden in rules.forbidden {
-        if path.starts_with(forbidden.within) && path != forbidden.except {
-            let code: String = split.code.concat().split_whitespace().collect();
-            if code.contains(forbidden.code) {
-                problems.push(
-                    Error::new(ErrorCode::ForbiddenCode, path)
-                        .got(forbidden.code)
-                        .nearest(forbidden.instead),
-                );
-            }
-        }
-    }
     let listed = rules.exceptions.unsafe_files.contains(&path);
     let first = split
         .code

@@ -1,8 +1,8 @@
 use engine_core::bevy_ecs::prelude::Component;
-use engine_settings::settings;
+use engine_settings::fields;
 use serde::{Deserialize, Serialize};
 
-settings! {
+fields! {
     #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]

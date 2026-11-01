@@ -2,12 +2,14 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use engine::host::FramePhase;
-use engine::{Engine, Error, ErrorCode, Expected, Game, GameHost, GpuPreference, RenderTarget};
+use engine::{
+    BrickList, Engine, Error, ErrorCode, Expected, Game, GameHost, GpuPreference, RenderTarget,
+};
 use serde_json::Value;
 
 use crate::files::Image;
 use crate::jobs::{JobOptions, JobPool};
-use crate::{Pix, RenderDoc, file_error};
+use crate::{DYNAMIC_RESOLUTION, Pix, RenderDoc, file_error};
 
 pub struct Offscreen<G: Game> {
     host: Box<GameHost<G>>,
@@ -60,22 +62,24 @@ impl<G: Game> Offscreen<G> {
         size: (u32, u32),
         gpu: GpuPreference,
         jobs: &JobOptions,
-        build: impl FnOnce() -> Result<(Engine, G), E>,
+        bricks: impl FnOnce(BrickList) -> BrickList,
+        build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> engine::Result<Self> {
-        Self::launch_with(size, gpu, jobs.pool(false), build)
+        Self::launch_with(size, gpu, jobs.pool(false), bricks, build)
     }
 
     pub fn launch_with<E: Into<engine::Error>>(
         size: (u32, u32),
         gpu: GpuPreference,
         mut jobs: JobPool,
-        build: impl FnOnce() -> Result<(Engine, G), E>,
+        bricks: impl FnOnce(BrickList) -> BrickList,
+        build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> engine::Result<Self> {
         let target = RenderTarget::Offscreen { size, gpu };
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
-            target, build,
+            target, bricks, build,
         )))?);
-        host.set_dynamic_resolution(false);
+        host.set_setting(DYNAMIC_RESOLUTION, false.into())?;
         jobs.attach(&mut host);
         Ok(Self { host, size, jobs })
     }

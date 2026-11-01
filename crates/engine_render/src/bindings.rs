@@ -5,10 +5,7 @@ use crate::gpu_layouts::scene::{ColorData, GroundData, MaterialUniform, PoseData
 mod groups;
 mod table;
 
-pub use groups::{
-    BindingDecl, Contribution, GroupRef, ResolvedBinding, ResolvedLayout, SharedBinding,
-    SharedGroups, StageCounts,
-};
+pub use groups::{BindingDecl, ResolvedBinding, ResolvedLayout, StageCounts};
 pub use table::{
     Binding, Format, Kind, Sample, Sampling, Stages, Table, View, bind, dynamic_uniform, read,
     read_of, sampler, texture, uniform, uniform_of, write,

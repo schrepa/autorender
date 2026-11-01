@@ -3,79 +3,45 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+extern crate engine_ecs as bevy_ecs;
+
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, BrickStats, Bricks, Engine, EnvironmentSection, Error, Presentation};
-use engine_settings::{InvalidSetting, settings};
-use serde::{Deserialize, Serialize};
+use engine_core::{Brick, Bricks, Schedule, Source, settings, stats};
+
+static SOURCE: Source = Source::generated("brick_template", [0; 32], &[]);
 
 settings! {
-    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(
-        feature = "schema",
-        derive(schemars::JsonSchema),
-        schemars(rename = "SceneTemplate")
-    )]
-    #[serde(default, deny_unknown_fields)]
+    #[section("template")]
     pub struct Template {
         pub enabled: bool = true => any,
     }
 }
 
-impl EnvironmentSection for Template {
-    const KEY: &'static str = "template";
-    const NAME: &'static str = "Template";
-    const OPT_IN: bool = true;
-
-    fn section_off() -> Self {
-        Self { enabled: false }
-    }
-
-    fn section_check(&self) -> Result<(), InvalidSetting> {
-        self.validate()
-    }
-
-    fn section_sanitized(self) -> Self {
-        self.sanitized()
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(Template)
+stats! {
+    #[section("template_stats")]
+    pub struct TemplateStats {
+        pub frames: u32,
     }
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct TemplateStats {
-    pub frames: u32,
+fn enabled(settings: Res<Template>) -> bool {
+    settings.enabled
 }
 
-impl BrickStats for TemplateStats {
-    const KEY: &'static str = "template";
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(TemplateStats)
-    }
-}
-
-fn count_frames(settings: Option<Res<Template>>, mut stats: ResMut<TemplateStats>) {
-    if settings.is_some_and(|settings| settings.enabled) {
-        stats.frames = stats.frames.wrapping_add(1);
-    }
-}
-
-pub fn smoke(_: &mut Engine) -> Result<(), Error> {
-    Ok(())
+fn count_frames(mut stats: ResMut<TemplateStats>) {
+    stats.frames = stats.frames.wrapping_add(1);
 }
 
 pub struct TemplateBrick;
 
 impl Brick for TemplateBrick {
-    fn register(bricks: &mut Bricks) {
+    const SOURCE: &'static Source = &SOURCE;
+
+    fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .when(enabled)
             .settings::<Template>()
             .stats::<TemplateStats>()
-            .systems(Presentation, count_frames);
+            .systems(Schedule::Presentation, count_frames);
     }
 }

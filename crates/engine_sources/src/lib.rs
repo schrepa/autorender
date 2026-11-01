@@ -5,720 +5,288 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use sha2::{Digest, Sha256};
+use toml_edit::{Document, Item};
 
-pub fn record_key(source: &[u8; 32], kind: &str, identity: &[u8]) -> [u8; 32] {
-    let mut hash = Sha256::new();
-    hash.update(source);
-    hash.update(kind.as_bytes());
-    hash.update([0]);
-    hash.update(identity);
-    hash.finalize().into()
+const RESERVED: &[&str] = &["engine", "generated", "face", "place"];
+
+const KEYWORDS: &[&str] = &[
+    "as", "async", "await", "box", "break", "const", "continue", "dyn", "else", "enum", "extern",
+    "false", "fn", "for", "gen", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut",
+    "pub", "ref", "return", "static", "struct", "trait", "true", "try", "type", "unsafe", "use",
+    "where", "while", "yield",
+];
+
+#[derive(Default)]
+struct Node {
+    module: Option<u32>,
+    entries: Vec<String>,
+    variables: Vec<String>,
+    children: BTreeMap<String, Node>,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct Set<'a> {
-    pub name: &'a str,
-    pub roots: &'a [&'a str],
-    pub stop: &'a [&'a str],
-    pub files: &'a [&'a str],
-    pub crates: Option<&'a [&'a str]>,
+impl Node {
+    fn at(&mut self, path: &[String]) -> &mut Node {
+        let mut node = self;
+        for segment in path {
+            node = node.children.entry(segment.clone()).or_default();
+        }
+        node
+    }
+
+    fn write(&self, out: &mut String, depth: usize) {
+        let indent = "    ".repeat(depth);
+        if let Some(index) = self.module {
+            out.push_str(&format!(
+                "{indent}pub const MODULE: ::engine_core::Module = \
+                 ::engine_core::Module::generated(&crate::SOURCE, {index});\n"
+            ));
+            let mut named = vec!["MODULE".to_owned()];
+            for (names, kind) in [(&self.entries, "Entry"), (&self.variables, "Var")] {
+                for name in names {
+                    let constant = name.to_uppercase();
+                    if named.contains(&constant) {
+                        continue;
+                    }
+                    out.push_str(&format!(
+                        "{indent}pub const {constant}: ::engine_core::{kind} = \
+                         ::engine_core::{kind}::generated(MODULE, {name:?});\n"
+                    ));
+                    named.push(constant);
+                }
+            }
+        }
+        for (name, child) in &self.children {
+            let name = if KEYWORDS.contains(&name.as_str()) {
+                format!("r#{name}")
+            } else {
+                name.clone()
+            };
+            out.push_str(&format!("{indent}pub mod {name} {{\n"));
+            child.write(out, depth + 1);
+            out.push_str(&format!("{indent}}}\n"));
+        }
+    }
 }
 
 pub fn emit() {
-    emit_sets(&[]);
-}
-
-pub fn emit_sets(sets: &[Set<'_>]) {
     let manifest = PathBuf::from(var("CARGO_MANIFEST_DIR"));
-    let mut source = source_declaration(&manifest, "this crate");
-    if !sets.is_empty() {
-        let modules = Modules::of(&manifest);
-        source.push_str(
-            "/// The hashes of the code making each kind of this crate's records:\n\
-             /// the modules making it and what they use (`engine_sources::Set`).\n\
-             pub mod sources {\n",
-        );
-        for set in sets {
-            let digest = set_digest(&manifest, &modules, set);
-            source.push_str(&format!(
-                "    /// The hash of the code of {}, what it uses and what it builds with.\n\
-                 \x20   pub const {}: [u8; 32] = [{}];\n",
-                set.roots
-                    .iter()
-                    .map(|root| format!("`{root}`"))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                set.name,
-                bytes(&digest),
-            ));
-        }
-        source.push_str("}\n");
-    }
-    write_out("source.rs", &source);
-}
-
-pub fn emit_of(name: &str) {
-    let manifest = PathBuf::from(var("CARGO_MANIFEST_DIR"));
+    let out = PathBuf::from(var("OUT_DIR"));
+    let package = var("CARGO_PKG_NAME");
+    let shaders = manifest.join("src").join("shaders");
+    let prefix = prefix(&shaders);
     let root = workspace_root(&manifest);
-    let workspace = read(&root.join("Cargo.toml"));
-    let paths = table_paths(&workspace, "workspace.dependencies");
-    let folder = paths
-        .get(name)
-        .map(|path| root.join(path))
-        .unwrap_or_else(|| panic!("the workspace names no crate {name}"));
-    let source = source_declaration(&folder, &format!("the crate `{name}`"));
-    write_out(&format!("{name}_source.rs"), &source);
-}
+    let hash = digest(&package, &manifest, &root);
 
-fn source_declaration(manifest: &Path, crate_name: &str) -> String {
-    let root = workspace_root(manifest);
-    let mut files = Vec::new();
-    for folder in &crate_folders(&root, manifest, None) {
-        println!("cargo:rerun-if-changed={}", folder.display());
-        list(folder, &mut files);
+    let mut wgsl = Vec::new();
+    if prefix.is_some() {
+        list(&shaders, &mut wgsl);
     }
-    let digest = digest(&root, manifest, files);
-    format!(
-        "/// The hash of the source code {crate_name} builds from: its own, what\n\
-         /// it depends on in its repository, its lockfile entries and the\n\
-         /// toolchain.\n\
-         pub const SOURCE: [u8; 32] = [{}];\n",
-        bytes(&digest)
-    )
-}
+    wgsl.retain(|file| file.extension().is_some_and(|extension| extension == "wgsl"));
+    wgsl.sort();
 
-fn set_digest(manifest: &Path, modules: &Modules, set: &Set<'_>) -> [u8; 32] {
-    let root = workspace_root(manifest);
-    let mut files = Vec::new();
-    for name in modules.closure(set.roots, set.stop) {
-        files.extend(modules.files[&name].iter().cloned());
+    let mut tree = Node::default();
+    let mut texts = String::new();
+    for (index, file) in wgsl.iter().enumerate() {
+        let inside = file.strip_prefix(&shaders).expect("under src/shaders");
+        let segments: Vec<String> = inside
+            .with_extension("")
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        let path = segments.join("::");
+        let text = fs::read_to_string(file).expect("a WGSL file");
+        texts.push_str(&format!(
+            "    ::engine_core::ShaderText::generated({path:?}, include_str!({:?})),\n",
+            file.display().to_string()
+        ));
+        let node = tree.at(&segments);
+        node.module = Some(index as u32);
+        node.entries = entries(&text);
+        node.variables = variables(&text);
     }
-    files.push(modules.lib.clone());
-    for file in ["Cargo.toml", "build.rs"] {
-        let path = manifest.join(file);
-        if path.exists() {
-            files.push(path);
-        }
-    }
-    for file in set.files {
-        let path = manifest.join(file);
-        if file.ends_with('/') {
-            list(&path, &mut files);
-        } else {
-            files.push(path);
-        }
-    }
-    for folder in crate_folders(&root, manifest, set.crates) {
-        if folder != manifest {
-            list(&folder, &mut files);
-        }
-    }
-    digest(&root, manifest, files)
-}
 
-pub fn crate_source(folder: &Path) -> [u8; 32] {
-    let root = workspace_root(folder);
-    let mut files = Vec::new();
-    for folder in &crate_folders(&root, folder, None) {
-        list(folder, &mut files);
-    }
-    hash_files(&root, folder, files)
-}
-
-fn digest(root: &Path, manifest: &Path, files: Vec<PathBuf>) -> [u8; 32] {
-    println!(
-        "cargo:rerun-if-changed={}",
-        root.join("rust-toolchain.toml").display()
+    let mut code = String::new();
+    code.push_str("extern crate engine_ecs as bevy_ecs;\n");
+    code.push_str(&format!(
+        "pub(crate) static SOURCE: ::engine_core::Source = \
+         ::engine_core::Source::generated({package:?}, {hash:?}, &[\n{texts}]);\n"
+    ));
+    code.push_str("pub(crate) mod shaders {\n");
+    code.push_str(
+        "    #![allow(dead_code, non_upper_case_globals, \
+         reason = \"every entry and variable of the brick's modules is named\")]\n",
     );
-    println!(
-        "cargo:rerun-if-changed={}",
-        root.join("Cargo.lock").display()
-    );
-    hash_files(root, manifest, files)
+    tree.write(&mut code, 1);
+    code.push_str("}\n");
+    fs::write(out.join("brick.rs"), code).expect("OUT_DIR is writable");
 }
 
-fn hash_files(root: &Path, manifest: &Path, files: Vec<PathBuf>) -> [u8; 32] {
-    let mut named: BTreeMap<String, PathBuf> = files
-        .into_iter()
-        .map(|path| {
-            let relative = path
-                .strip_prefix(root)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-            (relative, path)
-        })
-        .collect();
-    named.insert(
-        "rust-toolchain.toml".to_owned(),
-        root.join("rust-toolchain.toml"),
-    );
+fn digest(package: &str, manifest: &Path, root: &Path) -> [u8; 32] {
+    let mut crates = BTreeSet::new();
+    crates.insert(normal(manifest));
+    reach(manifest, root, &mut crates);
+
     let mut hash = Sha256::new();
-    for (name, path) in &named {
-        let bytes = fs::read(path).unwrap_or_else(|error| panic!("cannot read {name}: {error}"));
-        hash.update(name.as_bytes());
-        hash.update([0]);
-        hash.update(normalized(&bytes));
-        hash.update([0]);
+    hash.update(package.as_bytes());
+    hash.update([0]);
+    for dir in &crates {
+        let mut files = Vec::new();
+        list(&dir.join("src"), &mut files);
+        files.push(dir.join("Cargo.toml"));
+        files.sort();
+        println!("cargo:rerun-if-changed={}", dir.join("src").display());
+        println!("cargo:rerun-if-changed={}", dir.join("Cargo.toml").display());
+        for file in &files {
+            hash.update(relative(root, file).as_bytes());
+            hash.update([0]);
+            hash.update(text_bytes(file));
+            hash.update([0]);
+        }
     }
     let lock = root.join("Cargo.lock");
-    let package = package_name(&read(&manifest.join("Cargo.toml")));
-    hash.update(b"Cargo.lock");
-    hash.update([0]);
-    hash.update(lock_entries(&read(&lock), &package).as_bytes());
+    println!("cargo:rerun-if-changed={}", lock.display());
+    hash.update(text_bytes(&lock));
     hash.finalize().into()
 }
 
-fn crate_folders(root: &Path, manifest: &Path, only: Option<&[&str]>) -> BTreeSet<PathBuf> {
-    let workspace = read(&root.join("Cargo.toml"));
-    let paths = table_paths(&workspace, "workspace.dependencies");
-    let patches = table_paths(&workspace, "patch.crates-io");
-    let mut folders = BTreeSet::new();
-    let mut queue = vec![manifest.to_path_buf()];
-    while let Some(folder) = queue.pop() {
-        if !folders.insert(folder.clone()) {
+fn var(name: &str) -> String {
+    std::env::var(name).unwrap_or_else(|_| panic!("{name} is set by cargo"))
+}
+
+fn prefix(shaders: &Path) -> Option<String> {
+    let read = fs::read_dir(shaders).ok()?;
+    let mut tops = Vec::new();
+    for entry in read.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if scratch(&name) {
             continue;
         }
-        let crate_manifest = read(&folder.join("Cargo.toml"));
-        for name in dependency_names(&crate_manifest) {
-            if let Some(path) = paths.get(&name) {
-                if only.is_none_or(|only| only.contains(&name.as_str())) {
-                    queue.push(root.join(path));
-                }
-            } else if let Some(path) = patches.get(&name) {
-                folders.insert(root.join(path));
-            }
+        if !entry.path().is_dir() {
+            panic!("src/shaders/{name}: a brick's WGSL lives in its one folder under src/shaders/");
         }
+        tops.push(name);
     }
-    folders
-}
-
-fn lock_entries(lock: &str, package: &str) -> String {
-    let entries: Vec<LockEntry> = lock
-        .split("[[package]]")
-        .skip(1)
-        .map(LockEntry::of)
-        .collect();
-    if !entries.iter().any(|entry| entry.name == package) {
-        return lock.to_owned();
-    }
-    let mut taken = vec![false; entries.len()];
-    let mut queue: Vec<(String, Option<String>)> = vec![(package.to_owned(), None)];
-    while let Some((name, version)) = queue.pop() {
-        for (index, entry) in entries.iter().enumerate() {
-            let matches = entry.name == name
-                && version
-                    .as_ref()
-                    .is_none_or(|version| *version == entry.version);
-            if !matches || taken[index] {
-                continue;
-            }
-            taken[index] = true;
-            for dependency in &entry.dependencies {
-                let mut parts = dependency.split_whitespace();
-                let name = parts.next().unwrap_or_default().to_owned();
-                let version = parts.next().map(str::to_owned);
-                queue.push((name, version));
-            }
+    tops.sort();
+    match tops.as_slice() {
+        [] => None,
+        [one] if RESERVED.contains(&one.as_str()) => {
+            panic!("src/shaders/{one}: the prefix {one} is core's")
         }
-    }
-    entries
-        .iter()
-        .zip(taken)
-        .filter(|(_, taken)| *taken)
-        .map(|(entry, _)| entry.text.as_str())
-        .collect::<Vec<_>>()
-        .join("[[package]]")
-}
-
-struct LockEntry {
-    text: String,
-    name: String,
-    version: String,
-    dependencies: Vec<String>,
-}
-
-impl LockEntry {
-    fn of(text: &str) -> Self {
-        let mut entry = Self {
-            text: text.replace("\r\n", "\n"),
-            name: String::new(),
-            version: String::new(),
-            dependencies: Vec::new(),
-        };
-        let mut listing = false;
-        for line in text.lines() {
-            let line = line.trim();
-            if listing {
-                if line.starts_with(']') {
-                    listing = false;
-                } else if let Some(quoted) = line.trim_end_matches(',').strip_prefix('"') {
-                    entry
-                        .dependencies
-                        .push(quoted.trim_end_matches('"').to_owned());
-                }
-                continue;
-            }
-            if let Some(value) = line.strip_prefix("name = ") {
-                entry.name = value.trim_matches('"').to_owned();
-            } else if let Some(value) = line.strip_prefix("version = ") {
-                entry.version = value.trim_matches('"').to_owned();
-            } else if line.starts_with("dependencies = [") {
-                listing = !line.ends_with(']');
-            }
-        }
-        entry
+        [one] => Some(one.clone()),
+        many => panic!(
+            "src/shaders/ holds {}: a brick's modules share one prefix folder",
+            many.join(", ")
+        ),
     }
 }
 
-fn package_name(manifest: &str) -> String {
-    let mut inside = false;
-    for line in manifest.lines() {
-        let line = line.trim();
-        if let Some(header) = line.strip_prefix('[') {
-            inside = header.trim_end_matches(']').trim() == "package";
-            continue;
-        }
-        if inside
-            && let Some((key, value)) = line.split_once('=')
-            && key.trim() == "name"
+fn read(path: &Path) -> Option<Item> {
+    let text = fs::read_to_string(path).ok()?;
+    Document::parse(text).ok().map(Document::into_item)
+}
+
+fn workspace_root(start: &Path) -> PathBuf {
+    let mut at = Some(start);
+    while let Some(dir) = at {
+        if read(&dir.join("Cargo.toml")).is_some_and(|manifest| manifest.get("workspace").is_some())
         {
-            return value.trim().trim_matches('"').to_owned();
+            return normal(dir);
         }
+        at = dir.parent();
     }
-    String::new()
+    normal(start)
 }
 
-struct Modules {
-    lib: PathBuf,
-    files: BTreeMap<String, Vec<PathBuf>>,
-    names: BTreeMap<String, BTreeSet<String>>,
-    exports: BTreeMap<String, BTreeSet<String>>,
-    globs: BTreeSet<String>,
+fn kind(manifest: &Item) -> Option<&str> {
+    manifest
+        .get("package")?
+        .get("metadata")?
+        .get("engine")?
+        .get("kind")?
+        .as_str()
 }
 
-impl Modules {
-    fn of(manifest: &Path) -> Self {
-        let source = manifest.join("src");
-        let lib = ["lib.rs", "main.rs"]
-            .into_iter()
-            .map(|file| source.join(file))
-            .find(|path| path.exists())
-            .unwrap_or_else(|| panic!("{} holds no lib.rs or main.rs", source.display()));
-        let root = code(&read(&lib));
-        let mut modules = Self {
-            lib,
-            files: BTreeMap::new(),
-            names: BTreeMap::new(),
-            exports: BTreeMap::new(),
-            globs: BTreeSet::new(),
+fn dependency_tables(manifest: &Item) -> Vec<&Item> {
+    let mut tables: Vec<&Item> = manifest.get("dependencies").into_iter().collect();
+    if let Some(targets) = manifest.get("target").and_then(Item::as_table_like) {
+        tables.extend(targets.iter().filter_map(|(_, target)| target.get("dependencies")));
+    }
+    tables
+}
+
+fn reach(dir: &Path, root: &Path, found: &mut BTreeSet<PathBuf>) {
+    let Some(manifest) = read(&dir.join("Cargo.toml")) else {
+        return;
+    };
+    let workspace = read(&root.join("Cargo.toml"));
+    for table in dependency_tables(&manifest) {
+        let Some(dependencies) = table.as_table_like() else {
+            continue;
         };
-        for name in declared_modules(&root) {
-            if test_code(&name) {
-                continue;
-            }
-            let mut files = Vec::new();
-            let file = source.join(format!("{name}.rs"));
-            if file.exists() {
-                files.push(file);
-            }
-            let folder = source.join(&name);
-            if folder.is_dir() {
-                list(&folder, &mut files);
-            }
-            let mut included = Vec::new();
-            let mut text = String::new();
-            for file in files.iter().filter(|file| is_rust(file)) {
-                let raw = read(file);
-                let folder = file.parent().unwrap_or(&source);
-                included.extend(includes(&raw).into_iter().map(|path| folder.join(path)));
-                text.push_str(&code(&raw));
-                text.push('\n');
-            }
-            files.extend(included);
-            files.sort();
-            files.dedup();
-            modules.files.insert(name.clone(), files);
-            modules.names.insert(name, names(&text));
-        }
-        for (module, items) in reexports(&root) {
-            if !modules.files.contains_key(&module) {
-                continue;
-            }
-            match items {
-                None => {
-                    modules.globs.insert(module);
-                }
-                Some(items) => {
-                    for item in items {
-                        modules
-                            .exports
-                            .entry(item)
-                            .or_default()
-                            .insert(module.clone());
-                    }
-                }
-            }
-        }
-        modules
-    }
-
-    fn uses(&self, name: &str) -> BTreeSet<String> {
-        let mut used = BTreeSet::new();
-        for reached in &self.names[name] {
-            if reached == "*" {
-                for from in self.exports.values() {
-                    used.extend(from.iter().cloned());
-                }
-                used.extend(self.globs.iter().cloned());
-            } else if self.files.contains_key(reached) {
-                used.insert(reached.clone());
-            } else if let Some(from) = self.exports.get(reached) {
-                used.extend(from.iter().cloned());
+        for (key, entry) in dependencies.iter() {
+            let inherited = entry.get("workspace").and_then(Item::as_bool) == Some(true);
+            let (source, base) = if inherited {
+                let declared = workspace
+                    .as_ref()
+                    .and_then(|item| item.get("workspace")?.get("dependencies")?.get(key));
+                (declared, root)
             } else {
-                used.extend(self.globs.iter().cloned());
-            }
-        }
-        used.remove(name);
-        used
-    }
-
-    fn closure(&self, roots: &[&str], stop: &[&str]) -> BTreeSet<String> {
-        let mut found = BTreeSet::new();
-        let mut queue: Vec<String> = roots.iter().map(|root| (*root).to_owned()).collect();
-        while let Some(name) = queue.pop() {
-            assert!(
-                self.files.contains_key(&name),
-                "the crate's root declares no module {name}"
-            );
-            if stop.contains(&name.as_str()) || !found.insert(name.clone()) {
+                (Some(entry), dir)
+            };
+            let Some(path) = source
+                .and_then(|item| item.get("path"))
+                .and_then(Item::as_str)
+            else {
                 continue;
-            }
-            queue.extend(self.uses(&name));
-        }
-        found
-    }
-}
-
-fn is_rust(path: &Path) -> bool {
-    path.extension().is_some_and(|extension| extension == "rs")
-}
-
-fn declared_modules(root: &str) -> Vec<String> {
-    let tokens = tokens(root);
-    let mut names = Vec::new();
-    for window in tokens.windows(3) {
-        if window[0] == "mod" && window[2] == ";" && is_identifier(&window[1]) {
-            names.push(window[1].clone());
-        }
-    }
-    names
-}
-
-fn reexports(root: &str) -> Vec<(String, Option<Vec<String>>)> {
-    let tokens = tokens(root);
-    let mut found = Vec::new();
-    let mut at = 0;
-    while at + 1 < tokens.len() {
-        if tokens[at] != "use" || !is_identifier(&tokens[at + 1]) {
-            at += 1;
-            continue;
-        }
-        let end = tokens[at..]
-            .iter()
-            .position(|token| token == ";")
-            .map_or(tokens.len(), |offset| at + offset);
-        let statement = &tokens[at + 1..end];
-        let module = statement[0].clone();
-        if module == "crate" || module == "self" || module == "super" {
-            at = end;
-            continue;
-        }
-        if statement.iter().any(|token| token == "*") {
-            found.push((module, None));
-        } else {
-            let items = statement[1..]
-                .iter()
-                .filter(|token| is_identifier(token) && token.as_str() != "as")
-                .cloned()
-                .collect();
-            found.push((module, Some(items)));
-        }
-        at = end;
-    }
-    found
-}
-
-fn names(text: &str) -> BTreeSet<String> {
-    let tokens = tokens(text);
-    let mut found = BTreeSet::new();
-    let mut at = 0;
-    while at + 2 < tokens.len() {
-        let rooted = (tokens[at] == "crate" || tokens[at] == "super") && tokens[at + 1] == "::";
-        if !rooted {
-            at += 1;
-            continue;
-        }
-        let next = &tokens[at + 2];
-        if next == "{" {
-            let (mut depth, mut first) = (0_u32, true);
-            let mut inside = at + 2;
-            while let Some(token) = tokens.get(inside) {
-                match token.as_str() {
-                    "{" => {
-                        depth += 1;
-                        first = depth == 1;
-                    }
-                    "}" => {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
-                    }
-                    "," if depth == 1 => first = true,
-                    _ if depth == 1 && first && is_identifier(token) => {
-                        found.insert(token.clone());
-                        first = false;
-                    }
-                    _ => {}
-                }
-                inside += 1;
-            }
-            at = inside;
-        } else {
-            if is_identifier(next) || next == "*" {
-                found.insert(next.clone());
-            }
-            at += 2;
-        }
-    }
-    found
-}
-
-fn tokens(text: &str) -> Vec<String> {
-    let chars: Vec<char> = text.chars().collect();
-    let mut tokens = Vec::new();
-    let mut at = 0;
-    while at < chars.len() {
-        let c = chars[at];
-        if c.is_whitespace() {
-            at += 1;
-        } else if c.is_alphanumeric() || c == '_' {
-            let start = at;
-            while at < chars.len() && (chars[at].is_alphanumeric() || chars[at] == '_') {
-                at += 1;
-            }
-            tokens.push(chars[start..at].iter().collect());
-        } else if c == ':' && chars.get(at + 1) == Some(&':') {
-            tokens.push("::".to_owned());
-            at += 2;
-        } else {
-            tokens.push(c.to_string());
-            at += 1;
-        }
-    }
-    tokens
-}
-
-fn is_identifier(token: &str) -> bool {
-    token
-        .chars()
-        .next()
-        .is_some_and(|first| first.is_alphabetic() || first == '_')
-}
-
-fn includes(text: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    for macro_name in ["include_str!(", "include_bytes!(", "include!("] {
-        let mut rest = text;
-        while let Some(at) = rest.find(macro_name) {
-            rest = &rest[at + macro_name.len()..];
-            let trimmed = rest.trim_start();
-            if let Some(quoted) = trimmed.strip_prefix('"')
-                && let Some((path, _)) = quoted.split_once('"')
-            {
-                found.push(path.to_owned());
+            };
+            let target = normal(&base.join(path));
+            let Some(reached) = read(&target.join("Cargo.toml")) else {
+                continue;
+            };
+            if matches!(kind(&reached), Some("support" | "place")) && found.insert(target.clone()) {
+                reach(&target, root, found);
             }
         }
     }
-    found
 }
 
-fn code(text: &str) -> String {
-    let chars: Vec<char> = text.chars().collect();
-    let mut out = String::with_capacity(text.len());
-    let mut at = 0;
-    while at < chars.len() {
-        let c = chars[at];
-        let next = chars.get(at + 1).copied();
-        if c == '/' && next == Some('/') {
-            while at < chars.len() && chars[at] != '\n' {
-                at += 1;
+fn normal(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
             }
-            out.push(' ');
-        } else if c == '/' && next == Some('*') {
-            at += 2;
-            while at < chars.len() && !(chars[at] == '*' && chars.get(at + 1) == Some(&'/')) {
-                at += 1;
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                out.push(component.as_os_str());
             }
-            at += 2;
-            out.push(' ');
-        } else if c == 'r' && (next == Some('"') || next == Some('#')) && raw_string(&chars, at) {
-            let mut hashes = 0;
-            at += 1;
-            while chars.get(at) == Some(&'#') {
-                hashes += 1;
-                at += 1;
-            }
-            at += 1;
-            while at < chars.len() {
-                if chars[at] == '"'
-                    && (1..=hashes).all(|offset| chars.get(at + offset) == Some(&'#'))
-                {
-                    at += 1 + hashes;
-                    break;
-                }
-                at += 1;
-            }
-            out.push(' ');
-        } else if c == '"' {
-            at += 1;
-            while at < chars.len() && chars[at] != '"' {
-                if chars[at] == '\\' {
-                    at += 1;
-                }
-                at += 1;
-            }
-            at += 1;
-            out.push(' ');
-        } else if c == '\'' && char_literal(&chars, at) {
-            at += 1;
-            while at < chars.len() && chars[at] != '\'' {
-                if chars[at] == '\\' {
-                    at += 1;
-                }
-                at += 1;
-            }
-            at += 1;
-            out.push(' ');
-        } else {
-            out.push(c);
-            at += 1;
         }
     }
     out
 }
 
-fn raw_string(chars: &[char], at: usize) -> bool {
-    let before = at.checked_sub(1).map(|before| chars[before]);
-    if before.is_some_and(|before| before.is_alphanumeric() || before == '_') {
-        return false;
+fn text_bytes(file: &Path) -> Vec<u8> {
+    let bytes = fs::read(file).unwrap_or_default();
+    let mut out = Vec::with_capacity(bytes.len());
+    for (at, byte) in bytes.iter().enumerate() {
+        if *byte == b'\r' && bytes.get(at + 1) == Some(&b'\n') {
+            continue;
+        }
+        out.push(*byte);
     }
-    let mut after = at + 1;
-    while chars.get(after) == Some(&'#') {
-        after += 1;
-    }
-    chars.get(after) == Some(&'"')
+    out
 }
 
-fn char_literal(chars: &[char], at: usize) -> bool {
-    match chars.get(at + 1) {
-        Some('\\') => true,
-        Some(_) => chars.get(at + 2) == Some(&'\''),
-        None => false,
-    }
-}
-
-fn bytes(digest: &[u8]) -> String {
-    digest
-        .iter()
-        .map(|byte| format!("{byte:#04x}"))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn write_out(file: &str, source: &str) {
-    let out = PathBuf::from(var("OUT_DIR")).join(file);
-    fs::write(&out, source)
-        .unwrap_or_else(|error| panic!("cannot write {}: {error}", out.display()));
-}
-
-fn var(name: &str) -> String {
-    std::env::var(name).unwrap_or_else(|_| panic!("{name} is not set: run from a build script"))
-}
-
-fn read(path: &Path) -> String {
-    fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()))
-}
-
-fn workspace_root(manifest: &Path) -> PathBuf {
-    manifest
-        .ancestors()
-        .find(|folder| {
-            fs::read_to_string(folder.join("Cargo.toml"))
-                .is_ok_and(|text| text.lines().any(|line| line.trim() == "[workspace]"))
-        })
-        .unwrap_or_else(|| panic!("no workspace above {}", manifest.display()))
-        .to_path_buf()
-}
-
-fn table_paths(manifest: &str, table: &str) -> BTreeMap<String, String> {
-    let mut paths = BTreeMap::new();
-    let mut inside = false;
-    for line in manifest.lines() {
-        let line = line.trim();
-        if let Some(header) = line.strip_prefix('[') {
-            inside = header.trim_end_matches(']').trim() == table;
-            continue;
-        }
-        if !inside {
-            continue;
-        }
-        let Some((name, value)) = line.split_once('=') else {
-            continue;
-        };
-        if let Some(path) = quoted_after(value, "path") {
-            paths.insert(name.trim().trim_matches('"').to_owned(), path);
-        }
-    }
-    paths
-}
-
-fn dependency_names(manifest: &str) -> Vec<String> {
-    let mut names = Vec::new();
-    let mut inside = false;
-    for line in manifest.lines() {
-        let line = line.trim();
-        if let Some(header) = line.strip_prefix('[') {
-            let header = header.trim_end_matches(']').trim();
-            inside = header == "dependencies" || header.ends_with(".dependencies");
-            inside &=
-                !header.ends_with("dev-dependencies") && !header.ends_with("build-dependencies");
-            continue;
-        }
-        if !inside || line.starts_with('#') {
-            continue;
-        }
-        let Some((key, _)) = line.split_once('=') else {
-            continue;
-        };
-        let name = key.trim().trim_end_matches(".workspace").trim_matches('"');
-        if !name.is_empty() {
-            names.push(name.to_owned());
-        }
-    }
-    names
-}
-
-fn quoted_after(value: &str, key: &str) -> Option<String> {
-    let at = value.find(key)?;
-    let rest = value[at + key.len()..].trim_start().strip_prefix('=')?;
-    let rest = rest.trim_start().strip_prefix('"')?;
-    rest.split_once('"').map(|(path, _)| path.to_owned())
+fn scratch(name: &str) -> bool {
+    name.starts_with('.')
+        || name.ends_with('~')
+        || [".swp", ".tmp", ".orig", ".rej"]
+            .iter()
+            .any(|suffix| name.ends_with(suffix))
 }
 
 fn test_code(name: &str) -> bool {
@@ -729,40 +297,87 @@ fn test_code(name: &str) -> bool {
 }
 
 fn list(folder: &Path, files: &mut Vec<PathBuf>) {
-    let entries = fs::read_dir(folder)
-        .unwrap_or_else(|error| panic!("cannot list {}: {error}", folder.display()));
-    for entry in entries {
-        let path = entry
-            .unwrap_or_else(|error| panic!("cannot list {}: {error}", folder.display()))
-            .path();
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let scratch = name.starts_with('.')
-            || name.ends_with('~')
-            || [".swp", ".tmp", ".orig", ".rej"]
-                .iter()
-                .any(|suffix| name.ends_with(suffix));
-        if scratch || test_code(&name) {
+    let Ok(read) = fs::read_dir(folder) else {
+        return;
+    };
+    for entry in read.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if scratch(&name) || test_code(&name) {
             continue;
         }
         if path.is_dir() {
-            if name != "target" {
-                list(&path, files);
-            }
+            list(&path, files);
         } else {
             files.push(path);
         }
     }
 }
 
-fn normalized(bytes: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(bytes.len());
-    for (index, &byte) in bytes.iter().enumerate() {
-        if !(byte == b'\r' && bytes.get(index + 1) == Some(&b'\n')) {
-            out.push(byte);
-        }
-    }
-    out
+fn relative(root: &Path, file: &Path) -> String {
+    normal(file)
+        .strip_prefix(root)
+        .unwrap_or(file)
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn identifier(text: &str) -> String {
+    text.chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect()
+}
+
+fn header(text: &str, at: usize) -> &str {
+    let start = text[..at]
+        .rfind([';', '{', '}'])
+        .map_or(0, |found| found + 1);
+    &text[start..at]
+}
+
+fn words(text: &str, word: &str) -> Vec<usize> {
+    let bytes = text.as_bytes();
+    text.match_indices(word)
+        .map(|(at, _)| at)
+        .filter(|&at| {
+            let before =
+                at == 0 || !(bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_');
+            let after = bytes
+                .get(at + word.len())
+                .is_none_or(|c| !(c.is_ascii_alphanumeric() || *c == b'_'));
+            before && after
+        })
+        .collect()
+}
+
+fn entries(text: &str) -> Vec<String> {
+    words(text, "fn")
+        .into_iter()
+        .filter(|&at| {
+            let head = header(text, at);
+            head.contains("@vertex") || head.contains("@fragment") || head.contains("@compute")
+        })
+        .map(|at| identifier(text[at + 2..].trim_start()))
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+fn variables(text: &str) -> Vec<String> {
+    words(text, "var")
+        .into_iter()
+        .filter(|&at| header(text, at).contains("@group("))
+        .map(|at| {
+            let mut rest = text[at + 3..].trim_start();
+            if rest.starts_with('<') {
+                rest = rest
+                    .find('>')
+                    .map_or("", |close| &rest[close + 1..])
+                    .trim_start();
+            }
+            identifier(rest)
+        })
+        .filter(|name| !name.is_empty())
+        .collect()
 }

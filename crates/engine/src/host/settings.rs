@@ -1,3 +1,7 @@
+use bevy_ecs::prelude::World;
+use engine_core::{Error, ErrorCode};
+use serde_json::Value;
+
 use super::TerrainClock;
 use crate::{Game, GameHost};
 
@@ -17,12 +21,11 @@ impl Setting {
     }
 }
 
+pub const OVERLAY: &str = "set";
+
 macro_rules! words {
     ([$($word:literal => $value:expr),+ $(,)?]) => {
         &[$($word),+]
-    };
-    ((named $named:path)) => {
-        <$named>::NAMES
     };
 }
 
@@ -33,18 +36,16 @@ macro_rules! parse {
             _ => None,
         }
     };
-    ($value:ident, (named $named:path)) => {
-        <$named>::named($value).map(Some)
-    };
 }
 
 macro_rules! settings {
     ($(
         $field:ident: $ty:ty = $name:literal, $values:tt => $apply:ident;
     )*) => {
-        #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+        #[derive(Clone, Debug, Default, PartialEq)]
         pub struct HostSettings {
             $(pub $field: Option<$ty>,)*
+            pub overlay: Vec<(String, Value)>,
         }
 
         pub const SETTINGS: &[Setting] = &[$(Setting {
@@ -53,26 +54,35 @@ macro_rules! settings {
         }),*];
 
         impl HostSettings {
-            pub fn set(&mut self, name: &str, value: &str) -> Result<bool, engine_core::Error> {
+            pub fn set(&mut self, name: &str, value: &str) -> Result<bool, Error> {
                 match name {
                     $($name => {
                         let Some(parsed) = parse!(value, $values) else {
                             let values: &[&str] = words!($values);
-                            return Err(engine_core::Error::new(engine_core::ErrorCode::InvalidValue, "$")
+                            return Err(Error::new(ErrorCode::InvalidValue, "$")
                                 .got(value)
                                 .variants(values.iter().copied()));
                         };
                         self.$field = parsed;
                         Ok(true)
                     })*
+                    OVERLAY => {
+                        self.overlay.push(overlaid(value)?);
+                        Ok(true)
+                    }
                     _ => Ok(false),
                 }
             }
 
-            pub fn apply<G: Game>(&self, host: &mut GameHost<G>) {
+            pub fn apply<G: Game>(&self, host: &mut GameHost<G>) -> Result<(), Error> {
                 $(if let Some(value) = self.$field {
                     host.$apply(value);
                 })*
+                for (key, value) in &self.overlay {
+                    host.set_setting(key, value.clone())
+                        .map_err(|error| error.within(&format!("{OVERLAY}.{key}")))?;
+                }
+                Ok(())
             }
         }
     };
@@ -81,24 +91,27 @@ macro_rules! settings {
 settings! {
     pipeline: bool = "pipeline",
         ["on" => Some(true), "off" => Some(false)] => set_tick_pipelining;
-    taa: bool = "taa",
-        ["scene" => None, "on" => Some(true), "off" => Some(false)] => set_temporal_antialiasing;
-    occlusion: bool = "occlusion",
-        ["scene" => None, "on" => Some(true), "off" => Some(false)] => set_occlusion_culling;
-    subpixel: bool = "subpixel",
-        ["scene" => None, "on" => Some(true), "off" => Some(false)] => set_subpixel_culling;
     between: bool = "between",
         ["on" => Some(true), "off" => Some(false)] => set_between_frames;
     terrain_clock: TerrainClock = "terrain-clock",
         ["wall" => Some(TerrainClock::Wall), "frames" => Some(TerrainClock::Frames)] => set_terrain_clock;
-    debug_view: engine_core::DebugViewMode = "debug-view",
-        (named engine_core::DebugViewMode) => set_debug_view;
-    dynamic_resolution: bool = "dynamic-resolution",
-        ["host" => None, "on" => Some(true), "off" => Some(false)] => set_dynamic_resolution;
 }
 
 impl HostSettings {
     pub fn takes(name: &str) -> bool {
-        SETTINGS.iter().any(|setting| setting.name == name)
+        name == OVERLAY || SETTINGS.iter().any(|setting| setting.name == name)
     }
+}
+
+fn overlaid(entry: &str) -> Result<(String, Value), Error> {
+    let Some((key, value)) = entry.split_once('=').filter(|(key, _)| !key.is_empty()) else {
+        return Err(Error::new(ErrorCode::InvalidValue, "$").got(entry));
+    };
+    let value = engine_settings::parse_json::<Value>(value).map_err(|error| error.within("$"))?;
+    Ok((key.to_owned(), value))
+}
+
+pub fn apply_setting(world: &mut World, key: &str, value: &Value) -> Result<(), Error> {
+    engine_registry::settings(world, key)?.set(world, value)?;
+    Ok(())
 }

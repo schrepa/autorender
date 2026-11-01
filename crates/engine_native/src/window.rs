@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use engine::host::{FramePhase, HostSettings};
-use engine::{Engine, ErrorCode, Game, GameHost, GpuPreference, RenderTarget};
+use engine::{BrickList, Engine, ErrorCode, Game, GameHost, GpuPreference, RenderTarget};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
 use winit::event::WindowEvent;
@@ -56,17 +56,26 @@ impl Window {
     }
 }
 
-type Build<'a, G> = Box<dyn FnOnce() -> engine::Result<(Engine, G)> + 'a>;
+type Build<'a, G> = (
+    Box<dyn FnOnce(BrickList) -> BrickList + 'a>,
+    Box<dyn FnOnce(&mut Engine) -> engine::Result<G> + 'a>,
+);
 
 pub fn run<'a, G: Game, E: Into<engine::Error>>(
     window: Window,
-    build: impl FnOnce() -> Result<(Engine, G), E> + 'a,
+    bricks: impl FnOnce(BrickList) -> BrickList + 'a,
+    build: impl FnOnce(&mut Engine) -> Result<G, E> + 'a,
 ) -> engine::Result<Option<WindowReport>> {
     let event_loop = EventLoop::new()
         .map_err(|error| host_error(ErrorCode::RenderFailed, "$.event_loop", error))?;
     let mut app = App {
         options: window,
-        build: Some(Box::new(move || build().map_err(Into::into))),
+        build: Some((
+            Box::new(bricks),
+            Box::new(move |engine: &mut Engine| {
+                build(engine).map_err(Into::<engine::Error>::into)
+            }),
+        )),
         input: Input::default(),
         running: None,
         outcome: Ok(None),
@@ -99,7 +108,7 @@ impl<'a, G: Game> App<'a, G> {
     fn start(
         &mut self,
         event_loop: &ActiveEventLoop,
-        build: Build<'a, G>,
+        (bricks, build): Build<'a, G>,
     ) -> engine::Result<Running<G>> {
         let attributes =
             winit::window::Window::default_attributes().with_title(&self.options.title);
@@ -121,12 +130,15 @@ impl<'a, G: Game> App<'a, G> {
             vsync: self.options.vsync,
         };
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
-            target, build,
+            target, bricks, build,
         )))?);
         host.set_pixel_ratio(window.scale_factor());
         host.set_refresh_interval(refresh_interval(&window));
-        host.set_dynamic_resolution(self.options.measure.is_none());
-        self.options.settings.apply(&mut host);
+        host.set_setting(
+            crate::DYNAMIC_RESOLUTION,
+            self.options.measure.is_none().into(),
+        )?;
+        self.options.settings.apply(&mut host)?;
         let mut jobs = self.options.jobs.pool(false);
         jobs.attach(&mut host);
         Ok(Running {

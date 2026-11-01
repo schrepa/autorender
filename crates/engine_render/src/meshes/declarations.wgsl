@@ -1,4 +1,4 @@
-import package::frame::view::fade_noise;
+import package::engine::view::fade_noise;
 
 @group(1) @binding(0) var base_color_texture: texture_2d<f32>;
 @group(1) @binding(1) var base_color_sampler: sampler;

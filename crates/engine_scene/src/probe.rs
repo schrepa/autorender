@@ -1,5 +1,5 @@
 use engine_core::{Error, Interior, ReflectionProbe, bevy_ecs::world::EntityWorldMut, glam::Vec3};
-use engine_settings::{Rule, settings};
+use engine_settings::{Rule, fields};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -9,7 +9,7 @@ use crate::components::{
 };
 use crate::instance::Lookups;
 
-settings! {
+fields! {
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]

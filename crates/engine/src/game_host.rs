@@ -1,7 +1,7 @@
 use crate::app_host::AppHost;
 use crate::game::Game;
 use crate::host::{FrameLoop, FramePhase, InputGatherer, JobOrder, JobScheduler};
-use engine_core::{ActionInput, Engine, JobId};
+use engine_core::{ActionInput, BrickList, Engine, JobId};
 use engine_render::RenderTarget;
 use engine_scene::SceneFiles;
 
@@ -20,15 +20,15 @@ pub struct GameHost<G: Game> {
 impl<G: Game> GameHost<G> {
     pub async fn launch<E: Into<crate::Error>>(
         target: RenderTarget,
-        build: impl FnOnce() -> Result<(Engine, G), E>,
+        bricks: impl FnOnce(BrickList) -> BrickList,
+        build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> crate::Result<Self> {
         engine_panic::install();
         let input = InputGatherer::new(G::ACTIONS)?;
         let mut game = None;
-        let app = AppHost::launch(target, || {
-            let (engine, built) = build().map_err(Into::into)?;
-            game = Some(built);
-            Ok(engine)
+        let app = AppHost::launch(target, bricks, |engine| {
+            game = Some(build(engine).map_err(Into::into)?);
+            Ok(())
         })
         .await?;
         let game = game.expect("game_built");
@@ -190,7 +190,7 @@ impl<G: Game> GameHost<G> {
         let here = self.jobs.take_here();
         if !here.is_empty() {
             for request in here {
-                let output = self.app.run_job_here(request.kind, &request.input);
+                let output = self.app.run_job_here(&request.kind, &request.input);
                 self.jobs.ran_here(request.id, output, &mut finished);
             }
             orders.extend(self.jobs.take(Vec::new(), &mut finished));
@@ -232,6 +232,10 @@ impl<G: Game> GameHost<G> {
         self.jobs.task_done(worker);
     }
 
+    pub fn job_list(&self) -> std::sync::Arc<engine_registry::JobList> {
+        self.app.job_list()
+    }
+
     fn finish_jobs(&mut self, finished: Vec<crate::host::Finished>) {
         for (id, result) in finished {
             match result {
@@ -262,7 +266,7 @@ impl<G: Game> GameHost<G> {
     pub fn reload_scene(&mut self, source: &str, files: &SceneFiles) -> crate::Result<()> {
         self.game
             .reload_scene(self.app.engine_mut(), source, files)?;
-        self.app.apply_overrides();
+        self.app.replay_settings()?;
         self.app.forget_pipeline_list();
         self.suspend();
         Ok(())
@@ -272,16 +276,8 @@ impl<G: Game> GameHost<G> {
         self.app.set_tick_pipelining(enabled);
     }
 
-    pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
-        self.app.set_temporal_antialiasing(enabled);
-    }
-
-    pub fn set_occlusion_culling(&mut self, enabled: bool) {
-        self.app.set_occlusion_culling(enabled);
-    }
-
-    pub fn set_subpixel_culling(&mut self, enabled: bool) {
-        self.app.set_subpixel_culling(enabled);
+    pub fn set_setting(&mut self, key: &str, value: serde_json::Value) -> crate::Result<()> {
+        self.app.set_setting(key, value)
     }
 
     pub fn set_pixel_ratio(&mut self, ratio: f64) {
@@ -290,18 +286,6 @@ impl<G: Game> GameHost<G> {
 
     pub fn set_refresh_interval(&mut self, milliseconds: Option<f64>) {
         self.app.set_refresh_interval(milliseconds);
-    }
-
-    pub fn set_resolution_scale(&mut self, scale: f64) {
-        self.app.set_resolution_scale(scale);
-    }
-
-    pub fn set_dynamic_resolution(&mut self, enabled: bool) {
-        self.app.set_dynamic_resolution(enabled);
-    }
-
-    pub fn set_debug_view(&mut self, view: engine_core::DebugViewMode) {
-        self.app.set_debug_view(view);
     }
 
     pub fn set_terrain_clock(&mut self, clock: crate::host::TerrainClock) {
@@ -352,22 +336,6 @@ impl<G: Game> GameHost<G> {
 
     pub fn tick_pipelining(&self) -> bool {
         self.app.tick_pipelining()
-    }
-
-    pub fn temporal_antialiasing(&self) -> bool {
-        self.app.temporal_antialiasing()
-    }
-
-    pub fn occlusion_culling(&self) -> bool {
-        self.app.occlusion_culling()
-    }
-
-    pub fn subpixel_culling(&self) -> bool {
-        self.app.subpixel_culling()
-    }
-
-    pub fn dynamic_resolution(&self) -> bool {
-        self.app.dynamic_resolution()
     }
 }
 
@@ -466,11 +434,12 @@ impl<G: Game> GameHost<G> {
                         "revision": document.revision.to_string(),
                     })));
             }
-            self.game.reload_scene(self.app.engine_mut(), source, files)
+            self.game
+                .reload_scene(self.app.engine_mut(), source, files)?;
+            self.app.replay_settings()
         })();
         match result {
             Ok(()) => {
-                self.app.apply_overrides();
                 self.app.forget_pipeline_list();
                 self.suspend();
                 self.development.result(

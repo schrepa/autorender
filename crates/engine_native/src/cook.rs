@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use engine::collections::HashSet;
+use engine::host::JobRef;
 use engine::{Error, ErrorCode};
 
 use crate::file_error;
@@ -10,16 +11,17 @@ const LEVEL: i32 = 19;
 
 #[derive(Default)]
 pub(crate) struct PackWriter {
-    records: Vec<([u8; 32], &'static str, Vec<u8>)>,
+    records: Vec<([u8; 32], Box<str>, Vec<u8>)>,
     seen: HashSet<[u8; 32]>,
 }
 
 impl PackWriter {
-    pub(crate) fn take(&mut self, key: &str, kind: &'static str, bytes: &[u8]) {
+    pub(crate) fn take(&mut self, key: &str, kind: Option<&JobRef>, bytes: &[u8]) {
         let Some(key) = engine_worker::key_from_hex(key) else {
             return;
         };
         if self.seen.insert(key) {
+            let kind = kind.map_or("", JobRef::name).into();
             self.records.push((key, kind, bytes.to_vec()));
         }
     }
@@ -28,17 +30,17 @@ impl PackWriter {
         self.records.len()
     }
 
-    pub(crate) fn kinds(&self) -> BTreeMap<&'static str, usize> {
+    pub(crate) fn kinds(&self) -> BTreeMap<String, usize> {
         let mut kinds = BTreeMap::new();
-        for &(_, kind, _) in &self.records {
-            *kinds.entry(kind).or_default() += 1;
+        for (_, kind, _) in &self.records {
+            *kinds.entry(kind.to_string()).or_default() += 1;
         }
         kinds
     }
 
     pub(crate) fn write(&self, path: &Path) -> Result<u64, Error> {
         let listing =
-            engine_worker::listing_bytes(self.records.iter().map(|(key, kind, _)| (key, *kind)));
+            engine_worker::listing_bytes(self.records.iter().map(|(key, kind, _)| (key, &**kind)));
         let records: Vec<([u8; 32], &[u8])> =
             std::iter::once((engine_worker::listing_key(), listing.as_slice()))
                 .chain(

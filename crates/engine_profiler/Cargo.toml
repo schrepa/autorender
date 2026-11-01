@@ -60,4 +60,4 @@ allow_attributes_without_reason = "deny"
 missing_assert_message = "deny"
 
 [package.metadata.engine]
-kind = "tool"
+kind = "host"

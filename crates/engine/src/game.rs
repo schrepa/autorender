@@ -1,5 +1,10 @@
-use engine_core::{Engine, Error, ErrorCode, bevy_ecs::resource::Resource};
+use bevy_ecs::resource::Resource;
+use engine_core::{BrickList, Engine, Error, ErrorCode};
 use engine_scene::{SceneFiles, SceneInstance};
+
+pub fn engine(bricks: impl FnOnce(BrickList) -> BrickList) -> crate::Result<Engine> {
+    Engine::listed(bricks(BrickList::default()))
+}
 
 pub trait Game: 'static {
     const ACTIONS: &'static [(&'static str, u32)] = &[("Space", 0)];

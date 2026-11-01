@@ -19,7 +19,7 @@ fn standing() -> Option<Grounded> {
     Some(Grounded::default())
 }
 
-engine_settings::settings! {
+engine_settings::fields! {
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
@@ -40,7 +40,7 @@ engine_settings::settings! {
     }
 }
 
-engine_settings::settings! {
+engine_settings::fields! {
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]

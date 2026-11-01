@@ -125,13 +125,13 @@ pub struct DrawOrder {
     pub keys: Vec<(u8, Variant, Option<MaterialHandle>, u8, u32)>,
 }
 
-const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = crate::vertex_attributes!(Vertex {
+const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = crate::pipelines::vertex_attributes!(Vertex {
     0 => position as Float32x3,
     1 => normal as Snorm16x2,
     7 => uv as Float32x2,
 });
 const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = wgpu::vertex_attr_array![2 => Uint32];
-const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] = crate::vertex_attributes!(ExtraVertex {
+const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] = crate::pipelines::vertex_attributes!(ExtraVertex {
     9 => color as Unorm16x4,
     10 => uv1 as Float32x2,
 });

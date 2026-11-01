@@ -1,3 +1,5 @@
+use std::any::TypeId;
+
 use bevy_ecs::{component::Component, resource::Resource, world::World};
 use serde_json::Value;
 
@@ -29,19 +31,41 @@ pub struct PlaceDecl {
     wgsl: Option<&'static str>,
     smokes: &'static [Smoke],
     insert: fn(&mut World),
+    ty: fn() -> TypeId,
 }
 
 impl PlaceDecl {
     pub const fn slot<S: Slot>() -> Self {
-        Self { name: S::NAME, kind: PlaceKind::Slot, wgsl: S::WGSL, smokes: S::SMOKES, insert: insert_slot::<S> }
+        Self {
+            name: S::NAME,
+            kind: PlaceKind::Slot,
+            wgsl: S::WGSL,
+            smokes: S::SMOKES,
+            insert: insert_slot::<S>,
+            ty: TypeId::of::<S>,
+        }
     }
 
     pub const fn list<L: List>() -> Self {
-        Self { name: L::NAME, kind: PlaceKind::List, wgsl: L::WGSL, smokes: L::SMOKES, insert: insert_nothing }
+        Self {
+            name: L::NAME,
+            kind: PlaceKind::List,
+            wgsl: L::WGSL,
+            smokes: L::SMOKES,
+            insert: insert_nothing,
+            ty: TypeId::of::<L>,
+        }
     }
 
     pub const fn component<C: Component>(name: &'static str) -> Self {
-        Self { name, kind: PlaceKind::Component, wgsl: None, smokes: &[], insert: insert_component::<C> }
+        Self {
+            name,
+            kind: PlaceKind::Component,
+            wgsl: None,
+            smokes: &[],
+            insert: insert_component::<C>,
+            ty: TypeId::of::<C>,
+        }
     }
 
     #[doc(hidden)]
@@ -67,6 +91,11 @@ impl PlaceDecl {
     #[doc(hidden)]
     pub fn insert(&self, world: &mut World) {
         (self.insert)(world)
+    }
+
+    #[doc(hidden)]
+    pub fn type_id(&self) -> TypeId {
+        (self.ty)()
     }
 }
 
@@ -201,19 +230,32 @@ macro_rules! gpu_struct {
     (@wgsl i32) => { "i32" };
     (@wgsl [f32; 2]) => { "vec2<f32>" };
     (@wgsl [u32; 2]) => { "vec2<u32>" };
+    (@wgsl [i32; 2]) => { "vec2<i32>" };
+    (@wgsl [f32; 3]) => { "vec3<f32>" };
+    (@wgsl [u32; 3]) => { "vec3<u32>" };
+    (@wgsl [i32; 3]) => { "vec3<i32>" };
     (@wgsl [f32; 4]) => { "vec4<f32>" };
     (@wgsl [u32; 4]) => { "vec4<u32>" };
     (@wgsl [i32; 4]) => { "vec4<i32>" };
     (@wgsl [[f32; 4]; 4]) => { "mat4x4<f32>" };
+    (@wgsl [[f32; 4]; $count:literal]) => { ::core::concat!("array<vec4<f32>, ", ::core::stringify!($count), ">") };
+    (@wgsl [[u32; 4]; $count:literal]) => { ::core::concat!("array<vec4<u32>, ", ::core::stringify!($count), ">") };
+    (@wgsl [[i32; 4]; $count:literal]) => { ::core::concat!("array<vec4<i32>, ", ::core::stringify!($count), ">") };
     (@align f32) => { 4 };
     (@align u32) => { 4 };
     (@align i32) => { 4 };
     (@align [f32; 2]) => { 8 };
     (@align [u32; 2]) => { 8 };
+    (@align [i32; 2]) => { 8 };
+    (@align [f32; 3]) => { 16 };
+    (@align [u32; 3]) => { 16 };
+    (@align [i32; 3]) => { 16 };
     (@align [f32; 4]) => { 16 };
     (@align [u32; 4]) => { 16 };
     (@align [i32; 4]) => { 16 };
-    (@align [[f32; 4]; 4]) => { 16 };
+    (@align [[f32; 4]; $count:literal]) => { 16 };
+    (@align [[u32; 4]; $count:literal]) => { 16 };
+    (@align [[i32; 4]; $count:literal]) => { 16 };
     (
         @crate $bytemuck:literal;
         $(#[$meta:meta])*

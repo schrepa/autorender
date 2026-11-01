@@ -13,11 +13,12 @@ mod views;
 pub use crate::app_host::{TerrainClock, now_ms};
 pub use adapter::{AdapterStatus, vendor};
 pub use engine_core::{
-    Cooking, Distribution, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRequest, JobShare, Jobs,
-    MISSING_RECORD, RecordFetch, RecordKey, RecordParity, TerrainDebug, URGENT_JOBS, VIEW_JOBS,
+    Cooking, Distribution, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobQueue, JobRef, JobRequest,
+    JobShare, MISSING_RECORD, RecordFetch, RecordKey, RecordParity, URGENT_JOBS, VIEW_JOBS,
     content_hash, job_class, job_priority, median,
 };
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
+pub use engine_registry::JobList;
 pub use environment::{HostEnvironment, KNOWN_DIFFERENCES};
 pub use frame_loop::{FrameLoop, FramePhase};
 pub use input::{FrameInput, InputGatherer, KEYS};
@@ -29,8 +30,8 @@ pub use resolution::{render_size, view_size};
 pub use scene_load::{
     FileRead, IMAGE_FORMATS, Image, ImageFormat, SceneLoad, decode_image, image_format,
 };
-pub use settings::{HostSettings, SETTINGS, Setting};
-pub use views::{SceneLookControl, SceneViewControl, SceneViewsBrick, show_look, show_view};
+pub use settings::{HostSettings, OVERLAY, SETTINGS, Setting, apply_setting};
+pub use views::{SceneLookControl, SceneViewControl, show_look, show_view};
 
 #[cfg(all(feature = "schema", not(target_arch = "wasm32")))]
 pub fn typescript() -> String {
@@ -72,5 +73,6 @@ pub fn typescript() -> String {
         .map(|setting| (setting.name.to_owned(), setting.accepted().into()))
         .collect();
     output.push_str(&constant("HOST_SETTINGS", &settings.into()));
+    output.push_str(&constant("HOST_OVERLAY", &OVERLAY.into()));
     output
 }

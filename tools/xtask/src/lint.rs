@@ -11,6 +11,11 @@ use crate::{
 
 pub(crate) const LINT: &[Stage<Path>] = &[
     Stage {
+        name: "kinds",
+        needs: &[],
+        run: kinds,
+    },
+    Stage {
         name: "policy",
         needs: &[],
         run: |root| engine_checks::policy::check(repository(root)?, &RULES),
@@ -46,11 +51,6 @@ pub(crate) const LINT: &[Stage<Path>] = &[
         run: authoring::validate_sources,
     },
     Stage {
-        name: "generated files",
-        needs: &[],
-        run: authoring::check_generated,
-    },
-    Stage {
         name: "bench",
         needs: &[],
         run: |root| engine_checks::bench::check(repository(root)?),
@@ -61,45 +61,6 @@ pub(crate) const LINT: &[Stage<Path>] = &[
         run: crate::equivalence::check,
     },
     Stage {
-        name: "coverage",
-        needs: &[],
-        run: crate::coverage::check,
-    },
-    Stage {
-        name: "path map",
-        needs: &[],
-        run: crate::verify::check,
-    },
-    Stage {
-        name: "dependencies",
-        needs: &[],
-        run: |root| {
-            engine_checks::dependencies::check(
-                repository(root)?,
-                &RULES.exceptions,
-                &crate::bricks::standard_engine(),
-            )
-        },
-    },
-    Stage {
-        name: "faces",
-        needs: &[],
-        run: |root| engine_checks::faces::check(repository(root)?),
-    },
-    Stage {
-        name: "schedule ambiguities",
-        needs: &[],
-        run: |_| engine_checks::ambiguities::check(crate::bricks::standard_engine()),
-    },
-    Stage {
-        name: "exports",
-        needs: &[],
-        run: |root| match &RULES.facade {
-            Some(facade) => engine_checks::exports::check(repository(root)?, facade),
-            None => Ok(()),
-        },
-    },
-    Stage {
         name: "structure",
         needs: &[],
         run: |root| engine_checks::structure::check(repository(root)?, &RULES.exceptions),
@@ -108,11 +69,6 @@ pub(crate) const LINT: &[Stage<Path>] = &[
         name: "examples are leaves",
         needs: &[],
         run: |root| engine_checks::leaves::check(repository(root)?),
-    },
-    Stage {
-        name: "gpu",
-        needs: &[],
-        run: |root| engine_checks::gpu::check(repository(root)?),
     },
     Stage {
         name: "pure",
@@ -193,6 +149,10 @@ pub(crate) const LINT: &[Stage<Path>] = &[
         run: |root| run(root, NPM, &["run", "typecheck", "--prefix", "web"]),
     },
 ];
+
+fn kinds(root: &Path) -> Result<(), String> {
+    run(root, "cargo", &["run", "-q", "--locked", "-p", "kinds"])
+}
 
 fn clippy(root: &Path, selection: &[&str]) -> Result<(), String> {
     let mut arguments = vec!["clippy"];

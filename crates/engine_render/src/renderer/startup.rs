@@ -161,23 +161,19 @@ impl Renderer {
             gpu_frame: false,
             health,
             profiler,
-            shared: crate::bindings::SharedGroups::default(),
             previous: PreviousFrame::default(),
             debug,
             mesh_entries: None,
-            scene_shading: SceneShading::NONE,
-            warm: Vec::new(),
             views: None,
         };
         let renderer = Self {
             core,
-            parts: Parts::default(),
-            table: GraphTable::default(),
-            graph: FrameGraph::default(),
+            parts: Vec::new(),
+            graph: StaticGraph::default(),
+            plans: PlanCache::default(),
+            passes: &[],
             installing: None,
             ran: Vec::new(),
-            #[cfg(feature = "profiling")]
-            prelude_owners: Vec::new(),
         };
         crate::platform::yield_now().await;
         Ok(StartingRenderer {

@@ -1,20 +1,23 @@
-mod map;
-
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use engine_checks::bricks::Recorded;
+use engine_checks::Repository;
 
 use crate::Failure;
 use crate::measure::git;
-use map::Check;
+use crate::process::{Client, clients};
+use crate::smoke::PLAYER;
 
 const USAGE: &str =
     "usage: cargo xtask verify [--level quick|pr|merge] [--base REV] [--plan] [--json]";
 
+const TOOLS: &str = "xtask";
+
+const CLIPPY: [&str; 5] = ["--all-targets", "--locked", "--", "-D", "warnings"];
+
 const QUICK_STAGES: &[&str] = &[
+    "kinds",
     "policy",
     "comments",
     "fmt",
@@ -22,15 +25,8 @@ const QUICK_STAGES: &[&str] = &[
     "web errors",
     "web parameters",
     "scene sources",
-    "generated files",
     "bench",
     "equivalence matrix",
-    "coverage",
-    "path map",
-    "dependencies",
-    "faces",
-    "schedule ambiguities",
-    "exports",
     "structure",
     "examples are leaves",
 ];
@@ -55,75 +51,76 @@ impl Level {
 #[derive(Default)]
 struct Selection {
     everything: bool,
-    corpora: BTreeSet<&'static str>,
-    pure_wasm: bool,
-    shaders: bool,
-    smokes: BTreeSet<String>,
-    core_smokes: bool,
-    all_smokes: bool,
-    projects: BTreeSet<&'static str>,
-    equivalence: bool,
-    browser: bool,
-    self_checks: BTreeSet<&'static str>,
-    packages: BTreeSet<String>,
-    unmapped: Vec<String>,
+    outside: Vec<String>,
+    touched: BTreeSet<String>,
+    affected: BTreeSet<String>,
 }
 
 impl Selection {
-    fn add(&mut self, root: &Path, bricks: &[Recorded], path: &str) {
-        for brick in bricks {
-            if brick
-                .paths
-                .iter()
-                .any(|pattern| map::matches(pattern, path))
-            {
-                let smokes = brick.smokes.iter().chain(&brick.place_smokes);
-                self.smokes.extend(smokes.map(|(smoke, _)| smoke.clone()));
+    fn of(repository: &Repository, changed: &BTreeSet<String>) -> Self {
+        let mut selection = Self::default();
+        for path in changed {
+            match owner(repository, path) {
+                Some(package) => {
+                    selection.touched.insert(package.to_owned());
+                }
+                None => selection.outside.push(path.clone()),
             }
         }
-        let Some(checks) = map::checks_of(path) else {
-            self.unmapped.push(path.to_owned());
-            self.everything = true;
-            return;
+        selection.everything = !selection.outside.is_empty();
+        selection.affected = if selection.everything {
+            repository
+                .own()
+                .map(|package| package.name.clone())
+                .collect()
+        } else {
+            dependents(repository, &selection.touched)
         };
-        for check in checks {
-            match check {
-                Check::Everything => self.everything = true,
-                Check::Pure(corpus) => {
-                    self.corpora.insert(corpus);
-                }
-                Check::PureWasm => self.pure_wasm = true,
-                Check::Shaders => self.shaders = true,
-                Check::CoreSmokes => self.core_smokes = true,
-                Check::AllSmokes => self.all_smokes = true,
-                Check::Project => self.projects.extend(map::project_of(path)),
-                Check::Equivalence => self.equivalence = true,
-                Check::Browser => self.browser = true,
-                Check::Tools(kind) => {
-                    self.self_checks.insert(kind);
-                }
-            }
-        }
-        if let Some(package) = package_of(root, path) {
-            self.packages.insert(package);
-        }
+        selection
+    }
+
+    fn affects(&self, package: &str) -> bool {
+        self.affected.contains(package)
     }
 }
 
-fn package_of(root: &Path, path: &str) -> Option<String> {
-    let mut folder = Path::new(path).parent();
-    while let Some(at) = folder {
-        if let Ok(manifest) = fs::read_to_string(root.join(at).join("Cargo.toml"))
-            && let Some((_, package)) = manifest.split_once("[package]")
-        {
-            return package.lines().find_map(|line| {
-                let value = line.trim().strip_prefix("name")?.trim().strip_prefix('=')?;
-                Some(value.trim().trim_matches('"').to_owned())
-            });
+fn project(folder: &str, within: &BTreeSet<String>) -> bool {
+    clients()
+        .iter()
+        .any(|client| client.folder == folder && within.contains(&client.package))
+}
+
+fn owner<'a>(repository: &'a Repository, path: &str) -> Option<&'a str> {
+    repository
+        .own()
+        .filter_map(|package| Some((package.path.as_deref()?, package.name.as_str())))
+        .filter(|(folder, _)| {
+            path.strip_prefix(folder)
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+        .max_by_key(|(folder, _)| folder.len())
+        .map(|(_, name)| name)
+}
+
+fn dependents(repository: &Repository, touched: &BTreeSet<String>) -> BTreeSet<String> {
+    let mut affected = touched.clone();
+    loop {
+        let reached: Vec<String> = repository
+            .own()
+            .filter(|package| !affected.contains(&package.name))
+            .filter(|package| {
+                package
+                    .dependencies
+                    .iter()
+                    .any(|dependency| affected.contains(&dependency.package))
+            })
+            .map(|package| package.name.clone())
+            .collect();
+        if reached.is_empty() {
+            return affected;
         }
-        folder = at.parent().filter(|parent| !parent.as_os_str().is_empty());
+        affected.extend(reached);
     }
-    None
 }
 
 struct Step<'a> {
@@ -182,21 +179,19 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
             .lines()
             .map(str::to_owned),
     );
-    let bricks = engine_checks::bricks::recorded(crate::rules::repository(root)?)?;
-    let mut selection = Selection::default();
-    for path in &changed {
-        selection.add(root, &bricks, path);
-    }
+    let selection = Selection::of(crate::rules::repository(root)?, &changed);
     let record = serde_json::json!({
         "event": "changes",
         "files": changed.len(),
         "base": &base[..base.len().min(12)],
+        "crates": selection.touched,
+        "affected": selection.affected.len(),
     });
     println!("{record}");
-    if !selection.unmapped.is_empty() {
+    if !selection.outside.is_empty() {
         let record = serde_json::json!({
-            "event": "paths_unmapped",
-            "paths": selection.unmapped,
+            "event": "paths_outside_crates",
+            "paths": selection.outside,
         });
         println!("{record}");
     }
@@ -223,101 +218,79 @@ pub fn verify(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     ran.outcome
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
+fn quick<'a>(root: &'a Path, selection: &Selection) -> Vec<Step<'a>> {
+    let mut steps = Vec::new();
+    for stage in crate::lint::LINT
+        .iter()
+        .filter(|stage| QUICK_STAGES.contains(&stage.name))
+    {
+        steps.push(Step::new(stage.name, move || Ok((stage.run)(root)?)));
+    }
+    if !selection.affected.is_empty() {
+        let mut arguments = vec!["clippy".to_owned()];
+        if selection.everything {
+            arguments.push("--workspace".into());
+        } else {
+            for package in &selection.affected {
+                arguments.extend(["-p".to_owned(), package.clone()]);
+            }
+        }
+        arguments.extend(CLIPPY.map(str::to_owned));
+        let name = format!("cargo {}", arguments.join(" "));
+        steps.push(Step::new(name, move || {
+            let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+            Ok(crate::process::run(root, "cargo", &arguments)?)
+        }));
+    }
+    if selection.affects(TOOLS) {
+        steps.push(Step::new("pure (every corpus)", move || {
+            crate::pure::pure(root, &[])
+        }));
+    }
+    steps
+}
+
+fn smokes<'a>(root: &'a Path, merge: bool, selection: &Selection) -> Vec<Step<'a>> {
+    let wanted: Vec<&Client> = clients()
+        .iter()
+        .filter(|client| client.native.is_some())
+        .filter(|client| merge || selection.affects(&client.package))
+        .collect();
+    let mut runs: Vec<Vec<String>> = Vec::new();
+    if wanted.iter().any(|client| client.folder == PLAYER) {
+        runs.push(Vec::new());
+    }
+    if merge {
+        runs.push(vec!["--native-profile".to_owned(), "dev".to_owned()]);
+        runs.push(vec!["--browser".to_owned()]);
+    }
+    for client in wanted.iter().filter(|client| client.folder != PLAYER) {
+        runs.push(vec!["--project".to_owned(), client.folder.clone()]);
+    }
+    runs.into_iter()
+        .map(|options| {
+            let name = format!("smoke {}", options.join(" ")).trim_end().to_owned();
+            Step::new(name, move || crate::smoke::smoke(root, &options))
+        })
+        .collect()
+}
+
 fn steps<'a>(
     root: &'a Path,
     level: Level,
     base: &'a str,
     selection: &Selection,
 ) -> Result<Vec<Step<'a>>, String> {
-    let mut steps = Vec::new();
-    let everything = selection.everything;
     if level == Level::Quick {
-        for stage in crate::lint::LINT
-            .iter()
-            .filter(|stage| QUICK_STAGES.contains(&stage.name))
-        {
-            steps.push(Step::new(stage.name, move || Ok((stage.run)(root)?)));
-        }
-        if everything || selection.shaders {
-            steps.push(Step::new("gpu", move || {
-                Ok(engine_checks::gpu::check(crate::rules::repository(root)?)?)
-            }));
-        }
-        if everything || !selection.packages.is_empty() {
-            let mut arguments = vec!["clippy".to_owned()];
-            if everything {
-                arguments.push("--workspace".into());
-            } else {
-                for package in &selection.packages {
-                    arguments.extend(["-p".to_owned(), package.clone()]);
-                }
-            }
-            arguments
-                .extend(["--all-targets", "--locked", "--", "-D", "warnings"].map(str::to_owned));
-            let name = format!("cargo {}", arguments.join(" "));
-            steps.push(Step::new(name, move || {
-                let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
-                Ok(crate::process::run(root, "cargo", &arguments)?)
-            }));
-        }
-        let corpora: Vec<String> = if everything {
-            Vec::new()
-        } else {
-            selection
-                .corpora
-                .iter()
-                .map(|corpus| (*corpus).to_owned())
-                .collect()
-        };
-        if everything || !corpora.is_empty() {
-            let name = if corpora.is_empty() {
-                "pure (every corpus)".to_owned()
-            } else {
-                format!("pure {}", corpora.join(" "))
-            };
-            steps.push(Step::new(name, move || crate::pure::pure(root, &corpora)));
-        }
-        return Ok(steps);
+        return Ok(quick(root, selection));
     }
-    steps.push(Step::new("lint", move || {
+    let merge = level == Level::Merge;
+    let tools = selection.affects(TOOLS);
+    let mut steps = vec![Step::new("lint", move || {
         Ok(engine_checks::stages::run(root, crate::lint::LINT)?)
-    }));
-    let all_smokes = level == Level::Merge || everything || selection.all_smokes;
-    let mut smokes: BTreeSet<String> = selection.smokes.clone();
-    if selection.core_smokes {
-        smokes.extend(
-            engine::smokes::core()
-                .iter()
-                .map(|smoke| smoke.name.to_owned()),
-        );
-    }
-    let mut runs: Vec<Vec<String>> = Vec::new();
-    if all_smokes {
-        runs.push(Vec::new());
-    } else if !smokes.is_empty() {
-        runs.push(smokes.into_iter().collect());
-    }
-    if level == Level::Merge {
-        runs.push(vec!["--native-profile".to_owned(), "dev".to_owned()]);
-        runs.push(vec!["--browser".to_owned()]);
-    }
-    let every_project = level == Level::Merge || everything;
-    for client in crate::process::clients() {
-        let folder = client.folder.as_str();
-        let wanted = every_project || selection.projects.contains(folder);
-        if wanted && client.native.is_some() && folder != crate::smoke::PLAYER {
-            runs.push(vec!["--project".to_owned(), folder.to_owned()]);
-        }
-    }
-    for options in runs {
-        let name = format!("smoke {}", options.join(" ")).trim_end().to_owned();
-        steps.push(Step::new(name, move || crate::smoke::smoke(root, &options)));
-    }
-    if level == Level::Merge || everything || selection.pure_wasm {
+    })];
+    steps.extend(smokes(root, merge, selection));
+    if merge || tools {
         steps.push(Step::new("pure --wasm terrain tables", move || {
             crate::pure::pure(
                 root,
@@ -330,13 +303,7 @@ fn steps<'a>(
         }));
     }
     let tiers = crate::equivalence::tiers(root)?;
-    let project_cells: BTreeSet<&str> = tiers
-        .iter()
-        .filter(|(_, _, project)| selection.projects.contains(project.as_str()))
-        .map(|(name, _, _)| name.as_str())
-        .collect();
-    let wanted_equivalence = everything || selection.equivalence || !project_cells.is_empty();
-    if level == Level::Merge {
+    if merge {
         let options = vec![
             "--base".to_owned(),
             base.to_owned(),
@@ -347,13 +314,15 @@ fn steps<'a>(
             format!("equivalence {}", options.join(" ")),
             move || crate::equivalence::equivalence(root, &options),
         ));
-    } else if wanted_equivalence {
-        let mut cells: BTreeSet<&str> = tiers
+    } else {
+        let cells: BTreeSet<&str> = tiers
             .iter()
-            .filter(|(_, tier, _)| tier == "smoke")
+            .filter(|(_, tier, folder)| {
+                project(folder, &selection.touched)
+                    || (tier == "smoke" && project(folder, &selection.affected))
+            })
             .map(|(name, _, _)| name.as_str())
             .collect();
-        cells.extend(project_cells);
         if !cells.is_empty() {
             let options = vec![
                 "--base".to_owned(),
@@ -367,26 +336,19 @@ fn steps<'a>(
             ));
         }
     }
-    if level == Level::Merge && (everything || selection.browser) {
+    let browser = clients()
+        .iter()
+        .any(|client| selection.affects(&client.package));
+    if merge && browser {
         let options = vec!["--base".to_owned(), base.to_owned(), "--browser".into()];
         steps.push(Step::new(
             format!("equivalence {}", options.join(" ")),
             move || crate::equivalence::equivalence(root, &options),
         ));
     }
-    let self_checks: Vec<String> = if everything {
-        Vec::new()
-    } else {
-        selection
-            .self_checks
-            .iter()
-            .map(|kind| (*kind).to_owned())
-            .collect()
-    };
-    if everything || !self_checks.is_empty() {
-        let name = format!("selfcheck {}", self_checks.join(" "));
-        steps.push(Step::new(name.trim_end().to_owned(), move || {
-            crate::selfcheck::selfcheck(root, &self_checks)
+    if tools {
+        steps.push(Step::new("selfcheck", move || {
+            crate::selfcheck::selfcheck(root, &[])
         }));
     }
     Ok(steps)
@@ -475,49 +437,4 @@ fn tabled(results: &[(&str, Option<u8>, Duration)]) -> Result<(), Failure> {
     } else {
         Err(message.into())
     }
-}
-
-pub(crate) fn check(root: &Path) -> Result<(), String> {
-    let mut problems = Vec::new();
-    let tracked = git(root, &["ls-files"])?;
-    let unmapped: Vec<&str> = tracked
-        .lines()
-        .filter(|path| map::checks_of(path).is_none())
-        .collect();
-    if !unmapped.is_empty() {
-        problems.push(format!("no rule covers {}", unmapped.join(", ")));
-    }
-    let corpora: Vec<&str> = crate::pure::CORPORA
-        .iter()
-        .map(|corpus| corpus.name)
-        .collect();
-    for rule in map::MAP {
-        for check in rule.checks {
-            match check {
-                Check::Pure(corpus) if !corpora.contains(corpus) => {
-                    problems.push(format!(
-                        "a rule names the pure corpus {corpus}, which does not exist"
-                    ));
-                }
-                Check::Tools(kind) if !crate::selfcheck::KINDS.contains(kind) => {
-                    problems.push(format!(
-                        "a rule names the self-check {kind}, which does not exist"
-                    ));
-                }
-                _ => {}
-            }
-        }
-    }
-    if problems.is_empty() {
-        let record = serde_json::json!({
-            "event": "path_map_covers",
-            "files": tracked.lines().count(),
-        });
-        println!("{record}");
-        return Ok(());
-    }
-    Err(format!(
-        "the path map (tools/xtask/src/verify/map.rs) is incomplete:\n  {}",
-        problems.join("\n  ")
-    ))
 }

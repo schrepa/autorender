@@ -1,79 +1,358 @@
-use engine_core::smoke::{Checked, SmokeResult, SmokeSession, component, control, number};
-use engine_core::{BrickList, BrickRegistry, Slot, smoke_check};
-use serde_json::{Value, json};
+use bevy_ecs::prelude::{Component, Entity, Resource};
+use engine_place::{Error, ErrorCode, InterpolateTransform, Slot};
+use glam::{Mat4, Vec3};
+use serde::{Deserialize, Serialize};
 
-use crate::PhysicsSlot;
+pub const MIN_COLLIDER_EXTENT: f32 = 1.0e-4;
+pub const MAX_COLLIDER_EXTENT: f32 = 1.0e4;
+pub const MAX_COLLISION_COORDINATE: f32 = 1.0e6;
 
-const FLOOR_TOP: f64 = 0.0;
-const HALF: f64 = 0.5;
-const START: f64 = 4.0;
-const TICKS: u32 = 180;
-const RESTS_WITHIN: f64 = 0.05;
-const HELD_WITHIN: f64 = 1.0e-4;
-
-pub(crate) fn physics(session: &mut dyn SmokeSession) -> SmokeResult {
-    let members = session
-        .app()
-        .world()
-        .get_resource::<BrickRegistry>()
-        .map(|registry| registry.members(PhysicsSlot::NAME))
-        .unwrap_or_default();
-    if members.is_empty() {
-        return Ok(());
-    }
-    let bricks = session.bricks();
-    let rests = height(session, bricks.clone(), true)?;
-    let rested = (number(&rests) - (FLOOR_TOP + HALF)).abs() <= RESTS_WITHIN;
-    smoke_check!(
-        rested,
-        "box_rests_on_floor",
-        json!({ "members": members, "height": rests }),
-        json!({ "height": FLOOR_TOP + HALF, "within": RESTS_WITHIN })
-    );
-    let left_out = bricks.clone().without(members.iter().copied());
-    let held = height(session, left_out, false)?;
-    let stayed = (number(&held) - START).abs() <= HELD_WITHIN;
-    smoke_check!(
-        stayed,
-        "box_holds_without_filler",
-        json!({ "members": members, "height": held }),
-        json!({ "height": START })
-    );
-    session.restart(bricks);
-    Ok(())
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ColliderShape {
+    Cuboid { half_extents: Vec3 },
+    Sphere { radius: f32 },
 }
 
-fn height(session: &mut dyn SmokeSession, bricks: BrickList, body: bool) -> Checked<Value> {
-    session.source(&scene(body).to_string());
-    session.restart(bricks);
-    control(session, "pause", json!({}))?;
-    session.step(TICKS);
-    let mut transform = component(session, "box", "Transform")?;
-    Ok(transform["translation"][1].take())
+impl ColliderShape {
+    pub fn dimensions(self) -> Vec3 {
+        match self {
+            Self::Cuboid { half_extents } => half_extents,
+            Self::Sphere { radius } => Vec3::splat(radius),
+        }
+    }
+
+    pub fn validate(self) -> Result<(), Error> {
+        let dimensions = self.dimensions();
+        if dimensions.is_finite()
+            && dimensions.cmpge(Vec3::splat(MIN_COLLIDER_EXTENT)).all()
+            && dimensions.cmple(Vec3::splat(MAX_COLLIDER_EXTENT)).all()
+        {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorCode::InvalidShape, "$.collision").range(
+                f64::from(MIN_COLLIDER_EXTENT),
+                f64::from(MAX_COLLIDER_EXTENT),
+            ))
+        }
+    }
 }
 
-fn scene(body: bool) -> Value {
-    let cuboid = |half: [f64; 3]| json!({ "shape": { "kind": "cuboid", "half_extents": half } });
-    let mut falling = json!({
-        "id": "box",
-        "collider": cuboid([HALF; 3]),
-        "transform": { "translation": [0.0, START, 0.0] },
-    });
-    if body {
-        falling["rigid_body"] = json!({});
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CollisionLayers {
+    pub memberships: u32,
+    pub filter: u32,
+}
+
+impl Default for CollisionLayers {
+    fn default() -> Self {
+        Self {
+            memberships: 1,
+            filter: u32::MAX,
+        }
     }
-    json!({
-        "id": "slot-physics",
-        "revision": 1,
-        "materials": [],
-        "meshes": [],
-        "entities": [
-            {
-                "id": "floor",
-                "collider": cuboid([10.0, HALF, 10.0]),
-                "transform": { "translation": [0.0, FLOOR_TOP - HALF, 0.0] },
-            },
-            falling,
-        ],
-    })
+}
+
+impl CollisionLayers {
+    pub const fn new(memberships: u32, filter: u32) -> Self {
+        Self {
+            memberships,
+            filter,
+        }
+    }
+
+    pub const fn interacts(self, other: Self) -> bool {
+        self.memberships & other.filter != 0 && other.memberships & self.filter != 0
+    }
+}
+
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Collider {
+    shape: ColliderShape,
+    layers: CollisionLayers,
+    sensor: bool,
+}
+
+impl Collider {
+    pub fn new(shape: ColliderShape) -> Result<Self, Error> {
+        shape.validate()?;
+        Ok(Self {
+            shape,
+            layers: CollisionLayers::default(),
+            sensor: false,
+        })
+    }
+
+    pub fn cuboid(half_extents: Vec3) -> Result<Self, Error> {
+        Self::new(ColliderShape::Cuboid { half_extents })
+    }
+
+    pub fn sphere(radius: f32) -> Result<Self, Error> {
+        Self::new(ColliderShape::Sphere { radius })
+    }
+
+    #[must_use]
+    pub fn with_layers(mut self, layers: CollisionLayers) -> Self {
+        self.layers = layers;
+        self
+    }
+
+    #[must_use]
+    pub fn with_sensor(mut self, sensor: bool) -> Self {
+        self.sensor = sensor;
+        self
+    }
+
+    pub fn shape(self) -> ColliderShape {
+        self.shape
+    }
+
+    pub fn layers(self) -> CollisionLayers {
+        self.layers
+    }
+
+    pub fn is_sensor(self) -> bool {
+        self.sensor
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BodyMotion {
+    #[default]
+    Dynamic,
+    Kinematic,
+}
+
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[require(InterpolateTransform)]
+#[schemars(rename = "SceneRigidBody")]
+#[serde(default, deny_unknown_fields)]
+pub struct RigidBody {
+    pub motion: BodyMotion,
+    pub density: f32,
+    pub friction: f32,
+    pub restitution: f32,
+    pub drag: f32,
+    pub velocity: [f32; 3],
+    pub spin: [f32; 3],
+    pub fast: bool,
+}
+
+impl Default for RigidBody {
+    fn default() -> Self {
+        Self {
+            motion: BodyMotion::Dynamic,
+            density: 600.0,
+            friction: 0.6,
+            restitution: 0.05,
+            drag: 1.0,
+            velocity: [0.0; 3],
+            spin: [0.0; 3],
+            fast: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SensorFilter {
+    #[default]
+    Include,
+    Exclude,
+    Only,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct QueryFilter {
+    pub layers: CollisionLayers,
+    pub sensors: SensorFilter,
+    pub exclude: Option<Entity>,
+}
+
+impl QueryFilter {
+    pub fn accepts(self, entity: Entity, collider: Collider) -> bool {
+        self.exclude != Some(entity)
+            && self.layers.interacts(collider.layers)
+            && match self.sensors {
+                SensorFilter::Include => true,
+                SensorFilter::Exclude => !collider.sensor,
+                SensorFilter::Only => collider.sensor,
+            }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CollisionRay {
+    pub origin: Vec3,
+    pub direction: Vec3,
+    pub max_distance: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlacedPart {
+    pub layer: u16,
+    pub asset: u16,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RayHit {
+    pub entity: Entity,
+    pub distance: f32,
+    pub point: Vec3,
+    pub normal: Vec3,
+    pub started_inside: bool,
+    pub placed: Option<PlacedPart>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ShapeCastOptions {
+    pub stop_at_penetration: bool,
+    pub target_distance: f32,
+}
+
+impl Default for ShapeCastOptions {
+    fn default() -> Self {
+        Self {
+            stop_at_penetration: true,
+            target_distance: 0.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ShapeHit {
+    pub entity: Entity,
+    pub fraction: f32,
+    pub point: Vec3,
+    pub normal: Vec3,
+    pub started_overlapping: bool,
+    pub placed: Option<PlacedPart>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SensorPair {
+    pub first: Entity,
+    pub second: Entity,
+}
+
+impl SensorPair {
+    pub fn new(a: Entity, b: Entity) -> Self {
+        if a < b {
+            Self {
+                first: a,
+                second: b,
+            }
+        } else {
+            Self {
+                first: b,
+                second: a,
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SensorEventKind {
+    Enter,
+    Exit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SensorEvent {
+    pub pair: SensorPair,
+    pub kind: SensorEventKind,
+}
+
+pub trait Collide: Send + Sync + 'static {
+    fn raycast(&self, ray: CollisionRay, filter: QueryFilter) -> Result<Option<RayHit>, Error>;
+
+    fn raycast_all(
+        &self,
+        ray: CollisionRay,
+        filter: QueryFilter,
+        output: &mut Vec<RayHit>,
+        limit: usize,
+    ) -> Result<(), Error>;
+
+    fn overlap(
+        &self,
+        shape: ColliderShape,
+        matrix: Mat4,
+        filter: QueryFilter,
+        output: &mut Vec<Entity>,
+        limit: usize,
+    ) -> Result<(), Error>;
+
+    fn cast_shape(
+        &self,
+        shape: ColliderShape,
+        matrix: Mat4,
+        displacement: Vec3,
+        filter: QueryFilter,
+        options: ShapeCastOptions,
+    ) -> Result<Option<ShapeHit>, Error>;
+
+    fn events(&self) -> &[SensorEvent];
+
+    fn pairs(&self) -> &[SensorPair];
+}
+
+struct NoCollision;
+
+impl Collide for NoCollision {
+    fn raycast(&self, _: CollisionRay, _: QueryFilter) -> Result<Option<RayHit>, Error> {
+        Ok(None)
+    }
+
+    fn raycast_all(
+        &self,
+        _: CollisionRay,
+        _: QueryFilter,
+        _: &mut Vec<RayHit>,
+        _: usize,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn overlap(
+        &self,
+        _: ColliderShape,
+        _: Mat4,
+        _: QueryFilter,
+        _: &mut Vec<Entity>,
+        _: usize,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn cast_shape(
+        &self,
+        _: ColliderShape,
+        _: Mat4,
+        _: Vec3,
+        _: QueryFilter,
+        _: ShapeCastOptions,
+    ) -> Result<Option<ShapeHit>, Error> {
+        Ok(None)
+    }
+
+    fn events(&self) -> &[SensorEvent] {
+        &[]
+    }
+
+    fn pairs(&self) -> &[SensorPair] {
+        &[]
+    }
+}
+
+#[derive(Resource)]
+pub struct Collision(pub Box<dyn Collide>);
+
+impl Default for Collision {
+    fn default() -> Self {
+        Self(Box::new(NoCollision))
+    }
+}
+
+impl Slot for Collision {
+    const NAME: &'static str = "collision";
 }

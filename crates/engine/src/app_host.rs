@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
+
 use engine_core::{
-    Engine, ErrorCode, FrameReport, FrameStats, InputState, JobId, JobRequest, JobShare,
-    RecordFetch, RecordKey,
+    BrickList, Engine, ErrorCode, FrameReport, FrameStats, InputState, JobId, JobRef, JobRequest,
+    JobShare, RecordFetch, RecordKey,
 };
 use engine_render::{RenderTarget, Renderer};
 
@@ -63,16 +65,12 @@ fn wire(
     (workers, verifying): (u32, bool),
     clock: TerrainClock,
 ) {
+    engine.set_clock(clock.reading());
     let world = engine.app.world_mut();
-    if let Some(mut terrains) = world.get_resource_mut::<engine_terrain::Terrains>() {
-        terrains.set_device_tiles(Some(renderer.terrain_tile_capacity()));
-        terrains.set_clock(clock.reading());
-        terrains.set_water_settling(engine_water::sources::WATER, true);
-    }
     if let Some(mut records) = world.get_resource_mut::<engine_core::Records>() {
         records.set_sampling(Some(renderer.texture_sampling()));
     }
-    if let Some(mut jobs) = world.get_resource_mut::<engine_core::Jobs>() {
+    if let Some(mut jobs) = world.get_resource_mut::<engine_core::JobQueue>() {
         jobs.set_workers(workers);
         jobs.set_verifying(verifying);
     }
@@ -87,8 +85,7 @@ pub(crate) struct AppHost {
     tick_pipelining: bool,
     gpu_inputs_stale: bool,
     terrain_clock: TerrainClock,
-    overrides: Overrides,
-    record_fetches: Vec<(JobId, RecordKey)>,
+    overlay: BTreeMap<String, serde_json::Value>,
     pipeline_list: crate::host::PipelineList,
     pixel_ratio: f64,
     refresh_ms: Option<f64>,
@@ -98,16 +95,6 @@ pub(crate) struct AppHost {
     profile_frame: u64,
     #[cfg(any(feature = "dev", feature = "profiling"))]
     attribution: attribution::Attribution,
-}
-
-#[derive(Clone, Copy, Default)]
-struct Overrides {
-    temporal_antialiasing: Option<bool>,
-    occlusion_culling: Option<bool>,
-    subpixel_culling: Option<bool>,
-    debug_view: Option<engine_core::DebugViewMode>,
-    resolution_scale: Option<f32>,
-    dynamic_resolution: Option<bool>,
 }
 
 #[derive(Clone, Copy)]
@@ -132,10 +119,15 @@ fn built(build: impl FnOnce() -> Result<Engine>) -> Result<Engine> {
 impl AppHost {
     pub(crate) async fn launch(
         target: RenderTarget,
-        build: impl FnOnce() -> Result<Engine>,
+        bricks: impl FnOnce(BrickList) -> BrickList,
+        build: impl FnOnce(&mut Engine) -> Result<()>,
     ) -> Result<Self> {
         let starting = Renderer::start(target).await?;
-        let engine = built(build)?;
+        let engine = built(|| {
+            let mut engine = crate::engine(bricks)?;
+            build(&mut engine)?;
+            Ok(engine)
+        })?;
         let renderer = Box::new(starting.finish().await?);
         let mut host = Self::with(engine, renderer);
         host.claim_passes()?;
@@ -153,8 +145,7 @@ impl AppHost {
             tick_pipelining: true,
             gpu_inputs_stale: false,
             terrain_clock: TerrainClock::Wall,
-            overrides: Overrides::default(),
-            record_fetches: Vec::new(),
+            overlay: BTreeMap::new(),
             pipeline_list: crate::host::PipelineList::default(),
             pixel_ratio: 1.0,
             refresh_ms: None,
@@ -180,19 +171,18 @@ impl AppHost {
             .engine
             .app
             .world()
-            .get_resource::<engine_core::Jobs>()
+            .get_resource::<engine_core::JobQueue>()
             .map_or((0, false), |jobs| (jobs.workers(), jobs.verifying()));
         wire(&mut engine, &self.renderer, jobs, self.terrain_clock);
         self.pipeline_list = crate::host::PipelineList::default();
         self.gpu_inputs_stale = false;
-        for (_, record) in std::mem::take(&mut self.record_fetches) {
-            self.renderer.give_record(record, None);
-        }
         let replaced = std::mem::replace(&mut self.engine, engine);
         if let Err(error) = self.claim_passes() {
             panic!("{error}");
         }
-        self.apply_overrides();
+        if let Err(error) = self.replay_settings() {
+            panic!("{error}");
+        }
         self.suspend();
         replaced
     }
@@ -214,64 +204,23 @@ impl AppHost {
         self.pipeline_list = crate::host::PipelineList::default();
     }
 
-    pub fn apply_overrides(&mut self) {
-        let Overrides {
-            temporal_antialiasing,
-            occlusion_culling,
-            subpixel_culling,
-            debug_view,
-            resolution_scale,
-            dynamic_resolution,
-        } = self.overrides;
+    pub fn set_setting(&mut self, key: &str, value: serde_json::Value) -> Result<()> {
+        crate::host::apply_setting(self.engine.app.world_mut(), key, &value)?;
+        self.overlay.insert(key.to_owned(), value);
+        Ok(())
+    }
+
+    pub(crate) fn replay_settings(&mut self) -> Result<()> {
         let world = self.engine.app.world_mut();
-        if let Some(enabled) = temporal_antialiasing {
-            let settings = world
-                .get_resource::<engine_core::TemporalAntialiasing>()
-                .copied()
-                .unwrap_or_default();
-            world.insert_resource(engine_core::TemporalAntialiasing {
-                enabled,
-                ..settings
-            });
+        for (key, value) in &self.overlay {
+            crate::host::apply_setting(world, key, value)?;
         }
-        if let Some(enabled) = occlusion_culling {
-            world.insert_resource(engine_core::OcclusionCulling { enabled });
-        }
-        if let Some(enabled) = subpixel_culling {
-            world.insert_resource(engine_core::SubpixelCulling { enabled });
-        }
-        if let Some(view) = debug_view {
-            let settings = world
-                .get_resource::<engine_core::DebugView>()
-                .copied()
-                .unwrap_or_default();
-            world.insert_resource(engine_core::DebugView { view, ..settings });
-        }
-        if let Some(scale) = resolution_scale {
-            world.insert_resource(engine_core::Resolution { scale });
-        }
-        if let Some(enabled) = dynamic_resolution {
-            let settings = world
-                .get_resource::<engine_core::DynamicResolution>()
-                .copied()
-                .unwrap_or_default();
-            world.insert_resource(engine_core::DynamicResolution {
-                enabled,
-                ..settings
-            });
-        }
+        Ok(())
     }
 
     pub fn set_terrain_clock(&mut self, clock: TerrainClock) {
         self.terrain_clock = clock;
-        if let Some(mut terrains) = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_terrain::Terrains>()
-        {
-            terrains.set_clock(clock.reading());
-        }
+        self.engine.set_clock(clock.reading());
     }
 
     pub fn set_tick_pipelining(&mut self, enabled: bool) {
@@ -285,50 +234,6 @@ impl AppHost {
         self.tick_pipelining
     }
 
-    pub fn set_temporal_antialiasing(&mut self, enabled: bool) {
-        self.overrides.temporal_antialiasing = Some(enabled);
-        self.apply_overrides();
-    }
-
-    pub fn temporal_antialiasing(&self) -> bool {
-        self.engine
-            .app
-            .world()
-            .get_resource::<engine_core::TemporalAntialiasing>()
-            .is_some_and(|settings| settings.enabled)
-    }
-
-    pub fn set_occlusion_culling(&mut self, enabled: bool) {
-        self.overrides.occlusion_culling = Some(enabled);
-        self.apply_overrides();
-    }
-
-    pub fn occlusion_culling(&self) -> bool {
-        self.engine
-            .app
-            .world()
-            .get_resource::<engine_core::OcclusionCulling>()
-            .is_some_and(|settings| settings.enabled)
-    }
-
-    pub fn set_debug_view(&mut self, view: engine_core::DebugViewMode) {
-        self.overrides.debug_view = Some(view);
-        self.apply_overrides();
-    }
-
-    pub fn set_subpixel_culling(&mut self, enabled: bool) {
-        self.overrides.subpixel_culling = Some(enabled);
-        self.apply_overrides();
-    }
-
-    pub fn subpixel_culling(&self) -> bool {
-        self.engine
-            .app
-            .world()
-            .get_resource::<engine_core::SubpixelCulling>()
-            .is_some_and(|settings| settings.enabled)
-    }
-
     pub fn set_pixel_ratio(&mut self, ratio: f64) {
         self.pixel_ratio = if ratio.is_finite() && ratio > 0.0 {
             ratio
@@ -339,24 +244,6 @@ impl AppHost {
 
     pub fn set_refresh_interval(&mut self, milliseconds: Option<f64>) {
         self.refresh_ms = milliseconds.filter(|ms| ms.is_finite() && *ms > 0.0);
-    }
-
-    pub fn set_resolution_scale(&mut self, scale: f64) {
-        self.overrides.resolution_scale = Some(scale as f32);
-        self.apply_overrides();
-    }
-
-    pub fn set_dynamic_resolution(&mut self, enabled: bool) {
-        self.overrides.dynamic_resolution = Some(enabled);
-        self.apply_overrides();
-    }
-
-    pub fn dynamic_resolution(&self) -> bool {
-        self.engine
-            .app
-            .world()
-            .get_resource::<engine_core::DynamicResolution>()
-            .is_some_and(|settings| settings.enabled)
     }
 
     fn resolution_settings(&self) -> (engine_core::Resolution, engine_core::DynamicResolution) {
@@ -471,14 +358,14 @@ impl AppHost {
         if world.get_resource::<engine_core::Viewport>() != Some(&viewport) {
             world.insert_resource(viewport);
         }
-        engine_terrain::stream_now(world);
+        self.engine.stream_now();
     }
 
     pub fn work_between_frames(&mut self, milliseconds: f64) -> bool {
         if !milliseconds.is_finite() || milliseconds <= 0.0 {
             return false;
         }
-        engine_terrain::work_between_frames(self.engine.app.world_mut(), milliseconds)
+        self.engine.work_between_frames(milliseconds)
     }
 
     pub fn set_job_workers(&mut self, workers: u32) {
@@ -486,7 +373,7 @@ impl AppHost {
             .engine
             .app
             .world_mut()
-            .get_resource_mut::<engine_core::Jobs>()
+            .get_resource_mut::<engine_core::JobQueue>()
         {
             jobs.set_workers(workers);
         }
@@ -497,7 +384,7 @@ impl AppHost {
             .engine
             .app
             .world_mut()
-            .get_resource_mut::<engine_core::Jobs>()
+            .get_resource_mut::<engine_core::JobQueue>()
         {
             jobs.set_verifying(verifying);
         }
@@ -508,7 +395,7 @@ impl AppHost {
             .engine
             .app
             .world_mut()
-            .get_resource_mut::<engine_core::Jobs>()
+            .get_resource_mut::<engine_core::JobQueue>()
         else {
             return Vec::new();
         };
@@ -539,18 +426,18 @@ impl AppHost {
 
     pub fn run_job_here(
         &mut self,
-        kind: &str,
+        kind: &JobRef,
         input: &[u8],
     ) -> std::result::Result<Vec<u8>, String> {
         match self
             .engine
             .app
             .world_mut()
-            .get_resource_mut::<engine_core::Jobs>()
+            .get_resource_mut::<engine_core::JobQueue>()
         {
             Some(mut jobs) => jobs.run_here(kind, input),
             None => Err(Error::new(ErrorCode::MissingResource, "$")
-                .got("Jobs")
+                .got("JobQueue")
                 .to_string()),
         }
     }
@@ -568,7 +455,7 @@ impl AppHost {
             .engine
             .app
             .world_mut()
-            .get_resource_mut::<engine_core::Jobs>()
+            .get_resource_mut::<engine_core::JobQueue>()
         {
             jobs.report_cache(hits, misses, bytes, mismatches);
         }
@@ -579,7 +466,7 @@ impl AppHost {
             .engine
             .app
             .world_mut()
-            .get_resource_mut::<engine_core::Jobs>()
+            .get_resource_mut::<engine_core::JobQueue>()
         {
             jobs.report_held(held);
         }
@@ -590,7 +477,7 @@ impl AppHost {
             .engine
             .app
             .world_mut()
-            .get_resource_mut::<engine_core::Jobs>()
+            .get_resource_mut::<engine_core::JobQueue>()
         {
             jobs.complete(id, output);
         }
@@ -837,7 +724,6 @@ impl AppHost {
             bricks_cost: None,
             bricks: std::collections::BTreeMap::new(),
         };
-        self.exchange_records();
         self.pipeline_list.after_frame(
             &mut self.engine,
             &self.renderer,
@@ -846,89 +732,12 @@ impl AppHost {
         Ok(())
     }
 
-    fn exchange_records(&mut self) {
-        let world = self.engine.app.world_mut();
-        let wants = self.renderer.take_record_wants();
-        let made = self.renderer.take_made_records();
-        let answers = match world.get_resource_mut::<engine_core::Jobs>() {
-            Some(mut jobs) => {
-                let mut answers = Vec::new();
-                let mut asked = Vec::with_capacity(self.record_fetches.len() + wants.len());
-                for (id, record) in std::mem::take(&mut self.record_fetches) {
-                    match jobs.take(id) {
-                        Some(output) => answers.push((record, output.ok())),
-                        None => asked.push((id, record)),
-                    }
-                }
-                let priority = engine_core::job_priority(engine_core::VIEW_JOBS, 0);
-                for record in wants {
-                    asked.push((jobs.fetch(record, priority), record));
-                }
-                for (record, bytes, parity) in made {
-                    jobs.keep_with(record, bytes, parity);
-                }
-                self.record_fetches = asked;
-                answers
-            }
-            None => wants.into_iter().map(|record| (record, None)).collect(),
-        };
-        for (record, bytes) in answers {
-            self.renderer.give_record(record, bytes);
-        }
-        if let Some(mut cooking) = world.get_resource_mut::<engine_core::Cooking>() {
-            for (part, left) in self.renderer.records_left() {
-                cooking.left(part, left);
-            }
-        }
-        self.exchange_settled_water();
-    }
-
-    fn exchange_settled_water(&mut self) {
-        let world = self.engine.app.world_mut();
-        if let Some(mut terrains) = world.get_resource_mut::<engine_terrain::Terrains>() {
-            let starts = terrains.take_water_settles();
-            if !starts.is_empty() {
-                self.renderer.start_records(
-                    starts
-                        .into_iter()
-                        .map(|(id, records, start)| {
-                            let start: std::sync::Arc<dyn std::any::Any + Send + Sync> = start;
-                            (id, records, start)
-                        })
-                        .collect(),
-                );
-            }
-        }
-        let settled = self.renderer.take_records();
-        if settled.is_empty() {
-            return;
-        }
-        if let Some(mut jobs) = world.get_resource_mut::<engine_core::Jobs>() {
-            for (record, made) in &settled {
-                if let Ok(bytes) = made {
-                    jobs.keep_with(*record, bytes.clone(), engine_terrain::SETTLED_PARITY);
-                }
-            }
-        }
-        if let Some(mut terrains) = world.get_resource_mut::<engine_terrain::Terrains>() {
-            for (record, made) in settled {
-                terrains.water_settled(record, made);
-            }
-        }
-    }
-
     fn loading(&self) -> bool {
-        let world = self.engine.app.world();
-        world
-            .get_resource::<engine_terrain::Terrains>()
-            .is_some_and(engine_terrain::Terrains::loading)
-            || world
-                .get_resource::<engine_core::Records>()
-                .is_some_and(engine_core::Records::loading)
-            || world
-                .get_resource::<engine_core::StaticTables>()
-                .is_some_and(engine_core::StaticTables::loading)
-            || self.pipeline_list.waiting()
+        self.engine.loading() || self.pipeline_list.waiting()
+    }
+
+    pub fn job_list(&self) -> std::sync::Arc<engine_registry::JobList> {
+        self.engine.job_list()
     }
 
     pub fn stats(&self) -> FrameStats {
@@ -942,8 +751,8 @@ impl AppHost {
                 .engine
                 .app
                 .world()
-                .get_resource::<engine_core::Jobs>()
-                .map(engine_core::Jobs::stats)
+                .get_resource::<engine_core::JobQueue>()
+                .map(engine_core::JobQueue::stats)
                 .unwrap_or_default(),
             bricks: self
                 .engine

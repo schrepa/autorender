@@ -27,22 +27,14 @@ macro_rules! __game_surface {
                 fn reset_camera();
                 fn reload_scene(source: &str, files: $crate::browser::SceneFileSet) -> Result<(), $crate::__private::JsValue>;
                 fn set_tick_pipelining(enabled: bool);
-                fn set_temporal_antialiasing(enabled: bool);
-                fn set_occlusion_culling(enabled: bool);
-                fn set_subpixel_culling(enabled: bool);
                 fn set_pixel_ratio(ratio: f64);
-                fn set_resolution_scale(scale: f64);
-                fn set_dynamic_resolution(enabled: bool);
+                fn set_setting(key: &str, value: &str) -> Result<(), $crate::__private::JsValue>;
                 fn apply_host_settings(query: &str) -> Result<(), $crate::__private::JsValue>;
             }
             always_ref {
                 fn stats() -> String as Json<FrameStats>;
                 fn tick_pipelining() -> bool;
-                fn temporal_antialiasing() -> bool;
-                fn occlusion_culling() -> bool;
-                fn subpixel_culling() -> bool;
                 fn distribution(values: Vec<f64>) -> String as Json<Option<Distribution>>;
-                fn dynamic_resolution() -> bool;
             }
             dev_mut {
                 fn dev_command(request: &str, width: u32, height: u32, paused: bool) -> String as Json<Reply>;
@@ -117,10 +109,11 @@ macro_rules! __export_game {
         impl $name {
             pub async fn launch<E: Into<$crate::Error>>(
                 canvas: $crate::__private::web_sys::HtmlCanvasElement,
-                build: impl FnOnce() -> Result<($crate::Engine, $game), E>,
+                bricks: impl FnOnce($crate::BrickList) -> $crate::BrickList,
+                build: impl FnOnce(&mut $crate::Engine) -> Result<$game, E>,
             ) -> Result<Self, $crate::__private::JsValue> {
                 Ok(Self {
-                    host: $crate::browser::PageHost::launch(canvas, build).await?,
+                    host: $crate::browser::PageHost::launch(canvas, bricks, build).await?,
                 })
             }
 

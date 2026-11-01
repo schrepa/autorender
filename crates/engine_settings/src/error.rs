@@ -186,10 +186,16 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+impl From<engine_codec::CodecError> for Error {
+    fn from(error: engine_codec::CodecError) -> Self {
+        Self::new(ErrorCode::Undecodable, "$").got(error.to_string())
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
-impl From<Error> for wasm_bindgen::JsValue {
+impl From<Error> for js_sys::wasm_bindgen::JsValue {
     fn from(error: Error) -> Self {
-        use wasm_bindgen::JsCast;
+        use js_sys::wasm_bindgen::JsCast;
         let line = error.to_string();
         let thrown = js_sys::Error::new(&line);
         thrown.set_name(JS_ERROR_NAME);

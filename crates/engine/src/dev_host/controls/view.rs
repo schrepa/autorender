@@ -40,11 +40,7 @@ pub(super) fn camera(
     size: (u32, u32),
 ) -> Result<Value, Error> {
     let camera = engine_dev::validated_camera(position, target, vertical_fov_radians, near, far)?;
-    let world = app.engine.app.world_mut();
-    if let Some(mut controller) = world.get_resource_mut::<crate::camera::FlyCameraController>() {
-        controller.align_to(&camera);
-    }
-    world.insert_resource(camera);
+    app.engine.app.world_mut().insert_resource(camera);
     then_render(
         app,
         size,

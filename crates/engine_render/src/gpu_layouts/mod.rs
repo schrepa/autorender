@@ -47,7 +47,6 @@ const fn same(a: &str, b: &str) -> bool {
     true
 }
 
-#[macro_export]
 macro_rules! gpu_structs {
     (@module) => { None };
     (@module $module:literal) => { Some($module) };
@@ -69,7 +68,7 @@ macro_rules! gpu_structs {
                     rust: stringify!($name),
                     mirrors: &[$($($crate::gpu_layouts::Mirror {
                         name: $mirror,
-                        module: $crate::gpu_structs!(@module $($module)?),
+                        module: gpu_structs!(@module $($module)?),
                     }),*)?],
                     size: ::core::mem::size_of::<$name>(),
                     fields: &[$($crate::gpu_layouts::Field {
@@ -92,7 +91,6 @@ pub struct Constant {
     pub mirrors: &'static [Mirror],
 }
 
-#[macro_export]
 macro_rules! gpu_consts {
     ($(
         $(#[$meta:meta])*
@@ -106,14 +104,13 @@ macro_rules! gpu_consts {
                 value: $name as f64,
                 mirrors: &[$($crate::gpu_layouts::Mirror {
                     name: $mirror,
-                    module: $crate::gpu_structs!(@module $($module)?),
+                    module: gpu_structs!(@module $($module)?),
                 }),+],
             },
         )*];
     };
 }
 
-#[macro_export]
 macro_rules! gpu_mirrors {
     ($($path:path => [$($mirror:literal $(in $module:literal)?),+ $(,)?];)*) => {
         pub const MIRRORED: &[$crate::gpu_layouts::Constant] = &[$(
@@ -122,7 +119,7 @@ macro_rules! gpu_mirrors {
                 value: $path as f64,
                 mirrors: &[$($crate::gpu_layouts::Mirror {
                     name: $mirror,
-                    module: $crate::gpu_structs!(@module $($module)?),
+                    module: gpu_structs!(@module $($module)?),
                 }),+],
             },
         )*];

@@ -99,18 +99,10 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         ),
         ("web/src/generated/errors.ts".to_owned(), error_codes()),
         (
-            "web/src/generated/coverage.json".to_owned(),
-            crate::coverage::coverage(root, &development)?,
-        ),
-        (
             engine_checks::bricks::FILE.to_owned(),
             engine_checks::bricks::bricks_json(repository, &mut crate::bricks::standard_engine())?,
         ),
     ]);
-    files.extend(engine_checks::faces::files(
-        repository,
-        &engine_checks::bricks::registered_crates(&engine),
-    )?);
     for client in crate::process::clients()
         .iter()
         .filter(|client| client.schema)
@@ -214,8 +206,4 @@ fn tooling_types(root: &Path) -> Result<(), String> {
 
 pub fn write_generated(root: &Path) -> Result<(), String> {
     engine_checks::generated::write(root, &generated(root)?)
-}
-
-pub fn check_generated(root: &Path) -> Result<(), String> {
-    engine_checks::generated::check(root, &generated(root)?, "cargo xtask schema")
 }

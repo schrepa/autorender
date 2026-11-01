@@ -4,7 +4,6 @@ use bevy_ecs::prelude::Resource;
 pub struct ActionId(u8);
 
 impl ActionId {
-    pub const JUMP: Self = Self(0);
     pub const COUNT: u32 = u32::BITS;
 
     pub const fn new(index: u8) -> Option<Self> {
@@ -15,13 +14,13 @@ impl ActionId {
         }
     }
 
-    pub const fn mask(self) -> u32 {
+    const fn mask(self) -> u32 {
         1_u32 << self.0
     }
 }
 
-#[derive(Resource, Debug, Default)]
-pub struct ActionInput {
+#[derive(Debug, Default)]
+struct ActionBits {
     held: u32,
     pending_pressed: u32,
     pending_released: u32,
@@ -29,34 +28,45 @@ pub struct ActionInput {
     tick_released: u32,
 }
 
+#[derive(Resource, Default)]
+#[component(immutable)]
+pub struct ActionInput {
+    state: ActionBits,
+}
+
 impl ActionInput {
-    pub fn ingest(&mut self, held: u32, pressed: u32, released: u32) {
-        self.pending_pressed |= pressed | (held & !self.held);
-        self.pending_released |= released | (self.held & !held);
-        self.held = held;
-    }
-
     pub fn pressed(&self, action: ActionId) -> bool {
-        self.held & action.mask() != 0
-    }
-    pub fn just_pressed(&self, action: ActionId) -> bool {
-        self.tick_pressed & action.mask() != 0
-    }
-    pub fn just_released(&self, action: ActionId) -> bool {
-        self.tick_released & action.mask() != 0
+        self.state.held & action.mask() != 0
     }
 
+    pub fn just_pressed(&self, action: ActionId) -> bool {
+        self.state.tick_pressed & action.mask() != 0
+    }
+
+    pub fn just_released(&self, action: ActionId) -> bool {
+        self.state.tick_released & action.mask() != 0
+    }
+
+    #[doc(hidden)]
+    pub fn ingest(&mut self, held: u32, pressed: u32, released: u32) {
+        let state = &mut self.state;
+        state.pending_pressed |= pressed | (held & !state.held);
+        state.pending_released |= released | (state.held & !held);
+        state.held = held;
+    }
+
+    #[doc(hidden)]
     pub fn clear(&mut self) {
-        *self = Self::default();
+        self.state = ActionBits::default();
     }
 
     pub(crate) fn begin_tick(&mut self) {
-        self.tick_pressed = std::mem::take(&mut self.pending_pressed);
-        self.tick_released = std::mem::take(&mut self.pending_released);
+        self.state.tick_pressed = std::mem::take(&mut self.state.pending_pressed);
+        self.state.tick_released = std::mem::take(&mut self.state.pending_released);
     }
 
     pub(crate) fn end_tick(&mut self) {
-        self.tick_pressed = 0;
-        self.tick_released = 0;
+        self.state.tick_pressed = 0;
+        self.state.tick_released = 0;
     }
 }

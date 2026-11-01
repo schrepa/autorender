@@ -1,4 +1,4 @@
-use engine_core::bevy_ecs::prelude::Entity;
+use bevy_ecs::prelude::Entity;
 use engine_core::{DrawState, Error, ErrorCode, Expected};
 use engine_dev::results::{
     CaptureResult, FramesResult, GameResult, KeptArtifact, WatchResult, result,

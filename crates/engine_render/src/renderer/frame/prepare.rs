@@ -1,7 +1,7 @@
 use super::*;
 use crate::graph::FrameShape;
 use crate::memory::buffer_init;
-use crate::parts::{Begin, BeginOut, PartAssets, PreludeStage};
+use crate::parts::PartAssets;
 
 impl Renderer {
     pub(super) fn plan_frame(
@@ -403,8 +403,6 @@ impl Renderer {
     pub(super) fn prepare_pipelines(&mut self, info: &FrameInfo<'_>) -> Passes {
         let kind = info.kind;
         let gpu_mode = kind.gpu_mode;
-        let shading = self.parts.shading(info.snapshot);
-        self.core.specialize_shading(&shading);
         let targets = Self::frame_targets(info);
         let opaque_kind = PassKind::opaque(targets);
         let meshes = self.core.mesh_entries.is_some();
@@ -469,26 +467,5 @@ impl Renderer {
             .map(|views| views.cameras);
         core.camera
             .refresh(&core.device, &core.shared, parts, cameras);
-    }
-}
-
-impl Core {
-    pub(super) fn specialize_shading(&mut self, shading: &crate::parts::Shading) {
-        let (set, warm) = SceneShading::of_parts(shading);
-        self.scene_shading = set;
-        self.warm = if self.mesh_pipelines.cooking {
-            warm
-        } else {
-            Vec::new()
-        };
-        self.set_shading(shading);
-    }
-
-    pub fn shading(&self) -> SceneShading {
-        self.scene_shading
-    }
-
-    pub fn warm_shading(&self) -> &[SceneShading] {
-        &self.warm
     }
 }

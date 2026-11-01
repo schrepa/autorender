@@ -1,6 +1,6 @@
 import package::engine::math::maximum_abs;
 import package::engine::wind::{slot_sway, wind_sway};
-import package::frame::view::{camera, detail_across, stable_normalize};
+import package::engine::view::{camera, detail_across, stable_normalize};
 import package::meshes::declarations::{AffinePose, AffineVertexInput, GROUNDING, TemporalOutput,
     VertexOutput, colors, poses, previous_poses, slot_fade, slot_index, slot_moved};
 

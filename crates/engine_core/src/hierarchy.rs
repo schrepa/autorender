@@ -1,7 +1,7 @@
 use crate::collections::HashMap;
-use crate::interpolation::{InterpolateTransform, InterpolationState, Observer};
+use crate::interpolation::{InterpolationState, Observer};
 use crate::ticks::{ChangeWindow, STAMP_BLOCK, ScanClock, consume_through};
-use crate::{NodePose, Transform, entity_indices::EntityIndices};
+use crate::{InterpolateTransform, NodePose, Transform, entity_indices::EntityIndices};
 use bevy_ecs::change_detection::ContiguousRef;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;

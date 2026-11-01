@@ -214,7 +214,7 @@ impl PreparedComponent for Tint {
 pub static GROUNDED: ComponentKind = ComponentKind {
     name: "grounded",
     shows: "Grounded",
-    placement: Placement::Roots(ErrorCode::InvalidGrounded),
+    placement: Placement::Roots(ErrorCode::InvalidValue),
     schema: crate::component_schema!(Grounded),
     example: object_example,
     validate: validate_grounded,
@@ -583,7 +583,7 @@ fn example_shows(session: &mut dyn SmokeSession, kind: &'static ComponentKind) -
     );
     if admitted
         .as_ref()
-        .is_err_and(|error| error.code == ErrorCode::MissingPlugin)
+        .is_err_and(|error| error.code == ErrorCode::SectionUnlisted)
     {
         return Ok(());
     }

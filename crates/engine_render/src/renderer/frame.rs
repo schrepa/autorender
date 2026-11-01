@@ -1,5 +1,5 @@
 use super::*;
-use crate::parts::{NodeViews, Prelude, Step};
+use crate::parts::NodeViews;
 
 mod encode;
 mod prepare;
@@ -186,23 +186,15 @@ impl Renderer {
         Ok(stats)
     }
 
-    fn prepare_parts(&mut self, info: &FrameInfo<'_>, prelude: &mut Prelude) {
-        let (parts, core, table) = (&mut self.parts, &mut self.core, &self.table);
-        for index in 0..parts.len() {
-            let decl = parts.decl(index);
-            let _owner = crate::memory::owned(decl.brick);
-            prelude.attribute(decl.brick);
-            parts.with_part(index, |part, parts| {
-                part.prepare(
-                    &mut Step {
-                        core,
-                        parts,
-                        table,
-                        frame: info,
-                    },
-                    prelude,
-                );
-            });
+    fn prepare_parts(&mut self, world: &bevy_ecs::world::World, frame: u64) -> Vec<Error> {
+        let mut faults = Vec::new();
+        for held in &mut self.parts {
+            let _owner = crate::memory::owned(held.brick);
+            let mut core = engine_registry::FrameCore { frame };
+            if let Err(error) = held.held.prepare(world, &mut core) {
+                faults.push(error);
+            }
         }
+        faults
     }
 }

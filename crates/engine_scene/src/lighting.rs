@@ -2,7 +2,7 @@ use engine_core::{
     Error, LightRegion, LocalLight, MAX_SPOT_DEGREES, MAX_SPREAD_DEGREES, MIN_SPOT_DEGREES,
     ParticleBlend, ParticleEmitter, Spot, bevy_ecs::world::EntityWorldMut, glam::Vec3,
 };
-use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
+use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, fields};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -12,7 +12,7 @@ use crate::components::{
 };
 use crate::instance::Lookups;
 
-settings! {
+fields! {
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
@@ -75,7 +75,7 @@ impl From<LightRegion> for SceneLightRegion {
     }
 }
 
-settings! {
+fields! {
     extra_rules;
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -157,7 +157,7 @@ fn default_emitter() -> SceneEmitter {
     SceneEmitter::from(&ParticleEmitter::default())
 }
 
-settings! {
+fields! {
     extra_rules;
     #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]

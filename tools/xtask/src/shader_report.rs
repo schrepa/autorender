@@ -2,7 +2,16 @@ use engine_core::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use engine_checks::gpu::{Checked, modules};
+use engine::bricks::BrickRegistry;
+use engine_render::bindings::{Kind, ResolvedBinding, ResolvedLayout, Stages};
+use engine_render::faces::face_module;
+use engine_render::linker::{Linker, ShaderModule, declared_bindings};
+use engine_render::parts::{CORE_BRICK, installed_parts};
+use engine_render::pieces::{PIECES_MODULE, PieceDecl, pieces_source, place};
+use engine_render::places::{PLACE_OWNER, place_module, places_of};
+use engine_render::render_bricks::render_bricks;
+use engine_render::shaders::MODULES;
+use naga::valid::{Capabilities, ModuleInfo, ValidationFlags, Validator};
 use serde_json::{Value, json};
 
 const RGA_VERSION: &str = "2.14.2";
@@ -21,13 +30,156 @@ const RGA_ARCHIVE: Option<(&str, &str)> = None;
 
 const TARGETS: [&str; 3] = ["gfx1100", "gfx1150", "gfx1201"];
 
+struct Checked {
+    name: String,
+    module: naga::Module,
+    info: ModuleInfo,
+}
+
+fn leaked(text: String) -> &'static str {
+    Box::leak(text.into_boxed_str())
+}
+
+fn generated(path: String, source: String) -> ShaderModule {
+    ShaderModule {
+        path: leaked(path),
+        brick: CORE_BRICK,
+        source: leaked(source),
+    }
+}
+
+fn link(linker: &mut Linker, sources: &mut Vec<ShaderModule>, module: ShaderModule) {
+    linker.add_generated(
+        module.path.to_owned(),
+        module.brick,
+        module.source.to_owned(),
+    );
+    sources.push(module);
+}
+
+fn installed() -> Result<(Vec<ShaderModule>, Linker), String> {
+    let engine = crate::bricks::standard_engine();
+    let registry = engine
+        .app
+        .world()
+        .get_resource::<BrickRegistry>()
+        .ok_or("the standard engine registers no brick")?;
+    let mut sources = MODULES.to_vec();
+    let mut linker = Linker::new(MODULES);
+    let mut pieces: Vec<(&'static str, PieceDecl)> = Vec::new();
+    for (_, render) in render_bricks(registry) {
+        let modules: Vec<ShaderModule> = render.modules().copied().collect();
+        linker
+            .add_modules(&modules)
+            .map_err(|error| error.to_string())?;
+        sources.extend(modules);
+        pieces.extend(
+            render
+                .parts
+                .iter()
+                .filter_map(|part| Some((part.decl.brick, part.decl.piece?))),
+        );
+    }
+    place(&pieces).map_err(|error| error.to_string())?;
+    let decls: Vec<PieceDecl> = pieces.iter().map(|&(_, piece)| piece).collect();
+    link(
+        &mut linker,
+        &mut sources,
+        generated(PIECES_MODULE.to_owned(), pieces_source(&decls)),
+    );
+    let places = places_of(registry).map_err(|error| error.to_string())?;
+    linker
+        .add_places(&places)
+        .map_err(|error| error.to_string())?;
+    for linked in &places {
+        if let Some(contract) = linked.place.face.wgsl {
+            sources.push(ShaderModule {
+                path: leaked(place_module(linked.place.name)),
+                brick: PLACE_OWNER,
+                source: contract,
+            });
+        }
+        if let Some(source) = &linked.source {
+            sources.push(generated(face_module(linked.place.name), source.clone()));
+        }
+    }
+    let made = engine_render::generated::generated(&installed_parts(registry))
+        .map_err(|error| error.to_string())?;
+    for made in made {
+        link(&mut linker, &mut sources, generated(made.path, made.source));
+    }
+    Ok((sources, linker))
+}
+
+fn placement(sources: &[ShaderModule]) -> ResolvedLayout {
+    let mut names: Vec<&'static str> = Vec::new();
+    for module in sources {
+        for name in declared_bindings(module.source) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    ResolvedLayout {
+        label: "engine/checks",
+        groups: 1,
+        bindings: names
+            .into_iter()
+            .zip(0..)
+            .map(|(name, number)| ResolvedBinding {
+                group: 0,
+                number,
+                name,
+                kind: Kind::Write,
+                stages: Stages::VERTEX_FRAGMENT_COMPUTE,
+                owner: "engine/checks",
+            })
+            .collect(),
+    }
+}
+
+fn validated(text: &str) -> Result<(naga::Module, ModuleInfo), String> {
+    let module = naga::front::wgsl::parse_str(text).map_err(|error| error.emit_to_string(text))?;
+    let mut validator = Validator::new(ValidationFlags::all(), Capabilities::all());
+    let info = validator
+        .validate(&module)
+        .map_err(|error| error.emit_to_string(text))?;
+    Ok((module, info))
+}
+
+fn modules() -> Result<Vec<Checked>, String> {
+    let (sources, mut linker) = installed()?;
+    let layout = placement(&sources);
+    let mut checked = Vec::new();
+    let mut failures = Vec::new();
+    for source in &sources {
+        let name = source.path.to_owned();
+        let text = match linker.compose_module(&name, &layout) {
+            Ok(composed) => composed.text.clone(),
+            Err(error) => {
+                failures.push(format!("{name}: {error}"));
+                continue;
+            }
+        };
+        match validated(&text) {
+            Ok((module, info)) => checked.push(Checked { name, module, info }),
+            Err(error) => failures.push(format!("{name}: {error}")),
+        }
+    }
+    if failures.is_empty() {
+        Ok(checked)
+    } else {
+        Err(failures.join("\n"))
+    }
+}
+
 pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
     let (folder, rga) = match options {
         [flag, folder] if flag == "--report" => (PathBuf::from(folder), true),
         [flag, folder, no] if flag == "--report" && no == "--no-rga" => {
             (PathBuf::from(folder), false)
         }
-        _ => return Err("usage: cargo xtask gpu [--report DIR [--no-rga]]".into()),
+        _ => return Err("usage: cargo xtask gpu --report DIR [--no-rga]".into()),
     };
     let modules = modules()?;
     let rga = if rga { rga_program(root)? } else { None };

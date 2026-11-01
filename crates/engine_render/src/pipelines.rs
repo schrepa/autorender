@@ -18,8 +18,7 @@ use std::{
 };
 
 use crate::bindings::{
-    Format, GroupRef, Kind, ResolvedBinding, ResolvedLayout, Sample, Sampling, SharedGroups,
-    Stages, Table, View,
+    Format, Kind, ResolvedBinding, ResolvedLayout, Sample, Sampling, Stages, Table, View,
 };
 use crate::linker::{Composed, Linker};
 use crate::pipeline_layouts::{PIPELINE_LAYOUTS, PipelineLayout, StageLimits};
@@ -250,15 +249,11 @@ fn fits(limits: &StageLimits, device: &wgpu::Limits) -> bool {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum GroupKey {
     Own(&'static str),
-    Shared(&'static str, &'static [&'static str]),
 }
 
 impl GroupKey {
-    fn of(group: GroupRef) -> Self {
-        match group {
-            GroupRef::Own(table) => GroupKey::Own(table.label),
-            GroupRef::Shared { group, without } => GroupKey::Shared(group, without),
-        }
+    fn of(table: &'static Table) -> Self {
+        GroupKey::Own(table.label)
     }
 }
 
@@ -266,7 +261,6 @@ struct Registry {
     device: wgpu::Device,
     canvas: Option<wgpu::TextureFormat>,
     linker: Linker,
-    shared: SharedGroups,
     layouts_listed: Vec<Layouts>,
     declared: BTreeMap<&'static str, PipelineLayout>,
     resolved: BTreeMap<&'static str, Result<Arc<ResolvedLayout>, Error>>,
@@ -289,7 +283,6 @@ impl Registry {
             device: device.clone(),
             canvas: None,
             linker: Linker::new(crate::shaders::MODULES),
-            shared: SharedGroups::default(),
             layouts_listed: vec![PIPELINE_LAYOUTS],
             declared: BTreeMap::new(),
             resolved: BTreeMap::new(),
@@ -331,7 +324,7 @@ impl Registry {
         let Some(declared) = self.declared(label) else {
             return Err(failed("$.layouts").expected(Expected::Present).got(label));
         };
-        let resolved = ResolvedLayout::resolve(declared.label, declared.groups, &self.shared)
+        let resolved = ResolvedLayout::resolve(declared.label, declared.groups)
             .and_then(|resolved| resolved.check(&declared.limits).map(|()| resolved))
             .map(Arc::new);
         if let Err(error) = &resolved {
@@ -341,34 +334,12 @@ impl Registry {
         resolved
     }
 
-    fn group_layout(&mut self, group: GroupRef) -> GroupLayout {
-        let key = GroupKey::of(group);
+    fn group_layout(&mut self, table: &'static Table) -> GroupLayout {
+        let key = GroupKey::of(table);
         if let Some(found) = self.groups.get(&key) {
             return found.clone();
         }
-        let made = match group {
-            GroupRef::Own(table) => layout(&self.device, table),
-            GroupRef::Shared { group, without } => {
-                let bindings = self
-                    .shared
-                    .view(group, without)
-                    .map(|binding| ResolvedBinding {
-                        group: 0,
-                        number: binding.number,
-                        name: binding.decl.name,
-                        kind: binding.decl.kind,
-                        stages: binding.decl.stages,
-                        owner: binding.brick,
-                    })
-                    .collect();
-                group_layout(
-                    &self.device,
-                    key,
-                    &format!("engine/{group}-group"),
-                    bindings,
-                )
-            }
-        };
+        let made = layout(&self.device, table);
         self.groups.insert(key, made.clone());
         made
     }
@@ -526,11 +497,7 @@ fn with_registry<R>(device: &wgpu::Device, act: impl FnOnce(&mut Registry) -> R)
     })
 }
 
-pub fn install(
-    device: &wgpu::Device,
-    shared: &SharedGroups,
-    layouts: impl IntoIterator<Item = Layouts>,
-) {
+pub fn install(device: &wgpu::Device, layouts: impl IntoIterator<Item = Layouts>) {
     with_registry(device, |registry| {
         let mut listed = vec![PIPELINE_LAYOUTS];
         for layouts in layouts {
@@ -539,13 +506,6 @@ pub fn install(
             }
         }
         registry.layouts_listed = listed;
-        if registry.shared != *shared {
-            registry.shared = shared.clone();
-            registry.resolved.clear();
-            registry.groups.clear();
-            registry.layouts.clear();
-            registry.forget_pipelines();
-        }
     });
 }
 
@@ -560,16 +520,6 @@ pub fn link(device: &wgpu::Device, linker: Linker) {
 
 pub fn layout_of(device: &wgpu::Device, declared: &PipelineLayout) -> wgpu::PipelineLayout {
     with_registry(device, |registry| registry.layout_of(declared))
-}
-
-pub fn shared_layout(
-    device: &wgpu::Device,
-    group: &'static str,
-    without: &'static [&'static str],
-) -> GroupLayout {
-    with_registry(device, |registry| {
-        registry.group_layout(GroupRef::Shared { group, without })
-    })
 }
 
 const LIST: &[u8; 4] = b"PIPL";
@@ -1007,10 +957,7 @@ pub struct Family {
 
 impl Family {
     pub fn new(device: &wgpu::Device, declared: &PipelineLayout, more: &[&GroupLayout]) -> Self {
-        let group = match declared.groups[0] {
-            GroupRef::Own(table) => layout(device, table),
-            GroupRef::Shared { group, without } => shared_layout(device, group, without),
-        };
+        let group = layout(device, declared.groups[0]);
         let groups: Vec<&GroupLayout> = std::iter::once(&group)
             .chain(more.iter().copied())
             .collect();
@@ -1354,11 +1301,10 @@ pub struct Fullscreen<'a> {
     pub depth: Option<wgpu::DepthStencilState>,
 }
 
-#[macro_export]
 macro_rules! vertex_attributes {
     ($ty:ident { $($location:literal => $field:ident as $format:ident),+ $(,)? }) => {
         [$({
-            const FIELD: &$crate::gpu_layouts::Field = $ty::LAYOUT.field(stringify!($field));
+            const FIELD: &crate::gpu_layouts::Field = $ty::LAYOUT.field(stringify!($field));
             const _: () = assert!(::wgpu::VertexFormat::$format.size() as usize == FIELD.size);
             ::wgpu::VertexAttribute {
                 format: ::wgpu::VertexFormat::$format,
@@ -1368,6 +1314,8 @@ macro_rules! vertex_attributes {
         }),+]
     };
 }
+
+pub(crate) use vertex_attributes;
 
 pub fn fullscreen(device: &wgpu::Device, pass: &Fullscreen<'_>) -> wgpu::RenderPipeline {
     geometry(

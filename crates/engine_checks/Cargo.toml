@@ -9,11 +9,8 @@ publish.workspace = true
 engine = { workspace = true, features = ["schema"] }
 engine_core.workspace = true
 engine_dev.workspace = true
-engine_places.workspace = true
 engine_render.workspace = true
 engine_sources.workspace = true
-bevy_ecs = { workspace = true, features = ["debug"] }
-naga = { workspace = true, features = ["wgsl-in"] }
 serde_json.workspace = true
 toml_edit.workspace = true
 

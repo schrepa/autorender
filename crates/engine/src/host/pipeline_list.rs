@@ -1,5 +1,5 @@
 use engine_core::{
-    Cooking, Engine, JobId, Jobs, MISSING_RECORD, RecordKey, URGENT_JOBS, job_priority,
+    Cooking, Engine, JobId, JobQueue, MISSING_RECORD, RecordKey, URGENT_JOBS, job_priority,
 };
 use engine_render::Renderer;
 
@@ -59,7 +59,7 @@ impl PipelineList {
             self.state = State::Making { key, quiet: 0 };
             return;
         }
-        self.state = match world.get_resource_mut::<Jobs>() {
+        self.state = match world.get_resource_mut::<JobQueue>() {
             Some(mut jobs) => State::Asked {
                 key,
                 fetch: jobs.fetch(key, job_priority(URGENT_JOBS, 0)),
@@ -72,7 +72,7 @@ impl PipelineList {
         let State::Asked { key, fetch } = self.state else {
             return;
         };
-        let Some(mut jobs) = engine.app.world_mut().get_resource_mut::<Jobs>() else {
+        let Some(mut jobs) = engine.app.world_mut().get_resource_mut::<JobQueue>() else {
             return;
         };
         let Some(output) = jobs.take(fetch) else {
@@ -103,7 +103,7 @@ impl PipelineList {
         let still = created == 0 && others.is_none_or(|others| others == 0);
         *quiet = if still { *quiet + 1 } else { 0 };
         let done = *quiet >= QUIET_FRAMES;
-        if done && let Some(mut jobs) = world.get_resource_mut::<Jobs>() {
+        if done && let Some(mut jobs) = world.get_resource_mut::<JobQueue>() {
             jobs.keep(key, renderer.pipeline_list());
         }
         if let Some(mut cooking) = world.get_resource_mut::<Cooking>() {

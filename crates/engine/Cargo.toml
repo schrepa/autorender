@@ -4,21 +4,27 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+autoexamples = false
 
 [features]
 default = []
-dev = ["dep:wgpu", "engine_core/dev", "engine_render/dev", "schema"]
+dev = ["dep:engine_dev", "dep:wgpu", "engine_core/dev", "engine_render/dev", "schema"]
 profiling = ["engine_profile/enabled", "engine_core/profiling", "engine_render/profiling"]
 attribution = ["engine_core/attribution"]
 schema = ["engine_core/schema", "engine_settings/schema", "engine_panic/schema", "engine_scene/schema", "dep:schemars"]
 
 [dependencies]
 engine_core.workspace = true
+engine_registry.workspace = true
 engine_profile.workspace = true
 engine_scene.workspace = true
 engine_settings.workspace = true
 engine_render.workspace = true
+engine_dev = { workspace = true, optional = true }
+engine_worker.workspace = true
 engine_panic.workspace = true
+bevy_ecs.workspace = true
+glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars = { workspace = true, optional = true }
@@ -29,10 +35,6 @@ wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
 web-sys.workspace = true
-
-[[example]]
-name = "app_template"
-crate-type = ["cdylib", "rlib"]
 
 [lints]
 workspace = true

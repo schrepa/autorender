@@ -4,7 +4,6 @@ mod bricks;
 mod checkouts;
 mod checks;
 mod cook;
-mod coverage;
 mod development;
 mod equivalence;
 mod heavy;
@@ -134,7 +133,7 @@ fn execute() -> Result<(), Failure> {
     if task == "new" {
         return Ok(scaffold::new(&root, &options)?);
     }
-    if task == "gpu" && !options.is_empty() {
+    if task == "gpu" {
         return Ok(shader_report::run(&root, &options)?);
     }
     if task == "build-dev" {
@@ -162,7 +161,6 @@ fn execute() -> Result<(), Failure> {
         "lint" => engine_checks::stages::run(root.as_path(), lint::LINT),
         "assets" => authoring::validate_sources(&root),
         "schema" => authoring::write_generated(&root),
-        "gpu" => rules::repository(&root).and_then(engine_checks::gpu::check),
         _ => Err(format!(
             "unknown command {task:?}; run `cargo xtask help` for usage"
         )),
@@ -283,7 +281,7 @@ fn authoring_commands() -> Vec<Command> {
         Command::new(
             "gpu",
             [
-                CommandOption::taking("--report", "DIR"),
+                CommandOption::taking("--report", "DIR").required(),
                 CommandOption::flag("--no-rga"),
             ],
         ),

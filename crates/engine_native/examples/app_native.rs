@@ -4,7 +4,7 @@ mod app;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> std::process::ExitCode {
-    engine_native::main("Template", std::env::args().skip(1), app::build)
+    engine_native::main("Template", std::env::args().skip(1), app::bricks, app::build)
 }
 
 #[cfg(all(feature = "profiling", not(target_arch = "wasm32")))]

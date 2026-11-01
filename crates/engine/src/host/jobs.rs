@@ -1,5 +1,5 @@
 use engine_core::collections::HashMap;
-use engine_core::{JobId, JobRequest, JobShare, MISSING_RECORD, RecordKey};
+use engine_core::{JobId, JobRef, JobRequest, JobShare, MISSING_RECORD, RecordKey};
 
 use crate::app_host::JobMessage;
 
@@ -17,16 +17,16 @@ pub enum JobOrder {
     Lookup {
         id: JobId,
         key: String,
-        kind: &'static str,
+        kind: Option<JobRef>,
     },
     Keep {
         key: String,
-        kind: &'static str,
+        kind: Option<JobRef>,
         output: Vec<u8>,
     },
     Mismatch {
         key: String,
-        kind: &'static str,
+        kind: Option<JobRef>,
     },
 }
 
@@ -51,7 +51,7 @@ pub struct JobScheduler {
     caching: bool,
     verify: bool,
     running: HashMap<u64, u32>,
-    keys: HashMap<u64, RecordKey>,
+    keys: HashMap<u64, (RecordKey, JobRef)>,
     verifying: HashMap<u64, Vec<u8>>,
     fetched: HashMap<String, Vec<u8>>,
     looking: HashMap<u64, Looking>,
@@ -105,12 +105,13 @@ impl JobScheduler {
                 JobMessage::Share(share) => self.orders.push(JobOrder::Share(share)),
                 JobMessage::Run(request) => match request.record {
                     Some(record) if self.caching => {
-                        self.lookup(request.id, record, Looking::Job(request));
+                        let kind = Some(request.kind.clone());
+                        self.lookup(request.id, record, kind, Looking::Job(request));
                     }
                     _ => self.dispatch(request),
                 },
                 JobMessage::Fetch(fetch) if self.caching => {
-                    self.lookup(fetch.id, fetch.record, Looking::Fetch);
+                    self.lookup(fetch.id, fetch.record, None, Looking::Fetch);
                 }
                 JobMessage::Fetch(fetch) => {
                     finished.push((fetch.id, Err(MISSING_RECORD.to_owned())));
@@ -119,15 +120,12 @@ impl JobScheduler {
                     let key = record.hex();
                     if let Some(handed) = self.fetched.remove(&key) {
                         if !parity.holds(&handed, &output) {
-                            self.orders.push(JobOrder::Mismatch {
-                                key,
-                                kind: record.kind,
-                            });
+                            self.orders.push(JobOrder::Mismatch { key, kind: None });
                         }
                     } else if self.caching {
                         self.orders.push(JobOrder::Keep {
                             key,
-                            kind: record.kind,
+                            kind: None,
                             output,
                         });
                     }
@@ -137,11 +135,11 @@ impl JobScheduler {
         std::mem::take(&mut self.orders)
     }
 
-    fn lookup(&mut self, id: JobId, record: RecordKey, looking: Looking) {
+    fn lookup(&mut self, id: JobId, record: RecordKey, kind: Option<JobRef>, looking: Looking) {
         self.orders.push(JobOrder::Lookup {
             id,
             key: record.hex(),
-            kind: record.kind,
+            kind,
         });
         self.looking.insert(id.0, looking);
     }
@@ -178,7 +176,7 @@ impl JobScheduler {
             None => {}
         }
         if let Some(record) = request.record {
-            self.keys.insert(id.0, record);
+            self.keys.insert(id.0, (record, request.kind.clone()));
         }
         self.dispatch(request);
     }
@@ -234,20 +232,20 @@ impl JobScheduler {
     fn made(&mut self, id: JobId, output: Result<Vec<u8>, String>, finished: &mut Vec<Finished>) {
         let key = self.keys.remove(&id.0);
         if let Some(kept) = self.verifying.remove(&id.0) {
-            if let (Some(key), Ok(output)) = (key, &output)
+            if let (Some((key, kind)), Ok(output)) = (key, &output)
                 && kept != *output
             {
                 self.orders.push(JobOrder::Mismatch {
                     key: key.hex(),
-                    kind: key.kind,
+                    kind: Some(kind),
                 });
             }
             return;
         }
-        if let (Some(key), Ok(output)) = (key, &output) {
+        if let (Some((key, kind)), Ok(output)) = (key, &output) {
             self.orders.push(JobOrder::Keep {
                 key: key.hex(),
-                kind: key.kind,
+                kind: Some(kind),
                 output: output.clone(),
             });
         }

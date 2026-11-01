@@ -25,23 +25,22 @@ impl Default for EngineConfig {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy)]
+#[derive(Resource, Clone, Copy, Debug, Default)]
+#[component(immutable)]
+pub struct FrameTime {
+    pub delta_seconds: f32,
+    pub elapsed_seconds: f64,
+    pub presented_seconds: f64,
+    pub frame: u64,
+    pub between_frames_micros: u32,
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default)]
+#[component(immutable)]
 pub struct FixedTime {
     pub delta_seconds: f32,
     pub elapsed_seconds: f64,
     pub tick: u64,
-}
-
-#[derive(Resource, Debug, Clone, Copy, Default)]
-pub struct FrameTime {
-    pub delta_seconds: f32,
-    pub elapsed_seconds: f64,
-    pub frame: u64,
-}
-
-#[derive(Resource, Debug, Clone, Copy, Default)]
-pub struct PresentedTime {
-    pub seconds: f64,
 }
 
 #[derive(Debug, Clone, Copy, Default)]

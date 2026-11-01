@@ -11,8 +11,8 @@ use engine_core::{
 use crate::platform::{RenderTarget, failed, failed_with};
 use engine_core::{Error, Expected};
 
-use crate::RenderStats;
 use crate::batches::{BatchPlan, DrawBatch};
+use engine_core::RenderStats;
 use crate::cached::{Bound, Versioned};
 use crate::depth_pyramid::DepthPyramid;
 use crate::entries::{MeshPass, PassKind, Streams};
@@ -22,18 +22,18 @@ use crate::gpu_data::{
 };
 use crate::gpu_presentation::GpuPresentationPass;
 use crate::gpu_uploads;
-use crate::graph::{FrameGraph, GraphTable};
+use crate::graph::{PlanCache, StaticGraph};
 use crate::impostors::{
     AtlasShape, BakeGpu, BakeSource, Contents, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas,
     ImpostorPipelines, ImpostorRecord, Supplied,
 };
 use crate::materials::MaterialStore;
 use crate::mesh_arena::{Bindings, MeshArena, MeshDraw, Placement};
-use crate::parts::{FrameInfo, FrameKind, GpuPart, PartEntry, Parts, Passes};
+use crate::parts::{FrameInfo, FrameKind, Passes};
 use crate::pipelines::PipelineCounts;
 use crate::profiling::GpuProfiler;
+use crate::registration::Installed;
 use crate::retained_uploads::RetainedUploads;
-use crate::scene_shading::SceneShading;
 use crate::staging::{self, StagingRing};
 use crate::targets::{FrameSize, Targets};
 use crate::uploads::UploadCache;
@@ -48,7 +48,6 @@ mod frame_stats;
 mod health;
 mod impostor_draws;
 mod install;
-pub use install::installed_parts;
 mod instances;
 mod meshes;
 #[cfg(not(target_arch = "wasm32"))]
@@ -63,7 +62,7 @@ mod startup;
 
 pub use attribution::GpuPassTimes;
 pub use camera::CameraBindings;
-pub use core_state::Core;
+pub(crate) use core_state::Core;
 pub(crate) use display::DisplayFrame;
 pub use display::{DepthTarget, Display};
 pub use extra_views::CasterDraw;
@@ -173,20 +172,25 @@ pub(crate) struct StructureKeys {
 
 type Validation = std::pin::Pin<Box<dyn std::future::Future<Output = Option<wgpu::Error>>>>;
 
+pub(crate) struct HeldPart {
+    pub(crate) brick: &'static str,
+    pub(crate) part: std::any::TypeId,
+    pub(crate) held: Box<dyn Installed>,
+}
+
 pub struct Renderer {
     core: Core,
-    parts: Parts,
-    table: GraphTable,
-    graph: FrameGraph,
+    parts: Vec<HeldPart>,
+    graph: StaticGraph,
+    plans: PlanCache,
+    passes: &'static [&'static str],
     installing: Option<Validation>,
     ran: Vec<&'static [&'static str]>,
-    #[cfg(feature = "profiling")]
-    prelude_owners: Vec<(&'static str, &'static str)>,
 }
 
 impl Renderer {
     pub fn installed_passes(&self) -> &'static [&'static str] {
-        self.table.names()
+        self.passes
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -199,38 +203,6 @@ impl Renderer {
 
     pub fn set_cooking(&mut self, cooking: bool) {
         self.core.mesh_pipelines.cooking = cooking;
-        self.parts.set_cooking(cooking);
         self.core.impostors.atlas.set_cooking(cooking);
-    }
-
-    fn view<'f>(&'f self, info: &'f FrameInfo<'f>) -> crate::parts::View<'f> {
-        crate::parts::View {
-            core: &self.core,
-            parts: &self.parts,
-            table: &self.table,
-            frame: info,
-        }
-    }
-
-    fn steps(
-        &mut self,
-        info: &FrameInfo<'_>,
-        mut act: impl FnMut(&mut dyn GpuPart, &mut crate::parts::Step<'_>),
-    ) {
-        let (parts, core, table) = (&mut self.parts, &mut self.core, &self.table);
-        for index in 0..parts.len() {
-            let _owner = crate::memory::owned(parts.decl(index).brick);
-            parts.with_part(index, |part, parts| {
-                act(
-                    part,
-                    &mut crate::parts::Step {
-                        core,
-                        parts,
-                        table,
-                        frame: info,
-                    },
-                );
-            });
-        }
     }
 }

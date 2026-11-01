@@ -8,19 +8,6 @@ pub type GroundData = [u32; 4];
 
 gpu_structs! {
     #[derive(Clone, Copy, Pod, Zeroable)]
-    pub struct CameraUniform as ["Camera"] {
-        pub view_projection: [[f32; 4]; 4],
-        pub previous_view_projection: [[f32; 4]; 4],
-        pub inverse_view_projection: [[f32; 4]; 4],
-        pub position: [f32; 4],
-        pub jitter: [f32; 4],
-        pub options: [f32; 4],
-        pub wind: [f32; 4],
-        pub region: [f32; 4],
-        pub detail: [f32; 4],
-    }
-
-    #[derive(Clone, Copy, Pod, Zeroable)]
     pub struct ColorData as ["SlotColor"] {
         pub color: [u32; 2],
         pub surface: u32,

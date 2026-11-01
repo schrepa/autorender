@@ -7,10 +7,13 @@ publish.workspace = true
 
 [features]
 default = []
-dev = []
-profiling = []
+dev = ["engine/dev"]
+profiling = ["engine/profiling", "engine_profiler/profiling"]
 
 [dependencies]
+engine.workspace = true
+engine_profiler.workspace = true
+engine_worker.workspace = true
 png.workspace = true
 sha2.workspace = true
 serde_json.workspace = true

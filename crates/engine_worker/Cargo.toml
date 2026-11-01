@@ -5,34 +5,23 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [package.metadata.engine]
 kind = "host"
-worker = true
 
 [dependencies]
-engine_textures.workspace = true
-engine_math.workspace = true
+engine_core.workspace = true
+engine_registry.workspace = true
 engine_settings.workspace = true
+engine_math.workspace = true
 sha2.workspace = true
 serde_json.workspace = true
 ruzstd.workspace = true
-engine_sources.workspace = true
 png.workspace = true
 zune-jpeg.workspace = true
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-engine_lodbuild.workspace = true
-
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen.workspace = true
 js-sys.workspace = true
 engine_panic.workspace = true
-
-[build-dependencies]
-engine_sources.workspace = true
 
 [lints]
 workspace = true

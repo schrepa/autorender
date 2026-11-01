@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -9,6 +10,8 @@ use super::Problems;
 use crate::Repository;
 
 const DEPENDENCY_TABLES: &[&str] = &["dependencies", "dev-dependencies", "build-dependencies"];
+
+const UNSAFE_CODE: &str = "rust::unsafe_code";
 
 const PACKAGE_JSON_TABLES: &[&str] = &[
     "dependencies",
@@ -67,6 +70,9 @@ pub fn check(
     let inherited_keys: Vec<&str> = table(workspace, "package")
         .map(|package| package.iter().map(|(key, _)| key).collect())
         .unwrap_or_default();
+    let levels = table(workspace, "lints")
+        .map(lint_levels)
+        .unwrap_or_default();
     if whole {
         pinned(workspace, problems);
         check_toolchain(root, problems)?;
@@ -76,7 +82,13 @@ pub fn check(
             continue;
         };
         let manifest = parse(root, &path)?;
-        check_member(&path, manifest.as_item(), &inherited_keys, problems);
+        check_member(
+            &path,
+            manifest.as_item(),
+            &inherited_keys,
+            &levels,
+            problems,
+        );
     }
     for path in package_jsons {
         check_package_json(root, path, problems)?;
@@ -109,7 +121,36 @@ fn pinned(workspace: &Item, problems: &mut Problems) {
     }
 }
 
-fn check_member(path: &str, manifest: &Item, inherited_keys: &[&str], problems: &mut Problems) {
+fn lint_levels(lints: &dyn TableLike) -> BTreeMap<String, String> {
+    let mut levels = BTreeMap::new();
+    for (tool, table) in lints.iter() {
+        for (lint, level) in table.as_table_like().into_iter().flat_map(TableLike::iter) {
+            let level = level
+                .get("level")
+                .unwrap_or(level)
+                .as_str()
+                .unwrap_or_default();
+            levels.insert(format!("{tool}::{lint}"), level.to_owned());
+        }
+    }
+    levels
+}
+
+fn lowers_unsafe_only(lints: &dyn TableLike, levels: &BTreeMap<String, String>) -> bool {
+    let mut local = lint_levels(lints);
+    let lowered = local.remove(UNSAFE_CODE);
+    let mut shared = levels.clone();
+    shared.remove(UNSAFE_CODE);
+    local == shared && lowered.as_deref() == Some("deny")
+}
+
+fn check_member(
+    path: &str,
+    manifest: &Item,
+    inherited_keys: &[&str],
+    levels: &BTreeMap<String, String>,
+    problems: &mut Problems,
+) {
     let package = manifest.get("package");
     for key in inherited_keys {
         if !package
@@ -122,6 +163,7 @@ fn check_member(path: &str, manifest: &Item, inherited_keys: &[&str], problems: 
     let lints = manifest.get("lints");
     match lints.and_then(Item::as_table_like) {
         Some(table) if lints.is_some_and(inherited) && table.len() == 1 => {}
+        Some(table) if lowers_unsafe_only(table, levels) => {}
         Some(_) => problems.push(Error::new(ErrorCode::NotInherited, path).got("lints")),
         None => problems.push(Error::new(ErrorCode::LintMissing, path).got("lints")),
     }

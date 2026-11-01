@@ -46,13 +46,6 @@ impl SceneEnvironment {
         self.sections.get(key).filter(|value| !value.is_null())
     }
 
-    pub fn opt_in_sections(world: &World) -> Vec<&'static str> {
-        registered(world)
-            .filter(|section| section.opt_in)
-            .map(|section| section.key)
-            .collect()
-    }
-
     pub fn check(&self, world: &World, path: &str) -> Result<(), Error> {
         for key in self.keys() {
             let at = format!("{path}.{key}");
@@ -91,7 +84,6 @@ impl SceneEnvironment {
                 Some(value) => {
                     section.insert(world, value.clone(), &format!("{path}.{}", section.key))?;
                 }
-                None if section.opt_in => section.remove(world),
                 None => section.reset(world),
             }
         }
@@ -111,7 +103,7 @@ fn section_of<'w>(world: &'w World, key: &str, path: &str) -> Result<&'w Setting
         .get_resource::<BrickRegistry>()
         .and_then(|registry| registry.section(key))
         .ok_or_else(|| {
-            Error::new(ErrorCode::MissingPlugin, path)
+            Error::new(ErrorCode::SectionUnlisted, path)
                 .got(key)
                 .variants(registered(world).map(|section| section.key))
         })

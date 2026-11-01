@@ -1,19 +1,7 @@
-use engine_core::bevy_ecs::prelude::World;
-use engine_core::{Brick, Bricks, Error, Operation};
+use bevy_ecs::prelude::World;
+use engine_core::{Error, Operation};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-
-use crate::camera::FlyCameraController;
-
-pub struct SceneViewsBrick;
-
-impl Brick for SceneViewsBrick {
-    fn register(bricks: &mut Bricks<'_>) {
-        bricks
-            .operation::<SceneViewControl>()
-            .operation::<SceneLookControl>();
-    }
-}
 
 #[derive(Debug, Deserialize, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -64,10 +52,7 @@ impl Operation for SceneLookControl {
 }
 
 pub fn show_view(world: &mut World, name: &str, path: &str) -> Result<(), Error> {
-    let camera = engine_scene::show_view(world, name, path)?;
-    if let Some(mut controller) = world.get_resource_mut::<FlyCameraController>() {
-        controller.align_to(&camera);
-    }
+    engine_scene::show_view(world, name, path)?;
     Ok(())
 }
 

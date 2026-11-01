@@ -4,63 +4,43 @@ pub struct Template;
 
 impl Game for Template {
     fn reset_camera(&mut self, engine: &mut Engine) {
-        let world = engine.app.world_mut();
-        let camera = Camera::default();
-        if let Some(mut controller) = world.get_resource_mut::<FlyCameraController>() {
-            controller.align_to(&camera);
-        }
-        world.insert_resource(camera);
+        engine.app.world_mut().insert_resource(Camera::default());
     }
 }
 
-#[derive(Component)]
-struct Turning;
-
-fn turn(time: Res<FixedTime>, mut cubes: Query<&mut Transform, With<Turning>>) {
-    for mut transform in &mut cubes {
-        transform.rotation = Quat::from_rotation_y(time.delta_seconds) * transform.rotation;
-    }
+pub fn bricks<L: Listing>(list: L) -> L {
+    engine_standard::standard(list)
 }
 
-struct TemplatePlugin;
+const DAY: [&str; 4] = [
+    "sun.preset",
+    "sky_light.preset",
+    "surface_light.preset",
+    "grading.preset",
+];
 
-impl Plugin for TemplatePlugin {
-    fn build(&self, app: &mut App) {
-        app.add_systems(FixedSimulation, turn.after(FixedSimulationSystems::Pose));
-    }
-}
-
-pub fn build() -> engine::Result<(Engine, Template)> {
-    let mut engine = Engine::default();
-    engine
-        .app
-        .add_bricks(engine::bricks::standard())
-        .add_plugins((FlyCameraPlugin, TemplatePlugin))
-        .insert_resource(Sunlight {
-            preset: LightPreset::Day,
-            ..Sunlight::default()
-        })
-        .insert_resource(SkyLighting {
-            preset: LightPreset::Day,
-            ..SkyLighting::default()
-        })
-        .insert_resource(SurfaceLight {
-            preset: LightPreset::Day,
-            ..SurfaceLight::default()
-        })
-        .insert_resource(Grading {
-            preset: LightPreset::Day,
-            ..Grading::default()
-        });
+pub fn build(engine: &mut Engine) -> engine::Result<Template> {
     let world = engine.app.world_mut();
+    for key in DAY {
+        engine::host::apply_setting(world, key, &serde_json::json!("day"))?;
+    }
+    let (mesh, ground, block) = {
+        let mut assets = world.resource_mut::<AssetLibrary>();
+        (
+            assets.insert_mesh(Mesh::cube())?,
+            assets.insert_material(Material::new([0.35, 0.4, 0.45, 1.0])?)?,
+            assets.insert_material(Material::new([0.9, 0.5, 0.2, 1.0])?)?,
+        )
+    };
     world.spawn((
         Transform {
             translation: Vec3::new(0.0, -0.5, 0.0),
             scale: Vec3::new(20.0, 1.0, 20.0),
             ..Transform::default()
         },
-        Cube {
-            color: [0.35, 0.4, 0.45, 1.0],
+        Mesh3d {
+            mesh,
+            material: ground,
         },
     ));
     world.spawn((
@@ -69,13 +49,12 @@ pub fn build() -> engine::Result<(Engine, Template)> {
             scale: Vec3::splat(2.0),
             ..Transform::default()
         },
-        Cube {
-            color: [0.9, 0.5, 0.2, 1.0],
+        Mesh3d {
+            mesh,
+            material: block,
         },
-        InterpolateTransform,
-        Turning,
     ));
-    Ok((engine, Template))
+    Ok(Template)
 }
 
 engine::export_game!(
@@ -88,6 +67,6 @@ impl TemplateGame {
     pub async fn create(
         canvas: web_sys::HtmlCanvasElement,
     ) -> Result<TemplateGame, wasm_bindgen::JsValue> {
-        Self::launch(canvas, build).await
+        Self::launch(canvas, bricks, build).await
     }
 }

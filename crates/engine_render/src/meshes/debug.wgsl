@@ -1,4 +1,4 @@
-import package::frame::view::stable_normalize;
+import package::engine::view::stable_normalize;
 import package::meshes::declarations::{AffineVertexInput, VertexOutput, slot_index};
 import package::meshes::surface::octahedral_coordinates;
 import package::meshes::vertex::vertex_affine;

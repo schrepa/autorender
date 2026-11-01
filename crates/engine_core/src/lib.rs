@@ -3,6 +3,8 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+extern crate self as engine_core;
+
 mod antialiasing;
 pub mod bounds;
 pub mod brick_smokes;
@@ -10,10 +12,8 @@ mod bricks;
 mod clock;
 mod clouds;
 pub mod command_line;
-mod commands;
 mod debug_view;
 pub mod debug_view_smoke;
-mod detail_eye;
 mod effects;
 mod entity_indices;
 mod extraction;
@@ -40,10 +40,13 @@ mod records;
 mod resolution;
 mod retained_render;
 mod scene;
-mod sections;
+mod schedules;
+mod section;
+mod services;
 mod sky;
 mod sky_occlusion;
 pub mod smoke;
+mod source;
 mod spline_mesh;
 mod statistics;
 mod tables;
@@ -52,23 +55,24 @@ mod transform_edits;
 mod wind;
 
 pub use antialiasing::*;
-pub use bevy_app::{App, Plugin, PluginGroup, PluginGroupBuilder};
-pub use bevy_ecs;
+pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
 pub use clouds::*;
-pub use commands::*;
 pub use debug_view::*;
-pub use detail_eye::*;
 pub use effects::*;
 pub use engine_assets::{
     Aabb, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, Filter, Grounding, LOD_RECORD,
-    LodInput, LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding, MaterialHandle, Mesh,
-    MeshHandle, MeshLods, MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureHandle,
-    TextureRef, TopLayer, UvTransform, Wrap, lod_input, trim_cards,
+    LodInput, LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding, Mesh, MeshLods,
+    MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureRef, TopLayer, UvTransform, Wrap,
+    lod_input, trim_cards,
 };
-pub use engine_settings::{ErrorCode, InvalidSetting};
-pub use engine_tables as table_data;
+pub use engine_place::{
+    DrawPoint, Error, ErrorCode, GpuStruct, InterpolateTransform, JobRef, List, MaterialHandle,
+    Mesh3d, MeshHandle, PlaceDecl, Runs, Slot, Smoke, SmokeFailure, SmokeSession, Stamp,
+    TextureHandle, gpu_consts, smoke_eq,
+};
+pub use engine_settings::{settings, stats};
 pub use foliage::*;
 pub use frame_stats::*;
 pub use glam;
@@ -89,21 +93,54 @@ pub use records::*;
 pub use resolution::*;
 pub use retained_render::*;
 pub use scene::*;
+pub use section::{Cut, Operation, Readback, Section};
+pub use services::{
+    AssetResidency, ComponentKind, Detail, DeviceLimits, Poses, SceneComponents, View,
+};
 pub use sky::*;
 pub use sky_occlusion::*;
+pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use spline_mesh::*;
 pub use statistics::{Distribution, median};
 pub use tables::*;
 pub use transform_edits::*;
 pub use wind::*;
 
-use bevy_app::PluginsState;
-use bevy_ecs::{
-    prelude::*,
-    schedule::{ScheduleLabel, SingleThreadedExecutor},
-};
+pub mod codec {
+    pub use engine_codec::{decode, encode};
+}
+
+#[doc(hidden)]
+pub mod __private {
+    pub use ::bytemuck;
+    pub use ::schemars;
+    pub use ::serde;
+    pub use engine_place::gpu_struct as place_gpu_struct;
+}
+
+#[macro_export]
+macro_rules! gpu_struct {
+    ($($body:tt)*) => {
+        $crate::__private::place_gpu_struct! { @crate "::engine_core::__private::bytemuck"; $($body)* }
+    };
+}
+
+use bevy_ecs::change_detection::Ref;
+use bevy_ecs::component::Component;
+use bevy_ecs::entity::Entity;
+use bevy_ecs::hierarchy::ChildOf;
+use bevy_ecs::lifecycle::Add;
+use bevy_ecs::observer::On;
+use bevy_ecs::query::{Has, Or, QueryState, With};
+use bevy_ecs::resource::Resource;
+use bevy_ecs::schedule::{ScheduleLabel, Schedules, SingleThreadedExecutor};
+use bevy_ecs::world::World;
 use clock::FixedClock;
-use interpolation::InterpolationState;
+use interpolation::{InterpolationState, ResetWatch};
+use schedules::{
+    BetweenFrames, FixedMove, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
+    Presentation, TransformPropagation, ViewSync, WorldSync,
+};
 
 type RenderQuery = QueryState<
     (
@@ -115,48 +152,6 @@ type RenderQuery = QueryState<
     ),
     Or<(With<Cube>, With<Mesh3d>)>,
 >;
-
-#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FixedSimulation;
-
-#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FixedPreSimulation;
-
-#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct FixedPostSimulation;
-
-#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Presentation;
-
-#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TransformPropagation;
-
-#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct WorldSync;
-
-#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ViewSync;
-
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum FixedSimulationSystems {
-    Move,
-    Simulate,
-    Ride,
-    Pose,
-}
-
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WorldSyncSystems {
-    Stream,
-    Ground,
-    Spawn,
-    Build,
-}
-
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ViewSyncSystems {
-    Stream,
-}
 
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StreamingFocus;
@@ -179,7 +174,8 @@ pub struct Engine {
     clock: FixedClock,
     render_query: RenderQuery,
     retained: retained_render::RetainedRender,
-    plugins_finalized: bool,
+    resets: ResetWatch,
+    finalized: bool,
     tick_ahead: TickAhead,
 }
 
@@ -201,8 +197,24 @@ impl TickAhead {
     }
 }
 
-fn single_threaded(schedule: &mut Schedule) {
+fn single_threaded(schedule: &mut bevy_ecs::schedule::Schedule) {
     schedule.set_executor(SingleThreadedExecutor::new());
+}
+
+fn modify<R: Resource>(world: &mut World, change: impl FnOnce(&mut R)) {
+    let changed = world.modify_resource(change).ok().flatten();
+    assert!(
+        changed.is_some(),
+        "core_resource_held {}",
+        std::any::type_name::<R>()
+    );
+}
+
+fn has_systems(world: &World, label: impl ScheduleLabel) -> bool {
+    world
+        .resource::<Schedules>()
+        .get(label)
+        .is_some_and(|schedule| schedule.systems_len() != 0)
 }
 
 impl Engine {
@@ -217,59 +229,34 @@ impl Engine {
         app.world_mut()
             .resource_mut::<Schedules>()
             .remove(bevy_app::First);
-        app.add_observer(refuse_bevy_hierarchy)
-            .init_schedule(FixedSimulation)
-            .init_schedule(FixedPreSimulation)
-            .init_schedule(FixedPostSimulation)
-            .init_schedule(Presentation)
-            .init_schedule(TransformPropagation)
+        interpolation::track_markers(app.world_mut());
+        app.add_observer(refuse_bevy_hierarchy);
+        for schedule in Schedule::ALL {
+            app.init_schedule(schedule.label())
+                .edit_schedule(schedule.label(), single_threaded);
+        }
+        app.init_schedule(TransformPropagation)
             .add_systems(TransformPropagation, |world: &mut World| {
                 propagate_transforms(world);
             })
-            .init_schedule(WorldSync)
-            .init_schedule(ViewSync)
-            .add_systems(
-                WorldSync,
-                spline_mesh::build.in_set(WorldSyncSystems::Build),
-            )
-            .configure_sets(
-                WorldSync,
-                (
-                    WorldSyncSystems::Stream,
-                    WorldSyncSystems::Ground,
-                    WorldSyncSystems::Spawn,
-                    WorldSyncSystems::Build,
-                )
-                    .chain(),
-            )
-            .configure_sets(
-                FixedSimulation,
-                (
-                    FixedSimulationSystems::Move,
-                    FixedSimulationSystems::Simulate,
-                    FixedSimulationSystems::Ride,
-                    FixedSimulationSystems::Pose,
-                )
-                    .chain(),
-            )
-            .edit_schedule(FixedSimulation, single_threaded)
-            .edit_schedule(FixedPreSimulation, single_threaded)
-            .edit_schedule(FixedPostSimulation, single_threaded)
-            .edit_schedule(Presentation, single_threaded)
             .edit_schedule(TransformPropagation, single_threaded)
-            .edit_schedule(WorldSync, single_threaded)
-            .edit_schedule(ViewSync, single_threaded)
+            .add_systems(WorldSync, spline_mesh::build)
             .insert_resource(FixedTime {
                 delta_seconds: clock.step_seconds() as f32,
                 elapsed_seconds: 0.0,
                 tick: 0,
             })
             .init_resource::<FrameTime>()
-            .init_resource::<PresentedTime>()
             .init_resource::<Camera>()
-            .init_resource::<BrickRegistry>()
-            .init_resource::<Jobs>()
-            .init_resource::<Records>()
+            .init_resource::<Detail>()
+            .init_resource::<CookMode>()
+            .init_resource::<JobQueue>()
+            .init_resource::<engine_registry::JobListed>()
+            .insert_resource(Records::empty())
+            .init_resource::<RecordExchange>()
+            .insert_resource(View::empty())
+            .insert_resource(Poses::empty())
+            .insert_resource(AssetResidency::empty())
             .init_resource::<mesh_lods::MeshLevels>()
             .init_resource::<StaticTables>()
             .init_resource::<Viewport>()
@@ -287,6 +274,7 @@ impl Engine {
             Option<Ref<Mesh3d>>,
             Option<Ref<Tint>>,
         ), Or<(With<Cube>, With<Mesh3d>)>>();
+        let resets = ResetWatch::new(app.world_mut());
         let mut retained = retained_render::RetainedRender::new(
             cube_mesh,
             config.frustum_culling,
@@ -298,13 +286,14 @@ impl Engine {
             clock,
             render_query,
             retained,
-            plugins_finalized: false,
+            resets,
+            finalized: false,
             tick_ahead: TickAhead::None,
         }
     }
 
     pub fn advance(&mut self, delta_seconds: f64) -> FrameReport {
-        self.finalize_plugins();
+        self.finalize();
         let delta_seconds = clock::sanitize_delta(delta_seconds);
         let report = self.clock.advance(delta_seconds);
         self.run_frame(report.fixed_steps, delta_seconds.min(0.25));
@@ -314,7 +303,7 @@ impl Engine {
     #[cfg(feature = "dev")]
     pub fn step_fixed(&mut self, ticks: u32) -> Result<FrameReport, Error> {
         check_dev_ticks(ticks)?;
-        self.finalize_plugins();
+        self.finalize();
         self.forget_ticks_ahead();
         self.clock.reset();
         let delta_seconds = (f64::from(ticks) * self.clock.step_seconds()).min(0.25);
@@ -324,6 +313,18 @@ impl Engine {
             dropped_seconds: 0.0,
             interpolation: 0.0,
         })
+    }
+
+    pub fn between_frames(&mut self, micros: u32) {
+        self.finalize();
+        let world = self.app.world_mut();
+        modify(world, |frame: &mut FrameTime| {
+            frame.between_frames_micros = micros;
+        });
+        if has_systems(world, BetweenFrames) {
+            let _profile = engine_profile::span("ecs", "BetweenFrames");
+            world.run_schedule(BetweenFrames);
+        }
     }
 
     fn run_frame(&mut self, fixed_steps: u32, delta_seconds: f64) {
@@ -345,12 +346,11 @@ impl Engine {
         if self.tick_ahead != TickAhead::InFlight {
             self.refresh_transforms();
         }
-        {
-            let mut frame = self.app.world_mut().resource_mut::<FrameTime>();
+        modify(self.app.world_mut(), |frame: &mut FrameTime| {
             frame.delta_seconds = delta_seconds as f32;
             frame.elapsed_seconds += delta_seconds;
             frame.frame = frame.frame.saturating_add(1);
-        }
+        });
         for _ in 0..fixed_steps {
             self.run_fixed_tick();
         }
@@ -366,7 +366,7 @@ impl Engine {
     }
 
     pub fn run_ahead(&mut self, predicted_delta_seconds: f64) -> bool {
-        self.finalize_plugins();
+        self.finalize();
         let in_flight = match self.tick_ahead {
             TickAhead::None => false,
             TickAhead::InFlight => true,
@@ -440,43 +440,33 @@ impl Engine {
 
     fn begin_fixed_tick(&mut self) {
         interpolation::begin_tick(self.app.world_mut());
-        {
-            let mut time = self.app.world_mut().resource_mut::<FixedTime>();
-            time.elapsed_seconds += self.clock.step_seconds();
+        let step = self.clock.step_seconds();
+        modify(self.app.world_mut(), |time: &mut FixedTime| {
+            time.elapsed_seconds += step;
             time.tick = time.tick.saturating_add(1);
-        }
-        self.app
-            .world_mut()
-            .resource_mut::<ActionInput>()
-            .begin_tick();
-        if self
-            .app
-            .get_schedule(FixedPreSimulation)
-            .expect("engine_pre_schedule")
-            .systems_len()
-            != 0
-        {
+        });
+        modify(self.app.world_mut(), ActionInput::begin_tick);
+        if has_systems(self.app.world(), FixedPreSimulation) {
             {
                 let _profile = engine_profile::span("ecs", "FixedPreSimulation");
                 self.app.world_mut().run_schedule(FixedPreSimulation);
             }
             self.refresh_transforms();
         }
+        if has_systems(self.app.world(), FixedMove) {
+            let _profile = engine_profile::span("ecs", "FixedMove");
+            self.app.world_mut().run_schedule(FixedMove);
+        }
         {
             let _profile = engine_profile::span("ecs", "FixedSimulation");
             self.app.world_mut().run_schedule(FixedSimulation);
         }
+        self.resets.snap(self.app.world_mut());
     }
 
     fn finish_fixed_tick(&mut self) {
         self.refresh_transforms();
-        if self
-            .app
-            .get_schedule(FixedPostSimulation)
-            .expect("engine_post_schedule")
-            .systems_len()
-            != 0
-        {
+        if has_systems(self.app.world(), FixedPostSimulation) {
             {
                 let _profile = engine_profile::span("ecs", "FixedPostSimulation");
                 self.app.world_mut().run_schedule(FixedPostSimulation);
@@ -484,21 +474,16 @@ impl Engine {
             self.refresh_transforms();
         }
         interpolation::end_tick(self.app.world_mut());
-        self.app
-            .world_mut()
-            .resource_mut::<ActionInput>()
-            .end_tick();
+        modify(self.app.world_mut(), ActionInput::end_tick);
     }
 
     pub fn reset_clock(&mut self) {
         self.forget_ticks_ahead();
         self.clock.reset();
-        reset_all_interpolation(self.app.world_mut());
-        self.app.world_mut().resource_mut::<ActionInput>().clear();
-        self.app
-            .world_mut()
-            .resource_mut::<FrameTime>()
-            .delta_seconds = 0.0;
+        let world = self.app.world_mut();
+        reset_all_interpolation(world);
+        modify(world, ActionInput::clear);
+        modify(world, |frame: &mut FrameTime| frame.delta_seconds = 0.0);
     }
 
     pub fn refresh_transforms(&mut self) {
@@ -531,7 +516,7 @@ impl Engine {
 
     pub fn extract_frame(&mut self, aspect: f32) -> RenderFrame<'_> {
         let _profile = engine_profile::span("cpu", "extraction");
-        self.finalize_plugins();
+        self.finalize();
         self.complete_pending_tick();
         self.mark_presented_time(None);
         self.sync_world();
@@ -544,7 +529,7 @@ impl Engine {
     pub fn extract_gpu_frame(&mut self, aspect: f32, alpha: f32) -> Result<RenderFrame<'_>, Error> {
         let _profile = engine_profile::span("cpu", "extraction");
         PresentationMode::Interpolated { alpha }.validate()?;
-        self.finalize_plugins();
+        self.finalize();
         self.mark_presented_time(Some(alpha));
         if let Some(gathered) = self.tick_ahead.presents_previous() {
             interpolation::present_gpu_fraction(self.app.world_mut(), alpha, gathered);
@@ -581,14 +566,15 @@ impl Engine {
         };
         let world = self.app.world_mut();
         let fixed = world.resource::<FixedTime>().elapsed_seconds;
-        world.resource_mut::<PresentedTime>().seconds = fixed - behind - ahead;
+        modify(world, |frame: &mut FrameTime| {
+            frame.presented_seconds = fixed - behind - ahead;
+        });
     }
 
     fn extract_retained(&mut self, aspect: f32, gpu: bool) -> RenderFrame<'_> {
         let world = self.app.world();
         self.retained
             .prepare(world, &mut self.render_query, aspect, gpu);
-        extraction::extract(&mut self.retained, world);
         if gpu {
             self.app.world_mut().increment_change_tick();
         }
@@ -599,39 +585,17 @@ impl Engine {
         )
     }
 
-    fn finalize_plugins(&mut self) {
-        if self.plugins_finalized {
+    fn finalize(&mut self) {
+        if self.finalized {
             return;
         }
         self.refuse_unrun_schedules();
-        let state = self.app.plugins_state();
-        assert!(
-            !matches!(state, PluginsState::Adding),
-            "plugins_ready_before_frame"
-        );
-        match state {
-            PluginsState::Ready => {
-                self.app.finish();
-                self.app.cleanup();
-            }
-            PluginsState::Finished => self.app.cleanup(),
-            PluginsState::Adding | PluginsState::Cleaned => {}
-        }
-        self.plugins_finalized = true;
+        self.finalized = true;
     }
-}
 
-impl Engine {
     fn refuse_unrun_schedules(&self) {
-        let run = [
-            FixedPreSimulation.intern(),
-            FixedSimulation.intern(),
-            FixedPostSimulation.intern(),
-            Presentation.intern(),
-            TransformPropagation.intern(),
-            WorldSync.intern(),
-            ViewSync.intern(),
-        ];
+        let mut run: Vec<_> = Schedule::ALL.iter().map(|schedule| schedule.label()).collect();
+        run.push(TransformPropagation.intern());
         let schedules = self.app.world().resource::<Schedules>();
         for (label, schedule) in schedules.iter() {
             assert!(
@@ -642,7 +606,7 @@ impl Engine {
     }
 }
 
-fn refuse_bevy_hierarchy(add: On<Add, bevy_ecs::hierarchy::ChildOf>) {
+fn refuse_bevy_hierarchy(add: On<Add, ChildOf>) {
     panic!("child_of_ignored {}", add.entity);
 }
 

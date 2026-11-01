@@ -15,7 +15,7 @@ pub const MAX_SOURCE_BYTES: usize = 64 * 1024 * 1024;
 pub struct SceneDocument {
     #[cfg_attr(
         feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub id: String,
     pub revision: u64,
@@ -140,7 +140,7 @@ fn default_camera() -> SceneCamera {
     }
 }
 
-engine_settings::settings! {
+engine_settings::fields! {
     extra_rules;
     #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -216,7 +216,7 @@ impl SceneSurface {
 pub struct SceneMesh {
     #[cfg_attr(
         feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub id: String,
     pub source: MeshSource,
@@ -248,7 +248,7 @@ pub enum MeshSource {
     Provided {
         #[cfg_attr(
             feature = "schema",
-            schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+            schemars(transform = engine_settings::stated(engine_settings::fields::id()))
         )]
         name: String,
     },
@@ -366,7 +366,7 @@ fn zero_uv(uv: &[f32; 2]) -> bool {
     *uv == [0.0; 2]
 }
 
-engine_settings::settings! {
+engine_settings::fields! {
     #[derive(Debug, Clone, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(deny_unknown_fields)]
@@ -387,7 +387,7 @@ const TAGS: Rule = Rule::count(0.0, 16.0);
 pub struct SceneObject {
     #[cfg_attr(
         feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub id: String,
     #[serde(default)]
@@ -398,26 +398,26 @@ pub struct SceneObject {
     pub name: String,
     #[cfg_attr(
         feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh: Option<String>,
     #[cfg_attr(
         feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub parent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub prefab: Option<String>,
     #[serde(flatten)]
@@ -447,7 +447,7 @@ impl Setting for SceneObject {
     }
 }
 
-engine_settings::settings! {
+engine_settings::fields! {
     #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]

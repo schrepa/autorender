@@ -16,7 +16,7 @@ pub use crate::gpu_layouts::constants::LOD_LEVELS;
 pub use crate::gpu_layouts::constants::LOD_STATE;
 pub use crate::gpu_layouts::constants::MOVED_SLOT;
 pub use crate::gpu_layouts::constants::STILL_FRAMES;
-pub use crate::gpu_layouts::scene::CameraUniform;
+pub use crate::CameraUniform;
 
 impl CameraUniform {
     pub fn exact(view_projection: Mat4, position: glam::Vec3, seconds: f32) -> Self {
@@ -31,6 +31,7 @@ impl CameraUniform {
             wind: [0.0, 0.0, 0.0, seconds],
             region: [0.0; 4],
             detail: position.extend(0.0).to_array(),
+            view: [0; 4],
         }
     }
 

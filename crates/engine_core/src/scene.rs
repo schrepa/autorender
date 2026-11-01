@@ -3,10 +3,10 @@ use engine_assets::{
     AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle, MeshLods, Surface, Texture,
     TextureHandle,
 };
-use engine_settings::{ExtraRules, InvalidSetting, rule, settings};
 use glam::{BVec4A, Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
+use serde::Serialize;
 
-use crate::NodePose;
+use crate::{Error, ErrorCode, NodePose};
 use std::sync::Arc;
 
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
@@ -126,61 +126,58 @@ pub struct Cube {
     pub color: [f32; 4],
 }
 
-#[derive(Component, Debug, Clone, Copy)]
-pub struct Mesh3d {
-    pub mesh: MeshHandle,
-    pub material: MaterialHandle,
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct Camera {
+    pub position: Vec3,
+    pub target: Vec3,
+    pub near: f32,
+    pub far: f32,
+    pub projection: Projection,
 }
 
-settings! {
-    unauthored;
-    extra_rules;
-    #[derive(Resource, Debug, Clone, Copy)]
-    pub struct Camera {
-        pub position: Vec3 = Vec3::new(24.0, 19.0, 28.0) => range(-Camera::REACH, Camera::REACH),
-        pub target: Vec3 = Vec3::ZERO => range(-Camera::REACH, Camera::REACH),
-        pub vertical_fov_radians: f32 = 55.0_f32.to_radians()
-            => range(Camera::MIN_FOV_DEGREES.to_radians(), Camera::MAX_FOV_DEGREES.to_radians()),
-        pub near: f32 = 0.1 => range(Camera::MIN_DEPTH, Camera::REACH),
-        pub far: f32 = 500.0 => range(Camera::MIN_DEPTH, Camera::REACH),
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, serde::Deserialize)]
+pub enum Projection {
+    Perspective { vertical_fov_radians: f32 },
+    Orthographic { height: f32 },
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self {
+            position: Vec3::new(24.0, 19.0, 28.0),
+            target: Vec3::ZERO,
+            near: 0.1,
+            far: 500.0,
+            projection: Projection::Perspective {
+                vertical_fov_radians: default_fov(),
+            },
+        }
     }
 }
 
-impl ExtraRules for Camera {
-    fn check_extra(&self) -> Result<(), InvalidSetting> {
-        if (self.target - self.position).length_squared() < Self::MIN_DEPTH * Self::MIN_DEPTH {
-            return Err(
-                InvalidSetting::broken("target", rule::at_least(Self::MIN_DEPTH))
-                    .got((self.target - self.position).length()),
-            );
-        }
-        if self.far - self.near < Self::MIN_DEPTH {
-            return Err(InvalidSetting::broken(
-                "far",
-                rule::range(self.near + Self::MIN_DEPTH, Self::REACH),
-            )
-            .got(self.far));
-        }
-        Ok(())
-    }
+fn default_fov() -> f32 {
+    55.0_f32.to_radians()
+}
 
-    fn sanitize_extra(mut self) -> Self {
-        if (self.target - self.position).length_squared() < Self::MIN_DEPTH * Self::MIN_DEPTH {
-            let step = if self.position.z - 1.0 >= -Self::REACH {
-                Vec3::NEG_Z
-            } else {
-                Vec3::Z
-            };
-            self.target = self.position + step;
-        }
-        if self.far - self.near < Self::MIN_DEPTH {
-            let defaults = Self::default();
-            let depth = defaults.far - defaults.near;
-            self.far = crate::math::min(self.near + depth, Self::REACH);
-            self.near = crate::math::min(self.near, self.far - depth);
-        }
-        self
+fn kept(value: f32, min: f32, max: f32, default: f32) -> f32 {
+    if value.is_finite() {
+        crate::math::clamp(value, min, max)
+    } else {
+        default
     }
+}
+
+fn kept_point(value: Vec3, default: Vec3) -> Vec3 {
+    let reach = Camera::REACH;
+    Vec3::new(
+        kept(value.x, -reach, reach, default.x),
+        kept(value.y, -reach, reach, default.y),
+        kept(value.z, -reach, reach, default.z),
+    )
+}
+
+fn within(value: f32, min: f32, max: f32) -> bool {
+    (min..=max).contains(&value)
 }
 
 impl Camera {
@@ -188,6 +185,102 @@ impl Camera {
     pub const MIN_DEPTH: f32 = 0.001;
     pub const MIN_FOV_DEGREES: f32 = 1.0;
     pub const MAX_FOV_DEGREES: f32 = 179.0;
+
+    #[doc(hidden)]
+    pub fn check(&self) -> Result<(), Error> {
+        let invalid = |field: &str| Err(Error::new(ErrorCode::InvalidValue, format!("$.{field}")));
+        let reach = Self::REACH;
+        if !self
+            .position
+            .to_array()
+            .iter()
+            .all(|&axis| within(axis, -reach, reach))
+        {
+            return invalid("position");
+        }
+        if !self
+            .target
+            .to_array()
+            .iter()
+            .all(|&axis| within(axis, -reach, reach))
+        {
+            return invalid("target");
+        }
+        if !within(self.near, Self::MIN_DEPTH, reach) {
+            return invalid("near");
+        }
+        if !within(self.far, Self::MIN_DEPTH, reach) {
+            return invalid("far");
+        }
+        match self.projection {
+            Projection::Perspective {
+                vertical_fov_radians,
+            } if !within(
+                vertical_fov_radians,
+                Self::MIN_FOV_DEGREES.to_radians(),
+                Self::MAX_FOV_DEGREES.to_radians(),
+            ) =>
+            {
+                return invalid("projection.vertical_fov_radians");
+            }
+            Projection::Orthographic { height } if !within(height, Self::MIN_DEPTH, reach) => {
+                return invalid("projection.height");
+            }
+            Projection::Perspective { .. } | Projection::Orthographic { .. } => {}
+        }
+        if (self.target - self.position).length_squared() < Self::MIN_DEPTH * Self::MIN_DEPTH {
+            return invalid("target");
+        }
+        if self.far - self.near < Self::MIN_DEPTH {
+            return invalid("far");
+        }
+        Ok(())
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn sanitized(self) -> Self {
+        let defaults = Self::default();
+        let reach = Self::REACH;
+        let projection = match self.projection {
+            Projection::Perspective {
+                vertical_fov_radians,
+            } => Projection::Perspective {
+                vertical_fov_radians: kept(
+                    vertical_fov_radians,
+                    Self::MIN_FOV_DEGREES.to_radians(),
+                    Self::MAX_FOV_DEGREES.to_radians(),
+                    default_fov(),
+                ),
+            },
+            Projection::Orthographic { height } => Projection::Orthographic {
+                height: kept(height, Self::MIN_DEPTH, reach, 1.0),
+            },
+        };
+        let mut sanitized = Self {
+            position: kept_point(self.position, defaults.position),
+            target: kept_point(self.target, defaults.target),
+            near: kept(self.near, Self::MIN_DEPTH, reach, defaults.near),
+            far: kept(self.far, Self::MIN_DEPTH, reach, defaults.far),
+            projection,
+        };
+        if (sanitized.target - sanitized.position).length_squared()
+            < Self::MIN_DEPTH * Self::MIN_DEPTH
+        {
+            let step = if sanitized.position.z - 1.0 >= -reach {
+                Vec3::NEG_Z
+            } else {
+                Vec3::Z
+            };
+            sanitized.target = sanitized.position + step;
+        }
+        if sanitized.far - sanitized.near < Self::MIN_DEPTH {
+            let depth = defaults.far - defaults.near;
+            sanitized.far = crate::math::min(sanitized.near + depth, reach);
+            sanitized.near = crate::math::min(sanitized.near, sanitized.far - depth);
+        }
+        sanitized
+    }
 
     pub fn eye(&self) -> Vec3 {
         self.sanitized().position
@@ -212,9 +305,9 @@ impl Camera {
         let Self {
             position,
             target,
-            vertical_fov_radians: fov,
             near,
             far,
+            projection,
         } = self.sanitized();
         let direction = (target - position).try_normalize().unwrap_or(Vec3::NEG_Z);
         let up = if direction.dot(Vec3::Y).abs() > 0.999 {
@@ -222,12 +315,23 @@ impl Camera {
         } else {
             Vec3::Y
         };
-        (
-            Mat4::perspective_rh(fov, aspect, far, near),
-            position,
-            direction,
-            up,
-        )
+        let projection = match projection {
+            Projection::Perspective {
+                vertical_fov_radians,
+            } => Mat4::perspective_rh(vertical_fov_radians, aspect, far, near),
+            Projection::Orthographic { height } => {
+                let (half_width, half_height) = (height * aspect * 0.5, height * 0.5);
+                Mat4::orthographic_rh(
+                    -half_width,
+                    half_width,
+                    -half_height,
+                    half_height,
+                    far,
+                    near,
+                )
+            }
+        };
+        (projection, position, direction, up)
     }
 }
 
@@ -344,22 +448,4 @@ pub struct RenderSnapshot {
     pub dropped_instances: usize,
     pub missing_assets: usize,
     pub invalid_transforms: usize,
-    pub extracted: crate::Extracted,
-}
-
-impl RenderSnapshot {
-    pub fn section<T: crate::EnvironmentSection>(&self) -> T {
-        self.extracted
-            .get::<T>()
-            .copied()
-            .unwrap_or_else(|| T::section_off().section_sanitized())
-    }
-}
-
-pub fn section_in<T: crate::EnvironmentSection>(world: &bevy_ecs::world::World) -> T {
-    world
-        .get_resource::<T>()
-        .copied()
-        .unwrap_or_else(T::section_off)
-        .section_sanitized()
 }

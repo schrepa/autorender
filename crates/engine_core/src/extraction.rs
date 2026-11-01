@@ -1,24 +1,9 @@
 use bevy_ecs::prelude::{Entity, World};
 use glam::Mat4;
 
-use crate::retained_render::RetainedRender;
 use crate::{
     GlobalTransforms, PresentationMode, PresentationState, PresentedTransforms, TransformIndex,
 };
-
-pub(crate) fn extract(retained: &mut RetainedRender, world: &World) {
-    retained.set_tables(
-        world
-            .get_resource::<crate::StaticTables>()
-            .map(crate::StaticTables::render)
-            .unwrap_or_default(),
-    );
-    if let Some(registry) = world.get_resource::<crate::BrickRegistry>() {
-        for (brick, extract) in registry.extractions() {
-            crate::bricks::under(brick, || retained.extract_brick(world, extract));
-        }
-    }
-}
 
 #[derive(Clone, Copy)]
 pub(crate) enum Poses<'w> {

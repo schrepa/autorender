@@ -33,7 +33,7 @@ fn view_far() -> f32 {
     SceneCamera::default().far
 }
 
-engine_settings::settings! {
+engine_settings::fields! {
     extra_rules;
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -78,7 +78,7 @@ impl SceneView {
 pub struct SceneLook {
     #[cfg_attr(
         feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub name: String,
     pub environment: SceneEnvironment,

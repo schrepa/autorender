@@ -33,7 +33,6 @@ pub use document::{
     MAX_SOURCE_BYTES, MeshSource, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
     SceneSurface, SceneTransform, SceneVertex,
 };
-pub use engine_core::EnvironmentSection;
 pub use engine_core::{parse_json, parse_value};
 pub use environment::SceneEnvironment;
 #[cfg(feature = "schema")]

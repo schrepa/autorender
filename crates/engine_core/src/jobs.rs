@@ -2,32 +2,190 @@ use crate::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bevy_ecs::prelude::*;
+use bevy_ecs::resource::Resource;
+use bevy_ecs::system::{Deferred, Res, SystemParam};
 use serde::Serialize;
+
+use crate::{Error, ErrorCode, JobRef, Source};
+
+pub struct JobKind {
+    name: &'static str,
+    source: &'static Source,
+    start: fn(&[u8], &mut JobCx<'_>) -> Result<Box<dyn Job>, Error>,
+}
+
+impl JobKind {
+    pub const fn new(
+        name: &'static str,
+        source: &'static Source,
+        start: fn(&[u8], &mut JobCx<'_>) -> Result<Box<dyn Job>, Error>,
+    ) -> Self {
+        Self {
+            name,
+            source,
+            start,
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+
+    #[doc(hidden)]
+    pub fn source(&self) -> &'static Source {
+        self.source
+    }
+
+    #[doc(hidden)]
+    pub fn start(&self, input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+        (self.start)(input, cx)
+    }
+}
+
+impl From<&'static JobKind> for JobRef {
+    fn from(kind: &'static JobKind) -> Self {
+        JobRef::named(kind.name, kind.source.hash())
+    }
+}
+
+pub trait Job: Send {
+    fn step(&mut self, budget: u64, cx: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error>;
+}
+
+pub struct JobCx<'c> {
+    list: &'c engine_registry::JobList,
+    shares: &'c dyn engine_registry::Shares,
+}
+
+impl<'c> JobCx<'c> {
+    #[doc(hidden)]
+    pub fn new(list: &'c engine_registry::JobList, shares: &'c dyn engine_registry::Shares) -> Self {
+        Self { list, shares }
+    }
+}
+
+impl JobCx<'_> {
+    pub fn start(&mut self, kind: &JobRef, input: &[u8]) -> Result<Box<dyn Job>, Error> {
+        todo!()
+    }
+
+    pub fn share(&self, key: RecordKey) -> Option<&[u8]> {
+        self.shares.share(key.0)
+    }
+}
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, serde::Deserialize,
+)]
+pub struct RecordKey([u8; 32]);
+
+impl RecordKey {
+    #[doc(hidden)]
+    pub const fn from_hash(hash: [u8; 32]) -> Self {
+        Self(hash)
+    }
+
+    #[doc(hidden)]
+    pub fn hash(&self) -> [u8; 32] {
+        self.0
+    }
+
+    #[doc(hidden)]
+    pub fn hex(&self) -> String {
+        self.0.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
+}
+
+#[must_use]
+#[derive(Debug)]
+pub struct Ticket {
+    key: RecordKey,
+    interest: u32,
+}
+
+#[derive(SystemParam)]
+pub struct Jobs<'w, 's> {
+    orders: Deferred<'s, engine_registry::JobOrders>,
+    listed: Res<'w, engine_registry::JobListed>,
+}
+
+impl Jobs<'_, '_> {
+    pub fn start(&mut self, kind: &'static JobKind, input: Vec<u8>, priority: u32) -> Ticket {
+        todo!()
+    }
+
+    pub fn fetch(&mut self, kind: &'static JobKind, input: &[u8], priority: u32) -> Ticket {
+        todo!()
+    }
+
+    pub fn cancel(&mut self, ticket: Ticket) {
+        todo!()
+    }
+
+    pub fn share(&mut self, bytes: Arc<[u8]>) -> RecordKey {
+        todo!()
+    }
+
+    pub fn keep(&mut self, kind: &'static JobKind, input: &[u8], bytes: Vec<u8>) -> Ticket {
+        todo!()
+    }
+}
+
+#[derive(Resource)]
+#[component(immutable)]
+pub struct Records {
+    store: engine_registry::RecordStore,
+}
+
+impl Records {
+    pub(crate) fn empty() -> Self {
+        Self {
+            store: engine_registry::RecordStore::default(),
+        }
+    }
+
+    pub fn get(&self, ticket: &Ticket) -> Option<Result<Arc<[u8]>, Error>> {
+        todo!()
+    }
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[component(immutable)]
+pub struct CookMode {
+    pub cooking: bool,
+}
+
+static TEXTURES: Source = Source::generated("engine_textures", engine_textures::SOURCE, &[]);
+
+#[doc(hidden)]
+pub static TEXTURE_COOK: JobKind =
+    JobKind::new(engine_textures::COOK_JOB, &TEXTURES, start_texture_cook);
+
+struct Whole {
+    input: Vec<u8>,
+    run: fn(&[u8]) -> Result<Vec<u8>, String>,
+}
+
+impl Job for Whole {
+    fn step(&mut self, _: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
+        (self.run)(&self.input)
+            .map(Some)
+            .map_err(|message| Error::new(ErrorCode::InvalidValue, message))
+    }
+}
+
+fn start_texture_cook(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    Ok(Box::new(Whole {
+        input: input.to_vec(),
+        run: engine_textures::cook_job,
+    }))
+}
 
 static SUBMITTED: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct JobId(pub u64);
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct RecordKey {
-    pub hash: [u8; 32],
-    pub kind: &'static str,
-}
-
-impl RecordKey {
-    pub fn new(source: &[u8; 32], kind: &'static str, identity: &[u8]) -> Self {
-        Self {
-            hash: engine_sources::record_key(source, kind, identity),
-            kind,
-        }
-    }
-
-    pub fn hex(&self) -> String {
-        self.hash.iter().map(|byte| format!("{byte:02x}")).collect()
-    }
-}
 
 pub const MISSING_RECORD: &str = "no store holds the record";
 
@@ -49,7 +207,7 @@ impl RecordParity {
 #[derive(Clone, Debug, PartialEq)]
 pub struct JobRequest {
     pub id: JobId,
-    pub kind: &'static str,
+    pub kind: JobRef,
     pub input: Vec<u8>,
     pub priority: u32,
     pub record: Option<RecordKey>,
@@ -131,17 +289,11 @@ pub fn content_hash(bytes: &[u8]) -> u128 {
     (u128::from(h2) << 64) | u128::from(h1)
 }
 
-pub trait JobWorker: Send + Sync + 'static {
-    fn share(&mut self, key: &str, bytes: Arc<[u8]>) -> Result<(), String>;
-    fn unshare(&mut self, key: &str);
-    fn run(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String>;
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobShare {
     Clear,
-    Set { key: String, bytes: Arc<[u8]> },
-    Remove { key: String },
+    Set { key: RecordKey, bytes: Arc<[u8]> },
+    Remove { key: RecordKey },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -163,8 +315,9 @@ pub struct JobStats {
     pub in_place: u64,
 }
 
+#[doc(hidden)]
 #[derive(Resource)]
-pub struct Jobs {
+pub struct JobQueue {
     workers: u32,
     hosted: bool,
     verifying: bool,
@@ -177,15 +330,12 @@ pub struct Jobs {
     done: HashMap<JobId, Result<Vec<u8>, String>>,
     cache: [u64; 4],
     held: u32,
-    shared: Vec<(String, Arc<[u8]>)>,
-    sharing: u64,
-    make_here: Option<fn() -> Box<dyn JobWorker>>,
-    here: Option<(Box<dyn JobWorker>, Vec<String>, u64)>,
+    shared: Vec<(RecordKey, Arc<[u8]>)>,
     stats: JobStats,
     last_failure: Option<String>,
 }
 
-impl Default for Jobs {
+impl Default for JobQueue {
     fn default() -> Self {
         Self {
             workers: 0,
@@ -201,16 +351,13 @@ impl Default for Jobs {
             cache: [0; 4],
             held: 0,
             shared: Vec::new(),
-            sharing: 0,
-            make_here: None,
-            here: None,
             stats: JobStats::default(),
             last_failure: None,
         }
     }
 }
 
-impl Jobs {
+impl JobQueue {
     pub fn workers(&self) -> u32 {
         self.workers
     }
@@ -236,13 +383,13 @@ impl Jobs {
         self.hosted = true;
     }
 
-    pub fn submit(&mut self, kind: &'static str, input: Vec<u8>, priority: u32) -> JobId {
+    pub fn submit(&mut self, kind: JobRef, input: Vec<u8>, priority: u32) -> JobId {
         self.submit_with(kind, input, priority, None)
     }
 
     pub fn submit_record(
         &mut self,
-        kind: &'static str,
+        kind: JobRef,
         input: Vec<u8>,
         priority: u32,
         record: RecordKey,
@@ -252,7 +399,7 @@ impl Jobs {
 
     fn submit_with(
         &mut self,
-        kind: &'static str,
+        kind: JobRef,
         input: Vec<u8>,
         priority: u32,
         record: Option<RecordKey>,
@@ -260,7 +407,7 @@ impl Jobs {
         let id = next_id();
         self.stats.submitted += 1;
         if !self.hosted {
-            let output = self.run_here(kind, &input);
+            let output = self.run_here(&kind, &input);
             self.finish(id, output);
             return id;
         }
@@ -319,68 +466,23 @@ impl Jobs {
         }
     }
 
-    pub fn share(&mut self, key: String, bytes: impl Into<Arc<[u8]>>) {
-        let bytes: Arc<[u8]> = bytes.into();
+    pub fn share(&mut self, key: RecordKey, bytes: Arc<[u8]>) {
         self.shared.retain(|(shared, _)| *shared != key);
-        self.shared.push((key.clone(), bytes.clone()));
-        self.sharing += 1;
+        self.shared.push((key, Arc::clone(&bytes)));
         self.shares.push(JobShare::Set { key, bytes });
     }
 
-    pub fn is_shared(&self, key: &str) -> bool {
-        self.shared.iter().any(|(shared, _)| shared == key)
-    }
-
-    pub fn unshare(&mut self, key: String) {
+    pub fn unshare(&mut self, key: RecordKey) {
         let before = self.shared.len();
         self.shared.retain(|(shared, _)| *shared != key);
         if self.shared.len() < before {
-            self.sharing += 1;
             self.shares.push(JobShare::Remove { key });
         }
     }
 
-    pub fn works_here(&self) -> bool {
-        self.make_here.is_some()
-    }
-
-    pub fn work_here(&mut self, make: fn() -> Box<dyn JobWorker>) {
-        self.make_here = Some(make);
-        self.here = None;
-    }
-
-    pub fn run_here(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
+    fn run_here(&mut self, kind: &JobRef, input: &[u8]) -> Result<Vec<u8>, String> {
         self.stats.in_place += 1;
-        if engine_tables::TableWorker::runs(kind) || engine_textures::TextureWorker::runs(kind) {
-            let _profile = engine_profile::span("cpu", "job_in_place");
-            if let Some(output) =
-                engine_tables::run(kind, input).or_else(|| engine_textures::run(kind, input))
-            {
-                return output;
-            }
-        }
-        let Some(make) = self.make_here else {
-            return Err(format!("no worker runs {kind} jobs"));
-        };
-        let (shared, sharing) = (&self.shared, self.sharing);
-        let (worker, held, synced) = self.here.get_or_insert_with(|| (make(), Vec::new(), 0));
-        if *synced != sharing {
-            let current: HashSet<&str> = shared.iter().map(|(key, _)| key.as_str()).collect();
-            for key in held.iter().filter(|key| !current.contains(key.as_str())) {
-                worker.unshare(key);
-            }
-            held.retain(|key| current.contains(key.as_str()));
-            let holding: HashSet<String> = held.iter().cloned().collect();
-            for (key, bytes) in shared {
-                if !holding.contains(key) {
-                    worker.share(key, Arc::clone(bytes))?;
-                    held.push(key.clone());
-                }
-            }
-            *synced = sharing;
-        }
-        let _profile = engine_profile::span("cpu", "job_in_place");
-        worker.run(kind, input)
+        todo!()
     }
 
     pub fn take_shares(&mut self, out: &mut Vec<JobShare>) {
@@ -453,28 +555,6 @@ impl Jobs {
     }
 }
 
-#[derive(Resource, Clone, Debug, Default)]
-pub struct Cooking {
-    left: Vec<(&'static str, u64)>,
-}
-
-impl Cooking {
-    pub fn left(&mut self, feature: &'static str, left: u64) {
-        match self.left.iter_mut().find(|(name, _)| *name == feature) {
-            Some((_, count)) => *count = left,
-            None => self.left.push((feature, left)),
-        }
-    }
-
-    pub fn remaining(&self) -> u64 {
-        self.left.iter().map(|(_, left)| left).sum()
-    }
-
-    pub fn features(&self) -> &[(&'static str, u64)] {
-        &self.left
-    }
-}
-
 fn next_id() -> JobId {
     JobId(SUBMITTED.fetch_add(1, Ordering::Relaxed) + 1)
 }
@@ -502,13 +582,13 @@ impl JobFailures {
 }
 
 pub struct JobBudget<'a> {
-    pub jobs: &'a mut Jobs,
+    pub jobs: &'a mut JobQueue,
     slots: usize,
     urgent: usize,
 }
 
 impl JobBudget<'_> {
-    pub fn of(jobs: &mut Jobs) -> JobBudget<'_> {
+    pub fn of(jobs: &mut JobQueue) -> JobBudget<'_> {
         let workers = jobs.workers().max(1) as usize;
         let running = jobs.running();
         JobBudget {

@@ -371,35 +371,6 @@ impl Grading {
     }
 }
 
-macro_rules! light_sections {
-    ($($section:ident: $key:literal),* $(,)?) => {
-        $(
-            impl EnvironmentSection for $section {
-                const KEY: &'static str = $key;
-                const NAME: &'static str = stringify!($section);
-                const OPT_IN: bool = false;
-
-                fn section_off() -> Self {
-                    Self::default()
-                }
-
-                fn section_check(&self) -> Result<(), InvalidSetting> {
-                    self.validate()
-                }
-
-                fn section_sanitized(self) -> Self {
-                    self.sanitized()
-                }
-
-                #[cfg(feature = "schema")]
-                fn schema() -> schemars::Schema {
-                    schemars::schema_for!($section)
-                }
-            }
-        )*
-    };
-}
-
 light_sections! {
     Sunlight: "sun",
     SkyLighting: "sky_light",

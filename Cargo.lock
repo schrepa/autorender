@@ -887,12 +887,17 @@ dependencies = [
 name = "engine"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "engine_core",
+ "engine_dev",
  "engine_panic",
  "engine_profile",
+ "engine_registry",
  "engine_render",
  "engine_scene",
  "engine_settings",
+ "engine_worker",
+ "glam 0.30.9",
  "js-sys",
  "schemars",
  "serde",
@@ -974,14 +979,11 @@ dependencies = [
 name = "engine_checks"
 version = "0.1.0"
 dependencies = [
- "bevy_ecs",
  "engine",
  "engine_core",
  "engine_dev",
- "engine_places",
  "engine_render",
  "engine_sources",
- "naga",
  "serde_json",
  "toml_edit",
 ]
@@ -990,6 +992,7 @@ dependencies = [
 name = "engine_codec"
 version = "0.1.0"
 dependencies = [
+ "glam 0.30.9",
  "serde",
  "serde_json",
 ]
@@ -1014,9 +1017,14 @@ version = "0.1.0"
 dependencies = [
  "bevy_app",
  "bevy_ecs",
+ "bytemuck",
  "engine_assets",
+ "engine_codec",
+ "engine_ecs",
  "engine_math",
+ "engine_place",
  "engine_profile",
+ "engine_registry",
  "engine_settings",
  "engine_sources",
  "engine_textures",
@@ -1105,7 +1113,10 @@ dependencies = [
 name = "engine_heightfield"
 version = "0.1.0"
 dependencies = [
+ "engine_codec",
+ "engine_math",
  "glam 0.30.9",
+ "libm",
  "schemars",
  "serde",
  "serde_json",
@@ -1267,6 +1278,9 @@ dependencies = [
 name = "engine_native"
 version = "0.1.0"
 dependencies = [
+ "engine",
+ "engine_profiler",
+ "engine_worker",
  "png",
  "pollster",
  "serde_json",
@@ -1341,7 +1355,10 @@ dependencies = [
 name = "engine_places"
 version = "0.1.0"
 dependencies = [
+ "engine_codec",
  "engine_ecs",
+ "engine_heightfield",
+ "engine_math",
  "engine_place",
  "glam 0.30.9",
  "schemars",
@@ -1416,17 +1433,26 @@ name = "engine_registry"
 version = "0.1.0"
 dependencies = [
  "bevy_ecs",
+ "bytemuck",
+ "engine_math",
  "engine_place",
+ "engine_settings",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
 name = "engine_render"
 version = "0.1.0"
 dependencies = [
+ "bevy_ecs",
  "bytemuck",
  "engine_core",
  "engine_profile",
+ "engine_registry",
  "engine_sources",
  "engine_textures",
  "glam 0.30.9",
@@ -1470,6 +1496,7 @@ dependencies = [
 name = "engine_settings"
 version = "0.1.0"
 dependencies = [
+ "engine_codec",
  "engine_math",
  "glam 0.30.9",
  "js-sys",
@@ -1477,7 +1504,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -1508,6 +1534,7 @@ name = "engine_sources"
 version = "0.1.0"
 dependencies = [
  "sha2",
+ "toml_edit",
 ]
 
 [[package]]
@@ -1534,8 +1561,44 @@ dependencies = [
 name = "engine_standard"
 version = "0.1.0"
 dependencies = [
+ "engine_ambient_occlusion",
+ "engine_auto_exposure",
+ "engine_bloom",
+ "engine_collision",
  "engine_core",
+ "engine_debug_view",
+ "engine_dither",
+ "engine_ground_cover",
+ "engine_grounding",
+ "engine_layer_erosion",
+ "engine_layer_heightmap",
+ "engine_layer_hydrology",
+ "engine_layer_noise",
+ "engine_layer_paths",
+ "engine_layer_relief",
+ "engine_layer_stamps",
+ "engine_lighting",
+ "engine_lights",
+ "engine_meshes",
+ "engine_navigation",
+ "engine_particles",
+ "engine_physics",
  "engine_places",
+ "engine_probes",
+ "engine_reflections",
+ "engine_scatter",
+ "engine_shadows",
+ "engine_sky",
+ "engine_splines",
+ "engine_sun",
+ "engine_taa",
+ "engine_terrain",
+ "engine_terrain_shading",
+ "engine_time_of_day",
+ "engine_tonemap",
+ "engine_water",
+ "engine_wind",
+ "engine_world_streaming",
 ]
 
 [[package]]
@@ -1665,18 +1728,16 @@ dependencies = [
 name = "engine_worker"
 version = "0.1.0"
 dependencies = [
- "engine_lodbuild",
+ "engine_core",
  "engine_math",
  "engine_panic",
+ "engine_registry",
  "engine_settings",
- "engine_sources",
- "engine_textures",
  "js-sys",
  "png",
  "ruzstd",
  "serde_json",
  "sha2",
- "wasm-bindgen",
  "zune-jpeg",
 ]
 
@@ -2318,6 +2379,7 @@ dependencies = [
 name = "kinds"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
  "toml_edit",
 ]
 

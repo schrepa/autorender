@@ -10,8 +10,6 @@ use crate::{Exceptions, Repository, Rules};
 
 const USAGE: &str = "usage: cargo xtask verify [--level quick|pr|merge] | schema";
 
-const SCHEMA: &str = "cargo xtask schema";
-
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
 type Build = Box<dyn Fn() -> Result<Engine, String>>;
@@ -28,19 +26,27 @@ impl App {
 
     pub fn generated(&self) -> Result<Vec<(String, String)>, String> {
         let mut engine = self.engine()?;
-        let registered = crate::bricks::registered_crates(&engine);
-        let mut files = vec![(
+        Ok(vec![(
             crate::bricks::FILE.to_owned(),
             crate::bricks::bricks_json(&self.repository, &mut engine)?,
-        )];
-        files.extend(crate::faces::files(&self.repository, &registered)?);
-        Ok(files)
+        )])
     }
 }
 
-const QUICK: usize = 8;
+const QUICK: usize = 5;
 
 const STAGES: &[Stage<App>] = &[
+    Stage {
+        name: "kinds",
+        needs: &[],
+        run: |app| {
+            crate::tools::run(
+                &app.repository.root,
+                "cargo",
+                &["run", "-q", "--locked", "-p", "kinds"],
+            )
+        },
+    },
     Stage {
         name: "policy",
         needs: &[],
@@ -60,26 +66,6 @@ const STAGES: &[Stage<App>] = &[
         name: "structure",
         needs: &[],
         run: |app| crate::structure::check(&app.repository, &Exceptions::NONE),
-    },
-    Stage {
-        name: "generated files",
-        needs: &[],
-        run: |app| crate::generated::check(&app.repository.root, &app.generated()?, SCHEMA),
-    },
-    Stage {
-        name: "dependencies",
-        needs: &["generated files"],
-        run: |app| crate::dependencies::check(&app.repository, &Exceptions::NONE, &app.engine()?),
-    },
-    Stage {
-        name: "faces",
-        needs: &[],
-        run: |app| crate::faces::check(&app.repository),
-    },
-    Stage {
-        name: "schedule ambiguities",
-        needs: &[],
-        run: |app| crate::ambiguities::check(app.engine()?),
     },
     Stage {
         name: "clippy",

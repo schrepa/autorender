@@ -1,4 +1,4 @@
-import package::post::frame::{depth_texture, post};
+import package::engine::post::frame::{depth_texture, post};
 
 fn world_at(pixel: vec2<i32>) -> vec4<f32> {
     let depth = textureLoad(depth_texture, pixel, 0);

@@ -513,12 +513,7 @@ pub fn face_source(place: &str, contract: &Contract, answered: &Answered) -> Str
 }
 
 pub fn places_of(registry: &BrickRegistry) -> Result<Vec<LinkedPlace>, Error> {
-    let mut places = registry.places();
-    for place in crate::composite::POST_PLACES {
-        if !places.iter().any(|known| known.name == place.name) {
-            places.push(*place);
-        }
-    }
+    let places = registry.places();
     let mut linked = Vec::new();
     for place in places {
         let Some(source) = place.face.wgsl else {

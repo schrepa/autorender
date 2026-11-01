@@ -1,4 +1,4 @@
-import package::post::frame::{drawn_texels, linear, post};
+import package::engine::post::frame::{drawn_texels, linear, post};
 
 @group(0) @binding(4) var source: texture_2d<f32>;
 

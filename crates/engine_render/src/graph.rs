@@ -1,149 +1,105 @@
-use engine_core::{Error, ErrorCode, Expected};
+use engine_core::{Error, ErrorCode};
 
-pub const MAX_COLORS: usize = 4;
-pub const MAX_PASSES: usize = 64;
-const SET_WORDS: usize = 2;
-pub const MAX_RESOURCES: usize = 64 * SET_WORDS;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Stage {
-    Prepare,
-    Opaque,
-    Deferred,
-    OpaqueLate,
-    Occlusion,
-    OpaqueSecond,
-    AfterOpaque,
-    Surfaces,
-    Sky,
-    Transparent,
-    Exposure,
-    PostScene,
-    PostLight,
-    Composite,
-    AfterFrame,
-}
-
-impl Stage {
-    pub const fn batch(self) -> u8 {
-        match self {
-            Self::Prepare => 0,
-            Self::Opaque
-            | Self::Deferred
-            | Self::OpaqueLate
-            | Self::Occlusion
-            | Self::OpaqueSecond => 1,
-            Self::AfterOpaque
-            | Self::Surfaces
-            | Self::Sky
-            | Self::Transparent
-            | Self::Exposure
-            | Self::PostScene
-            | Self::PostLight
-            | Self::Composite
-            | Self::AfterFrame => 2,
-        }
-    }
-}
+use crate::Layer;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Lifetime {
+pub enum Life {
     Frame,
     Kept,
+    Previous,
     Output,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct ResourceDecl {
-    pub name: &'static str,
-    pub lifetime: Lifetime,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct PassDecl {
-    pub name: &'static str,
-    pub stage: Stage,
+impl From<crate::Lifetime> for Life {
+    fn from(lifetime: crate::Lifetime) -> Self {
+        match lifetime {
+            crate::Lifetime::Frame => Self::Frame,
+            crate::Lifetime::Kept => Self::Kept,
+            crate::Lifetime::Previous => Self::Previous,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ResourceId(u16);
+pub struct ResourceId(u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct PassId(u16);
-
-impl PassId {
-    pub fn index(self) -> usize {
-        usize::from(self.0)
-    }
-
-    fn bit(self) -> u64 {
-        1 << self.0
-    }
-}
+pub struct PassId(u32);
 
 impl ResourceId {
+    pub fn new(index: usize) -> Self {
+        Self(index as u32)
+    }
+
     pub fn index(self) -> usize {
-        usize::from(self.0)
+        self.0 as usize
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-struct Set([u64; SET_WORDS]);
-
-impl Set {
-    fn contains(self, resource: ResourceId) -> bool {
-        let index = resource.index();
-        self.0[index / 64] & (1 << (index % 64)) != 0
+impl PassId {
+    pub fn new(index: usize) -> Self {
+        Self(index as u32)
     }
 
-    fn insert(&mut self, resource: ResourceId) {
-        let index = resource.index();
-        self.0[index / 64] |= 1 << (index % 64);
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct Bits(Vec<u64>);
+
+impl Bits {
+    pub fn of(width: usize) -> Self {
+        Self(vec![0; width.div_ceil(64)])
     }
 
-    fn remove(&mut self, resource: ResourceId) {
-        let index = resource.index();
-        self.0[index / 64] &= !(1 << (index % 64));
+    pub fn contains(&self, index: usize) -> bool {
+        self.0
+            .get(index / 64)
+            .is_some_and(|word| word & (1 << (index % 64)) != 0)
     }
 
-    fn union(self, other: Self) -> Self {
-        let mut words = self.0;
-        for (word, more) in words.iter_mut().zip(other.0) {
-            *word |= more;
+    pub fn insert(&mut self, index: usize) {
+        if let Some(word) = self.0.get_mut(index / 64) {
+            *word |= 1 << (index % 64);
         }
-        Self(words)
     }
 
-    fn intersect(self, other: Self) -> Self {
-        let mut words = self.0;
-        for (word, more) in words.iter_mut().zip(other.0) {
-            *word &= more;
+    fn remove(&mut self, index: usize) {
+        if let Some(word) = self.0.get_mut(index / 64) {
+            *word &= !(1 << (index % 64));
         }
-        Self(words)
     }
 
-    fn without(self, other: Self) -> Self {
-        let mut words = self.0;
-        for (word, more) in words.iter_mut().zip(other.0) {
-            *word &= !more;
-        }
-        Self(words)
+    fn union(&self, other: &Self) -> Self {
+        Self(self.0.iter().zip(&other.0).map(|(a, b)| a | b).collect())
     }
 
-    fn is_empty(self) -> bool {
+    fn intersect(&self, other: &Self) -> Self {
+        Self(self.0.iter().zip(&other.0).map(|(a, b)| a & b).collect())
+    }
+
+    fn without(&self, other: &Self) -> Self {
+        Self(self.0.iter().zip(&other.0).map(|(a, b)| a & !b).collect())
+    }
+
+    fn is_empty(&self) -> bool {
         self.0.iter().all(|&word| word == 0)
     }
 
-    fn first(self) -> Option<ResourceId> {
+    fn first(&self) -> Option<usize> {
         self.0.iter().enumerate().find_map(|(word, &bits)| {
-            (bits != 0).then(|| ResourceId((word * 64) as u16 + bits.trailing_zeros() as u16))
+            (bits != 0).then(|| word * 64 + bits.trailing_zeros() as usize)
         })
     }
 
-    fn iter(self) -> impl Iterator<Item = ResourceId> {
-        (0..MAX_RESOURCES as u16)
-            .map(ResourceId)
-            .filter(move |&resource| self.contains(resource))
+    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        self.0.iter().enumerate().flat_map(|(word, &bits)| {
+            (0..64)
+                .filter(move |bit| bits & (1 << bit) != 0)
+                .map(move |bit| word * 64 + bit)
+        })
     }
 }
 
@@ -195,494 +151,417 @@ pub const BLACK: [f64; 4] = [0.0, 0.0, 0.0, 1.0];
 pub const FAR: f32 = 0.0;
 
 #[derive(Clone, Copy, Debug)]
-struct ResourceEntry {
-    name: &'static str,
-    lifetime: Lifetime,
-    owner: usize,
+pub struct ResourceEntry {
+    pub label: &'static str,
+    pub part: u32,
+    pub life: Life,
+    pub view: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub struct PassEntry {
-    pub name: &'static str,
-    pub span: &'static str,
-    pub stage: Stage,
-    pub part: usize,
-    pub index: usize,
-}
-
-#[derive(Debug, Default)]
-pub struct GraphTable {
-    resources: Vec<ResourceEntry>,
-    passes: Vec<PassEntry>,
-    names: &'static [&'static str],
-}
-
-impl GraphTable {
-    pub fn add_part(
-        &mut self,
-        part: usize,
-        brick: &'static str,
-        passes: &'static [PassDecl],
-        resources: &'static [ResourceDecl],
-    ) -> Result<(), Error> {
-        for resource in resources {
-            if self.resource(resource.name).is_some() {
-                return Err(Error::new(
-                    ErrorCode::DuplicateBrick,
-                    format!("$.bricks.{brick}.resources.{}", resource.name),
-                )
-                .expected(Expected::Unique)
-                .got(resource.name));
-            }
-            if self.resources.len() >= MAX_RESOURCES {
-                return Err(Error::new(
-                    ErrorCode::RenderFailed,
-                    format!("$.bricks.{brick}.resources"),
-                )
-                .at_most(MAX_RESOURCES as u64)
-                .got(self.resources.len() + 1));
-            }
-            self.resources.push(ResourceEntry {
-                name: resource.name,
-                lifetime: resource.lifetime,
-                owner: part,
-            });
-        }
-        for (index, pass) in passes.iter().enumerate() {
-            if self.passes.iter().any(|known| known.name == pass.name) {
-                return Err(Error::new(
-                    ErrorCode::DuplicateBrick,
-                    format!("$.bricks.{brick}.passes.{}", pass.name),
-                )
-                .expected(Expected::Unique)
-                .got(pass.name));
-            }
-            if self.passes.len() >= MAX_PASSES {
-                return Err(Error::new(
-                    ErrorCode::RenderFailed,
-                    format!("$.bricks.{brick}.passes"),
-                )
-                .at_most(MAX_PASSES as u64)
-                .got(self.passes.len() + 1));
-            }
-            self.passes.push(PassEntry {
-                name: pass.name,
-                span: leak(format!("stage_{}", pass.name)),
-                stage: pass.stage,
-                part,
-                index,
-            });
-        }
-        let names: Vec<&'static str> = self.passes.iter().map(|pass| pass.name).collect();
-        self.names = Box::leak(names.into_boxed_slice());
-        Ok(())
-    }
-
-    pub fn resource(&self, name: &str) -> Option<ResourceId> {
-        self.resources
-            .iter()
-            .position(|resource| resource.name == name)
-            .map(|index| ResourceId(index as u16))
-    }
-
-    pub fn resource_name(&self, resource: ResourceId) -> &'static str {
-        self.resources[resource.index()].name
-    }
-
-    pub fn lifetime(&self, resource: ResourceId) -> Lifetime {
-        self.resources[resource.index()].lifetime
-    }
-
-    pub fn owner(&self, resource: ResourceId) -> usize {
-        self.resources[resource.index()].owner
-    }
-
-    pub fn pass_named(&self, name: &str) -> Option<PassId> {
-        self.passes
-            .iter()
-            .position(|pass| pass.name == name)
-            .map(|position| PassId(position as u16))
-    }
-
-    pub fn entry(&self, pass: PassId) -> PassEntry {
-        self.passes[pass.index()]
-    }
-
-    pub fn names(&self) -> &'static [&'static str] {
-        self.names
-    }
-
-    pub fn names_of(&self, kept: u64) -> engine_core::Names {
-        engine_core::Names {
-            bits: kept,
-            names: self.names,
-        }
-    }
-
-    fn resources(&self) -> impl Iterator<Item = (ResourceId, ResourceEntry)> + '_ {
-        self.resources
-            .iter()
-            .enumerate()
-            .map(|(index, &resource)| (ResourceId(index as u16), resource))
-    }
-}
-
-fn leak(text: String) -> &'static str {
-    Box::leak(text.into_boxed_str())
+    pub label: &'static str,
+    pub part: u32,
+    pub local: u32,
+    pub package: &'static str,
+    pub registered: u32,
+    pub layer: Option<Layer>,
+    pub shared: bool,
 }
 
 #[derive(Clone, Debug)]
-pub struct Node {
-    pass: PassId,
-    stage: Stage,
-    reads: Set,
-    written_reads: Set,
-    writes: Set,
-    colors: [Option<(ResourceId, Access)>; MAX_COLORS],
+pub struct Declared {
+    pub entry: PassEntry,
+    pub reads: Vec<ResourceId>,
+    pub writes: Vec<ResourceId>,
+    pub colors: Vec<(ResourceId, Access)>,
+    pub depth: Option<(ResourceId, Access)>,
+    pub after: Vec<PassId>,
+}
+
+#[derive(Clone, Debug)]
+struct Node {
+    entry: PassEntry,
+    reads: Bits,
+    writes: Bits,
+    colors: Vec<(ResourceId, Access)>,
     depth: Option<(ResourceId, Access)>,
-    kept: bool,
-    color_ops: [Option<Ops>; MAX_COLORS],
-    depth_ops: Option<Ops>,
 }
 
 impl Node {
-    pub fn pass(&self) -> PassId {
-        self.pass
+    fn attachments(&self) -> impl Iterator<Item = (ResourceId, Access)> + '_ {
+        self.colors.iter().chain(&self.depth).copied()
     }
 
-    pub fn colors(&self) -> impl Iterator<Item = (ResourceId, Ops)> + '_ {
-        self.colors
-            .iter()
-            .zip(&self.color_ops)
-            .filter_map(|(color, ops)| Some((color.as_ref()?.0, (*ops)?)))
-    }
-
-    pub fn depth(&self) -> Option<(ResourceId, Option<Ops>)> {
-        self.depth.map(|(resource, _)| (resource, self.depth_ops))
-    }
-
-    fn inputs(&self) -> Set {
-        let mut inputs = self.reads;
+    fn inputs(&self) -> Bits {
+        let mut inputs = self.reads.clone();
         for (resource, access) in self.attachments() {
             if !matches!(access, Access::Clear(_)) {
-                inputs.insert(resource);
+                inputs.insert(resource.index());
             }
         }
         inputs
     }
 
-    fn required(&self) -> Set {
-        let mut required = self.reads;
+    fn required(&self) -> Bits {
+        let mut required = self.reads.clone();
         for (resource, access) in self.attachments() {
             if matches!(access, Access::Load | Access::ReadOnly) {
-                required.insert(resource);
+                required.insert(resource.index());
             }
         }
         required
     }
 
-    fn outputs(&self) -> Set {
-        let mut outputs = self.writes;
+    fn outputs(&self) -> Bits {
+        let mut outputs = self.writes.clone();
         for (resource, access) in self.attachments() {
             if access != Access::ReadOnly {
-                outputs.insert(resource);
+                outputs.insert(resource.index());
             }
         }
         outputs
     }
 
-    fn reads_only(&self) -> Set {
-        self.inputs().without(self.outputs())
+    fn reads_only(&self) -> Bits {
+        self.inputs().without(&self.outputs())
     }
 
-    fn attachments(&self) -> impl Iterator<Item = (ResourceId, Access)> + '_ {
-        self.colors.iter().flatten().chain(&self.depth).copied()
+    fn key(&self, index: usize) -> (u8, u8, &'static str, u32, usize) {
+        (
+            self.entry.layer.map_or(0, |layer| layer as u8 + 1),
+            u8::from(!self.entry.shared),
+            self.entry.package,
+            self.entry.registered,
+            index,
+        )
+    }
+
+    fn batch(&self, positioned_before: bool) -> u8 {
+        match self.entry.layer {
+            None if positioned_before => 2,
+            None => 0,
+            Some(Layer::Occluders | Layer::Opaque | Layer::Late) => 1,
+            Some(Layer::Backdrop) if self.entry.shared => 1,
+            Some(Layer::Backdrop | Layer::Media | Layer::Over | Layer::Blend) => 2,
+        }
     }
 }
 
-pub struct PassBuilder<'g> {
-    node: &'g mut Node,
+#[derive(Clone, Debug)]
+pub struct Planned {
+    pub pass: PassId,
+    pub batch: u8,
+    pub colors: Vec<(ResourceId, Ops)>,
+    pub depth: Option<(ResourceId, Option<Ops>)>,
 }
 
-impl PassBuilder<'_> {
-    #[must_use]
-    pub fn read(self, resource: impl Into<Option<ResourceId>>) -> Self {
-        if let Some(resource) = resource.into() {
-            self.node.reads.insert(resource);
+#[derive(Clone, Debug, Default)]
+pub struct Plan {
+    pub passes: Vec<Planned>,
+    pub written: Bits,
+}
+
+#[derive(Debug, Default)]
+pub struct StaticGraph {
+    resources: Vec<ResourceEntry>,
+    nodes: Vec<Node>,
+    order: Vec<usize>,
+    batches: Vec<u8>,
+}
+
+fn refused(code: ErrorCode, path: String) -> Error {
+    Error::new(code, path)
+}
+
+impl StaticGraph {
+    pub fn build(resources: Vec<ResourceEntry>, passes: Vec<Declared>) -> Result<Self, Error> {
+        let width = resources.len();
+        let count = passes.len();
+        let mut nodes = Vec::with_capacity(count);
+        let mut after = Vec::with_capacity(count);
+        for declared in passes {
+            let mut reads = Bits::of(width);
+            let mut writes = Bits::of(width);
+            for resource in &declared.reads {
+                reads.insert(resource.index());
+            }
+            for resource in &declared.writes {
+                writes.insert(resource.index());
+            }
+            after.push(declared.after);
+            nodes.push(Node {
+                entry: declared.entry,
+                reads,
+                writes,
+                colors: declared.colors,
+                depth: declared.depth,
+            });
         }
-        self
-    }
-
-    #[must_use]
-    pub fn read_if(self, condition: bool, resource: impl Into<Option<ResourceId>>) -> Self {
-        if condition { self.read(resource) } else { self }
-    }
-
-    #[must_use]
-    pub fn read_written(self, resource: impl Into<Option<ResourceId>>) -> Self {
-        if let Some(resource) = resource.into() {
-            self.node.written_reads.insert(resource);
+        let mut views = Bits::of(width);
+        for (index, resource) in resources.iter().enumerate() {
+            if resource.view {
+                views.insert(index);
+            }
         }
-        self
-    }
-
-    #[must_use]
-    pub fn read_written_if(self, condition: bool, resource: impl Into<Option<ResourceId>>) -> Self {
-        if condition {
-            self.read_written(resource)
-        } else {
-            self
+        for node in &nodes {
+            if node.entry.layer.is_none() && !node.outputs().intersect(&views).is_empty() {
+                return Err(refused(
+                    ErrorCode::ViewWriterUnplaced,
+                    format!("$.passes.{}", node.entry.label),
+                ));
+            }
         }
-    }
-
-    #[must_use]
-    pub fn write(self, resource: impl Into<Option<ResourceId>>) -> Self {
-        if let Some(resource) = resource.into() {
-            self.node.writes.insert(resource);
+        let mut before = vec![Bits::of(count); count];
+        for (late, reader) in nodes.iter().enumerate() {
+            let reads = reader.reads_only();
+            let inputs = reader.inputs();
+            for (early, writer) in nodes.iter().enumerate() {
+                if early == late {
+                    continue;
+                }
+                let outputs = writer.outputs();
+                for resource in outputs.intersect(&inputs).iter() {
+                    let entry = &resources[resource];
+                    if entry.view {
+                        let placed_earlier = reader.entry.layer.is_none()
+                            || writer.key(early) < reader.key(late);
+                        if placed_earlier {
+                            before[late].insert(early);
+                        } else if reads.contains(resource) {
+                            before[early].insert(late);
+                        }
+                    } else if entry.life == Life::Previous {
+                        if reads.contains(resource) {
+                            before[early].insert(late);
+                        }
+                    } else if reads.contains(resource) {
+                        before[late].insert(early);
+                    }
+                }
+                if reader.entry.layer.is_some() && writer.entry.layer.is_some() {
+                    let shared_view = !reader.outputs().intersect(&outputs).intersect(&views).is_empty();
+                    if shared_view && writer.key(early) < reader.key(late) {
+                        before[late].insert(early);
+                    }
+                }
+            }
+            for pass in &after[late] {
+                before[late].insert(pass.index());
+            }
         }
-        self
-    }
-
-    #[must_use]
-    pub fn write_if(self, condition: bool, resource: impl Into<Option<ResourceId>>) -> Self {
-        if condition {
-            self.write(resource)
-        } else {
-            self
+        let mut placed = Bits::of(count);
+        let mut order = Vec::with_capacity(count);
+        while order.len() < count {
+            let next = (0..count)
+                .filter(|&index| {
+                    !placed.contains(index) && before[index].without(&placed).is_empty()
+                })
+                .min_by_key(|&index| nodes[index].key(index));
+            let Some(next) = next else {
+                let stuck = (0..count)
+                    .filter(|&index| !placed.contains(index))
+                    .min_by_key(|&index| nodes[index].key(index))
+                    .unwrap_or(0);
+                return Err(refused(
+                    ErrorCode::AmbiguousPasses,
+                    format!("$.passes.{}", nodes[stuck].entry.label),
+                ));
+            };
+            placed.insert(next);
+            order.push(next);
         }
-    }
-
-    #[must_use]
-    pub fn color(self, resource: ResourceId, access: Access) -> Self {
-        if let Some(slot) = self.node.colors.iter_mut().find(|slot| slot.is_none()) {
-            *slot = Some((resource, access));
+        let mut reach = before.clone();
+        for &index in &order {
+            let mut through = reach[index].clone();
+            for earlier in reach[index].iter().collect::<Vec<_>>() {
+                through = through.union(&reach[earlier]);
+            }
+            reach[index] = through;
         }
-        self
+        for first in 0..count {
+            for second in first + 1..count {
+                let shared = nodes[first]
+                    .outputs()
+                    .intersect(&nodes[second].outputs())
+                    .without(&views);
+                let Some(resource) = shared.first() else {
+                    continue;
+                };
+                let ordered = reach[second].contains(first) || reach[first].contains(second);
+                if !ordered {
+                    return Err(refused(
+                        ErrorCode::AmbiguousPasses,
+                        format!(
+                            "$.passes.{}.writes.{}[{}]",
+                            nodes[second].entry.label,
+                            resources[resource].label,
+                            nodes[first].entry.label
+                        ),
+                    ));
+                }
+            }
+        }
+        for (late, reader) in nodes.iter().enumerate() {
+            for resource in reader.reads_only().iter() {
+                if resources[resource].life != Life::Frame || resources[resource].view {
+                    continue;
+                }
+                let written = (0..count).any(|early| {
+                    reach[late].contains(early) && nodes[early].outputs().contains(resource)
+                });
+                if !written {
+                    return Err(refused(
+                        ErrorCode::ReadBeforeWrite,
+                        format!("$.passes.{}.reads.{}", reader.entry.label, resources[resource].label),
+                    ));
+                }
+            }
+        }
+        let mut batches = Vec::with_capacity(count);
+        let mut positioned = false;
+        let mut last = 0;
+        for &index in &order {
+            let node = &nodes[index];
+            let batch = node.batch(positioned).max(last);
+            positioned |= node.entry.layer.is_some();
+            last = batch;
+            batches.push(batch);
+        }
+        Ok(Self {
+            resources,
+            nodes,
+            order,
+            batches,
+        })
     }
 
-    #[must_use]
-    pub fn depth(self, resource: ResourceId, access: Access) -> Self {
-        self.node.depth = Some((resource, access));
-        self
+    pub fn passes(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn resources(&self) -> usize {
+        self.resources.len()
+    }
+
+    pub fn entry(&self, pass: PassId) -> PassEntry {
+        self.nodes[pass.index()].entry
+    }
+
+    pub fn resource(&self, resource: ResourceId) -> ResourceEntry {
+        self.resources[resource.index()]
+    }
+
+    pub fn plan(&self, runs: &Bits, outputs: &Bits) -> Result<Plan, Error> {
+        let mut needed = outputs.clone();
+        for (index, resource) in self.resources.iter().enumerate() {
+            if resource.life != Life::Frame {
+                needed.insert(index);
+            }
+        }
+        let mut kept: Vec<Option<Planned>> = vec![None; self.order.len()];
+        for (at, &index) in self.order.iter().enumerate().rev() {
+            if !runs.contains(index) {
+                continue;
+            }
+            let node = &self.nodes[index];
+            let produced = node.outputs();
+            if produced.intersect(&needed).is_empty() {
+                continue;
+            }
+            let colors = node
+                .colors
+                .iter()
+                .filter_map(|&(resource, access)| {
+                    Some((resource, store_ops(access, needed.contains(resource.index()))?))
+                })
+                .collect();
+            let depth = node.depth.map(|(resource, access)| {
+                (resource, store_ops(access, needed.contains(resource.index())))
+            });
+            kept[at] = Some(Planned {
+                pass: PassId::new(index),
+                batch: self.batches[at],
+                colors,
+                depth,
+            });
+            for resource in produced.iter() {
+                if self.resources[resource].life == Life::Frame {
+                    needed.remove(resource);
+                }
+            }
+            needed = needed.union(&node.inputs());
+        }
+        let mut written = Bits::of(self.resources.len());
+        for (index, resource) in self.resources.iter().enumerate() {
+            if matches!(resource.life, Life::Kept | Life::Previous) {
+                written.insert(index);
+            }
+        }
+        let mut passes = Vec::new();
+        for mut planned in kept.into_iter().flatten() {
+            let node = &self.nodes[planned.pass.index()];
+            if let Some(resource) = node.required().without(&written).first() {
+                return Err(refused(
+                    ErrorCode::ReadBeforeWrite,
+                    format!("$.passes.{}.reads.{}", node.entry.label, self.resources[resource].label),
+                ));
+            }
+            for (resource, ops) in &mut planned.colors {
+                if let Some(&(_, access)) = node.colors.iter().find(|(known, _)| *known == *resource) {
+                    ops.load = load_op(access, written.contains(resource.index()));
+                }
+            }
+            if let (Some((resource, Some(ops))), Some((_, access))) = (planned.depth.as_mut(), node.depth) {
+                ops.load = load_op(access, written.contains(resource.index()));
+            }
+            written = written.union(&node.outputs());
+            passes.push(planned);
+        }
+        Ok(Plan { passes, written })
     }
 }
 
 #[derive(Debug, Default)]
-pub struct FrameGraph {
-    nodes: Vec<Node>,
+pub struct PlanCache {
+    plans: Vec<(Bits, Bits, Plan)>,
+    misses: u64,
 }
 
-impl FrameGraph {
-    pub fn clear(&mut self) {
-        self.nodes.clear();
-    }
-
-    pub fn add(&mut self, table: &GraphTable, pass: PassId) -> PassBuilder<'_> {
-        self.nodes.push(Node {
-            pass,
-            stage: table.entry(pass).stage,
-            reads: Set::default(),
-            written_reads: Set::default(),
-            writes: Set::default(),
-            colors: [None; MAX_COLORS],
-            depth: None,
-            kept: false,
-            color_ops: [None; MAX_COLORS],
-            depth_ops: None,
-        });
-        let last = self.nodes.len() - 1;
-        PassBuilder {
-            node: &mut self.nodes[last],
-        }
-    }
-
-    pub fn compile(&mut self, table: &GraphTable) -> Result<(), Error> {
-        let mut written = Set::default();
-        for node in &self.nodes {
-            written = written.union(node.outputs());
-        }
-        for node in &mut self.nodes {
-            node.reads = node.reads.union(node.written_reads.intersect(written));
-            node.written_reads = Set::default();
-        }
-        self.nodes.sort_by_key(|node| (node.stage, node.pass));
-        if let Some(twice) = self
-            .nodes
-            .windows(2)
-            .find(|pair| pair[0].pass == pair[1].pass)
-        {
-            return Err(Error::new(
-                ErrorCode::RenderFailed,
-                format!("$.passes.{}", table.entry(twice[0].pass).name),
-            )
-            .expected(Expected::Unique));
-        }
-        let mut ordered = Vec::with_capacity(self.nodes.len());
-        let mut start = 0;
-        while start < self.nodes.len() {
-            let stage = self.nodes[start].stage;
-            let end = start
-                + self.nodes[start..]
-                    .iter()
-                    .take_while(|node| node.stage == stage)
-                    .count();
-            ordered.extend(
-                order_stage(table, &self.nodes[start..end])?
-                    .into_iter()
-                    .map(|at| start + at),
-            );
-            start = end;
-        }
-        let nodes = std::mem::take(&mut self.nodes);
-        let mut slots: Vec<Option<Node>> = nodes.into_iter().map(Some).collect();
-        self.nodes = ordered
-            .into_iter()
-            .filter_map(|index| slots[index].take())
-            .collect();
-        self.plan_operations(table)
-    }
-
-    fn plan_operations(&mut self, table: &GraphTable) -> Result<(), Error> {
-        let mut needed = Set::default();
-        for (resource, entry) in table.resources() {
-            if entry.lifetime != Lifetime::Frame {
-                needed.insert(resource);
-            }
-        }
-        for node in self.nodes.iter_mut().rev() {
-            let outputs = node.outputs();
-            node.kept = !outputs.intersect(needed).is_empty();
-            if !node.kept {
-                continue;
-            }
-            for (slot, ops) in node.colors.iter().zip(&mut node.color_ops) {
-                *ops = slot
-                    .and_then(|(resource, access)| store_ops(access, needed.contains(resource)));
-            }
-            node.depth_ops = node
-                .depth
-                .and_then(|(resource, access)| store_ops(access, needed.contains(resource)));
-            for resource in outputs.iter() {
-                if table.lifetime(resource) == Lifetime::Frame {
-                    needed.remove(resource);
+impl PlanCache {
+    pub fn plan(
+        &mut self,
+        graph: &StaticGraph,
+        runs: &Bits,
+        outputs: &Bits,
+        most: usize,
+    ) -> Result<&Plan, Error> {
+        let found = self
+            .plans
+            .iter()
+            .position(|(known, read, _)| known == runs && read == outputs);
+        let index = match found {
+            Some(index) => index,
+            None => {
+                let plan = graph.plan(runs, outputs)?;
+                self.misses += 1;
+                if self.plans.len() >= most.max(1) {
+                    self.plans.remove(0);
                 }
+                self.plans.push((runs.clone(), outputs.clone(), plan));
+                self.plans.len() - 1
             }
-            needed = needed.union(node.inputs());
-        }
-        let mut written = Set::default();
-        for (resource, entry) in table.resources() {
-            if entry.lifetime == Lifetime::Kept {
-                written.insert(resource);
-            }
-        }
-        for node in self.nodes.iter_mut().filter(|node| node.kept) {
-            if let Some(resource) = node.required().without(written).first() {
-                return Err(Error::new(
-                    ErrorCode::RenderFailed,
-                    format!("$.passes.{}", table.entry(node.pass).name),
-                )
-                .expected(Expected::Present)
-                .got(table.resource_name(resource)));
-            }
-            let colors = node.colors;
-            for (slot, ops) in colors.iter().zip(&mut node.color_ops) {
-                if let (Some((resource, access)), Some(ops)) = (slot, ops.as_mut()) {
-                    ops.load = load_op(*access, written.contains(*resource));
-                }
-            }
-            if let (Some((resource, access)), Some(ops)) = (node.depth, node.depth_ops.as_mut()) {
-                ops.load = load_op(access, written.contains(resource));
-            }
-            written = written.union(node.outputs());
-        }
-        Ok(())
-    }
-
-    pub fn kept_passes(&self) -> impl Iterator<Item = &Node> {
-        self.nodes.iter().filter(|node| node.kept)
-    }
-
-    pub fn kept(&self) -> u64 {
-        self.kept_passes()
-            .fold(0, |mask, node| mask | node.pass.bit())
-    }
-
-    pub fn written(&self) -> u128 {
-        let Set([low, high]) = self.kept_passes().fold(Set::default(), |written, node| {
-            written.union(node.outputs())
-        });
-        u128::from(low) | (u128::from(high) << 64)
-    }
-}
-
-fn order_stage(table: &GraphTable, nodes: &[Node]) -> Result<Vec<usize>, Error> {
-    let count = nodes.len();
-    let mut before = vec![0_u64; count];
-    for (late, reader) in nodes.iter().enumerate() {
-        let reads = reader.reads_only();
-        for (early, writer) in nodes.iter().enumerate() {
-            if early != late && !writer.outputs().intersect(reads).is_empty() {
-                before[late] |= 1 << early;
-            }
-        }
-    }
-    let mut placed = 0_u64;
-    let mut order = Vec::with_capacity(count);
-    while order.len() < count {
-        let next = (0..count)
-            .filter(|&index| placed & (1 << index) == 0 && before[index] & !placed == 0)
-            .min_by_key(|&index| nodes[index].pass);
-        let Some(next) = next else {
-            let stuck = (0..count)
-                .filter(|&index| placed & (1 << index) == 0)
-                .min_by_key(|&index| nodes[index].pass)
-                .map_or(nodes[0].pass, |index| nodes[index].pass);
-            return Err(Error::new(
-                ErrorCode::AmbiguousPasses,
-                format!("$.passes.{}", table.entry(stuck).name),
-            )
-            .expected(Expected::Acyclic));
         };
-        placed |= 1 << next;
-        order.push(next);
+        Ok(&self.plans[index].2)
     }
-    let mut reach = before.clone();
-    for &index in &order {
-        let mut through = reach[index];
-        for (earlier, &reached) in reach.iter().enumerate() {
-            if through & (1 << earlier) != 0 {
-                through |= reached;
-            }
-        }
-        reach[index] = through;
+
+    pub fn misses(&self) -> u64 {
+        self.misses
     }
-    for first in 0..count {
-        for second in first + 1..count {
-            let shared = nodes[first].outputs().intersect(nodes[second].outputs());
-            let Some(resource) = shared.first() else {
-                continue;
-            };
-            let ordered = reach[second] & (1 << first) != 0 || reach[first] & (1 << second) != 0;
-            if !ordered {
-                let (early, late) = if nodes[first].pass < nodes[second].pass {
-                    (first, second)
-                } else {
-                    (second, first)
-                };
-                return Err(Error::new(
-                    ErrorCode::AmbiguousPasses,
-                    format!(
-                        "$.passes.{}.writes.{}",
-                        table.entry(nodes[late].pass).name,
-                        table.resource_name(resource)
-                    ),
-                )
-                .expected(Expected::Sorted)
-                .got(table.entry(nodes[early].pass).name));
-            }
-        }
+
+    pub fn clear(&mut self) {
+        self.plans.clear();
     }
-    Ok(order)
 }
 
 fn store_ops(access: Access, read: bool) -> Option<Ops> {

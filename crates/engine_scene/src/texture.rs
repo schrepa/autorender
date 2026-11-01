@@ -11,7 +11,7 @@ use crate::{SceneFiles, files::valid_uri, validation::identifier};
 pub struct SceneTexture {
     #[cfg_attr(
         feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -40,7 +40,7 @@ pub struct SceneTexture {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(
         feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub provided: Option<String>,
 }

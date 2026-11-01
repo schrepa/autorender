@@ -10,21 +10,26 @@ default = []
 dev = ["engine_profile/bricks"]
 profiling = ["engine_profile/enabled"]
 attribution = []
-schema = ["dep:schemars", "engine_assets/schema", "engine_settings/schema"]
+schema = ["engine_assets/schema", "engine_settings/schema"]
 
 [dependencies]
+engine_ecs.workspace = true
+engine_place.workspace = true
+engine_registry.workspace = true
+engine_codec.workspace = true
 engine_assets.workspace = true
 engine_math.workspace = true
 engine_settings.workspace = true
 engine_profile.workspace = true
 bevy_app.workspace = true
-bevy_ecs.workspace = true
+bevy_ecs = { workspace = true, features = ["debug"] }
+bytemuck.workspace = true
 glam.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 engine_sources.workspace = true
 engine_textures.workspace = true
-schemars = { workspace = true, optional = true }
 
 [build-dependencies]
 engine_sources.workspace = true

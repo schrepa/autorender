@@ -29,9 +29,9 @@ gpu_consts! {
 
     pub const MATERIAL_ANISOTROPY: u16 = 16 => ["DETAIL_ANISOTROPY"];
 
-    pub const PYRAMID_GROUP: u32 = 8 => ["@pyramid_first" in "culling::pyramid", "@pyramid_down" in "culling::pyramid", "@pyramid_first_nearest" in "culling::pyramid", "@pyramid_down_nearest" in "culling::pyramid"];
+    pub const PYRAMID_GROUP: u32 = 8 => ["@pyramid_first" in "engine::pyramid", "@pyramid_down" in "engine::pyramid", "@pyramid_first_nearest" in "engine::pyramid", "@pyramid_down_nearest" in "engine::pyramid"];
 
-    pub const PYRAMID_EXTENT_BYTES: usize = 16 => ["size_of Extent" in "culling::pyramid"];
+    pub const PYRAMID_EXTENT_BYTES: usize = 16 => ["size_of Extent" in "engine::pyramid"];
 
     pub const VARIANT_MAPS: u32 = 1 => ["VARIANT_MAPS" in "meshes::declarations"];
     pub const VARIANT_NORMAL_MAP: u32 = 2 => ["VARIANT_NORMAL_MAP" in "meshes::declarations"];

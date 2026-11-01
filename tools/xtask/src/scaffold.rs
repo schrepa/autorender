@@ -491,9 +491,8 @@ fn part_claim(
                 }) else {
                     continue;
                 };
-                let face = engine_checks::faces::face(&package.folder)?;
                 let module = module_of(&path, package.path.as_deref().unwrap_or_default());
-                let inner = if face.reaches(std::slice::from_ref(&name)) || module.is_empty() {
+                let inner = if module.is_empty() {
                     name.clone()
                 } else {
                     format!("{module}::{name}")

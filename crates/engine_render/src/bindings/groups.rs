@@ -5,100 +5,6 @@ use crate::pipeline_layouts::StageLimits;
 
 pub type BindingDecl = Binding;
 
-#[derive(Debug)]
-pub struct Contribution {
-    pub group: &'static str,
-    pub set: &'static str,
-    pub bindings: &'static [BindingDecl],
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum GroupRef {
-    Own(&'static Table),
-    Shared {
-        group: &'static str,
-        without: &'static [&'static str],
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SharedBinding {
-    pub number: u32,
-    pub set: &'static str,
-    pub brick: &'static str,
-    pub decl: BindingDecl,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SharedGroups {
-    groups: Vec<(&'static str, Vec<SharedBinding>)>,
-}
-
-impl SharedGroups {
-    pub fn add(
-        &mut self,
-        brick: &'static str,
-        contribution: &'static Contribution,
-    ) -> Result<(), Error> {
-        let index = match self
-            .groups
-            .iter()
-            .position(|(name, _)| *name == contribution.group)
-        {
-            Some(index) => index,
-            None => {
-                self.groups.push((contribution.group, Vec::new()));
-                self.groups.len() - 1
-            }
-        };
-        let bindings = &mut self.groups[index].1;
-        for decl in contribution.bindings {
-            if let Some(known) = bindings.iter().find(|known| known.decl.name == decl.name) {
-                return Err(Error::new(
-                    ErrorCode::DuplicateBrick,
-                    format!(
-                        "$.groups.{}.{}.{}",
-                        contribution.group, contribution.set, decl.name
-                    ),
-                )
-                .expected(Expected::Unique)
-                .got(known.brick));
-            }
-            bindings.push(SharedBinding {
-                number: bindings.len() as u32,
-                set: contribution.set,
-                brick,
-                decl: *decl,
-            });
-        }
-        Ok(())
-    }
-
-    pub fn groups(&self) -> impl Iterator<Item = (&'static str, &[SharedBinding])> + '_ {
-        self.groups
-            .iter()
-            .map(|(name, bindings)| (*name, bindings.as_slice()))
-    }
-
-    pub fn group(&self, name: &str) -> Option<&[SharedBinding]> {
-        self.groups
-            .iter()
-            .find(|(known, _)| *known == name)
-            .map(|(_, bindings)| bindings.as_slice())
-    }
-
-    pub fn view<'a>(
-        &'a self,
-        name: &str,
-        without: &'a [&'static str],
-    ) -> impl Iterator<Item = &'a SharedBinding> + 'a {
-        self.group(name)
-            .unwrap_or_default()
-            .iter()
-            .filter(move |binding| !without.contains(&binding.set))
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ResolvedBinding {
     pub group: u32,
@@ -134,41 +40,24 @@ const STAGES: [(&str, Stages); 3] = [
 impl ResolvedLayout {
     pub fn resolve(
         label: &'static str,
-        groups: &[GroupRef],
-        shared: &SharedGroups,
+        groups: &[&'static Table],
     ) -> Result<Self, Error> {
         let mut bindings: Vec<ResolvedBinding> = Vec::new();
-        for (group, reference) in groups.iter().enumerate() {
+        for (group, table) in groups.iter().enumerate() {
             let group = group as u32;
-            let resolved: Vec<ResolvedBinding> = match *reference {
-                GroupRef::Own(table) => table
-                    .bindings
-                    .iter()
-                    .enumerate()
-                    .map(|(number, binding)| ResolvedBinding {
-                        group,
-                        number: number as u32,
-                        name: binding.name,
-                        kind: binding.kind,
-                        stages: binding.stages,
-                        owner: table.label,
-                    })
-                    .collect(),
-                GroupRef::Shared {
-                    group: name,
-                    without,
-                } => shared
-                    .view(name, without)
-                    .map(|binding| ResolvedBinding {
-                        group,
-                        number: binding.number,
-                        name: binding.decl.name,
-                        kind: binding.decl.kind,
-                        stages: binding.decl.stages,
-                        owner: binding.brick,
-                    })
-                    .collect(),
-            };
+            let resolved: Vec<ResolvedBinding> = table
+                .bindings
+                .iter()
+                .enumerate()
+                .map(|(number, binding)| ResolvedBinding {
+                    group,
+                    number: number as u32,
+                    name: binding.name,
+                    kind: binding.kind,
+                    stages: binding.stages,
+                    owner: table.label,
+                })
+                .collect();
             for binding in resolved {
                 if let Some(known) = bindings.iter().find(|known| known.name == binding.name) {
                     return Err(Error::new(

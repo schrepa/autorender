@@ -25,7 +25,6 @@ pub use crate::gpu_layouts::impostors::ImpostorRecord;
 use crate::graph::Targets;
 use crate::mesh_arena::MeshDraw;
 use crate::mipmaps::MipGenerator;
-use crate::parts::{Prelude, PreludeStage};
 use crate::renderer::ShadingSet;
 pub use content::Contents;
 
@@ -276,12 +275,6 @@ impl MipEncoder for Option<wgpu::CommandEncoder> {
                 label: Some(MIPS_LABEL),
             })
         })
-    }
-}
-
-impl MipEncoder for Prelude {
-    fn mips(&mut self, device: &wgpu::Device) -> &mut wgpu::CommandEncoder {
-        self.encoder(device, PreludeStage::Uploads, "pre_mips", MIPS_LABEL)
     }
 }
 

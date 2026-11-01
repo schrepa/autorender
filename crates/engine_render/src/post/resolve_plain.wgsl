@@ -1,8 +1,8 @@
 import package::face::post_scene::apply as post_scene;
-import package::post::frame::{
+import package::engine::post::frame::{
     drawn_uv, effect_shade, linear, occlusion, occlusion_at, post, scene,
 };
-import package::post::pixel::{PostPixel, SceneLight};
+import package::engine::post::pixel::{PostPixel, SceneLight};
 
 struct Resolved {
     color: vec3<f32>,

@@ -11,7 +11,7 @@
   "crates/engine_debug_view/src/shaders.rs",
   "crates/engine_dither/src/**/*.wgsl",
   "crates/engine_dither/src/shaders.rs",
-  "crates/engine_faces/src/**/*.wgsl",
+  "crates/engine_places/src/**/*.wgsl",
   "crates/engine_ground_cover/src/**/*.wgsl",
   "crates/engine_ground_cover/src/shaders.rs",
   "crates/engine_lighting/src/**/*.wgsl",

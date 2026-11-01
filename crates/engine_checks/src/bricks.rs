@@ -16,107 +16,9 @@ use engine_render::places::{Answer, contract, place_module};
 use engine_render::render_bricks::{RenderBrick, render_bricks};
 use serde_json::{Value, json};
 
-use crate::workspace::joined;
 use crate::{Package, Repository};
 
-type Smokes = Vec<(String, bool)>;
-
 pub const FILE: &str = "bricks.json";
-
-pub struct Recorded {
-    pub name: String,
-    pub krate: String,
-    pub reads: Vec<String>,
-    pub paths: Vec<String>,
-    pub smokes: Smokes,
-    pub place_smokes: Smokes,
-    pub parts: Vec<String>,
-}
-
-pub fn recorded(repository: &Repository) -> Result<Vec<Recorded>, String> {
-    let path = repository.root.join(FILE);
-    if !path.is_file() {
-        return Ok(Vec::new());
-    }
-    let text =
-        std::fs::read_to_string(&path).map_err(|error| format!("cannot read {FILE}: {error}"))?;
-    let file: Value =
-        serde_json::from_str(&text).map_err(|error| format!("{FILE} is not JSON: {error}"))?;
-    let strings = |value: &Value| -> Vec<String> {
-        value
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect()
-    };
-    let smokes = |value: &Value| -> Smokes {
-        value
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|smoke| {
-                let name = smoke["name"].as_str()?.to_owned();
-                Some((name, smoke["gpu"] == true))
-            })
-            .collect()
-    };
-    let places: Vec<(Vec<String>, Smokes)> = file["places"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|place| (strings(&place["members"]), smokes(&place["smokes"])))
-        .collect();
-    Ok(file["bricks"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .map(|brick| {
-            let name = brick["name"].as_str().unwrap_or_default().to_owned();
-            let place_smokes = places
-                .iter()
-                .filter(|(members, _)| members.contains(&name))
-                .flat_map(|(_, held)| held.iter().cloned())
-                .collect();
-            Recorded {
-                krate: brick["crate"].as_str().unwrap_or_default().to_owned(),
-                reads: strings(&brick["reads"]),
-                paths: strings(&brick["paths"]),
-                smokes: smokes(&brick["smokes"]),
-                place_smokes,
-                parts: strings(&brick["parts"]),
-                name,
-            }
-        })
-        .collect())
-}
-
-pub fn brick_crates<'a>(
-    repository: &Repository,
-    crates: impl IntoIterator<Item = &'a str>,
-) -> BTreeSet<String> {
-    crates
-        .into_iter()
-        .filter(|name| {
-            repository
-                .of_crate(name)
-                .is_some_and(|package| !package.core())
-        })
-        .map(str::to_owned)
-        .collect()
-}
-
-pub fn registered_crates(engine: &Engine) -> Vec<&'static str> {
-    engine
-        .app
-        .world()
-        .get_resource::<BrickRegistry>()
-        .into_iter()
-        .flat_map(BrickRegistry::bricks)
-        .map(|brick| brick.crate_name)
-        .collect()
-}
 
 fn dependencies(repository: &Repository, package: &Package) -> Vec<String> {
     let mut dependencies: Vec<String> = package
@@ -183,27 +85,6 @@ fn accessed(world: &mut World, names: &[&'static str]) -> BTreeMap<&'static str,
         world.resource_mut::<Schedules>().insert(schedule);
     }
     accessed
-}
-
-fn paths(brick: &BrickRecord, package: &Package) -> Vec<String> {
-    let Some(folder) = package.path.as_deref() else {
-        return Vec::new();
-    };
-    if !package.core() {
-        return vec![joined(folder, "**")];
-    }
-    let path = brick.type_path.split('<').next().unwrap_or(brick.type_path);
-    let segments: Vec<&str> = path.split("::").collect();
-    match segments.get(1..segments.len().saturating_sub(1)) {
-        Some(modules) if !modules.is_empty() => {
-            let module = modules.join("/");
-            vec![
-                joined(folder, &format!("src/{module}.rs")),
-                joined(folder, &format!("src/{module}/**")),
-            ]
-        }
-        Some(_) | None => vec![joined(folder, "src/lib.rs")],
-    }
 }
 
 struct Rendered {
@@ -273,7 +154,7 @@ fn needs(
         .collect()
 }
 
-pub fn pieces(registry: &BrickRegistry) -> Vec<(&'static str, PieceDecl)> {
+fn pieces(registry: &BrickRegistry) -> Vec<(&'static str, PieceDecl)> {
     render_bricks(registry)
         .flat_map(|(_, render)| render.parts.iter())
         .filter_map(|part| Some((part.decl.brick, part.decl.piece?)))
@@ -293,7 +174,7 @@ fn frame(registry: &BrickRegistry) -> Result<Value, String> {
     Ok(json!({ "pieces": listed, "size": size }))
 }
 
-pub fn installed_passes(registry: &BrickRegistry) -> Vec<&'static str> {
+fn installed_passes(registry: &BrickRegistry) -> Vec<&'static str> {
     engine_render::parts::installed_parts(registry)
         .iter()
         .flat_map(|part| part.decl.passes)
@@ -301,7 +182,7 @@ pub fn installed_passes(registry: &BrickRegistry) -> Vec<&'static str> {
         .collect()
 }
 
-pub(crate) fn place_face(place: &engine_core::Place) -> Value {
+fn place_face(place: &engine_core::Place) -> Value {
     let face = &place.face;
     let wgsl = face.wgsl.map(|source| match contract(source) {
         Ok(found) => json!({
@@ -443,7 +324,6 @@ fn record(
             .iter()
             .map(|smoke| json!({ "name": smoke.name, "gpu": smoke.gpu }))
             .collect::<Vec<_>>(),
-        "paths": paths(brick, package),
         "system_set": brick.name,
         "resources": brick.resources.iter().map(|owned| owned.name).collect::<Vec<_>>(),
         "components": kinds

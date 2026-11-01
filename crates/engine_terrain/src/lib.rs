@@ -6,26 +6,17 @@
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
 
 pub mod bake;
-pub mod bed;
 pub mod bounce;
-pub mod codec;
 pub mod expr;
 pub mod expr_layer;
 pub mod flow;
-pub mod given;
 pub mod gpu;
-pub mod hydraulics;
-pub mod hydrology;
 pub mod jobs;
-pub mod layer;
 pub mod layers;
 pub mod lighting;
 pub mod macro_colors;
-pub mod noise;
 pub mod path;
 mod placement;
-mod pyramid;
-pub mod rivers;
 mod runtime;
 pub mod scene;
 mod select;
@@ -40,29 +31,15 @@ mod tile_errors;
 mod tile_water;
 
 pub use bake::TerrainBake;
-pub use bed::{Bed, NARROWEST, Reach};
 pub use engine_core::{Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
 pub use expr::Expr;
 pub use flow::{Block, Pool, RiverFlow, WEIR};
-pub use given::{
-    GivenRiver, MAX_CREDIT, MAX_DEPTH, MAX_DISCHARGE, MAX_GIVEN_RIVERS, MAX_PRECISION,
-    MAX_RIVER_POINTS, MAX_WIDTH,
-};
-pub use hydrology::{
-    FLOW_RANGE, Fall, Hydrology, HydrologySample, HydrologyStats, LAKE_RANGE, RIVER_FAR,
-    WETNESS_RANGE,
-};
-pub use layer::{
-    Below, ChangeMap, FineRegion, LayerBake, LayerFiles, LayerKind, LayerTile, NoFiles, Place, Row,
-    SamplePoint, TerrainLayer, TerrainLayerKinds, TerrainLayersList, TileFrame,
-};
-pub use layers::{Blend, HeightImage, Layers, Stamp, StampOp};
-pub use path::{Bridge, HeightGrid, PATH_FAR, PathSample, Route, RouteOptions, route};
+pub use layers::{Stamp, StampOp};
+pub use path::{HeightGrid, Route, RouteOptions, route};
 pub use placement::{
     AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Footprint, Obstacle, Placed, PlacementChoice,
     PlacementLayer, Placing, Solid,
 };
-pub use rivers::{RIVER_STEP, Rivers};
 pub use runtime::LayerStats;
 pub use runtime::{
     BRIDGE_SOLIDS, Cover, DECK_DEPTH, DECK_MARGIN, DECK_RISE, FALLS_SHOWN, FallView, GroundCover,

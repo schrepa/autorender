@@ -22,12 +22,12 @@ pub struct SceneSpline {
     pub points: Vec<[f32; 3]>,
     #[cfg_attr(
         feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub mesh: String,
     #[cfg_attr(
         feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::rule::id()))
+        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
     )]
     pub material: String,
 }
@@ -48,7 +48,7 @@ impl SceneSpline {
     pub(crate) fn validate(&self, path: &str) -> Result<(), Error> {
         if !(2..=MAX_SPLINE_POINTS).contains(&self.points.len()) {
             return Err(
-                Error::new(ErrorCode::InvalidSpline, format!("{path}.points"))
+                Error::new(ErrorCode::InvalidValue, format!("{path}.points"))
                     .expected(Expected::Array)
                     .range(2.0, MAX_SPLINE_POINTS as f64)
                     .got(self.points.len()),
@@ -60,7 +60,7 @@ impl SceneSpline {
                 .all(|value| value.is_finite() && value.abs() <= 1.0e7)
         }) {
             return Err(
-                Error::new(ErrorCode::InvalidSpline, format!("{path}.points[{index}]"))
+                Error::new(ErrorCode::InvalidValue, format!("{path}.points[{index}]"))
                     .expected(Expected::Finite)
                     .range(-1.0e7, 1.0e7)
                     .got(self.points[index]),

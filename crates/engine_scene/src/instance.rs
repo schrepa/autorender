@@ -12,12 +12,11 @@ use engine_core::{
     },
     propagate_transforms, set_parents,
 };
-use engine_world_streaming::{StreamSet, Streamed, StreamedItem, WorldCells, remove_streamed};
 
 use crate::{
     SceneDocument, SceneFiles,
     hierarchy::ExpandedObject,
-    validation::{PreparedEntity, PreparedScene, PreparedStreamed},
+    validation::{PreparedEntity, PreparedScene},
 };
 
 #[derive(Component, Debug)]
@@ -55,7 +54,7 @@ pub struct SceneInstance {
     mesh_ids: Vec<String>,
     texture_ids: Vec<String>,
     origins: Origins,
-    streamed: Option<StreamSet>,
+    streamed: bool,
 }
 
 #[derive(Debug, Default)]
@@ -242,12 +241,12 @@ impl SceneInstance {
         engine_core::OperationScene {
             id: self.id.clone(),
             entities: self.entities.clone(),
-            streamed: self.streamed.is_some(),
+            streamed: self.streamed,
             authored: authored_id,
         }
     }
 
-    pub fn streamed(&self) -> Option<StreamSet> {
+    pub fn streamed(&self) -> bool {
         self.streamed
     }
 
@@ -262,9 +261,6 @@ impl SceneInstance {
             .is_some_and(|scene| Arc::ptr_eq(&scene.entities, &self.entities))
         {
             world.remove_resource::<engine_core::OperationScene>();
-        }
-        if let Some(set) = self.streamed {
-            remove_streamed(world, set);
         }
         for &entity in self.entities.values() {
             world.despawn(entity);
@@ -324,33 +320,7 @@ impl SceneDocument {
             environment.apply_all(world, "$.environment")?;
         }
         world.insert_resource(crate::SceneViews::of(self));
-        let streamed = (!prepared.streamed.items.is_empty()).then(|| {
-            let scene = Arc::new(StreamedScene {
-                lookups,
-                prepared: std::mem::take(&mut prepared.streamed),
-            });
-            let items: Vec<StreamedItem> = scene
-                .prepared
-                .items
-                .iter()
-                .enumerate()
-                .map(|(item, prepared)| StreamedItem {
-                    id: Some(Arc::from(format!(
-                        "{}/{}",
-                        self.id, scene.prepared.entities[prepared.entities[0]].source.id
-                    ))),
-                    position: prepared.position,
-                    reach: prepared.reach,
-                    content: Arc::new(StreamedTree {
-                        scene: scene.clone(),
-                        item,
-                    }),
-                })
-                .collect();
-            world
-                .get_resource_or_insert_with(WorldCells::default)
-                .add(items)
-        });
+        let streamed = !prepared.streamed.items.is_empty();
         let instance = SceneInstance {
             id: self.id.clone(),
             revision: self.revision,
@@ -527,61 +497,4 @@ fn spawn_entity(
         prepared.spawn(&mut entity, lookups);
     }
     entity.id()
-}
-
-struct StreamedScene {
-    lookups: Lookups,
-    prepared: PreparedStreamed,
-}
-
-struct StreamedTree {
-    scene: Arc<StreamedScene>,
-    item: usize,
-}
-
-impl Streamed for StreamedTree {
-    fn entities(&self) -> u32 {
-        self.scene.prepared.items[self.item].entities.len() as u32
-    }
-
-    fn spawn(&self, world: &mut World, spawned: &mut Vec<Entity>) {
-        let scene = &*self.scene;
-        let prepared = &scene.prepared;
-        let item = &prepared.items[self.item];
-        let mine: Vec<Entity> = item
-            .entities
-            .iter()
-            .map(|&index| {
-                spawn_entity(
-                    world,
-                    &scene.lookups,
-                    &prepared.entities[index],
-                    prepared.transforms[index],
-                    &prepared.components[index],
-                )
-            })
-            .collect();
-        let entity_of = |index: usize| {
-            mine[item
-                .entities
-                .iter()
-                .position(|&own| own == index)
-                .expect("reference_within_item")]
-        };
-        let parents: Vec<_> = item
-            .entities
-            .iter()
-            .zip(&mine)
-            .filter_map(|(&index, &entity)| {
-                prepared.parents[index].map(|parent| (entity, Some(entity_of(parent))))
-            })
-            .collect();
-        if set_parents(world, &parents).is_err() {
-            for entity in mine {
-                let _ = world.try_despawn(entity);
-            }
-            return;
-        }
-        spawned.extend(mine);
-    }
 }

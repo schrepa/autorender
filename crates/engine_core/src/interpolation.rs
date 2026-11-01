@@ -8,22 +8,61 @@ pub use gpu::{
 use crate::collections::HashSet;
 
 use bevy_ecs::prelude::*;
+use bevy_ecs::system::SystemState;
 use glam::Mat4;
 
 use crate::entity_indices::EntityIndices;
 
 use crate::{
-    FixedTime, FrameTime, GlobalTransform, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, Parent,
-    Transform,
+    FixedTime, FrameTime, GlobalTransform, InterpolateTransform, MAX_HIERARCHY_DEPTH,
+    MAX_TRANSFORM_NODES, Parent, Transform,
     hierarchy::{HierarchyScratch, Source, TransformIndex, ValueIds, same_pose_bits},
 };
 
-#[derive(Component, Debug, Default, Clone, Copy)]
-#[component(
-    on_insert = crate::hierarchy::tracking::topology_changed,
-    on_remove = crate::hierarchy::tracking::topology_changed
-)]
-pub struct InterpolateTransform;
+pub(crate) fn track_markers(world: &mut World) {
+    world
+        .register_component_hooks::<InterpolateTransform>()
+        .on_insert(crate::hierarchy::tracking::topology_changed)
+        .on_remove(crate::hierarchy::tracking::topology_changed);
+}
+
+type ResetQuery = SystemState<
+    Query<
+        'static,
+        'static,
+        (Entity, Ref<'static, InterpolateTransform>),
+        Changed<InterpolateTransform>,
+    >,
+>;
+
+pub(crate) struct ResetWatch {
+    query: ResetQuery,
+    moved: Vec<Entity>,
+}
+
+impl ResetWatch {
+    pub(crate) fn new(world: &mut World) -> Self {
+        Self {
+            query: SystemState::new(world),
+            moved: Vec::new(),
+        }
+    }
+
+    pub(crate) fn snap(&mut self, world: &mut World) {
+        self.moved.clear();
+        if let Ok(changed) = self.query.get(world) {
+            self.moved.extend(
+                changed
+                    .iter()
+                    .filter(|(_, marker)| !marker.is_added())
+                    .map(|(entity, _)| entity),
+            );
+        }
+        if !self.moved.is_empty() {
+            reset_roots(world, &self.moved);
+        }
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PresentedTransform(GlobalTransform);

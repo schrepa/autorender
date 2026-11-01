@@ -7,7 +7,10 @@ pub use engine_textures::{
     Family as TextureFamily, Source as TextureSource, Usage as TextureUsage,
 };
 
-use crate::{Cooking, JobFailures, JobId, Jobs, RecordKey, URGENT_JOBS, VIEW_JOBS, job_priority};
+use crate::{
+    CookMode, JobFailures, JobId, JobKind, JobQueue, JobRef, RecordKey, TEXTURE_COOK, URGENT_JOBS,
+    VIEW_JOBS, job_priority,
+};
 
 const TEXTURE_RECORD: &str = "texture";
 
@@ -35,7 +38,7 @@ pub type MakeTextures = Arc<dyn Fn() -> Result<Vec<TextureSource>, String> + Sen
 pub enum MakeSources {
     Here(MakeTextures),
     Job {
-        kind: &'static str,
+        kind: &'static JobKind,
         input: Vec<u8>,
         size: [u32; 2],
     },
@@ -54,7 +57,11 @@ impl TextureSet {
         let mut identity =
             format!("{}/{}/{}", self.name, self.textures[index].0, family.name()).into_bytes();
         identity.extend_from_slice(&engine_textures::SOURCE);
-        RecordKey::new(&self.source, TEXTURE_RECORD, &identity)
+        RecordKey::from_hash(engine_sources::record_key(
+            &self.source,
+            TEXTURE_RECORD,
+            &identity,
+        ))
     }
 }
 
@@ -100,8 +107,9 @@ struct Batch {
     sources: Sources,
 }
 
+#[doc(hidden)]
 #[derive(Resource, Default)]
-pub struct Records {
+pub struct RecordExchange {
     sampling: Option<TextureSampling>,
     requests: Vec<Request>,
     sets: Vec<AskedSet>,
@@ -111,7 +119,7 @@ pub struct Records {
     frame: u64,
 }
 
-impl Records {
+impl RecordExchange {
     pub fn set_sampling(&mut self, sampling: Option<TextureSampling>) {
         self.sampling = sampling;
     }
@@ -216,7 +224,7 @@ impl Records {
             .retain(|asked| !asked.asked.iter().all(|&done| done));
     }
 
-    fn step_sources(&mut self, id: u64, jobs: &mut Jobs, priority: u32) {
+    fn step_sources(&mut self, id: u64, jobs: &mut JobQueue, priority: u32) {
         let Some(batch) = self.batches.iter_mut().find(|batch| batch.id == id) else {
             return;
         };
@@ -238,7 +246,8 @@ impl Records {
                         Sources::Made(made.map_err(|error| format!("{}: {error}", batch.set.name)));
                 }
                 MakeSources::Job { kind, input, .. } => {
-                    batch.sources = Sources::Making(jobs.submit(kind, input.clone(), priority));
+                    batch.sources =
+                        Sources::Making(jobs.submit(JobRef::from(*kind), input.clone(), priority));
                 }
             },
             &Sources::Making(job) => {
@@ -303,7 +312,11 @@ enum Step {
     Failed(RecordKey, String),
 }
 
-fn step(records: &mut Records, mut request: Request, (jobs, place): (&mut Jobs, u32)) -> Step {
+fn step(
+    records: &mut RecordExchange,
+    mut request: Request,
+    (jobs, place): (&mut JobQueue, u32),
+) -> Step {
     let make_priority = job_priority(VIEW_JOBS, place);
     loop {
         match request.stage {
@@ -351,7 +364,8 @@ fn step(records: &mut Records, mut request: Request, (jobs, place): (&mut Jobs, 
                     match sources {
                         Some(Sources::Made(Ok(made))) => {
                             let input = engine_textures::cook_input(&made[index], family);
-                            let id = jobs.submit(engine_textures::COOK_JOB, input, make_priority);
+                            let id =
+                                jobs.submit(JobRef::from(&TEXTURE_COOK), input, make_priority);
                             request.stage = Stage::Cooking(id);
                         }
                         Some(Sources::Made(Err(error))) => {
@@ -380,25 +394,24 @@ fn step(records: &mut Records, mut request: Request, (jobs, place): (&mut Jobs, 
 }
 
 pub(crate) fn exchange(world: &mut World) {
-    let cooking = world.contains_resource::<Cooking>();
+    let cooking = world
+        .get_resource::<CookMode>()
+        .is_some_and(|mode| mode.cooking);
     let requests = {
-        let mut records = world.resource_mut::<Records>();
+        let mut records = world.resource_mut::<RecordExchange>();
         records.frame += 1;
         records.ask_textures(cooking);
         std::mem::take(&mut records.requests)
     };
     if requests.is_empty() {
-        if let Some(mut cooking) = world.get_resource_mut::<Cooking>() {
-            cooking.left("records", 0);
-        }
         return;
     }
     let mut waiting = Vec::with_capacity(requests.len());
     let mut arrived = Vec::new();
     let mut failed = Vec::new();
-    world.resource_scope(|world, mut jobs: Mut<Jobs>| {
+    world.resource_scope(|world, mut jobs: Mut<JobQueue>| {
         let verifying = jobs.verifying();
-        let mut records = world.resource_mut::<Records>();
+        let mut records = world.resource_mut::<RecordExchange>();
         for (place, request) in requests.into_iter().enumerate() {
             match step(&mut records, request, (&mut *jobs, place as u32)) {
                 Step::Waiting(request) => waiting.push(request),
@@ -428,14 +441,14 @@ pub(crate) fn exchange(world: &mut World) {
             failed.push(format!("record {}: {error}", key.hex()));
         }
     }
-    let mut records = world.resource_mut::<Records>();
+    let mut records = world.resource_mut::<RecordExchange>();
     let frame = records.frame;
     for error in failed {
         records.failures.record(frame, error);
     }
     waiting.append(&mut records.requests);
     records.requests = waiting;
-    let Records {
+    let RecordExchange {
         requests, batches, ..
     } = &mut *records;
     batches.retain(|batch| {
@@ -443,8 +456,4 @@ pub(crate) fn exchange(world: &mut World) {
             |request| matches!(request.make, Make::Texture { batch: id, .. } if id == batch.id),
         )
     });
-    let left = records.requests.len() as u64;
-    if let Some(mut cooking) = world.get_resource_mut::<Cooking>() {
-        cooking.left("records", left);
-    }
 }

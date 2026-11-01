@@ -1,5 +1,5 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Stages(pub(super) u8);
+pub struct Stages(pub(crate) u8);
 
 impl Stages {
     pub const VERTEX: Self = Self(1);

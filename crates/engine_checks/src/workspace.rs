@@ -33,10 +33,6 @@ impl Package {
         self.name.replace('-', "_")
     }
 
-    pub fn core(&self) -> bool {
-        self.engine["core"] == true
-    }
-
     pub fn game(&self) -> Option<&str> {
         self.engine["game"].as_str()
     }
@@ -49,10 +45,6 @@ impl Package {
         self.game().is_some() || self.engine["worker"] == true
     }
 
-    pub fn replaces(&self) -> Option<&str> {
-        self.engine["replaces"].as_str()
-    }
-
     pub fn own(&self) -> bool {
         self.member && self.path.is_some()
     }
@@ -62,7 +54,7 @@ impl Package {
     }
 }
 
-pub(crate) fn joined(folder: &str, name: &str) -> String {
+fn joined(folder: &str, name: &str) -> String {
     if folder.is_empty() {
         name.to_owned()
     } else {
@@ -70,7 +62,7 @@ pub(crate) fn joined(folder: &str, name: &str) -> String {
     }
 }
 
-pub(crate) fn slashed(path: &Path) -> String {
+fn slashed(path: &Path) -> String {
     path.components()
         .map(|part| part.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
@@ -176,10 +168,6 @@ impl Repository {
         self.root
             .strip_prefix(&self.workspace_root)
             .is_ok_and(|rest| rest.as_os_str().is_empty())
-    }
-
-    pub fn relative(&self, path: &Path) -> Option<String> {
-        path.strip_prefix(&self.root).ok().map(slashed)
     }
 
     pub fn runtime(&self) -> BTreeSet<&str> {

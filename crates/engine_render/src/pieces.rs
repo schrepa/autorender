@@ -1,17 +1,17 @@
 use std::fmt::Write as _;
 
-use engine_core::{Error, ErrorCode, Expected};
+use engine_core::{Error, ErrorCode};
 
 pub const PIECES_MODULE: &str = "generated::pieces";
 pub const PIECES_BINDING: &str = "pieces";
 pub const PIECES_STRUCT: &str = "Pieces";
 pub const PIECE_ALIGN: u64 = 16;
-pub const PIECES_MOST: u64 = 65_536;
+pub const PIECES_BYTES: u64 = 16_384;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PieceDecl {
-    pub name: &'static str,
-    pub module: &'static str,
+pub struct Piece {
+    pub brick: &'static str,
+    pub prefix: &'static str,
     pub ty: &'static str,
     pub size: u64,
 }
@@ -22,29 +22,28 @@ pub struct PieceAt {
     pub size: u64,
 }
 
-pub fn place(pieces: &[(&'static str, PieceDecl)]) -> Result<(Vec<PieceAt>, u64), Error> {
+pub fn ordered(pieces: &mut [Piece]) {
+    pieces.sort_by(|first, second| first.brick.cmp(second.brick));
+}
+
+pub fn place(pieces: &[Piece], most: u64) -> Result<(Vec<PieceAt>, u64), Error> {
     let mut placed = Vec::with_capacity(pieces.len());
     let mut end = 0_u64;
-    for (index, &(brick, piece)) in pieces.iter().enumerate() {
-        if let Some(&(first, _)) = pieces[..index]
+    for (index, piece) in pieces.iter().enumerate() {
+        if pieces[..index]
             .iter()
-            .find(|(_, earlier)| earlier.name == piece.name)
+            .any(|earlier| earlier.brick == piece.brick || earlier.prefix == piece.prefix)
         {
             return Err(Error::new(
-                ErrorCode::DuplicateBrick,
-                format!("$.pieces.{}", piece.name),
-            )
-            .expected(Expected::Unique)
-            .got(brick)
-            .nearest(first));
+                ErrorCode::NameTwice,
+                format!("$.pieces.{}", piece.prefix),
+            ));
         }
         if piece.size == 0 || !piece.size.is_multiple_of(PIECE_ALIGN) {
             return Err(Error::new(
-                ErrorCode::InvalidArguments,
-                format!("$.pieces.{}.size", piece.name),
-            )
-            .expected(Expected::Multiple)
-            .got(piece.size));
+                ErrorCode::InvalidValue,
+                format!("$.pieces.{}.size", piece.prefix),
+            ));
         }
         let offset = end.next_multiple_of(PIECE_ALIGN);
         placed.push(PieceAt {
@@ -54,25 +53,27 @@ pub fn place(pieces: &[(&'static str, PieceDecl)]) -> Result<(Vec<PieceAt>, u64)
         end = offset + piece.size;
     }
     let total = end.max(PIECE_ALIGN);
-    if total > PIECES_MOST {
-        return Err(Error::new(ErrorCode::BindingLimit, "$.pieces")
-            .at_most(PIECES_MOST)
-            .got(total));
+    if total > most {
+        return Err(Error::new(ErrorCode::PiecesLimit, "$.pieces"));
     }
     Ok((placed, total))
 }
 
-pub fn pieces_source(pieces: &[PieceDecl]) -> String {
+pub fn pieces_source(pieces: &[Piece]) -> String {
     let mut source = String::new();
     for piece in pieces {
-        let _ = writeln!(source, "import package::{}::{};", piece.module, piece.ty);
+        let _ = writeln!(
+            source,
+            "import package::generated::{}::{};",
+            piece.prefix, piece.ty
+        );
     }
     let _ = writeln!(source, "\nstruct {PIECES_STRUCT} {{");
     if pieces.is_empty() {
         let _ = writeln!(source, "    none: vec4<f32>,");
     }
     for piece in pieces {
-        let _ = writeln!(source, "    {}: {},", piece.name, piece.ty);
+        let _ = writeln!(source, "    {}: {},", piece.prefix, piece.ty);
     }
     let _ = writeln!(source, "}}");
     let _ = writeln!(
@@ -80,4 +81,18 @@ pub fn pieces_source(pieces: &[PieceDecl]) -> String {
         "\n@group(0) @binding(0) var<uniform> {PIECES_BINDING}: {PIECES_STRUCT};"
     );
     source
+}
+
+pub fn piece_path(piece: &Piece) -> String {
+    format!("{PIECES_MODULE}::{}", piece.prefix)
+}
+
+pub fn piece_source(piece: &Piece) -> String {
+    format!(
+        "import package::{PIECES_MODULE}::{PIECES_BINDING};\n\
+         import package::generated::{prefix}::{ty};\n\n\
+         fn piece() -> {ty} {{\n    return {PIECES_BINDING}.{prefix};\n}}\n",
+        prefix = piece.prefix,
+        ty = piece.ty,
+    )
 }

@@ -3,97 +3,81 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-mod ground;
-mod physics;
-mod place_smokes;
-mod solids;
-mod water;
+extern crate engine_ecs as bevy_ecs;
 
-pub use ground::*;
-pub use solids::*;
-pub use water::{
-    WaterBodies, WaterFace, WaterKind, WaterObstacle, WaterObstacles, WaterSample, WaterSurfaces,
-    WaterWorker,
-};
+pub mod bloom;
+pub mod dither;
+pub mod exposure;
+pub mod ground;
+pub mod lighting;
+pub mod lights;
+pub mod meshes;
+pub mod particles;
+pub mod physics;
+pub mod probes;
+pub mod reflections;
+pub mod shadows;
+pub mod sky;
+mod smokes;
+pub mod solids;
+pub mod splines;
+pub mod streaming;
+pub mod sun;
+pub mod terrain;
+pub mod tonemap;
+pub mod water;
+pub mod wind;
 
-use engine_core::smoke::SmokeEntry;
-use engine_core::{Absent, CpuList, CpuSlot, Face, FaceType, List, Place, Slot};
+use engine_place::PlaceDecl;
 
-const fn cpu<T: 'static>() -> Face {
-    Face {
-        cpu: Some(FaceType::of::<T>()),
-        gpu: None,
-        wgsl: None,
-        absent: Absent::Required,
-    }
-}
-
-pub struct GroundSlot;
-
-impl Slot for GroundSlot {
-    const NAME: &'static str = "ground";
-    const FACE: Face = cpu::<Ground>();
-    const SMOKES: &'static [SmokeEntry] = &[SmokeEntry {
-        name: "slot_ground",
-        brick: Self::NAME,
-        gpu: false,
-        run: place_smokes::ground,
-    }];
-}
-
-impl CpuSlot for GroundSlot {
-    type Cpu = Ground;
-}
-
-pub struct PhysicsSlot;
-
-impl Slot for PhysicsSlot {
-    const NAME: &'static str = "physics";
-    const SMOKES: &'static [SmokeEntry] = &[SmokeEntry {
-        name: "slot_physics",
-        brick: Self::NAME,
-        gpu: false,
-        run: physics::physics,
-    }];
-}
-
-pub struct WaterBodiesList;
-
-impl List for WaterBodiesList {
-    const NAME: &'static str = "water_bodies";
-    const FACE: Face = cpu::<WaterBodies>();
-    const SMOKES: &'static [SmokeEntry] = &[SmokeEntry {
-        name: "list_water_bodies",
-        brick: Self::NAME,
-        gpu: false,
-        run: place_smokes::water_bodies,
-    }];
-}
-
-impl CpuList for WaterBodiesList {
-    type Cpu = WaterBodies;
-}
-
-pub struct WorldSolidsList;
-
-impl List for WorldSolidsList {
-    const NAME: &'static str = "world_solids";
-    const FACE: Face = cpu::<WorldSolids>();
-    const SMOKES: &'static [SmokeEntry] = &[SmokeEntry {
-        name: "list_world_solids",
-        brick: Self::NAME,
-        gpu: false,
-        run: solids::world_solids,
-    }];
-}
-
-impl CpuList for WorldSolidsList {
-    type Cpu = WorldSolids;
-}
-
-pub static PLACES: &[Place] = &[
-    Place::slot::<GroundSlot>(),
-    Place::slot::<PhysicsSlot>(),
-    Place::list::<WaterBodiesList>(),
-    Place::list::<WorldSolidsList>(),
+pub const PLACES: &[PlaceDecl] = &[
+    PlaceDecl::slot::<sun::SunPath>(),
+    PlaceDecl::slot::<sun::Sun>(),
+    PlaceDecl::slot::<sky::SkyLight>(),
+    PlaceDecl::slot::<exposure::Exposure>(),
+    PlaceDecl::slot::<tonemap::Display>(),
+    PlaceDecl::slot::<lighting::Lighting>(),
+    PlaceDecl::slot::<lights::Lights>(),
+    PlaceDecl::component::<lights::LocalLight>("local_light"),
+    PlaceDecl::slot::<shadows::ShadowMaps>(),
+    PlaceDecl::slot::<shadows::CasterRoutes>(),
+    PlaceDecl::slot::<shadows::ShadowCasters>(),
+    PlaceDecl::component::<shadows::ShadowChanges>("shadow_changes"),
+    PlaceDecl::slot::<probes::ProbeViews>(),
+    PlaceDecl::slot::<probes::ProbeCaptures>(),
+    PlaceDecl::slot::<probes::ProbeLight>(),
+    PlaceDecl::component::<probes::ReflectionProbe>("reflection_probe"),
+    PlaceDecl::slot::<bloom::Glow>(),
+    PlaceDecl::slot::<reflections::Reflected>(),
+    PlaceDecl::slot::<dither::DitherPlace>(),
+    PlaceDecl::slot::<meshes::Instances>(),
+    PlaceDecl::slot::<particles::Transparency>(),
+    PlaceDecl::component::<particles::ParticleEmitter>("particle_emitter"),
+    PlaceDecl::slot::<ground::Ground>(),
+    PlaceDecl::slot::<ground::TerrainTiles>(),
+    PlaceDecl::slot::<ground::GroundSurface>(),
+    PlaceDecl::slot::<ground::Heightfield>(),
+    PlaceDecl::slot::<ground::GroundTiles>(),
+    PlaceDecl::slot::<ground::Horizons>(),
+    PlaceDecl::slot::<ground::Bounce>(),
+    PlaceDecl::slot::<ground::PlacedTiles>(),
+    PlaceDecl::slot::<ground::Cover>(),
+    PlaceDecl::list::<ground::FarCover>(),
+    PlaceDecl::slot::<ground::Occupancy>(),
+    PlaceDecl::slot::<ground::Foliage>(),
+    PlaceDecl::component::<ground::HeightHeld>("height_held"),
+    PlaceDecl::slot::<water::Waterline>(),
+    PlaceDecl::slot::<water::WaterObstacles>(),
+    PlaceDecl::slot::<water::WaterFlow>(),
+    PlaceDecl::slot::<water::Hydrology>(),
+    PlaceDecl::component::<water::WaterBody>("water_body"),
+    PlaceDecl::slot::<wind::Wind>(),
+    PlaceDecl::slot::<physics::Collision>(),
+    PlaceDecl::component::<physics::Collider>("collider"),
+    PlaceDecl::component::<physics::RigidBody>("rigid_body"),
+    PlaceDecl::component::<solids::SolidSource>("solid_source"),
+    PlaceDecl::component::<splines::SplineMesh>("spline_mesh"),
+    PlaceDecl::component::<streaming::StreamingFocus>("streaming_focus"),
+    PlaceDecl::list::<terrain::TerrainLayers>(),
+    PlaceDecl::slot::<terrain::DrawnRivers>(),
 ];

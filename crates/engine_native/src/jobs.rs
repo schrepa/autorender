@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::JoinHandle;
 
-use engine::host::{JobId, JobOrder, JobShare, policy};
+use engine::host::{JobId, JobList, JobOrder, JobRef, JobShare, RecordKey, policy};
 use engine::{Game, GameHost};
 use engine_worker::Report;
 
@@ -56,12 +56,12 @@ impl JobOptions {
 }
 
 enum Order {
-    Share(String, Arc<[u8]>),
-    Unshare(String),
+    Share(RecordKey, Arc<[u8]>),
+    Unshare(RecordKey),
     Clear,
     Run {
         id: u64,
-        kind: &'static str,
+        kind: JobRef,
         input: Vec<u8>,
         priority: u32,
     },
@@ -69,7 +69,7 @@ enum Order {
     Read {
         id: JobId,
         key: String,
-        kind: &'static str,
+        kind: Option<JobRef>,
         sources: Vec<Source>,
     },
     Stop,
@@ -81,7 +81,7 @@ enum Reported {
         worker: u32,
         id: JobId,
         key: String,
-        kind: &'static str,
+        kind: Option<JobRef>,
         sources: Vec<Source>,
         read: Option<(usize, Vec<u8>)>,
     },
@@ -97,25 +97,41 @@ struct Slot {
 pub struct Written {
     pub records: usize,
     pub bytes: u64,
-    pub kinds: BTreeMap<&'static str, usize>,
+    pub kinds: BTreeMap<String, usize>,
 }
 
 pub struct JobPool {
+    count: usize,
     slots: Vec<Slot>,
+    report: Sender<Reported>,
     reports: Receiver<Reported>,
     store: Option<JobStore>,
     reported: Option<(u64, u64, u64, u64)>,
     cook: Option<PackWriter>,
-    mismatched: Vec<(&'static str, String)>,
+    mismatched: Vec<(Option<JobRef>, String)>,
 }
 
 impl JobPool {
     pub fn new(count: usize, store: Option<JobStore>) -> Self {
         let (report, reports) = channel();
-        let slots = (0..count)
+        Self {
+            count,
+            slots: Vec::new(),
+            report,
+            reports,
+            store,
+            reported: None,
+            cook: None,
+            mismatched: Vec::new(),
+        }
+    }
+
+    fn start(&mut self, list: &Arc<JobList>) {
+        self.slots = (0..self.count)
             .map(|index| {
                 let (orders, inbox) = channel();
-                let report = report.clone();
+                let report = self.report.clone();
+                let list = Arc::clone(list);
                 #[cfg(feature = "profiling")]
                 let (register, registered) = channel();
                 let thread = std::thread::Builder::new()
@@ -125,7 +141,7 @@ impl JobPool {
                         let _ = register.send(engine_profiler::sampler::SampledThread::current(
                             format!("Job worker {index}"),
                         ));
-                        work(index as u32, &inbox, &report);
+                        work(index as u32, list, &inbox, &report);
                     })
                     .expect("thread_starts");
                 Slot {
@@ -136,14 +152,6 @@ impl JobPool {
                 }
             })
             .collect();
-        Self {
-            slots,
-            reports,
-            store,
-            reported: None,
-            cook: None,
-            mismatched: Vec::new(),
-        }
     }
 
     #[cfg(feature = "profiling")]
@@ -155,10 +163,11 @@ impl JobPool {
     }
 
     pub fn size(&self) -> usize {
-        self.slots.len()
+        self.count
     }
 
     pub fn attach<G: Game>(&mut self, host: &mut GameHost<G>) {
+        self.start(&host.job_list());
         host.set_job_workers(self.size() as u32);
         let cache = self.store.as_ref().map(JobStore::verify);
         host.set_job_cache(cache.is_some(), cache == Some(true));
@@ -203,10 +212,10 @@ impl JobPool {
         match order {
             JobOrder::Share(JobShare::Clear) => self.broadcast(|| Order::Clear),
             JobOrder::Share(JobShare::Set { key, bytes }) => {
-                self.broadcast(|| Order::Share(key.clone(), bytes.clone()));
+                self.broadcast(|| Order::Share(key, bytes.clone()));
             }
             JobOrder::Share(JobShare::Remove { key }) => {
-                self.broadcast(|| Order::Unshare(key.clone()));
+                self.broadcast(|| Order::Unshare(key));
             }
             JobOrder::Run { worker, request } => {
                 let _ = self.slots[worker as usize].orders.send(Order::Run {
@@ -246,7 +255,7 @@ impl JobPool {
             }
             JobOrder::Keep { key, kind, output } => {
                 if let Some(cook) = &mut self.cook {
-                    cook.take(&key, kind, &output);
+                    cook.take(&key, kind.as_ref(), &output);
                 }
                 if let Some(store) = &mut self.store {
                     store.keep(&key, &output);
@@ -264,7 +273,7 @@ impl JobPool {
     fn answer<G: Game>(
         &mut self,
         host: &mut GameHost<G>,
-        (id, key, kind): (JobId, String, &'static str),
+        (id, key, kind): (JobId, String, Option<JobRef>),
         sources: &[Source],
         read: Option<(usize, Vec<u8>)>,
     ) {
@@ -273,7 +282,7 @@ impl JobPool {
             .as_mut()
             .and_then(|store| store.answered(&key, sources, read));
         if let (Some(cook), Some(record)) = (&mut self.cook, &kept) {
-            cook.take(&key, kind, record);
+            cook.take(&key, kind.as_ref(), record);
         }
         host.job_kept(id, key, kept);
     }
@@ -282,7 +291,7 @@ impl JobPool {
         self.store.as_ref().map_or(0, JobStore::packed)
     }
 
-    pub fn mismatched(&self) -> &[(&'static str, String)] {
+    pub fn mismatched(&self) -> &[(Option<JobRef>, String)] {
         &self.mismatched
     }
 
@@ -325,8 +334,8 @@ impl Drop for JobPool {
     }
 }
 
-fn work(index: u32, inbox: &Receiver<Order>, report: &Sender<Reported>) {
-    let mut worker = engine_worker::Worker::new();
+fn work(index: u32, list: Arc<JobList>, inbox: &Receiver<Order>, report: &Sender<Reported>) {
+    let mut worker = engine_worker::Worker::new(list);
     loop {
         let mut next = if worker.busy() {
             inbox.try_recv().ok()
@@ -339,17 +348,17 @@ fn work(index: u32, inbox: &Receiver<Order>, report: &Sender<Reported>) {
         while let Some(order) = next.take() {
             match order {
                 Order::Share(key, bytes) => {
-                    if let Err(error) = worker.share(&key, bytes) {
+                    if let Err(error) = worker.share(key, bytes) {
                         let record = serde_json::json!({
                             "event": "share_refused",
                             "worker": index,
-                            "key": key,
+                            "key": key.hex(),
                             "error": error,
                         });
                         eprintln!("{record}");
                     }
                 }
-                Order::Unshare(key) => worker.unshare(&key),
+                Order::Unshare(key) => worker.unshare(key),
                 Order::Clear => worker.clear(),
                 Order::Run {
                     id,
