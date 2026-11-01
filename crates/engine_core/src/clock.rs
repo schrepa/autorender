@@ -5,22 +5,18 @@ use crate::AssetBudget;
 #[derive(Debug, Clone, Copy)]
 pub struct EngineConfig {
     pub fixed_hz: f64,
-    pub max_fixed_steps: u32,
-    pub max_render_instances: usize,
+    pub max_fixed_steps: u32,
     pub asset_budget: AssetBudget,
-    pub max_transform_nodes: usize,
-    pub frustum_culling: bool,
+    pub max_transform_nodes: usize,
 }
 
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
             fixed_hz: 60.0,
-            max_fixed_steps: 5,
-            max_render_instances: usize::MAX,
+            max_fixed_steps: 5,
             asset_budget: AssetBudget::default(),
-            max_transform_nodes: crate::MAX_TRANSFORM_NODES,
-            frustum_culling: true,
+            max_transform_nodes: crate::MAX_TRANSFORM_NODES,
         }
     }
 }

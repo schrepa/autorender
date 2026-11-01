@@ -35,7 +35,7 @@ pub(super) fn set(
     } else {
         control.sections()
     };
-    environment.apply_sections(app.engine.app.world_mut(), "$")?;
+    let skipped = environment.apply_sections(app.engine.app.world_mut(), "$")?;
     rendered(app.dev_render(width, height))?;
     let after = current(app);
     let named = environment.ordered_keys(app.engine.app.world());
@@ -50,6 +50,7 @@ pub(super) fn set(
         environment_changed: named.clone(),
         before: pick(&before),
         after: pick(&after),
+        skipped,
     }))
 }
 

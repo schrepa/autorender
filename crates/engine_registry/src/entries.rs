@@ -71,7 +71,7 @@ pub struct JoinEntry {
     pub scope: Scope,
     pub wgsl: Option<Box<dyn Any + Send + Sync>>,
     pub(crate) member: Option<Box<dyn Any + Send + Sync>>,
-    pub(crate) add: fn(&mut World, Box<dyn Any + Send + Sync>, GateId, &'static str),
+    pub(crate) add: fn(&mut World, Box<dyn Any + Send + Sync>, GateId, (&'static str, TypeId)),
     pub(crate) init: fn(&mut World),
     pub(crate) refresh: fn(&mut World),
 }
@@ -97,6 +97,10 @@ impl JoinEntry {
     pub fn member<M: 'static>(&self) -> Option<&M> {
         self.member.as_deref()?.downcast_ref::<M>()
     }
+
+    pub fn take_member(&mut self) -> Option<Box<dyn Any + Send + Sync>> {
+        self.member.take()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -107,6 +111,7 @@ pub struct SettingsEntry {
     pub type_name: &'static str,
     pub at: &'static Location<'static>,
     init: fn(&mut World),
+    check: fn(&Value, &str) -> Result<(), Error>,
     set: fn(&mut World, &Value, &str) -> Result<(), Error>,
     reset: fn(&mut World),
     current: fn(&World) -> Value,
@@ -119,6 +124,7 @@ impl SettingsEntry {
     #[track_caller]
     pub fn of<T>(
         key: &'static str,
+        check: fn(&Value, &str) -> Result<(), Error>,
         set: fn(&mut World, &Value, &str) -> Result<(), Error>,
         schema: fn() -> schemars::Schema,
     ) -> Self
@@ -132,6 +138,7 @@ impl SettingsEntry {
             type_name: std::any::type_name::<T>(),
             at: Location::caller(),
             init: init_of::<T>,
+            check,
             set,
             reset: reset_of::<T>,
             current: current_of::<T>,
@@ -147,6 +154,10 @@ impl SettingsEntry {
             name: self.type_name,
             init: self.init,
         }
+    }
+
+    pub fn check(&self, value: &Value, path: &str) -> Result<(), Error> {
+        (self.check)(value, path)
     }
 
     pub fn set(&self, world: &mut World, value: &Value) -> Result<(), Error> {

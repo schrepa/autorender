@@ -72,9 +72,7 @@ pub fn run<'a, G: Game, E: Into<engine::Error>>(
         options: window,
         build: Some((
             Box::new(bricks),
-            Box::new(move |engine: &mut Engine| {
-                build(engine).map_err(Into::<engine::Error>::into)
-            }),
+            Box::new(move |engine: &mut Engine| build(engine).map_err(Into::<engine::Error>::into)),
         )),
         input: Input::default(),
         running: None,

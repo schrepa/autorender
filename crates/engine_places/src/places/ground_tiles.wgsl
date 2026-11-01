@@ -1,12 +1,6 @@
 const NOT_RESIDENT: u32 = 0xffffffffu;
-const TILE_QUADS: u32 = 256u;
 const PEAK_MIPS: u32 = 8u;
 const PEAK_CELLS: u32 = 128u;
-
-struct MaterialCover {
-    shape: vec4<f32>,
-    color: vec4<f32>,
-}
 
 struct GroundTerrain {
     directory: u32,
@@ -45,7 +39,11 @@ struct GroundMaterial {
 
 struct MaterialLook {
     far: vec4<f32>,
-    canopy: vec4<f32>,
+}
+
+fn terrain_info(terrain: u32) -> TerrainInfo {
+    var info: TerrainInfo;
+    return info;
 }
 
 fn ground_of(info: TerrainInfo) -> GroundTerrain {
@@ -123,7 +121,6 @@ fn material_look(base: u32, material: u32) -> MaterialLook {
     return look;
 }
 
-fn material_cover(base: u32, material: u32) -> MaterialCover {
-    var cover: MaterialCover;
-    return cover;
+fn ground_sky(terrain: u32, local: vec2<f32>) -> vec4<f32> {
+    return vec4<f32>(1.0, 0.5, 0.5, 0.5);
 }

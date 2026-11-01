@@ -10,6 +10,7 @@ use crate::entries::{
     Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry, init_of,
 };
 use crate::gates::{GateFn, Scope};
+use crate::jobs::JobMember;
 
 pub trait RecordExt {
     fn record(&mut self) -> &mut BrickRecord;
@@ -140,6 +141,13 @@ impl BrickRecord {
 
     pub fn joins(&self) -> &[JoinEntry] {
         &self.joins
+    }
+
+    pub fn take_members(&mut self) -> Vec<JobMember> {
+        self.joins
+            .iter_mut()
+            .filter_map(|joined| Some((joined.list, joined.take_member()?)))
+            .collect()
     }
 
     pub fn owned(&self) -> &[Owned] {

@@ -4,99 +4,23 @@
 )]
 
 mod bake;
-mod content;
 mod records;
 
-use engine_core::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
+
+use bevy_ecs::world::World;
+use engine_core::collections::HashMap;
 use engine_core::glam::Vec3;
 use engine_core::{
-    Error, ErrorCode, Job, JobCx, JobKind, Material, MaterialHandle, MeshHandle, RecordKey,
+    AtlasDevice, AtlasFormat, AtlasRole, AtlasShape, AtlasWork, IMPOSTOR_KINDS as KINDS,
+    ImpostorBooks, ImpostorIdentity, ImpostorRecord, MaterialHandle, MeshHandle,
 };
 
-use crate::bindings::{IMPOSTOR_BAKE, IMPOSTOR_DRAW};
-use crate::cached::Cached;
-use crate::entries::MeshEntries;
-use crate::gpu_layouts::constants::IMPOSTOR_FOLIAGE as FOLIAGE;
-use crate::gpu_layouts::constants::IMPOSTOR_FRAMES_SHIFT as FRAMES_SHIFT;
-pub use crate::gpu_layouts::constants::IMPOSTOR_HEMISPHERE as HEMISPHERE;
-use crate::gpu_layouts::constants::IMPOSTOR_KINDS as KINDS;
-use crate::gpu_layouts::constants::IMPOSTOR_MASKED as MASKED;
-use crate::gpu_layouts::constants::VARIANT_FOLIAGE;
-pub use crate::gpu_layouts::impostors::ImpostorRecord;
-use crate::materials::Variant;
-use crate::mesh_arena::MeshDraw;
+use crate::bindings::IMPOSTOR_BAKE;
+use crate::materials::{MaterialStore, Variant};
+use crate::mesh_arena::{GpuMeshes, MeshDraw};
 use crate::mipmaps::MipGenerator;
-pub use content::Contents;
-
-pub static IMPOSTOR: JobKind = JobKind::new("engine::impostor", &crate::SOURCE, made_on_the_gpu);
-
-fn made_on_the_gpu(_: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    Err(Error::new(ErrorCode::JobUnsupported, "engine::impostor"))
-}
-
-pub const IMPOSTOR_MIN_TRIANGLES: usize = 64;
-
-const RGBA8_SIZE: u32 = 512;
-
-const LOAD_BUDGET: usize = 16 << 20;
-
-const FIRST_BYTES: u64 = 16 << 20;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct AtlasShape {
-    pub frames: u32,
-    pub texels: u32,
-    pub hemisphere: bool,
-}
-
-impl AtlasShape {
-    pub const SPHERE: Self = Self {
-        frames: 8,
-        texels: 16,
-        hemisphere: false,
-    };
-
-    pub fn size(self) -> u32 {
-        self.frames * self.texels
-    }
-
-    pub fn levels(self) -> u32 {
-        self.texels.trailing_zeros()
-    }
-
-    fn flags(self) -> u32 {
-        self.texels | if self.hemisphere { HEMISPHERE } else { 0 } | (self.frames << FRAMES_SHIFT)
-    }
-
-    fn held(self, format: AtlasFormat) -> Self {
-        match format {
-            AtlasFormat::Rgba8 if self.size() > RGBA8_SIZE => Self {
-                texels: self.texels / 2,
-                ..self
-            },
-            AtlasFormat::Bc7 | AtlasFormat::Astc | AtlasFormat::Rgba8 => self,
-        }
-    }
-
-    fn held_on(self, device: &wgpu::Device, format: AtlasFormat) -> Self {
-        let limits = device.limits();
-        let mut shape = self.held(format);
-        while (shape.size() > limits.max_texture_dimension_2d
-            || records::readback_bytes(shape) > limits.max_buffer_size)
-            && shape.texels > 2
-        {
-            shape.texels /= 2;
-        }
-        shape
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AtlasFormat {
-    Bc7,
-    Astc,
-    Rgba8,
-}
+use crate::shaders::{Entry, Stage};
 
 const FORMATS: [wgpu::TextureFormat; 4] = [
     wgpu::TextureFormat::Rgba8UnormSrgb,
@@ -129,160 +53,78 @@ const ASTC_FORMATS: [wgpu::TextureFormat; 4] = [
     },
 ];
 
-impl AtlasFormat {
-    fn of(device: &wgpu::Device) -> Self {
-        let features = device.features();
-        if features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
-            Self::Bc7
-        } else if features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC) {
-            Self::Astc
-        } else {
-            Self::Rgba8
-        }
-    }
+const BAKE_MODULE: &str = "engine::impostor_bake";
 
-    fn tag(self) -> u32 {
-        match self {
-            Self::Rgba8 => 0,
-            Self::Bc7 => 1,
-            Self::Astc => 2,
-        }
-    }
-
-    fn family(self) -> Option<engine_textures::Family> {
-        match self {
-            Self::Bc7 => Some(engine_textures::Family::Bc7),
-            Self::Astc => Some(engine_textures::Family::Astc),
-            Self::Rgba8 => None,
-        }
-    }
-
-    fn rows(self, size: u32) -> (u32, u32) {
-        match self {
-            Self::Bc7 | Self::Astc => (size.div_ceil(4) * 16, size.div_ceil(4)),
-            Self::Rgba8 => (size * 4, size),
-        }
-    }
-
-    fn level_bytes(self, size: u32) -> usize {
-        let (row, rows) = self.rows(size);
-        row as usize * rows as usize
-    }
-
-    fn textures(self) -> [wgpu::TextureFormat; 4] {
-        match self {
-            Self::Bc7 => BC7_FORMATS,
-            Self::Astc => ASTC_FORMATS,
-            Self::Rgba8 => FORMATS,
-        }
+fn format_of(device: &wgpu::Device) -> AtlasFormat {
+    let features = device.features();
+    if features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC) {
+        AtlasFormat::Bc7
+    } else if features.contains(wgpu::Features::TEXTURE_COMPRESSION_ASTC) {
+        AtlasFormat::Astc
+    } else {
+        AtlasFormat::Rgba8
     }
 }
 
-impl ImpostorRecord {
-    pub fn new(
-        min: Vec3,
-        max: Vec3,
-        layer: u32,
-        (emissive, masked, foliage): ([f32; 3], bool, bool),
-        shape: AtlasShape,
-    ) -> Self {
-        let center = (min + max) * 0.5;
-        let half = (max - min) * 0.5;
-        let radius = engine_core::math::max(half.length() * 1.0001, 1.0e-6);
-        Self {
-            sphere: center.extend(radius).to_array(),
-            extent: half.to_array(),
-            layer,
-            emissive,
-            flags: shape.flags()
-                | if masked { MASKED } else { 0 }
-                | if foliage { FOLIAGE } else { 0 },
-        }
-    }
-
-    pub fn error(&self) -> f32 {
-        let texels = self.flags & (HEMISPHERE - 1);
-        if texels == 0 {
-            return 0.0;
-        }
-        2.0 * self.sphere[3] / texels as f32
-    }
-
-    pub fn framed(&self) -> bool {
-        self.flags & (HEMISPHERE - 1) != 0 && self.sphere[3] > 0.0
+fn family(format: AtlasFormat) -> Option<engine_textures::Family> {
+    match format {
+        AtlasFormat::Bc7 => Some(engine_textures::Family::Bc7),
+        AtlasFormat::Astc => Some(engine_textures::Family::Astc),
+        AtlasFormat::Rgba8 => None,
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Layers {
-    free: Vec<u32>,
-    used: u32,
-}
-
-impl Layers {
-    pub fn allocate(&mut self, limit: u32) -> Option<u32> {
-        if let Some(index) = self
-            .free
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, layer)| **layer)
-            .map(|(index, _)| index)
-        {
-            return Some(self.free.swap_remove(index));
-        }
-        (self.used < limit).then(|| {
-            self.used += 1;
-            self.used - 1
-        })
-    }
-
-    pub fn release(&mut self, layer: u32) {
-        self.free.push(layer);
-    }
-
-    pub fn extent(&self) -> u32 {
-        self.used
-    }
-
-    pub fn live(&self) -> u32 {
-        self.used - self.free.len() as u32
+fn textures(format: AtlasFormat) -> [wgpu::TextureFormat; 4] {
+    match format {
+        AtlasFormat::Bc7 => BC7_FORMATS,
+        AtlasFormat::Astc => ASTC_FORMATS,
+        AtlasFormat::Rgba8 => FORMATS,
     }
 }
 
-pub fn grown_layers(needed: u32, bytes: u64, limit: u32) -> u32 {
-    let first = (FIRST_BYTES / bytes.max(1)).clamp(1, 16) as u32;
-    needed.max(first).next_power_of_two().min(limit).max(needed)
+pub(crate) fn atlas_device(device: &wgpu::Device) -> AtlasDevice {
+    let limits = device.limits();
+    AtlasDevice {
+        format: format_of(device),
+        max_texture_dimension: limits.max_texture_dimension_2d,
+        max_buffer_size: limits.max_buffer_size,
+        max_layers: limits.max_texture_array_layers,
+        row_alignment: wgpu::COPY_BYTES_PER_ROW_ALIGNMENT,
+    }
 }
 
-fn shades_as_foliage(variant: Variant) -> bool {
-    variant.alpha_mask() || variant.bits() & VARIANT_FOLIAGE != 0
-}
-
-fn most_layers(device: &wgpu::Device) -> u32 {
-    device.limits().max_texture_array_layers / KINDS
-}
-
-fn layer_limit(device: &wgpu::Device, budget: Option<u32>) -> u32 {
-    most_layers(device).min(budget.unwrap_or(u32::MAX))
+fn bake_entries(extended: bool, shade: bool) -> (Entry, Entry) {
+    let entry = |name, stage| Entry {
+        module: BAKE_MODULE,
+        name,
+        stage,
+    };
+    let vertex = if extended {
+        entry("vs_impostor_bake_extended", Stage::Vertex)
+    } else {
+        entry("vs_impostor_bake", Stage::Vertex)
+    };
+    let fragment = match (extended, shade) {
+        (false, false) => entry("fs_impostor_bake", Stage::Fragment),
+        (true, false) => entry("fs_impostor_bake_extended", Stage::Fragment),
+        (false, true) => entry("fs_impostor_shade", Stage::Fragment),
+        (true, true) => entry("fs_impostor_shade_extended", Stage::Fragment),
+    };
+    (vertex, fragment)
 }
 
 const MIPS_LABEL: &str = "engine/texture-mips";
 
-pub trait MipEncoder {
-    fn mips(&mut self, device: &wgpu::Device) -> &mut wgpu::CommandEncoder;
-}
-
-impl MipEncoder for Option<wgpu::CommandEncoder> {
-    fn mips(&mut self, device: &wgpu::Device) -> &mut wgpu::CommandEncoder {
-        self.get_or_insert_with(|| {
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some(MIPS_LABEL),
-            })
+fn mip_encoder<'a>(
+    device: &wgpu::Device,
+    encoder: &'a mut Option<wgpu::CommandEncoder>,
+) -> &'a mut wgpu::CommandEncoder {
+    encoder.get_or_insert_with(|| {
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some(MIPS_LABEL),
         })
-    }
+    })
 }
-
-pub type ImpostorKey = (MeshHandle, Option<MaterialHandle>);
 
 struct Arrays {
     texture: wgpu::Texture,
@@ -297,74 +139,36 @@ impl Drop for Arrays {
     }
 }
 
-struct Baked {
-    record: ImpostorRecord,
-    material: Option<Material>,
+struct BakeSource<'a> {
+    draw: MeshDraw<'a>,
+    extended: bool,
+    group: &'a wgpu::BindGroup,
+    variant: Variant,
+    bounds: (Vec3, Vec3),
+    parts: Vec<BakePart<'a>>,
 }
 
-#[derive(Clone, Copy)]
-struct Supply {
-    record: RecordKey,
-    material: Option<Material>,
+struct BakePart<'a> {
+    draw: MeshDraw<'a>,
+    extended: bool,
+    group: &'a wgpu::BindGroup,
+    variant: Variant,
 }
 
-pub enum Supplied {
-    Resident(ImpostorRecord),
-    Coming,
-    Refused,
-}
-
-impl Supplied {
-    pub fn record(&self) -> ImpostorRecord {
-        match self {
-            Self::Resident(record) => *record,
-            Self::Coming | Self::Refused => ImpostorRecord::default(),
-        }
-    }
-}
-
-pub struct BakeSource<'a> {
-    pub draw: MeshDraw<'a>,
-    pub extended: bool,
-    pub group: &'a wgpu::BindGroup,
-    pub variant: Variant,
-    pub bounds: (Vec3, Vec3),
-    pub material: Option<Material>,
-    pub parts: Vec<BakePart<'a>>,
-}
-
-pub struct BakePart<'a> {
-    pub draw: MeshDraw<'a>,
-    pub extended: bool,
-    pub group: &'a wgpu::BindGroup,
-    pub variant: Variant,
-}
-
-pub struct BakeGpu<'a> {
-    pub device: &'a wgpu::Device,
-    pub queue: &'a crate::gpu_calls::Queue,
-    pub encoder: &'a mut dyn MipEncoder,
-    pub mips: &'a MipGenerator,
-    pub pipelines: &'a mut ImpostorPipelines,
-    pub entries: &'a MeshEntries,
-}
-
-pub struct ImpostorPipelines {
+struct ImpostorPipelines {
     bake_layout: crate::pipelines::GroupLayout,
     bake_pipeline_layout: wgpu::PipelineLayout,
     bake_pipelines: HashMap<Variant, wgpu::RenderPipeline>,
     shade_pipelines: HashMap<Variant, wgpu::RenderPipeline>,
-    draw_layout: crate::pipelines::GroupLayout,
     sampler: wgpu::Sampler,
     no_shade: Option<wgpu::TextureView>,
 }
 
 impl ImpostorPipelines {
-    pub fn new(device: &wgpu::Device) -> Self {
+    fn new(device: &wgpu::Device) -> Self {
         let bake_layout = crate::pipelines::layout(device, &IMPOSTOR_BAKE);
         let bake_pipeline_layout =
             crate::pipelines::layout_of(device, &crate::pipeline_layouts::IMPOSTOR_BAKE_PIPELINES);
-        let draw_layout = crate::pipelines::layout(device, &IMPOSTOR_DRAW);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("engine/impostor-sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -379,34 +183,20 @@ impl ImpostorPipelines {
             bake_pipeline_layout,
             bake_pipelines: HashMap::default(),
             shade_pipelines: HashMap::default(),
-            draw_layout,
             sampler,
             no_shade: None,
         }
     }
 }
 
-pub struct ImpostorAtlas {
+struct Atlas {
     shape: AtlasShape,
     format: AtlasFormat,
     arrays: Option<Arrays>,
     targets: Option<bake::BakeTargets>,
-    layers: Layers,
-    baked: HashMap<ImpostorKey, Baked>,
-    supplies: HashMap<ImpostorKey, Supply>,
-    supplied: HashSet<ImpostorKey>,
-    wants: Vec<RecordKey>,
-    answers: HashMap<RecordKey, Option<Vec<u8>>>,
     readbacks: Vec<records::Readback>,
-    loaded: usize,
-    deferred: bool,
-    cooking: bool,
     records: wgpu::Buffer,
     uploaded: Vec<ImpostorRecord>,
-    group: Cached<(u64, u64), wgpu::BindGroup>,
-    records_generation: u64,
-    arrays_generation: u64,
-    generation: u64,
 }
 
 fn record_buffer(device: &wgpu::Device, records: usize) -> wgpu::Buffer {
@@ -421,296 +211,59 @@ fn record_buffer(device: &wgpu::Device, records: usize) -> wgpu::Buffer {
     )
 }
 
-impl ImpostorAtlas {
-    pub fn new(device: &wgpu::Device, shape: AtlasShape) -> Self {
-        let format = AtlasFormat::of(device);
+impl Atlas {
+    fn new(device: &wgpu::Device, shape: AtlasShape, format: AtlasFormat) -> Self {
         Self {
-            shape: shape.held_on(device, format),
+            shape,
             format,
             arrays: None,
             targets: None,
-            layers: Layers::default(),
-            baked: HashMap::default(),
-            supplies: HashMap::default(),
-            supplied: HashSet::default(),
-            wants: Vec::new(),
-            answers: HashMap::default(),
             readbacks: Vec::new(),
-            loaded: 0,
-            deferred: false,
-            cooking: false,
             records: record_buffer(device, 1),
             uploaded: Vec::new(),
-            group: Cached::default(),
-            records_generation: 0,
-            arrays_generation: 0,
-            generation: 0,
         }
-    }
-
-    pub fn set_cooking(&mut self, cooking: bool) {
-        self.cooking = cooking;
-    }
-
-    pub fn fit(&mut self, device: &wgpu::Device, shape: AtlasShape) {
-        let shape = shape.held_on(device, self.format);
-        if shape == self.shape {
-            return;
-        }
-        self.shape = shape;
-        self.arrays = None;
-        self.targets = None;
-        self.group = Cached::default();
-        self.layers = Layers::default();
-        self.baked.clear();
-        self.supplies.clear();
-        self.supplied.clear();
-        self.wants.clear();
-        self.answers.clear();
-        self.readbacks.clear();
-        self.generation += 1;
-    }
-
-    pub fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    pub fn live(&self) -> u32 {
-        self.layers.live()
-    }
-
-    pub fn capacity_bytes(&self) -> u64 {
-        let layers = self.arrays.as_ref().map_or(0, |arrays| arrays.layers);
-        u64::from(layers) * self.layer_bytes() + self.records.size()
     }
 
     fn layer_bytes(&self) -> u64 {
         self.format.level_bytes(self.shape.size()) as u64 * 4 * 4 / 3
     }
 
-    pub fn contains(&self, key: ImpostorKey) -> bool {
-        self.baked.contains_key(&key)
+    fn capacity_bytes(&self) -> u64 {
+        let layers = self.arrays.as_ref().map_or(0, |arrays| arrays.layers);
+        u64::from(layers) * self.layer_bytes() + self.records.size()
     }
 
-    pub fn record(&self, key: ImpostorKey, material: Option<&Material>) -> Option<ImpostorRecord> {
-        self.baked
-            .get(&key)
-            .filter(|baked| baked.material.as_ref() == material)
-            .map(|baked| baked.record)
-    }
-
-    pub fn take_wants(&mut self, out: &mut Vec<RecordKey>) {
-        out.append(&mut self.wants);
-    }
-
-    pub fn asks(&self, record: RecordKey) -> bool {
-        self.supplies.values().any(|supply| supply.record == record)
-    }
-
-    pub fn answer(&mut self, record: RecordKey, bytes: Option<Vec<u8>>) {
-        self.answers.insert(record, bytes);
-        self.generation += 1;
-    }
-
-    pub fn left(&self) -> u64 {
-        (self.supplies.len() + self.readbacks.len()) as u64
-    }
-
-    fn record_key(&self, content: (u128, u128)) -> RecordKey {
-        RecordKey::of(&IMPOSTOR, &records::identity(self.shape, self.format, content))
-    }
-
-    pub fn retain(
-        &mut self,
-        mut keep: impl FnMut(&ImpostorKey) -> bool,
-        mut material: impl FnMut(MaterialHandle) -> Option<Material>,
-    ) {
-        let layers = &mut self.layers;
-        let before = self.baked.len();
-        self.baked.retain(|key, baked| {
-            let current = key.1.and_then(&mut material);
-            let kept = keep(key) && baked.material == current;
-            if !kept {
-                layers.release(baked.record.layer);
-            }
-            kept
-        });
-        if self.baked.len() != before {
-            self.generation += 1;
-        }
-        let supplied = std::mem::take(&mut self.supplied);
-        let asked = self.supplies.len();
-        self.supplies.retain(|key, _| keep(key));
-        let kept = self.supplies.len();
-        self.supplies.retain(|key, _| supplied.contains(key));
-        if self.cooking && self.supplies.len() < kept {
-            let record = serde_json::json!({
-                "event": "impostor_supplies_dropped",
-                "dropped": kept - self.supplies.len(),
-                "asked": asked,
-            });
-            eprintln!("{record}");
-        }
-        let supplies = &self.supplies;
-        self.answers
-            .retain(|record, _| supplies.values().any(|supply| supply.record == *record));
-    }
-
-    pub fn enforce_budget(&mut self, budget: Option<u32>) {
-        if !self.cooking && budget.is_some_and(|budget| self.layers.live() > budget) {
-            self.baked.clear();
-            self.layers = Layers::default();
-            self.generation += 1;
-        }
-    }
-
-    pub fn supply(
-        &mut self,
-        mut gpu: BakeGpu<'_>,
-        key: ImpostorKey,
-        source: &BakeSource<'_>,
-        content: (u128, u128),
-        budget: Option<u32>,
-    ) -> Supplied {
-        if let Some(resident) = self.record(key, source.material.as_ref()) {
-            return Supplied::Resident(resident);
-        }
-        self.supplied.insert(key);
-        let budget = budget.filter(|_| !self.cooking);
-        if self.layers.live() >= layer_limit(gpu.device, budget) {
-            self.supplies.remove(&key);
-            return Supplied::Refused;
-        }
-        let asked = self
-            .supplies
-            .get(&key)
-            .filter(|supply| supply.material.as_ref() == source.material.as_ref())
-            .map(|supply| supply.record);
-        let Some(record) = asked else {
-            let record = self.record_key(content);
-            self.wants.push(record);
-            self.supplies.insert(
-                key,
-                Supply {
-                    record,
-                    material: source.material,
-                },
-            );
-            return Supplied::Coming;
-        };
-        if self.loaded >= LOAD_BUDGET && self.answers.get(&record).is_some_and(Option::is_some) {
-            self.deferred = true;
-            return Supplied::Coming;
-        }
-        let Some(answer) = self.answers.remove(&record) else {
-            return Supplied::Coming;
-        };
-        if answer.is_some()
-            && self
-                .supplies
-                .iter()
-                .any(|(other, supply)| *other != key && supply.record == record)
-        {
-            self.answers.insert(record, answer.clone());
-        }
-        if let Some(bytes) = answer
-            && self.load(&mut gpu, key, source, &bytes, budget)
-        {
-            self.supplies.remove(&key);
-            return self.supplied(key, source);
-        }
-        self.bake(gpu, source, content);
-        Supplied::Coming
-    }
-
-    fn supplied(&self, key: ImpostorKey, source: &BakeSource<'_>) -> Supplied {
-        self.record(key, source.material.as_ref())
-            .map_or(Supplied::Refused, Supplied::Resident)
-    }
-
-    fn layer(
-        &mut self,
-        device: &wgpu::Device,
-        encoder: &mut dyn MipEncoder,
-        budget: Option<u32>,
-    ) -> Option<u32> {
-        if self.layers.live() >= layer_limit(device, budget) {
-            return None;
-        }
-        let layer = self.layers.allocate(most_layers(device))?;
-        self.ensure_layers(device, encoder, self.layers.extent());
-        Some(layer)
-    }
-
-    fn resident(&mut self, key: ImpostorKey, source: &BakeSource<'_>, layer: u32) {
-        let emissive = source
-            .material
-            .as_ref()
-            .map_or([0.0; 3], Material::emissive);
-        let variants =
-            || std::iter::once(source.variant).chain(source.parts.iter().map(|part| part.variant));
-        let masked = variants().any(Variant::alpha_mask);
-        let foliage = variants().any(shades_as_foliage);
-        let record = ImpostorRecord::new(
-            source.bounds.0,
-            source.bounds.1,
-            layer,
-            (emissive, masked, foliage),
-            self.shape,
-        );
-        self.baked.insert(
-            key,
-            Baked {
-                record,
-                material: source.material,
-            },
-        );
-        self.generation += 1;
-    }
-
-    pub fn release_targets(&mut self) {
-        self.targets = None;
-    }
-
-    pub fn release(&mut self, device: &wgpu::Device) {
-        if self.arrays.is_none()
-            && self.targets.is_none()
-            && self.baked.is_empty()
-            && self.supplies.is_empty()
-            && self.readbacks.is_empty()
-            && self.uploaded.is_empty()
-        {
-            return;
-        }
+    fn reset(&mut self, shape: AtlasShape) {
+        self.shape = shape;
         self.arrays = None;
         self.targets = None;
-        self.group = Cached::default();
-        self.layers = Layers::default();
-        self.baked.clear();
-        self.supplies.clear();
-        self.supplied.clear();
-        self.wants.clear();
-        self.answers.clear();
+        self.readbacks.clear();
+    }
+
+    fn release(&mut self, device: &wgpu::Device) {
+        self.arrays = None;
+        self.targets = None;
         self.readbacks.clear();
         self.uploaded.clear();
         crate::memory::release_buffer(&self.records);
         self.records = record_buffer(device, 1);
-        self.records_generation += 1;
-        self.arrays_generation += 1;
-        self.generation += 1;
     }
 
-    fn ensure_layers(&mut self, device: &wgpu::Device, encoder: &mut dyn MipEncoder, layers: u32) {
+    fn grow(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut Option<wgpu::CommandEncoder>,
+        capacity: u32,
+    ) {
         if self
             .arrays
             .as_ref()
-            .is_some_and(|arrays| arrays.layers >= layers)
+            .is_some_and(|arrays| arrays.layers >= capacity)
         {
             return;
         }
-        let capacity = grown_layers(layers, self.layer_bytes(), most_layers(device));
         let (size, levels) = (self.shape.size(), self.shape.levels());
-        let formats = self.format.textures();
+        let formats = textures(self.format);
         let texture = crate::memory::texture(
             device,
             &wgpu::TextureDescriptor {
@@ -731,7 +284,7 @@ impl ImpostorAtlas {
             },
         );
         if let Some(old) = &self.arrays {
-            let encoder = encoder.mips(device);
+            let encoder = mip_encoder(device, encoder);
             for kind in 0..KINDS {
                 for level in 0..levels {
                     let size = size >> level;
@@ -786,68 +339,220 @@ impl ImpostorAtlas {
             whole,
             layers: capacity,
         });
-        self.arrays_generation += 1;
     }
 
-    pub fn frames(&self) -> Option<(&wgpu::TextureView, u64)> {
-        self.arrays
-            .as_ref()
-            .map(|arrays| (&arrays.whole, self.arrays_generation))
-    }
-
-    pub fn prepare(
+    fn upload_records(
         &mut self,
         device: &wgpu::Device,
         queue: &crate::gpu_calls::Queue,
-        pipelines: &ImpostorPipelines,
         records: &[ImpostorRecord],
     ) -> bool {
-        let Some(arrays) = self.arrays.as_ref() else {
+        if self.arrays.is_none() || records == self.uploaded.as_slice() {
             return false;
-        };
-        if records != self.uploaded.as_slice() {
-            let bytes = size_of_val(records) as u64;
-            if bytes > self.records.size() {
-                self.records = record_buffer(device, records.len().next_power_of_two());
-                self.records_generation += 1;
-            }
-            if !records.is_empty() {
-                queue.write_buffer(&self.records, 0, bytemuck::cast_slice(records));
-            }
-            self.uploaded.clear();
-            self.uploaded.extend_from_slice(records);
         }
-        let key = (self.records_generation, self.arrays_generation);
-        if self.group.stale(&key) {
-            let group = crate::pipelines::group(
-                device,
-                "engine/impostor-group",
-                &IMPOSTOR_DRAW,
-                &pipelines.draw_layout,
-                &[
-                    ("impostor_records", self.records.as_entire_binding()),
-                    ("impostor_albedo", crate::pipelines::view(&arrays.views[0])),
-                    (
-                        "impostor_emissive",
-                        crate::pipelines::view(&arrays.views[1]),
-                    ),
-                    (
-                        "impostor_geometry",
-                        crate::pipelines::view(&arrays.views[2]),
-                    ),
-                    ("impostor_surface", crate::pipelines::view(&arrays.views[3])),
-                    (
-                        "impostor_sampler",
-                        crate::pipelines::sampler(&pipelines.sampler),
-                    ),
-                ],
-            );
-            self.group.set(key, group);
+        let bytes = size_of_val(records) as u64;
+        let grown = bytes > self.records.size();
+        if grown {
+            self.records = record_buffer(device, records.len().next_power_of_two());
         }
-        true
+        if !records.is_empty() {
+            queue.write_buffer(&self.records, 0, bytemuck::cast_slice(records));
+        }
+        self.uploaded.clear();
+        self.uploaded.extend_from_slice(records);
+        grown
+    }
+}
+
+pub(crate) enum FrameResource<'a> {
+    Buffer(&'a wgpu::Buffer),
+    View(&'a wgpu::TextureView),
+    Sampler(&'a wgpu::Sampler),
+}
+
+pub(crate) struct Impostors {
+    pipelines: ImpostorPipelines,
+    atlases: BTreeMap<AtlasRole, Atlas>,
+    done: u64,
+    generation: u64,
+}
+
+impl Impostors {
+    pub(crate) fn new(device: &wgpu::Device) -> Self {
+        Self {
+            pipelines: ImpostorPipelines::new(device),
+            atlases: BTreeMap::new(),
+            done: 0,
+            generation: 0,
+        }
     }
 
-    pub fn group(&self) -> Option<&wgpu::BindGroup> {
-        self.group.get()
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
+
+    pub(crate) fn forget(&mut self) {
+        self.atlases.clear();
+        self.generation += 1;
+    }
+
+    pub(crate) fn capacity_bytes(&self) -> u64 {
+        self.atlases.values().map(Atlas::capacity_bytes).sum()
+    }
+
+    pub(crate) fn frame_resource(&self, name: &str) -> Option<FrameResource<'_>> {
+        if name == "impostor_sampler" {
+            return Some(FrameResource::Sampler(&self.pipelines.sampler));
+        }
+        let (role, name) = match name.strip_prefix("placed_") {
+            Some(name) => (AtlasRole::Placed, name),
+            None => (AtlasRole::Scene, name),
+        };
+        let atlas = self.atlases.get(&role)?;
+        if name == "impostor_records" {
+            return Some(FrameResource::Buffer(&atlas.records));
+        }
+        let arrays = atlas.arrays.as_ref()?;
+        let view = match name {
+            "impostor_albedo" => &arrays.views[0],
+            "impostor_emissive" => &arrays.views[1],
+            "impostor_geometry" => &arrays.views[2],
+            "impostor_surface" => &arrays.views[3],
+            "impostor_atlas" => &arrays.whole,
+            _ => return None,
+        };
+        Some(FrameResource::View(view))
+    }
+
+    pub(crate) fn run(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &crate::gpu_calls::Queue,
+        world: &World,
+        (meshes, materials): (&GpuMeshes, &MaterialStore),
+        encoder: &mut Option<wgpu::CommandEncoder>,
+    ) {
+        let Some(books) = world.get_resource::<ImpostorBooks>() else {
+            return;
+        };
+        let Some(facts) = books.device() else {
+            return;
+        };
+        for (at, role, work) in books.work() {
+            if at <= self.done {
+                continue;
+            }
+            self.done = at;
+            if let AtlasWork::Reset { shape } = work {
+                self.atlases
+                    .entry(role)
+                    .or_insert_with(|| Atlas::new(device, *shape, facts.format))
+                    .reset(*shape);
+                self.generation += 1;
+                continue;
+            }
+            let Some(atlas) = self.atlases.get_mut(&role) else {
+                continue;
+            };
+            match work {
+                AtlasWork::Reset { .. } => {}
+                AtlasWork::Release => {
+                    atlas.release(device);
+                    self.generation += 1;
+                }
+                AtlasWork::Grow { layers } => {
+                    atlas.grow(device, encoder, *layers);
+                    self.generation += 1;
+                }
+                AtlasWork::Load { layer, bytes } => atlas.load(queue, *layer, bytes),
+                AtlasWork::Bake {
+                    identity,
+                    mesh,
+                    material,
+                    parts,
+                    bounds,
+                } => {
+                    let Some(source) =
+                        bake_source((meshes, materials), (*mesh, *material), parts, *bounds)
+                    else {
+                        continue;
+                    };
+                    let gpu = BakeGpu {
+                        device,
+                        encoder: &mut *encoder,
+                        mips: materials.mips(),
+                        pipelines: &mut self.pipelines,
+                    };
+                    atlas.bake(gpu, &source, *identity);
+                }
+                AtlasWork::DropTargets => atlas.targets = None,
+            }
+        }
+        for (role, atlas) in &mut self.atlases {
+            if atlas.upload_records(device, queue, books.records(*role)) {
+                self.generation += 1;
+            }
+        }
+    }
+
+    pub(crate) fn after_submit(&mut self) {
+        for atlas in self.atlases.values_mut() {
+            atlas.after_submit();
+        }
+    }
+
+    pub(crate) fn deliver(&mut self, world: &mut World) {
+        let mut made: Vec<(AtlasRole, ImpostorIdentity, Option<Vec<u8>>)> = Vec::new();
+        for (&role, atlas) in &mut self.atlases {
+            atlas.take_made(role, &mut made);
+        }
+        engine_core::deliver_impostors(world, self.done, made);
+    }
+}
+
+fn bake_source<'a>(
+    (meshes, materials): (&'a GpuMeshes, &'a MaterialStore),
+    (mesh, material): (MeshHandle, Option<MaterialHandle>),
+    parts: &[(MeshHandle, MaterialHandle)],
+    bounds: (Vec3, Vec3),
+) -> Option<BakeSource<'a>> {
+    let held = |handle: Option<MaterialHandle>| {
+        handle.is_none_or(|handle| materials.group(handle).is_some())
+    };
+    if !held(material) {
+        return None;
+    }
+    let gpu = meshes.get(mesh)?;
+    let (group, variant) = materials.binding(material);
+    let mut baked = Vec::with_capacity(parts.len());
+    for &(part, part_material) in parts {
+        let (Some(part_mesh), Some(draw)) = (meshes.get(part), meshes.draw(part)) else {
+            continue;
+        };
+        if !held(Some(part_material)) {
+            continue;
+        }
+        let (group, variant) = materials.binding(Some(part_material));
+        baked.push(BakePart {
+            draw,
+            extended: part_mesh.extended,
+            group,
+            variant: variant.with_extended(part_mesh.extended),
+        });
+    }
+    Some(BakeSource {
+        draw: meshes.draw(mesh)?,
+        extended: gpu.extended,
+        group,
+        variant,
+        bounds,
+        parts: baked,
+    })
+}
+
+struct BakeGpu<'a> {
+    device: &'a wgpu::Device,
+    encoder: &'a mut Option<wgpu::CommandEncoder>,
+    mips: &'a MipGenerator,
+    pipelines: &'a mut ImpostorPipelines,
 }

@@ -3,28 +3,67 @@ use engine_math::collections::HashSet;
 use engine_place::MeshHandle;
 use glam::{Affine3A, Mat4, UVec2, Vec3};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FrameFacts {
+    pub display: bool,
+    pub exact: bool,
+    pub temporal: bool,
+    pub capture: bool,
+    pub debug: bool,
+    pub display_size: UVec2,
+    pub render_size: UVec2,
+}
+
+impl Default for FrameFacts {
+    fn default() -> Self {
+        Self {
+            display: false,
+            exact: true,
+            temporal: false,
+            capture: false,
+            debug: false,
+            display_size: UVec2::new(1920, 1080),
+            render_size: UVec2::new(1920, 1080),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewState {
-    render_size: UVec2,
+    facts: FrameFacts,
     view_projection: Mat4,
     eye: Vec3,
     frozen: Option<Vec3>,
+    scene: u64,
 }
 
 impl Default for ViewState {
     fn default() -> Self {
         Self {
-            render_size: UVec2::new(1920, 1080),
+            facts: FrameFacts::default(),
             view_projection: Mat4::IDENTITY,
             eye: Vec3::ZERO,
             frozen: None,
+            scene: 0,
         }
     }
 }
 
 impl ViewState {
+    pub fn facts(&self) -> FrameFacts {
+        self.facts
+    }
+
     pub fn render_size(&self) -> UVec2 {
-        self.render_size
+        self.facts.render_size
+    }
+
+    pub fn display_size(&self) -> UVec2 {
+        self.facts.display_size
+    }
+
+    pub fn scene(&self) -> u64 {
+        self.scene
     }
 
     pub fn view_projection(&self) -> Mat4 {
@@ -43,10 +82,14 @@ impl ViewState {
         self.frozen
     }
 
-    pub fn set(&mut self, render_size: UVec2, view_projection: Mat4, eye: Vec3) {
-        self.render_size = render_size;
+    pub fn set(&mut self, facts: FrameFacts, view_projection: Mat4, eye: Vec3) {
+        self.facts = facts;
         self.view_projection = view_projection;
         self.eye = eye;
+    }
+
+    pub fn new_scene(&mut self) {
+        self.scene = self.scene.wrapping_add(1);
     }
 
     pub fn freeze(&mut self, at: Option<Vec3>) {

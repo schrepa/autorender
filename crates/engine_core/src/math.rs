@@ -1,5 +1,6 @@
 use glam::Vec4;
 
+pub use engine_heightfield::hydraulics::GRAVITY;
 pub use engine_math::{REDUCTION_LIMIT, clamp, cos, exp, ln, max, min, pow, sin, sin_cos};
 
 #[inline]

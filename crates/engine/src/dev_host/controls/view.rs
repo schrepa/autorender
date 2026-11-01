@@ -21,7 +21,11 @@ pub(super) fn present(
 }
 
 pub(super) fn culling(app: &mut AppHost, enabled: bool, size: (u32, u32)) -> Result<Value, Error> {
-    app.engine.set_frustum_culling(enabled);
+    crate::host::apply_setting(
+        app.engine.app.world_mut(),
+        "culling.frustum",
+        &Value::Bool(enabled),
+    )?;
     then_render(
         app,
         size,

@@ -1,14 +1,13 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use engine_core::{
-    BrickList, CookMode, DeviceLimits, Engine, ErrorCode, FrameReport, FrameStats, InputState,
-    JobRef, RecordExchange,
+    BrickList, Engine, ErrorCode, FrameFacts, FrameReport, FrameStats, JobExchange, JobId, JobRef,
+    MoveInput, RecordExchange, WorkClock,
 };
 use engine_registry::Registry;
 use engine_render::{RenderTarget, Renderer};
 
-use crate::host::{HostJobs, JobId, JobMessage};
+use crate::host::JobMessage;
 use crate::resolution::{DynamicResolution, Resolution};
 use crate::{Error, Result};
 
@@ -54,20 +53,29 @@ impl TerrainClock {
     }
 }
 
-fn wire(engine: &mut Engine, renderer: &Renderer, workers: u32, clock: TerrainClock) {
-    engine.set_clock(clock.reading());
+fn wire(
+    engine: &mut Engine,
+    renderer: &Renderer,
+    (workers, verifying): (u32, bool),
+    clock: TerrainClock,
+) {
     let world = engine.app.world_mut();
+    world.insert_resource(WorkClock {
+        reading: clock.reading(),
+    });
     if let Some(mut records) = world.get_resource_mut::<RecordExchange>() {
         records.set_sampling(Some(renderer.texture_sampling()));
+    }
+    if let Some(mut jobs) = world.get_resource_mut::<JobExchange>() {
+        jobs.set_workers(workers);
+        jobs.set_verifying(verifying);
     }
     limit(engine, renderer, workers);
 }
 
 fn limit(engine: &mut Engine, renderer: &Renderer, workers: u32) {
-    engine.app.world_mut().insert_resource(DeviceLimits {
-        memory_budget: renderer.memory_budget(),
-        cores: workers,
-    });
+    let limits = crate::game::device_limits(&renderer.limits(), renderer.features(), workers);
+    engine.app.world_mut().insert_resource(limits);
 }
 
 pub(crate) struct AppHost {
@@ -80,7 +88,6 @@ pub(crate) struct AppHost {
     gpu_inputs_stale: bool,
     terrain_clock: TerrainClock,
     overlay: BTreeMap<String, serde_json::Value>,
-    jobs: HostJobs,
     pipeline_list: crate::host::PipelineList,
     pixel_ratio: f64,
     refresh_ms: Option<f64>,
@@ -130,7 +137,7 @@ impl AppHost {
     }
 
     fn with(mut engine: Engine, renderer: Box<Renderer>) -> Self {
-        wire(&mut engine, &renderer, 0, TerrainClock::Wall);
+        wire(&mut engine, &renderer, (0, false), TerrainClock::Wall);
         Self {
             engine,
             renderer,
@@ -141,7 +148,6 @@ impl AppHost {
             gpu_inputs_stale: false,
             terrain_clock: TerrainClock::Wall,
             overlay: BTreeMap::new(),
-            jobs: HostJobs::default(),
             pipeline_list: crate::host::PipelineList::default(),
             pixel_ratio: 1.0,
             refresh_ms: None,
@@ -163,13 +169,13 @@ impl AppHost {
     }
 
     pub fn replace_engine(&mut self, mut engine: Engine) -> Engine {
-        wire(
-            &mut engine,
-            &self.renderer,
-            self.jobs.workers(),
-            self.terrain_clock,
-        );
-        self.jobs.clear();
+        let jobs = self
+            .engine
+            .app
+            .world()
+            .get_resource::<JobExchange>()
+            .map_or((0, false), |jobs| (jobs.workers(), jobs.verifying()));
+        wire(&mut engine, &self.renderer, jobs, self.terrain_clock);
         self.pipeline_list = crate::host::PipelineList::default();
         self.gpu_inputs_stale = false;
         let replaced = std::mem::replace(&mut self.engine, engine);
@@ -189,9 +195,10 @@ impl AppHost {
     ) -> bool {
         if self.pipeline_list.unasked() {
             let content = content(&self.engine);
-            self.pipeline_list.ask(&self.engine, content, &mut self.jobs);
+            self.pipeline_list.ask(&mut self.engine, content);
         }
-        self.pipeline_list.take(&mut self.renderer, &mut self.jobs);
+        self.pipeline_list
+            .take(&mut self.engine, &mut self.renderer);
         self.pipeline_list.waiting()
     }
 
@@ -215,7 +222,9 @@ impl AppHost {
 
     pub fn set_terrain_clock(&mut self, clock: TerrainClock) {
         self.terrain_clock = clock;
-        self.engine.set_clock(clock.reading());
+        self.engine.app.world_mut().insert_resource(WorkClock {
+            reading: clock.reading(),
+        });
     }
 
     pub fn set_tick_pipelining(&mut self, enabled: bool) {
@@ -269,7 +278,7 @@ impl AppHost {
         &mut self,
         kind: FrameKind,
         (width, height): (u32, u32),
-    ) -> engine_core::DynamicResolutionStats {
+    ) -> (engine_core::DynamicResolutionStats, (u32, u32)) {
         let timing = self.renderer.take_frame_time();
         if let Some((ms, _)) = timing {
             self.gpu_ms = Some(ms as f32);
@@ -277,11 +286,12 @@ impl AppHost {
         let (resolution, dynamic) = self.resolution_settings();
         let FrameKind::Display { interval, .. } = kind else {
             self.renderer.set_render_size(width, height);
-            return engine_core::DynamicResolutionStats {
+            let stats = engine_core::DynamicResolutionStats {
                 active: false,
                 scale: 1.0,
                 budget_ms: 0.0,
             };
+            return (stats, (width, height));
         };
         self.adapt_resolution(&dynamic, timing, interval);
         let scale = self.dynamic.scale(&dynamic);
@@ -293,7 +303,7 @@ impl AppHost {
         )
         .unwrap_or((width, height));
         self.renderer.set_render_size(render_width, render_height);
-        engine_core::DynamicResolutionStats {
+        let stats = engine_core::DynamicResolutionStats {
             active: dynamic.enabled,
             scale: scale as f32,
             budget_ms: if dynamic.enabled {
@@ -301,7 +311,8 @@ impl AppHost {
             } else {
                 0.0
             },
-        }
+        };
+        (stats, (render_width, render_height))
     }
 
     fn resolution_stats(&self, (width, height): (u32, u32)) -> engine_core::ResolutionStats {
@@ -364,19 +375,60 @@ impl AppHost {
     }
 
     pub fn set_job_workers(&mut self, workers: u32) {
-        self.jobs.set_workers(workers);
-        limit(&mut self.engine, &self.renderer, workers);
-    }
-
-    pub fn take_jobs(&mut self) -> Vec<JobMessage> {
-        let orders = self
+        if let Some(mut jobs) = self
             .engine
             .app
             .world_mut()
-            .get_resource_mut::<engine_registry::JobQueue>()
-            .map(|mut queue| std::mem::take(&mut queue.orders))
-            .unwrap_or_default();
-        self.jobs.take(orders)
+            .get_resource_mut::<JobExchange>()
+        {
+            jobs.set_workers(workers);
+        }
+        limit(&mut self.engine, &self.renderer, workers);
+    }
+
+    pub fn set_job_verifying(&mut self, verifying: bool) {
+        if let Some(mut jobs) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<JobExchange>()
+        {
+            jobs.set_verifying(verifying);
+        }
+    }
+
+    pub fn take_jobs(&mut self) -> Vec<JobMessage> {
+        let Some(mut jobs) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<JobExchange>()
+        else {
+            return Vec::new();
+        };
+        let mut cancels = Vec::new();
+        let mut shares = Vec::new();
+        let mut requests = Vec::new();
+        let mut fetches = Vec::new();
+        let mut keeps = Vec::new();
+        jobs.take_cancels(&mut cancels);
+        jobs.take_shares(&mut shares);
+        jobs.take_requests(&mut requests);
+        jobs.take_fetches(&mut fetches);
+        jobs.take_keeps(&mut keeps);
+        let cancels = cancels.into_iter().map(JobMessage::Cancel);
+        let shares = shares.into_iter().map(JobMessage::Share);
+        let requests = requests.into_iter().map(JobMessage::Run);
+        let fetches = fetches.into_iter().map(JobMessage::Fetch);
+        let keeps = keeps
+            .into_iter()
+            .map(|(record, kind, bytes, parity)| JobMessage::Keep(record, kind, bytes, parity));
+        cancels
+            .chain(shares)
+            .chain(requests)
+            .chain(fetches)
+            .chain(keeps)
+            .collect()
     }
 
     pub fn run_job_here(
@@ -384,10 +436,17 @@ impl AppHost {
         kind: &JobRef,
         input: &[u8],
     ) -> std::result::Result<Vec<u8>, String> {
-        self.jobs.ran_here();
-        engine_worker::Worker::new(self.job_list(), now_ms)
-            .run(kind.name(), input)
-            .map_err(|error| error.to_string())
+        match self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<JobExchange>()
+        {
+            Some(mut jobs) => jobs.run_here(kind, input),
+            None => Err(Error::new(ErrorCode::MissingResource, "$")
+                .got("JobExchange")
+                .to_string()),
+        }
     }
 
     pub fn complete_job(&mut self, id: JobId, output: Vec<u8>) {
@@ -399,21 +458,40 @@ impl AppHost {
     }
 
     pub fn report_job_cache(&mut self, hits: u64, misses: u64, bytes: u64, mismatches: u64) {
-        self.jobs.report_cache(hits, misses, bytes, mismatches);
+        if let Some(mut jobs) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<JobExchange>()
+        {
+            jobs.report_cache(hits, misses, bytes, mismatches);
+        }
     }
 
     pub fn report_jobs_held(&mut self, held: u32) {
-        self.jobs.report_held(held);
+        if let Some(mut jobs) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<JobExchange>()
+        {
+            jobs.report_held(held);
+        }
     }
 
     fn finish_job(&mut self, id: JobId, output: std::result::Result<Vec<u8>, String>) {
-        let Some((key, output)) = self.jobs.finish(id, output) else {
-            return;
-        };
-        let record = output
-            .map(Arc::from)
-            .map_err(|error| Error::new(ErrorCode::InvalidRecord, "$.jobs").got(error));
-        self.engine.arrive(key, record);
+        if let Some(mut jobs) = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<JobExchange>()
+        {
+            jobs.complete(id, output);
+        }
+    }
+
+    fn deliver(&mut self) {
+        self.renderer.deliver(self.engine.app.world_mut());
     }
 
     pub fn frame(
@@ -421,7 +499,7 @@ impl AppHost {
         timestamp_ms: f64,
         width: u32,
         height: u32,
-        input: InputState,
+        input: MoveInput,
     ) -> Result<()> {
         if !timestamp_ms.is_finite() {
             return Err(Error::new(ErrorCode::InvalidInput, "$.timestamp")
@@ -440,6 +518,7 @@ impl AppHost {
         self.set_input(input);
         {
             let _core = attribution::core_scope();
+            self.deliver();
             let start = now_ms();
             let report = self.engine.advance(delta);
             let simulation_ms = now_ms() - start;
@@ -456,11 +535,6 @@ impl AppHost {
             if self.tick_pipelining {
                 let start = now_ms();
                 if self.engine.run_ahead(delta) {
-                    if self.engine.tick_completed_ahead()
-                        && let Some(current) = self.engine.gpu_current()
-                    {
-                        self.renderer.prestage_gpu_current(current);
-                    }
                     self.stats.simulation_ms += now_ms() - start;
                 }
             }
@@ -476,7 +550,7 @@ impl AppHost {
         ticks: u32,
         width: u32,
         height: u32,
-        input: InputState,
+        input: MoveInput,
     ) -> Result<()> {
         engine_core::check_dev_ticks(ticks)?;
         self.begin_attribution();
@@ -488,6 +562,7 @@ impl AppHost {
             self.engine.complete_pending_tick();
             self.last_timestamp_ms = None;
             self.set_input(input);
+            self.deliver();
             let start = now_ms();
             let report = self.engine.step_fixed(ticks)?;
             let simulation_ms = now_ms() - start;
@@ -505,6 +580,7 @@ impl AppHost {
         self.begin_profile_frame();
         {
             let _core = attribution::core_scope();
+            self.deliver();
             self.render_frame(width, height, 0.0, FrameReport::default(), FrameKind::Exact)?;
         }
         self.end_attribution();
@@ -525,6 +601,7 @@ impl AppHost {
             let _core = attribution::core_scope();
             self.engine.complete_pending_tick();
             self.engine.reveal_ticks_ahead();
+            self.deliver();
             self.render_frame(
                 width,
                 height,
@@ -537,7 +614,7 @@ impl AppHost {
         Ok(())
     }
 
-    fn set_input(&mut self, input: InputState) {
+    fn set_input(&mut self, input: MoveInput) {
         let _profile = engine_profile::span("cpu", "host.input");
         fn bounded(value: f32, limit: f32) -> f32 {
             if value.is_finite() {
@@ -546,13 +623,18 @@ impl AppHost {
                 0.0
             }
         }
-        *self.engine.app.world_mut().resource_mut::<InputState>() = InputState {
+        self.engine.app.world_mut().insert_resource(MoveInput {
             move_forward: bounded(input.move_forward, 1.0),
             move_right: bounded(input.move_right, 1.0),
             move_up: bounded(input.move_up, 1.0),
             look_yaw: bounded(input.look_yaw, crate::host::policy::LOOK_LIMIT),
             look_pitch: bounded(input.look_pitch, crate::host::policy::LOOK_LIMIT),
-        };
+        });
+    }
+
+    fn display_size(&self, (width, height): (u32, u32)) -> glam::UVec2 {
+        let (width, height) = self.renderer.view_size().unwrap_or((width, height));
+        glam::UVec2::new(width, height)
     }
 
     fn render_frame(
@@ -574,7 +656,8 @@ impl AppHost {
                     height: height.max(1),
                 });
         }
-        let dynamic_resolution = self.size_frame(kind, (width, height));
+        let (dynamic_resolution, (render_width, render_height)) =
+            self.size_frame(kind, (width, height));
         let (frame_number, tick) = {
             let world = self.engine.app.world();
             (
@@ -582,15 +665,7 @@ impl AppHost {
                 world.resource::<engine_core::FixedTime>().tick,
             )
         };
-        self.renderer.set_cooking(
-            self.engine
-                .app
-                .world()
-                .get_resource::<CookMode>()
-                .is_some_and(|mode| mode.cooking),
-        );
         let before_extraction = now_ms();
-        let culling_enabled = self.engine.frustum_culling();
         let aspect = width.max(1) as f32 / height.max(1) as f32;
         let gpu = match kind {
             FrameKind::Display { .. } | FrameKind::Preview { .. } => true,
@@ -600,6 +675,29 @@ impl AppHost {
             self.engine.complete_pending_tick();
             self.engine.reveal_ticks_ahead();
         }
+        let display = matches!(kind, FrameKind::Display { .. });
+        let world = self.engine.app.world();
+        let debug = world
+            .get_resource::<engine_render::DebugShown>()
+            .is_some_and(|shown| shown.owner.is_some());
+        let post = self.renderer.post(world);
+        let display_size = self.display_size((width, height));
+        let render_size = if display && !debug && post {
+            glam::UVec2::new(render_width, render_height)
+                .clamp(glam::UVec2::ONE, display_size.max(glam::UVec2::ONE))
+        } else {
+            display_size
+        };
+        let facts = FrameFacts {
+            display,
+            exact: !gpu,
+            temporal: display && gpu && !debug && post && self.renderer.motion(world),
+            capture: false,
+            debug,
+            display_size,
+            render_size,
+        };
+        self.engine.set_frame(facts);
         let frame = match kind {
             FrameKind::Display { alpha, .. } | FrameKind::Preview { alpha } => {
                 self.engine.extract_gpu_frame(aspect, alpha)?
@@ -615,35 +713,12 @@ impl AppHost {
         if frame.gpu().is_some() {
             self.gpu_inputs_stale = !rendered.submitted;
         }
-        let snapshot = frame.snapshot();
-        let listed = snapshot.visible_instances.min(u32::MAX as usize) as u32;
-        let (visible, culled, dropped) = if frame.gpu().is_some() {
-            let visible = rendered.gpu_visible.unwrap_or(listed);
-            (
-                visible,
-                listed.saturating_sub(visible),
-                visible.saturating_sub(rendered.instances),
-            )
-        } else {
-            (
-                listed,
-                0,
-                snapshot.dropped_instances.min(u32::MAX as usize) as u32,
-            )
-        };
         self.stats = FrameStats {
             frame: frame_number,
             tick,
             simulation_ms,
             extraction_ms: after_extraction - before_extraction,
             render_ms: now_ms() - after_extraction,
-            invalid_transforms: snapshot.invalid_transforms.min(u32::MAX as usize) as u32,
-            render_candidates: snapshot.render_candidates.min(u32::MAX as usize) as u32,
-            visible_instances: visible,
-            culled_instances: culled,
-            dropped_instances: dropped,
-            missing_assets: snapshot.missing_assets.min(u32::MAX as usize) as u32,
-            culling_enabled,
             fixed_steps: report.fixed_steps,
             dropped_seconds: self.stats.dropped_seconds + report.dropped_seconds,
             pipelines_compiling: false,
@@ -659,10 +734,9 @@ impl AppHost {
             bricks: std::collections::BTreeMap::new(),
         };
         self.pipeline_list.after_frame(
-            &self.engine,
+            &mut self.engine,
             &self.renderer,
             self.stats.render.pipelines_created,
-            &mut self.jobs,
         );
         Ok(())
     }
@@ -692,7 +766,6 @@ impl AppHost {
                     .map(|entry| (entry.key, u64::from(entry.pending(world))))
             })
             .collect();
-        features.extend(self.renderer.records_left());
         features.push(("pipelines", u64::from(self.pipeline_list.making())));
         features
     }
@@ -703,18 +776,19 @@ impl AppHost {
 
     pub fn stats(&self) -> FrameStats {
         let (pipelines_listed, pipelines_unlisted) = self.renderer.pipelines_listed();
+        let world = self.engine.app.world();
         FrameStats {
             pipelines_compiling: self.renderer.pipelines_compiling(),
             pipelines_listed,
             pipelines_unlisted,
             loading: self.loading(),
-            jobs: self.jobs.stats(),
-            bricks: self
-                .engine
-                .app
-                .world()
+            jobs: world
+                .get_resource::<JobExchange>()
+                .map(JobExchange::stats)
+                .unwrap_or_default(),
+            bricks: world
                 .get_resource::<Registry>()
-                .map(|registry| registry.frame_stats(self.engine.app.world()))
+                .map(|registry| registry.frame_stats(world))
                 .unwrap_or_default(),
             ..self.stats.clone()
         }
@@ -728,6 +802,9 @@ impl AppHost {
         self.last_timestamp_ms = None;
         self.dynamic.reset();
         self.engine.reset_clock();
-        *self.engine.app.world_mut().resource_mut::<InputState>() = InputState::default();
+        self.engine
+            .app
+            .world_mut()
+            .insert_resource(MoveInput::default());
     }
 }

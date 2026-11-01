@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
-use engine_assets::{AssetLibrary, LOD_RECORD, MeshHandle, MeshLods, lod_input};
+use engine_assets::{AssetLibrary, MeshHandle, MeshLods, lod_input};
 
-use crate::jobs::record_key;
+use crate::jobs::{MESH_LODS_NAME, record_key};
 use crate::{
     CookMode, JobExchange, JobId, JobRef, MESH_LODS, RecordKey, VIEW_JOBS, content_hash,
     job_priority,
@@ -21,7 +21,7 @@ impl MeshLevels {
 fn lod_record(input: &[u8]) -> RecordKey {
     record_key(
         &crate::sources::LODBUILD,
-        LOD_RECORD,
+        MESH_LODS_NAME,
         &content_hash(input).to_le_bytes(),
     )
 }

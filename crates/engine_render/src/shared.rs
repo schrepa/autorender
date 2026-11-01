@@ -10,6 +10,8 @@ use crate::{
 };
 
 pub(crate) const COMPOSITE: &str = "composite";
+pub(crate) const DEBUG_VIEW: &str = "debug_view";
+pub(crate) const DEBUG_TARGETS: [&str; 3] = ["debug_ids", "debug_count", "debug_terrain"];
 pub(crate) const OUTPUT_PREFIX: &str = "output_";
 pub(crate) const POST: &str = "post";
 pub(crate) const LINEAR: &str = "linear";
@@ -115,6 +117,21 @@ fn layer_name(layer: Layer) -> &'static str {
 pub(crate) struct Composite {
     pass: Pass<Self>,
     pipeline: crate::Pipeline<Self, crate::Own>,
+    debug_pass: Pass<Self>,
+    debug_pipeline: crate::Pipeline<Self, crate::Own>,
+}
+
+fn fullscreen(fragment: engine_core::Entry) -> crate::RenderPipeline<'static> {
+    crate::RenderPipeline {
+        vertex: crate::shaders::FULLSCREEN,
+        fragment: Some(fragment),
+        debug: None,
+        vertices: &[],
+        primitive: wgpu::PrimitiveState::default(),
+        depth: crate::DepthUse::None,
+        blend: None,
+        writes: wgpu::ColorWrites::ALL,
+    }
 }
 
 impl GpuPart for Composite {
@@ -122,33 +139,34 @@ impl GpuPart for Composite {
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let pass = cx.pass(COMPOSITE).id();
-        let pipeline = cx.render_pipeline(
+        let pipeline = cx.render_pipeline(pass, &fullscreen(crate::shaders::FS_COMPOSITE), &[])?;
+        let debug_pass = cx.pass(DEBUG_VIEW).after(pass).id();
+        let debug_pipeline = cx.render_pipeline(debug_pass, &fullscreen(crate::shaders::FS_DEBUG_VIEW), &[])?;
+        Ok(Self {
             pass,
-            &crate::RenderPipeline {
-                vertex: crate::shaders::FULLSCREEN,
-                fragment: Some(crate::shaders::FS_COMPOSITE),
-                debug: None,
-                vertices: &[],
-                primitive: wgpu::PrimitiveState::default(),
-                depth: crate::DepthUse::None,
-                blend: None,
-                writes: wgpu::ColorWrites::ALL,
-            },
-            &[],
-        )?;
-        Ok(Self { pass, pipeline })
+            pipeline,
+            debug_pass,
+            debug_pipeline,
+        })
     }
 
     fn prepare(&mut self, (): (), cx: &mut Prepare<'_, Self>) {
-        if !cx.core.debug {
+        if cx.core.debug {
+            cx.run(self.debug_pass);
+        } else {
             cx.run(self.pass);
         }
     }
 
-    fn encode(&mut self, _pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
+    fn encode(&mut self, pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
+        let pipeline = if pass == self.debug_pass {
+            &self.debug_pipeline
+        } else {
+            &self.pipeline
+        };
         let mut draw = cx.render(crate::Attach::Declared, None);
         draw.draw(
-            &self.pipeline,
+            pipeline,
             crate::Shape::Pulled {
                 vertices: 0..3,
                 instances: 0..1,
@@ -217,7 +235,7 @@ fn sampled_type(format: wgpu::TextureFormat) -> &'static str {
 
 pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
     let mut imports = String::from(
-        "import package::engine::shading::{Shaded, ViewPixel};\nimport package::engine::post::pixel::PostPixel;\n",
+        "import package::engine::shading::{Shaded, ViewPixel};\nimport package::engine::post::pixel::{PostPixel, SceneLight};\n",
     );
     let mut body = String::new();
     for (index, output) in outputs.iter().enumerate() {
@@ -248,10 +266,10 @@ pub(crate) fn targets_source(outputs: &[OutputDecl]) -> String {
         let _ = writeln!(body, "    @location({location}) {}: {},", output.name, output_type(output.format));
         location += 1;
     }
-    let _ = writeln!(body, "}}\n\nfn composite_out(color: vec4<f32>, at: PostPixel) -> CompositeOut {{\n    var out: CompositeOut;\n    out.canvas = color;");
+    let _ = writeln!(body, "}}\n\nfn composite_out(color: vec4<f32>, light: SceneLight, at: PostPixel) -> CompositeOut {{\n    var out: CompositeOut;\n    out.canvas = color;");
     for (index, output) in outputs.iter().enumerate() {
         if output.layers.is_empty() && output.module.is_some() {
-            let _ = writeln!(body, "    out.{} = member_{index}(color, at);", output.name);
+            let _ = writeln!(body, "    out.{} = member_{index}(light, at);", output.name);
         }
     }
     let _ = writeln!(body, "    return out;\n}}");
@@ -263,20 +281,38 @@ pub(crate) fn composite_source() -> String {
 import package::engine::post::resolve_plain::scene_light;
 import package::engine::color::encode_srgb;
 import package::face::post_scene::apply as post_scene;
-import package::face::resolve::resolve;
+import package::face::resolve::{resolve, resolved_at};
 import package::face::post_light::apply as post_light;
 import package::face::post_display::apply as post_display;
 import package::generated::targets::{CompositeOut, composite_out};
+import package::face::debug::{DebugShade, DebugTargets, shown};
+import package::face::debug_modes::shade_kind;
+
+@group(0) @binding(0) var debug_ids: texture_2d<u32>;
+@group(0) @binding(0) var debug_count: texture_2d<f32>;
+@group(0) @binding(0) var debug_terrain: texture_2d<u32>;
+
+@fragment
+fn fs_debug_view(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let pixel = vec2<i32>(position.xy);
+    var targets: DebugTargets;
+    targets.ids = textureLoad(debug_ids, pixel, 0);
+    targets.count = textureLoad(debug_count, pixel, 0).r;
+    targets.terrain = textureLoad(debug_terrain, pixel, 0).xy;
+    var shade: DebugShade;
+    return shown(shade_kind(shade, targets), targets);
+}
 
 @fragment
 fn fs_composite(@builtin(position) position: vec4<f32>) -> CompositeOut {
     let started = scene_light(position);
     var light = post_scene(started.light, started.at);
     light = resolve(started.at, light);
-    let color = post_light(light.color, started.at);
+    let at = resolved_at(started.at);
+    let color = post_light(light.color, at);
     var encoded = encode_srgb(color);
-    encoded = post_display(encoded, started.at);
-    return composite_out(vec4<f32>(encoded, 1.0), started.at);
+    encoded = post_display(encoded, at);
+    return composite_out(vec4<f32>(encoded, 1.0), light, at);
 }
 "
     .to_owned()

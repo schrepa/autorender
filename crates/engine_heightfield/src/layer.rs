@@ -2,7 +2,7 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use engine_codec::{Error, Expected, Reader, Writer};
+use engine_codec::{Error, ErrorCode, Expected, Reader, Writer};
 use glam::Vec2;
 use serde_json::Value;
 
@@ -357,6 +357,39 @@ pub struct FineRegion {
     pub low: Vec2,
     pub high: Vec2,
     pub texel: f32,
+}
+
+pub fn unknown_kind(path: &str, got: &str, kinds: &[&'static LayerKind]) -> Error {
+    Error::new(ErrorCode::UnknownVariant, path)
+        .got(got)
+        .variants(kinds.iter().map(|kind| kind.name))
+}
+
+pub fn layer_from_json(
+    value: &Value,
+    files: &dyn LayerFiles,
+    path: &str,
+    kinds: &[&'static LayerKind],
+) -> Result<Arc<dyn TerrainLayer>, Error> {
+    let Some(object) = value.as_object() else {
+        return Err(Error::new(ErrorCode::InvalidType, path).expected(Expected::Object));
+    };
+    let type_path = format!("{path}.{TYPE_KEY}");
+    let Some(name) = object.get(TYPE_KEY) else {
+        return Err(Error::new(ErrorCode::MissingField, type_path)
+            .variants(kinds.iter().map(|kind| kind.name)));
+    };
+    let Some(name) = name.as_str() else {
+        return Err(Error::new(ErrorCode::InvalidType, type_path).expected(Expected::String));
+    };
+    let kind = kinds
+        .iter()
+        .find(|kind| kind.name == name)
+        .ok_or_else(|| unknown_kind(&type_path, name, kinds))?;
+    let mut settings = object.clone();
+    settings.remove(TYPE_KEY);
+    settings.remove(ID_KEY);
+    (kind.from_json)(&Value::Object(settings), files).map_err(|error| error.within(path))
 }
 
 pub fn layer_json(layer: &dyn TerrainLayer) -> Value {

@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Component, Resource};
-use engine_place::{DrawPoint, Slot, Stamp};
+use engine_place::{DrawPoint, Slot};
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -74,6 +74,7 @@ pub struct ProbeView {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ProbeFace {
     pub face: u32,
+    pub center: Vec3,
     pub view: Mat4,
     pub cube: u32,
 }
@@ -81,7 +82,8 @@ pub struct ProbeFace {
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct ProbeCaptures {
     pub faces: Vec<ProbeFace>,
-    pub stamp: Stamp,
+    pub size: u32,
+    pub still: bool,
 }
 
 impl Slot for ProbeCaptures {

@@ -131,6 +131,29 @@ impl DevTools {
                 },
             );
         }
+        for kind in engine_core::scene_components(world) {
+            let key = kind.key();
+            if inspectors.contains_key(key) {
+                continue;
+            }
+            let schema = match kind.json_schema() {
+                Value::Null => json!({ "type": "object" }),
+                schema => schema,
+            };
+            let (has, read) = (kind.clone(), kind.clone());
+            inspectors.insert(
+                key.to_owned(),
+                Inspector {
+                    descriptor: InspectorDescriptor::new(key, schema),
+                    kind: InspectorKind::Component,
+                    has: Box::new(move |world, entity| {
+                        entity.is_some_and(|entity| has.value(world, entity).is_some())
+                    }),
+                    read: Box::new(move |world, entity, _| read.value(world, entity?)),
+                    brick: None,
+                },
+            );
+        }
         inspectors.insert(
             "Environment".to_owned(),
             Inspector {

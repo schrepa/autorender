@@ -13,23 +13,24 @@ mod views;
 pub use crate::app_host::{TerrainClock, now_ms};
 pub use adapter::{AdapterStatus, vendor};
 pub use engine_core::{
-    Distribution, GAMEPLAY_JOBS, IDLE_JOBS, JobRef, RecordKey, URGENT_JOBS, VIEW_JOBS,
-    content_hash, job_class, job_priority, median,
+    Distribution, GAMEPLAY_JOBS, IDLE_JOBS, JobId, JobRef, JobRequest, JobShare, MISSING_RECORD,
+    RecordFetch, RecordKey, RecordParity, URGENT_JOBS, VIEW_JOBS, content_hash, job_class,
+    job_priority, median,
 };
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
 pub use engine_registry::JobList;
 pub use environment::{HostEnvironment, KNOWN_DIFFERENCES};
 pub use frame_loop::{FrameLoop, FramePhase};
 pub use input::{FrameInput, InputGatherer, KEYS};
-pub use jobs::{JobId, JobMessage, JobOrder, JobRequest, JobShare, MISSING_RECORD, RecordFetch};
-pub(crate) use jobs::{Finished, HostJobs, JobScheduler};
+pub(crate) use jobs::{Finished, JobScheduler};
+pub use jobs::{JobMessage, JobOrder};
 pub(crate) use pipeline_list::PipelineList;
 pub(crate) use resolution::DynamicScale;
 pub use resolution::{render_size, view_size};
 pub use scene_load::{
     FileRead, IMAGE_FORMATS, Image, ImageFormat, SceneLoad, decode_image, image_format,
 };
-pub use settings::{HostSettings, OVERLAY, SETTINGS, Setting, apply_setting};
+pub use settings::{HostSettings, OVERLAY, SETTINGS, Setting, apply_setting, run_operation};
 pub use views::{show_look, show_view};
 
 #[cfg(all(feature = "schema", not(target_arch = "wasm32")))]

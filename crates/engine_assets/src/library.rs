@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -49,6 +51,116 @@ impl MaterialHandle {
 impl engine_settings::Setting for MeshHandle {}
 impl engine_settings::Setting for MaterialHandle {}
 impl engine_settings::Setting for TextureHandle {}
+
+thread_local! {
+    static SCOPE: RefCell<Option<Arc<SceneAssets>>> = const { RefCell::new(None) };
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SceneAssets {
+    pub meshes: BTreeMap<String, MeshHandle>,
+    pub materials: BTreeMap<String, MaterialHandle>,
+    pub textures: BTreeMap<String, TextureHandle>,
+}
+
+struct Restore(Option<Arc<SceneAssets>>);
+
+impl Drop for Restore {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        SCOPE.with(|scope| *scope.borrow_mut() = previous);
+    }
+}
+
+impl SceneAssets {
+    pub fn scope<R>(self: &Arc<Self>, run: impl FnOnce() -> R) -> R {
+        let previous = SCOPE.with(|scope| scope.borrow_mut().replace(Arc::clone(self)));
+        let _restore = Restore(previous);
+        run()
+    }
+}
+
+fn named<H: Copy + PartialEq>(
+    handle: H,
+    table: fn(&SceneAssets) -> &BTreeMap<String, H>,
+    kind: &str,
+) -> Result<String, String> {
+    SCOPE.with(|scope| {
+        let scope = scope.borrow();
+        let assets = scope
+            .as_deref()
+            .ok_or_else(|| format!("a {kind} handle is written only within its scene's assets"))?;
+        table(assets)
+            .iter()
+            .find(|(_, known)| **known == handle)
+            .map(|(name, _)| name.clone())
+            .ok_or_else(|| format!("the scene names no such {kind}"))
+    })
+}
+
+fn handle<H: Copy>(
+    name: &str,
+    table: fn(&SceneAssets) -> &BTreeMap<String, H>,
+    kind: &str,
+) -> Result<H, String> {
+    SCOPE.with(|scope| {
+        let scope = scope.borrow();
+        let assets = scope
+            .as_deref()
+            .ok_or_else(|| format!("a {kind} handle is read only within its scene's assets"))?;
+        table(assets)
+            .get(name)
+            .copied()
+            .ok_or_else(|| format!("the scene names no {kind} {name}"))
+    })
+}
+
+fn handle_schema() -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "string",
+        "maxLength": engine_settings::MAX_ID_BYTES,
+        "minLength": 1,
+        "pattern": engine_settings::ID_PATTERN,
+    })
+}
+
+macro_rules! scene_named {
+    ($handle:ident, $table:ident, $kind:literal) => {
+        impl serde::Serialize for $handle {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let name = named(*self, |assets| &assets.$table, $kind)
+                    .map_err(<S::Error as serde::ser::Error>::custom)?;
+                serializer.serialize_str(&name)
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for $handle {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let name = <String as serde::Deserialize>::deserialize(deserializer)?;
+                handle(&name, |assets| &assets.$table, $kind)
+                    .map_err(<D::Error as serde::de::Error>::custom)
+            }
+        }
+
+        impl schemars::JsonSchema for $handle {
+            fn inline_schema() -> bool {
+                true
+            }
+
+            fn schema_name() -> std::borrow::Cow<'static, str> {
+                stringify!($handle).into()
+            }
+
+            fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+                handle_schema()
+            }
+        }
+    };
+}
+
+scene_named!(MeshHandle, meshes, "mesh");
+scene_named!(MaterialHandle, materials, "material");
+scene_named!(TextureHandle, textures, "texture");
 
 #[derive(Debug, Clone, Copy)]
 pub struct AssetBudget {
@@ -227,6 +339,7 @@ impl HeldMesh {
 #[derive(Resource)]
 pub struct AssetLibrary {
     id: u64,
+    cube: Option<MeshHandle>,
     revision: u64,
     material_revision: u64,
     budget: AssetBudget,
@@ -261,6 +374,7 @@ impl AssetLibrary {
             .expect("library_ids_left");
         Self {
             id,
+            cube: None,
             revision: 0,
             material_revision: 0,
             budget,
@@ -285,6 +399,16 @@ impl AssetLibrary {
             self.awaiting_lods.push(handle);
         }
         Ok(handle)
+    }
+
+    pub fn insert_cube(&mut self) -> Result<MeshHandle, Error> {
+        let cube = self.insert_mesh(Mesh::cube())?;
+        self.cube = Some(cube);
+        Ok(cube)
+    }
+
+    pub fn cube_mesh(&self) -> MeshHandle {
+        self.cube.unwrap_or_default()
     }
 
     pub fn reserve_mesh(&mut self) -> Result<MeshHandle, Error> {

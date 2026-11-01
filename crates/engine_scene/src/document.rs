@@ -44,12 +44,12 @@ impl SceneDocument {
                 .got(source.len()));
         }
         let document: Self = crate::parse_json(source)?;
-        document.validate()?;
+        document.structure()?;
         Ok(document)
     }
 
     pub fn to_json(&self) -> Result<String, Error> {
-        self.validate()?;
+        self.structure()?;
         let mut output = BoundedSource {
             bytes: Vec::new(),
             exceeded: false,
@@ -67,7 +67,7 @@ impl SceneDocument {
     }
 
     #[cfg(feature = "schema")]
-    pub fn schema_json(registry: &engine_registry::Registry) -> String {
+    pub fn schema_json(registry: &engine_registry::Registry, kinds: &crate::SceneKinds) -> String {
         let mut schema =
             serde_json::to_value(schemars::schema_for!(Self)).expect("schema_serializes");
         if let Some(definitions) = schema
@@ -81,6 +81,19 @@ impl SceneDocument {
                 .and_then(serde_json::Value::as_object_mut)
             {
                 properties.extend(sections);
+            }
+            let components = crate::components::component_schemas(kinds, definitions);
+            if let Some(object) = definitions
+                .get_mut("SceneObject")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                if let Some(properties) = object
+                    .get_mut("properties")
+                    .and_then(serde_json::Value::as_object_mut)
+                {
+                    properties.extend(components);
+                }
+                object.insert("additionalProperties".to_owned(), Value::Bool(false));
             }
         }
         let mut source = serde_json::to_string_pretty(&schema).expect("schema_serializes");
@@ -131,8 +144,7 @@ fn default_camera() -> SceneCamera {
 
 engine_settings::fields! {
     extra_rules;
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(default, deny_unknown_fields)]
     pub struct SceneCamera {
         pub position: [f32; 3] = default_camera().position => range(-Camera::REACH, Camera::REACH),
@@ -374,8 +386,7 @@ fn zero_uv(uv: &[f32; 2]) -> bool {
 }
 
 engine_settings::fields! {
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct ScenePrefab {
         pub id: String = String::new() => id,
@@ -385,50 +396,28 @@ engine_settings::fields! {
 
 const TAGS: Rule = Rule::count(0.0, 16.0);
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(transform = state_object_rules)
-)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(transform = state_object_rules)]
 pub struct SceneObject {
-    #[cfg_attr(
-        feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
-    )]
+    #[schemars(transform = engine_settings::stated(engine_settings::fields::id()))]
     pub id: String,
     #[serde(default)]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(length(max = crate::validation::MAX_NAME_BYTES))
-    )]
+    #[schemars(length(max = crate::validation::MAX_NAME_BYTES))]
     pub name: String,
-    #[cfg_attr(
-        feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
-    )]
+    #[schemars(transform = engine_settings::stated(engine_settings::fields::id()))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mesh: Option<String>,
-    #[cfg_attr(
-        feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
-    )]
+    #[schemars(transform = engine_settings::stated(engine_settings::fields::id()))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
-    )]
+    #[schemars(transform = engine_settings::stated(engine_settings::fields::id()))]
     pub parent: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(transform = engine_settings::stated(engine_settings::fields::id()))
-    )]
+    #[schemars(transform = engine_settings::stated(engine_settings::fields::id()))]
     pub prefab: Option<String>,
     #[serde(flatten)]
-    #[cfg_attr(feature = "schema", schemars(skip))]
+    #[schemars(skip)]
     pub components: BTreeMap<String, Value>,
     #[serde(default)]
     pub transform: SceneTransform,
@@ -436,7 +425,6 @@ pub struct SceneObject {
     pub tags: Vec<String>,
 }
 
-#[cfg(feature = "schema")]
 fn state_object_rules(schema: &mut schemars::Schema) {
     engine_settings::state(schema, "tags", TAGS);
 }
@@ -455,8 +443,7 @@ impl Setting for SceneObject {
 }
 
 engine_settings::fields! {
-    #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(default, deny_unknown_fields)]
     pub struct SceneTransform {
         pub translation: [f32; 3] = [0.0; 3] => range(-1.0e6, 1.0e6),

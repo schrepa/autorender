@@ -13,6 +13,26 @@ pub struct InputView {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct JobsView {
+    pub workers: u32,
+    pub running: u32,
+    pub submitted: u64,
+    pub completed: u64,
+    pub failed: u64,
+    pub last_failure: Option<String>,
+    pub cancelled: u64,
+    pub shares: u32,
+    pub shared_bytes: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub cache_bytes: u64,
+    pub cache_mismatches: u64,
+    pub held: u32,
+    pub in_place: u64,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct TransformView {
     pub translation: [f32; 3],
     pub rotation: [f32; 4],

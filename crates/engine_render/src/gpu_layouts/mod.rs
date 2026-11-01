@@ -111,25 +111,6 @@ macro_rules! gpu_consts {
     };
 }
 
-macro_rules! gpu_mirrors {
-    ($($path:path => [$($mirror:literal $(in $module:literal)?),+ $(,)?];)*) => {
-        pub const MIRRORED: &[$crate::gpu_layouts::Constant] = &[$(
-            $crate::gpu_layouts::Constant {
-                rust: stringify!($path),
-                value: $path as f64,
-                mirrors: &[$($crate::gpu_layouts::Mirror {
-                    name: $mirror,
-                    module: gpu_structs!(@module $($module)?),
-                }),+],
-            },
-        )*];
-    };
-}
-
-pub fn constants() -> impl Iterator<Item = &'static Constant> {
-    constants::DECLARED.iter().chain(constants::MIRRORED)
-}
-
 pub mod constants;
 
 macro_rules! layout_modules {

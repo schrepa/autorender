@@ -5,6 +5,14 @@ impl Renderer {
         &self.core.adapter
     }
 
+    pub fn device_limits(&self) -> wgpu::Limits {
+        self.core.device.limits()
+    }
+
+    pub fn device_features(&self) -> wgpu::Features {
+        self.core.device.features()
+    }
+
     pub fn texture_sampling(&self) -> engine_core::TextureSampling {
         use engine_core::{TextureFamily, TextureSampling};
         let features = self.core.device.features();

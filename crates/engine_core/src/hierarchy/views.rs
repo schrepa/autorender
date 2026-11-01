@@ -45,7 +45,7 @@ impl GlobalTransforms {
     }
 
     #[inline]
-    pub(crate) fn topology_revision(&self) -> u64 {
+    pub fn topology_revision(&self) -> u64 {
         self.topology_revision
     }
 

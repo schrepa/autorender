@@ -438,6 +438,73 @@ impl Linker {
         self.module(path)
             .is_some_and(|module| defines_function(&module.text, function))
     }
+
+    pub(crate) fn unused(&mut self, composed: &[Arc<Composed>], roots: &[(String, String)]) -> Vec<Error> {
+        let mut texts: Vec<(String, String)> = composed
+            .iter()
+            .map(|composed| (composed.module.clone(), composed.text.clone()))
+            .collect();
+        for (module, name) in roots {
+            if mentioned(&texts, module, name) || !self.defines(module, name) {
+                continue;
+            }
+            if let Ok(composed) = self.compose_named(module, name) {
+                texts.push((composed.module.clone(), composed.text.clone()));
+            }
+        }
+        let mut problems = Vec::new();
+        for module in self.modules.iter().filter(|module| !module.generated && module.package != CORE_PACKAGE) {
+            for item in items(&module.text) {
+                let root = roots
+                    .iter()
+                    .any(|(known, name)| *known == module.path && *name == item);
+                if !root && !mentioned(&texts, &module.path, &item) {
+                    problems.push(Error::new(
+                        ErrorCode::WgslUnused,
+                        format!("$.shaders.{}.{item}", module.path),
+                    ));
+                }
+            }
+        }
+        problems
+    }
+}
+
+fn mentioned(texts: &[(String, String)], path: &str, name: &str) -> bool {
+    let Ok(module) = module_path(path) else {
+        return false;
+    };
+    let mangled = wesl::mangler::EscapeMangler.mangle(&module, name);
+    texts.iter().any(|(main, text)| {
+        let ident = if main == path { name } else { mangled.as_str() };
+        mentions(text, ident)
+    })
+}
+
+fn mentions(text: &str, ident: &str) -> bool {
+    let word = |character: char| character.is_ascii_alphanumeric() || character == '_';
+    text.match_indices(ident).any(|(at, _)| {
+        let before = text[..at].chars().next_back().is_none_or(|character| !word(character));
+        let after = text[at + ident.len()..].chars().next().is_none_or(|character| !word(character));
+        before && after
+    })
+}
+
+fn items(text: &str) -> Vec<String> {
+    use wesl::syntax::{GlobalDeclaration, TranslationUnit};
+    let Ok(unit) = text.parse::<TranslationUnit>() else {
+        return Vec::new();
+    };
+    unit.global_declarations
+        .iter()
+        .filter_map(|declaration| match declaration.node() {
+            GlobalDeclaration::Function(item) => Some(item.ident.to_string()),
+            GlobalDeclaration::Struct(item) => Some(item.ident.to_string()),
+            GlobalDeclaration::Declaration(item) => Some(item.ident.to_string()),
+            GlobalDeclaration::TypeAlias(item) => Some(item.ident.to_string()),
+            GlobalDeclaration::Void | GlobalDeclaration::ConstAssert(_) | GlobalDeclaration::Compound(_) => None,
+        })
+        .collect()
 }
 
 pub(crate) fn module_path(path: &str) -> Result<wesl::syntax::ModulePath, String> {

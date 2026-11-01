@@ -1,16 +1,14 @@
 use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
 use std::rc::Rc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
-use std::sync::{Mutex, OnceLock, PoisonError};
 
 pub const MAX_BRICKS: usize = 64;
 pub const CORE: u16 = 0;
-pub const CORE_NAME: &str = "core";
 const DEPTH: usize = 32;
 pub(crate) const CALIBRATION_PAIRS: u32 = 4_096;
 
-static NAMES: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
 static CLOCK: OnceLock<fn() -> f64> = OnceLock::new();
 static SCOPE_MS: OnceLock<f64> = OnceLock::new();
 static ALLOCATION_MS: OnceLock<f64> = OnceLock::new();
@@ -110,33 +108,6 @@ pub fn scope_cost_ms() -> f64 {
 
 pub fn allocation_cost_ms() -> f64 {
     ALLOCATION_MS.get().copied().unwrap_or(0.0)
-}
-
-pub fn brick_index(name: &'static str) -> u16 {
-    if name == CORE_NAME {
-        return CORE;
-    }
-    let mut names = NAMES.lock().unwrap_or_else(PoisonError::into_inner);
-    if names.is_empty() {
-        names.push(CORE_NAME);
-    }
-    if let Some(index) = names.iter().position(|&known| known == name) {
-        return index as u16;
-    }
-    if names.len() == MAX_BRICKS {
-        return CORE;
-    }
-    names.push(name);
-    (names.len() - 1) as u16
-}
-
-pub fn brick_name(index: u16) -> &'static str {
-    NAMES
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(usize::from(index))
-        .copied()
-        .unwrap_or(CORE_NAME)
 }
 
 pub fn current_brick() -> u16 {

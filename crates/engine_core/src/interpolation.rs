@@ -14,8 +14,8 @@ use glam::Mat4;
 use crate::entity_indices::EntityIndices;
 
 use crate::{
-    FixedTime, FrameTime, GlobalTransform, InterpolateTransform, MAX_HIERARCHY_DEPTH,
-    MAX_TRANSFORM_NODES, Parent, Transform,
+    FixedTime, FrameTime, GlobalTransform, GlobalTransforms, InterpolateTransform,
+    MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, Parent, Transform,
     hierarchy::{HierarchyScratch, Source, TransformIndex, ValueIds, same_pose_bits},
 };
 
@@ -298,9 +298,9 @@ impl FromWorld for PresentedTransforms {
 }
 
 impl PresentedTransforms {
-    pub(crate) fn gpu_presentation<'a>(
+    pub fn gpu_presentation<'a>(
         &'a self,
-        hierarchy: &'a HierarchyScratch,
+        hierarchy: &'a GlobalTransforms,
     ) -> GpuPresentation<'a> {
         self.gpu.view(hierarchy)
     }

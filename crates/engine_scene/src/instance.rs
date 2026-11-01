@@ -6,14 +6,13 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::world::{World, WorldId};
 use engine_assets::SceneAssets;
 use engine_core::{
-    AssetLibrary, Error, MaterialHandle, Mesh3d, MeshHandle, ProvidedAssets, TextureHandle,
-    Transform, propagate_transforms, set_parents,
+    AssetLibrary, Error, MaterialHandle, Mesh3d, MeshHandle, ProvidedAssets, SceneContext,
+    TextureHandle, Transform, propagate_transforms, set_parents,
 };
 use engine_registry::{OperationScene, SceneEntity};
 
 use crate::{
-    SceneDocument, SceneFiles, components::Kinds, hierarchy::ExpandedObject,
-    validation::PreparedScene,
+    SceneDocument, SceneFiles, SceneKinds, hierarchy::ExpandedObject, validation::PreparedScene,
 };
 
 #[derive(Debug)]
@@ -236,6 +235,12 @@ impl SceneInstance {
         {
             world.remove_resource::<OperationScene>();
         }
+        if world
+            .get_resource::<SceneContext>()
+            .is_some_and(|context| Arc::ptr_eq(&context.entities, &self.entities))
+        {
+            world.remove_resource::<SceneContext>();
+        }
         for &entity in self.entities.values() {
             world.despawn(entity);
         }
@@ -255,12 +260,13 @@ impl SceneDocument {
         world: &mut World,
         files: &SceneFiles,
     ) -> Result<SceneInstance, Error> {
-        let mut prepared = self.prepare(Some(files))?;
-        let kinds = Kinds::of(world);
-        let skipped = self.admit(world, &kinds)?;
+        let kinds = SceneKinds::of(world);
+        let mut prepared = self.prepare(Some(files), &kinds)?;
+        let paths = crate::loading::paths(self, &kinds)?;
+        let skipped = crate::loading::named(self).scope(|| self.admit(world, &kinds))?;
         let (assets, owned) = self.insert_assets(world, &mut prepared)?;
-        let lookups = Lookups::new(self, &assets);
-        let spawned = match self.spawn(world, &prepared, &lookups, &kinds) {
+        let table = Arc::new(self.table(&assets));
+        let spawned = match self.spawn(world, &prepared, &table, &kinds) {
             Ok(spawned) => spawned,
             Err(error) => {
                 owned.remove(&mut world.resource_mut::<AssetLibrary>());
@@ -295,17 +301,20 @@ impl SceneDocument {
                 .coded(ErrorCode::HierarchyInstallFailed)
                 .within("$.entities"));
         }
+        let entities = Arc::new(entities);
         propagate_transforms(world);
         world.insert_resource(self.camera.camera());
+        let context = crate::loading::context(self, table, paths, entities.clone());
+        world.insert_resource(context.clone());
         if let Some(environment) = &prepared.environment {
-            environment.apply_all(world, "$.environment")?;
+            context.scope(|| environment.apply_all(world, "$.environment"))?;
         }
         world.insert_resource(crate::SceneViews::of(self));
         let instance = SceneInstance {
             id: self.id.clone(),
             revision: self.revision,
             world_id: world.id(),
-            entities: Arc::new(entities),
+            entities,
             assets,
             owned,
             material_ids: self
@@ -407,12 +416,13 @@ impl SceneDocument {
         &self,
         world: &mut World,
         prepared: &PreparedScene,
-        lookups: &Lookups,
-        kinds: &Kinds,
+        table: &Arc<SceneAssets>,
+        kinds: &SceneKinds,
     ) -> Result<Vec<Entity>, Error> {
         let mut spawned = Vec::with_capacity(prepared.entities.len());
         for (expanded, &transform) in prepared.entities.iter().zip(&prepared.transforms) {
-            match spawn_entity(world, lookups, kinds, expanded, transform) {
+            let scene = (self.id.as_str(), table);
+            match spawn_entity(world, scene, kinds, expanded, transform) {
                 Ok(entity) => spawned.push(entity),
                 Err(error) => {
                     for entity in spawned {
@@ -426,43 +436,35 @@ impl SceneDocument {
     }
 }
 
-struct Lookups {
-    scene_id: String,
-    assets: SceneAssets,
-}
-
-impl Lookups {
-    fn new(document: &SceneDocument, handles: &Handles) -> Self {
-        Self {
-            scene_id: document.id.clone(),
-            assets: SceneAssets {
-                meshes: document
-                    .meshes
-                    .iter()
-                    .zip(&handles.meshes)
-                    .map(|(source, handle)| (source.id.clone(), *handle))
-                    .collect(),
-                materials: document
-                    .materials
-                    .iter()
-                    .zip(&handles.materials)
-                    .map(|(source, handle)| (source.id.clone(), *handle))
-                    .collect(),
-                textures: document
-                    .textures
-                    .iter()
-                    .zip(&handles.textures)
-                    .map(|(source, handle)| (source.id.clone(), *handle))
-                    .collect(),
-            },
+impl SceneDocument {
+    fn table(&self, handles: &Handles) -> SceneAssets {
+        SceneAssets {
+            meshes: self
+                .meshes
+                .iter()
+                .zip(&handles.meshes)
+                .map(|(source, handle)| (source.id.clone(), *handle))
+                .collect(),
+            materials: self
+                .materials
+                .iter()
+                .zip(&handles.materials)
+                .map(|(source, handle)| (source.id.clone(), *handle))
+                .collect(),
+            textures: self
+                .textures
+                .iter()
+                .zip(&handles.textures)
+                .map(|(source, handle)| (source.id.clone(), *handle))
+                .collect(),
         }
     }
 }
 
 fn spawn_entity(
     world: &mut World,
-    lookups: &Lookups,
-    kinds: &Kinds,
+    (scene_id, table): (&str, &Arc<SceneAssets>),
+    kinds: &SceneKinds,
     expanded: &ExpandedObject,
     transform: Transform,
 ) -> Result<Entity, Error> {
@@ -470,7 +472,7 @@ fn spawn_entity(
     let mut entity = world.spawn((
         transform,
         SceneEntity {
-            scene_id: lookups.scene_id.clone(),
+            scene_id: scene_id.to_owned(),
             authored_id: source.id.clone(),
             name: source.name.clone(),
             tags: source.tags.clone(),
@@ -482,14 +484,12 @@ fn spawn_entity(
     ));
     if let (Some(mesh), Some(material)) = (&source.mesh, &source.material) {
         entity.insert(Mesh3d {
-            mesh: lookups.assets.meshes[mesh.as_str()],
-            material: lookups.assets.materials[material.as_str()],
+            mesh: table.meshes[mesh.as_str()],
+            material: table.materials[material.as_str()],
         });
     }
     let entity = entity.id();
-    let read = lookups
-        .assets
-        .scope(|| kinds.read(world, entity, source, &expanded.path));
+    let read = table.scope(|| kinds.read(world, entity, source, &expanded.path));
     if let Err(error) = read {
         world.despawn(entity);
         return Err(error);

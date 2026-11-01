@@ -2,6 +2,7 @@ use crate::GameHost;
 use crate::game::Game;
 use crate::host::{JobId, JobOrder, JobShare};
 use engine_core::{BrickList, Engine};
+use engine_settings::js_error as js;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
@@ -13,7 +14,7 @@ pub struct SceneLoading {
 impl SceneLoading {
     pub fn new(source: &str) -> Result<Self, JsValue> {
         Ok(Self {
-            load: Some(crate::host::SceneLoad::new(source)?),
+            load: Some(crate::host::SceneLoad::new(source).map_err(js)?),
         })
     }
 
@@ -28,7 +29,7 @@ impl SceneLoading {
     }
 
     pub fn read(&mut self, uri: &str, bytes: Vec<u8>) -> Result<bool, JsValue> {
-        Ok(self.loading()?.read(uri, bytes)?.is_some())
+        Ok(self.loading()?.read(uri, bytes).map_err(js)?.is_some())
     }
 
     pub fn image(
@@ -48,12 +49,12 @@ impl SceneLoading {
     }
 
     pub fn decode(&mut self, uri: &str, bytes: &[u8]) -> Result<(), JsValue> {
-        Ok(self.loading()?.decode(uri, bytes)?)
+        self.loading()?.decode(uri, bytes).map_err(js)
     }
 
     pub fn finish(&mut self) -> Result<engine_scene::SceneFiles, JsValue> {
         let load = self.load.take().ok_or_else(ended)?;
-        Ok(load.finish()?)
+        load.finish().map_err(js)
     }
 
     fn loading(&mut self) -> Result<&mut crate::host::SceneLoad, JsValue> {
@@ -62,9 +63,10 @@ impl SceneLoading {
 }
 
 fn ended() -> JsValue {
-    crate::Error::new(engine_core::ErrorCode::InvalidRequest, "$")
-        .expected(crate::Expected::Present)
-        .into()
+    js(
+        crate::Error::new(engine_core::ErrorCode::InvalidRequest, "$")
+            .expected(crate::Expected::Present),
+    )
 }
 
 pub struct PageHost<G: Game> {
@@ -93,12 +95,12 @@ impl<G: Game> PageHost<G> {
     ) -> Result<Self, JsValue> {
         let target = engine_render::RenderTarget::Canvas(canvas);
         Ok(Self {
-            host: GameHost::launch(target, bricks, build).await?,
+            host: GameHost::launch(target, bricks, build).await.map_err(js)?,
         })
     }
 
     pub fn frame(&mut self, timestamp: f64, width: u32, height: u32) -> Result<(), JsValue> {
-        Ok(self.host.frame(timestamp, width, height)?)
+        self.host.frame(timestamp, width, height).map_err(js)
     }
 
     pub fn animation_frame(
@@ -107,7 +109,10 @@ impl<G: Game> PageHost<G> {
         width: u32,
         height: u32,
     ) -> Result<u32, JsValue> {
-        Ok(self.host.animation_frame(timestamp, width, height)? as u32)
+        Ok(self
+            .host
+            .animation_frame(timestamp, width, height)
+            .map_err(js)? as u32)
     }
 
     pub fn take_jobs(&mut self) -> js_sys::Array {
@@ -198,13 +203,13 @@ impl<G: Game> PageHost<G> {
         source: &str,
         files: impl Into<engine_scene::SceneFiles>,
     ) -> Result<(), JsValue> {
-        Ok(self.host.reload_scene(source, &files.into())?)
+        self.host.reload_scene(source, &files.into()).map_err(js)
     }
 
     pub fn set_setting(&mut self, key: &str, value: &str) -> Result<(), JsValue> {
         let value = engine_settings::parse_json::<serde_json::Value>(value)
-            .map_err(|error| error.within("$.value"))?;
-        Ok(self.host.set_setting(key, value)?)
+            .map_err(|error| js(error.within("$.value")))?;
+        self.host.set_setting(key, value).map_err(js)
     }
 
     pub fn apply_host_settings(&mut self, query: &str) -> Result<(), JsValue> {
@@ -214,7 +219,7 @@ impl<G: Game> PageHost<G> {
             if let Some(value) = parameters.get(setting.name) {
                 settings
                     .set(setting.name, &value)
-                    .map_err(|error| error.within(&format!("?{}", setting.name)))?;
+                    .map_err(|error| js(error.within(&format!("?{}", setting.name))))?;
             }
         }
         let overlay = crate::host::OVERLAY;
@@ -222,17 +227,16 @@ impl<G: Game> PageHost<G> {
             let entry = entry.as_string().unwrap_or_default();
             settings
                 .set(overlay, &entry)
-                .map_err(|error| error.within(&format!("?{overlay}")))?;
+                .map_err(|error| js(error.within(&format!("?{overlay}"))))?;
         }
         let world = self.host.engine_mut().app.world_mut();
         if let Some(look) = parameters.get("look") {
-            crate::host::show_look(world, &look, "?look")?;
+            crate::host::show_look(world, &look, "?look").map_err(js)?;
         }
         if let Some(view) = parameters.get("view") {
-            crate::host::show_view(world, &view, "?view")?;
+            crate::host::show_view(world, &view, "?view").map_err(js)?;
         }
-        settings.apply(&mut self.host)?;
-        Ok(())
+        settings.apply(&mut self.host).map_err(js)
     }
 
     pub fn distribution(&self, values: Vec<f64>) -> String {
@@ -300,11 +304,11 @@ fn written(step: &engine_dev::Step) -> String {
 #[cfg(feature = "profiling")]
 impl<G: Game> PageHost<G> {
     pub fn profiling_start(&mut self, max_events: u32) -> Result<(), JsValue> {
-        Ok(self.host.profiling_start(max_events as usize)?)
+        self.host.profiling_start(max_events as usize).map_err(js)
     }
 
     pub fn profiling_stop(&mut self) -> Result<String, JsValue> {
-        Ok(self.host.profiling_stop()?.to_string())
+        Ok(self.host.profiling_stop().map_err(js)?.to_string())
     }
 
     pub fn profiling_report(&mut self) -> String {

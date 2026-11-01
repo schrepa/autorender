@@ -5,8 +5,13 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+default = []
+profiling = ["dep:engine_profile", "engine_profile/bricks"]
+
 [dependencies]
 engine_place.workspace = true
+engine_profile = { workspace = true, optional = true }
 engine_settings.workspace = true
 engine_math.workspace = true
 bevy_ecs = { workspace = true, features = ["debug"] }

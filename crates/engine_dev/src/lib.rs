@@ -28,7 +28,7 @@ pub use engine_settings::ErrorCode;
 pub use explain::{DrawState, EntityFacts, ExplainRecord};
 pub use inspect::{
     Context, DevTools, InspectorDescriptor, InspectorKind, RenderedMesh, RendererFacts,
-    TOOLING_TYPES, reserved_names,
+    TOOLING_TYPES, frustum_culling, reserved_names,
 };
 pub use profile::profiled;
 pub use protocol::bounds;

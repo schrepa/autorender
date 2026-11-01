@@ -1,6 +1,5 @@
-use bevy_ecs::change_detection::Mut;
 use engine_core::ErrorCode;
-use engine_registry::{BrickRecord, Registry};
+use engine_registry::Registry;
 
 use super::AppHost;
 use crate::{Error, Result};
@@ -16,15 +15,12 @@ impl AppHost {
         if !world.contains_resource::<Registry>() {
             return Ok(());
         }
-        let renderer = &mut self.renderer;
-        let installed = world.resource_scope(|world, registry: Mut<Registry>| {
-            let bricks: Vec<&BrickRecord> = registry.bricks().iter().collect();
-            renderer.install(world, &bricks)
-        });
-        installed.map_err(|mut problems| match problems.len() {
-            1 => problems.remove(0),
-            _ => Error::new(ErrorCode::RenderFailed, "$.bricks").got(&problems),
-        })
+        self.renderer
+            .install(world)
+            .map_err(|mut problems| match problems.len() {
+                1 => problems.remove(0),
+                _ => Error::new(ErrorCode::RenderFailed, "$.bricks").got(&problems),
+            })
     }
 }
 
@@ -50,10 +46,10 @@ mod unmeasured {
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
 mod measured {
+    use engine_profile::MAX_BRICKS;
     use engine_registry::{
         BrickCost, BrickCosts, CORE_ROW, GPU_IDLE_ROW, Registry, UNATTRIBUTED_ROW, WARMUP_FRAMES,
     };
-    use engine_profile::MAX_BRICKS;
 
     use super::AppHost;
     use crate::app_host::now_ms;
@@ -137,13 +133,17 @@ mod measured {
                 pass.and_then(|pass| renderer.pass_owner(pass))
                     .unwrap_or(CORE_ROW)
             };
-            let mut names: Vec<&'static str> = registry
-                .map(|registry| registry.names().collect())
+            let mut bricks: Vec<(&'static str, u16)> = registry
+                .map(|registry| {
+                    registry
+                        .iter()
+                        .map(|(id, record)| (record.package, id.profile_index()))
+                        .collect()
+                })
                 .unwrap_or_default();
-            names.push(CORE_ROW);
-            let mut rows: Vec<BrickCost> = Vec::with_capacity(names.len() + 2);
-            for brick in names {
-                let index = engine_profile::brick_index(brick);
+            bricks.push((CORE_ROW, engine_profile::CORE));
+            let mut rows: Vec<BrickCost> = Vec::with_capacity(bricks.len() + 2);
+            for (brick, index) in bricks {
                 let slot = usize::from(index).min(MAX_BRICKS - 1);
                 let heap = engine_profile::brick_heap(index);
                 let owned = memory

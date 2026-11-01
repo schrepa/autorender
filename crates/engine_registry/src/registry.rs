@@ -26,6 +26,10 @@ impl BrickId {
     pub fn index(self) -> usize {
         self.0 as usize
     }
+
+    pub fn profile_index(self) -> u16 {
+        u16::try_from(self.0 + 1).unwrap_or(u16::MAX)
+    }
 }
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -36,6 +40,8 @@ pub struct Registry {
     bricks: Vec<BrickRecord>,
     catalog: Vec<PlaceDecl>,
     core_fills: Vec<PlaceDecl>,
+    core_sections: Vec<SettingsEntry>,
+    core_operations: Vec<OperationEntry>,
     bases: Vec<u32>,
     listed: Vec<&'static str>,
     left_out: Vec<&'static str>,
@@ -87,6 +93,42 @@ impl Registry {
         let decl = PlaceDecl::slot::<S>();
         self.core_fills.push(decl);
         self.catalog_add(decl);
+    }
+
+    pub fn core_settings(&mut self, mut entry: SettingsEntry) {
+        entry.brick = CORE_ROW;
+        let owner = self
+            .section(entry.key)
+            .map(|known| known.brick)
+            .or_else(|| self.stats_section(entry.key).map(|known| known.brick));
+        if let Some(owner) = owner {
+            let path = format!("$.sections.{}", entry.key);
+            self.problems.push(
+                Error::new(ErrorCode::NameTwice, path)
+                    .got(owner)
+                    .nearest(CORE_ROW),
+            );
+            return;
+        }
+        self.core_sections.push(entry);
+    }
+
+    pub fn core_operation(&mut self, mut entry: OperationEntry) {
+        entry.brick = CORE_ROW;
+        if let Some(owner) = self.operation(entry.name).map(|known| known.brick) {
+            let path = format!("$.operations.{}", entry.name);
+            self.problems.push(
+                Error::new(ErrorCode::NameTwice, path)
+                    .got(owner)
+                    .nearest(CORE_ROW),
+            );
+            return;
+        }
+        self.core_operations.push(entry);
+    }
+
+    pub fn profile_names(&self) -> Vec<&'static str> {
+        std::iter::once(CORE_ROW).chain(self.names()).collect()
     }
 
     pub fn leave_out(&mut self, package: &'static str) {
@@ -216,9 +258,11 @@ impl Registry {
     }
 
     pub fn sections(&self) -> impl Iterator<Item = &SettingsEntry> + '_ {
-        self.bricks
-            .iter()
-            .flat_map(|record| record.settings_entries())
+        self.core_sections.iter().chain(
+            self.bricks
+                .iter()
+                .flat_map(|record| record.settings_entries()),
+        )
     }
 
     pub fn section(&self, key: &str) -> Option<&SettingsEntry> {
@@ -234,7 +278,9 @@ impl Registry {
     }
 
     pub fn operations(&self) -> impl Iterator<Item = &OperationEntry> + '_ {
-        self.bricks.iter().flat_map(|record| record.operations())
+        self.core_operations
+            .iter()
+            .chain(self.bricks.iter().flat_map(|record| record.operations()))
     }
 
     pub fn operation(&self, name: &str) -> Option<&OperationEntry> {
@@ -281,6 +327,9 @@ impl Registry {
         self.check_owned();
         for decl in &self.catalog {
             decl.insert(world);
+        }
+        for entry in &self.core_sections {
+            entry.owned().init(world);
         }
         for record in &self.bricks {
             for owned in record.owned() {
@@ -447,11 +496,12 @@ impl Registry {
         let mut lists: Vec<(TypeId, fn(&mut World))> = Vec::new();
         for (index, record) in self.bricks.iter_mut().enumerate() {
             let base = self.bases[index];
-            let package = record.package;
+            let (package, brick) = (record.package, record.brick());
             for joined in &mut record.joins {
                 (joined.init)(world);
                 if let Some(member) = joined.member.take() {
-                    (joined.add)(world, member, GateId(base + joined.scope.0), package);
+                    let owner = (package, brick);
+                    (joined.add)(world, member, GateId(base + joined.scope.0), owner);
                 }
                 if !lists.iter().any(|(list, _)| *list == joined.list) {
                     lists.push((joined.list, joined.refresh));
@@ -536,7 +586,15 @@ impl Registry {
                     collective_conditions: Vec::new(),
                     metadata: chain,
                 };
+                #[cfg(feature = "profiling")]
+                let before = crate::measured::keys(all.entry(group.schedule));
                 all.add_systems(group.schedule, chained.in_set(BrickSet(package)));
+                #[cfg(feature = "profiling")]
+                crate::measured::wrap(
+                    all.entry(group.schedule),
+                    &before,
+                    (package, brick.profile_index()),
+                );
             }
         }
     }

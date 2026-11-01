@@ -50,3 +50,7 @@ fn ambient() -> f32 {
 fn sunlight(authored: vec3<f32>) -> vec3<f32> {
     return authored;
 }
+
+fn adapted_exposure(authored: f32) -> f32 {
+    return authored;
+}

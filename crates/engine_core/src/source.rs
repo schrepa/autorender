@@ -20,12 +20,12 @@ impl Source {
     }
 
     #[doc(hidden)]
-    pub fn package(&self) -> &'static str {
+    pub const fn package(&self) -> &'static str {
         self.package
     }
 
     #[doc(hidden)]
-    pub fn hash(&self) -> [u8; 32] {
+    pub const fn hash(&self) -> [u8; 32] {
         self.hash
     }
 

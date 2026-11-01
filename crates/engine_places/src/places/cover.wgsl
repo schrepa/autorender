@@ -60,3 +60,11 @@ fn cover_seen(depth: f32) -> CoverSeen {
     seen.occlusion = 1.0;
     return seen;
 }
+
+fn material_canopy(terrain: u32, material: u32) -> vec4<f32> {
+    return vec4<f32>(0.0);
+}
+
+fn cover_terms(terrain: u32) -> vec2<f32> {
+    return vec2<f32>(0.0);
+}

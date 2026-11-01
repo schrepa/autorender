@@ -1,9 +1,10 @@
 mod access;
 mod attribution;
-mod draws;
 mod entries;
 mod gates;
 mod jobs;
+#[cfg(feature = "profiling")]
+mod measured;
 mod members;
 mod order;
 mod record;
@@ -16,14 +17,14 @@ pub use attribution::{
     BrickCost, BrickCosts, BrickRow, BrickTable, CORE_ROW, GPU_IDLE_ROW, UNATTRIBUTED_ROW,
     WARMUP_FRAMES,
 };
-pub use draws::{DrawMember, RawDraw};
 pub use entries::{
     Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry, access_of,
     parse_section, set_section,
 };
 pub use gates::{GateDriver, GateFn, GateId, Gates, Scope, gate_on};
 pub use jobs::{
-    JobKindRef, JobList, JobListed, JobOrder, JobOrders, JobQueue, RecordStore, Shares,
+    JobKindRef, JobList, JobListed, JobMember, JobOrder, JobOrders, JobQueue, RecordParity,
+    RecordStore, Shares,
 };
 pub use members::MembersOf;
 pub use record::{BrickRecord, RecordExt};
@@ -31,4 +32,4 @@ pub use registry::{BrickId, BrickSet, Registry, settings};
 pub use scene::{
     AuthoredId, OperationScene, SceneEntity, SceneRead, SpawnedBy, authored_entity, authored_id,
 };
-pub use services::{InputState, PoseTable, Residency, ViewState};
+pub use services::{FrameFacts, InputState, PoseTable, Residency, ViewState};

@@ -6,31 +6,16 @@ use serde::{Deserialize, Serialize};
 pub const MAX_SPOT_DEGREES: f32 = 89.0;
 pub const MIN_SPOT_DEGREES: f32 = 0.1;
 pub const MAX_LIGHT_RANGE: f32 = 10_000.0;
+pub const LIGHT_INTERIOR: u32 = 1;
+pub const LIGHT_EXTERIOR: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(from = "AuthoredSpot", into = "AuthoredSpot")]
 pub struct Spot {
     pub direction: Vec3,
-    #[serde(
-        rename = "inner_angle_degrees",
-        with = "crate::degrees",
-        default = "authored_inner_angle"
-    )]
     pub inner_angle: f32,
-    #[serde(
-        rename = "outer_angle_degrees",
-        with = "crate::degrees",
-        default = "authored_outer_angle"
-    )]
     pub outer_angle: f32,
-}
-
-fn authored_inner_angle() -> f32 {
-    Spot::default().inner_angle.to_degrees().to_radians()
-}
-
-fn authored_outer_angle() -> f32 {
-    Spot::default().outer_angle.to_degrees().to_radians()
+    pub authored_degrees: Option<[f32; 2]>,
 }
 
 impl Default for Spot {
@@ -39,6 +24,42 @@ impl Default for Spot {
             direction: Vec3::NEG_Y,
             inner_angle: 25.0_f32.to_radians(),
             outer_angle: 40.0_f32.to_radians(),
+            authored_degrees: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct AuthoredSpot {
+    direction: Vec3,
+    inner_angle_degrees: f32,
+    outer_angle_degrees: f32,
+}
+
+impl Default for AuthoredSpot {
+    fn default() -> Self {
+        Self::from(Spot::default())
+    }
+}
+
+impl From<AuthoredSpot> for Spot {
+    fn from(authored: AuthoredSpot) -> Self {
+        Self {
+            direction: authored.direction,
+            inner_angle: authored.inner_angle_degrees.to_radians(),
+            outer_angle: authored.outer_angle_degrees.to_radians(),
+            authored_degrees: Some([authored.inner_angle_degrees, authored.outer_angle_degrees]),
+        }
+    }
+}
+
+impl From<Spot> for AuthoredSpot {
+    fn from(spot: Spot) -> Self {
+        Self {
+            direction: spot.direction,
+            inner_angle_degrees: spot.inner_angle.to_degrees(),
+            outer_angle_degrees: spot.outer_angle.to_degrees(),
         }
     }
 }
@@ -106,6 +127,7 @@ impl LocalLight {
                 direction,
                 inner_angle,
                 outer_angle,
+                authored_degrees: None,
             }),
             ..Self::point(color, intensity, range)
         }
@@ -136,6 +158,10 @@ pub struct Lights;
 
 impl Slot for Lights {
     const NAME: &'static str = "lights";
-    const WGSL: Option<&'static str> = Some(include_str!("places/lights.wgsl"));
+    const WGSL: Option<&'static str> = Some(contract!(
+        "places/lights.wgsl",
+        LIGHT_INTERIOR,
+        LIGHT_EXTERIOR,
+    ));
     const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::LIGHTS];
 }

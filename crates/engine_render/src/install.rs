@@ -3,6 +3,7 @@ use std::ops::Range;
 
 use engine_core::{Entry, Error, ErrorCode, Var};
 
+use crate::graph::Clear;
 use crate::linker::Linker;
 use crate::{Access, DepthUse, Layer, Lifetime, SamplerDesc, VertexLayout, ViewTarget};
 
@@ -24,6 +25,7 @@ pub(crate) enum Bound {
 pub(crate) enum Copied {
     Buffer(u32),
     Texture(u32),
+    Target(ViewTarget),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,6 +67,7 @@ pub(crate) struct PassDecl {
     pub(crate) after: Vec<u32>,
     pub(crate) colors: Vec<(u32, Access)>,
     pub(crate) depths: Vec<(u32, Access)>,
+    pub(crate) clears: Vec<(u32, Clear)>,
     pub(crate) claims: Vec<TypeId>,
     pub(crate) members: Vec<u32>,
 }
@@ -79,6 +82,7 @@ pub(crate) struct RenderDecl {
     pub(crate) depth: DepthUse,
     pub(crate) blend: Option<wgpu::BlendState>,
     pub(crate) writes: wgpu::ColorWrites,
+    pub(crate) targets: Option<Vec<(Option<wgpu::BlendState>, wgpu::ColorWrites)>>,
 }
 
 #[derive(Clone, Debug)]
@@ -93,6 +97,15 @@ pub(crate) struct PipelineDecl {
     pub(crate) scope: Scoped,
     pub(crate) program: Program,
     pub(crate) bound: Vec<(Var, Bound)>,
+}
+
+impl PassDecl {
+    pub(crate) fn clear_of(&self, texture: u32) -> Option<Clear> {
+        self.clears
+            .iter()
+            .find(|(known, _)| *known == texture)
+            .map(|(_, clear)| *clear)
+    }
 }
 
 impl PipelineDecl {
@@ -169,11 +182,16 @@ pub(crate) struct InstallCore {
     pub(crate) declared: Declared,
     pub(crate) draws: Vec<DrawEntry>,
     pub(crate) linker: Linker,
+    pub(crate) features: wgpu::Features,
     pub(crate) problems: Vec<Error>,
 }
 
+fn core_entry(entry: Entry) -> bool {
+    std::ptr::eq(entry.module().source(), crate::shared::core_source())
+}
+
 impl InstallCore {
-    pub(crate) fn new(linker: Linker) -> Self {
+    pub(crate) fn new(linker: Linker, features: wgpu::Features) -> Self {
         Self {
             part: 0,
             package: "",
@@ -181,6 +199,7 @@ impl InstallCore {
             declared: Declared::default(),
             draws: Vec::new(),
             linker,
+            features,
             problems: Vec::new(),
         }
     }
@@ -276,6 +295,7 @@ impl InstallCore {
             after: Vec::new(),
             colors: Vec::new(),
             depths: Vec::new(),
+            clears: Vec::new(),
             claims: Vec::new(),
             members: Vec::new(),
         });
@@ -328,7 +348,9 @@ impl InstallCore {
             bound,
         };
         for entry in decl.entries() {
-            self.owns(entry.module().source().package(), &path)?;
+            if !core_entry(entry) {
+                self.owns(entry.module().source().package(), &path)?;
+            }
             self.linker.add_source(entry.module().source());
             if !self.linker.has_entry(entry) {
                 return Err(Error::new(ErrorCode::UnknownModule, path).got(entry.name()));

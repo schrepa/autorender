@@ -1,14 +1,15 @@
 #![expect(
     clippy::expect_used,
-    reason = "extraction validated every material's textures"
+    reason = "residency admits a material only while the library holds its textures"
 )]
 
 use engine_core::collections::HashMap;
 use std::collections::BTreeMap;
 
+use bevy_ecs::world::World;
 use engine_core::{
-    AlphaMode, Filter, Material, MaterialHandle, Sampler, Texture, TextureFormat, TextureHandle,
-    UvTransform, Wrap,
+    AlphaMode, AssetLibrary, AssetResidency, Filter, Material, MaterialHandle, Sampler, Texture,
+    TextureFormat, TextureHandle, UvTransform, Wrap,
 };
 
 use crate::bindings::MATERIAL;
@@ -48,6 +49,7 @@ pub struct MaterialStore {
     textures: BTreeMap<(TextureHandle, bool), GpuTexture>,
     materials: BTreeMap<MaterialHandle, GpuMaterial>,
     generation: u64,
+    synced: Option<u64>,
     defaults: Defaults,
     mips: MipGenerator,
 }
@@ -99,6 +101,7 @@ impl MaterialStore {
             textures: BTreeMap::new(),
             materials: BTreeMap::new(),
             generation: 0,
+            synced: None,
             defaults: Defaults {
                 _textures: textures,
                 white_srgb,
@@ -109,6 +112,42 @@ impl MaterialStore {
             },
             mips: MipGenerator::new(device),
         }
+    }
+
+    pub(crate) fn sync(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &crate::gpu_calls::Queue,
+        world: &World,
+        encoder: &mut Option<wgpu::CommandEncoder>,
+    ) -> (u64, u32) {
+        let (Some(residency), Some(library)) = (
+            world.get_resource::<AssetResidency>(),
+            world.get_resource::<AssetLibrary>(),
+        ) else {
+            return (0, 0);
+        };
+        let generation = residency.materials_generation();
+        if self.synced == Some(generation) {
+            return (0, 0);
+        }
+        self.retain(
+            |material| residency.material_resident(material),
+            |texture| residency.texture_resident(texture),
+        );
+        let sources = residency.materials().filter_map(|(handle, version)| {
+            library
+                .material(handle)
+                .map(|material| (handle, material, version))
+        });
+        let texture = |handle: TextureHandle| library.texture(handle).map(|texture| &**texture);
+        let uploaded = self.upload(device, queue, sources, texture, encoder);
+        self.synced = Some(generation);
+        uploaded
+    }
+
+    pub(crate) fn forget_sync(&mut self) {
+        self.synced = None;
     }
 
     pub(crate) fn retain(
@@ -183,7 +222,15 @@ impl MaterialStore {
             return (0, 0);
         };
         let mut levels = 0;
-        let gpu = create_texture(device, queue, source, srgb, &self.mips, encoder, &mut levels);
+        let gpu = create_texture(
+            device,
+            queue,
+            source,
+            srgb,
+            &self.mips,
+            encoder,
+            &mut levels,
+        );
         let bytes = gpu.byte_len;
         entry.insert(gpu);
         (bytes, levels)
@@ -571,6 +618,13 @@ impl MaterialUniform {
         uniform.variant = [f32::from_bits(Variant::of(material).bits()), 0.0, 0.0, 0.0];
         uniform
     }
+}
+
+pub fn material_variant(material: Option<&Material>, extended: bool) -> u32 {
+    material
+        .map_or(Variant::BASIC, Variant::of)
+        .with_extended(extended)
+        .bits()
 }
 
 pub fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {

@@ -1,14 +1,38 @@
-use bevy_ecs::prelude::{Component, Resource};
+use bevy_ecs::prelude::{Component, Entity, Resource};
 use engine_math::clamp;
 use engine_place::Slot;
 use serde::{Deserialize, Serialize};
 
-#[derive(Resource, Default)]
-pub struct Instances;
+pub const MOVED_SLOT: u32 = 0x8000_0000;
+pub const FADE_SLOT: u32 = 0x00ff_ffff;
+pub const FADE_WORD_ON: u32 = 0x100;
+pub const FADE_WORD_OUT: u32 = 0x80;
+pub const STILL_FRAMES: u32 = 16;
+
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct Instances {
+    pub slots: Vec<(Entity, u32)>,
+}
+
+impl Instances {
+    pub fn drawn(&self, entity: Entity) -> Option<u32> {
+        self.slots
+            .binary_search_by_key(&entity, |&(drawn, _)| drawn)
+            .ok()
+            .map(|index| self.slots[index].1)
+    }
+}
 
 impl Slot for Instances {
     const NAME: &'static str = "instances";
-    const WGSL: Option<&'static str> = Some(include_str!("places/instances.wgsl"));
+    const WGSL: Option<&'static str> = Some(contract!(
+        "places/instances.wgsl",
+        MOVED_SLOT,
+        FADE_SLOT,
+        FADE_WORD_ON,
+        FADE_WORD_OUT,
+        STILL_FRAMES,
+    ));
     const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::INSTANCES];
 }
 

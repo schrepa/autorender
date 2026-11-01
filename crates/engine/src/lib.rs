@@ -28,17 +28,17 @@ pub use engine_core::command_line;
 pub use engine_core::smoke_eq;
 
 mod games {
+    pub use crate::resolution::{DynamicResolution, Resolution};
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, BrickList,
         Camera, DynamicResolutionStats, Engine, EngineConfig, Filter, FixedTime, FrameReport,
-        FrameTime, GlobalTransform, GlobalTransforms, Grounding, InputState, InterpolateTransform,
-        Listing, MakeSources, MakeTextures, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle,
-        MeshVertex, Parent, PresentedTransform, PresentedTransforms, Projection, ProvidedAssets,
+        FrameTime, GlobalTransform, GlobalTransforms, Grounding, InterpolateTransform, Listing,
+        MakeSources, MakeTextures, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex,
+        MoveInput, Parent, PresentedTransform, PresentedTransforms, Projection, ProvidedAssets,
         ResolutionStats, Sampler, Surface, Texture, TextureHandle, TextureRef, TextureSet,
         TextureSource, TextureUsage, TopLayer, Transform, UvTransform, Wrap, edit_transform, math,
         reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
     };
-    pub use crate::resolution::{DynamicResolution, Resolution};
 }
 pub use games::*;
 
@@ -81,9 +81,7 @@ pub struct ShaderModule {
     pub source: &'static str,
 }
 
-pub fn shader_modules(
-    bricks: impl FnOnce(BrickList) -> BrickList,
-) -> Result<Vec<ShaderModule>> {
+pub fn shader_modules(bricks: impl FnOnce(BrickList) -> BrickList) -> Result<Vec<ShaderModule>> {
     let list = bricks(BrickList::default());
     let mut modules: Vec<ShaderModule> = Vec::new();
     for (path, source) in engine_render::core_modules() {

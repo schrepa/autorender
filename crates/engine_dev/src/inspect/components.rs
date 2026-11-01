@@ -26,15 +26,39 @@ impl DevTools {
             brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "Input"),
             kind: InspectorKind::Resource,
-            has: Box::new(|world, _| world.get_resource::<InputState>().is_some()),
+            has: Box::new(|world, _| world.get_resource::<MoveInput>().is_some()),
             read: Box::new(input_view),
         })
+        .expect("descriptor_bounded");
+        self.register_resource::<JobExchange>(
+            InspectorDescriptor::generated(schemas, "Jobs"),
+            |jobs| {
+                let stats = jobs.stats();
+                json!(crate::views::JobsView {
+                    workers: stats.workers,
+                    running: stats.running,
+                    submitted: stats.submitted,
+                    completed: stats.completed,
+                    failed: stats.failed,
+                    last_failure: jobs.last_failure().map(str::to_owned),
+                    cancelled: stats.cancelled,
+                    shares: stats.shares,
+                    shared_bytes: stats.shared_bytes,
+                    cache_hits: stats.cache_hits,
+                    cache_misses: stats.cache_misses,
+                    cache_bytes: stats.cache_bytes,
+                    cache_mismatches: stats.cache_mismatches,
+                    held: stats.held,
+                    in_place: stats.in_place,
+                })
+            },
+        )
         .expect("descriptor_bounded");
     }
 }
 
 fn input_view(world: &World, _: Option<Entity>, _: &Context<'_>) -> Option<Value> {
-    let input = world.get_resource::<InputState>()?;
+    let input = world.get_resource::<MoveInput>()?;
     let actions = world.get_resource::<ActionInput>();
     Some(json!(InputView {
         move_forward: input.move_forward,

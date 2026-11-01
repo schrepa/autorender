@@ -1,6 +1,7 @@
 use std::fmt::Write as _;
 
-use engine_core::{Error, ErrorCode, PlaceKind};
+use engine_core::{Error, ErrorCode};
+use engine_place::PlaceKind;
 use wesl::syntax::{
     AssignmentOperator, Attribute, DeclarationKind, Expression, Function, GlobalDeclaration,
     ImportContent, ImportStatement, PathOrigin, Statement, TranslationUnit, TypeExpression,
@@ -457,10 +458,16 @@ pub fn face_source(place: &str, contract: &Contract, answered: &Answered) -> Str
     let mut body = String::new();
     match answered {
         Answered::Filler(filler) => {
+            for import in &contract.imports {
+                let _ = writeln!(imports, "{import}");
+            }
             shared_imports(&mut imports, &module, contract);
             switched(&mut imports, &mut body, place, filler, contract);
         }
         Answered::Nobody => {
+            for import in &contract.imports {
+                let _ = writeln!(imports, "{import}");
+            }
             shared_imports(&mut imports, &module, contract);
             let names: Vec<&str> = contract.answers.iter().map(|answer| answer.name.as_str()).collect();
             if !names.is_empty() {

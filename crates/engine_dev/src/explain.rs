@@ -76,7 +76,7 @@ impl DevTools {
                 .expected(Expected::Entity)
                 .got(id)
         })?;
-        let entity = scene.authored_entity(world, id).ok_or_else(|| {
+        let entity = scene.entity(id).ok_or_else(|| {
             Error::new(ErrorCode::UnknownEntity, "$.entity")
                 .expected(Expected::Entity)
                 .got(id)

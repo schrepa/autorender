@@ -45,6 +45,7 @@ results! {
     step: crate::results::StepResult,
     environment: crate::results::EnvironmentResult,
     frames: crate::results::FramesResult,
+    probe: crate::results::ProbeResult,
     game: crate::results::GameResult,
     pause: crate::results::StatusResult,
     resume: crate::results::StatusResult,
@@ -365,6 +366,9 @@ pub struct EnvironmentResult {
     pub environment_changed: Vec<String>,
     pub before: serde_json::Map<String, Value>,
     pub after: serde_json::Map<String, Value>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(not(target_arch = "wasm32"), schemars(with = "Vec<Value>"))]
+    pub skipped: Vec<engine_settings::Error>,
 }
 
 #[derive(Serialize)]
@@ -460,6 +464,14 @@ pub struct WatchRecord {
     pub component: Option<String>,
     #[cfg_attr(not(target_arch = "wasm32"), schemars(with = "Option<Value>"))]
     pub value: Value,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct ProbeResult {
+    #[serde(flatten)]
+    pub probe: serde_json::Map<String, Value>,
+    pub entity: Option<AuthoredEntity>,
 }
 
 #[derive(Serialize)]

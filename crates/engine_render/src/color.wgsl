@@ -18,12 +18,6 @@ fn filmic(x: vec3<f32>) -> vec3<f32> {
     return saturate((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14));
 }
 
-fn unfilmic(shown: f32) -> f32 {
-    let a = 2.51 - 2.43 * shown;
-    let b = 0.03 - 0.59 * shown;
-    return (sqrt(b * b + 0.56 * a * shown) - b) / (2.0 * a);
-}
-
 fn dither_hash(seed: vec3<u32>) -> vec3<u32> {
     var v = seed * 1664525u + 1013904223u;
     v.x += v.y * v.z;

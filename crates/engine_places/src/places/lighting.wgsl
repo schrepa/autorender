@@ -1,4 +1,4 @@
-import package::engine::shading::{Shaded, SurfacePoint, flat};
+import package::engine::shading::{Shaded, SurfacePoint};
 
 fn highlights() -> vec4<f32> {
     return vec4<f32>(0.0);
@@ -43,9 +43,11 @@ fn widened(point: SurfacePoint, turn_dx: vec3<f32>, turn_dy: vec3<f32>) -> Surfa
 }
 
 fn finish(point: SurfacePoint, local: vec3<f32>) -> Shaded {
-    return flat(vec4<f32>(point.albedo, point.opacity));
+    var shaded: Shaded;
+    return shaded;
 }
 
 fn finish_ground(point: SurfacePoint, local: vec3<f32>) -> Shaded {
-    return flat(vec4<f32>(point.albedo, point.opacity));
+    var shaded: Shaded;
+    return shaded;
 }

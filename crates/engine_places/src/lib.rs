@@ -5,6 +5,16 @@
 
 extern crate engine_ecs as bevy_ecs;
 
+macro_rules! contract {
+    ($file:literal $(, $name:ident)* $(,)?) => {{
+        const CONSTANTS: &[(&str, u32)] = &[$((::core::stringify!($name), $name)),*];
+        const TEXT: &str = ::core::include_str!($file);
+        const BYTES: [u8; crate::contract::length(CONSTANTS, TEXT)] =
+            crate::contract::written(CONSTANTS, TEXT);
+        crate::contract::text(&BYTES)
+    }};
+}
+
 pub mod bloom;
 pub mod dither;
 pub mod exposure;
@@ -31,18 +41,71 @@ pub mod wind;
 
 use engine_place::PlaceDecl;
 
-mod degrees {
-    use serde::{Deserialize, Deserializer, Serializer};
+mod contract {
+    const LEAD: &[u8] = b"const ";
+    const TYPED: &[u8] = b": u32 = ";
+    const END: &[u8] = b"u;\n";
 
-    pub(crate) fn serialize<S: Serializer>(
-        radians: &f32,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_f32(radians.to_degrees())
+    const fn digits(value: u32) -> usize {
+        let mut count = 1;
+        let mut rest = value / 10;
+        while rest > 0 {
+            count += 1;
+            rest /= 10;
+        }
+        count
     }
 
-    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
-        f32::deserialize(deserializer).map(f32::to_radians)
+    pub(crate) const fn length(constants: &[(&str, u32)], text: &str) -> usize {
+        let mut total = text.len();
+        let mut at = 0;
+        while at < constants.len() {
+            let (name, value) = constants[at];
+            total += LEAD.len() + name.len() + TYPED.len() + digits(value) + END.len();
+            at += 1;
+        }
+        total
+    }
+
+    const fn put<const N: usize>(out: &mut [u8; N], mut end: usize, bytes: &[u8]) -> usize {
+        let mut at = 0;
+        while at < bytes.len() {
+            out[end] = bytes[at];
+            end += 1;
+            at += 1;
+        }
+        end
+    }
+
+    pub(crate) const fn written<const N: usize>(constants: &[(&str, u32)], text: &str) -> [u8; N] {
+        let mut out = [0; N];
+        let mut end = 0;
+        let mut at = 0;
+        while at < constants.len() {
+            let (name, value) = constants[at];
+            end = put(&mut out, end, LEAD);
+            end = put(&mut out, end, name.as_bytes());
+            end = put(&mut out, end, TYPED);
+            let mut place = digits(value);
+            let mut rest = value;
+            while place > 0 {
+                place -= 1;
+                out[end + place] = b'0' + (rest % 10) as u8;
+                rest /= 10;
+            }
+            end += digits(value);
+            end = put(&mut out, end, END);
+            at += 1;
+        }
+        put(&mut out, end, text.as_bytes());
+        out
+    }
+
+    pub(crate) const fn text(bytes: &'static [u8]) -> &'static str {
+        match core::str::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(_) => panic!("contract_text_is_utf8"),
+        }
     }
 }
 
@@ -104,6 +167,7 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<solids::SolidSource>("solid_source"),
     PlaceDecl::component::<splines::SplineMesh>("spline_mesh"),
     PlaceDecl::component::<streaming::StreamingFocus>("streaming_focus"),
+    PlaceDecl::slot::<streaming::StreamingPaths>(),
     PlaceDecl::list::<terrain::TerrainLayers>(),
     PlaceDecl::slot::<terrain::DrawnRivers>(),
 ];

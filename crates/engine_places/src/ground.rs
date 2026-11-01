@@ -24,10 +24,39 @@ pub struct GroundObstacle {
     pub radius: f32,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum GroundRead<T> {
+    Ready(T),
+    Waiting,
+    Off,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct GroundSource {
+    pub ground: Entity,
+    pub origin: Vec3,
+    pub pyramid: Pyramid,
+    pub identity: Arc<[u8]>,
+}
+
+impl std::fmt::Debug for GroundSource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("GroundSource")
+            .field("ground", &self.ground)
+            .field("origin", &self.origin)
+            .field("pyramid", &self.pyramid)
+            .field("identity", &self.identity.len())
+            .finish()
+    }
+}
+
 pub trait GroundQuery: Send + Sync + 'static {
     fn point(&self, at: Vec2) -> Option<GroundPoint>;
 
-    fn obstacles(&self, low: Vec2, high: Vec2, found: &mut Vec<GroundObstacle>);
+    fn obstacles(&self, ground: Entity) -> Vec<GroundObstacle>;
+
+    fn source(&self, from: Vec2, to: Vec2) -> GroundRead<GroundSource>;
 
     fn grid(&self) -> Option<JobRef>;
 }
@@ -39,7 +68,13 @@ impl GroundQuery for NoGround {
         None
     }
 
-    fn obstacles(&self, _: Vec2, _: Vec2, _: &mut Vec<GroundObstacle>) {}
+    fn obstacles(&self, _: Entity) -> Vec<GroundObstacle> {
+        Vec::new()
+    }
+
+    fn source(&self, _: Vec2, _: Vec2) -> GroundRead<GroundSource> {
+        GroundRead::Off
+    }
 
     fn grid(&self) -> Option<JobRef> {
         None
@@ -76,6 +111,7 @@ pub struct GroundGrid {
     pub heights: Box<[f32]>,
     pub holes: Option<Box<[u64]>>,
     pub bridges: Arc<[GroundBridge]>,
+    pub water: Option<Box<[f32]>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -84,6 +120,21 @@ pub struct GroundBridge {
     pub width: f32,
     pub tunnel: bool,
 }
+
+engine_codec::record!(GroundGrid {
+    key,
+    spacing,
+    heights,
+    holes,
+    bridges,
+    water,
+});
+
+engine_codec::record!(GroundBridge {
+    deck,
+    width,
+    tunnel,
+});
 
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HeightHeld(pub bool);
@@ -119,8 +170,9 @@ pub enum SurfaceProjection {
     Biplanar,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SurfaceMaterial {
+    pub name: Arc<str>,
     pub material: Option<MaterialHandle>,
     pub color: [f32; 3],
     pub roughness: f32,
@@ -133,6 +185,7 @@ pub struct SurfaceMaterial {
 impl Default for SurfaceMaterial {
     fn default() -> Self {
         Self {
+            name: Arc::from(""),
             material: None,
             color: [0.5; 3],
             roughness: 0.9,
@@ -222,9 +275,18 @@ pub struct TileFace {
     pub stamp: Stamp,
     pub bounds: (Vec3, Vec3),
     pub level: u8,
+    pub spacing: f32,
     pub heights: Arc<[f32]>,
-    pub materials: Arc<[u8]>,
+    pub holes: Option<Arc<[u64]>>,
+    pub control: Option<Arc<[u32]>>,
+    pub river_edges: Option<Arc<[u16]>>,
+    pub river_beds: Option<Arc<[u16]>>,
+    pub patch_bounds: Arc<[[f32; 2]]>,
+    pub patch_holes: Arc<[u64]>,
+    pub ground_errors: Arc<[u16]>,
+    pub water_errors: Arc<[u16]>,
     pub errors: Arc<[f32]>,
+    pub stamps: Arc<[engine_heightfield::Stamp]>,
     pub placed: Arc<[Placed]>,
 }
 
@@ -238,6 +300,12 @@ pub struct TerrainEntry {
     pub steep: Option<Steep>,
     pub may_hole: bool,
     pub reach: Arc<[f32]>,
+    pub recipe: Option<[u8; 32]>,
+    pub pinned_levels: u32,
+    pub pixel_error: f32,
+    pub level_errors: Arc<[f32]>,
+    pub surface_program: bool,
+    pub baked: Option<Arc<engine_heightfield::Layers>>,
     pub macro_map: Option<TextureHandle>,
     pub materials: Arc<[SurfaceMaterial]>,
     pub maps: Arc<[Option<SurfaceMaps>]>,
@@ -280,12 +348,13 @@ impl Slot for Heightfield {
     const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::HEIGHTFIELD];
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HeldTile {
     pub terrain: Entity,
     pub key: TileKey,
     pub stamp: Stamp,
     pub layer: u32,
+    pub top: f32,
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
@@ -297,7 +366,7 @@ pub struct GroundTiles {
 
 impl Slot for GroundTiles {
     const NAME: &'static str = "ground_tiles";
-    const WGSL: Option<&'static str> = Some(include_str!("places/ground_tiles.wgsl"));
+    const WGSL: Option<&'static str> = Some(contract!("places/ground_tiles.wgsl", TILE_QUADS));
     const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::GROUND_TILES];
 }
 
@@ -339,10 +408,20 @@ impl Slot for PlacedTiles {
     const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::PLACED_TILES];
 }
 
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct Cover {
     pub enabled: bool,
     pub density: f32,
+    pub widths: Vec<(Entity, f32)>,
+}
+
+impl Cover {
+    pub fn width_of(&self, terrain: Entity) -> f32 {
+        self.widths
+            .iter()
+            .find(|(covered, _)| *covered == terrain)
+            .map_or(0.0, |&(_, width)| width)
+    }
 }
 
 impl Slot for Cover {
@@ -378,4 +457,5 @@ pub struct Foliage {
 
 impl Slot for Foliage {
     const NAME: &'static str = "foliage";
+    const WGSL: Option<&'static str> = Some(include_str!("places/foliage.wgsl"));
 }

@@ -273,6 +273,12 @@ impl Default for TransformIndex {
     }
 }
 
+impl TransformIndex {
+    pub fn index(&self) -> usize {
+        self.0
+    }
+}
+
 const _: () = assert!(MAX_TRANSFORM_NODES < u32::MAX as usize, "indices_fit_u32");
 const _: () = assert!(MAX_HIERARCHY_DEPTH < u8::MAX as usize, "depths_fit_u8");
 const NO_NODE: u32 = u32::MAX;

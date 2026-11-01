@@ -1,11 +1,11 @@
 use bevy_ecs::world::World;
 use engine_core::Error;
+use engine_registry::Registry;
 
-use crate::SceneDocument;
-use crate::components::Kinds;
+use crate::{SceneDocument, SceneKinds};
 
 impl SceneDocument {
-    pub(crate) fn admit(&self, world: &World, kinds: &Kinds) -> Result<Vec<Error>, Error> {
+    pub(crate) fn admit(&self, world: &World, kinds: &SceneKinds) -> Result<Vec<Error>, Error> {
         let mut skipped = Vec::new();
         let lists =
             [("$.entities".to_owned(), &self.entities)]
@@ -18,13 +18,14 @@ impl SceneDocument {
                 kinds.unlisted(object, &format!("{list}[{index}]"), &mut skipped);
             }
         }
+        let registry = world.get_resource::<Registry>();
         for (index, look) in self.looks.iter().enumerate() {
             let path = format!("$.looks[{index}].environment");
-            look.environment.check(world, &path)?;
+            look.environment.check_in(registry, &path)?;
             skipped.extend(look.environment.unlisted(world, &path));
         }
         if let Some(environment) = &self.environment {
-            environment.check(world, "$.environment")?;
+            environment.check_in(registry, "$.environment")?;
             skipped.extend(environment.unlisted(world, "$.environment"));
         }
         Ok(skipped)

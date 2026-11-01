@@ -1,4 +1,4 @@
-use engine_core::{Error, ErrorCode, InputState};
+use engine_core::{Error, ErrorCode, MoveInput};
 
 use super::policy::{LOOK_LIMIT, MAX_ACTIONS};
 
@@ -78,7 +78,7 @@ const MOVEMENT: &[(&str, Axis, bool)] = &[
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct FrameInput {
-    pub state: InputState,
+    pub state: MoveInput,
     pub held: u32,
     pub pressed: u32,
     pub released: u32,
@@ -180,7 +180,7 @@ impl InputGatherer {
             f32::from(u8::from(way(true))) - f32::from(u8::from(way(false)))
         };
         let input = FrameInput {
-            state: InputState {
+            state: MoveInput {
                 move_forward: axis(Axis::Forward),
                 move_right: axis(Axis::Right),
                 move_up: axis(Axis::Up),

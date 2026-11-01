@@ -1,4 +1,4 @@
-use std::any::Any;
+use std::any::{Any, TypeId};
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
@@ -12,6 +12,8 @@ pub struct MembersOf<L: List> {
     live: Vec<bool>,
     gates: Vec<GateId>,
     owners: Vec<&'static str>,
+    bricks: Vec<TypeId>,
+    locals: Vec<u32>,
 }
 
 impl<L: List> Default for MembersOf<L> {
@@ -21,6 +23,8 @@ impl<L: List> Default for MembersOf<L> {
             live: Vec::new(),
             gates: Vec::new(),
             owners: Vec::new(),
+            bricks: Vec::new(),
+            locals: Vec::new(),
         }
     }
 }
@@ -32,6 +36,15 @@ impl<L: List> MembersOf<L> {
             .zip(&self.live)
             .filter(|(_, live)| **live)
             .map(|(member, _)| member)
+    }
+
+    pub fn owned(&self) -> impl Iterator<Item = (TypeId, u32, &L::Member)> + '_ {
+        self.members
+            .iter()
+            .zip(&self.live)
+            .zip(self.bricks.iter().zip(&self.locals))
+            .filter(|((_, live), _)| **live)
+            .map(|((member, _), (&brick, &local))| (brick, local, member))
     }
 
     pub fn all(&self) -> &[L::Member] {
@@ -50,11 +63,14 @@ impl<L: List> MembersOf<L> {
         self.members.is_empty()
     }
 
-    pub fn push(&mut self, member: L::Member, gate: GateId, owner: &'static str) {
+    pub fn push(&mut self, member: L::Member, gate: GateId, owner: &'static str, brick: TypeId) {
+        let local = self.bricks.iter().filter(|&&known| known == brick).count() as u32;
         self.members.push(member);
         self.live.push(true);
         self.gates.push(gate);
         self.owners.push(owner);
+        self.bricks.push(brick);
+        self.locals.push(local);
     }
 
     pub fn refresh(&mut self, gates: &Gates) {
@@ -87,12 +103,12 @@ pub(crate) fn add_member<L: List>(
     world: &mut World,
     member: Box<dyn Any + Send + Sync>,
     gate: GateId,
-    owner: &'static str,
+    (owner, brick): (&'static str, TypeId),
 ) {
     if let Ok(member) = member.downcast::<L::Member>() {
         world
             .get_resource_or_init::<MembersOf<L>>()
-            .push(*member, gate, owner);
+            .push(*member, gate, owner, brick);
     }
 }
 

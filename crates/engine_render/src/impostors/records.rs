@@ -1,48 +1,11 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use engine_core::{impostor_level_rows, impostor_record_header};
+
 use super::*;
 
-const RECORD_MAGIC: &[u8; 4] = b"EIMP";
-const RECORD_HEADER: usize = 24;
 const ROW: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-
-pub(super) fn identity(shape: AtlasShape, format: AtlasFormat, content: (u128, u128)) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(48);
-    for word in [
-        format.tag(),
-        shape.frames,
-        shape.texels,
-        u32::from(shape.hemisphere),
-    ] {
-        bytes.extend_from_slice(&word.to_le_bytes());
-    }
-    bytes.extend_from_slice(&content.0.to_le_bytes());
-    bytes.extend_from_slice(&content.1.to_le_bytes());
-    bytes
-}
-
-fn record_header(shape: AtlasShape, format: AtlasFormat) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(RECORD_HEADER);
-    bytes.extend_from_slice(RECORD_MAGIC);
-    for word in [
-        format.tag(),
-        shape.frames,
-        shape.texels,
-        u32::from(shape.hemisphere),
-        shape.levels(),
-    ] {
-        bytes.extend_from_slice(&word.to_le_bytes());
-    }
-    bytes
-}
-
-fn record_bytes(shape: AtlasShape, format: AtlasFormat) -> usize {
-    RECORD_HEADER
-        + 4 * (0..shape.levels())
-            .map(|level| format.level_bytes(shape.size() >> level))
-            .sum::<usize>()
-}
 
 #[derive(Clone, Copy)]
 struct Region {
@@ -52,17 +15,12 @@ struct Region {
     row: u32,
 }
 
-fn level_rows(shape: AtlasShape, level: u32) -> (u32, u32, u32) {
-    let (row, rows) = AtlasFormat::Rgba8.rows(shape.size() >> level);
-    (rows, row.next_multiple_of(ROW), row)
-}
-
 fn level_regions(shape: AtlasShape) -> (Vec<Region>, u64) {
     let mut regions = Vec::with_capacity(4 * shape.levels() as usize);
     let mut bytes = 0_u64;
     for _ in 0..4 {
         for level in 0..shape.levels() {
-            let (rows, stride, row) = level_rows(shape, level);
+            let (rows, stride, row) = impostor_level_rows(shape, level, ROW);
             regions.push(Region {
                 offset: bytes,
                 rows,
@@ -75,15 +33,6 @@ fn level_regions(shape: AtlasShape) -> (Vec<Region>, u64) {
     (regions, bytes)
 }
 
-pub(super) fn readback_bytes(shape: AtlasShape) -> u64 {
-    4 * (0..shape.levels())
-        .map(|level| {
-            let (rows, stride, _) = level_rows(shape, level);
-            u64::from(stride) * u64::from(rows)
-        })
-        .sum::<u64>()
-}
-
 enum Mapped {
     Recorded,
     Mapping,
@@ -92,38 +41,22 @@ enum Mapped {
 }
 
 pub(super) struct Readback {
-    record: RecordKey,
+    identity: ImpostorIdentity,
     buffer: wgpu::Buffer,
     regions: Vec<Region>,
     mapped: Rc<RefCell<Mapped>>,
 }
 
-impl ImpostorAtlas {
-    pub(super) fn load(
-        &mut self,
-        gpu: &mut BakeGpu<'_>,
-        key: ImpostorKey,
-        source: &BakeSource<'_>,
-        bytes: &[u8],
-        budget: Option<u32>,
-    ) -> bool {
-        let header = record_header(self.shape, self.format);
-        if bytes.len() != record_bytes(self.shape, self.format)
-            || bytes.get(..RECORD_HEADER) != Some(header.as_slice())
-        {
-            return false;
-        }
-        let Some(layer) = self.layer(gpu.device, gpu.encoder, budget) else {
-            return false;
-        };
+impl Atlas {
+    pub(super) fn load(&mut self, queue: &crate::gpu_calls::Queue, layer: u32, bytes: &[u8]) {
         let arrays = self.arrays.as_ref().expect("arrays_grown");
-        let mut at = RECORD_HEADER;
+        let mut at = engine_core::IMPOSTOR_RECORD_HEADER;
         for kind in 0..KINDS {
             for level in 0..self.shape.levels() {
                 let size = self.shape.size() >> level;
                 let (row, rows) = self.format.rows(size);
                 let length = row as usize * rows as usize;
-                gpu.queue.write_texture(
+                queue.write_texture(
                     wgpu::TexelCopyTextureInfo {
                         texture: &arrays.texture,
                         mip_level: level,
@@ -149,19 +82,15 @@ impl ImpostorAtlas {
                 at += length;
             }
         }
-        self.loaded += bytes.len();
-        self.resident(key, source, layer);
-        true
     }
 
     pub(super) fn read_back(
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        content: (u128, u128),
+        identity: ImpostorIdentity,
     ) {
         let shape = self.shape;
-        let record = self.record_key(content);
         let baked = &self.targets.as_ref().expect("targets_drawn").layer;
         let (regions, bytes) = level_regions(shape);
         let buffer = crate::memory::buffer(
@@ -200,14 +129,18 @@ impl ImpostorAtlas {
             );
         }
         self.readbacks.push(Readback {
-            record,
+            identity,
             buffer,
             regions,
             mapped: Rc::new(RefCell::new(Mapped::Recorded)),
         });
     }
 
-    pub fn take_made(&mut self, out: &mut Vec<(RecordKey, Vec<u8>)>) {
+    pub(super) fn take_made(
+        &mut self,
+        role: AtlasRole,
+        out: &mut Vec<(AtlasRole, ImpostorIdentity, Option<Vec<u8>>)>,
+    ) {
         let mut kept = Vec::with_capacity(self.readbacks.len());
         for readback in std::mem::take(&mut self.readbacks) {
             let read = match &*readback.mapped.borrow() {
@@ -216,22 +149,14 @@ impl ImpostorAtlas {
                 Mapped::Recorded | Mapped::Mapping => None,
             };
             match read {
-                Some(Some(bytes)) => {
-                    out.push((readback.record, bytes.clone()));
-                    self.answer(readback.record, Some(bytes));
-                }
-                Some(None) => self.answer(readback.record, None),
+                Some(bytes) => out.push((role, readback.identity, bytes)),
                 None => kept.push(readback),
             }
         }
         self.readbacks = kept;
     }
 
-    pub fn after_submit(&mut self) {
-        self.loaded = 0;
-        if std::mem::take(&mut self.deferred) {
-            self.generation += 1;
-        }
+    pub(super) fn after_submit(&mut self) {
         for readback in &self.readbacks {
             if !matches!(*readback.mapped.borrow(), Mapped::Recorded) {
                 continue;
@@ -260,7 +185,7 @@ impl ImpostorAtlas {
     }
 
     fn assemble(&self, regions: &[Region], bytes: &[u8]) -> Vec<u8> {
-        let mut out = record_header(self.shape, self.format);
+        let mut out = impostor_record_header(self.shape, self.format);
         let levels = self.shape.levels() as usize;
         for (index, region) in regions.iter().enumerate() {
             let mut texels = Vec::with_capacity(region.row as usize * region.rows as usize);
@@ -270,7 +195,7 @@ impl ImpostorAtlas {
                     texels.extend_from_slice(row);
                 }
             }
-            match self.format.family() {
+            match family(self.format) {
                 None => out.extend_from_slice(&texels),
                 Some(family) => {
                     let size = self.shape.size() >> (index % levels);

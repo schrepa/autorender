@@ -153,6 +153,21 @@ impl JobRef {
     }
 }
 
+impl engine_codec::Codec for JobRef {
+    fn write(&self, out: &mut engine_codec::Writer) {
+        out.put(&self.name.to_string()).put(&self.source);
+    }
+
+    fn read(input: &mut engine_codec::Reader<'_>) -> Result<Self, Error> {
+        let name: String = input.get()?;
+        let source: [u8; 32] = input.get()?;
+        Ok(Self {
+            name: name.into_boxed_str(),
+            source,
+        })
+    }
+}
+
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Mesh3d {
     pub mesh: MeshHandle,
@@ -209,6 +224,7 @@ pub trait SmokeSession {
     fn step(&mut self, ticks: u32);
     fn frame(&mut self) -> bool;
     fn source(&mut self, document: &str);
+    fn file(&mut self, name: &str, bytes: Vec<u8>);
 }
 
 #[macro_export]
@@ -246,9 +262,12 @@ macro_rules! gpu_struct {
     (@wgsl [u32; 4]) => { "vec4<u32>" };
     (@wgsl [i32; 4]) => { "vec4<i32>" };
     (@wgsl [[f32; 4]; 4]) => { "mat4x4<f32>" };
-    (@wgsl [[f32; 4]; $count:literal]) => { ::core::concat!("array<vec4<f32>, ", ::core::stringify!($count), ">") };
-    (@wgsl [[u32; 4]; $count:literal]) => { ::core::concat!("array<vec4<u32>, ", ::core::stringify!($count), ">") };
-    (@wgsl [[i32; 4]; $count:literal]) => { ::core::concat!("array<vec4<i32>, ", ::core::stringify!($count), ">") };
+    (@wgsl [[[f32; 4]; 4]; $count:tt]) => { ::core::concat!("array<mat4x4<f32>, ", ::core::stringify!($count), ">") };
+    (@wgsl [[f32; 4]; $count:tt]) => { ::core::concat!("array<vec4<f32>, ", ::core::stringify!($count), ">") };
+    (@wgsl [[u32; 4]; $count:tt]) => { ::core::concat!("array<vec4<u32>, ", ::core::stringify!($count), ">") };
+    (@wgsl [[i32; 4]; $count:tt]) => { ::core::concat!("array<vec4<i32>, ", ::core::stringify!($count), ">") };
+    (@wgsl [$inner:ident; $count:tt]) => { ::core::concat!("array<", ::core::stringify!($inner), ", ", ::core::stringify!($count), ">") };
+    (@wgsl $inner:ident) => { ::core::stringify!($inner) };
     (@align f32) => { 4 };
     (@align u32) => { 4 };
     (@align i32) => { 4 };
@@ -261,9 +280,12 @@ macro_rules! gpu_struct {
     (@align [f32; 4]) => { 16 };
     (@align [u32; 4]) => { 16 };
     (@align [i32; 4]) => { 16 };
-    (@align [[f32; 4]; $count:literal]) => { 16 };
-    (@align [[u32; 4]; $count:literal]) => { 16 };
-    (@align [[i32; 4]; $count:literal]) => { 16 };
+    (@align [[[f32; 4]; 4]; $count:tt]) => { 16 };
+    (@align [[f32; 4]; $count:tt]) => { 16 };
+    (@align [[u32; 4]; $count:tt]) => { 16 };
+    (@align [[i32; 4]; $count:tt]) => { 16 };
+    (@align [$inner:ident; $count:tt]) => { 16 };
+    (@align $inner:ident) => { 16 };
     (
         @crate $bytemuck:literal;
         $(#[$meta:meta])*
@@ -275,7 +297,6 @@ macro_rules! gpu_struct {
             ::core::clone::Clone,
             ::core::marker::Copy,
             ::core::fmt::Debug,
-            ::core::default::Default,
             ::core::cmp::PartialEq,
             $crate::__private::bytemuck::Pod,
             $crate::__private::bytemuck::Zeroable
@@ -285,6 +306,12 @@ macro_rules! gpu_struct {
         $(#[$meta])*
         $vis struct $name {
             $($field_vis $field: $ty,)*
+        }
+
+        impl ::core::default::Default for $name {
+            fn default() -> Self {
+                <Self as $crate::__private::bytemuck::Zeroable>::zeroed()
+            }
         }
 
         const _: () = {

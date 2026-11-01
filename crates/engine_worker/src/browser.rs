@@ -31,6 +31,10 @@ pub fn image(image: &Image) -> JsValue {
     let object = Object::new();
     set(&object, "width", &JsValue::from(image.width));
     set(&object, "height", &JsValue::from(image.height));
-    set(&object, "pixels", &Uint8Array::from(image.pixels.as_slice()));
+    set(
+        &object,
+        "pixels",
+        &Uint8Array::from(image.pixels.as_slice()),
+    );
     object.into()
 }

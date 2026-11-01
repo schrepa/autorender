@@ -22,7 +22,7 @@ pub use given::GivenRiver;
 pub use grid::{MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
 pub use hydrology::{Fall, HydrologyBake, HydrologySample, HydrologyStats, RIVER_FAR, WaterGrid};
 pub use layer::{LayerBake, LayerTile, TerrainLayer};
-pub use layers::{Blend, HeightImage, Layers};
+pub use layers::{Blend, HeightImage, Layers, Stamp, StampOp};
 pub use path::{Bridge, PathSample};
 pub use rivers::{Given, RIVER_STEP, River, RiverLine, Rivers};
 pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverListing, RiverSight};

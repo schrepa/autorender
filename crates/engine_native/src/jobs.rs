@@ -349,15 +349,15 @@ fn work(index: u32, list: Arc<JobList>, inbox: &Receiver<Order>, report: &Sender
         };
         while let Some(order) = next.take() {
             match order {
-                Order::Share(key, bytes) => worker.share(key.hash(), bytes),
-                Order::Unshare(key) => worker.unshare(key.hash()),
+                Order::Share(key, bytes) => worker.share(key, bytes),
+                Order::Unshare(key) => worker.unshare(key),
                 Order::Clear => worker.clear(),
                 Order::Run {
                     id,
                     kind,
                     input,
                     priority,
-                } => worker.hold(id, kind.name(), input, priority),
+                } => worker.hold(id, kind, input, priority),
                 Order::Cancel(id) => worker.cancel(id),
                 Order::Read {
                     id,

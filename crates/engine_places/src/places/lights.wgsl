@@ -17,9 +17,6 @@ struct LightCluster {
     end: f32,
 }
 
-const LIGHT_INTERIOR: u32 = 1u;
-const LIGHT_EXTERIOR: u32 = 2u;
-
 fn light_cluster(world: vec3<f32>, pixel: vec2<f32>) -> LightCluster {
     var cluster: LightCluster;
     return cluster;

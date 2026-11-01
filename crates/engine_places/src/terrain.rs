@@ -1,18 +1,13 @@
 use bevy_ecs::prelude::Resource;
-use engine_place::{JobRef, List, Slot};
+use engine_place::{List, Slot};
 
-pub use engine_heightfield::layer::DrawRivers;
-
-pub struct LayerKind {
-    pub layer: &'static engine_heightfield::layer::LayerKind,
-    pub job: JobRef,
-}
+pub use engine_heightfield::layer::{DrawRivers, LayerKind};
 
 pub struct TerrainLayers;
 
 impl List for TerrainLayers {
     const NAME: &'static str = "terrain_layers";
-    type Member = LayerKind;
+    type Member = &'static LayerKind;
 }
 
 #[derive(Resource, Clone, Copy, Default)]

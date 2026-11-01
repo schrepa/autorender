@@ -8,7 +8,7 @@ const MAX_DEPTH: usize = 64;
 
 impl SceneDocument {
     pub fn to_canonical_json(&self, schema: &Value) -> Result<String, Error> {
-        self.validate()?;
+        self.structure()?;
         let value =
             serde_json::to_value(self).map_err(|_| Error::new(ErrorCode::InvalidJson, "$"))?;
         let canonical = Canonical { root: schema }.value(&value, Some(schema), 0);

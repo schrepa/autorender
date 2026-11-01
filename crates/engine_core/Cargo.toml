@@ -7,8 +7,8 @@ publish.workspace = true
 
 [features]
 default = []
-dev = ["engine_profile/bricks"]
-profiling = ["engine_profile/enabled"]
+dev = ["engine_profile/bricks", "engine_registry/profiling"]
+profiling = ["engine_profile/enabled", "engine_registry/profiling"]
 attribution = []
 schema = ["engine_assets/schema", "engine_settings/schema"]
 
@@ -17,6 +17,8 @@ engine_place.workspace = true
 engine_registry.workspace = true
 engine_codec.workspace = true
 engine_assets.workspace = true
+engine_heightfield.workspace = true
+engine_lodbuild.workspace = true
 engine_math.workspace = true
 engine_settings.workspace = true
 engine_profile.workspace = true
@@ -30,15 +32,8 @@ serde_json.workspace = true
 sha2.workspace = true
 engine_textures.workspace = true
 
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-engine_lodbuild.workspace = true
-
 [build-dependencies]
-sha2.workspace = true
-
-[[example]]
-name = "brick_template"
-crate-type = ["rlib"]
+engine_sources.workspace = true
 
 [lints]
 workspace = true

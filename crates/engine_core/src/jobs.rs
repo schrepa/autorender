@@ -6,16 +6,20 @@ use bevy_ecs::change_detection::Mut;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Deferred, Res, SystemParam};
 use bevy_ecs::world::World;
-use engine_registry::{JobKindRef, JobList, JobListed, JobOrder, JobOrders, RecordStore, Shares};
+use engine_registry::{
+    JobKindRef, JobList, JobListed, JobMember, JobOrder, JobOrders, RecordParity, RecordStore,
+    Shares,
+};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::{Error, ErrorCode, JobRef, Source, settings};
+use crate::{Error, ErrorCode, JobRef, List, Source, settings};
 
 pub struct JobKind {
     name: &'static str,
     source: &'static Source,
     start: fn(&[u8], &mut JobCx<'_>) -> Result<Box<dyn Job>, Error>,
+    parity: RecordParity,
 }
 
 impl JobKind {
@@ -28,7 +32,14 @@ impl JobKind {
             name,
             source,
             start,
+            parity: RecordParity::Exact,
         }
+    }
+
+    #[must_use]
+    pub const fn kept_alike(mut self, alike: fn(&[u8], &[u8]) -> bool) -> Self {
+        self.parity = RecordParity::Within(alike);
+        self
     }
 
     #[doc(hidden)]
@@ -39,6 +50,11 @@ impl JobKind {
     #[doc(hidden)]
     pub fn source(&self) -> &'static Source {
         self.source
+    }
+
+    #[doc(hidden)]
+    pub fn parity(&self) -> RecordParity {
+        self.parity
     }
 
     #[doc(hidden)]
@@ -85,6 +101,10 @@ impl JobCx<'_> {
     pub fn share(&self, key: RecordKey) -> Option<&[u8]> {
         self.shares.share(key.0)
     }
+
+    pub fn members<L: List>(&self) -> impl Iterator<Item = &L::Member> + '_ {
+        self.list.members::<L>()
+    }
 }
 
 #[doc(hidden)]
@@ -97,12 +117,30 @@ pub fn job_list(kinds: &[&'static JobKind]) -> Result<JobList, Error> {
     )
 }
 
+#[doc(hidden)]
+pub fn job_list_with(
+    kinds: &[&'static JobKind],
+    members: Vec<JobMember>,
+) -> Result<JobList, Error> {
+    job_list(kinds).map(|list| list.with_members(members))
+}
+
 #[derive(
     Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, serde::Deserialize,
 )]
 pub struct RecordKey([u8; 32]);
 
 impl RecordKey {
+    #[doc(hidden)]
+    pub fn new(source: &[u8; 32], kind: &str, identity: &[u8]) -> Self {
+        record_key(source, kind, identity)
+    }
+
+    #[doc(hidden)]
+    pub fn of(kind: &JobKind, input: &[u8]) -> Self {
+        key_of(kind, input)
+    }
+
     #[doc(hidden)]
     pub const fn from_hash(hash: [u8; 32]) -> Self {
         Self(hash)
@@ -204,7 +242,13 @@ impl Jobs<'_, '_> {
 
     pub fn keep(&mut self, kind: &'static JobKind, input: &[u8], bytes: Vec<u8>) -> Ticket {
         let key = self.listed_key(kind, input);
-        self.orders.orders.push(JobOrder::Keep { key: key.0, bytes });
+        self.orders.orders.push(JobOrder::Keep {
+            key: key.0,
+            kind: kind.name,
+            source: kind.source.hash(),
+            bytes,
+            parity: kind.parity,
+        });
         Ticket::new(key)
     }
 
@@ -234,6 +278,10 @@ impl Records {
     pub fn get(&self, ticket: &Ticket) -> Option<Result<Arc<[u8]>, Error>> {
         self.store.get(&ticket.key.0)
     }
+
+    pub(crate) fn arrive(&mut self, key: RecordKey, record: Result<Arc<[u8]>, Error>) {
+        self.store.arrive(key.0, record);
+    }
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -254,49 +302,45 @@ static TEXTURES: Source = Source::generated("engine_textures", crate::sources::T
 
 static LODBUILD: Source = Source::generated("engine_lodbuild", crate::sources::LODBUILD, &[]);
 
-#[doc(hidden)]
-pub static TEXTURE_COOK: JobKind =
-    JobKind::new(engine_textures::COOK_JOB, &TEXTURES, start_texture_cook);
+pub(crate) const TEXTURE_COOK_NAME: &str = "engine::texture_cook";
+
+pub(crate) const MESH_LODS_NAME: &str = "engine::mesh_lods";
 
 #[doc(hidden)]
-pub static MESH_LODS: JobKind =
-    JobKind::new(engine_assets::LOD_RECORD, &LODBUILD, start_mesh_lods);
+pub static TEXTURE_COOK: JobKind = JobKind::new(TEXTURE_COOK_NAME, &TEXTURES, start_texture_cook);
+
+#[doc(hidden)]
+pub static MESH_LODS: JobKind = JobKind::new(MESH_LODS_NAME, &LODBUILD, start_mesh_lods);
 
 struct Whole {
     input: Vec<u8>,
-    run: fn(&[u8]) -> Result<Vec<u8>, String>,
+    run: fn(&[u8]) -> Result<Vec<u8>, Error>,
 }
 
 impl Job for Whole {
     fn step(&mut self, _: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
-        (self.run)(&self.input)
-            .map(Some)
-            .map_err(|message| Error::new(ErrorCode::InvalidValue, message))
+        (self.run)(&self.input).map(Some)
     }
+}
+
+fn cook_texture(input: &[u8]) -> Result<Vec<u8>, Error> {
+    engine_textures::cook_job(input).map_err(|message| {
+        Error::new(ErrorCode::InvalidValue, format!("$.jobs.{TEXTURE_COOK_NAME}")).got(message)
+    })
 }
 
 fn start_texture_cook(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
     Ok(Box::new(Whole {
         input: input.to_vec(),
-        run: engine_textures::cook_job,
+        run: cook_texture,
     }))
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn start_mesh_lods(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
     Ok(Box::new(Whole {
         input: input.to_vec(),
         run: engine_lodbuild::run,
     }))
-}
-
-#[cfg(target_arch = "wasm32")]
-fn start_mesh_lods(_: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    Err(Error::new(
-        ErrorCode::JobUnsupported,
-        format!("$.jobs.{}", engine_assets::LOD_RECORD),
-    )
-    .got(engine_assets::LOD_RECORD))
 }
 
 static SUBMITTED: AtomicU64 = AtomicU64::new(0);
@@ -305,21 +349,6 @@ static SUBMITTED: AtomicU64 = AtomicU64::new(0);
 pub struct JobId(pub u64);
 
 pub const MISSING_RECORD: &str = "no store holds the record";
-
-#[derive(Clone, Copy, Debug)]
-pub enum RecordParity {
-    Exact,
-    Within(fn(&[u8], &[u8]) -> bool),
-}
-
-impl RecordParity {
-    pub fn holds(self, handed: &[u8], made: &[u8]) -> bool {
-        match self {
-            Self::Exact => handed == made,
-            Self::Within(alike) => alike(handed, made),
-        }
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct JobRequest {
@@ -445,6 +474,14 @@ struct Flight {
     fetching: bool,
 }
 
+struct Asked {
+    key: RecordKey,
+    kind: JobRef,
+    input: Vec<u8>,
+    priority: u32,
+    fetching: bool,
+}
+
 struct Shared<'a>(&'a [(RecordKey, Arc<[u8]>)]);
 
 impl Shares for Shared<'_> {
@@ -471,6 +508,7 @@ pub struct JobExchange {
     cancels: Vec<JobId>,
     done: HashMap<JobId, Result<Vec<u8>, String>>,
     flights: Vec<Flight>,
+    asked: Vec<Asked>,
     cache: [u64; 4],
     held: u32,
     shared: Vec<(RecordKey, Arc<[u8]>)>,
@@ -493,6 +531,7 @@ impl Default for JobExchange {
             cancels: Vec::new(),
             done: HashMap::default(),
             flights: Vec::new(),
+            asked: Vec::new(),
             cache: [0; 4],
             held: 0,
             shared: Vec::new(),
@@ -530,6 +569,10 @@ impl JobExchange {
 
     pub fn list(&self) -> &JobList {
         &self.list
+    }
+
+    pub fn shared_list(&self) -> Arc<JobList> {
+        Arc::clone(&self.list)
     }
 
     pub(crate) fn set_list(&mut self, list: JobList) {
@@ -735,8 +778,13 @@ impl JobExchange {
                     priority,
                 } => {
                     store.want(key);
-                    let kind = JobRef::named(kind, source);
-                    self.begin(RecordKey(key), kind, input, priority, false, store);
+                    self.asked.push(Asked {
+                        key: RecordKey(key),
+                        kind: JobRef::named(kind, source),
+                        input,
+                        priority,
+                        fetching: false,
+                    });
                 }
                 JobOrder::Fetch {
                     key,
@@ -746,8 +794,13 @@ impl JobExchange {
                     priority,
                 } => {
                     store.want(key);
-                    let kind = JobRef::named(kind, source);
-                    self.begin(RecordKey(key), kind, input, priority, true, store);
+                    self.asked.push(Asked {
+                        key: RecordKey(key),
+                        kind: JobRef::named(kind, source),
+                        input,
+                        priority,
+                        fetching: true,
+                    });
                 }
                 JobOrder::Cancel { key } => {
                     if store.release(&key) {
@@ -755,15 +808,48 @@ impl JobExchange {
                     }
                 }
                 JobOrder::Share { key, bytes } => self.share(RecordKey(key), bytes),
-                JobOrder::Keep { key, bytes } => {
+                JobOrder::Keep {
+                    key,
+                    kind,
+                    source,
+                    bytes,
+                    parity,
+                } => {
                     store.want(key);
                     store.arrive(key, Ok(Arc::from(bytes.as_slice())));
-                    self.keep(RecordKey(key), None, bytes);
+                    let kind = Some(JobRef::named(kind, source));
+                    self.keep_with(RecordKey(key), kind, bytes, parity);
                 }
             }
         }
+        self.admit(store);
         self.land(store);
         store.evict(keep_frames);
+    }
+
+    fn admit(&mut self, store: &RecordStore) {
+        let mut budget = JobBudget::of(self.workers, self.running());
+        for asked in std::mem::take(&mut self.asked) {
+            if !self.wanted(asked.key, store) {
+                continue;
+            }
+            if !budget.take(asked.priority) {
+                self.asked.push(asked);
+                continue;
+            }
+            let Asked {
+                key,
+                kind,
+                input,
+                priority,
+                fetching,
+            } = asked;
+            self.begin(key, kind, input, priority, fetching);
+        }
+    }
+
+    fn wanted(&self, key: RecordKey, store: &RecordStore) -> bool {
+        store.waiting(&key.0) && !self.flights.iter().any(|flight| flight.key == key)
     }
 
     fn begin(
@@ -773,11 +859,7 @@ impl JobExchange {
         input: Vec<u8>,
         priority: u32,
         fetching: bool,
-        store: &RecordStore,
     ) {
-        if store.get(&key.0).is_some() || self.flights.iter().any(|flight| flight.key == key) {
-            return;
-        }
         let (job, input) = if fetching {
             (self.fetch(Some(kind.clone()), key, priority), input)
         } else {
@@ -797,6 +879,7 @@ impl JobExchange {
     }
 
     fn abandon(&mut self, key: RecordKey) {
+        self.asked.retain(|asked| asked.key != key);
         if let Some(at) = self.flights.iter().position(|flight| flight.key == key) {
             let flight = self.flights.remove(at);
             self.cancel(flight.job);
@@ -841,7 +924,7 @@ pub(crate) fn exchange_orders(world: &mut World) {
     let idle = orders.is_empty()
         && world
             .get_resource::<JobExchange>()
-            .is_none_or(|exchange| exchange.flights.is_empty())
+            .is_none_or(|exchange| exchange.flights.is_empty() && exchange.asked.is_empty())
         && world
             .get_resource::<Records>()
             .is_none_or(|records| records.store.is_empty());
@@ -884,24 +967,21 @@ impl JobFailures {
     }
 }
 
-pub struct JobBudget<'a> {
-    pub jobs: &'a mut JobExchange,
+struct JobBudget {
     slots: usize,
     urgent: usize,
 }
 
-impl JobBudget<'_> {
-    pub fn of(jobs: &mut JobExchange) -> JobBudget<'_> {
-        let workers = jobs.workers().max(1) as usize;
-        let running = jobs.running();
-        JobBudget {
+impl JobBudget {
+    fn of(workers: u32, running: usize) -> Self {
+        let workers = workers.max(1) as usize;
+        Self {
             slots: (workers * 2).saturating_sub(running),
             urgent: (workers * 3).saturating_sub(running),
-            jobs,
         }
     }
 
-    pub fn take(&mut self, priority: u32) -> bool {
+    fn take(&mut self, priority: u32) -> bool {
         let free = if job_class(priority) == URGENT_JOBS {
             self.urgent
         } else {
@@ -913,10 +993,5 @@ impl JobBudget<'_> {
         self.slots = self.slots.saturating_sub(1);
         self.urgent = self.urgent.saturating_sub(1);
         true
-    }
-
-    pub fn release(&mut self) {
-        self.slots += 1;
-        self.urgent += 1;
     }
 }

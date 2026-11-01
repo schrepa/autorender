@@ -2,11 +2,11 @@ use engine_settings::{ErrorCode, Expected};
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine_core::{
-    Error, MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform, glam::Mat4, valid_global_matrix,
+    Error, MAX_HIERARCHY_DEPTH as MAX_DEPTH, Placed, Transform, glam::Mat4, valid_global_matrix,
 };
 
 use crate::validation::{display_name, identifier, reference, unique_ids, unknown};
-use crate::{SceneDocument, SceneObject, ScenePrefab};
+use crate::{SceneDocument, SceneKinds, SceneObject, ScenePrefab};
 
 pub(crate) struct ExpandedObject {
     pub source: SceneObject,
@@ -41,7 +41,7 @@ type Prefabs<'a> = BTreeMap<&'a str, (usize, &'a ScenePrefab)>;
 impl SceneDocument {
     pub fn expanded_entities(&self) -> Result<Vec<SceneObject>, Error> {
         Ok(self
-            .prepare(None)?
+            .prepare(None, &SceneKinds::default())?
             .entities
             .into_iter()
             .map(|entity| entity.source)
@@ -52,16 +52,18 @@ impl SceneDocument {
         &self,
         mesh_ids: &BTreeSet<&str>,
         material_ids: &BTreeSet<&str>,
+        kinds: &SceneKinds,
     ) -> Result<ExpandedScene, Error> {
-        let (prefab_ids, prefabs) = self.validate_prefabs(mesh_ids, material_ids)?;
+        let (prefab_ids, prefabs) = self.validate_prefabs(mesh_ids, material_ids, kinds)?;
         let ids = (mesh_ids, material_ids, &prefab_ids);
-        expand_list(&listed(&self.entities, "$.entities"), ids, &prefabs)
+        expand_list(&listed(&self.entities, "$.entities"), ids, &prefabs, kinds)
     }
 
     fn validate_prefabs(
         &self,
         mesh_ids: &BTreeSet<&str>,
         material_ids: &BTreeSet<&str>,
+        kinds: &SceneKinds,
     ) -> Result<(BTreeSet<&str>, Prefabs<'_>), Error> {
         let prefab_ids = unique_ids(
             self.prefabs.iter().map(|prefab| prefab.id.as_str()),
@@ -89,9 +91,8 @@ impl SceneDocument {
                 transforms.push(validate_object(
                     entity,
                     &path,
-                    mesh_ids,
-                    material_ids,
-                    &prefab_ids,
+                    (mesh_ids, material_ids, &prefab_ids),
+                    kinds,
                 )?);
             }
             validate_graph(
@@ -101,6 +102,7 @@ impl SceneDocument {
                     .enumerate()
                     .map(|(index, entity)| (entity, format!("{path}[{index}]"))),
                 &transforms,
+                (kinds, false),
             )?;
         }
 
@@ -114,10 +116,13 @@ impl SceneDocument {
     }
 }
 
+type Ids<'a, 'b> = (&'b BTreeSet<&'a str>, &'b BTreeSet<&'a str>, &'b BTreeSet<&'a str>);
+
 fn expand_list(
     list: &[Listed<'_>],
-    (mesh_ids, material_ids, prefab_ids): (&BTreeSet<&str>, &BTreeSet<&str>, &BTreeSet<&str>),
+    ids: Ids<'_, '_>,
     prefab_lookup: &Prefabs<'_>,
+    kinds: &SceneKinds,
 ) -> Result<ExpandedScene, Error> {
     let mut known = BTreeSet::new();
     for entry in list {
@@ -131,13 +136,7 @@ fn expand_list(
     }
     let mut expanded_count = list.len();
     for entry in list {
-        validate_object(
-            entry.object,
-            &entry.path,
-            mesh_ids,
-            material_ids,
-            prefab_ids,
-        )?;
+        validate_object(entry.object, &entry.path, ids, kinds)?;
         if let Some(id) = &entry.object.prefab {
             expanded_count += prefab_lookup[id.as_str()].1.entities.len();
         }
@@ -193,6 +192,7 @@ fn expand_list(
             .iter()
             .map(|entity| (&entity.source, entity.path.clone())),
         &transforms,
+        (kinds, true),
     )?;
     Ok(ExpandedScene {
         entities,
@@ -203,10 +203,10 @@ fn expand_list(
 fn validate_object(
     entity: &SceneObject,
     path: &str,
-    mesh_ids: &BTreeSet<&str>,
-    material_ids: &BTreeSet<&str>,
-    prefab_ids: &BTreeSet<&str>,
+    (mesh_ids, material_ids, prefab_ids): Ids<'_, '_>,
+    kinds: &SceneKinds,
 ) -> Result<Transform, Error> {
+    kinds.check(entity, path)?;
     match (&entity.mesh, &entity.material) {
         (Some(mesh), Some(material)) if entity.prefab.is_none() => {
             reference(mesh, mesh_ids, &format!("{path}.mesh"))?;
@@ -258,6 +258,7 @@ fn validate_object(
 fn validate_graph<'a>(
     entries: impl Iterator<Item = (&'a SceneObject, String)>,
     transforms: &[Transform],
+    (kinds, roots): (&SceneKinds, bool),
 ) -> Result<(), Error> {
     let entries: Vec<_> = entries.collect();
     let ids: BTreeMap<_, _> = entries
@@ -345,6 +346,15 @@ fn validate_graph<'a>(
                 .expected(Expected::Invertible)
                 .got(entries[index].0.transform));
             }
+            kinds.check_placed(
+                entries[index].0,
+                Placed {
+                    root: roots && entries[index].0.parent.is_none(),
+                    streamed: false,
+                    world: matrix,
+                },
+                &entries[index].1,
+            )?;
             worlds[index] = Some(matrix);
             depths[index] = depth;
         }

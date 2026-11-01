@@ -1,4 +1,5 @@
 const TERRAIN_GRID: u32 = 17u;
+const SURFACE_LEAF_INDICES: u32 = 0u;
 
 struct TerrainUniform {
     anchor: vec4<f32>,
@@ -49,6 +50,9 @@ struct TerrainGroundSamples {
 struct TerrainGroundRise {
     rise: f32,
     relief: bool,
+}
+
+fn use_terrain(index: u32) {
 }
 
 fn terrain_uniform() -> TerrainUniform {

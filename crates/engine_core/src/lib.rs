@@ -5,6 +5,7 @@
 
 extern crate self as engine_core;
 
+mod assets;
 pub mod bounds;
 mod bricks;
 mod clock;
@@ -35,21 +36,32 @@ mod sources {
     include!(concat!(env!("OUT_DIR"), "/sources.rs"));
 }
 
+pub mod profile {
+    pub use engine_profile::{Span, span};
+}
+
+pub use assets::*;
 pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
 pub use engine_assets::{
-    Aabb, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, Filter, Grounding, LOD_RECORD,
-    LodInput, LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding, Mesh, MeshLods,
-    MeshVertex, Sampler, Surface, Texture, TextureFormat, TextureRef, TopLayer, UvTransform, Wrap,
-    lod_input, trim_cards,
+    Aabb, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, Filter, Grounding, LodInput, LodLevel,
+    MAX_TEXTURE_DIMENSION, Material, MaterialBinding, Mesh, MeshLods, MeshVertex, Sampler,
+    Surface, Texture, TextureFormat, TextureRef, TopLayer, UvTransform, Wrap, lod_input,
+    trim_cards,
 };
 pub use engine_place::{
     DrawPoint, Error, ErrorCode, GpuStruct, InterpolateTransform, JobRef, List, MaterialHandle,
     Mesh3d, MeshHandle, PlaceDecl, Runs, Slot, Smoke, SmokeFailure, SmokeSession, Stamp,
     TextureHandle, gpu_consts, smoke_eq,
 };
-pub use engine_settings::{settings, stats};
+pub use engine_registry::{AuthoredId, FrameFacts, RecordParity};
+pub use engine_settings::{
+    Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting,
+    fields, is_id, parse_value, parse_value_at, settings, stats,
+};
+#[cfg(feature = "schema")]
+pub use engine_settings::{state, stated};
 pub use frame_stats::*;
 pub use glam;
 pub use hierarchy::*;
@@ -61,8 +73,9 @@ pub use records::*;
 pub use scene::*;
 pub use section::{Cut, Operation, Readback, Section};
 pub use services::{
-    AssetResidency, ComponentKind, Detail, DeviceLimits, Poses, SceneComponents, View,
-    scene_component, scene_components,
+    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, Placed, Poses, Reach,
+    SceneComponents, SceneContext, SceneIds, ScenePath, View, WorkClock, scene_component,
+    scene_components,
 };
 pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
@@ -87,21 +100,19 @@ macro_rules! gpu_struct {
     };
 }
 
+use std::sync::Arc;
+
 use bevy_ecs::change_detection::CheckChangeTicks;
+use bevy_ecs::component::Immutable;
 use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::lifecycle::Add;
 use bevy_ecs::observer::On;
 use bevy_ecs::resource::Resource;
-use bevy_ecs::schedule::{
-    Chain, InternedScheduleLabel, IntoScheduleConfigs, ScheduleConfigs, ScheduleLabel, Schedules,
-    SingleThreadedExecutor,
-};
-use bevy_ecs::system::{ResMut, ScheduleSystem};
+use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules, SingleThreadedExecutor};
+use bevy_ecs::system::ResMut;
 use bevy_ecs::world::World;
 use clock::FixedClock;
-use engine_registry::{
-    BrickSet, GateDriver, GateId, JobListed, OperationEntry, Registry, SettingsEntry, gate_on,
-};
+use engine_registry::{GateDriver, JobList, JobListed, MembersOf, OperationEntry, Registry};
 use interpolation::{InterpolationState, ResetWatch};
 use schedules::{
     BetweenFrames, FixedMove, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
@@ -128,6 +139,7 @@ pub struct Engine {
     clock: FixedClock,
     resets: ResetWatch,
     gates: Option<GateDriver>,
+    facts: Option<FrameFacts>,
     finalized: bool,
     tick_ahead: TickAhead,
 }
@@ -200,16 +212,8 @@ fn has_systems(world: &World, label: impl ScheduleLabel) -> bool {
 }
 
 fn core_entries(registry: &mut Registry) {
-    registry.core_settings(SettingsEntry::of::<Detail>(
-        Detail::KEY,
-        bricks::set_of::<Detail>,
-        Detail::schema,
-    ));
-    registry.core_settings(SettingsEntry::of::<JobSettings>(
-        JobSettings::KEY,
-        bricks::set_of::<JobSettings>,
-        JobSettings::schema,
-    ));
+    registry.core_settings(bricks::settings_entry::<Detail>());
+    registry.core_settings(bricks::settings_entry::<JobSettings>());
     registry.core_operation(OperationEntry::of::<
         <services::ViewControl as Operation>::Params,
     >(
@@ -227,19 +231,16 @@ fn refused(problems: &[Error]) -> Result<(), Error> {
     }
 }
 
-fn publish_view(world: &mut World, aspect: f32) {
+fn publish_view(world: &mut World, aspect: f32, facts: FrameFacts) {
     let camera = *world.resource::<Camera>();
-    let viewport = *world.resource::<Viewport>();
-    let size = glam::UVec2::new(viewport.width, viewport.height);
     let view_projection = camera.view_projection(aspect);
     let eye = camera.eye();
     let held = world.resource::<View>().state();
-    if held.render_size() == size && held.view_projection() == view_projection && held.eye() == eye
-    {
+    if held.facts() == facts && held.view_projection() == view_projection && held.eye() == eye {
         return;
     }
     modify(world, |view: &mut View| {
-        view.state_mut().set(size, view_projection, eye);
+        view.state_mut().set(facts, view_projection, eye);
     });
 }
 
@@ -313,11 +314,8 @@ impl Engine {
             .init_resource::<RecordExchange>()
             .insert_resource(View::empty())
             .insert_resource(Poses::empty())
-            .insert_resource(AssetResidency::empty())
-            .insert_resource(DeviceLimits {
-                memory_budget: u64::MAX,
-                cores,
-            })
+            .insert_resource(DeviceLimits::without_device(cores))
+            .init_resource::<WorkClock>()
             .init_resource::<mesh_lods::MeshLevels>()
             .init_resource::<Viewport>()
             .init_resource::<MoveInput>()
@@ -328,12 +326,14 @@ impl Engine {
             .insert_resource(TransformNodeLimit(config.max_transform_nodes))
             .init_resource::<GlobalTransforms>()
             .insert_resource(assets);
+        assets::install(app.world_mut());
         let resets = ResetWatch::new(app.world_mut());
         Self {
             app,
             clock,
             resets,
             gates: None,
+            facts: None,
             finalized: false,
             tick_ahead: TickAhead::None,
         }
@@ -352,12 +352,12 @@ impl Engine {
         for &places in list.place_sets() {
             registry.places(places);
         }
+        for register in list.core_places() {
+            register(&mut registry);
+        }
         core_entries(&mut registry);
-        let mut systems = Vec::with_capacity(list.listed().len());
         for listed in list.listed() {
-            let mut record = listed.record();
-            systems.push((listed.package(), bricks::take_systems(&mut record)));
-            registry.add(record);
+            registry.add(listed.record());
         }
         for &package in list.left_out() {
             registry.leave_out(package);
@@ -365,61 +365,52 @@ impl Engine {
         let world = self.app.world_mut();
         world.insert_resource(JobListed::of(&jobs));
         world.resource_mut::<JobExchange>().set_list(jobs);
-        self.gates = Some(registry.install(world));
-        self.add_brick_systems(systems);
-        let labels: Vec<InternedScheduleLabel> =
-            Schedule::ALL.iter().map(|schedule| schedule.label()).collect();
-        engine_registry::order_schedules(self.app.world_mut(), &labels);
-        refused(self.app.world().resource::<Registry>().problems())
+        let labels: [InternedScheduleLabel; 8] = Schedule::ALL.map(Schedule::label);
+        self.gates = Some(registry.install(world, &labels));
+        let twice = world
+            .get_resource::<MembersOf<SceneComponents>>()
+            .map(|members| members.names_twice(|kind| kind.key()))
+            .unwrap_or_default();
+        let mut registry = world.resource_mut::<Registry>();
+        for error in twice {
+            registry.report(error);
+        }
+        refused(registry.problems())
     }
 
-    fn add_brick_systems(&mut self, mut systems: Vec<(&'static str, Vec<bricks::Systems>)>) {
-        let order: Vec<(&'static str, Option<GateId>)> = {
-            let registry = self.app.world().resource::<Registry>();
-            registry
-                .iter()
-                .map(|(brick, record)| (record.package, registry.brick_gate(brick)))
-                .collect()
-        };
-        for (package, gate) in order {
-            let Some(at) = systems.iter().position(|(owner, _)| *owner == package) else {
-                continue;
-            };
-            let (_, entries) = systems.swap_remove(at);
-            let mut schedules: [Vec<ScheduleConfigs<ScheduleSystem>>; 8] = Default::default();
-            for entry in entries {
-                schedules[entry.schedule.index()].push((entry.configs)());
-            }
-            for (schedule, configs) in Schedule::ALL.into_iter().zip(schedules) {
-                if !configs.is_empty() {
-                    self.add_brick_schedule(package, gate, schedule, configs);
-                }
-            }
+    #[track_caller]
+    pub fn settings<S: Section + Resource<Mutability = Immutable>>(&mut self) -> &mut Self {
+        let entry = bricks::settings_entry::<S>();
+        let world = self.app.world_mut();
+        entry.owned().init(world);
+        if let Some(mut registry) = world.get_resource_mut::<Registry>() {
+            registry.core_settings(entry);
         }
+        self
     }
 
-    fn add_brick_schedule(
-        &mut self,
-        package: &'static str,
-        gate: Option<GateId>,
-        schedule: Schedule,
-        configs: Vec<ScheduleConfigs<ScheduleSystem>>,
-    ) {
-        let label = schedule.label();
-        let set = BrickSet(package);
-        #[cfg(any(feature = "dev", feature = "profiling"))]
-        let before = bricks::system_keys(&self.app, label);
-        let group = ScheduleConfigs::Configs {
-            configs,
-            collective_conditions: Vec::new(),
-            metadata: Chain::default(),
-        };
-        self.app.add_systems(label, group.chain().in_set(set));
-        if let Some(gate) = gate {
-            self.app.configure_sets(label, set.run_if(gate_on(gate)));
-        }
-        #[cfg(any(feature = "dev", feature = "profiling"))]
-        bricks::measure_systems(&mut self.app, label, &before, package);
+    #[doc(hidden)]
+    pub fn set_frame(&mut self, facts: FrameFacts) {
+        self.facts = Some(facts);
+    }
+
+    #[doc(hidden)]
+    pub fn new_scene(&mut self) {
+        modify(self.app.world_mut(), |view: &mut View| {
+            view.state_mut().new_scene();
+        });
+    }
+
+    #[doc(hidden)]
+    pub fn arrive(&mut self, key: RecordKey, record: Result<Arc<[u8]>, Error>) {
+        modify(self.app.world_mut(), |records: &mut Records| {
+            records.arrive(key, record);
+        });
+    }
+
+    #[doc(hidden)]
+    pub fn job_list(&self) -> Arc<JobList> {
+        self.app.world().resource::<JobExchange>().shared_list()
     }
 
     pub fn pending(&self) -> u32 {
@@ -679,11 +670,12 @@ impl Engine {
         let _profile = engine_profile::span("cpu", "extraction");
         self.finalize();
         self.complete_pending_tick();
+        self.run_gates();
         self.mark_presented_time(None);
         self.sync_world();
         self.refresh_transforms();
         interpolation::prepare(self.app.world_mut());
-        self.sync_view(aspect);
+        self.sync_view(aspect, true);
         RenderFrame {
             world: self.app.world(),
             gpu: false,
@@ -694,6 +686,7 @@ impl Engine {
         let _profile = engine_profile::span("cpu", "extraction");
         PresentationMode::Interpolated { alpha }.validate()?;
         self.finalize();
+        self.run_gates();
         self.mark_presented_time(Some(alpha));
         if let Some(gathered) = self.tick_ahead.presents_previous() {
             interpolation::present_gpu_fraction(self.app.world_mut(), alpha, gathered);
@@ -702,7 +695,7 @@ impl Engine {
             self.refresh_transforms();
             interpolation::prepare_gpu(self.app.world_mut(), alpha);
         }
-        self.sync_view(aspect);
+        self.sync_view(aspect, false);
         Ok(RenderFrame {
             world: self.app.world(),
             gpu: true,
@@ -717,12 +710,26 @@ impl Engine {
         self.app.world_mut().run_schedule(WorldSync);
     }
 
-    fn sync_view(&mut self, aspect: f32) {
+    fn sync_view(&mut self, aspect: f32, exact: bool) {
         let _profile = engine_profile::span("ecs", "ViewSync");
+        let facts = FrameFacts {
+            exact,
+            ..self.facts.unwrap_or_else(|| self.viewport_facts())
+        };
         let world = self.app.world_mut();
         publish_poses(world);
-        publish_view(world, aspect);
+        publish_view(world, aspect, facts);
         world.run_schedule(ViewSync);
+    }
+
+    fn viewport_facts(&self) -> FrameFacts {
+        let viewport = *self.app.world().resource::<Viewport>();
+        let size = glam::UVec2::new(viewport.width, viewport.height);
+        FrameFacts {
+            display_size: size,
+            render_size: size,
+            ..FrameFacts::default()
+        }
     }
 
     fn mark_presented_time(&mut self, alpha: Option<f32>) {

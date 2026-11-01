@@ -1,5 +1,5 @@
-import package::engine::shading::{Shaded, ViewPixel};
+import package::place::debug::{DebugShade, DebugTargets};
 
-fn shade_kind(kind: u32, shaded: Shaded, at: ViewPixel, color: vec4<f32>) -> vec4<f32> {
-    return color;
+fn shade_kind(shade: DebugShade, targets: DebugTargets) -> DebugShade {
+    return shade;
 }

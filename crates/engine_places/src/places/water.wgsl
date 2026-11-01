@@ -1,9 +1,3 @@
-const WATER_LIVE_BLOCK: u32 = 8u;
-const NO_WATER_BLOCK: u32 = 0xffffffffu;
-const NO_WATER_SURFACE: f32 = -1.0e30;
-const WATER_TILE_PATCHES: u32 = 16u;
-const WATER_SPAN_LEAST: f32 = 0.25;
-const WATER_SPAN_MOST: f32 = 4096.0;
 const WATER_HELD: f32 = 0.5;
 
 struct WaterWords {
@@ -54,25 +48,26 @@ fn water_words(words: vec4<u32>) -> WaterWords {
 
 fn water_cell(local: vec2<f32>, level: u32) -> WaterCell {
     var cell: WaterCell;
-    cell.block = NO_WATER_BLOCK;
     return cell;
+}
+
+fn water_level(cell: WaterCell) -> WaterLevel {
+    var level: WaterLevel;
+    return level;
 }
 
 fn water_smooth(surfaces: array<vec2<f32>, 16>, within: vec2<f32>, spacing: f32) -> WaterLevel {
     var level: WaterLevel;
-    level.surface = NO_WATER_SURFACE;
     return level;
 }
 
 fn water_read(cell: WaterCell) -> WaterAt {
     var at: WaterAt;
-    at.surface = NO_WATER_SURFACE;
     return at;
 }
 
 fn water_at_level(level: WaterLevel) -> WaterAt {
     var at: WaterAt;
-    at.surface = NO_WATER_SURFACE;
     return at;
 }
 
@@ -82,6 +77,5 @@ fn water_words_add(at: WaterAt, words: WaterWords, share: f32, nearest: bool) ->
 
 fn water_level_at(local: vec2<f32>) -> WaterLevel {
     var level: WaterLevel;
-    level.surface = NO_WATER_SURFACE;
     return level;
 }

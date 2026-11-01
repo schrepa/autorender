@@ -106,6 +106,7 @@ pub fn generated(world: &World) -> Result<Generated, String> {
         "Camera": schemars::schema_for!(views::CameraView),
         "Mesh3d": schemars::schema_for!(views::Mesh3dView),
         "Input": schemars::schema_for!(views::InputView),
+        "Jobs": schemars::schema_for!(views::JobsView),
         "FrameStats": frame_stats(registry, &mut problems),
     });
     if let Some(all) = schemas.as_object_mut() {
@@ -627,12 +628,7 @@ const RENAMED: &[(&str, &str)] = &[
     ("SceneTexture.rgba8", "inline"),
 ];
 
-fn authored_parity(
-    world: &World,
-    scene: &Value,
-    schemas: &Value,
-    problems: &mut Vec<String>,
-) {
+fn authored_parity(world: &World, scene: &Value, schemas: &Value, problems: &mut Vec<String>) {
     let definitions = &scene["$defs"];
     let object = definitions["SceneObject"]["properties"]
         .as_object()

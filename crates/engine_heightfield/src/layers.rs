@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use engine_codec::Error;
+use engine_codec::{Error, ErrorCode};
 use engine_math::{max, min};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -12,6 +12,7 @@ use crate::layer::{
     Below, ChangeMap, DrawRivers, LayerKind, Place, SamplePoint, TerrainLayer, read_entry,
     write_entry,
 };
+use crate::noise::smooth;
 use crate::path::{Bridge, PathSample};
 use crate::rivers::Rivers;
 
@@ -39,6 +40,93 @@ impl Blend {
 }
 
 pub const MAX_HEIGHT: f32 = 20_000.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StampOp {
+    Raise(#[schemars(range(min = 0.0, max = MAX_HEIGHT))] f32),
+    Lower(#[schemars(range(min = 0.0, max = MAX_HEIGHT))] f32),
+    Flatten(#[schemars(range(min = -MAX_HEIGHT, max = MAX_HEIGHT))] f32),
+    Hole,
+}
+
+impl StampOp {
+    fn validate(&self) -> Result<(), Error> {
+        let (variant, height, range) = match *self {
+            Self::Raise(height) => ("raise", height, [0.0, f64::from(MAX_HEIGHT)]),
+            Self::Lower(height) => ("lower", height, [0.0, f64::from(MAX_HEIGHT)]),
+            Self::Flatten(height) => (
+                "flatten",
+                height,
+                [-f64::from(MAX_HEIGHT), f64::from(MAX_HEIGHT)],
+            ),
+            Self::Hole => return Ok(()),
+        };
+        held(height, range, format!("$.op.{variant}"))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Stamp {
+    #[schemars(inner(range(min = -Layers::MAX_COORDINATE, max = Layers::MAX_COORDINATE)))]
+    pub center: [f32; 2],
+    #[schemars(range(min = 0.0, max = Layers::MAX_COORDINATE))]
+    pub radius: f32,
+    #[serde(default)]
+    #[schemars(range(min = 0.0, max = Layers::MAX_COORDINATE))]
+    pub falloff: f32,
+    pub op: StampOp,
+}
+
+impl Default for Stamp {
+    fn default() -> Self {
+        Self {
+            center: [0.0; 2],
+            radius: 1.0,
+            falloff: 0.0,
+            op: StampOp::Hole,
+        }
+    }
+}
+
+impl Stamp {
+    #[inline]
+    pub fn weight(&self, x: f32, z: f32) -> f32 {
+        let dx = x - self.center[0];
+        let dz = z - self.center[1];
+        let distance = (dx * dx + dz * dz).sqrt();
+        1.0 - smooth((distance - self.radius) / max(self.falloff, 1.0e-6))
+    }
+
+    pub fn reach(&self) -> f32 {
+        self.radius + self.falloff
+    }
+
+    pub fn validate(&self) -> Result<(), Error> {
+        let reach = [bound(-Layers::MAX_COORDINATE), bound(Layers::MAX_COORDINATE)];
+        let spread = [bound(0.0), bound(Layers::MAX_COORDINATE)];
+        for (index, &value) in self.center.iter().enumerate() {
+            held(value, reach, format!("$.center[{index}]"))?;
+        }
+        held(self.radius, spread, "$.radius".to_owned())?;
+        held(self.falloff, spread, "$.falloff".to_owned())?;
+        self.op.validate()
+    }
+}
+
+fn bound(value: f32) -> f64 {
+    value.to_string().parse().unwrap_or(f64::from(value))
+}
+
+fn held(value: f32, [low, high]: [f64; 2], path: String) -> Result<(), Error> {
+    if (low as f32..=high as f32).contains(&value) {
+        return Ok(());
+    }
+    Err(Error::new(ErrorCode::OutOfRange, path)
+        .range(low, high)
+        .got(bound(value)))
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeightImage {
@@ -375,6 +463,35 @@ impl Layers {
         }
     }
 
+    pub fn with_stamps(
+        &self,
+        stamps: &[Stamp],
+        kinds: &[&'static LayerKind],
+    ) -> Result<Self, Error> {
+        let mut layers = self.layers.clone();
+        if !stamps.is_empty() {
+            let kind = kinds
+                .iter()
+                .find(|kind| kind.name == STAMP)
+                .ok_or_else(|| Error::new(ErrorCode::MissingLayer, "$.stamps").variants([STAMP]))?;
+            for (offset, stamp) in stamps.iter().enumerate() {
+                let at = format!("$.layers[{}]", self.layers.len() + offset);
+                stamp
+                    .validate()
+                    .map_err(|error| error.coded(ErrorCode::InvalidTerrain).within(&at))?;
+                let bytes = engine_codec::encode(stamp);
+                let made =
+                    (kind.read)(&mut Reader::new(&bytes)).map_err(|error| error.within(&at))?;
+                layers.push(made);
+            }
+        }
+        Ok(Self {
+            layers,
+            offset: self.offset,
+            fade: self.fade,
+        })
+    }
+
     #[must_use]
     pub fn with_drawn(
         &self,
@@ -561,6 +678,8 @@ impl Layers {
     }
 }
 
+const STAMP: &str = "stamp";
+
 fn unbaked(layer: &Arc<dyn TerrainLayer>) -> Arc<dyn TerrainLayer> {
     layer.unbaked().unwrap_or_else(|| layer.clone())
 }
@@ -600,6 +719,20 @@ record!(ImageLevel {
     samples,
 });
 record!(Fade { low, high, blend });
+
+tagged!(StampOp {
+    0 => Raise(meters),
+    1 => Lower(meters),
+    2 => Flatten(height),
+    3 => Hole,
+});
+
+record!(Stamp {
+    center,
+    radius,
+    falloff,
+    op,
+});
 
 impl Layers {
     pub fn write(&self, out: &mut Writer) {

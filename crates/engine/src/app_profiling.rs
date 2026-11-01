@@ -84,4 +84,13 @@ impl AppHost {
     pub fn profiling_report(&mut self) -> Value {
         self.renderer.profile_report()
     }
+
+    pub fn profile_bricks(&self) -> Vec<&'static str> {
+        let mut names = vec![engine_registry::CORE_ROW];
+        let world = self.engine.app.world();
+        if let Some(registry) = world.get_resource::<engine_registry::Registry>() {
+            names.extend(registry.names());
+        }
+        names
+    }
 }

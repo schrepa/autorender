@@ -49,7 +49,10 @@ impl SceneEnvironment {
     }
 
     pub fn check(&self, world: &World, path: &str) -> Result<(), Error> {
-        self.check_in(world.get_resource::<Registry>(), path)
+        let context = crate::loading::kept(world);
+        crate::loading::within(context.as_ref(), || {
+            self.check_in(world.get_resource::<Registry>(), path)
+        })
     }
 
     pub(crate) fn check_in(&self, registry: Option<&Registry>, path: &str) -> Result<(), Error> {
@@ -73,15 +76,18 @@ impl SceneEnvironment {
     }
 
     pub fn apply_sections(&self, world: &mut World, path: &str) -> Result<Vec<Error>, Error> {
-        self.check(world, path)?;
-        let skipped = self.unlisted(world, path);
-        for key in self.keys() {
-            let Some(section) = listed(world, key) else {
-                continue;
-            };
-            section.set_at(world, &self.sections[key], &format!("{path}.{key}"))?;
-        }
-        Ok(skipped)
+        let context = crate::loading::kept(world);
+        crate::loading::within(context.as_ref(), || {
+            self.check_in(world.get_resource::<Registry>(), path)?;
+            let skipped = self.unlisted(world, path);
+            for key in self.keys() {
+                let Some(section) = listed(world, key) else {
+                    continue;
+                };
+                section.set_at(world, &self.sections[key], &format!("{path}.{key}"))?;
+            }
+            Ok(skipped)
+        })
     }
 
     pub(crate) fn apply_all(&self, world: &mut World, path: &str) -> Result<(), Error> {

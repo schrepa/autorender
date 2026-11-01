@@ -1,10 +1,3 @@
-mod attribution;
-
-#[doc(hidden)]
-pub use attribution::under;
-#[cfg(any(feature = "dev", feature = "profiling"))]
-pub(crate) use attribution::{measure_systems, system_keys};
-
 use std::any::Any;
 use std::marker::PhantomData;
 
@@ -13,20 +6,21 @@ use bevy_ecs::component::{Immutable, Mutable};
 use bevy_ecs::entity::Entity;
 use bevy_ecs::query::{QueryFilter, ReadOnlyQueryData};
 use bevy_ecs::resource::{IsResource, Resource};
-use bevy_ecs::schedule::{IntoScheduleConfigs, ScheduleConfigs};
+use bevy_ecs::schedule::IntoScheduleConfigs;
 use bevy_ecs::system::{
     Commands, IntoSystem, IsFunctionSystem, Query, ReadOnlySystemParam, Res, ScheduleSystem,
     SystemParam, SystemParamFunction, SystemState,
 };
 use bevy_ecs::world::World;
 use engine_registry::{
-    BrickRecord, GateFn, JobList, OperationEntry, Registry, SettingsEntry, SpawnedBy, StatsEntry,
+    BrickRecord, GateFn, JobList, OperationEntry, OperationScene, Registry, SceneEntity,
+    SettingsEntry, SpawnedBy, StatsEntry,
 };
 use serde_json::Value;
 
 use crate::{
-    Error, ErrorCode, GpuStruct, JobKind, List, Module, Operation, PlaceDecl, Section, Slot,
-    Smoke, Source,
+    Authored, Error, ErrorCode, GpuStruct, JobKind, List, Module, Operation, PlaceDecl, SceneIds,
+    Section, Slot, Smoke, Source,
 };
 
 pub trait Brick: 'static {
@@ -89,8 +83,12 @@ impl Bricks<'_> {
         self
     }
 
-    pub fn join<L: List>(&mut self, member: L::Member, wgsl: Option<Module>) -> &mut Self {
-        self.record.join::<L>(member, wgsl.map(boxed_module));
+    pub fn join<L: List>(
+        &mut self,
+        member: impl Into<L::Member>,
+        wgsl: Option<Module>,
+    ) -> &mut Self {
+        self.record.join::<L>(member.into(), wgsl.map(boxed_module));
         self
     }
 
@@ -102,10 +100,7 @@ impl Bricks<'_> {
     where
         M: 'static,
     {
-        self.record.entries.push(Box::new(Systems {
-            schedule,
-            configs: Box::new(move || systems.chain()),
-        }));
+        self.record.systems(schedule.label(), systems);
         self
     }
 
@@ -116,8 +111,7 @@ impl Bricks<'_> {
 
     #[track_caller]
     pub fn settings<S: Section + Resource<Mutability = Immutable>>(&mut self) -> &mut Self {
-        self.record
-            .settings(SettingsEntry::of::<S>(S::KEY, set_of::<S>, S::schema));
+        self.record.settings(settings_entry::<S>());
         self
     }
 
@@ -169,11 +163,16 @@ fn boxed_module(module: Module) -> Box<dyn Any + Send + Sync> {
     Box::new(module)
 }
 
-pub(crate) fn set_of<S: Section>(
-    world: &mut World,
-    value: &Value,
-    path: &str,
-) -> Result<(), Error> {
+#[track_caller]
+pub(crate) fn settings_entry<S: Section>() -> SettingsEntry {
+    SettingsEntry::of::<S>(S::KEY, check_of::<S>, set_of::<S>, S::schema)
+}
+
+fn check_of<S: Section>(value: &Value, path: &str) -> Result<(), Error> {
+    engine_registry::parse_section::<S>(value, path, S::check).map(drop)
+}
+
+fn set_of<S: Section>(world: &mut World, value: &Value, path: &str) -> Result<(), Error> {
     engine_registry::set_section::<S>(world, value, path, S::check)
 }
 
@@ -194,24 +193,6 @@ pub(crate) fn run_operation<O: Operation>(
     let answer = O::run(params, request);
     state.apply(world);
     answer
-}
-
-pub(crate) struct Systems {
-    pub(crate) schedule: Schedule,
-    pub(crate) configs: Box<dyn FnOnce() -> ScheduleConfigs<ScheduleSystem> + Send + Sync>,
-}
-
-pub(crate) fn take_systems(record: &mut BrickRecord) -> Vec<Systems> {
-    let mut systems = Vec::new();
-    let mut kept = Vec::with_capacity(record.entries.len());
-    for entry in record.entries.drain(..) {
-        match entry.downcast::<Systems>() {
-            Ok(entry) => systems.push(*entry),
-            Err(entry) => kept.push(entry),
-        }
-    }
-    record.entries = kept;
-    systems
 }
 
 pub trait Listing: Sized {
@@ -266,6 +247,10 @@ impl Listed {
 fn record_of<B: Brick>() -> BrickRecord {
     let source = B::SOURCE;
     let mut record = BrickRecord::new::<B>(source.package(), source.hash(), B::SMOKES);
+    if let Some(first) = source.modules().first() {
+        let path = first.path();
+        record.shader_prefix(path.split("::").next().unwrap_or(path));
+    }
     B::register(&mut Bricks::recording(&mut record));
     record
 }
@@ -276,6 +261,7 @@ pub struct BrickList {
     bricks: Vec<Listed>,
     places: Vec<&'static [PlaceDecl]>,
     left_out: Vec<&'static str>,
+    core: Vec<fn(&mut Registry)>,
 }
 
 impl BrickList {
@@ -295,6 +281,10 @@ impl BrickList {
         &self.left_out
     }
 
+    pub fn core_places(&self) -> &[fn(&mut Registry)] {
+        &self.core
+    }
+
     pub fn contains(&self, package: &str) -> bool {
         self.bricks
             .iter()
@@ -309,7 +299,35 @@ impl BrickList {
     }
 
     pub fn job_list(&self) -> Result<JobList, Error> {
-        crate::job_list(&self.jobs())
+        let mut records: Vec<BrickRecord> = self.bricks.iter().map(Listed::record).collect();
+        records.sort_by(|a, b| a.package.cmp(b.package));
+        let members = records
+            .iter_mut()
+            .flat_map(BrickRecord::take_members)
+            .collect();
+        crate::job_list_with(&self.jobs(), members)
+    }
+
+    #[must_use]
+    pub fn with_core(mut self, register: fn(&mut Registry)) -> Self {
+        self.core.push(register);
+        self
+    }
+
+    #[must_use]
+    pub fn without_package(mut self, package: &str) -> Self {
+        let left = self
+            .bricks
+            .iter()
+            .map(Listed::package)
+            .find(|&listed| listed == package);
+        self.bricks.retain(|listed| listed.package() != package);
+        if let Some(left) = left
+            && !self.left_out.contains(&left)
+        {
+            self.left_out.push(left);
+        }
+        self
     }
 }
 
@@ -353,6 +371,8 @@ impl<D: ReadOnlyQueryData + 'static, F: QueryFilter + 'static> sealed::Sealed
 impl<D: ReadOnlyQueryData + 'static, F: QueryFilter + 'static> Read for Query<'_, '_, D, F> {}
 impl<L: List> sealed::Sealed for Joined<'_, L> {}
 impl<L: List> Read for Joined<'_, L> {}
+impl sealed::Sealed for SceneIds<'_, '_> {}
+impl Read for SceneIds<'_, '_> {}
 
 macro_rules! read_tuples {
     ($($param:ident),*) => {
@@ -388,6 +408,10 @@ impl<L: List> Joined<'_, L> {
     pub fn iter(&self) -> impl Iterator<Item = &L::Member> + '_ {
         self.members.iter().flat_map(|members| members.live())
     }
+
+    pub fn owned(&self) -> impl Iterator<Item = (std::any::TypeId, u32, &L::Member)> + '_ {
+        self.members.iter().flat_map(|members| members.owned())
+    }
 }
 
 #[derive(SystemParam)]
@@ -417,6 +441,26 @@ impl<B: Brick> Spawner<'_, '_, B> {
     pub fn despawn(&mut self, entity: Entity) {
         self.commands
             .queue(move |world: &mut World| despawned::<B>(world, entity));
+    }
+
+    pub fn author(&mut self, entity: Entity, authored: Authored) {
+        self.commands
+            .queue(move |world: &mut World| authored_by::<B>(world, entity, authored));
+    }
+
+    pub fn insert_scene(&mut self, entity: Entity, key: &str, value: Value) {
+        let key = key.to_owned();
+        self.commands
+            .queue(move |world: &mut World| scene_inserted::<B>(world, entity, &key, &value));
+    }
+
+    pub fn set_parent(&mut self, child: Entity, parent: Option<Entity>) {
+        self.set_parents(vec![(child, parent)]);
+    }
+
+    pub fn set_parents(&mut self, changes: Vec<(Entity, Option<Entity>)>) {
+        self.commands
+            .queue(move |world: &mut World| parented::<B>(world, &changes));
     }
 }
 
@@ -459,6 +503,63 @@ fn despawned<B: Brick>(world: &mut World, entity: Entity) {
     world.despawn(entity);
 }
 
+fn authored_by<B: Brick>(world: &mut World, entity: Entity, authored: Authored) {
+    if !owned::<B>(world, entity) {
+        foreign::<B>(world, entity);
+        return;
+    }
+    let scene_id = match world.get_resource_mut::<OperationScene>() {
+        Some(mut scene) => {
+            scene.streamed = true;
+            scene.id.clone()
+        }
+        None => String::new(),
+    };
+    if let Ok(mut owned) = world.get_entity_mut(entity) {
+        owned.insert(SceneEntity {
+            scene_id,
+            authored_id: authored.id,
+            name: authored.name,
+            tags: authored.tags,
+            authored_parent: authored.parent,
+            prefab_id: authored.prefab_id,
+            prefab_instance: authored.prefab_instance,
+            prefab_local_id: authored.prefab_local_id,
+        });
+    }
+}
+
+fn scene_inserted<B: Brick>(world: &mut World, entity: Entity, key: &str, value: &Value) {
+    if !owned::<B>(world, entity) {
+        foreign::<B>(world, entity);
+        return;
+    }
+    let path = format!("$.bricks.{}.spawner.{key}", B::SOURCE.package());
+    let read = match crate::scene_component(world, key) {
+        Some(kind) => kind
+            .read(world, entity, value)
+            .map_err(|error| error.within(&path)),
+        None => Err(Error::new(ErrorCode::SectionUnlisted, path).got(key)),
+    };
+    if let Err(error) = read {
+        report(world, error);
+    }
+}
+
+fn parented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
+    let stranger = changes.iter().find(|&&(child, parent)| {
+        !owned::<B>(world, child) || parent.is_some_and(|parent| !owned::<B>(world, parent))
+    });
+    if let Some(&(child, _)) = stranger {
+        foreign::<B>(world, child);
+        return;
+    }
+    if let Err(error) = crate::set_parents(world, changes) {
+        let path = format!("$.bricks.{}.spawner.parent", B::SOURCE.package());
+        report(world, error.within(&path));
+    }
+}
+
 fn owned<B: Brick>(world: &World, entity: Entity) -> bool {
     world.get::<SpawnedBy<B>>(entity).is_some()
 }
@@ -478,6 +579,10 @@ fn foreign<B: Brick>(world: &mut World, entity: Entity) {
         format!("$.bricks.{package}.spawner"),
     )
     .got(entity.to_string());
+    report(world, error);
+}
+
+fn report(world: &mut World, error: Error) {
     if let Some(mut registry) = world.get_resource_mut::<Registry>() {
         registry.report(error);
     }

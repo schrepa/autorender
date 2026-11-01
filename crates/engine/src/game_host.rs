@@ -181,6 +181,7 @@ impl<G: Game> GameHost<G> {
 
     pub fn set_job_cache(&mut self, caching: bool, verify: bool) {
         self.jobs.set_cache(caching, verify);
+        self.app.set_job_verifying(caching && verify);
     }
 
     pub fn take_jobs(&mut self) -> Vec<JobOrder> {
@@ -349,6 +350,10 @@ impl<G: Game> GameHost<G> {
         self.app.renderer.slot_read_back(slot)
     }
 
+    pub(crate) fn job_workers(&self) -> u32 {
+        self.jobs.working()
+    }
+
     pub(crate) fn dev_tools(&self) -> &engine_dev::DevTools {
         &self.development.tools
     }
@@ -381,51 +386,27 @@ impl<G: Game> GameHost<G> {
         revision: &str,
         files: Option<&SceneFiles>,
     ) -> String {
-        use engine_core::{Error, ErrorCode};
-        use engine_settings::Expected;
-        use engine_scene::SceneDocument;
         let none = SceneFiles::default();
         let files = files.unwrap_or(&none);
-        let result = (|| {
-            let Some(scene) = self.game.scene() else {
-                return Err(Error::new(ErrorCode::UnsupportedCommand, "$.name").got("reload"));
-            };
-            let (Ok(expected), Ok(target)) =
-                (expected_revision.parse::<u64>(), revision.parse::<u64>())
-            else {
-                return Err(Error::new(ErrorCode::InvalidRevision, "$.args.revision")
-                    .expected(Expected::Integer)
-                    .got(revision));
-            };
-            if scene.revision() != expected {
-                return Err(
-                    Error::new(ErrorCode::RevisionConflict, "$.args.expected_revision")
-                        .got(expected_revision)
-                        .nearest(scene.revision().to_string()),
-                );
-            }
-            let document = SceneDocument::from_json(source)?;
-            if document.id != scene.id() || document.revision != target {
-                return Err(Error::new(ErrorCode::RevisionConflict, "$.args.revision")
-                    .expected(Expected::Matching)
-                    .got(serde_json::json!({
-                        "id": document.id,
-                        "revision": document.revision.to_string(),
-                    })));
-            }
-            self.game
-                .reload_scene(self.app.engine_mut(), source, files)?;
-            self.app.replay_settings()
-        })();
+        let result = reload_checked(
+            &mut self.game,
+            self.app.engine_mut(),
+            source,
+            (expected_revision, revision),
+            files,
+        )
+        .and_then(|()| self.app.replay_settings());
         match result {
             Ok(()) => {
                 self.app.forget_pipeline_list();
                 self.suspend();
-                self.development.result(
-                    &mut self.app,
-                    self.game.scene(),
-                    serde_json::json!({"reloaded": true, "saved_by_reload": false}),
-                )
+                let skipped = self.game.scene().map(|scene| scene.skipped().to_vec());
+                let mut reloaded = serde_json::json!({"reloaded": true, "saved_by_reload": false});
+                if let Some(skipped) = skipped.filter(|skipped| !skipped.is_empty()) {
+                    reloaded["skipped"] = serde_json::json!(skipped);
+                }
+                self.development
+                    .result(&mut self.app, self.game.scene(), reloaded)
             }
             Err(error) => self
                 .development
@@ -455,4 +436,47 @@ impl<G: Game> GameHost<G> {
     pub fn profiling_status(&self) -> serde_json::Value {
         self.app.profiling_status()
     }
+
+    pub fn profile_bricks(&self) -> Vec<&'static str> {
+        self.app.profile_bricks()
+    }
+}
+
+#[cfg(feature = "dev")]
+pub(crate) fn reload_checked<G: Game>(
+    game: &mut G,
+    engine: &mut Engine,
+    source: &str,
+    (expected_revision, revision): (&str, &str),
+    files: &SceneFiles,
+) -> crate::Result<()> {
+    use engine_core::{Error, ErrorCode};
+    use engine_scene::SceneDocument;
+    use engine_settings::Expected;
+    let Some(scene) = game.scene() else {
+        return Err(Error::new(ErrorCode::UnsupportedCommand, "$.name").got("reload"));
+    };
+    let (Ok(expected), Ok(target)) = (expected_revision.parse::<u64>(), revision.parse::<u64>())
+    else {
+        return Err(Error::new(ErrorCode::InvalidRevision, "$.args.revision")
+            .expected(Expected::Integer)
+            .got(revision));
+    };
+    if scene.revision() != expected {
+        return Err(
+            Error::new(ErrorCode::RevisionConflict, "$.args.expected_revision")
+                .got(expected_revision)
+                .nearest(scene.revision().to_string()),
+        );
+    }
+    let document = SceneDocument::from_json(source)?;
+    if document.id != scene.id() || document.revision != target {
+        return Err(Error::new(ErrorCode::RevisionConflict, "$.args.revision")
+            .expected(Expected::Matching)
+            .got(serde_json::json!({
+                "id": document.id,
+                "revision": document.revision.to_string(),
+            })));
+    }
+    game.reload_scene(engine, source, files)
 }

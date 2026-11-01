@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use bevy_ecs::prelude::{Component, Entity, Resource};
 use engine_place::{Error, ErrorCode, InterpolateTransform, Slot};
 use glam::{Mat4, Vec3};
@@ -308,7 +310,7 @@ pub struct SensorEvent {
     pub kind: SensorEventKind,
 }
 
-pub trait Collide: Send + Sync + 'static {
+pub trait Collide: Any + Send + Sync + 'static {
     fn raycast(&self, ray: CollisionRay, filter: QueryFilter) -> Result<Option<RayHit>, Error>;
 
     fn raycast_all(

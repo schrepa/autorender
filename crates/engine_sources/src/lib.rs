@@ -78,7 +78,7 @@ pub fn emit() {
     let shaders = manifest.join("src").join("shaders");
     let prefix = prefix(&shaders);
     let root = workspace_root(&manifest);
-    let hash = digest(&package, &manifest, &root);
+    let hash = digest(&package, &manifest, &root, false);
 
     let mut wgsl = Vec::new();
     if prefix.is_some() {
@@ -107,6 +107,15 @@ pub fn emit() {
         node.entries = entries(&text);
         node.variables = variables(&text);
     }
+    if let Some(prefix) = &prefix {
+        let generated = generated_wgsl(&manifest);
+        if !generated.is_empty() {
+            texts.push_str(&format!(
+                "    ::engine_core::ShaderText::generated({:?}, {generated:?}),\n",
+                format!("generated::{prefix}")
+            ));
+        }
+    }
 
     let mut code = String::new();
     code.push_str("extern crate engine_ecs as bevy_ecs;\n");
@@ -124,10 +133,30 @@ pub fn emit() {
     fs::write(out.join("brick.rs"), code).expect("OUT_DIR is writable");
 }
 
-fn digest(package: &str, manifest: &Path, root: &Path) -> [u8; 32] {
+pub fn emit_of(named: &[(&str, &str)]) {
+    let manifest = PathBuf::from(var("CARGO_MANIFEST_DIR"));
+    let out = PathBuf::from(var("OUT_DIR"));
+    let root = workspace_root(&manifest);
+    let workspace = read(&root.join("Cargo.toml"));
+    let mut code = String::new();
+    for &(constant, package) in named {
+        let path = workspace
+            .as_ref()
+            .and_then(|item| item.get("workspace")?.get("dependencies")?.get(package))
+            .and_then(|entry| entry.get("path"))
+            .and_then(Item::as_str)
+            .unwrap_or_else(|| panic!("the workspace names no path for {package}"));
+        let folder = normal(&root.join(path));
+        let hash = digest(package, &folder, &root, true);
+        code.push_str(&format!("pub(crate) const {constant}: [u8; 32] = {hash:?};\n"));
+    }
+    fs::write(out.join("sources.rs"), code).expect("OUT_DIR is writable");
+}
+
+fn digest(package: &str, manifest: &Path, root: &Path, every: bool) -> [u8; 32] {
     let mut crates = BTreeSet::new();
     crates.insert(normal(manifest));
-    reach(manifest, root, &mut crates);
+    reach(manifest, root, &mut crates, every);
 
     let mut hash = Sha256::new();
     hash.update(package.as_bytes());
@@ -217,7 +246,7 @@ fn dependency_tables(manifest: &Item) -> Vec<&Item> {
     tables
 }
 
-fn reach(dir: &Path, root: &Path, found: &mut BTreeSet<PathBuf>) {
+fn reach(dir: &Path, root: &Path, found: &mut BTreeSet<PathBuf>, every: bool) {
     let Some(manifest) = read(&dir.join("Cargo.toml")) else {
         return;
     };
@@ -246,8 +275,9 @@ fn reach(dir: &Path, root: &Path, found: &mut BTreeSet<PathBuf>) {
             let Some(reached) = read(&target.join("Cargo.toml")) else {
                 continue;
             };
-            if matches!(kind(&reached), Some("support" | "place")) && found.insert(target.clone()) {
-                reach(&target, root, found);
+            let followed = every || matches!(kind(&reached), Some("support" | "place"));
+            if followed && found.insert(target.clone()) {
+                reach(&target, root, found, every);
             }
         }
     }
@@ -380,4 +410,143 @@ fn variables(text: &str) -> Vec<String> {
         })
         .filter(|name| !name.is_empty())
         .collect()
+}
+
+fn generated_wgsl(manifest: &Path) -> String {
+    let mut files = Vec::new();
+    list(&manifest.join("src"), &mut files);
+    files.retain(|file| file.extension().is_some_and(|extension| extension == "rs"));
+    files.sort();
+    let mut wgsl = String::new();
+    for file in &files {
+        let text = fs::read_to_string(file).expect("a Rust file");
+        let mut found: Vec<(usize, &str)> = ["gpu_struct", "gpu_consts"]
+            .into_iter()
+            .flat_map(|name| words(&text, name).into_iter().map(move |at| (at, name)))
+            .collect();
+        found.sort_unstable();
+        for (at, name) in found {
+            let Some(body) = text[at + name.len()..]
+                .trim_start()
+                .strip_prefix('!')
+                .and_then(braced)
+            else {
+                continue;
+            };
+            let declared = if name == "gpu_struct" {
+                struct_wgsl(body)
+            } else {
+                consts_wgsl(body)
+            };
+            wgsl.push_str(&declared.unwrap_or_else(|| {
+                panic!("{}: the generated module cannot read this {name}!", file.display())
+            }));
+        }
+    }
+    wgsl
+}
+
+fn braced(text: &str) -> Option<&str> {
+    let text = text.trim_start();
+    let open = text.chars().next()?;
+    let close = match open {
+        '{' => '}',
+        '(' => ')',
+        '[' => ']',
+        _ => return None,
+    };
+    let inner = &text[1..];
+    let mut depth = 0usize;
+    for (at, character) in inner.char_indices() {
+        if character == open {
+            depth += 1;
+        } else if character == close {
+            if depth == 0 {
+                return Some(&inner[..at]);
+            }
+            depth -= 1;
+        }
+    }
+    None
+}
+
+fn without_attributes(text: &str) -> &str {
+    let mut rest = text.trim_start();
+    while let Some(attribute) = rest.strip_prefix('#') {
+        let Some(inner) = braced(attribute) else {
+            return rest;
+        };
+        let start = attribute.len() - attribute.trim_start().len();
+        rest = attribute[start + inner.len() + 2..].trim_start();
+    }
+    rest
+}
+
+fn without_visibility(text: &str) -> &str {
+    let text = text.trim_start();
+    let Some(rest) = text.strip_prefix("pub") else {
+        return text;
+    };
+    let rest = rest.trim_start();
+    match rest.strip_prefix('(') {
+        Some(scoped) => scoped
+            .find(')')
+            .map_or(rest, |close| scoped[close + 1..].trim_start()),
+        None => rest,
+    }
+}
+
+fn struct_wgsl(body: &str) -> Option<String> {
+    let rest = without_visibility(without_attributes(body))
+        .strip_prefix("struct")?
+        .trim_start();
+    let name = identifier(rest);
+    let fields = braced(&rest[name.len()..])?;
+    let mut wgsl = format!("struct {name} {{");
+    for field in fields.split(',') {
+        let field = without_visibility(field);
+        if field.is_empty() {
+            continue;
+        }
+        let (field, ty) = field.split_once(':')?;
+        let ty: String = ty.chars().filter(|c| !c.is_whitespace()).collect();
+        wgsl.push_str(&format!(" {}: {},", field.trim(), wgsl_type(&ty)?));
+    }
+    wgsl.push_str(" }\n");
+    Some(wgsl)
+}
+
+fn wgsl_type(ty: &str) -> Option<String> {
+    if matches!(ty, "f32" | "u32" | "i32") {
+        return Some(ty.to_owned());
+    }
+    if ty == "[[f32;4];4]" {
+        return Some("mat4x4<f32>".to_owned());
+    }
+    let (element, count) = ty.strip_prefix('[')?.strip_suffix(']')?.rsplit_once(';')?;
+    match element {
+        "f32" | "u32" | "i32" if matches!(count, "2" | "3" | "4") => {
+            Some(format!("vec{count}<{element}>"))
+        }
+        "[f32;4]" | "[u32;4]" | "[i32;4]" => {
+            Some(format!("array<vec4<{}>, {count}>", &element[1..4]))
+        }
+        _ => None,
+    }
+}
+
+fn consts_wgsl(body: &str) -> Option<String> {
+    let mut wgsl = String::new();
+    for declaration in body.split(';') {
+        let declaration = without_visibility(declaration);
+        if declaration.is_empty() {
+            continue;
+        }
+        let rest = declaration.strip_prefix("const")?;
+        let (name, rest) = rest.split_once(':')?;
+        let (ty, value) = rest.split_once('=')?;
+        let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+        wgsl.push_str(&format!("const {}: {} = {value};\n", name.trim(), ty.trim()));
+    }
+    Some(wgsl)
 }

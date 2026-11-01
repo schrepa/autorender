@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 use engine_core::{Error, Mesh, Texture, Transform};
 
 use crate::{
-    MeshSource, SceneDocument, SceneFile, SceneFileKind, SceneFiles, hierarchy::ExpandedObject,
-    material::PreparedMaterial,
+    MeshSource, SceneDocument, SceneFile, SceneFileKind, SceneFiles, SceneKinds,
+    hierarchy::ExpandedObject, material::PreparedMaterial,
 };
 
 pub(crate) struct PreparedScene {
@@ -24,15 +24,19 @@ struct CpuAssets {
 }
 
 impl SceneDocument {
-    pub fn validate(&self) -> Result<(), Error> {
-        self.prepare(None).map(|_| ())
+    pub fn validate(&self, kinds: &SceneKinds) -> Result<(), Error> {
+        self.prepare(None, kinds).map(|_| ())
     }
 
-    pub fn validate_with(&self, files: &SceneFiles) -> Result<(), Error> {
-        self.prepare(Some(files)).map(|_| ())
+    pub fn validate_with(&self, kinds: &SceneKinds, files: &SceneFiles) -> Result<(), Error> {
+        self.prepare(Some(files), kinds).map(|_| ())
     }
 
-    pub fn files(&self) -> Vec<SceneFile> {
+    pub(crate) fn structure(&self) -> Result<(), Error> {
+        self.prepare(None, &SceneKinds::default()).map(|_| ())
+    }
+
+    pub fn files(&self, kinds: &SceneKinds) -> Vec<SceneFile> {
         let mut files: Vec<SceneFile> = Vec::new();
         let mut add = |uri: &String, kind| {
             if !files.iter().any(|file| file.uri == *uri) {
@@ -57,10 +61,25 @@ impl SceneDocument {
                 | MeshSource::Provided { .. } => {}
             }
         }
+        let entities = self
+            .entities
+            .iter()
+            .chain(self.prefabs.iter().flat_map(|prefab| &prefab.entities));
+        crate::loading::named(self).scope(|| {
+            for entity in entities {
+                for uri in kinds.files(entity) {
+                    add(&uri, SceneFileKind::Buffer);
+                }
+            }
+        });
         files
     }
 
-    pub(crate) fn prepare(&self, files: Option<&SceneFiles>) -> Result<PreparedScene, Error> {
+    pub(crate) fn prepare(
+        &self,
+        files: Option<&SceneFiles>,
+        kinds: &SceneKinds,
+    ) -> Result<PreparedScene, Error> {
         identifier(&self.id, "$.id")?;
         self.validate_camera()?;
         self.validate_views()?;
@@ -82,7 +101,8 @@ impl SceneDocument {
                 )?;
             }
         }
-        let expanded = self.expand(&mesh_ids, &material_ids)?;
+        let expanded = crate::loading::named(self)
+            .scope(|| self.expand(&mesh_ids, &material_ids, kinds))?;
         let CpuAssets {
             textures,
             meshes,

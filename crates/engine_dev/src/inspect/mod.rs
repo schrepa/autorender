@@ -9,7 +9,7 @@ use std::{collections::BTreeMap, io::Write};
 use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_core::{
     ActionId, ActionInput, AssetLibrary, Camera, Engine, FixedTime, FrameTime, GlobalTransforms,
-    InputState, InterpolateTransform, MaterialHandle, Mesh3d, MeshHandle, Parent,
+    InterpolateTransform, JobExchange, MaterialHandle, Mesh3d, MeshHandle, MoveInput, Parent,
     PresentationMode, PresentationState, Projection, TextureHandle, Transform,
 };
 use engine_registry::{BrickRecord, OperationScene, Registry};
@@ -468,7 +468,7 @@ impl DevTools {
             world_entities: world.entities().len(),
             authored_entities: scene.map(SceneInstance::entity_count),
             inspectors: self.all_inspectors(&bricks).count(),
-            culling_enabled: engine.frustum_culling(),
+            culling_enabled: frustum_culling(world),
             features: registry.map(|registry| registry.names().collect()),
             presentation: presentation_view(engine.presentation()),
             fixed_delta_seconds: world
@@ -871,8 +871,15 @@ pub(crate) fn encode(value: &impl Serialize, limit: usize) -> Result<String, ser
     Ok(String::from_utf8(output.bytes).expect("json_utf8"))
 }
 
-pub(crate) fn authored_entity(world: &World, scene: &SceneInstance, id: &str) -> Option<Entity> {
-    scene.authored_entity(world, id)
+pub(crate) fn authored_entity(scene: &SceneInstance, id: &str) -> Option<Entity> {
+    scene.entity(id)
+}
+
+pub fn frustum_culling(world: &World) -> bool {
+    world
+        .get_resource::<Registry>()
+        .and_then(|registry| registry.section("culling"))
+        .is_some_and(|section| section.current(world)["frustum"] == json!(true))
 }
 
 fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, Error> {
@@ -980,8 +987,16 @@ fn described_brick(brick: &BrickRecord, full: bool) -> DescribedBrick {
     DescribedBrick {
         name: brick.package,
         crate_name: brick.package,
-        fills: brick.fills().iter().map(|filled| filled.place.name()).collect(),
-        joins: brick.joins().iter().map(|joined| joined.place.name()).collect(),
+        fills: brick
+            .fills()
+            .iter()
+            .map(|filled| filled.place.name())
+            .collect(),
+        joins: brick
+            .joins()
+            .iter()
+            .map(|joined| joined.place.name())
+            .collect(),
         settings: brick
             .settings_entries()
             .iter()

@@ -123,8 +123,9 @@ pub fn apply_setting(world: &mut World, key: &str, value: &Value) -> Result<(), 
     };
     let mut current = entry.current(world);
     let Some(fields) = current.as_object_mut() else {
-        return Err(Error::new(ErrorCode::InvalidType, format!("$.{section}"))
-            .expected(Expected::Object));
+        return Err(
+            Error::new(ErrorCode::InvalidType, format!("$.{section}")).expected(Expected::Object)
+        );
     };
     if !fields.contains_key(field) {
         return Err(Error::new(ErrorCode::UnknownField, format!("$.{key}"))
@@ -133,4 +134,19 @@ pub fn apply_setting(world: &mut World, key: &str, value: &Value) -> Result<(), 
     }
     fields.insert(field.to_owned(), value.clone());
     entry.set(world, &current)
+}
+
+pub fn run_operation(world: &mut World, name: &str, request: Value) -> Result<Value, Error> {
+    let operation = world
+        .get_resource::<engine_registry::Registry>()
+        .and_then(|registry| registry.operation(name))
+        .copied()
+        .ok_or_else(|| {
+            Error::new(ErrorCode::UnknownVariant, "$.name")
+                .expected(Expected::Present)
+                .got(name)
+        })?;
+    operation
+        .run(world, request)
+        .map_err(|error| error.within("$.args"))
 }

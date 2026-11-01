@@ -5,8 +5,8 @@ use std::time::Instant;
 use engine::Game;
 use engine::bricks::BrickList;
 use engine::smokes::{
-    Build, FRAME_MS, Headless, LIST, SmokeEntry, SmokeFailure, SmokeRecord, SmokeSession,
-    answered, engine_of, fault, listed, request_line, select, step_lines,
+    Build, FRAME_MS, Headless, LIST, SmokeEntry, SmokeFailure, SmokeRecord, SmokeSession, answered,
+    engine_of, fault, listed, routed, select, step_lines,
 };
 use serde_json::Value;
 
@@ -152,7 +152,11 @@ impl<G: Game> Native<G> {
 
 impl<G: Game> SmokeSession for Native<G> {
     fn request(&mut self, verb: &str, body: Value) -> Result<Value, Value> {
-        answered(self.send(&request_line(verb, body)))
+        let line = match &self.backend {
+            Backend::Headless(headless) => routed(headless.engine.app.world(), verb, body),
+            Backend::Gpu(session) => routed(session.game.host().engine().app.world(), verb, body),
+        };
+        answered(self.send(&line))
     }
 
     fn step(&mut self, ticks: u32) {
@@ -177,8 +181,19 @@ impl<G: Game> SmokeSession for Native<G> {
     }
 
     fn source(&mut self, document: &str) {
-        if let Backend::Gpu(session) = &mut self.backend {
-            session.play(document);
+        let loaded = match &mut self.backend {
+            Backend::Gpu(session) => session.play(document),
+            Backend::Headless(headless) => headless.source(document),
+        };
+        if let Err(error) = loaded {
+            self.faults.push(fault("source", &error));
+        }
+    }
+
+    fn file(&mut self, name: &str, bytes: &[u8]) {
+        match &mut self.backend {
+            Backend::Gpu(session) => session.file(name, bytes),
+            Backend::Headless(headless) => headless.file(name, bytes),
         }
     }
 }

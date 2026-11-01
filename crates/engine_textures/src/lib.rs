@@ -29,10 +29,13 @@ pub fn cook_input(source: &Source, family: Family) -> Vec<u8> {
     input
 }
 
-pub fn cook_job(input: &[u8]) -> Result<Vec<u8>, String> {
-    let header = input
-        .get(..COOK_HEADER)
-        .ok_or("a texture job is shorter than its header")?;
+pub fn cook_job(input: &[u8]) -> Result<Vec<u8>, Error> {
+    let header = input.get(..COOK_HEADER).ok_or_else(|| {
+        Error::new(ErrorCode::InvalidTexture, "$.input")
+            .expected(Expected::Present)
+            .at_least(COOK_HEADER as u64)
+            .got(input.len())
+    })?;
     let word = |at: usize| {
         u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
     };
@@ -40,12 +43,20 @@ pub fn cook_job(input: &[u8]) -> Result<Vec<u8>, String> {
         0 => Usage::Color,
         1 => Usage::Data,
         2 => Usage::Normal,
-        other => return Err(format!("a texture job names usage {other}")),
+        other => {
+            return Err(Error::new(ErrorCode::InvalidTexture, "$.input.usage")
+                .range(0.0, 2.0)
+                .got(other));
+        }
     };
     let family = match header[9] {
         0 => Family::Bc7,
         1 => Family::Astc,
-        other => return Err(format!("a texture job names family {other}")),
+        other => {
+            return Err(Error::new(ErrorCode::InvalidTexture, "$.input.family")
+                .range(0.0, 1.0)
+                .got(other));
+        }
     };
     let source = Source {
         width: word(0),
@@ -53,9 +64,7 @@ pub fn cook_job(input: &[u8]) -> Result<Vec<u8>, String> {
         pixels: input[COOK_HEADER..].to_vec(),
         usage,
     };
-    cook(&source, family)
-        .map(|texture| record(&texture))
-        .map_err(|error| error.to_string())
+    cook(&source, family).map(|texture| record(&texture))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -10,127 +10,35 @@ pub use engine_codec::{Allowed, Detail, Error, ErrorCode, Expected, MAX_GOT_BYTE
 #[cfg(target_arch = "wasm32")]
 pub use error::js_error;
 pub use error::{JS_ERROR_NAME, parse_json, parse_value, parse_value_at};
-pub use fields::{ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, is_id};
-#[cfg(feature = "schema")]
-pub use fields::{state, stated};
+pub use fields::{
+    ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, is_id, state, stated,
+};
 
 pub mod rule {
-    use crate::{Error, ErrorCode};
+    pub use crate::fields::{
+        Bound, above, above_to, any, at_least, at_most, budget, count, finite, id, multiple,
+        power_of_two, range, same,
+    };
+}
 
-    #[derive(Clone, Copy, Debug, PartialEq)]
-    pub struct Rule {
-        low: f64,
-        high: f64,
-    }
+#[doc(hidden)]
+pub mod __private {
+    pub use ::schemars;
+}
 
-    pub trait Setting {
-        fn measure(&self) -> Option<f64>;
-
-        #[doc(hidden)]
-        fn kept_by(&self, rule: Rule) -> bool {
-            self.measure()
-                .is_none_or(|measured| measured >= rule.low && measured <= rule.high)
-        }
-    }
-
-    impl Setting for bool {
-        fn measure(&self) -> Option<f64> {
-            None
-        }
-    }
-
-    macro_rules! measured {
-        ($($ty:ty),*) => {$(
-            impl Setting for $ty {
-                fn measure(&self) -> Option<f64> {
-                    Some(*self as f64)
-                }
-            }
-        )*};
-    }
-    measured!(f32, f64, u8, u16, u32, u64, i32, i64, usize);
-
-    impl<T: Setting, const N: usize> Setting for [T; N] {
-        fn measure(&self) -> Option<f64> {
-            None
-        }
-
-        fn kept_by(&self, rule: Rule) -> bool {
-            self.iter().all(|value| value.kept_by(rule))
-        }
-    }
-
-    impl<T: Setting> Setting for Option<T> {
-        fn measure(&self) -> Option<f64> {
-            None
-        }
-
-        fn kept_by(&self, rule: Rule) -> bool {
-            self.as_ref().is_none_or(|value| value.kept_by(rule))
-        }
-    }
-
-    impl<T: Setting> Setting for Vec<T> {
-        fn measure(&self) -> Option<f64> {
-            None
-        }
-
-        fn kept_by(&self, rule: Rule) -> bool {
-            self.iter().all(|value| value.kept_by(rule))
-        }
-    }
-
-    pub fn any() -> Rule {
-        Rule {
-            low: f64::NEG_INFINITY,
-            high: f64::INFINITY,
-        }
-    }
-
-    pub fn at_least(min: impl Into<f64>) -> Rule {
-        Rule {
-            low: min.into(),
-            high: f64::INFINITY,
-        }
-    }
-
-    pub fn at_most(max: impl Into<f64>) -> Rule {
-        Rule {
-            low: f64::NEG_INFINITY,
-            high: max.into(),
-        }
-    }
-
-    pub fn range(min: impl Into<f64>, max: impl Into<f64>) -> Rule {
-        Rule {
-            low: min.into(),
-            high: max.into(),
-        }
-    }
-
-    impl Rule {
-        pub fn check(self, value: &impl Setting, path: &'static str) -> Result<(), Error> {
-            if value.kept_by(self) {
-                return Ok(());
-            }
-            let refused = Error::new(ErrorCode::InvalidValue, path);
-            Err(match (self.low.is_finite(), self.high.is_finite()) {
-                (true, true) => refused.range(self.low, self.high),
-                (true, false) => refused.range(self.low, f64::MAX),
-                (false, true) => refused.range(f64::MIN, self.high),
-                (false, false) => refused,
-            })
-        }
-    }
+#[doc(hidden)]
+pub fn refused(checked: Result<(), InvalidSetting>) -> Result<(), Error> {
+    checked.map_err(|invalid| invalid.error(ErrorCode::InvalidEnvironment, "$"))
 }
 
 #[macro_export]
 macro_rules! settings {
     (
-        #[section($key:literal)]
+        @section $key:literal [$($check:path)?]
         $(#[$meta:meta])*
         $vis:vis struct $name:ident {
             $(
+                $(#[$field_meta:meta])*
                 $field_vis:vis $field:ident: $ty:ty = $default:expr
                     => $rule:ident $(($($arg:expr),* $(,)?))?
             ),* $(,)?
@@ -147,15 +55,29 @@ macro_rules! settings {
         )]
         #[component(immutable)]
         #[serde(crate = "::engine_core::__private::serde", default)]
-        #[schemars(crate = "::engine_core::__private::schemars")]
+        #[schemars(
+            crate = "::engine_core::__private::schemars",
+            transform = Self::state_rules
+        )]
         $(#[$meta])*
         $vis struct $name {
-            $($field_vis $field: $ty,)*
+            $($(#[$field_meta])* $field_vis $field: $ty,)*
         }
 
         impl ::core::default::Default for $name {
             fn default() -> Self {
                 Self { $($field: $default,)* }
+            }
+        }
+
+        impl $name {
+            #[doc(hidden)]
+            pub fn state_rules(schema: &mut $crate::__private::schemars::Schema) {
+                $($crate::state(
+                    schema,
+                    ::core::stringify!($field),
+                    $crate::rule::$rule($($($arg),*)?),
+                );)*
             }
         }
 
@@ -165,21 +87,39 @@ macro_rules! settings {
             fn check(&self) -> ::core::result::Result<(), $crate::Error> {
                 $($crate::__checked!(
                     self.$field,
-                    ::core::concat!($key, ".", ::core::stringify!($field));
+                    ::core::stringify!($field);
                     $rule $(($($arg),*))?
                 );)*
+                $($crate::refused($check(self))?;)?
                 ::core::result::Result::Ok(())
             }
         }
+    };
+    (
+        #[section($key:literal)]
+        #[check($check:path)]
+        $($rest:tt)*
+    ) => {
+        $crate::settings! { @section $key [$check] $($rest)* }
+    };
+    (
+        #[section($key:literal)]
+        $($rest:tt)*
+    ) => {
+        $crate::settings! { @section $key [] $($rest)* }
     };
 }
 
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __checked {
-    ($value:expr, $path:expr; any) => {};
-    ($value:expr, $path:expr; $rule:ident $(($($arg:expr),*))?) => {
-        $crate::rule::$rule($($($arg),*)?).check(&$value, $path)?
+    ($value:expr, $field:expr; any) => {};
+    ($value:expr, $field:expr; $rule:ident $(($($arg:expr),*))?) => {
+        $crate::refused($crate::Setting::check(
+            &$value,
+            $field,
+            $crate::rule::$rule($($($arg),*)?),
+        ))?
     };
 }
 

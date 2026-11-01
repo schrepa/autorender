@@ -35,6 +35,8 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("debug_fault", "status"),
     ("debug_device_loss", "status"),
     ("debug_missing_asset", ""),
+    ("probe", ""),
+    ("jobs", "status"),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
@@ -227,7 +229,8 @@ fn check_version(version: Option<Value>) -> Result<(), Error> {
             .expected(Expected::Present)
             .range(accepted, accepted));
     };
-    let Version { version } = engine_settings::parse_value(serde_json::json!({ "version": version }))?;
+    let Version { version } =
+        engine_settings::parse_value(serde_json::json!({ "version": version }))?;
     if version != PROTOCOL_VERSION {
         return Err(Error::new(ErrorCode::UnsupportedVersion, "$.version")
             .got(version)
@@ -599,10 +602,29 @@ pub enum BrowserControl {
         #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 192)))]
         entity: String,
     },
+    Probe {
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PIXEL)))]
+        x: u32,
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PIXEL)))]
+        y: u32,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "deserialize_optional_alpha"
+        )]
+        #[cfg_attr(
+            not(target_arch = "wasm32"),
+            schemars(with = "f64", transform = stated(bounds::ALPHA))
+        )]
+        alpha: Option<f64>,
+    },
+    Jobs {
+        workers: u32,
+    },
 }
 
 impl BrowserControl {
-    pub const NAMES: [&'static str; 17] = [
+    pub const NAMES: [&'static str; 19] = [
         "present",
         "culling",
         "environment",
@@ -620,6 +642,8 @@ impl BrowserControl {
         "debug_fault",
         "debug_device_loss",
         "debug_missing_asset",
+        "probe",
+        "jobs",
     ];
 
     pub fn route(self) -> Control {
@@ -670,6 +694,8 @@ impl BrowserControl {
             | Self::Frames { .. }
             | Self::Pause { .. }
             | Self::Resume { .. }
+            | Self::Probe { .. }
+            | Self::Jobs { .. }
             | Self::DebugDeviceLoss { .. }
             | Self::Game { .. }
             | Self::Reload { .. }) => Control::Host(HostControl::Loop(control)),
@@ -687,13 +713,14 @@ impl BrowserControl {
             | Self::Frames { .. }
             | Self::Input { .. }
             | Self::Render { .. }
+            | Self::Probe { .. }
             | Self::Game { .. }
             | Self::Reload { .. }
             | Self::DebugPanic { .. }
             | Self::DebugFault { .. }
             | Self::DebugDeviceLoss { .. }
             | Self::DebugMissingAsset { .. } => true,
-            Self::Pause { .. } | Self::Resume { .. } => false,
+            Self::Pause { .. } | Self::Resume { .. } | Self::Jobs { .. } => false,
         }
     }
 }

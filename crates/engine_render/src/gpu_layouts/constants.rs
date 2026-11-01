@@ -15,15 +15,11 @@ gpu_consts! {
     pub const PARENT_GROUP: u32 = 64 => ["@compose_parents" in "presentation::cull"];
     pub const ARGS_GROUP: u32 = 64 => ["@batch_args" in "presentation::cull"];
 
-    pub const CARD_VERTICES: u32 = 6 => ["IMPOSTOR_VERTICES" in "presentation::cull"];
-
     pub const IMPOSTOR_FRAMES_SHIFT: u32 = 19 => ["IMPOSTOR_FRAMES_SHIFT"];
     pub const IMPOSTOR_HEMISPHERE: u32 = 1 << 16 => ["IMPOSTOR_HEMISPHERE"];
     pub const IMPOSTOR_MASKED: u32 = 1 << 17 => ["IMPOSTOR_MASKED"];
     pub const IMPOSTOR_FOLIAGE: u32 = 1 << 24 => ["IMPOSTOR_FOLIAGE"];
     pub const MASK_MIP_SCALE: f32 = 0.25 => ["MASK_MIP_SCALE"];
-
-    pub const MIRRORED_BITS: u32 = 14 => ["MIRRORED_BITS"];
 
     pub const MATERIAL_ANISOTROPY: u16 = 16 => ["DETAIL_ANISOTROPY"];
 
@@ -42,40 +38,9 @@ gpu_consts! {
     pub const VARIANT_TOP_LAYER: u32 = 8192 => ["VARIANT_TOP_LAYER" in "engine::mesh::declarations"];
     pub const VARIANT_FOLIAGE: u32 = 65536 => ["VARIANT_FOLIAGE" in "engine::mesh::declarations"];
 
-    pub const DEBUG_SPAN_STEPS: f32 = 254.0 => ["DEBUG_SPAN_STEPS"];
-    pub const DEBUG_KIND_MESH: u32 = 1 => ["DEBUG_KIND_MESH"];
-    pub const DEBUG_KIND_PLACED: u32 = 2 => ["DEBUG_KIND_PLACED"];
-    pub const DEBUG_KIND_CARD: u32 = 3 => ["DEBUG_KIND_CARD"];
-    pub const DEBUG_KIND_PLACED_CARD: u32 = 4 => ["DEBUG_KIND_PLACED_CARD"];
-    pub const DEBUG_KIND_TERRAIN: u32 = 6 => ["DEBUG_KIND_TERRAIN"];
-    pub const DEBUG_KIND_COVER: u32 = 7 => ["DEBUG_KIND_COVER"];
-    pub const DEBUG_KIND_WATER: u32 = 8 => ["DEBUG_KIND_WATER"];
-    pub const DEBUG_KIND_FALLS: u32 = 10 => ["DEBUG_KIND_FALLS"];
-    pub const DEBUG_KIND_SKY: u32 = 11 => ["DEBUG_KIND_SKY"];
-    pub const DEBUG_LEVEL_SHIFT: u32 = 4 => ["DEBUG_LEVEL_SHIFT"];
-    pub const DEBUG_FADING: u32 = 0x100 => ["DEBUG_FADING"];
-    pub const DEBUG_CASTS: u32 = 0x200 => ["DEBUG_CASTS"];
-    pub const DEBUG_SOURCE_SHIFT: u32 = 16 => ["DEBUG_SOURCE_SHIFT"];
-    pub const DEBUG_NO_MATERIAL: u32 = 0xff => ["DEBUG_NO_MATERIAL"];
-
     pub const CARD_FADING: u32 = 1 << 31 => ["IMPOSTOR_FADING", "CARD_FADING" in "presentation::cull"];
     pub const CARD_FADING_OUT: u32 = 1 << 30 => ["IMPOSTOR_FADING_OUT", "CARD_FADING_OUT" in "presentation::cull"];
     pub const CARD_OVER: u32 = 1 << 15 => ["IMPOSTOR_OVER", "CARD_OVER" in "presentation::cull"];
 }
 
 pub const IMPOSTOR_KINDS: u32 = 4;
-
-gpu_mirrors! {
-    engine_core::NO_PARENT => ["NO_PARENT" in "presentation::cull"];
-    engine_core::NODE_VALID => ["NODE_VALID" in "presentation::cull"];
-    engine_core::NODE_BLEND => ["NODE_BLEND" in "presentation::cull"];
-    engine_core::NODE_ACTIVE => ["NODE_ACTIVE" in "presentation::cull"];
-    engine_core::NODE_PARENT_ACTIVE => ["NODE_PARENT_ACTIVE" in "presentation::cull"];
-    engine_core::presentation_bounds::MAX_COEFFICIENT => ["MAX_COEFFICIENT" in "presentation::cull"];
-    engine_core::presentation_bounds::ROUNDING_MARGIN => ["ROUNDING_MARGIN" in "presentation::cull"];
-    engine_core::presentation_bounds::MAX_PRODUCT_BOUND => ["MAX_PRODUCT_BOUND" in "presentation::cull"];
-    engine_core::presentation_bounds::COEFFICIENT_LIMIT => ["COEFFICIENT_LIMIT" in "presentation::cull"];
-    engine_core::presentation_bounds::MIN_LINEAR_SCALE => ["MIN_LINEAR_SCALE" in "presentation::cull"];
-    engine_core::presentation_bounds::COMMON_DETERMINANT_MARGIN => ["COMMON_DETERMINANT_MARGIN" in "presentation::cull"];
-    engine_core::presentation_bounds::LINEAR_ROTATION_DOT_THRESHOLD => ["LINEAR_ROTATION_DOT" in "presentation::cull"];
-}

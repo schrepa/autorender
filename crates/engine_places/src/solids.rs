@@ -57,3 +57,15 @@ pub trait SolidField: Send + Sync + 'static {
 pub struct SolidSource {
     pub field: Arc<dyn SolidField>,
 }
+
+struct NoSolids;
+
+impl SolidField for NoSolids {}
+
+impl Default for SolidSource {
+    fn default() -> Self {
+        Self {
+            field: Arc::new(NoSolids),
+        }
+    }
+}

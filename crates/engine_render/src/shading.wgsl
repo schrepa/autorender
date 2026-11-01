@@ -45,6 +45,9 @@ const BODY_THIN: u32 = 1u;
 const BODY_GROUND: u32 = 2u;
 const BODY_WATER: u32 = 3u;
 
+const SPECULAR_VARIANCE: f32 = 0.15;
+const SPECULAR_LIMIT: f32 = 0.2;
+
 struct ViewPixel {
     clip: vec4<f32>,
     previous: vec4<f32>,
@@ -63,4 +66,14 @@ fn flat(color: vec4<f32>) -> Shaded {
     shaded.across = 0.0;
     shaded.body = BODY_SOLID;
     return shaded;
+}
+
+fn world_plane(p: vec3<f32>, axis: u32) -> vec2<f32> {
+    if axis == 0u {
+        return vec2<f32>(p.z, -p.y);
+    }
+    if axis == 2u {
+        return vec2<f32>(p.x, -p.y);
+    }
+    return p.xz;
 }

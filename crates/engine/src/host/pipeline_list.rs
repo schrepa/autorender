@@ -1,9 +1,9 @@
-use engine_core::{CookMode, Engine, RecordKey, URGENT_JOBS, job_priority};
+use engine_core::{
+    CookMode, Engine, JobExchange, JobId, MISSING_RECORD, RecordKey, URGENT_JOBS, job_priority,
+};
 use engine_registry::Registry;
 use engine_render::Renderer;
 use sha2::{Digest, Sha256};
-
-use super::jobs::{HostJobs, JobId, MISSING_RECORD};
 
 const KIND: &str = "pipeline_list";
 
@@ -58,7 +58,7 @@ impl PipelineList {
         matches!(self.state, State::Making { .. })
     }
 
-    pub(crate) fn ask(&mut self, engine: &Engine, content: Option<Vec<u8>>, jobs: &mut HostJobs) {
+    pub(crate) fn ask(&mut self, engine: &mut Engine, content: Option<Vec<u8>>) {
         let Some(mut identity) = content else {
             self.state = State::Done;
             return;
@@ -80,17 +80,24 @@ impl PipelineList {
             self.state = State::Making { key, quiet: 0 };
             return;
         }
-        self.state = State::Asked {
-            key,
-            fetch: jobs.fetch_here(key, job_priority(URGENT_JOBS, 0)),
+        self.state = match engine.app.world_mut().get_resource_mut::<JobExchange>() {
+            Some(mut jobs) => State::Asked {
+                key,
+                fetch: jobs.fetch(None, key, job_priority(URGENT_JOBS, 0)),
+            },
+            None => State::Done,
         };
     }
 
-    pub(crate) fn take(&mut self, renderer: &mut Renderer, jobs: &mut HostJobs) {
+    pub(crate) fn take(&mut self, engine: &mut Engine, renderer: &mut Renderer) {
         let State::Asked { key, fetch } = self.state else {
             return;
         };
-        let Some(output) = jobs.take_here(fetch) else {
+        let world = engine.app.world_mut();
+        let Some(mut jobs) = world.get_resource_mut::<JobExchange>() else {
+            return;
+        };
+        let Some(output) = jobs.take(fetch) else {
             return;
         };
         self.state = match output.map(|record| renderer.create_listed_pipelines(&record)) {
@@ -101,13 +108,7 @@ impl PipelineList {
         };
     }
 
-    pub(crate) fn after_frame(
-        &mut self,
-        engine: &Engine,
-        renderer: &Renderer,
-        created: u32,
-        jobs: &mut HostJobs,
-    ) {
+    pub(crate) fn after_frame(&mut self, engine: &mut Engine, renderer: &Renderer, created: u32) {
         let State::Making { key, quiet } = &mut self.state else {
             return;
         };
@@ -120,9 +121,12 @@ impl PipelineList {
         });
         let still = created == 0 && others.is_none_or(|others| others == 0);
         *quiet = if still { *quiet + 1 } else { 0 };
-        if *quiet >= QUIET_FRAMES {
-            jobs.keep_here(key, renderer.pipeline_list());
-            self.state = State::Done;
+        if *quiet < QUIET_FRAMES {
+            return;
         }
+        if let Some(mut jobs) = engine.app.world_mut().get_resource_mut::<JobExchange>() {
+            jobs.keep(key, None, renderer.pipeline_list());
+        }
+        self.state = State::Done;
     }
 }

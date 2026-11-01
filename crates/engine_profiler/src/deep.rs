@@ -63,6 +63,7 @@ fn sample_heap(brick: u16, bytes: usize) {
 
 pub struct DeepCapture {
     sampler: Option<Sampler>,
+    bricks: Vec<&'static str>,
 }
 
 pub struct ProfileFiles {
@@ -79,13 +80,14 @@ impl DeepCapture {
         max_events: usize,
     ) -> Result<Self, Error> {
         host.profiling_start(max_events)?;
+        let bricks = host.profile_bricks();
         HEAP.lock().unwrap_or_else(PoisonError::into_inner).clear();
         engine::profiling::sample_allocations(Some(sample_heap));
         crate::counters::begin();
         let sampler = (!threads.is_empty())
             .then(|| Sampler::start(threads, INTERVAL, engine::host::now_ms))
             .flatten();
-        Ok(Self { sampler })
+        Ok(Self { sampler, bricks })
     }
 
     pub fn finish<G: Game>(
@@ -107,7 +109,7 @@ impl DeepCapture {
             report["gpu_counters"] = counters;
         }
         let symbols = Symbols::of(samples.as_ref(), &heap);
-        report["heap_samples_by_brick"] = heap_by_brick(&heap, &symbols);
+        report["heap_samples_by_brick"] = heap_by_brick(&heap, &symbols, &self.bricks);
         let profile = firefox_profile(&report, samples.as_ref(), &symbols, host.adapter());
         let summary = summary(&report, samples.as_ref(), &symbols, host.adapter());
         let unwritable = |path: &Path| {
@@ -491,7 +493,7 @@ fn firefox_profile(
     profile
 }
 
-fn heap_by_brick(samples: &[HeapSample], symbols: &Symbols) -> Value {
+fn heap_by_brick(samples: &[HeapSample], symbols: &Symbols, names: &[&'static str]) -> Value {
     type Stacks = HashMap<Vec<String>, (u64, u64)>;
     let mut bricks: BTreeMap<&'static str, (u64, u64, Stacks)> = BTreeMap::new();
     for sample in samples {
@@ -504,7 +506,11 @@ fn heap_by_brick(samples: &[HeapSample], symbols: &Symbols) -> Value {
             names.pop();
         }
         let callers = names.split_off(names.len().saturating_sub(HEAP_STACKS));
-        let brick = engine::profiling::brick_name(sample.brick);
+        let brick = names
+            .get(usize::from(sample.brick))
+            .or(names.first())
+            .copied()
+            .unwrap_or_default();
         let (count, bytes, stacks) = bricks.entry(brick).or_default();
         *count += 1;
         *bytes += sample.bytes as u64;

@@ -34,45 +34,36 @@ fn tile_frames(shape: AtlasShape) -> u32 {
     (TILE_TEXELS / shape.texels).clamp(1, shape.frames)
 }
 
-impl ImpostorAtlas {
+impl Atlas {
     pub(super) fn bake(
         &mut self,
         gpu: BakeGpu<'_>,
         source: &BakeSource<'_>,
-        content: (u128, u128),
+        identity: ImpostorIdentity,
     ) {
         let BakeGpu {
             device,
-            queue: _,
             encoder,
             mips,
             pipelines,
-            entries,
         } = gpu;
-        let encoder = encoder.mips(device);
+        let encoder = mip_encoder(device, encoder);
         let shape = self.shape;
         let targets = self
             .targets
             .get_or_insert_with(|| bake_targets(device, shape));
-        draw_layer(
-            (device, entries),
-            encoder,
-            pipelines,
-            targets,
-            source,
-            shape,
-        );
+        draw_layer(device, encoder, pipelines, targets, source, shape);
         for texture in &targets.layer {
             mips.record(device, encoder, texture);
         }
-        self.read_back(device, encoder, content);
+        self.read_back(device, encoder, identity);
     }
 }
 
 type BakeDraw<'a> = (&'a MeshDraw<'a>, bool, &'a wgpu::BindGroup, Variant);
 
 fn draw_layer(
-    (device, entries): (&wgpu::Device, &MeshEntries),
+    device: &wgpu::Device,
     encoder: &mut wgpu::CommandEncoder,
     pipelines: &mut ImpostorPipelines,
     targets: &BakeTargets,
@@ -101,11 +92,11 @@ fn draw_layer(
         pipelines
             .bake_pipelines
             .entry(variant)
-            .or_insert_with(|| bake_pipeline(device, layout, (variant, entries), false));
+            .or_insert_with(|| bake_pipeline(device, layout, variant, false));
         pipelines
             .shade_pipelines
             .entry(variant)
-            .or_insert_with(|| bake_pipeline(device, layout, (variant, entries), true));
+            .or_insert_with(|| bake_pipeline(device, layout, variant, true));
     }
     let no_shade = pipelines
         .no_shade
@@ -414,12 +405,12 @@ fn bake_targets(device: &wgpu::Device, shape: AtlasShape) -> BakeTargets {
 fn bake_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
-    (variant, entries): (Variant, &MeshEntries),
+    variant: Variant,
     shade: bool,
 ) -> wgpu::RenderPipeline {
     let constants = variant.constants();
     let extended = variant.extended();
-    let (vertex, fragment) = (entries.card_bake)(extended, shade);
+    let (vertex, fragment) = bake_entries(extended, shade);
     let mut buffers = vec![crate::mesh_arena::vertex_layout()];
     if extended {
         buffers.push(crate::mesh_arena::extra_layout());

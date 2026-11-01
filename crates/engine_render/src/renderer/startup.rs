@@ -128,6 +128,9 @@ impl Renderer {
             assets: Some(assets),
             plans: PlanCache::default(),
             passes: Vec::new(),
+            spans: Vec::new(),
+            #[cfg(feature = "profiling")]
+            prelude_owners: Vec::new(),
             installing: None,
             previous: None,
             seconds: None,

@@ -109,6 +109,7 @@ pub enum Rule {
     AboveTo(f64, f64),
     Above(f64),
     AtLeast(f64),
+    AtMost(f64),
     Budget,
     PowerOfTwo(f64, f64),
     Multiple(f64, f64, f64),
@@ -139,6 +140,10 @@ impl Rule {
 
     pub const fn at_least(min: f64) -> Self {
         Self::AtLeast(min)
+    }
+
+    pub const fn at_most(max: f64) -> Self {
+        Self::AtMost(max)
     }
 
     pub const fn budget() -> Self {
@@ -179,6 +184,14 @@ impl Rule {
                 Some(Expected::Finite),
                 Some(Allowed::Range { min, max: f64::MAX }),
             ),
+            Self::AtMost(max) if max >= 0.0 && max.fract() == 0.0 => (
+                Some(Expected::Finite),
+                Some(Allowed::AtMost { max: max as u64 }),
+            ),
+            Self::AtMost(max) => (
+                Some(Expected::Finite),
+                Some(Allowed::Range { min: f64::MIN, max }),
+            ),
             Self::Budget => (Some(Expected::Integer), Some(Allowed::AtLeast { min: 1 })),
             Self::PowerOfTwo(min, max) => (
                 Some(Expected::PowerOfTwo),
@@ -208,7 +221,6 @@ impl Rule {
         }
     }
 
-    #[cfg(feature = "schema")]
     fn keywords(self, whole: bool) -> serde_json::Map<String, serde_json::Value> {
         use serde_json::{Value, json};
         let number = |value: f64| -> Value {
@@ -234,6 +246,9 @@ impl Rule {
             }
             Self::AtLeast(min) => {
                 keywords.insert("minimum".into(), number(min));
+            }
+            Self::AtMost(max) => {
+                keywords.insert("maximum".into(), number(max));
             }
             Self::Budget => {
                 keywords.insert("minimum".into(), json!(1));
@@ -313,6 +328,10 @@ pub fn at_least(min: impl Bound) -> Rule {
     Rule::AtLeast(min.bound())
 }
 
+pub fn at_most(max: impl Bound) -> Rule {
+    Rule::AtMost(max.bound())
+}
+
 pub fn budget() -> Rule {
     Rule::Budget
 }
@@ -337,7 +356,6 @@ pub fn count(min: impl Bound, max: impl Bound) -> Rule {
     Rule::Count(min.bound(), max.bound())
 }
 
-#[cfg(feature = "schema")]
 pub fn state(schema: &mut schemars::Schema, field: &str, rule: Rule) {
     use serde_json::{Map, Value};
     fn has_type(schema: &Map<String, Value>, wanted: &str) -> bool {
@@ -387,6 +405,7 @@ pub fn state(schema: &mut schemars::Schema, field: &str, rule: Rule) {
         | Rule::AboveTo(..)
         | Rule::Above(_)
         | Rule::AtLeast(_)
+        | Rule::AtMost(_)
         | Rule::Budget
         | Rule::PowerOfTwo(..)
         | Rule::Multiple(..) => numbers(property, field),
@@ -395,7 +414,6 @@ pub fn state(schema: &mut schemars::Schema, field: &str, rule: Rule) {
     target.extend(rule.keywords(whole));
 }
 
-#[cfg(feature = "schema")]
 pub fn stated(rule: Rule) -> impl Fn(&mut schemars::Schema) {
     move |schema| {
         let mut object = schemars::Schema::default();
@@ -451,6 +469,7 @@ impl Setting for f32 {
             Rule::AboveTo(min, max) => value > min as f32 && value <= max as f32,
             Rule::Above(min) => value.is_finite() && value > min as f32,
             Rule::AtLeast(min) => value.is_finite() && value >= min as f32,
+            Rule::AtMost(max) => value.is_finite() && value <= max as f32,
             Rule::Budget | Rule::PowerOfTwo(..) | Rule::Multiple(..) => {
                 panic!("rule_needs_whole_number {field}")
             }
@@ -472,6 +491,7 @@ impl Setting for f32 {
             Rule::AboveTo(min, max) if self > min as f32 => engine_math::min(self, max as f32),
             Rule::Above(min) | Rule::AboveTo(min, _) if self <= min as f32 => default,
             Rule::AtLeast(min) => engine_math::max(self, min as f32),
+            Rule::AtMost(max) => engine_math::min(self, max as f32),
             Rule::Any
             | Rule::Finite
             | Rule::AboveTo(..)
@@ -497,6 +517,7 @@ fn whole_keeps(value: u64, rule: Rule) -> bool {
         Rule::AboveTo(min, max) => value > min as u64 && value <= max as u64,
         Rule::Above(min) => value > min as u64,
         Rule::AtLeast(min) => value >= min as u64,
+        Rule::AtMost(max) => value <= max as u64,
         Rule::Budget => value >= 1,
         Rule::PowerOfTwo(min, max) => within(min, max) && value.is_power_of_two(),
         Rule::Multiple(step, min, max) => within(min, max) && value.is_multiple_of(step as u64),
@@ -512,6 +533,7 @@ fn whole_kept(value: u64, rule: Rule) -> u64 {
         Rule::AboveTo(min, max) => value.clamp(min as u64 + 1, max as u64),
         Rule::Above(min) => value.max(min as u64 + 1),
         Rule::AtLeast(min) => value.max(min as u64),
+        Rule::AtMost(max) => value.min(max as u64),
         Rule::Budget => value.max(1),
         Rule::PowerOfTwo(min, max) => clamp(min, max).next_power_of_two().min(max as u64),
         Rule::Multiple(step, min, max) => {
@@ -565,6 +587,7 @@ impl Setting for f64 {
             Rule::AboveTo(min, max) => value > min && value <= max,
             Rule::Above(min) => value.is_finite() && value > min,
             Rule::AtLeast(min) => value.is_finite() && value >= min,
+            Rule::AtMost(max) => value.is_finite() && value <= max,
             Rule::Budget | Rule::PowerOfTwo(..) | Rule::Multiple(..) => {
                 panic!("rule_needs_whole_number {field}")
             }
@@ -595,6 +618,7 @@ impl Setting for String {
             | Rule::AboveTo(..)
             | Rule::Above(_)
             | Rule::AtLeast(_)
+            | Rule::AtMost(_)
             | Rule::Budget
             | Rule::PowerOfTwo(..)
             | Rule::Multiple(..)
@@ -751,8 +775,7 @@ macro_rules! fields {
                 }
             }
 
-            #[cfg(feature = "schema")]
-            pub fn state_rules(schema: &mut schemars::Schema) {
+            pub fn state_rules(schema: &mut $crate::__private::schemars::Schema) {
                 $($crate::fields::state(
                     schema,
                     stringify!($field),
@@ -787,13 +810,13 @@ macro_rules! fields {
     };
     (extra_rules; $($rest:tt)*) => {
         $crate::fields!(
-            @declare [#[cfg_attr(feature = "schema", schemars(transform = Self::state_rules))]] extra
+            @declare [#[schemars(transform = Self::state_rules)]] extra
             $($rest)*
         );
     };
     ($($rest:tt)*) => {
         $crate::fields!(
-            @declare [#[cfg_attr(feature = "schema", schemars(transform = Self::state_rules))]] plain
+            @declare [#[schemars(transform = Self::state_rules)]] plain
             $($rest)*
         );
     };

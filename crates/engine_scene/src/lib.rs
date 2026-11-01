@@ -10,12 +10,14 @@ mod environment;
 mod files;
 mod hierarchy;
 mod instance;
+mod loading;
 mod material;
 mod texture;
 mod validation;
 mod views;
 mod writer;
 
+pub use components::SceneKinds;
 pub use document::{
     MAX_SOURCE_BYTES, MeshSource, SceneCamera, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
     SceneSurface, SceneTransform, SceneVertex,

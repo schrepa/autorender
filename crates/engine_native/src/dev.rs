@@ -34,6 +34,7 @@ pub struct DevSession<G: Game> {
     controls: BTreeMap<String, GameControl<G>>,
     parameters: BTreeMap<String, String>,
     source: Option<Source>,
+    files: BTreeMap<String, Vec<u8>>,
     artifacts: PathBuf,
     pix: Option<Pix>,
     captures: u32,
@@ -59,6 +60,7 @@ impl<G: Game> DevSession<G> {
             controls: BTreeMap::new(),
             parameters: BTreeMap::new(),
             source: None,
+            files: BTreeMap::new(),
             artifacts,
             pix: None,
             captures: 0,
@@ -110,8 +112,14 @@ impl<G: Game> DevSession<G> {
         self
     }
 
-    pub(crate) fn play(&mut self, document: &str) {
+    pub(crate) fn play(&mut self, document: &str) -> engine::Result<()> {
         self.source = Some(Source::Document(document.to_owned()));
+        let files = engine::smokes::scene_files(document, &self.files)?;
+        self.game.host_mut().reload_scene(document, &files)
+    }
+
+    pub(crate) fn file(&mut self, name: &str, bytes: &[u8]) {
+        self.files.insert(name.to_owned(), bytes.to_vec());
     }
 
     pub fn run(mut self) -> engine::Result<()> {
@@ -289,7 +297,8 @@ impl<G: Game> DevSession<G> {
         let path = match &self.source {
             None => return Ok(None),
             Some(Source::Document(document)) => {
-                return Ok(Some((document.clone(), SceneFiles::default())));
+                let files = engine::smokes::scene_files(document, &self.files)?;
+                return Ok(Some((document.clone(), files)));
             }
             Some(Source::File(path)) => path,
         };

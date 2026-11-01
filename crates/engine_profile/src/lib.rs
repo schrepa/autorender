@@ -17,9 +17,8 @@ pub use allocator::{
 };
 #[cfg(feature = "bricks")]
 pub use bricks::{
-    BrickHeap, BrickScope, CORE, CORE_NAME, MAX_BRICKS, allocation_cost_ms, brick_heap,
-    brick_index, brick_name, current_brick, enter, install_clock, scope_cost_ms, take_scopes,
-    take_spent,
+    BrickHeap, BrickScope, CORE, MAX_BRICKS, allocation_cost_ms, brick_heap, current_brick, enter,
+    install_clock, scope_cost_ms, take_scopes, take_spent,
 };
 #[cfg(feature = "enabled")]
 pub use collector::*;

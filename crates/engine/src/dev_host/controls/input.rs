@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use super::super::{DevHost, InputBatch};
 use crate::app_host::AppHost;
-use engine_core::{ActionInput, Error, ErrorCode, InputState};
+use engine_core::{ActionInput, Error, ErrorCode, MoveInput};
 use engine_dev::bounds;
 use engine_dev::results::{InputResult, StepResult, result};
 use engine_settings::Setting;
@@ -39,7 +39,7 @@ pub(super) fn step(
         .app
         .world_mut()
         .modify_resource(|actions: &mut ActionInput| actions.ingest(held.0, held.1, held.2));
-    let input = InputState {
+    let input = MoveInput {
         move_forward: host.input.forward,
         move_right: host.input.right,
         move_up: host.input.up,

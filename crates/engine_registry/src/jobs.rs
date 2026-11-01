@@ -1,20 +1,38 @@
-use std::any::Any;
+use std::any::{Any, TypeId};
 use std::sync::Arc;
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{SystemBuffer, SystemMeta};
 use bevy_ecs::world::DeferredWorld;
 use engine_math::collections::HashMap;
-use engine_place::{Error, ErrorCode, JobRef};
+use engine_place::{Error, ErrorCode, JobRef, List};
 use sha2::{Digest, Sha256};
 
 pub type JobKindRef = &'static (dyn Any + Send + Sync);
+
+pub type JobMember = (TypeId, Box<dyn Any + Send + Sync>);
+
+#[derive(Clone, Copy, Debug)]
+pub enum RecordParity {
+    Exact,
+    Within(fn(&[u8], &[u8]) -> bool),
+}
+
+impl RecordParity {
+    pub fn holds(self, handed: &[u8], made: &[u8]) -> bool {
+        match self {
+            Self::Exact => handed == made,
+            Self::Within(alike) => alike(handed, made),
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct JobList {
     pub names: Vec<&'static str>,
     sources: Vec<[u8; 32]>,
     kinds: Vec<JobKindRef>,
+    members: Vec<JobMember>,
     hash: [u8; 32],
 }
 
@@ -39,13 +57,28 @@ impl JobList {
             names: listed.iter().map(|&(name, _, _)| name).collect(),
             sources: listed.iter().map(|&(_, source, _)| source).collect(),
             kinds: listed.iter().map(|&(_, _, kind)| kind).collect(),
+            members: Vec::new(),
             hash: hash.finalize().into(),
         })
+    }
+
+    #[must_use]
+    pub fn with_members(mut self, members: Vec<JobMember>) -> Self {
+        self.members = members;
+        self
     }
 
     pub fn find(&self, name: &str, source: &[u8; 32]) -> Option<JobKindRef> {
         let index = self.names.binary_search_by(|probe| probe.cmp(&name)).ok()?;
         (self.sources[index] == *source).then_some(self.kinds[index])
+    }
+
+    pub fn members<L: List>(&self) -> impl Iterator<Item = &L::Member> + '_ {
+        let list = TypeId::of::<L>();
+        self.members
+            .iter()
+            .filter(move |(of, _)| *of == list)
+            .filter_map(|(_, member)| member.downcast_ref::<L::Member>())
     }
 
     pub fn named(&self, name: &str) -> Option<JobRef> {
@@ -125,7 +158,10 @@ pub enum JobOrder {
     },
     Keep {
         key: [u8; 32],
+        kind: &'static str,
+        source: [u8; 32],
         bytes: Vec<u8>,
+        parity: RecordParity,
     },
 }
 

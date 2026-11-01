@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use engine_core::{BrickList, Job, JobCx, JobKind, JobRef, RecordKey};
+use engine_core::{BrickList, Job, JobCx, JobRef, RecordKey};
 use engine_registry::{JobList, Shares};
 use engine_settings::{Error, ErrorCode, Expected};
 
@@ -27,13 +27,7 @@ pub const SLICE_MS: f64 = 8.0;
 pub const STEP_UNITS: u64 = 4096;
 
 pub fn job_list(list: impl FnOnce(BrickList) -> BrickList) -> Result<JobList, Error> {
-    let listed = list(BrickList::default());
-    let kinds: Vec<&'static JobKind> = listed
-        .listed()
-        .iter()
-        .flat_map(|brick| brick.jobs().iter().copied())
-        .collect();
-    engine_core::job_list(&kinds)
+    list(BrickList::default()).job_list()
 }
 
 fn hex_key(hex: &str, path: &str) -> Result<[u8; 32], Error> {
@@ -287,7 +281,9 @@ macro_rules! __export_worker {
                 let list =
                     $crate::job_list(|list| $list(list)).map_err($crate::__private::js_error)?;
                 let worker = $crate::Worker::new(::std::sync::Arc::new(list), performance_now);
-                worker.handshake(hash).map_err($crate::__private::js_error)?;
+                worker
+                    .handshake(hash)
+                    .map_err($crate::__private::js_error)?;
                 Ok(Self { worker })
             }
 

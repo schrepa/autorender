@@ -1,10 +1,12 @@
 mod host;
 
-use std::sync::Arc;
+use std::collections::BTreeMap;
 
-use engine_core::{BrickList, Engine, ErrorCode, MAX_DEV_TICKS, RecordKey};
+use engine_core::{
+    BrickList, Engine, ErrorCode, JobExchange, MAX_DEV_TICKS, MISSING_RECORD, smoke_eq,
+};
 pub use engine_core::{Runs, Smoke, SmokeFailure, SmokeSession};
-use engine_registry::{JobOrder, Registry};
+use engine_registry::Registry;
 use engine_scene::{SceneFiles, SceneInstance};
 use serde_json::{Map, Value, json};
 
@@ -27,6 +29,7 @@ pub struct SmokeEntry {
     pub runs: Runs,
     pub run: fn(&mut dyn SmokeSession) -> std::result::Result<(), SmokeFailure>,
     pub without: Option<&'static str>,
+    pub list: Option<fn(BrickList) -> BrickList>,
 }
 
 impl SmokeEntry {
@@ -37,6 +40,7 @@ impl SmokeEntry {
             runs: smoke.runs,
             run: smoke.run,
             without: None,
+            list: None,
         }
     }
 
@@ -44,9 +48,10 @@ impl SmokeEntry {
         Self {
             name: Box::leak(format!("left_out.{package}").into_boxed_str()),
             owner: package,
-            runs: Runs::Headless,
-            run: left_out,
+            runs: Runs::Gpu,
+            run: |_| Ok(()),
             without: Some(package),
+            list: None,
         }
     }
 
@@ -55,23 +60,51 @@ impl SmokeEntry {
     }
 
     pub fn bricks(&self, bricks: &BrickList) -> BrickList {
-        match self.without {
-            Some(package) => bricks.clone().without_package(package),
+        let listed = match self.list {
+            Some(list) => list(bricks.clone()),
             None => bricks.clone(),
+        };
+        match self.without {
+            Some(package) => listed.without_package(package),
+            None => listed,
         }
     }
 
-    pub fn run_in(
-        &self,
-        session: &mut dyn SmokeSession,
-    ) -> std::result::Result<(), SmokeFailure> {
-        (self.run)(session)
+    pub fn run_in(&self, session: &mut dyn SmokeSession) -> std::result::Result<(), SmokeFailure> {
+        match self.without {
+            Some(package) => left_out(session, package),
+            None => (self.run)(session),
+        }
     }
 }
 
-fn left_out(session: &mut dyn SmokeSession) -> std::result::Result<(), SmokeFailure> {
+fn left_out(
+    session: &mut dyn SmokeSession,
+    package: &'static str,
+) -> std::result::Result<(), SmokeFailure> {
+    let paused = session.request("control", json!({ "name": "pause" }));
+    smoke_eq!(paused.is_ok(), true, "pauses");
+    let status = session
+        .request("query", json!({ "name": "status" }))
+        .map(|reply| reply["result"]["features"].clone())
+        .unwrap_or_default();
+    let features = status.as_array().cloned().unwrap_or_default();
+    smoke_eq!(features.is_empty(), false, "status_names_bricks_added");
+    smoke_eq!(
+        json!({ "without": package, "listed": features.contains(&json!(package)) }),
+        json!({ "without": package, "listed": false }),
+        "status_leaves_brick_out"
+    );
     session.step(1);
-    let _ = session.frame();
+    let rendered = session
+        .request("control", json!({ "name": "render" }))
+        .map_err(|reply| reply["error"].clone());
+    smoke_eq!(
+        json!({ "without": package, "error": rendered.err() }),
+        json!({ "without": package, "error": null }),
+        "renders_without_brick"
+    );
+    smoke_eq!(session.frame(), true, "frames_without_brick");
     Ok(())
 }
 
@@ -97,53 +130,53 @@ pub fn engine_of(bricks: BrickList) -> Result<Engine> {
     crate::game::listed(bricks)
 }
 
-pub struct SmokeGame;
-
-impl Game for SmokeGame {}
+pub type SceneBuild<G> = fn(&str, &SceneFiles, &mut Engine) -> Result<G>;
 
 pub enum Played<G> {
-    Plain(SmokeGame),
+    Plain(SceneBuild<G>),
     Scene(G),
 }
 
 pub fn played<G>(
     source: Option<&str>,
     engine: &mut Engine,
-    scene: impl FnOnce(&str, &SceneFiles, &mut Engine) -> Result<G>,
+    scene: SceneBuild<G>,
 ) -> Result<Played<G>> {
     let Some(document) = source else {
-        return Ok(Played::Plain(SmokeGame));
+        return Ok(Played::Plain(scene));
     };
-    Ok(Played::Scene(scene(document, &SceneFiles::default(), engine)?))
+    Ok(Played::Scene(scene(
+        document,
+        &SceneFiles::default(),
+        engine,
+    )?))
 }
 
 impl<G: Game> Game for Played<G> {
     const ACTIONS: &'static [(&'static str, u32)] = G::ACTIONS;
 
     fn before_frame(&mut self, engine: &mut Engine) {
-        match self {
-            Self::Plain(game) => game.before_frame(engine),
-            Self::Scene(game) => game.before_frame(engine),
+        if let Self::Scene(game) = self {
+            game.before_frame(engine);
         }
     }
 
     fn reset_camera(&mut self, engine: &mut Engine) {
-        match self {
-            Self::Plain(game) => game.reset_camera(engine),
-            Self::Scene(game) => game.reset_camera(engine),
+        if let Self::Scene(game) = self {
+            game.reset_camera(engine);
         }
     }
 
     fn scene(&self) -> Option<&SceneInstance> {
         match self {
-            Self::Plain(game) => game.scene(),
+            Self::Plain(_) => None,
             Self::Scene(game) => game.scene(),
         }
     }
 
     fn content(&self, engine: &Engine) -> Option<Vec<u8>> {
         match self {
-            Self::Plain(game) => game.content(engine),
+            Self::Plain(_) => None,
             Self::Scene(game) => game.content(engine),
         }
     }
@@ -155,7 +188,11 @@ impl<G: Game> Game for Played<G> {
         files: &SceneFiles,
     ) -> Result<()> {
         match self {
-            Self::Plain(game) => game.reload_scene(engine, source, files),
+            Self::Plain(scene) => {
+                let built = scene(source, files, engine)?;
+                *self = Self::Scene(built);
+                Ok(())
+            }
             Self::Scene(game) => game.reload_scene(engine, source, files),
         }
     }
@@ -260,6 +297,18 @@ pub fn request_line(verb: &str, body: Value) -> String {
     Value::Object(fields).to_string()
 }
 
+pub fn routed(world: &bevy_ecs::world::World, verb: &str, body: Value) -> String {
+    if engine_dev::Verb::named(verb).is_some() {
+        return request_line(verb, body);
+    }
+    let control = world
+        .get_resource::<Registry>()
+        .and_then(|registry| registry.operation(verb))
+        .is_some_and(|operation| operation.control);
+    let asked = if control { "control" } else { "query" };
+    request_line(asked, json!({ "name": verb, "args": body }))
+}
+
 pub fn answered(reply: Value) -> std::result::Result<Value, Value> {
     if reply["ok"] == true {
         Ok(reply)
@@ -282,24 +331,73 @@ fn json(value: &impl serde::Serialize) -> Value {
     serde_json::to_value(value).unwrap_or(Value::Null)
 }
 
+pub fn scene_files(document: &str, files: &BTreeMap<String, Vec<u8>>) -> Result<SceneFiles> {
+    let mut load = crate::host::SceneLoad::new(document)?;
+    for read in load.take_reads() {
+        let Some(bytes) = files.get(&read.uri) else {
+            continue;
+        };
+        if let Some(image) = load.read(&read.uri, bytes.clone())? {
+            load.decode(&read.uri, &image)?;
+        }
+    }
+    load.finish()
+}
+
 pub struct Headless<G: Game> {
     pub engine: Engine,
     pub game: G,
     tools: engine_dev::DevTools,
-    worker: engine_worker::Worker,
+    source: Option<String>,
+    files: BTreeMap<String, Vec<u8>>,
 }
 
 impl<G: Game> Headless<G> {
     pub fn new(engine: Engine, game: G) -> Self {
         let mut tools = engine_dev::DevTools::default();
         G::inspectors(&mut crate::game::Inspectors::new(&mut tools));
-        let worker = engine_worker::Worker::new(engine.job_list(), crate::host::now_ms);
         Self {
             engine,
             game,
             tools,
-            worker,
+            source: None,
+            files: BTreeMap::new(),
         }
+    }
+
+    pub fn file(&mut self, name: &str, bytes: &[u8]) {
+        self.files.insert(name.to_owned(), bytes.to_vec());
+    }
+
+    pub fn source(&mut self, document: &str) -> Result<()> {
+        self.source = Some(document.to_owned());
+        let files = scene_files(document, &self.files)?;
+        self.game.reload_scene(&mut self.engine, document, &files)?;
+        self.engine.reset_clock();
+        Ok(())
+    }
+
+    fn reload(
+        &mut self,
+        expected_revision: &str,
+        revision: &str,
+    ) -> std::result::Result<Value, Value> {
+        let Some(source) = self.source.clone() else {
+            return Err(json(
+                &Error::new(ErrorCode::UnsupportedCommand, "$.name").got("reload"),
+            ));
+        };
+        let files = scene_files(&source, &self.files).map_err(|error| json(&error))?;
+        crate::game_host::reload_checked(
+            &mut self.game,
+            &mut self.engine,
+            &source,
+            (expected_revision, revision),
+            &files,
+        )
+        .map_err(|error| json(&error))?;
+        self.engine.reset_clock();
+        Ok(json!({"reloaded": true, "saved_by_reload": false}))
     }
 
     pub fn request(&mut self, line: &str) -> Value {
@@ -323,7 +421,7 @@ impl<G: Game> Headless<G> {
 
     fn control(&mut self, envelope: &engine_dev::Envelope) -> Value {
         use engine_dev::results::{RenderResult, StepResult, result};
-        use engine_dev::{Control, HostControl};
+        use engine_dev::{BrowserControl, Control, HostControl};
         let control = match self
             .tools
             .parse_control(self.engine.app.world(), envelope, true)
@@ -339,6 +437,13 @@ impl<G: Game> Headless<G> {
             Control::Operation(call) => call
                 .apply(&mut self.engine, self.game.scene())
                 .map_err(|error| json(&error)),
+            Control::Host(HostControl::Loop(BrowserControl::Reload {
+                expected_revision,
+                revision,
+            })) => self.reload(&expected_revision, &revision),
+            Control::Host(HostControl::Loop(BrowserControl::Jobs { workers: 0 })) => {
+                Ok(self.status()["result"].clone())
+            }
             Control::Host(HostControl::Step { ticks }) => match self.engine.step_fixed(ticks) {
                 Ok(_) => Ok(result::step(StepResult {
                     ticks,
@@ -405,33 +510,31 @@ impl<G: Game> Headless<G> {
     }
 
     fn run_jobs(&mut self) {
-        let orders = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_registry::JobQueue>()
-            .map(|mut queue| std::mem::take(&mut queue.orders))
-            .unwrap_or_default();
-        for order in orders {
-            match order {
-                JobOrder::Start {
-                    key, kind, input, ..
-                }
-                | JobOrder::Fetch {
-                    key, kind, input, ..
-                } => {
-                    let record = self.worker.run(kind, &input).map(Arc::from);
-                    self.engine.arrive(RecordKey::from_hash(key), record);
-                }
-                JobOrder::Share { key, bytes } => self.worker.share(key, bytes),
-                JobOrder::Cancel { .. } | JobOrder::Keep { .. } => {}
-            }
+        let world = self.engine.app.world_mut();
+        let Some(mut jobs) = world.get_resource_mut::<JobExchange>() else {
+            return;
+        };
+        let (mut requests, mut fetches) = (Vec::new(), Vec::new());
+        let (mut shares, mut keeps, mut cancels) = (Vec::new(), Vec::new(), Vec::new());
+        jobs.take_shares(&mut shares);
+        jobs.take_keeps(&mut keeps);
+        jobs.take_cancels(&mut cancels);
+        jobs.take_requests(&mut requests);
+        jobs.take_fetches(&mut fetches);
+        for request in requests {
+            let output = jobs.run_here(&request.kind, &request.input);
+            jobs.complete(request.id, output);
+        }
+        for fetch in fetches {
+            jobs.complete(fetch.id, Err(MISSING_RECORD.to_owned()));
         }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 pub mod page {
+    use std::collections::BTreeMap;
+
     use engine_core::{BrickList, SmokeFailure, SmokeSession};
     use engine_dev::{Effect, HostContext, Outcome, Step};
     use serde_json::Value;
@@ -440,7 +543,7 @@ pub mod page {
 
     use super::{
         Build, FRAME_MS, Headless, SmokeEntry, SmokeRecord, answered, engine_of, fault, json,
-        request_line, select,
+        routed, scene_files, select,
     };
     use crate::{Game, GameHost, RenderTarget, Result};
 
@@ -452,6 +555,7 @@ pub mod page {
     struct Page<G: Game> {
         backend: Backend<G>,
         source: Option<String>,
+        files: BTreeMap<String, Vec<u8>>,
         size: (u32, u32),
         paused: bool,
         clock: f64,
@@ -470,7 +574,7 @@ pub mod page {
         let size = (canvas.width().max(1), canvas.height().max(1));
         let mut gpu = None;
         let mut passed = true;
-        for entry in select(entries, names)? {
+        for entry in select(entries, names).map_err(engine_settings::js_error)? {
             let record = record(entry, &canvas, size, bricks, build, &mut gpu).await;
             passed &= record.ok;
             report.call1(&JsValue::NULL, &JsValue::from_str(&record.line()))?;
@@ -503,6 +607,7 @@ pub mod page {
         let mut page = Page {
             backend,
             source: None,
+            files: BTreeMap::new(),
             size,
             paused: true,
             clock: 0.0,
@@ -607,7 +712,18 @@ pub mod page {
                             Step::Effect(effect) => {
                                 step = match (effect, self.source.as_deref()) {
                                     (Effect::Source, Some(document)) => {
-                                        host.dev_reloaded(document, None, &context)
+                                        match scene_files(document, &self.files) {
+                                            Ok(files) => {
+                                                host.dev_reloaded(document, Some(&files), &context)
+                                            }
+                                            Err(error) => {
+                                                let outcome = Outcome {
+                                                    failed: Some(json(&error).to_string()),
+                                                    ..Outcome::default()
+                                                };
+                                                host.dev_resume(outcome, &context)
+                                            }
+                                        }
                                     }
                                     (effect, _) => {
                                         let outcome = carry(
@@ -635,7 +751,11 @@ pub mod page {
 
     impl<G: Game> SmokeSession for Page<G> {
         fn request(&mut self, verb: &str, body: Value) -> std::result::Result<Value, Value> {
-            answered(self.send(&request_line(verb, body)))
+            let line = match &self.backend {
+                Backend::Headless(headless) => routed(headless.engine.app.world(), verb, body),
+                Backend::Gpu(host) => routed(host.engine().app.world(), verb, body),
+            };
+            answered(self.send(&line))
         }
 
         fn step(&mut self, ticks: u32) {
@@ -662,6 +782,21 @@ pub mod page {
 
         fn source(&mut self, document: &str) {
             self.source = Some(document.to_owned());
+            let loaded = match &mut self.backend {
+                Backend::Headless(headless) => headless.source(document),
+                Backend::Gpu(host) => scene_files(document, &self.files)
+                    .and_then(|files| host.reload_scene(document, &files)),
+            };
+            if let Err(error) = loaded {
+                self.faults.push(fault("source", &error));
+            }
+        }
+
+        fn file(&mut self, name: &str, bytes: &[u8]) {
+            self.files.insert(name.to_owned(), bytes.to_vec());
+            if let Backend::Headless(headless) = &mut self.backend {
+                headless.file(name, bytes);
+            }
         }
     }
 }

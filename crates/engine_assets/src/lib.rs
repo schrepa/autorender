@@ -12,7 +12,9 @@ mod texture;
 
 pub use cards::{AlphaImage, trim_cards};
 pub use engine_lodbuild::{LodInput, LodLevel, MeshLods, MeshVertex};
-pub use library::{AssetBudget, AssetLibrary, MaterialHandle, MeshHandle, TextureHandle};
+pub use library::{
+    AssetBudget, AssetLibrary, MaterialHandle, MeshHandle, SceneAssets, TextureHandle,
+};
 pub use lod::{lod_input, takes_levels};
 pub use material::{
     AlphaMode, Filter, Grounding, MAX_GROUNDING_HEIGHT, MAX_WORLD_TILING, Material,

@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Commands, Res, ResMut, SystemParamItem};
 use bevy_ecs::world::World;
-use engine_core::{Camera, Error, Operation};
+use engine_core::{Camera, Error, Operation, SceneContext};
 use engine_registry::Registry;
 use engine_settings::{ErrorCode, Expected};
 use serde::{Deserialize, Serialize};
@@ -36,8 +36,7 @@ fn view_far() -> f32 {
 
 engine_settings::fields! {
     extra_rules;
-    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct SceneView {
         pub name: String = String::new() => id,
@@ -174,8 +173,12 @@ pub fn show_look(world: &mut World, name: &str, path: &str) -> Result<(), Error>
     let Some(look) = look_named(world.get_resource::<SceneViews>(), name, path)? else {
         return Ok(());
     };
-    look.environment.check(world, &look.at)?;
-    look.apply(world)
+    let context = crate::loading::kept(world);
+    crate::loading::within(context.as_ref(), || {
+        look.environment
+            .check_in(world.get_resource::<Registry>(), &look.at)?;
+        look.apply(world)
+    })
 }
 
 fn view_camera(views: Option<&SceneViews>, name: &str, path: &str) -> Result<Camera, Error> {
@@ -245,18 +248,22 @@ impl Operation for SceneLookControl {
     type Params = (
         Option<Res<'static, SceneViews>>,
         Option<Res<'static, Registry>>,
+        Option<Res<'static, SceneContext>>,
         Commands<'static, 'static>,
     );
     type Request = Self;
 
     fn run(
-        (views, registry, mut commands): SystemParamItem<'_, '_, Self::Params>,
+        (views, registry, context, mut commands): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<Value, Error> {
         if let Some(look) = look_named(views.as_deref(), &request.name, "$.name")? {
-            look.environment.check_in(registry.as_deref(), &look.at)?;
+            let context = context.as_deref().cloned();
+            crate::loading::within(context.as_ref(), || {
+                look.environment.check_in(registry.as_deref(), &look.at)
+            })?;
             commands.queue(move |world: &mut World| {
-                let _ = look.apply(world);
+                let _ = crate::loading::within(context.as_ref(), || look.apply(world));
             });
         }
         Ok(json!({ "temporary": true, "look": request.name }))

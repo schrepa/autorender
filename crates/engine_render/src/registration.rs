@@ -5,9 +5,9 @@ use std::sync::Arc;
 use bevy_ecs::system::SystemState;
 use bevy_ecs::world::World;
 use engine_core::{DrawPoint, Error, ErrorCode};
-use engine_registry::Scope;
+use engine_registry::{DrawMember, RawDraw, Scope};
 
-use crate::encode::{EncodeCore, FrameCore, RawDraw};
+use crate::encode::{EncodeCore, FrameCore};
 use crate::install::InstallCore;
 use crate::{Draw, Encode, GpuPart, Install, Pass, Prepare};
 
@@ -30,6 +30,8 @@ impl PartRecord {
         }
     }
 }
+
+pub(crate) struct Generated(pub(crate) &'static [&'static str]);
 
 pub(crate) struct DrawAny {
     pub(crate) part: TypeId,
@@ -71,14 +73,6 @@ impl<D: DrawPoint> DrawRecord<D> {
     pub(crate) fn member(&self, part: u32) -> DrawMember<D> {
         (self.make)(part)
     }
-}
-
-type Call<D> = Box<dyn Fn(&dyn Any, &<D as DrawPoint>::Args, &mut RawDraw<'_>) -> u32 + Send + Sync>;
-
-pub(crate) struct DrawMember<D: DrawPoint> {
-    pub(crate) part: u32,
-    pub(crate) layer: D::Layer,
-    pub(crate) call: Call<D>,
 }
 
 fn trampoline<P: GpuPart, D: DrawPoint>(

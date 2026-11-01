@@ -1,35 +1,7 @@
-use std::sync::Arc;
-
 use engine_core::collections::HashMap;
-use engine_core::{JobRef, JobStats, RecordKey};
-
-pub const MISSING_RECORD: &str = "no store holds the record";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct JobId(pub u64);
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct JobRequest {
-    pub id: JobId,
-    pub kind: JobRef,
-    pub input: Vec<u8>,
-    pub priority: u32,
-    pub record: Option<RecordKey>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct RecordFetch {
-    pub id: JobId,
-    pub record: RecordKey,
-    pub priority: u32,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum JobShare {
-    Clear,
-    Set { key: RecordKey, bytes: Arc<[u8]> },
-    Remove { key: RecordKey },
-}
+use engine_core::{
+    JobId, JobRef, JobRequest, JobShare, MISSING_RECORD, RecordFetch, RecordKey, RecordParity,
+};
 
 #[derive(Debug)]
 pub enum JobMessage {
@@ -37,174 +9,7 @@ pub enum JobMessage {
     Share(JobShare),
     Run(JobRequest),
     Fetch(RecordFetch),
-    Keep(RecordKey, Option<JobRef>, Vec<u8>),
-}
-
-#[derive(Debug)]
-enum Asker {
-    World(RecordKey),
-    Host,
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct HostJobs {
-    next: u64,
-    asked: HashMap<u64, Asker>,
-    running: HashMap<[u8; 32], JobId>,
-    held: HashMap<u64, Result<Vec<u8>, String>>,
-    outbox: Vec<JobMessage>,
-    shared: HashMap<[u8; 32], u64>,
-    stats: JobStats,
-}
-
-impl HostJobs {
-    fn id(&mut self) -> JobId {
-        self.next += 1;
-        JobId(self.next)
-    }
-
-    pub(crate) fn take(&mut self, orders: Vec<engine_registry::JobOrder>) -> Vec<JobMessage> {
-        use engine_registry::JobOrder as World;
-        for order in orders {
-            match order {
-                World::Start {
-                    key,
-                    kind,
-                    source,
-                    input,
-                    priority,
-                } => self.run(key, JobRef::named(kind, source), input, priority, false),
-                World::Fetch {
-                    key,
-                    kind,
-                    source,
-                    input,
-                    priority,
-                } => self.run(key, JobRef::named(kind, source), input, priority, true),
-                World::Cancel { key } => {
-                    if let Some(id) = self.running.remove(&key) {
-                        self.asked.remove(&id.0);
-                        self.stats.cancelled += 1;
-                        self.outbox.push(JobMessage::Cancel(id));
-                    }
-                }
-                World::Share { key, bytes } => {
-                    self.shared.insert(key, bytes.len() as u64);
-                    self.outbox.push(JobMessage::Share(JobShare::Set {
-                        key: RecordKey::from_hash(key),
-                        bytes,
-                    }));
-                }
-                World::Keep {
-                    key,
-                    kind,
-                    source,
-                    bytes,
-                } => self.outbox.push(JobMessage::Keep(
-                    RecordKey::from_hash(key),
-                    Some(JobRef::named(kind, source)),
-                    bytes,
-                )),
-            }
-        }
-        std::mem::take(&mut self.outbox)
-    }
-
-    fn run(&mut self, key: [u8; 32], kind: JobRef, input: Vec<u8>, priority: u32, cooked: bool) {
-        if self.running.contains_key(&key) {
-            return;
-        }
-        let id = self.id();
-        let record = RecordKey::from_hash(key);
-        self.running.insert(key, id);
-        self.asked.insert(id.0, Asker::World(record));
-        self.stats.submitted += 1;
-        self.outbox.push(JobMessage::Run(JobRequest {
-            id,
-            kind,
-            input,
-            priority,
-            record: cooked.then_some(record),
-        }));
-    }
-
-    pub(crate) fn fetch_here(&mut self, record: RecordKey, priority: u32) -> JobId {
-        let id = self.id();
-        self.asked.insert(id.0, Asker::Host);
-        self.outbox
-            .push(JobMessage::Fetch(RecordFetch { id, record, priority }));
-        id
-    }
-
-    pub(crate) fn keep_here(&mut self, record: RecordKey, bytes: Vec<u8>) {
-        self.outbox.push(JobMessage::Keep(record, None, bytes));
-    }
-
-    pub(crate) fn take_here(&mut self, id: JobId) -> Option<Result<Vec<u8>, String>> {
-        self.held.remove(&id.0)
-    }
-
-    pub(crate) fn finish(
-        &mut self,
-        id: JobId,
-        output: Result<Vec<u8>, String>,
-    ) -> Option<(RecordKey, Result<Vec<u8>, String>)> {
-        match self.asked.remove(&id.0)? {
-            Asker::World(key) => {
-                self.running.remove(&key.hash());
-                match &output {
-                    Ok(_) => self.stats.completed += 1,
-                    Err(_) => self.stats.failed += 1,
-                }
-                Some((key, output))
-            }
-            Asker::Host => {
-                self.held.insert(id.0, output);
-                None
-            }
-        }
-    }
-
-    pub(crate) fn clear(&mut self) {
-        self.asked.clear();
-        self.running.clear();
-        self.held.clear();
-        self.shared.clear();
-        self.outbox.clear();
-        self.outbox.push(JobMessage::Share(JobShare::Clear));
-    }
-
-    pub(crate) fn set_workers(&mut self, workers: u32) {
-        self.stats.workers = workers;
-    }
-
-    pub(crate) fn workers(&self) -> u32 {
-        self.stats.workers
-    }
-
-    pub(crate) fn ran_here(&mut self) {
-        self.stats.in_place += 1;
-    }
-
-    pub(crate) fn report_cache(&mut self, hits: u64, misses: u64, bytes: u64, mismatches: u64) {
-        self.stats.cache_hits = hits;
-        self.stats.cache_misses = misses;
-        self.stats.cache_bytes = bytes;
-        self.stats.cache_mismatches = mismatches;
-    }
-
-    pub(crate) fn report_held(&mut self, held: u32) {
-        self.stats.held = held;
-    }
-
-    pub(crate) fn stats(&self) -> JobStats {
-        JobStats {
-            running: self.running.len() as u32,
-            shares: self.shared.len() as u32,
-            shared_bytes: self.shared.values().sum(),
-            ..self.stats
-        }
-    }
+    Keep(RecordKey, Option<JobRef>, Vec<u8>, RecordParity),
 }
 
 #[derive(Debug)]
@@ -315,15 +120,15 @@ impl JobScheduler {
                     _ => self.dispatch(request),
                 },
                 JobMessage::Fetch(fetch) if self.caching => {
-                    self.lookup(fetch.id, fetch.record, None, Looking::Fetch);
+                    self.lookup(fetch.id, fetch.record, fetch.kind, Looking::Fetch);
                 }
                 JobMessage::Fetch(fetch) => {
                     finished.push((fetch.id, Err(MISSING_RECORD.to_owned())));
                 }
-                JobMessage::Keep(record, kind, output) => {
+                JobMessage::Keep(record, kind, output, parity) => {
                     let key = record.hex();
                     if let Some(handed) = self.fetched.remove(&key) {
-                        if handed != output {
+                        if !parity.holds(&handed, &output) {
                             self.orders.push(JobOrder::Mismatch { key, kind });
                         }
                     } else if self.caching {

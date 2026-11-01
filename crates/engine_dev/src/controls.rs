@@ -49,6 +49,12 @@ impl BrowserControl {
                     "$.interval_ms",
                 )?;
             }
+            Self::Probe {
+                alpha: Some(alpha), ..
+            } => {
+                validated_presentation_alpha(*alpha)?;
+            }
+            Self::Probe { alpha: None, .. } => {}
             Self::Game { name, .. } => {
                 let valid = name.len() <= 64
                     && name.starts_with(|first: char| first.is_ascii_lowercase())
@@ -94,7 +100,8 @@ impl BrowserControl {
             | Self::DebugPanic { .. }
             | Self::DebugFault { .. }
             | Self::DebugDeviceLoss { .. }
-            | Self::DebugMissingAsset { .. } => {}
+            | Self::DebugMissingAsset { .. }
+            | Self::Jobs { .. } => {}
         }
         Ok(())
     }
@@ -263,7 +270,7 @@ fn missing_asset(
             .got(entity)
     })?;
     let world = engine.app.world_mut();
-    let mesh = crate::inspect::authored_entity(world, scene, entity)
+    let mesh = crate::inspect::authored_entity(scene, entity)
         .and_then(|entity| world.get::<Mesh3d>(entity))
         .map(|mesh3d| mesh3d.mesh)
         .ok_or_else(|| {

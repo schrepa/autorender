@@ -1,44 +1,86 @@
+use std::collections::BTreeSet;
+
 use bevy_ecs::world::World;
-use engine_core::{RenderFrame, RenderStats};
+use engine_core::{
+    AssetLibrary, AssetResidency, FrameTime, MaterialHandle, Mesh3d, MeshHandle, RenderFrame,
+    RenderStats, View,
+};
 
 use super::*;
 use crate::CameraUniform;
+use crate::gpu_calls::Handover;
 use crate::graph::Bits;
 use crate::install::Work;
 use crate::machine::Target;
+use crate::profiling::Span;
+
+const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
+
+struct Viewed {
+    view_projection: Mat4,
+    eye: glam::Vec3,
+    detail: glam::Vec3,
+    seconds: f32,
+}
+
+fn mark_between(encoder: &mut wgpu::CommandEncoder, end: Option<Span<'_>>, begin: Option<Span<'_>>) {
+    if let Some(end) = end {
+        end.mark(encoder, true);
+    }
+    if let Some(begin) = begin {
+        begin.mark(encoder, false);
+    }
+}
 
 fn camera_of(
-    snapshot: &engine_core::RenderSnapshot,
-    resolve: Option<crate::Resolve>,
-    previous: Option<Mat4>,
+    viewed: &Viewed,
+    temporal: Option<(crate::Resolve, Mat4)>,
     region: crate::targets::FrameRegion,
-    seconds: (f32, f32),
+    previous_seconds: f32,
 ) -> CameraUniform {
-    let temporal = resolve.filter(|resolve| *resolve != crate::Resolve::default());
     let mut camera = match temporal {
-        Some(resolve) => {
+        Some((resolve, previous)) => {
+            let (width, height) = region.render.pixels();
+            let clip = crate::gpu_data::jitter_clip(resolve.offset.to_array(), width, height);
             let mut camera = CameraUniform::temporal(
-                snapshot.view_projection,
-                snapshot.camera_position,
-                snapshot.elapsed_seconds,
-                previous.unwrap_or(snapshot.view_projection),
-                resolve.offset.to_array(),
-                region.render.pixels(),
+                viewed.view_projection,
+                viewed.eye,
+                viewed.seconds,
+                previous,
+                clip,
+                (width, height),
                 0,
             );
             camera.options[2] = resolve.turn - resolve.turn.floor();
             camera
         }
-        None => CameraUniform::exact(
-            snapshot.view_projection,
-            snapshot.camera_position,
-            snapshot.elapsed_seconds,
-        ),
+        None => CameraUniform::exact(viewed.view_projection, viewed.eye, viewed.seconds),
     };
-    camera.set_region(snapshot.view_projection, region);
-    camera.set_detail(snapshot.detail_eye);
-    camera.wind = [0.0, 0.0, 0.0, if temporal.is_some() { seconds.0 } else { seconds.1 }];
+    camera.set_region(viewed.view_projection, region);
+    camera.set_detail(viewed.detail);
+    camera.wind = [
+        0.0,
+        0.0,
+        0.0,
+        if temporal.is_some() {
+            previous_seconds
+        } else {
+            viewed.seconds
+        },
+    ];
     camera
+}
+
+fn wanted(world: &World) -> (BTreeSet<MeshHandle>, BTreeSet<MaterialHandle>) {
+    let mut meshes = BTreeSet::new();
+    let mut materials = BTreeSet::new();
+    if let Some(mut query) = world.try_query::<&Mesh3d>() {
+        for drawn in query.iter(world) {
+            meshes.insert(drawn.mesh);
+            materials.insert(drawn.material);
+        }
+    }
+    (meshes, materials)
 }
 
 impl Renderer {
@@ -70,12 +112,43 @@ impl Renderer {
             }
         }
         run.live = live;
+        let resident = run.assets.meshes.residency();
+        let published = world
+            .get_resource::<AssetResidency>()
+            .is_some_and(|known| known.generation() == resident.generation());
+        if !published {
+            let resident = resident.clone();
+            let _ = world.modify_resource(|known: &mut AssetResidency| *known.table_mut() = resident);
+        }
     }
 
+    fn mark(&self, encoder: Option<&mut wgpu::CommandEncoder>, end: Option<&'static str>, begin: Option<&'static str>) {
+        let Some(encoder) = encoder else {
+            return;
+        };
+        let span = |name: Option<&'static str>| self.core.profiler.span(name?);
+        mark_between(encoder, span(end), span(begin));
+    }
+
+    fn frame_encoder(&self, device: &wgpu::Device, batch: u8) -> wgpu::CommandEncoder {
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("engine/frame-encoder"),
+        });
+        let busy = |batch: u8| self.core.profiler.busy(BATCHES.get(usize::from(batch))?);
+        mark_between(&mut encoder, None, busy(batch));
+        encoder
+    }
+
+    fn close_batch(&self, encoder: &mut wgpu::CommandEncoder, batch: u8) {
+        let busy = self.core.profiler.busy(BATCHES.get(usize::from(batch)).copied().unwrap_or_default());
+        mark_between(encoder, busy, None);
+    }
+
+    #[expect(clippy::too_many_lines, reason = "longer than the line ceiling; it may only shrink")]
     fn render(&mut self, frame: RenderFrame<'_>, display: bool) -> Result<RenderStats, Error> {
-        let _profile = engine_profile::span("render", "render_frame");
+        let _profile = engine_profile::span("render", "render_snapshot");
         self.check_health()?;
-        let snapshot = frame.snapshot();
+        let gpu_mode = frame.gpu().is_some();
         let world = frame.world();
         let debug = world
             .get_resource::<crate::DebugShown>()
@@ -91,26 +164,79 @@ impl Renderer {
             return Ok(RenderStats::default());
         };
         let device = self.core.device.clone();
-        let mesh_bytes = upload_meshes(&device, &self.core.queue, &mut run.assets, &snapshot.meshes);
-        let (texture_bytes, mips) = run.assets.materials.upload_frame(&device, &self.core.queue, snapshot);
-        if let Some(encoder) = mips {
-            self.core.queue.hand(crate::gpu_calls::Handover::from(encoder));
+        let profile_upload = engine_profile::span("render", "asset_uploads");
+        let (meshes, materials) = wanted(world);
+        let mut mesh_bytes = 0;
+        let mut texture_bytes = 0;
+        let mut mips = None;
+        if let Some(library) = world.get_resource::<AssetLibrary>() {
+            run.assets.meshes.retain(|handle| library.mesh(handle).is_some());
+            run.assets
+                .materials
+                .retain(|handle| library.material(handle).is_some(), |handle| library.texture(handle).is_some());
+            for &handle in &meshes {
+                let (Some(mesh), Some(lods)) = (library.mesh(handle), library.mesh_lods(handle)) else {
+                    continue;
+                };
+                mesh_bytes += run.assets.meshes.upload(&device, &self.core.queue, handle, mesh, lods.map(|lods| &**lods));
+            }
+            let sources = materials
+                .iter()
+                .filter_map(|&handle| Some((handle, library.material(handle)?, library.material_version(handle)?)));
+            let (bytes, _) = run.assets.materials.upload(
+                &device,
+                &self.core.queue,
+                sources,
+                |handle| library.texture(handle).map(|texture| &**texture),
+                &mut mips,
+            );
+            texture_bytes += bytes;
         }
+        drop(profile_upload);
         run.frame += 1;
         run.parity = (run.frame % 2) as usize;
         run.debug = debug;
         run.drawn = 0;
         run.region = region.upscales().then(|| region.render.pixels());
+        run.asked_frame = world.get_resource::<FrameTime>().map_or(run.frame, |time| time.frame);
+        let settings = world.get_resource::<crate::RenderSettings>().cloned().unwrap_or_default();
+        run.readback_slots = settings.readback_slots.max(1) as usize;
+        run.readback_slot_bytes = settings.readback_slot_bytes;
+        run.switches = super::install::switches_of(&run.machine, world);
         run.drop_unfilled();
-        let seconds = snapshot.elapsed_seconds;
-        let previous_seconds = self.seconds.replace(seconds).unwrap_or(seconds);
-        let resolve = world.get_resource::<crate::Resolve>().copied();
-        run.cameras[0] = camera_of(snapshot, resolve, self.previous, region, (previous_seconds, seconds));
-        self.previous = Some(snapshot.view_projection);
+        let viewed = match world.get_resource::<View>() {
+            Some(view) => Viewed {
+                view_projection: view.view_projection(),
+                eye: view.state().eye(),
+                detail: view.detail_eye(),
+                seconds: world.get_resource::<FrameTime>().map_or(0.0, |time| time.elapsed_seconds as f32),
+            },
+            None => Viewed {
+                view_projection: Mat4::IDENTITY,
+                eye: glam::Vec3::ZERO,
+                detail: glam::Vec3::ZERO,
+                seconds: 0.0,
+            },
+        };
+        let previous_seconds = self.seconds.replace(viewed.seconds).unwrap_or(viewed.seconds);
+        let resolve = world
+            .get_resource::<crate::Resolve>()
+            .copied()
+            .filter(|resolve| *resolve != crate::Resolve::default());
+        let size = region.display.pixels();
+        let temporal = resolve.filter(|_| display && gpu_mode && !debug).map(|resolve| {
+            let previous = self
+                .previous
+                .filter(|(_, known)| *known == size)
+                .map_or(viewed.view_projection, |(previous, _)| previous);
+            (resolve, previous)
+        });
+        run.cameras[0] = camera_of(&viewed, temporal, region, previous_seconds);
+        self.previous = temporal.map(|_| (viewed.view_projection, size));
         run.post = crate::shared::post_uniform(
-            snapshot.view_projection,
-            snapshot.camera_position,
-            snapshot.detail_eye,
+            viewed.view_projection,
+            viewed.eye,
+            viewed.detail,
             region.render.pixels(),
             region.display.pixels(),
         );
@@ -118,31 +244,49 @@ impl Renderer {
             .texture()
             .create_view(&wgpu::TextureViewDescriptor::default());
         run.size_targets(region.display.pixels(), Some(canvas));
+        let profile_writes = engine_profile::span("render", "queue_writes");
         self.core.profiler.begin_frame(&device);
+        let capturing = self.core.profiler.capturing();
+        let Some(run) = self.run.as_mut() else {
+            return Ok(RenderStats::default());
+        };
+        run.merge = !capturing;
         run.runs = Bits::of(run.machine.graph.passes());
         for at in run.machine.declared.passes.len()..run.machine.graph.passes() {
             run.runs.insert(at);
         }
         for index in 0..run.parts.len() {
-            let live = run.live.get(index).copied().unwrap_or(true)
-                && run.faulted.get(index).is_some_and(Option::is_none);
-            if !live {
+            if !run.drawable(index as u32) {
                 continue;
             }
             let Some(mut held) = run.parts[index].take() else {
                 continue;
             };
             run.part = index as u32;
+            let package = run.machine.declared.parts.get(index).map_or(crate::linker::CORE_PACKAGE, |part| part.package);
+            let _owner = crate::memory::owned(package);
             if let Err(error) = held.prepare(world, run) {
                 run.fault(error);
             }
             run.parts[index] = Some(held);
+        }
+        if let Some(library) = world.get_resource::<AssetLibrary>() {
+            for texture in std::mem::take(&mut run.wanted_textures) {
+                if let Some(source) = library.texture(texture) {
+                    let (bytes, _) = run.assets.materials.upload_texture(&device, &self.core.queue, (texture, true), source, &mut mips);
+                    texture_bytes += bytes;
+                }
+            }
+        }
+        if let Some(encoder) = mips {
+            self.core.queue.hand(Handover::from(encoder));
         }
         run.write_cameras();
         run.write_post();
         let bytes = piece_bytes(world, &run.piece_layout);
         run.write_pieces(bytes);
         run.refresh_groups();
+        drop(profile_writes);
         let mut outputs = Bits::of(run.machine.graph.resources());
         if let Some(canvas) = run.machine.ids.target(Target::Canvas) {
             outputs.insert(canvas.index());
@@ -156,25 +300,33 @@ impl Renderer {
             .plans
             .plan(&run.machine.graph, &run.runs, &outputs, crate::graph::PLANS)?
             .clone();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("engine/frame-encoder"),
-        });
+        let profile_encoding = engine_profile::span("render", "command_encoding");
+        let mut encoder = self.frame_encoder(&device, 0);
         self.core.display.time_begin(&mut encoder);
+        let Some(run) = self.run.as_mut() else {
+            return Ok(RenderStats::default());
+        };
         run.encoder = Some(encoder);
         let mut batch = 0;
+        let mut timed: Option<&'static str> = None;
         let declared = run.machine.declared.passes.len();
         for planned in &plan.passes {
             if planned.batch != batch {
-                run.end_render();
-                if let Some(encoder) = run.encoder.take() {
-                    self.core.queue.hand(crate::gpu_calls::Handover::from(encoder));
+                let Some(run) = self.run.as_mut() else { break };
+                run.leave();
+                let mut ended = run.encoder.take();
+                self.mark(ended.as_mut(), timed.take(), None);
+                if let Some(mut encoder) = ended {
+                    self.close_batch(&mut encoder, batch);
+                    self.core.queue.hand(Handover::from(encoder));
                 }
-                run.encoder = Some(device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("engine/frame-encoder"),
-                }));
+                let encoder = self.frame_encoder(&device, planned.batch);
+                let Some(run) = self.run.as_mut() else { break };
+                run.encoder = Some(encoder);
                 batch = planned.batch;
             }
             let index = planned.pass.index();
+            let Some(run) = self.run.as_mut() else { break };
             if index >= declared {
                 if let Some(&(layer, view)) = run.machine.view_copies.get(index - declared) {
                     run.copy_view(layer, view);
@@ -183,13 +335,25 @@ impl Renderer {
             }
             let pass = &run.machine.declared.passes[index];
             let (part, work) = (pass.part, pass.work);
-            let live = run.live.get(part as usize).copied().unwrap_or(true)
-                && run.faulted.get(part as usize).is_some_and(Option::is_none);
-            if !live {
+            if !run.drawable(part) {
                 continue;
             }
             run.part = part;
             run.pass = index as u32;
+            run.planned = Some(planned.clone());
+            if run.enter(index as u32) {
+                let span = self.spans.get(index).copied();
+                let Some(run) = self.run.as_mut() else { break };
+                let mut encoder = run.encoder.take();
+                self.mark(encoder.as_mut(), timed, span);
+                timed = span;
+                let Some(run) = self.run.as_mut() else { break };
+                run.encoder = encoder;
+                run.group(index as u32);
+            }
+            let Some(run) = self.run.as_mut() else { break };
+            let package = run.machine.declared.parts.get(part as usize).map_or(crate::linker::CORE_PACKAGE, |part| part.package);
+            let _owner = crate::memory::owned(package);
             match work {
                 Work::Copy { .. } => run.copy(index as u32),
                 Work::Clear(buffer) => run.clear_buffer(buffer),
@@ -197,19 +361,25 @@ impl Renderer {
                     let Some(mut held) = run.parts[part as usize].take() else {
                         continue;
                     };
-                    run.planned = Some(planned.clone());
-                    #[cfg(any(not(target_arch = "wasm32"), feature = "profiling"))]
-                    if let Some(encoder) = run.encoder.as_mut()
-                        && run.open.is_none()
-                    {
-                        encoder.insert_debug_marker(pass_label(&run.machine, index));
-                    }
                     run.drawn += held.encode(index as u32, run);
                     run.parts[part as usize] = Some(held);
                 }
             }
         }
-        run.end_render();
+        let Some(run) = self.run.as_mut() else {
+            return Ok(RenderStats::default());
+        };
+        run.leave();
+        let mut encoder = run.encoder.take().unwrap_or_else(|| {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("engine/frame-encoder"),
+            })
+        });
+        self.mark(Some(&mut encoder), timed, None);
+        let Some(run) = self.run.as_mut() else {
+            return Ok(RenderStats::default());
+        };
+        run.encoder = Some(encoder);
         run.record_readbacks();
         let mut encoder = run.encoder.take().unwrap_or_else(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -217,13 +387,20 @@ impl Renderer {
             })
         });
         self.core.display.time_end(&device, &mut encoder);
+        self.close_batch(&mut encoder, batch);
         self.core.profiler.end_frame(&mut encoder);
-        self.core.queue.hand(crate::gpu_calls::Handover::from(encoder));
+        drop(profile_encoding);
+        let profile_submit = engine_profile::span("render", "submit_and_present");
+        self.core.queue.hand(Handover::from(encoder));
         self.core.queue.settle();
         self.core.profiler.submitted();
         surface.present(&self.core.queue);
+        let Some(run) = self.run.as_mut() else {
+            return Ok(RenderStats::default());
+        };
         run.map_readbacks();
         crate::platform::poll(&device);
+        drop(profile_submit);
         Ok(RenderStats {
             draw_calls: run.drawn,
             upload_bytes: mesh_bytes + texture_bytes,
@@ -235,10 +412,6 @@ impl Renderer {
             ..RenderStats::default()
         })
     }
-}
-
-fn pass_label(machine: &crate::machine::Machine, index: usize) -> &'static str {
-    machine.declared.passes.get(index).map_or("", |pass| pass.name)
 }
 
 fn piece_bytes(world: &World, layout: &[(usize, crate::pieces::PieceAt)]) -> Vec<u8> {
