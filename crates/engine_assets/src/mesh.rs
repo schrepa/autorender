@@ -1,19 +1,12 @@
 use std::sync::Arc;
 
-use engine_settings::{Error, ErrorCode, Expected};
+use engine_codec::{Error, ErrorCode, Expected};
 use glam::Vec3;
 
-use crate::MeshLods;
+use crate::{MeshLods, MeshVertex};
 
 fn invalid(path: impl Into<String>) -> Error {
     Error::new(ErrorCode::InvalidMesh, path)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct MeshVertex {
-    pub position: [f32; 3],
-    pub normal: [f32; 3],
-    pub uv: [f32; 2],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

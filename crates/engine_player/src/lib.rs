@@ -9,6 +9,4 @@ mod browser;
 pub mod native;
 mod player;
 
-include!(concat!(env!("OUT_DIR"), "/source.rs"));
-
-pub use player::{PlayerWalk, ScenePlayer, bricks};
+pub use player::ScenePlayer;

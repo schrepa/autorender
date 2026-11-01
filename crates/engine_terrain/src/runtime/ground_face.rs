@@ -1,433 +1,158 @@
-use std::sync::Arc;
+use super::*;
+use crate::jobs::GROUND_GRID;
+use engine_core::JobRef;
+use engine_places::ground::{Ground, GroundObstacle, GroundPoint, GroundQuery};
 
-use bevy_ecs::prelude::{Entity, Resource, World};
-use engine_core::math::max;
-use engine_core::{Error, ErrorCode, Expected, Pyramid, RecordKey, TileKey, section_in};
-use engine_places::{
-    Ground, GroundBridge, GroundFace, GroundGrid, GroundObstacle, GroundPoint, GroundRead,
-    GroundRecord, GroundRegions, GroundSource, GroundWorker,
-};
-use glam::Vec2;
+struct GroundTerrain {
+    origin: Vec3,
+    pyramid: Pyramid,
+    cutout: Option<(Vec2, Vec2)>,
+    around: bool,
+    tiles: HashMap<TileKey, Arc<Tile>>,
+    colliders: Vec<Option<PlacedCollider>>,
+}
 
-use super::residency::{TerrainState, reaches};
-use super::{PlacedShape, Terrains, Water};
-use crate::codec::{self, record};
-use crate::jobs::{TerrainWorker, TileJob, WalkedTile, stamped, tile_output};
-use crate::layer::{Below, Row, maps};
-use crate::tile::RiverInputs;
-use crate::{
-    Generator, HydrologySample, Layers, PathSample, SampleShape, Stamp, TILE_QUADS, TILE_SAMPLES,
-    TILE_STRIDE, Tile, TileWater,
-};
-
-pub(crate) struct TerrainGround;
-
-impl GroundFace for TerrainGround {
-    fn point(&self, world: &World, x: f32, z: f32) -> Option<GroundPoint> {
-        world
-            .get_resource::<Terrains>()?
-            .entries
-            .iter()
-            .find_map(|state| {
-                let origin = state.terrain.origin;
-                let local = Vec2::new(x - origin.x, z - origin.z);
-                let (level, sample) = state.sample(local)?;
-                let material = nearest(state, level, local)
-                    .and_then(|(tile, [column, row])| tile.control_at(column, row))
-                    .map(|control| control.a);
-                Some(GroundPoint {
-                    height: origin.y + sample.height,
-                    normal: sample.normal,
-                    level,
-                    hole: sample.hole,
-                    material,
-                })
-            })
-    }
-
-    fn map(&self, world: &World, name: &str, x: f32, z: f32) -> Option<f32> {
-        world
-            .get_resource::<Terrains>()?
-            .entries
-            .iter()
-            .find_map(|state| {
-                let origin = state.terrain.origin;
-                let local = Vec2::new(x - origin.x, z - origin.z);
-                let (level, _) = state.sample(local)?;
-                Some(map_at(state, name, level, local))
-            })
-            .flatten()
-    }
-
-    fn revision(&self, world: &World) -> u64 {
-        world
-            .get_resource::<Terrains>()
-            .map_or(0, Terrains::revision)
-    }
-
-    fn obstacles(&self, world: &World, ground: Entity) -> Vec<GroundObstacle> {
-        world
-            .get_resource::<Terrains>()
-            .and_then(|terrains| {
-                terrains
-                    .entries
-                    .iter()
-                    .find(|state| state.entity == ground && state.around.is_none())
-            })
-            .map_or_else(Vec::new, obstacles)
-    }
-
-    fn source(&self, world: &World, from: Vec2, to: Vec2) -> GroundRead<GroundSource> {
-        let Some(terrains) = world.get_resource::<Terrains>() else {
-            return GroundRead::Off;
-        };
-        let Some(state) = walked(terrains, from, to) else {
-            return GroundRead::Off;
-        };
-        let (Some(recipe), Some(layers)) = (state.recipe.as_ref(), terrains.layers(state.entity))
-        else {
-            return GroundRead::Waiting;
-        };
-        let Some(stack) = terrains
-            .stacks
-            .iter()
-            .find(|(stack, _)| Arc::ptr_eq(stack, &recipe.stack))
-            .map(|(_, key)| key.clone())
-        else {
-            return GroundRead::Waiting;
-        };
-        let pyramid = state.terrain.pyramid;
-        let edits: Vec<Stamp> = state.terrain.edits.iter().map(|edit| edit.stamp).collect();
-        let identity = codec::encode(&GroundIdentity {
-            stack,
-            pyramid,
-            edits: edits.clone(),
-        });
-        let bridges = ground_bridges(&layers);
-        GroundRead::Ready(GroundSource {
-            ground: state.entity,
+impl GroundTerrain {
+    fn of(state: &TerrainState) -> Self {
+        Self {
             origin: state.terrain.origin,
-            pyramid,
-            identity: Arc::from(identity),
-            regions: Arc::new(TerrainRegions {
-                recipe: recipe.key.clone(),
-                pyramid,
-                edits,
-                layers,
-                bridges,
-            }),
+            pyramid: state.terrain.pyramid,
+            cutout: state.around.as_ref().map(|around| around.cutout),
+            around: state.around.is_some(),
+            tiles: state
+                .store
+                .tiles()
+                .map(|tile| (tile.key(), Arc::clone(tile)))
+                .collect(),
+            colliders: state
+                .terrain
+                .surface
+                .assets
+                .iter()
+                .map(|asset| asset.collider)
+                .collect(),
+        }
+    }
+
+    fn cut_out(&self, local: Vec2) -> bool {
+        self.cutout.is_some_and(|(low, high)| {
+            local.x > low.x && local.y > low.y && local.x < high.x && local.y < high.y
         })
     }
 
-    fn heightfield(&self) -> bool {
-        true
-    }
-}
-
-struct GroundIdentity {
-    stack: String,
-    pyramid: Pyramid,
-    edits: Vec<Stamp>,
-}
-
-record!(GroundIdentity {
-    stack,
-    pyramid,
-    edits,
-});
-
-struct TerrainRegions {
-    recipe: String,
-    pyramid: Pyramid,
-    edits: Vec<Stamp>,
-    layers: Arc<Layers>,
-    bridges: Arc<[GroundBridge]>,
-}
-
-pub(super) fn keyed_tile(key: TileKey, output: &[u8]) -> Result<Tile, Error> {
-    let tile = tile_output(output)?;
-    if tile.key() != key {
-        return Err(codec::invalid("$.key").got([
-            u16::from(tile.key().level),
-            tile.key().x,
-            tile.key().z,
-        ]));
-    }
-    Ok(tile)
-}
-
-pub(super) fn walked_tile(
-    worker: &TerrainWorker,
-    identity: &[u8],
-    key: TileKey,
-) -> Result<(Tile, Arc<Layers>, Pyramid), Error> {
-    let GroundIdentity {
-        stack,
-        pyramid,
-        edits,
-    } = codec::decode(identity)?;
-    if !pyramid.contains(key) {
-        return Err(Error::new(ErrorCode::OutOfRange, "$.key").got([
-            u16::from(key.level),
-            key.x,
-            key.z,
-        ]));
-    }
-    let layers = worker
-        .stack(&stack)
-        .ok_or_else(|| Error::new(ErrorCode::UnknownReference, "$.stack").got(&stack))?;
-    let layers = stamped(layers, &reaching(&edits, &pyramid, key))?;
-    let mut whole = u64::MAX;
-    let tile = Generator::new(layers.clone(), &pyramid, key)
-        .advance(&mut whole)
-        .ok_or_else(|| {
-            Error::new(ErrorCode::InvalidTerrain, "$.heights").expected(Expected::Finite)
-        })?;
-    let tile: Tile = codec::decode(&codec::encode(&tile))?;
-    Ok((tile, layers, pyramid))
-}
-
-pub(super) fn tile_surfaces(tile: &Tile) -> Option<Box<[f32]>> {
-    let side = TILE_SAMPLES as usize;
-    let stride = TILE_STRIDE as usize;
-    let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
-    let surfaces = tile.water().map(TileWater::surfaces)?;
-    let mut water = vec![f32::NAN; side * side].into_boxed_slice();
-    for z in 0..side {
-        for x in 0..side {
-            water[z * side + x] = surfaces[stored(x, z)];
+    fn sample(&self, local: Vec2) -> Option<(u32, TileSample)> {
+        if self.cut_out(local) {
+            return None;
         }
-    }
-    Some(water)
-}
-
-fn reaching(edits: &[Stamp], pyramid: &Pyramid, key: TileKey) -> Vec<Stamp> {
-    edits
-        .iter()
-        .copied()
-        .filter(|stamp| reaches(stamp, pyramid, key))
-        .collect()
-}
-
-fn ground_bridges(layers: &Layers) -> Arc<[GroundBridge]> {
-    layers
-        .bridges()
-        .into_iter()
-        .map(|bridge| GroundBridge {
-            deck: bridge.deck,
-            width: bridge.width,
-            tunnel: bridge.tunnel,
+        let pyramid = &self.pyramid;
+        (0..pyramid.levels()).find_map(|level| {
+            let key = pyramid.tile_at(level, local)?;
+            let tile = self.tiles.get(&key)?;
+            let sample = tile.sample(local - pyramid.tile_origin(key))?;
+            Some((level, sample))
         })
-        .collect()
+    }
+
+    fn nearest(&self, level: u32, local: Vec2) -> Option<(&Arc<Tile>, [i32; 2])> {
+        let key = self.pyramid.tile_at(level, local)?;
+        let tile = self.tiles.get(&key)?;
+        let at = local - self.pyramid.tile_origin(key);
+        let spacing = tile.spacing();
+        Some((
+            tile,
+            [
+                (at.x / spacing).round() as i32,
+                (at.y / spacing).round() as i32,
+            ],
+        ))
+    }
 }
 
-fn ground_grid(
-    tile: &Tile,
-    layers: &Layers,
-    pyramid: &Pyramid,
-    bridges: Arc<[GroundBridge]>,
-) -> GroundGrid {
-    let side = TILE_SAMPLES as usize;
-    let key = tile.key();
-    let spacing = pyramid.spacing(u32::from(key.level));
-    let stride = TILE_STRIDE as usize;
-    let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
-    let mut heights = vec![0.0; side * side].into_boxed_slice();
-    for z in 0..side {
-        for x in 0..side {
-            heights[z * side + x] = tile.heights()[stored(x, z)];
+pub(crate) struct TerrainGround {
+    terrains: Vec<GroundTerrain>,
+}
+
+impl TerrainGround {
+    pub(crate) fn of(terrains: &Terrains) -> Self {
+        Self {
+            terrains: terrains.entries.iter().map(GroundTerrain::of).collect(),
         }
     }
-    let first = pyramid.first_sample(key);
-    GroundGrid {
-        key,
-        spacing,
-        heights,
-        holes: holes(layers, first, spacing),
-        bridges,
-    }
 }
 
-fn position(sample: [i64; 2], spacing: f32) -> Vec2 {
-    Vec2::new(sample[0] as f32, sample[1] as f32) * spacing
-}
-
-fn holes(layers: &Layers, first: [i64; 2], spacing: f32) -> Option<Box<[u64]>> {
-    let side = TILE_SAMPLES as usize;
-    let quads = TILE_QUADS as i64;
-    let last = [first[0] + quads, first[1] + quads];
-    if !layers.holes_reach(position(first, spacing), position(last, spacing)) {
-        return None;
+impl GroundQuery for TerrainGround {
+    fn point(&self, at: Vec2) -> Option<GroundPoint> {
+        self.terrains.iter().find_map(|terrain| {
+            let origin = terrain.origin;
+            let local = Vec2::new(at.x - origin.x, at.y - origin.z);
+            let (level, sample) = terrain.sample(local)?;
+            let material = terrain
+                .nearest(level, local)
+                .and_then(|(tile, [column, row])| tile.control_at(column, row))
+                .map(|control| control.a);
+            Some(GroundPoint {
+                height: origin.y + sample.height,
+                normal: sample.normal,
+                level,
+                hole: sample.hole,
+                material,
+            })
+        })
     }
-    let mut bits = vec![0_u64; (side * side).div_ceil(64)];
-    let mut any = false;
-    for z in 0..side {
-        for x in 0..side {
-            let point = position([first[0] + x as i64, first[1] + z as i64], spacing);
-            if layers.hole_at(point.x, point.y) {
-                let index = z * side + x;
-                bits[index / 64] |= 1 << (index % 64);
-                any = true;
+
+    fn obstacles(&self, low: Vec2, high: Vec2, found: &mut Vec<GroundObstacle>) {
+        for terrain in self.terrains.iter().filter(|terrain| !terrain.around) {
+            let origin = Vec2::new(terrain.origin.x, terrain.origin.z);
+            let mut keys: Vec<&TileKey> = terrain.tiles.keys().collect();
+            keys.sort_unstable();
+            for key in keys {
+                for placed in terrain.tiles[key].placed() {
+                    let Some(collider) = terrain
+                        .colliders
+                        .get(usize::from(placed.asset))
+                        .copied()
+                        .flatten()
+                    else {
+                        continue;
+                    };
+                    let reach = match collider.shape {
+                        PlacedShape::Sphere { radius } => radius,
+                        PlacedShape::Cuboid { half_extents } => {
+                            engine_math::max(half_extents[0], half_extents[2])
+                        }
+                    };
+                    let center = origin + Vec2::new(placed.position[0], placed.position[2]);
+                    let radius = reach * placed.scale;
+                    if center.x + radius < low.x
+                        || center.y + radius < low.y
+                        || center.x - radius > high.x
+                        || center.y - radius > high.y
+                    {
+                        continue;
+                    }
+                    found.push(GroundObstacle { center, radius });
+                }
             }
         }
     }
-    any.then(|| bits.into_boxed_slice())
-}
 
-fn nearest(state: &TerrainState, level: u32, local: Vec2) -> Option<(&Arc<Tile>, [i32; 2])> {
-    let pyramid = &state.terrain.pyramid;
-    let key = pyramid.tile_at(level, local)?;
-    let tile = state.store.get(&key)?;
-    let at = local - pyramid.tile_origin(key);
-    let spacing = tile.spacing();
-    Some((
-        tile,
-        [
-            (at.x / spacing).round() as i32,
-            (at.y / spacing).round() as i32,
-        ],
-    ))
-}
-
-fn map_at(state: &TerrainState, name: &str, level: u32, local: Vec2) -> Option<f32> {
-    let (tile, [column, row]) = nearest(state, level, local)?;
-    let layers: &Layers = state.baked.as_ref().unwrap_or(&state.terrain.layers);
-    let pyramid = &state.terrain.pyramid;
-    let stride = TILE_STRIDE as usize;
-    let stored = |at: i32| (at.clamp(-1, stride as i32 - 2) + 1) as usize;
-    let (column, row) = (stored(column), stored(row));
-    let (up, down) = (row.saturating_sub(1), (row + 1).min(stride - 1));
-    let (left, right) = (column.saturating_sub(1), (column + 1).min(stride - 1));
-    let heights = tile.heights();
-    let at = |r: usize, c: usize| heights[r * stride + c];
-    let height = at(row, column);
-    let spacing = tile.spacing();
-    let key = tile.key();
-    let first = pyramid.first_sample(key);
-    let sample = [first[0] + column as i64 - 1, first[1] + row as i64 - 1];
-    let offset = layers.offset_samples(spacing);
-    let x = (sample[0] + offset[0]) as f32 * spacing;
-    let z = (sample[1] + offset[1]) as f32 * spacing;
-    let shape = || {
-        SampleShape::of(
-            [up, row, down].map(|r| [left, column, right].map(|c| at(r, c))),
-            spacing,
-        )
-    };
-    let shown = layers.shown(x, z);
-    let water = || {
-        layers
-            .hydrology()
-            .filter(|_| shown > 0.0)
-            .map_or_else(HydrologySample::default, |water| {
-                RiverInputs::at(&water.rivers, [x, z], (height, spacing)).with_maps(
-                    water,
-                    [x, z],
-                    spacing,
-                )
-            })
-    };
-    let change = || {
-        let mut sum = [0.0_f32];
-        for map in layers.changes() {
-            map.change_row([x], z, spacing, |index, value| {
-                sum[index] += value;
-            });
-        }
-        sum[0] * shown
-    };
-    match name {
-        maps::HEIGHT => Some(height),
-        maps::SLOPE => {
-            let [gx, gz] = shape().gradient;
-            Some((gx * gx + gz * gz).sqrt())
-        }
-        maps::CURVATURE => Some(shape().curvature),
-        maps::FLOW => Some(water().flow * shown),
-        maps::WETNESS => Some(water().wetness * shown),
-        maps::LAKE => Some(water().lake * shown),
-        maps::RIVER => Some(water().river),
-        maps::GRAIN => Some(water().grain),
-        maps::POWER => Some(water().power),
-        maps::FLOOD => Some(water().flood),
-        maps::WORN => Some(max(-change(), 0.0)),
-        maps::DEPOSIT => Some(max(change(), 0.0)),
-        maps::PATH => {
-            let path = if shown > 0.0 {
-                layers.path_at(x, z)
-            } else {
-                PathSample::FAR
-            };
-            Some(path.distance.abs() - path.half)
-        }
-        _ => user_map(
-            (layers, pyramid),
-            name,
-            (u32::from(key.level), sample),
-            (x, z, spacing),
-        ),
+    fn grid(&self) -> Option<JobRef> {
+        self.terrains
+            .iter()
+            .any(|terrain| !terrain.around)
+            .then(|| JobRef::from(&GROUND_GRID))
     }
 }
 
-fn user_map(
-    (layers, pyramid): (&Layers, &Pyramid),
-    name: &str,
-    (level, sample): (u32, [i64; 2]),
-    (x, z, spacing): (f32, f32, f32),
-) -> Option<f32> {
-    let (index, layer) = layers
-        .layers()
-        .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, layer)| layer.outputs().iter().any(|output| output == name))?;
-    let height = layers.below(index).sample_height(pyramid, level, sample);
-    let point = Vec2::new(x, z);
-    let row = Row {
-        xs: std::slice::from_ref(&x),
-        z,
-        spacing,
-        low: point,
-        high: point,
-    };
-    let mut out = [0.0_f32];
-    layer
-        .map_row(name, Below::new(layers, index), &row, &[height], &mut out)
-        .then_some(out[0])
-}
-
-fn walked(terrains: &Terrains, from: Vec2, to: Vec2) -> Option<&TerrainState> {
-    terrains.entries.iter().find(|state| {
-        if state.around.is_some() {
-            return false;
-        }
-        let pyramid = &state.terrain.pyramid;
-        let [x, z] = pyramid.tiles(0);
-        let size = Vec2::new(x as f32, z as f32) * TILE_QUADS as f32 * pyramid.spacing(0);
-        let corner = Vec2::new(state.terrain.origin.x, state.terrain.origin.z);
-        [from, to].iter().all(|&point| {
-            let local = point - corner;
-            local.cmpge(Vec2::ZERO).all() && local.cmple(size).all()
-        })
-    })
-}
-
-fn obstacles(state: &TerrainState) -> Vec<GroundObstacle> {
-    let assets = &state.terrain.surface.assets;
-    state
-        .store
-        .tiles()
-        .flat_map(|tile| tile.placed().iter())
-        .filter_map(|placed| {
-            let collider = assets.get(usize::from(placed.asset))?.collider?;
-            let reach = match collider.shape {
-                PlacedShape::Sphere { radius } => radius,
-                PlacedShape::Cuboid { half_extents } => max(half_extents[0], half_extents[2]),
-            };
-            Some(GroundObstacle {
-                center: Vec2::new(placed.position[0], placed.position[2]),
-                radius: reach * placed.scale,
-            })
-        })
-        .collect()
+pub(crate) fn publish_ground(
+    terrains: Res<Terrains>,
+    mut ground: ResMut<Ground>,
+    mut published: Local<Option<(u64, u64)>>,
+) {
+    let seen = (terrains.epoch, terrains.revision());
+    if *published == Some(seen) && !ground.is_changed() {
+        return;
+    }
+    *ground = Ground(Arc::new(TerrainGround::of(&terrains)));
+    *published = Some(seen);
 }

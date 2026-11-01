@@ -3,42 +3,56 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-include!(concat!(env!("OUT_DIR"), "/source.rs"));
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use std::any::Any;
 use std::sync::Arc;
 
-use engine_core::{Brick, Bricks, Error, ErrorCode, Join, parse_value};
-use engine_terrain::codec::{Reader, Writer};
-use engine_terrain::layer::{
-    Below, LayerFiles, LayerKind, Made, Row, TerrainLayer, TerrainLayersList, no_files, same_as,
+use engine_codec::{Reader, Writer};
+use engine_core::{
+    Brick, Bricks, Error, ErrorCode, Job, JobCx, JobKind, JobRef, Source, parse_value,
 };
-use engine_terrain::layers::reaches;
-use engine_terrain::{Stamp, StampOp};
+use engine_heightfield::layer::{
+    Below, LayerFiles, LayerKind, Made, Row, TerrainLayer, no_files, no_points, same_as,
+};
+use engine_heightfield::layers::reaches;
+use engine_heightfield::{Stamp, StampOp};
+use engine_places::terrain::{self, TerrainLayers};
 use glam::Vec2;
 use serde_json::Value;
 
 pub struct LayerStampsBrick;
 
 impl Brick for LayerStampsBrick {
+    const SOURCE: &'static Source = &SOURCE;
+    const JOBS: &'static [&'static JobKind] = &[&STAMP_JOB];
+
     fn register(bricks: &mut Bricks<'_>) {
-        for &kind in KINDS {
-            bricks.join(Join::<TerrainLayersList>::new().cpu(kind));
-        }
+        bricks.join::<TerrainLayers>(
+            terrain::LayerKind {
+                layer: &STAMP,
+                job: JobRef::from(&STAMP_JOB),
+            },
+            None,
+        );
     }
 }
 
-pub static KINDS: &[&LayerKind] = &[&STAMP];
+pub static STAMP_JOB: JobKind = JobKind::new("layer_stamps::stamp", &SOURCE, refused);
 
 pub static STAMP: LayerKind = LayerKind {
     name: "stamp",
-    source: SOURCE,
+    source: SOURCE.hash(),
     from_json,
     read,
     files: no_files,
-    schema: engine_terrain::layer_schema!(schema),
-    points: engine_terrain::layer::no_points,
+    schema: engine_heightfield::schema::<Stamp>,
+    points: no_points,
 };
+
+fn refused(_input: &[u8], _cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    Err(Error::new(ErrorCode::JobUnsupported, "$.jobs"))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct StampLayer {
@@ -48,7 +62,7 @@ pub struct StampLayer {
 fn made(stamp: Stamp) -> Made {
     stamp
         .validate()
-        .map_err(|invalid| Error::from(invalid).coded(ErrorCode::InvalidTerrain))?;
+        .map_err(|error| error.coded(ErrorCode::InvalidValue))?;
     Ok(Arc::new(StampLayer { stamp }))
 }
 
@@ -58,11 +72,6 @@ fn from_json(settings: &Value, _files: &dyn LayerFiles) -> Made {
 
 fn read(input: &mut Reader<'_>) -> Made {
     made(input.get()?)
-}
-
-#[cfg(feature = "schema")]
-fn schema() -> schemars::Schema {
-    schemars::schema_for!(Stamp)
 }
 
 impl StampLayer {

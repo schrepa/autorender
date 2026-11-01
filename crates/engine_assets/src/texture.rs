@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use engine_settings::{Error, ErrorCode, Expected};
+use engine_codec::{Error, ErrorCode, Expected};
 
 pub const MAX_TEXTURE_DIMENSION: u32 = 8192;
 

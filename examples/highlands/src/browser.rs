@@ -1,3 +1,4 @@
+use engine::settings::js_error;
 use engine::{Error, ErrorCode};
 use wasm_bindgen::prelude::*;
 
@@ -20,10 +21,10 @@ impl HighlandsRocks {
         let invalid = || Error::new(ErrorCode::InvalidTexture, format!("$.{name}"));
         let format = engine::host::image_format(bytes).map(|format| format.name);
         if format != Some("ktx2-rgba8") {
-            return Err(invalid().got(format).variants(["ktx2-rgba8"]).into());
+            return Err(js_error(invalid().got(format).variants(["ktx2-rgba8"])));
         }
         let image =
-            engine::host::decode_image(name, bytes).map_err(|reason| invalid().got(reason))?;
+            engine::host::decode_image(name, bytes).map_err(|reason| js_error(invalid().got(reason)))?;
         self.maps.insert(name.to_owned(), image);
         Ok(())
     }
@@ -46,7 +47,10 @@ impl HighlandsGame {
         } else {
             RockMaps::default()
         };
-        Self::launch(canvas, move || Highlands::build(options, &rocks)).await
+        Self::launch(canvas, highlands_bricks::bricks, move |engine| {
+            Highlands::build(engine, options, &rocks)
+        })
+        .await
     }
 
     pub fn parameters() -> String {
@@ -61,7 +65,7 @@ impl HighlandsGame {
         let (engine, highlands) = self.host_mut().parts_mut();
         highlands
             .control(engine, name, value)
-            .map_err(JsValue::from)
+            .map_err(js_error)
     }
 }
 
@@ -75,11 +79,11 @@ engine::__if_dev! {
             query: String,
         ) -> Result<bool, JsValue> {
             let options = page_options(&query)?;
-            let build = move |source: Option<&str>, bricks| {
-                Highlands::played(options.clone(), source, bricks)
+            let build = move |source: Option<&str>, engine: &mut engine::Engine| {
+                Highlands::played(options.clone(), source, engine)
             };
-            let bricks = engine::bricks::standard();
-            let mut smokes = engine::smokes::registered(&bricks);
+            let bricks = highlands_bricks::bricks(engine::BrickList::default());
+            let mut smokes = engine::smokes::registered(&bricks).map_err(js_error)?;
             smokes.extend(crate::smokes());
             engine::smokes::page::run::<Highlands>(
                 canvas,
@@ -99,7 +103,7 @@ fn page_options(query: &str) -> Result<Options, JsValue> {
     let mut options = Options::default();
     for (name, _) in crate::parameters() {
         if let Some(value) = search.get(name) {
-            options.set(name, &value)?;
+            options.set(name, &value).map_err(js_error)?;
         }
     }
     Ok(options)

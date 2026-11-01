@@ -56,7 +56,6 @@ fn command(arguments: &[String]) -> Result<Value, Error> {
     } else {
         let target = options.into.as_ref().expect("target_validated");
         let original = authoring::read_scene_source(target)?;
-        drop(crate::bricks::standard_engine());
         let current = SceneDocument::from_json(&original)?;
         let revision = options.revision.expect("revision_validated");
         if current.revision != revision {
@@ -317,7 +316,7 @@ fn preserve_colliders(
             continue;
         };
         let Some(replacement) = replacements.get_mut(&old.id) else {
-            return Err(Error::new(ErrorCode::InvalidCollider, "$.replace")
+            return Err(Error::new(ErrorCode::InvalidValue, "$.replace")
                 .expected(Expected::Present)
                 .got(&old.id));
         };

@@ -1,13 +1,17 @@
 use std::sync::Arc;
 
-use engine_codec::CodecError;
+use engine_codec::Error;
 use engine_math::{max, min};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
 use crate::given::GivenRiver;
+use crate::grid::Pyramid;
 use crate::hydrology::HydrologyBake;
-use crate::layer::{ChangeMap, NoFiles, Place, TerrainLayer, layer_kind, read_entry, write_entry};
+use crate::layer::{
+    Below, ChangeMap, DrawRivers, LayerKind, Place, SamplePoint, TerrainLayer, read_entry,
+    write_entry,
+};
 use crate::path::{Bridge, PathSample};
 use crate::rivers::Rivers;
 
@@ -293,7 +297,7 @@ pub struct Fade {
 impl Layers {
     pub const MAX_COORDINATE: f32 = 1.0e7;
 
-    pub fn new(layers: Vec<Arc<dyn TerrainLayer>>) -> Result<Self, CodecError> {
+    pub fn new(layers: Vec<Arc<dyn TerrainLayer>>) -> Result<Self, Error> {
         for (index, layer) in layers.iter().enumerate() {
             layer
                 .check(Place {
@@ -372,7 +376,12 @@ impl Layers {
     }
 
     #[must_use]
-    pub fn with_drawn(&self, drawn: &[GivenRiver], baked: Option<&Self>) -> Self {
+    pub fn with_drawn(
+        &self,
+        drawn: &[GivenRiver],
+        baked: Option<&Self>,
+        make: Option<DrawRivers>,
+    ) -> Self {
         let Some(first) = self.layers.iter().position(|layer| layer.makes_water()) else {
             return self.clone();
         };
@@ -385,7 +394,7 @@ impl Layers {
             }
         }
         if !drawn.is_empty()
-            && let Some(rivers) = drawn_rivers(drawn)
+            && let Some(rivers) = make.and_then(|make| make(drawn).ok())
         {
             layers.insert(first, rivers);
         }
@@ -503,20 +512,57 @@ impl Layers {
             height + (changed - height) * shown
         }
     }
-}
 
-const RIVERS: &str = "rivers";
+    pub fn height_cost(&self) -> u64 {
+        self.layers().iter().map(|layer| layer.point_cost()).sum()
+    }
+
+    pub fn sample_height(&self, pyramid: &Pyramid, level: u32, sample: [i64; 2]) -> f32 {
+        let spacing = pyramid.spacing(level);
+        let [dx, dz] = self.offset_samples(spacing);
+        let sample = [sample[0] + dx, sample[1] + dz];
+        let x = sample[0] as f32 * spacing;
+        let z = sample[1] as f32 * spacing;
+        let point = SamplePoint {
+            sample,
+            x,
+            z,
+            spacing,
+        };
+        let mut height = 0.0_f32;
+        for (index, layer) in self.layers().iter().enumerate() {
+            if layer.makes_water() {
+                if let Some(rivers) = self.rivers_of(index) {
+                    let cut = rivers.cut(x, z, height, spacing);
+                    height = self.faded(height, cut, x, z);
+                }
+            } else {
+                layer.apply_point(Below::new(self, index), &point, &mut height);
+            }
+        }
+        height
+    }
+
+    pub fn height_at(&self, pyramid: &Pyramid, point: Vec2) -> f32 {
+        let spacing = pyramid.spacing(0);
+        let u = point.x / spacing;
+        let v = point.y / spacing;
+        let (i, j) = (u.floor(), v.floor());
+        let (fu, fv) = (u - i, v - j);
+        let (i, j) = (i as i64, j as i64);
+        let h = |di: i64, dj: i64| self.sample_height(pyramid, 0, [i + di, j + dj]);
+        if fu + fv <= 1.0 {
+            let h00 = h(0, 0);
+            h00 + fu * (h(1, 0) - h00) + fv * (h(0, 1) - h00)
+        } else {
+            let h11 = h(1, 1);
+            h11 + (1.0 - fu) * (h(0, 1) - h11) + (1.0 - fv) * (h(1, 0) - h11)
+        }
+    }
+}
 
 fn unbaked(layer: &Arc<dyn TerrainLayer>) -> Arc<dyn TerrainLayer> {
     layer.unbaked().unwrap_or_else(|| layer.clone())
-}
-
-fn drawn_rivers(drawn: &[GivenRiver]) -> Option<Arc<dyn TerrainLayer>> {
-    let kind = layer_kind(RIVERS)?;
-    let lines = serde_json::to_value(drawn).ok()?;
-    let mut settings = serde_json::Map::new();
-    settings.insert("lines".to_owned(), lines);
-    (kind.from_json)(&serde_json::Value::Object(settings), &NoFiles).ok()
 }
 
 pub fn nearest_path(layers: &[Arc<dyn TerrainLayer>], point: Vec2) -> PathSample {
@@ -533,7 +579,7 @@ pub fn reaches(center: [f32; 2], radius: f32, min: Vec2, max: Vec2) -> bool {
     nearest.distance_squared(Vec2::from(center)) <= radius * radius
 }
 
-use engine_codec::{Codec, Reader, Writer, record, tagged};
+use engine_codec::{Reader, Writer, record, tagged};
 
 tagged!(Blend {
     0 => Add,
@@ -555,8 +601,8 @@ record!(ImageLevel {
 });
 record!(Fade { low, high, blend });
 
-impl Codec for Layers {
-    fn write(&self, out: &mut Writer) {
+impl Layers {
+    pub fn write(&self, out: &mut Writer) {
         out.put(&(self.layers.len() as u64));
         for layer in &self.layers {
             write_entry(out, layer.as_ref());
@@ -564,11 +610,11 @@ impl Codec for Layers {
         out.put(&self.offset).put(&self.fade);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    pub fn read(input: &mut Reader<'_>, kinds: &[&'static LayerKind]) -> Result<Self, Error> {
         let count: u64 = input.get()?;
         let mut layers = Vec::new();
         for _ in 0..count {
-            layers.push(read_entry(input)?);
+            layers.push(read_entry(input, kinds)?);
         }
         let offset = input.get()?;
         let fade = input.get()?;

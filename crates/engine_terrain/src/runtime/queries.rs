@@ -46,7 +46,11 @@ impl Terrains {
     }
 
     pub fn stats(&self) -> TerrainStats {
-        self.stats
+        self.stats.clone()
+    }
+
+    pub fn refused(&self) -> &[(Entity, Error)] {
+        &self.refused
     }
 
     pub fn job_failures(&self) -> (u64, Option<&str>) {
@@ -64,19 +68,6 @@ impl Terrains {
             .iter()
             .find(|state| state.entity == entity && state.around.is_none())
             .map(|state| &state.terrain)
-    }
-
-    pub fn bake_record(&self, entity: Entity) -> Option<RecordKey> {
-        self.entries
-            .iter()
-            .find(|state| state.entity == entity && state.around.is_none())
-            .filter(|state| {
-                state
-                    .baked
-                    .as_ref()
-                    .is_some_and(|baked| baked.unbaked().is_none())
-            })
-            .and_then(|state| state.bake.key)
     }
 
     pub fn layers(&self, entity: Entity) -> Option<Arc<Layers>> {
@@ -97,7 +88,7 @@ impl Terrains {
             return Some(edited.clone());
         }
         let stamps: Vec<Stamp> = state.terrain.edits.iter().map(|edit| edit.stamp).collect();
-        Some(base.with_stamps(&stamps).map_or(base, Arc::new))
+        Some(crate::layers::with_stamps(&base, &stamps).map_or(base, Arc::new))
     }
 
     pub fn route(
@@ -166,19 +157,6 @@ impl Terrains {
                 state.terrain.surface.bridge,
             )
         })
-    }
-
-    pub fn falls(&self, entity: Entity) -> &[Fall] {
-        self.entries
-            .iter()
-            .find(|state| state.entity == entity && state.around.is_none())
-            .map_or(&[], |state| &state.falls)
-    }
-
-    pub(crate) fn fall_sets(&self) -> impl Iterator<Item = (Entity, Arc<[Fall]>, Vec3)> + '_ {
-        self.entries
-            .iter()
-            .map(|state| (state.entity, state.falls.clone(), state.terrain.origin))
     }
 
     pub fn revision(&self) -> u64 {

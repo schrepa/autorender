@@ -5,114 +5,91 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_core::math::{clamp, max};
 use engine_core::{
-    Brick, BrickStats, Bricks, Cooking, EnvironmentSection, Error, FixedSimulation,
-    FixedSimulationSystems, FixedTime, GAMEPLAY_JOBS, IDLE_JOBS, JobBudget, JobFailures, JobId,
-    Jobs, Join, Parent, RecordKey, TileKey, Transform, job_output, job_priority, section_in,
+    CookMode, Error, FixedTime, GAMEPLAY_JOBS, IDLE_JOBS, JobKind, JobRef, Jobs, Parent, Records,
+    Ticket, Transform, job_priority, settings, stats,
 };
-use engine_places::{
-    Ground, GroundObstacle, GroundRead, GroundRecord, GroundSource, HeightHeld, WaterBodies,
-    WaterSurfaces,
+use engine_math::{clamp, max};
+use engine_places::ground::{
+    Ground, GroundGrid, GroundObstacle, GroundRead, GroundSource, HeightHeld, Pyramid, TileKey,
 };
-use engine_scene::SceneComponentsList;
-use engine_settings::{InvalidSetting, settings};
+use engine_places::navigation::{NavAgent, NavStatus, NavWalk};
 use glam::{Quat, Vec2, Vec3};
-use serde::{Deserialize, Serialize};
 
-use crate::dev::{self, NavAgentView, NavAgentsView, NavGoControl, NavPathQuery};
-use crate::jobs::{PortalsJob, portals_output};
-use crate::scene::NAV_AGENT;
+use crate::jobs::{
+    GroundJob, PORTALS, PORTALS_NAME, PortalsJob, WALK_GROUND, WALK_GROUND_NAME, portals_output,
+};
+use crate::nav::{LEVELS, MAX_SLOPE, MAX_WATER, RADIUS, kept};
 use crate::{Gait, NavOptions, NavPath, TilePortals, WalkData, WalkGround, WalkSearch, Want};
 use cook::CookGraph;
 use records::{Resolved, WalkRecords};
 
 settings! {
-    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(
-        feature = "schema",
-        derive(schemars::JsonSchema),
-        schemars(rename = "SceneNavigation")
-    )]
-    #[serde(default, deny_unknown_fields)]
+    #[section("navigation")]
+    #[serde(deny_unknown_fields)]
+    #[schemars(rename = "SceneNavigation")]
     pub struct Navigation {
         pub enabled: bool = true => any,
         pub samples_per_tick: u32 = 32_768 => at_least(1024),
     }
 }
 
-impl Navigation {
-    pub fn off() -> Self {
-        Self {
-            enabled: false,
-            ..Self::default()
-        }
+stats! {
+    #[section("navigation_stats")]
+    pub struct NavStats {
+        pub agents: u32,
+        pub searching: u32,
+        pub waiting: u32,
+        pub walking: u32,
+        pub arrived: u32,
+        pub unreachable: u32,
+        pub work: u64,
+        pub grounds: u32,
+        pub portals: u32,
+        #[pending] pub cooking: u32,
     }
 }
 
-settings! {
-    #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[require(NavWalk, HeightHeld)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-    #[serde(default, deny_unknown_fields)]
-    pub struct NavAgent {
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub destination: Option<[f32; 2]> = None => finite,
-        pub speed: f32 = 1.4 => range(0.01, 100.0),
-        pub turn: f32 = 360.0 => range(1.0, 10_000.0),
-        pub offset: f32 = 0.0 => range(-10_000.0, 10_000.0),
-        pub radius: f32 = 0.4 => same(NavOptions::rule_of("radius")),
-        pub max_slope: f32 = 0.8 => same(NavOptions::rule_of("max_slope")),
-        pub max_water: f32 = 0.6 => same(NavOptions::rule_of("max_water")),
-        pub level: u32 = 0 => same(NavOptions::rule_of("level")),
+const SPEED: (f64, f64) = (0.01, 100.0);
+const TURN: (f64, f64) = (1.0, 10_000.0);
+const OFFSET: (f64, f64) = (-10_000.0, 10_000.0);
+
+fn sanitized(agent: &NavAgent) -> NavAgent {
+    let default = NavAgent::default();
+    NavAgent {
+        destination: agent
+            .destination
+            .filter(|to| to.iter().all(|value| value.is_finite())),
+        speed: kept(agent.speed, SPEED, default.speed),
+        turn: kept(agent.turn, TURN, default.turn),
+        offset: kept(agent.offset, OFFSET, default.offset),
+        radius: kept(agent.radius, RADIUS, default.radius),
+        max_slope: kept(agent.max_slope, MAX_SLOPE, default.max_slope),
+        max_water: kept(agent.max_water, MAX_WATER, default.max_water),
+        level: agent.level.clamp(LEVELS.0 as u32, LEVELS.1 as u32),
     }
 }
 
-impl NavAgent {
-    fn options(&self) -> NavOptions {
-        NavOptions {
-            level: self.level,
-            max_slope: self.max_slope,
-            radius: self.radius,
-            max_water: self.max_water,
-        }
+fn options(agent: &NavAgent) -> NavOptions {
+    NavOptions {
+        level: agent.level,
+        max_slope: agent.max_slope,
+        radius: agent.radius,
+        max_water: agent.max_water,
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum NavStatus {
-    #[default]
-    Idle,
-    Searching,
-    Walking,
-    Arrived,
-    Unreachable,
+#[derive(Default)]
+struct Failures {
+    count: u64,
+    last: Option<(u64, String)>,
 }
 
-#[derive(Component, Clone, Debug, Default)]
-pub struct NavWalk {
-    pub status: NavStatus,
-    pub destination: Option<[f32; 2]>,
-    pub points: Vec<Vec3>,
-    pub next: usize,
-    pub length: f32,
-    pub searched: usize,
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct NavStats {
-    pub agents: u32,
-    pub searching: u32,
-    pub waiting: u32,
-    pub walking: u32,
-    pub arrived: u32,
-    pub unreachable: u32,
-    pub work: u64,
-    pub grounds: u32,
-    pub portals: u32,
+impl Failures {
+    fn record(&mut self, tick: u64, error: String) {
+        self.count += 1;
+        self.last = Some((tick, error));
+    }
 }
 
 #[derive(Resource, Default)]
@@ -123,7 +100,12 @@ pub struct NavAgents {
     cook: Vec<CookGraph>,
     turn: usize,
     tick: u64,
-    failures: JobFailures,
+    failures: Failures,
+}
+
+struct Walked {
+    source: GroundSource,
+    grid: JobRef,
 }
 
 enum Search {
@@ -136,8 +118,7 @@ enum Search {
 }
 
 struct Running {
-    source: GroundSource,
-    surfaces: Surfaces,
+    walked: Walked,
     search: WalkSearch,
     held: Held,
     asked_ahead: usize,
@@ -175,28 +156,26 @@ impl Search {
 
     fn advance(
         &mut self,
-        world: &World,
-        records: &mut WalkRecords,
-        slots: &mut Option<JobBudget<'_>>,
+        ground: &Ground,
+        (records, jobs): (&mut WalkRecords, &mut Jobs),
         budget: &mut u64,
         tick: u64,
     ) -> Option<Found> {
         if let Self::Starting { from, to, options } = self {
-            let source = match ground_source(world, *from, *to) {
-                GroundRead::Ready(source) => source,
+            let walked = match ground_source(ground, *from, *to) {
+                GroundRead::Ready(walked) => walked,
                 GroundRead::Waiting => return None,
                 GroundRead::Off => return Some((Vec3::ZERO, None)),
             };
-            let corner = Vec2::new(source.origin.x, source.origin.z);
+            let corner = Vec2::new(walked.source.origin.x, walked.source.origin.z);
             let search = WalkSearch::new(
-                &source.pyramid,
+                &walked.source.pyramid,
                 (*from - corner, *to - corner),
-                ground_obstacles(world, source.ground),
+                ground_obstacles(ground, &walked.source),
                 options,
             );
             *self = Self::Running(Box::new(Running {
-                surfaces: water_surfaces(world, &source),
-                source,
+                walked,
                 search,
                 held: Held::default(),
                 asked_ahead: 0,
@@ -205,17 +184,17 @@ impl Search {
         let Self::Running(running) = self else {
             return None;
         };
-        let origin = running.source.origin;
+        let origin = running.walked.source.origin;
         loop {
-            records.ask_ahead(running, slots, tick);
+            records.ask_ahead(running, jobs, tick);
             if let Some(found) = running.search.step(budget, &running.held) {
                 return Some((origin, found));
             }
-            records.ask_ahead(running, slots, tick);
+            records.ask_ahead(running, jobs, tick);
             if running.search.wants().is_empty() {
                 return None;
             }
-            match records.resolve(running, slots, tick) {
+            match records.resolve(running, jobs, tick) {
                 Resolved::Progress => {}
                 Resolved::Waiting => return None,
                 Resolved::Failed => return Some((origin, None)),
@@ -247,12 +226,13 @@ impl NavAgents {
 
     pub fn query(
         &mut self,
-        world: &World,
-        jobs: &mut Jobs,
+        ground: &Ground,
+        (records, jobs): (&Records, &mut Jobs),
         ends: (Vec2, Vec2),
         options: &NavOptions,
     ) -> NavQuery {
-        self.records.take(jobs, self.tick, &mut self.failures);
+        self.records
+            .take(records, jobs, self.tick, &mut self.failures);
         let at = match self
             .queries
             .iter()
@@ -271,12 +251,10 @@ impl NavAgents {
                 self.queries.len() - 1
             }
         };
-        let mut slots = Some(JobBudget::of(jobs));
         let mut unlimited = u64::MAX;
         let found = self.queries[at].search.advance(
-            world,
-            &mut self.records,
-            &mut slots,
+            ground,
+            (&mut self.records, jobs),
             &mut unlimited,
             self.tick,
         );
@@ -295,25 +273,21 @@ impl NavAgents {
         }
     }
 
-    fn stop(&mut self, mut jobs: Option<&mut Jobs>) {
-        if let Some(jobs) = jobs.as_deref_mut() {
-            for id in self.cooking_jobs() {
-                jobs.cancel(id);
+    fn stop(&mut self, jobs: &mut Jobs) {
+        for graph in std::mem::take(&mut self.cook) {
+            for ticket in graph.flight {
+                jobs.cancel(ticket);
             }
         }
         self.searches.clear();
         self.queries.clear();
-        self.cook.clear();
         self.records.clear(jobs);
     }
 }
 
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum NavSystems {
-    Walk,
-}
-
-type Agents = QueryState<
+type Agents<'w, 's> = Query<
+    'w,
+    's,
     (
         Entity,
         &'static NavAgent,
@@ -323,80 +297,96 @@ type Agents = QueryState<
     Without<Parent>,
 >;
 
-fn ground_source(world: &World, from: Vec2, to: Vec2) -> GroundRead<GroundSource> {
-    world
-        .get_resource::<Ground>()
-        .map_or(GroundRead::Off, |ground| {
-            ground.face().source(world, from, to)
-        })
-}
-
-type Surfaces = Arc<[Arc<dyn WaterSurfaces>]>;
-
-fn water_surfaces(world: &World, source: &GroundSource) -> Surfaces {
-    world
-        .get_resource::<WaterBodies>()
-        .map_or_else(Vec::new, |bodies| bodies.surfaces(world, source))
-        .into()
-}
-
-fn ground_obstacles(world: &World, entity: Entity) -> Vec<GroundObstacle> {
-    world
-        .get_resource::<Ground>()
-        .map_or_else(Vec::new, |ground| ground.face().obstacles(world, entity))
-}
-
-fn scoped<R: Resource, T>(
-    world: &mut World,
-    run: impl FnOnce(&mut World, Option<Mut<'_, R>>) -> T,
-) -> T {
-    if world.contains_resource::<R>() {
-        world.resource_scope(|world, resource: Mut<R>| run(world, Some(resource)))
-    } else {
-        run(world, None)
+fn ground_source(ground: &Ground, from: Vec2, to: Vec2) -> GroundRead<Walked> {
+    match ground.0.source(from, to) {
+        GroundRead::Ready(source) => ground
+            .0
+            .grid()
+            .map_or(GroundRead::Off, |grid| GroundRead::Ready(Walked { source, grid })),
+        GroundRead::Waiting => GroundRead::Waiting,
+        GroundRead::Off => GroundRead::Off,
     }
 }
 
-pub(crate) fn walk_agents(world: &mut World, agents: &mut Agents) {
-    let time = *world.resource::<FixedTime>();
-    let settings = section_in::<Navigation>(world);
-    let stats = world.resource_scope(|world, mut navigation: Mut<NavAgents>| {
-        scoped::<Jobs, _>(world, |world, jobs| {
-            scoped::<Cooking, _>(world, |world, cooking| {
-                walk(
-                    world,
-                    agents,
-                    (&settings, time),
-                    &mut navigation,
-                    (jobs, cooking),
-                )
-            })
-        })
-    });
-    *world.resource_mut::<NavStats>() = stats;
+fn ground_obstacles(ground: &Ground, source: &GroundSource) -> Vec<GroundObstacle> {
+    let corner = Vec2::new(source.origin.x, source.origin.z);
+    let mut found = Vec::new();
+    ground
+        .0
+        .obstacles(Vec2::NEG_INFINITY, Vec2::INFINITY, &mut found);
+    for obstacle in &mut found {
+        obstacle.center -= corner;
+    }
+    found
+}
+
+fn ground_input(walked: &Walked, key: TileKey) -> Vec<u8> {
+    GroundJob {
+        grid: walked.grid.clone(),
+        source: walked.source.identity.to_vec(),
+        key,
+    }
+    .input()
+}
+
+fn portals_input(walked: &Walked, key: TileKey, gait: &Gait) -> Vec<u8> {
+    PortalsJob {
+        grid: walked.grid.clone(),
+        source: walked.source.identity.to_vec(),
+        pyramid: walked.source.pyramid,
+        key,
+        gait: *gait,
+    }
+    .input()
+}
+
+fn made<T>(
+    kind: &str,
+    output: Result<Arc<[u8]>, Error>,
+    decode: impl FnOnce(&[u8]) -> Result<T, Error>,
+) -> Result<T, String> {
+    let bytes = output.map_err(|error| format!("{kind}: {error}"))?;
+    decode(&bytes).map_err(|error| format!("{kind}: its output does not decode: {error}"))
+}
+
+pub(crate) fn walk_agents(
+    (time, settings, cook): (Res<FixedTime>, Res<Navigation>, Res<CookMode>),
+    (ground, records): (Res<Ground>, Res<Records>),
+    mut jobs: Jobs,
+    mut navigation: ResMut<NavAgents>,
+    mut stats: ResMut<NavStats>,
+    mut agents: Agents,
+) {
+    *stats = walk(
+        (&*settings, *time, cook.cooking),
+        (&*ground, &*records, &mut jobs),
+        &mut navigation,
+        &mut agents,
+    );
+}
+
+pub(crate) fn stop_walks(
+    mut navigation: ResMut<NavAgents>,
+    mut jobs: Jobs,
+    mut stats: ResMut<NavStats>,
+) {
+    navigation.stop(&mut jobs);
+    *stats = NavStats::default();
 }
 
 fn walk(
-    world: &mut World,
-    agents: &mut Agents,
-    (settings, time): (&Navigation, FixedTime),
+    (settings, time, cooking): (&Navigation, FixedTime, bool),
+    (ground, records, jobs): (&Ground, &Records, &mut Jobs),
     navigation: &mut NavAgents,
-    (mut jobs, mut cooking): (Option<Mut<'_, Jobs>>, Option<Mut<'_, Cooking>>),
+    agents: &mut Agents,
 ) -> NavStats {
     let mut stats = NavStats::default();
     navigation.tick = time.tick;
-    let mut jobs = jobs.as_deref_mut();
-    if !settings.enabled {
-        navigation.stop(jobs);
-        return stats;
-    }
-    if let Some(jobs) = jobs.as_deref_mut() {
-        navigation
-            .records
-            .take(jobs, navigation.tick, &mut navigation.failures);
-    }
-    for (entity, agent, mut walk, transform) in agents.iter_mut(world) {
-        let agent = agent.sanitized();
+    navigation
+        .records
+        .take(records, jobs, navigation.tick, &mut navigation.failures);
+    for (entity, agent, mut walk, transform) in agents.iter_mut() {
+        let agent = sanitized(agent);
         if walk.destination == agent.destination {
             continue;
         }
@@ -409,26 +399,26 @@ fn walk(
             continue;
         };
         let from = Vec2::new(transform.translation.x, transform.translation.z);
-        let search = Search::new(from, Vec2::from(destination), agent.options());
+        let search = Search::new(from, Vec2::from(destination), options(&agent));
         navigation.searches.push((entity, search));
         walk.status = NavStatus::Searching;
     }
     search(
         settings,
-        world,
-        jobs.as_deref_mut(),
+        (ground, &mut *jobs),
         (&mut *navigation, &mut stats),
         agents,
     );
-    if let (Some(jobs), Some(cooking)) = (jobs, cooking.as_deref_mut()) {
-        navigation.cook(world, agents, jobs, cooking);
+    if cooking {
+        let left = navigation.cook(ground, agents, (records, &mut *jobs));
+        stats.cooking = u32::try_from(left).unwrap_or(u32::MAX);
     }
     let (grounds, portals) = navigation.records.held();
     stats.grounds = grounds;
     stats.portals = portals;
     let seconds = time.delta_seconds;
     let mut moved = Vec::new();
-    for (entity, agent, mut walk, mut transform) in agents.iter_mut(world) {
+    for (entity, agent, mut walk, mut transform) in agents.iter_mut() {
         stats.agents += 1;
         match walk.status {
             NavStatus::Searching => stats.searching += 1,
@@ -440,14 +430,14 @@ fn walk(
             continue;
         }
         stats.walking += 1;
-        let agent = agent.sanitized();
+        let agent = sanitized(agent);
         moved.push((entity, step(&agent, &mut walk, &mut transform, seconds)));
     }
     for (_, step) in &mut moved {
-        step.settle(world);
+        step.settle(ground);
     }
     for (entity, step) in moved {
-        if let Ok((_, _, _, mut transform)) = agents.get_mut(world, entity) {
+        if let Ok((_, _, _, mut transform)) = agents.get_mut(entity) {
             transform.translation = step.position;
         }
     }
@@ -456,13 +446,11 @@ fn walk(
 
 fn search(
     settings: &Navigation,
-    world: &mut World,
-    jobs: Option<&mut Jobs>,
+    (ground, jobs): (&Ground, &mut Jobs),
     (navigation, stats): (&mut NavAgents, &mut NavStats),
     agents: &mut Agents,
 ) {
     let mut budget = u64::from(settings.samples_per_tick);
-    let mut slots = jobs.map(JobBudget::of);
     let count = navigation.searches.len();
     let mut finished = Vec::new();
     for offset in 0..count {
@@ -472,9 +460,8 @@ fn search(
         let index = (navigation.turn + offset) % count;
         let (entity, search) = &mut navigation.searches[index];
         if let Some(found) = search.advance(
-            world,
-            &mut navigation.records,
-            &mut slots,
+            ground,
+            (&mut navigation.records, &mut *jobs),
             &mut budget,
             navigation.tick,
         ) {
@@ -491,7 +478,7 @@ fn search(
     finished.sort_by_key(|&(index, ..)| std::cmp::Reverse(index));
     for (index, entity, (origin, found)) in finished {
         navigation.searches.swap_remove(index);
-        let Ok((_, _, mut walk, _)) = agents.get_mut(world, entity) else {
+        let Ok((_, _, mut walk, _)) = agents.get_mut(entity) else {
             continue;
         };
         give(&mut walk, origin, found);
@@ -522,10 +509,11 @@ struct Step {
 }
 
 impl Step {
-    fn settle(&mut self, world: &World) {
+    fn settle(&mut self, ground: &Ground) {
         let walked = self.walked;
-        let ground =
-            Ground::sample_in(world, self.position.x, self.position.z).map_or(walked, |point| {
+        let ground = ground
+            .sample(Vec2::new(self.position.x, self.position.z))
+            .map_or(walked, |point| {
                 if walked > point.height + DECK_ABOVE {
                     walked
                 } else {
@@ -600,78 +588,7 @@ fn walk_height(walk: &NavWalk, position: Vec3) -> f32 {
     a.y + (b.y - a.y) * t
 }
 
-fn portals_record(source: &GroundSource, key: TileKey, gait: &Gait) -> (Vec<u8>, RecordKey) {
-    let job = PortalsJob {
-        source: source.identity.to_vec(),
-        pyramid: source.pyramid,
-        key,
-        gait: *gait,
-    };
-    let input = job.identity();
-    let record = RecordKey::new(&crate::SOURCE, PortalsJob::KIND, &input);
-    (input, record)
-}
-
-impl EnvironmentSection for Navigation {
-    const KEY: &'static str = "navigation";
-    const NAME: &'static str = "Navigation";
-    const OPT_IN: bool = false;
-
-    fn section_off() -> Self {
-        Self::off()
-    }
-
-    fn section_check(&self) -> Result<(), InvalidSetting> {
-        self.validate()
-    }
-
-    fn section_sanitized(self) -> Self {
-        self.sanitized()
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(Navigation)
-    }
-}
-
-impl BrickStats for NavStats {
-    const KEY: &'static str = "navigation";
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(NavStats)
-    }
-}
-
-pub struct NavigationBrick;
-
-impl Brick for NavigationBrick {
-    fn register(bricks: &mut Bricks) {
-        bricks
-            .settings::<Navigation>()
-            .records(&[PortalsJob::KIND])
-            .resource::<NavAgents>()
-            .resource::<NavStats>()
-            .stats::<NavStats>()
-            .systems(
-                FixedSimulation,
-                (walk_agents, hold_heights).chain().in_set(NavSystems::Walk),
-            )
-            .configure_sets(
-                FixedSimulation,
-                NavSystems::Walk.in_set(FixedSimulationSystems::Move),
-            )
-            .operation::<NavGoControl>()
-            .operation::<NavPathQuery>()
-            .component_inspector::<NavAgent, NavAgentView>(dev::agent_view)
-            .inspector::<NavAgents, Option<NavAgentsView>>(|world, _| dev::agents_view(world))
-            .join(Join::<SceneComponentsList>::new().cpu(&NAV_AGENT));
-        crate::smokes::register(bricks);
-    }
-}
-
-fn hold_heights(mut agents: Query<(&NavWalk, &mut HeightHeld), Changed<NavWalk>>) {
+pub(crate) fn hold_heights(mut agents: Query<(&NavWalk, &mut HeightHeld), Changed<NavWalk>>) {
     for (walk, mut held) in &mut agents {
         let walking = walk.status == NavStatus::Walking;
         if held.0 != walking {

@@ -11,9 +11,15 @@ default = []
 [dependencies]
 engine_ecs.workspace = true
 engine_core.workspace = true
+engine_math.workspace = true
 engine_places.workspace = true
 engine_render.workspace = true
 bytemuck.workspace = true
+glam.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+engine_sources.workspace = true
 
 [lints]
 workspace = true

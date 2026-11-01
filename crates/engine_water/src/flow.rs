@@ -3,8 +3,8 @@ use std::sync::Arc;
 use engine_math::{max, min};
 use glam::{Mat3, Vec2, Vec3};
 
-use crate::hydraulics::{SHALLOWEST, TRICKLE, distances, friction_slope};
-use crate::rivers::{RIVER_STEP, River, Rivers};
+use engine_heightfield::hydraulics::{SHALLOWEST, TRICKLE, distances, friction_slope};
+use engine_heightfield::rivers::{RIVER_STEP, River, Rivers};
 
 pub const WEIR: f32 = 1.7;
 const RESTING: f32 = 0.35;

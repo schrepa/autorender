@@ -1,47 +1,17 @@
 use crate::GameHost;
 use crate::game::Game;
-use crate::host::JobOrder;
-use engine_core::{BrickList, Engine, JobId, JobShare};
+use crate::host::{JobId, JobOrder, JobShare};
+use engine_core::{BrickList, Engine};
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
 
-#[wasm_bindgen]
-#[derive(Default)]
-pub struct SceneFileSet {
-    files: engine_scene::SceneFiles,
-}
-
-#[wasm_bindgen]
-impl SceneFileSet {
-    #[wasm_bindgen(constructor)]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn add_image(&mut self, uri: &str, width: u32, height: u32, pixels: Vec<u8>) {
-        self.files.add_image(uri, width, height, pixels);
-    }
-
-    pub fn add_buffer(&mut self, uri: &str, bytes: Vec<u8>) {
-        self.files.add_buffer(uri, bytes);
-    }
-}
-
-impl SceneFileSet {
-    pub fn files(&self) -> &engine_scene::SceneFiles {
-        &self.files
-    }
-}
-
-#[wasm_bindgen(js_name = SceneLoad)]
-pub struct PageSceneLoad {
+#[doc(hidden)]
+pub struct SceneLoading {
     load: Option<crate::host::SceneLoad>,
 }
 
-#[wasm_bindgen(js_class = SceneLoad)]
-impl PageSceneLoad {
-    #[wasm_bindgen(constructor)]
-    pub fn new(source: &str) -> Result<PageSceneLoad, JsValue> {
+impl SceneLoading {
+    pub fn new(source: &str) -> Result<Self, JsValue> {
         Ok(Self {
             load: Some(crate::host::SceneLoad::new(source)?),
         })
@@ -81,11 +51,9 @@ impl PageSceneLoad {
         Ok(self.loading()?.decode(uri, bytes)?)
     }
 
-    pub fn finish(&mut self) -> Result<SceneFileSet, JsValue> {
+    pub fn finish(&mut self) -> Result<engine_scene::SceneFiles, JsValue> {
         let load = self.load.take().ok_or_else(ended)?;
-        Ok(SceneFileSet {
-            files: load.finish()?,
-        })
+        Ok(load.finish()?)
     }
 
     fn loading(&mut self) -> Result<&mut crate::host::SceneLoad, JsValue> {
@@ -225,8 +193,12 @@ impl<G: Game> PageHost<G> {
             .report_job_cache(count(hits), count(misses), count(bytes), count(mismatches));
     }
 
-    pub fn reload_scene(&mut self, source: &str, files: SceneFileSet) -> Result<(), JsValue> {
-        Ok(self.host.reload_scene(source, files.files())?)
+    pub fn reload_scene(
+        &mut self,
+        source: &str,
+        files: impl Into<engine_scene::SceneFiles>,
+    ) -> Result<(), JsValue> {
+        Ok(self.host.reload_scene(source, &files.into())?)
     }
 
     pub fn set_setting(&mut self, key: &str, value: &str) -> Result<(), JsValue> {
@@ -294,20 +266,18 @@ impl<G: Game> PageHost<G> {
         &mut self,
         source: &str,
         context: &str,
-        files: Option<SceneFileSet>,
+        files: Option<impl Into<engine_scene::SceneFiles>>,
     ) -> String {
+        let files = files.map(Into::into);
         let step = match read::<engine_dev::HostContext>(context, "$.context") {
-            Ok(context) => {
-                self.host
-                    .dev_reloaded(source, files.as_ref().map(SceneFileSet::files), &context)
-            }
+            Ok(context) => self.host.dev_reloaded(source, files.as_ref(), &context),
             Err(error) => self.unreadable(&error),
         };
         written(&step)
     }
 
     pub fn dev_refusal(&mut self, error: &str) -> String {
-        let error = engine_core::parse_json::<crate::Error>(error)
+        let error = engine_settings::parse_json::<crate::Error>(error)
             .unwrap_or_else(|error| error.within("$.error"));
         self.host.dev_refusal(&error).to_string()
     }
@@ -319,7 +289,7 @@ impl<G: Game> PageHost<G> {
 
 #[cfg(feature = "dev")]
 fn read<T: serde::de::DeserializeOwned>(json: &str, at: &str) -> crate::Result<T> {
-    engine_core::parse_json(json).map_err(|error| error.within(at))
+    engine_settings::parse_json(json).map_err(|error| error.within(at))
 }
 
 #[cfg(feature = "dev")]

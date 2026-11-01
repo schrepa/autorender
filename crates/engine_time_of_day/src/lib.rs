@@ -3,84 +3,51 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
+
 use bevy_ecs::prelude::*;
 use glam::Vec3;
-use serde::{Deserialize, Serialize};
 
-use engine_core::math::{max, sin_cos};
-use engine_core::{
-    Brick, Bricks, EnvironmentSection, FrameTime, Presentation, Sunlight, ViewSync, ViewSyncSystems,
-};
-use engine_settings::{InvalidSetting, settings};
+use engine_core::{Brick, Bricks, FrameTime, Schedule, Source, settings};
+use engine_math::{max, sin_cos};
+use engine_places::sun::SunPath;
 
 settings! {
-    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(
-        feature = "schema",
-        derive(schemars::JsonSchema),
-        schemars(rename = "SceneTimeOfDay")
-    )]
-    #[serde(default, deny_unknown_fields)]
+    #[section("time_of_day")]
+    #[derive(Copy)]
+    #[serde(deny_unknown_fields)]
+    #[schemars(rename = "SceneTimeOfDay")]
     pub struct TimeOfDay {
-        pub enabled: bool = true => any,
+        pub enabled: bool = false => any,
         pub hours: f32 = 15.0 => range(0.0, 24.0),
         pub speed: f32 = 0.0 => range(0.0, 24.0),
         pub step: f32 = 2.0 => range(0.1, 60.0),
         pub latitude: f32 = 45.0 => range(-90.0, 90.0),
         pub day: f32 = 172.0 => range(0.0, 365.0),
         pub north: f32 = 0.0 => range(-360.0, 360.0),
-    }
-}
-
-impl EnvironmentSection for TimeOfDay {
-    const KEY: &'static str = "time_of_day";
-    const NAME: &'static str = "TimeOfDay";
-    const OPT_IN: bool = true;
-
-    fn section_off() -> Self {
-        Self::off()
-    }
-
-    fn section_check(&self) -> Result<(), InvalidSetting> {
-        self.validate()
-    }
-
-    fn section_sanitized(self) -> Self {
-        self.sanitized()
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(TimeOfDay)
+        pub moon_age: f32 = 0.5 => range(0.0, 1.0),
     }
 }
 
 impl TimeOfDay {
-    pub fn off() -> Self {
-        Self {
-            enabled: false,
-            ..Self::default()
-        }
-    }
-
-    pub fn stepped_hours(&self) -> f32 {
+    fn stepped_hours(&self) -> f32 {
         let step = self.step / 60.0;
         (self.hours / step).floor() * step
     }
 
-    pub fn sun_direction(&self) -> Vec3 {
+    fn sun_direction(&self) -> Vec3 {
         let (declination, hour_angle) = self.sun_place();
         self.sky_direction(declination, hour_angle)
     }
 
-    pub fn moon_direction(&self, age: f32) -> Vec3 {
+    fn moon_direction(&self) -> Vec3 {
         let (declination, hour_angle) = self.sun_place();
-        let turn = std::f32::consts::TAU * age;
+        let turn = std::f32::consts::TAU * self.moon_age;
         let (_, cos_turn) = sin_cos(turn);
         self.sky_direction(declination * cos_turn, hour_angle - turn)
     }
 
-    pub fn star_turn(&self) -> glam::Quat {
+    fn star_turn(&self) -> glam::Quat {
         let (sin_latitude, cos_latitude) = sin_cos(self.latitude.to_radians());
         let (sin_north, cos_north) = sin_cos(self.north.to_radians());
         let north = self.north_axis();
@@ -143,58 +110,56 @@ fn galactic_axes() -> [Vec3; 3] {
     [centre, pole.cross(centre), pole]
 }
 
-fn advance_time_of_day(time: Res<FrameTime>, day: Option<ResMut<TimeOfDay>>) {
-    let Some(mut day) = day else {
-        return;
-    };
-    if !day.enabled || day.speed <= 0.0 || time.delta_seconds <= 0.0 {
-        return;
-    }
-    let hours = day.hours + day.speed * time.delta_seconds;
-    day.hours = max(hours.rem_euclid(24.0), 0.0);
+#[derive(Resource, Default)]
+struct DayTime {
+    hours: Option<f32>,
 }
 
-struct PlacedSun {
-    authored: Option<[f32; 3]>,
-    placed: [f32; 3],
-}
-
-fn place_sun(
-    day: Option<Res<TimeOfDay>>,
-    sunlight: Option<ResMut<Sunlight>>,
-    mut held: Local<Option<PlacedSun>>,
-) {
-    let Some(mut sunlight) = sunlight else {
-        return;
-    };
-    let sun = sunlight.sun_direction;
-    let kept = held.take().filter(|held| Some(held.placed) == sun);
-    match day.filter(|day| day.enabled) {
-        Some(day) => {
-            let placed = day.sanitized().sun_direction().to_array();
-            if sun != Some(placed) {
-                sunlight.sun_direction = Some(placed);
-            }
-            *held = Some(PlacedSun {
-                authored: kept.map_or(sun, |kept| kept.authored),
-                placed,
-            });
-        }
-        None => {
-            if let Some(kept) = kept {
-                sunlight.sun_direction = kept.authored;
-            }
+impl DayTime {
+    fn clock(&self, settings: &TimeOfDay) -> TimeOfDay {
+        TimeOfDay {
+            hours: self.hours.unwrap_or(settings.hours),
+            ..*settings
         }
     }
+}
+
+fn advance_time_of_day(time: Res<FrameTime>, settings: Res<TimeOfDay>, mut day: ResMut<DayTime>) {
+    if settings.is_changed() {
+        day.hours = Some(settings.hours);
+    }
+    if settings.speed <= 0.0 || time.delta_seconds <= 0.0 {
+        return;
+    }
+    let hours = day.hours.unwrap_or(settings.hours) + settings.speed * time.delta_seconds;
+    day.hours = Some(max(hours.rem_euclid(24.0), 0.0));
+}
+
+fn publish_path(settings: Res<TimeOfDay>, mut day: ResMut<DayTime>, mut path: ResMut<SunPath>) {
+    if day.hours.is_none() || (settings.is_changed() && !day.is_changed()) {
+        day.hours = Some(settings.hours);
+    }
+    let clock = day.clock(&settings);
+    path.set_if_neq(SunPath {
+        direction: Some(clock.sun_direction()),
+        hours: Some(clock.hours),
+        moon: Some(clock.moon_direction()),
+        stars: clock.star_turn(),
+    });
 }
 
 pub struct TimeOfDayBrick;
 
 impl Brick for TimeOfDayBrick {
-    fn register(bricks: &mut Bricks) {
+    const SOURCE: &'static Source = &SOURCE;
+
+    fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .when(|day: Res<TimeOfDay>| day.enabled)
             .settings::<TimeOfDay>()
-            .systems(Presentation, advance_time_of_day)
-            .systems(ViewSync, place_sun.before(ViewSyncSystems::Stream));
+            .resource::<DayTime>()
+            .fill::<SunPath>(None)
+            .systems(Schedule::Presentation, advance_time_of_day)
+            .systems(Schedule::ViewSync, publish_path);
     }
 }

@@ -1,16 +1,16 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use engine_core::{Error, ErrorCode};
-use engine_math::min;
-use engine_settings::{InvalidSetting, parse_value, settings};
-use engine_terrain::codec::{Reader, Writer};
-use engine_terrain::hydrology::{FLOW_RANGE, Hydrology, WETNESS_RANGE, WaterGrid, decode};
-use engine_terrain::layer::{
-    Below, LayerFiles, LayerKind, Made, Place, Row, TerrainLayer, no_files, same_as,
+use engine_codec::{Reader, Writer};
+use engine_core::{Error, ErrorCode, InvalidSetting, fields, parse_value};
+use engine_heightfield::HydrologyBake;
+use engine_heightfield::hydrology::{FLOW_RANGE, WETNESS_RANGE, WaterGrid, decode};
+use engine_heightfield::layer::{
+    Below, LayerFiles, LayerKind, Made, Place, Row, TerrainLayer, no_files, no_points, same_as,
 };
-use engine_terrain::noise::{gradient_value, smooth};
-use engine_terrain::rivers::{BANK_REACH, BANK_SLOPE};
+use engine_heightfield::noise::{gradient_value, smooth};
+use engine_heightfield::rivers::{BANK_REACH, BANK_SLOPE};
+use engine_math::min;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -28,9 +28,8 @@ const STEP_JOINTS: u32 = 0x510e_527f;
 const HUMMOCK_PATCHES: u32 = 0x9b05_688c;
 const HUMMOCK_MOUNDS: u32 = 0x1f83_d9ab;
 
-settings! {
-    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+fields! {
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(default, deny_unknown_fields)]
     pub struct StepsLayer {
         pub seed: u32 = 0 => any,
@@ -43,9 +42,8 @@ settings! {
     }
 }
 
-settings! {
-    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+fields! {
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(default, deny_unknown_fields)]
     pub struct HummocksLayer {
         pub seed: u32 = 0 => any,
@@ -60,22 +58,22 @@ settings! {
 
 pub static STEPS: LayerKind = LayerKind {
     name: "steps",
-    source: crate::SOURCE,
+    source: crate::SOURCE.hash(),
     from_json: steps_from_json,
     read: read_steps,
     files: no_files,
-    schema: engine_terrain::layer_schema!(steps_schema),
-    points: engine_terrain::layer::no_points,
+    schema: engine_heightfield::schema::<StepsLayer>,
+    points: no_points,
 };
 
 pub static HUMMOCKS: LayerKind = LayerKind {
     name: "hummocks",
-    source: crate::SOURCE,
+    source: crate::SOURCE.hash(),
     from_json: hummocks_from_json,
     read: read_hummocks,
     files: no_files,
-    schema: engine_terrain::layer_schema!(hummocks_schema),
-    points: engine_terrain::layer::no_points,
+    schema: engine_heightfield::schema::<HummocksLayer>,
+    points: no_points,
 };
 
 fn repose() -> f32 {
@@ -106,25 +104,15 @@ fn read_hummocks(input: &mut Reader<'_>) -> Made {
     Ok(Arc::new(hummocks))
 }
 
-#[cfg(feature = "schema")]
-fn steps_schema() -> schemars::Schema {
-    schemars::schema_for!(StepsLayer)
-}
-
-#[cfg(feature = "schema")]
-fn hummocks_schema() -> schemars::Schema {
-    schemars::schema_for!(HummocksLayer)
-}
-
 fn checked(valid: Result<(), InvalidSetting>) -> Result<(), Error> {
-    valid.map_err(|invalid| invalid.error(ErrorCode::InvalidTerrain, "$"))
+    valid.map_err(|invalid| invalid.error(ErrorCode::InvalidValue, "$"))
 }
 
 fn water_below(place: Place<'_>) -> Result<(), Error> {
     if place.below().iter().any(|layer| layer.makes_water()) {
         Ok(())
     } else {
-        Err(Error::new(ErrorCode::MissingLayer, "$").variants(["hydrology"]))
+        Err(Error::new(ErrorCode::InvalidValue, "$").variants(["hydrology"]))
     }
 }
 
@@ -321,7 +309,7 @@ fn map_slope(flow: f32, wetness: f32, spacing: f32) -> f32 {
     libm::expf(flow * std::f32::consts::LN_10 - wetness) / spacing
 }
 
-fn calm(hydrology: &Hydrology, x: f32, z: f32, spacing: f32) -> f32 {
+fn calm(hydrology: &HydrologyBake, x: f32, z: f32, spacing: f32) -> f32 {
     let half = 0.5 * BANK_REACH;
     let banks = smooth((hydrology.rivers.edge(x, z, spacing) - half) / half);
     if banks <= 0.0 {
@@ -369,7 +357,7 @@ fn blobs(x: f32, z: f32, across: f32, seed: u32) -> f32 {
     gradient_value(0.8 * u - 0.6 * v + 0.37, 0.6 * u + 0.8 * v + 0.61, seed)
 }
 
-engine_terrain::codec::record!(StepsLayer {
+engine_codec::record!(StepsLayer {
     seed,
     height,
     joints,
@@ -378,7 +366,7 @@ engine_terrain::codec::record!(StepsLayer {
     patches,
     cover,
 });
-engine_terrain::codec::record!(HummocksLayer {
+engine_codec::record!(HummocksLayer {
     seed,
     height,
     across,

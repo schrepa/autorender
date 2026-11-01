@@ -194,13 +194,6 @@ impl NoisePart {
     }
 }
 
-pub(crate) fn record(identity: &[u8]) -> Result<Vec<u8>, String> {
-    let mut part = NoisePart::new(identity)?;
-    let mut budget = u64::MAX;
-    part.advance(&mut budget)
-        .ok_or_else(|| "a cloud noise slab stopped short".into())
-}
-
 struct Octaves {
     worley: Vec<Lattice>,
     perlin: Vec<Lattice>,

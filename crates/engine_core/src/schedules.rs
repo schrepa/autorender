@@ -41,6 +41,19 @@ impl Schedule {
         Self::BetweenFrames,
     ];
 
+    pub(crate) fn index(self) -> usize {
+        match self {
+            Self::FixedPreSimulation => 0,
+            Self::FixedMove => 1,
+            Self::FixedSimulation => 2,
+            Self::FixedPostSimulation => 3,
+            Self::Presentation => 4,
+            Self::WorldSync => 5,
+            Self::ViewSync => 6,
+            Self::BetweenFrames => 7,
+        }
+    }
+
     #[doc(hidden)]
     pub fn label(self) -> InternedScheduleLabel {
         match self {

@@ -171,7 +171,10 @@ impl GateDriver {
             }
         }
         if self.scratch.is_empty() {
-            if world.get_resource::<Gates>().is_some_and(|gates| !gates.flipped().is_empty()) {
+            if world
+                .get_resource::<Gates>()
+                .is_some_and(|gates| !gates.flipped().is_empty())
+            {
                 world.resource_mut::<Gates>().settle();
             }
             return;

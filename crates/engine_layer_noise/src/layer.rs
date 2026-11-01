@@ -1,14 +1,13 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use engine_core::{Error, ErrorCode};
-use engine_settings::settings;
-use engine_terrain::Blend;
-use engine_terrain::codec::{Reader, Writer};
-use engine_terrain::layer::{
+use engine_codec::{Reader, Writer};
+use engine_core::{Error, ErrorCode, InvalidSetting, Rule, Setting, parse_value};
+use engine_heightfield::Blend;
+use engine_heightfield::layer::{
     Below, LayerFiles, LayerKind, LayerTile, Made, SamplePoint, TerrainLayer, TileFrame, same_as,
 };
-use engine_terrain::layers::MAX_HEIGHT;
+use engine_heightfield::layers::MAX_HEIGHT;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -17,26 +16,62 @@ use crate::tile::{
     COARSE_COST, GRID_STEP, NOISE_SAMPLE_COST, NoiseTile, QUARTER_WEIGHTS, interpolate,
 };
 
-settings! {
-    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-    #[serde(default, deny_unknown_fields)]
-    pub struct NoiseLayer {
-        pub seed: u32 = 0 => any,
-        pub height: f32 = 900.0 => range(0.0, MAX_HEIGHT),
-        pub offset: f32 = 0.0 => range(-MAX_HEIGHT, MAX_HEIGHT),
-        pub wavelength: f32 = 3000.0 => range(16.0, 1.0e6),
-        pub ridges: f32 = 0.3 => range(0.0, 1.0),
-        pub warp: f32 = 0.35 => range(0.0, 1.0),
-        pub erosion: f32 = 0.7 => range(0.0, 1.0),
-        pub smoothing: f32 = 1.0 => range(0.0, 1.0),
-        pub valleys: f32 = 0.7 => range(0.0, 1.0),
-        pub roughness: f32 = 0.5 => range(0.0, 1.0),
-        pub blend: Blend = Blend::Add => any,
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct NoiseLayer {
+    pub seed: u32,
+    pub height: f32,
+    pub offset: f32,
+    pub wavelength: f32,
+    pub ridges: f32,
+    pub warp: f32,
+    pub erosion: f32,
+    pub smoothing: f32,
+    pub valleys: f32,
+    pub roughness: f32,
+    pub blend: Blend,
+}
+
+impl Default for NoiseLayer {
+    fn default() -> Self {
+        Self {
+            seed: 0,
+            height: 900.0,
+            offset: 0.0,
+            wavelength: 3000.0,
+            ridges: 0.3,
+            warp: 0.35,
+            erosion: 0.7,
+            smoothing: 1.0,
+            valleys: 0.7,
+            roughness: 0.5,
+            blend: Blend::Add,
+        }
     }
 }
 
-engine_terrain::record!(NoiseLayer {
+impl NoiseLayer {
+    pub fn validate(&self) -> Result<(), InvalidSetting> {
+        let highest = f64::from(MAX_HEIGHT);
+        self.height.check("height", Rule::Range(0.0, highest))?;
+        self.offset.check("offset", Rule::Range(-highest, highest))?;
+        self.wavelength
+            .check("wavelength", Rule::Range(16.0, 1.0e6))?;
+        for (field, value) in [
+            ("ridges", self.ridges),
+            ("warp", self.warp),
+            ("erosion", self.erosion),
+            ("smoothing", self.smoothing),
+            ("valleys", self.valleys),
+            ("roughness", self.roughness),
+        ] {
+            value.check(field, Rule::Range(0.0, 1.0))?;
+        }
+        Ok(())
+    }
+}
+
+engine_codec::record!(NoiseLayer {
     seed,
     height,
     offset,
@@ -70,21 +105,16 @@ impl Noise {
 fn made(params: NoiseLayer) -> Made {
     params
         .validate()
-        .map_err(|invalid| Error::from(invalid).coded(ErrorCode::InvalidTerrain))?;
+        .map_err(|invalid| Error::from(invalid).coded(ErrorCode::InvalidValue))?;
     Ok(Arc::new(Noise::new(params)))
 }
 
 pub(crate) fn from_json(settings: &Value, _files: &dyn LayerFiles) -> Made {
-    made(engine_settings::parse_value(settings.clone())?)
+    made(parse_value(settings.clone())?)
 }
 
 pub(crate) fn read(input: &mut Reader<'_>) -> Made {
     made(input.get()?)
-}
-
-#[cfg(feature = "schema")]
-pub(crate) fn schema() -> schemars::Schema {
-    schemars::schema_for!(NoiseLayer)
 }
 
 impl TerrainLayer for Noise {

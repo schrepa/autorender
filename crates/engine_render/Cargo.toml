@@ -35,10 +35,7 @@ web-sys.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.wgpu]
 workspace = true
-features = ["dx12", "vulkan", "metal"]
-
-[build-dependencies]
-engine_sources.workspace = true
+features = ["dx12", "vulkan", "metal", "noop"]
 
 [lints.rust]
 unsafe_code = "deny"

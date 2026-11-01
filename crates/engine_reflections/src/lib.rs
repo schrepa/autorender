@@ -3,33 +3,79 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-use engine_core::{Brick, Bricks, Fill, Join};
-use engine_faces::places::{PostEffectsList, ReflectionsSlot};
-use engine_render::composite::PostScene;
-use engine_render::render_bricks::AddRenderParts;
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-mod gpu_layouts;
-mod layouts;
+mod gpu;
 mod part;
 mod settings;
-mod shaders;
 mod world_trace;
 
-pub use settings::Reflections;
+use bevy_ecs::prelude::*;
+use engine_core::{Brick, Bricks, Schedule, Source};
+use engine_places::ground::{GroundTiles, TerrainTiles};
+use engine_places::reflections::Reflected;
+use engine_render::{DebugShown, Layer, Output, PostScene, RenderBricks, ViewOutputs, wgpu};
+
+pub use settings::{Reflections, ReflectionsStats};
+
+use gpu::ReflectionsPiece;
+
+const SURFACE: Output = Output {
+    name: "surface",
+    format: wgpu::TextureFormat::Rgba16Uint,
+    layers: &[Layer::Opaque, Layer::Late, Layer::Backdrop, Layer::Media],
+};
 
 pub struct ReflectionsBrick;
 
 impl Brick for ReflectionsBrick {
+    const SOURCE: &'static Source = &SOURCE;
+
     fn register(bricks: &mut Bricks<'_>) {
+        use shaders::reflections::{apply, faces, surface};
         bricks
-            .fill(Fill::<ReflectionsSlot>::new().wgsl("reflections::faces::reflections"))
-            .join(Join::<PostScene>::new().wgsl(part::MEMBER))
-            .join(Join::<PostEffectsList>::new())
             .settings::<Reflections>()
-            .render_part(&part::PART)
-            .shaders(shaders::MODULES)
-            .places(engine_faces::places::PLACES)
-            .pipeline_layouts(layouts::PIPELINE_LAYOUTS)
-            .mirrors(gpu_layouts::LAYOUTS, gpu_layouts::DECLARED);
+            .stats::<ReflectionsStats>()
+            .piece::<ReflectionsPiece>()
+            .join::<ViewOutputs>(SURFACE, Some(surface::MODULE))
+            .systems(Schedule::ViewSync, publish_piece)
+            .within(reflecting, |bricks| {
+                bricks
+                    .fill::<Reflected>(Some(faces::reflections::MODULE))
+                    .join::<PostScene>((), Some(apply::MODULE))
+                    .part::<part::TraceGpu>();
+            });
     }
+}
+
+fn reflecting(reflections: Res<Reflections>) -> bool {
+    reflections.reflects()
+}
+
+fn publish_piece(
+    reflections: Res<Reflections>,
+    tiles: Res<TerrainTiles>,
+    ground: Res<GroundTiles>,
+    shown: Res<DebugShown>,
+    mut piece: ResMut<ReflectionsPiece>,
+    mut stats: ResMut<ReflectionsStats>,
+) {
+    let active = reflections.reflects() && shown.owner.is_none();
+    let walked = world_trace::traced(&tiles, &ground).count() as f32;
+    piece.set_if_neq(ReflectionsPiece {
+        surface: [
+            reflections.max_roughness,
+            if reflections.reflects() { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        ],
+        trace: [reflections.distance, 0.0, 0.0, walked],
+        applied: [
+            reflections.distance,
+            reflections.intensity,
+            if active { 1.0 } else { 0.0 },
+            0.0,
+        ],
+    });
+    stats.set_if_neq(ReflectionsStats { active });
 }

@@ -5,19 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-[features]
-default = []
-schema = ["dep:schemars", "engine_core/schema"]
-
 [dependencies]
 engine_ecs.workspace = true
 engine_core.workspace = true
 engine_places.workspace = true
+engine_codec.workspace = true
 engine_math.workspace = true
 glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-schemars = { workspace = true, optional = true }
 
 [build-dependencies]
 engine_sources.workspace = true

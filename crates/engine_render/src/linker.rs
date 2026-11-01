@@ -3,336 +3,336 @@ use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
-use engine_core::{Error, ErrorCode, Expected};
+use engine_core::{Entry, Error, ErrorCode, Source, Var};
 use wesl::Mangler as _;
 
-use crate::bindings::ResolvedLayout;
-use crate::places::{LinkedPlace, PLACE_OWNER, place_module};
-use crate::shaders::Entry;
+pub const CORE_PACKAGE: &str = "engine_render";
+pub const CORE_PREFIX: &str = "engine";
+pub const CAMERA: &str = "camera";
+pub const PIECES: &str = "pieces";
+const CORE_BINDINGS: [&str; 2] = [CAMERA, PIECES];
+const RESERVED: [&str; 4] = ["engine", "generated", "face", "place"];
 
-pub const UNPLACED_GROUP: u32 = 1_000_000;
-
-#[derive(Clone, Copy, Debug)]
-pub struct ShaderModule {
-    pub path: &'static str,
-    pub brick: &'static str,
-    pub source: &'static str,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Sample {
+    Float,
+    Depth,
+    Uint,
+    Sint,
 }
 
-#[derive(
-    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-pub struct ComposeKey {
-    pub module: String,
-    pub entry: String,
-    pub layout: String,
-    pub sources: u64,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Ty {
+    Uniform,
+    Storage { write: bool },
+    Texture {
+        sample: Sample,
+        view: wgpu::TextureViewDimension,
+    },
+    StorageTexture {
+        format: wgpu::TextureFormat,
+        access: wgpu::StorageTextureAccess,
+        view: wgpu::TextureViewDimension,
+    },
+    Sampler,
+    Comparison,
 }
 
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct Composed {
-    pub key: ComposeKey,
-    pub text: String,
-    pub hash: u64,
-    pub overrides: Vec<(String, String)>,
-}
+impl Ty {
+    pub(crate) fn binding(self, filterable: bool, dynamic: bool) -> wgpu::BindingType {
+        let buffer = |ty| wgpu::BindingType::Buffer {
+            ty,
+            has_dynamic_offset: dynamic,
+            min_binding_size: None,
+        };
+        match self {
+            Self::Uniform => buffer(wgpu::BufferBindingType::Uniform),
+            Self::Storage { write } => buffer(wgpu::BufferBindingType::Storage { read_only: !write }),
+            Self::Texture { sample, view } => wgpu::BindingType::Texture {
+                sample_type: match sample {
+                    Sample::Float => wgpu::TextureSampleType::Float { filterable },
+                    Sample::Depth => wgpu::TextureSampleType::Depth,
+                    Sample::Uint => wgpu::TextureSampleType::Uint,
+                    Sample::Sint => wgpu::TextureSampleType::Sint,
+                },
+                view_dimension: view,
+                multisampled: false,
+            },
+            Self::StorageTexture {
+                format,
+                access,
+                view,
+            } => wgpu::BindingType::StorageTexture {
+                access,
+                format,
+                view_dimension: view,
+            },
+            Self::Sampler => wgpu::BindingType::Sampler(if filterable {
+                wgpu::SamplerBindingType::Filtering
+            } else {
+                wgpu::SamplerBindingType::NonFiltering
+            }),
+            Self::Comparison => wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+        }
+    }
 
-impl Composed {
-    pub fn constants<'a>(&'a self, values: &[(&str, f64)]) -> Vec<(&'a str, f64)> {
-        values
-            .iter()
-            .filter_map(|&(name, value)| {
-                self.overrides
-                    .iter()
-                    .find(|(plain, _)| plain == name)
-                    .map(|(_, mangled)| (mangled.as_str(), value))
-            })
-            .collect()
+    pub(crate) fn writes(self) -> bool {
+        match self {
+            Self::Storage { write } => write,
+            Self::StorageTexture { access, .. } => access != wgpu::StorageTextureAccess::ReadOnly,
+            Self::Uniform | Self::Texture { .. } | Self::Sampler | Self::Comparison => false,
+        }
     }
 }
 
-struct Source {
+#[derive(Clone, Debug)]
+pub(crate) struct Declaration {
+    pub(crate) group: u32,
+    pub(crate) binding: u32,
+    pub(crate) name: String,
+    pub(crate) ty: Ty,
+}
+
+struct Module {
     path: String,
-    brick: &'static str,
+    package: &'static str,
     text: Cow<'static, str>,
-    overrides: Vec<String>,
-    hex_floats: Vec<String>,
+    declared: Vec<Declaration>,
     generated: bool,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct Composed {
+    pub(crate) module: String,
+    pub(crate) entry: String,
+    pub(crate) text: String,
+    pub(crate) hash: u64,
+    pub(crate) switches: Vec<u32>,
+}
+
 #[derive(Default)]
-pub struct Linker {
-    sources: Vec<Source>,
-    sources_hash: u64,
-    composed: BTreeMap<ComposeKey, Arc<Composed>>,
+pub(crate) struct Linker {
+    modules: Vec<Module>,
+    sources: Vec<&'static Source>,
+    numbers: BTreeMap<(String, String), u32>,
+    composed: BTreeMap<(String, String), Arc<Composed>>,
+    numbered: bool,
+}
+
+pub(crate) fn path_of(var_or_entry: (engine_core::Module, &str)) -> (&'static str, String) {
+    let (module, name) = var_or_entry;
+    let path = module
+        .source()
+        .modules()
+        .get(module.index() as usize)
+        .map_or("", |text| text.path());
+    (path, name.to_owned())
+}
+
+fn prefix(path: &str) -> &str {
+    path.split("::").next().unwrap_or(path)
 }
 
 impl Linker {
-    pub fn new(modules: &[ShaderModule]) -> Self {
+    pub(crate) fn new(core: &'static Source) -> Self {
         let mut linker = Self::default();
-        for module in modules {
-            linker.add(
-                module.path.to_owned(),
-                module.brick,
-                Cow::Borrowed(module.source),
-                false,
-            );
-        }
-        linker.rehash();
+        linker.add_source(core);
         linker
     }
 
-    pub fn add_modules(&mut self, modules: &[ShaderModule]) -> Result<(), Error> {
-        for module in modules {
-            if let Some(known) = self.sources.iter().find(|known| known.path == module.path) {
-                if known.brick == module.brick && known.text == module.source {
-                    continue;
-                }
-                return Err(Error::new(
-                    ErrorCode::DuplicateBrick,
-                    format!("$.shaders.{}", module.path),
-                )
-                .expected(Expected::Unique)
-                .got(module.brick)
-                .nearest(known.brick));
-            }
-            self.add(
-                module.path.to_owned(),
-                module.brick,
-                Cow::Borrowed(module.source),
-                false,
-            );
+    pub(crate) fn add_source(&mut self, source: &'static Source) {
+        if self.sources.iter().any(|known| std::ptr::eq(*known, source)) {
+            return;
         }
-        self.rehash();
-        Ok(())
-    }
-
-    pub fn add_places(&mut self, places: &[LinkedPlace]) -> Result<(), Error> {
-        for linked in places {
-            let name = linked.place.name;
-            if let Some(contract) = linked.place.face.wgsl {
-                self.add_place_module(place_module(name), PLACE_OWNER, Cow::Borrowed(contract))?;
-            }
-            if let Some(source) = &linked.source {
-                self.add_place_module(
-                    crate::faces::face_module(name),
-                    crate::parts::CORE_BRICK,
-                    Cow::Owned(source.clone()),
-                )?;
-            }
+        self.sources.push(source);
+        for module in source.modules() {
+            self.add(module.path().to_owned(), source.package(), Cow::Borrowed(module.text()), false);
         }
-        self.rehash();
-        Ok(())
+        self.numbered = false;
+        self.composed.clear();
     }
 
-    fn add_place_module(
-        &mut self,
-        path: String,
-        brick: &'static str,
-        text: Cow<'static, str>,
-    ) -> Result<(), Error> {
-        if let Some(known) = self.sources.iter().find(|known| known.path == path) {
-            return Err(
-                Error::new(ErrorCode::DuplicateBrick, format!("$.shaders.{path}"))
-                    .expected(Expected::Unique)
-                    .got(known.brick)
-                    .nearest(brick),
-            );
-        }
-        self.add(path, brick, text, false);
-        Ok(())
+    pub(crate) fn add_generated(&mut self, path: String, package: &'static str, text: String) {
+        self.modules.retain(|known| known.path != path);
+        self.add(path, package, Cow::Owned(text), true);
+        self.numbered = false;
+        self.composed.clear();
     }
 
-    pub fn face_needs(&self) -> Vec<FaceNeed> {
-        let mut needs = Vec::new();
-        for source in &self.sources {
-            for face in face_imports(&source.text) {
-                needs.push(FaceNeed {
-                    brick: source.brick,
-                    module: source.path.clone(),
-                    face,
-                });
-            }
-        }
-        needs
-    }
-
-    pub fn unanswered(&self) -> Option<FaceNeed> {
-        self.face_needs().into_iter().find(|need| {
-            let path = crate::faces::face_module(&need.face);
-            !self.sources.iter().any(|source| source.path == path)
-        })
-    }
-
-    pub fn add_generated(&mut self, path: String, brick: &'static str, source: String) -> bool {
-        if self
-            .sources
-            .iter()
-            .any(|known| known.path == path && known.brick == brick && known.text == source)
-        {
-            return false;
-        }
-        let imported = self.imports(&path);
-        self.sources.retain(|known| known.path != path);
-        if imported {
-            self.composed.clear();
-        } else {
-            self.composed.retain(|key, _| key.module != path);
-        }
-        self.add(path, brick, Cow::Owned(source), true);
-        self.rehash();
-        true
-    }
-
-    pub fn imports(&self, path: &str) -> bool {
-        let named = format!("package::{path}");
-        self.sources.iter().any(|source| {
-            source.path != path
-                && source.text.match_indices(named.as_str()).any(|(at, _)| {
-                    !source.text[at + named.len()..].starts_with(|character: char| {
-                        character.is_ascii_alphanumeric() || character == '_'
-                    })
-                })
-        })
-    }
-
-    pub fn sources_hash(&self) -> u64 {
-        self.sources_hash
-    }
-
-    fn rehash(&mut self) {
-        let mut hasher = DefaultHasher::new();
-        for source in &self.sources {
-            if source.generated && !self.imports(&source.path) {
-                continue;
-            }
-            source.path.hash(&mut hasher);
-            source.brick.hash(&mut hasher);
-            source.text.hash(&mut hasher);
-        }
-        self.sources_hash = hasher.finish();
-    }
-
-    fn add(&mut self, path: String, brick: &'static str, text: Cow<'static, str>, generated: bool) {
-        let overrides = declared_overrides(&text);
-        let hex_floats = hex_floats(&text);
-        self.sources.push(Source {
+    fn add(&mut self, path: String, package: &'static str, text: Cow<'static, str>, generated: bool) {
+        let declared = declarations(&text);
+        self.modules.push(Module {
             path,
-            brick,
+            package,
             text,
-            overrides,
-            hex_floats,
+            declared,
             generated,
         });
     }
 
-    pub fn module_brick(&self, path: &str) -> Option<&'static str> {
-        self.sources
+    fn module(&self, path: &str) -> Option<&Module> {
+        self.modules.iter().find(|module| module.path == path)
+    }
+
+    pub(crate) fn text(&self, path: &str) -> Option<&str> {
+        self.module(path).map(|module| &*module.text)
+    }
+
+    pub(crate) fn sources(&self) -> &[&'static Source] {
+        &self.sources
+    }
+
+    pub(crate) fn declared(&self, var: Var) -> Option<&Declaration> {
+        let (path, name) = path_of((var.module(), var.name()));
+        self.module(path)?
+            .declared
             .iter()
-            .find(|source| source.path == path)
-            .map(|source| source.brick)
+            .find(|declared| declared.name == name)
     }
 
-    pub fn paths(&self) -> impl Iterator<Item = &str> {
-        self.sources.iter().map(|source| source.path.as_str())
+    pub(crate) fn has_entry(&self, entry: Entry) -> bool {
+        let (path, name) = path_of((entry.module(), entry.name()));
+        self.module(path)
+            .is_some_and(|module| defines_function(&module.text, &name))
     }
 
-    pub fn key(&self, entry: Entry, layout: &ResolvedLayout) -> ComposeKey {
-        ComposeKey {
-            module: entry.module.to_owned(),
-            entry: entry.name.to_owned(),
-            layout: layout.label.to_owned(),
-            sources: self.sources_hash,
+    pub(crate) fn buffer_usage(&self, var: Var) -> wgpu::BufferUsages {
+        match self.declared(var).map(|declared| declared.ty) {
+            Some(Ty::Uniform) => wgpu::BufferUsages::UNIFORM,
+            Some(Ty::Storage { .. }) => wgpu::BufferUsages::STORAGE,
+            Some(_) | None => wgpu::BufferUsages::empty(),
         }
     }
 
-    pub fn preload(&mut self, composed: Vec<Composed>) {
-        for composed in composed {
-            if composed.key.sources == self.sources_hash {
-                self.composed
-                    .insert(composed.key.clone(), Arc::new(composed));
+    pub(crate) fn check(&self, fills: &dyn Fn(&'static str, &str) -> bool) -> Vec<Error> {
+        let mut problems = Vec::new();
+        let mut prefixes: Vec<(&'static str, &str)> = Vec::new();
+        for module in self.modules.iter().filter(|module| !module.generated) {
+            let path = format!("$.shaders.{}", module.path);
+            let first = prefix(&module.path);
+            let core = module.package == CORE_PACKAGE;
+            if core != (first == CORE_PREFIX) || (!core && RESERVED.contains(&first)) {
+                problems.push(Error::new(ErrorCode::ModuleOutsideBrick, path).got(module.package));
+                continue;
+            }
+            match prefixes.iter().find(|(package, _)| *package == module.package) {
+                Some((_, known)) if *known != first => {
+                    problems.push(Error::new(ErrorCode::ModuleOutsideBrick, path).got(first));
+                    continue;
+                }
+                Some(_) => {}
+                None => {
+                    if let Some((owner, _)) = prefixes.iter().find(|(_, known)| *known == first) {
+                        problems.push(Error::new(ErrorCode::NameTwice, path).got(*owner));
+                        continue;
+                    }
+                    prefixes.push((module.package, first));
+                }
+            }
+            if !core
+                && let Some(declared) = module
+                    .declared
+                    .iter()
+                    .find(|declared| declared.group == 0 && CORE_BINDINGS.contains(&declared.name.as_str()))
+            {
+                problems.push(Error::new(ErrorCode::BindingForeign, path.clone()).got(&declared.name));
+            }
+            let found = hex_floats(&module.text);
+            if !found.is_empty() {
+                problems.push(Error::new(ErrorCode::ShaderLink, path.clone()).got(found));
+            }
+            for imported in imports(&module.text) {
+                if !self.may_import(module, first, &imported, fills) {
+                    problems.push(Error::new(ErrorCode::ImportForeign, path.clone()).got(imported));
+                }
             }
         }
+        problems
     }
 
-    pub fn composed(&self) -> impl Iterator<Item = &Composed> {
-        self.composed.values().map(|composed| &**composed)
+    fn may_import(
+        &self,
+        module: &Module,
+        own: &str,
+        imported: &str,
+        fills: &dyn Fn(&'static str, &str) -> bool,
+    ) -> bool {
+        let mut segments = imported.split("::");
+        let first = segments.next().unwrap_or_default();
+        let second = segments.next().unwrap_or_default();
+        match first {
+            "engine" | "face" => true,
+            "place" => module.package == CORE_PACKAGE || fills(module.package, second),
+            "generated" => match second {
+                "pieces" => segments.next() == Some(own),
+                "targets" | "composite" => true,
+                _ => second == own,
+            },
+            _ => first == own,
+        }
     }
 
-    pub fn compose(
-        &mut self,
-        entry: Entry,
-        layout: &ResolvedLayout,
-    ) -> Result<Arc<Composed>, Error> {
-        self.compose_named(entry.module, entry.name, layout)
+    pub(crate) fn number(&mut self) -> Vec<(String, String, &'static str, Ty)> {
+        let mut ordered: Vec<(&'static str, usize, usize)> = Vec::new();
+        for (index, module) in self.modules.iter().enumerate() {
+            for (at, declared) in module.declared.iter().enumerate() {
+                if declared.group == 0 {
+                    ordered.push((module.package, index, at));
+                }
+            }
+        }
+        ordered.sort_by(|first, second| {
+            let core = |package: &str| package != CORE_PACKAGE;
+            (core(first.0), first.0, first.1, first.2).cmp(&(core(second.0), second.0, second.1, second.2))
+        });
+        self.numbers.clear();
+        let mut listed = Vec::with_capacity(ordered.len());
+        let mut next = CORE_BINDINGS.len() as u32;
+        for (package, index, at) in ordered {
+            let module = &self.modules[index];
+            let declared = &module.declared[at];
+            let number = match CORE_BINDINGS.iter().position(|name| *name == declared.name) {
+                Some(core) if package == CORE_PACKAGE => core as u32,
+                Some(_) | None => {
+                    next += 1;
+                    next - 1
+                }
+            };
+            let key = (module.path.clone(), declared.name.clone());
+            if self.numbers.insert(key.clone(), number).is_none() {
+                listed.push((key.0, key.1, package, declared.ty));
+            }
+        }
+        listed.sort_by_key(|(path, name, _, _)| self.numbers.get(&(path.clone(), name.clone())).copied());
+        self.numbered = true;
+        self.composed.clear();
+        listed
     }
 
-    pub fn compose_named(
-        &mut self,
-        module: &str,
-        entry: &str,
-        layout: &ResolvedLayout,
-    ) -> Result<Arc<Composed>, Error> {
-        let key = ComposeKey {
-            module: module.to_owned(),
-            entry: entry.to_owned(),
-            layout: layout.label.to_owned(),
-            sources: self.sources_hash,
-        };
-        let path = format!("$.shaders.{module}.{entry}");
-        self.link(key, Some(entry), path, layout)
+    pub(crate) fn binding_of(&self, path: &str, name: &str) -> Option<u32> {
+        self.numbers.get(&(path.to_owned(), name.to_owned())).copied()
     }
 
-    pub fn compose_module(
-        &mut self,
-        module: &str,
-        layout: &ResolvedLayout,
-    ) -> Result<Arc<Composed>, Error> {
-        let key = ComposeKey {
-            module: module.to_owned(),
-            entry: String::new(),
-            layout: layout.label.to_owned(),
-            sources: self.sources_hash,
-        };
-        let path = format!("$.shaders.{module}");
-        self.link(key, None, path, layout)
+    pub(crate) fn compose(&mut self, entry: Entry) -> Result<Arc<Composed>, Error> {
+        let (path, name) = path_of((entry.module(), entry.name()));
+        self.compose_named(path, &name)
     }
 
-    fn link(
-        &mut self,
-        key: ComposeKey,
-        keep: Option<&str>,
-        path: String,
-        layout: &ResolvedLayout,
-    ) -> Result<Arc<Composed>, Error> {
+    pub(crate) fn compose_named(&mut self, module: &str, entry: &str) -> Result<Arc<Composed>, Error> {
+        let key = (module.to_owned(), entry.to_owned());
         if let Some(composed) = self.composed.get(&key) {
             return Ok(Arc::clone(composed));
         }
-        let module = key.module.clone();
-        if !self.sources.iter().any(|source| source.path == module) {
-            return Err(Error::new(ErrorCode::UnknownModule, path.clone())
-                .got(&module)
-                .variants(self.paths().map(str::to_owned).collect::<Vec<_>>()));
-        }
-        if let Some(source) = self
-            .sources
-            .iter()
-            .find(|source| !source.hex_floats.is_empty())
-        {
-            return Err(
-                Error::new(ErrorCode::ShaderLink, format!("$.shaders.{}", source.path))
-                    .expected(Expected::Supported)
-                    .got(&source.hex_floats),
-            );
+        let path = format!("$.shaders.{module}.{entry}");
+        if self.module(module).is_none() {
+            return Err(Error::new(ErrorCode::UnknownModule, path).got(module));
         }
         let failed = |error: &dyn std::fmt::Display| {
             Error::new(ErrorCode::ShaderLink, path.clone()).got(error.to_string())
         };
         let mut resolver = wesl::resolver::VirtualResolver::new();
-        let mut unplaced = Vec::new();
-        for source in &self.sources {
-            let (text, missing) = place_bindings(&source.text, layout);
-            unplaced.extend(missing);
+        for source in &self.modules {
+            let text = self.numbered_text(source);
             resolver.add_module(
                 module_path(&source.path).map_err(|error| failed(&error))?,
                 Cow::Owned(text),
@@ -351,138 +351,268 @@ impl Linker {
             sourcemap: false,
             mangler: wesl::ManglerKind::Escape,
             mangle_main: false,
-            keep: keep.map(|name| vec![name.to_owned()]),
-            keep_main: keep.is_none(),
+            keep: Some(vec![entry.to_owned()]),
+            keep_main: false,
             features,
             ..Default::default()
         };
-        let main = module_path(&module).map_err(|error| failed(&error))?;
-        let mut result =
-            wesl::compile(&main, &options, &resolver).map_err(|error| failed(&error))?;
-        let order = |module: &wesl::syntax::ModulePath| {
-            let named = module.to_string();
-            if *module == main {
+        let main = module_path(module).map_err(|error| failed(&error))?;
+        let mut result = wesl::compile(&main, &options, &resolver).map_err(|error| failed(&error))?;
+        let order = |path: &wesl::syntax::ModulePath| {
+            if *path == main {
                 return 0;
             }
+            let named = path.to_string();
             1 + self
-                .sources
+                .modules
                 .iter()
                 .position(|source| format!("package::{}", source.path) == named)
-                .unwrap_or(self.sources.len())
+                .unwrap_or(self.modules.len())
         };
         result.modules.sort_by_key(|module| order(&module.path));
         let text = wesl::pass::link(&result.modules, Some(&result.used_items)).to_string();
-        if text.contains(&format!("@group({UNPLACED_GROUP})")) {
-            let used: Vec<String> = unplaced
-                .into_iter()
-                .filter(|name: &String| text.contains(name.as_str()))
-                .collect();
-            return Err(Error::new(ErrorCode::UnknownBinding, path.clone())
-                .expected(Expected::Present)
-                .got(used)
-                .variants(layout.bindings.iter().map(|binding| binding.name)));
-        }
-        let mut overrides = Vec::new();
-        for source in &self.sources {
-            for name in &source.overrides {
-                let mangled = if source.path == module {
-                    name.clone()
-                } else {
-                    let module = module_path(&source.path).map_err(|error| failed(&error))?;
-                    wesl::mangler::EscapeMangler.mangle(&module, name)
-                };
-                if declares_override(&text, &mangled) {
-                    overrides.push((name.clone(), mangled));
-                }
-            }
-        }
+        let switches = switch_ids(&text);
         let mut hasher = DefaultHasher::new();
         text.hash(&mut hasher);
         let composed = Arc::new(Composed {
-            key: key.clone(),
+            module: module.to_owned(),
+            entry: entry.to_owned(),
             hash: hasher.finish(),
             text,
-            overrides,
+            switches,
         });
         self.composed.insert(key, Arc::clone(&composed));
         Ok(composed)
     }
-}
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct FaceNeed {
-    pub brick: &'static str,
-    pub module: String,
-    pub face: String,
-}
-
-pub fn face_imports(text: &str) -> Vec<String> {
-    let prefix = format!("import package::{}::", crate::faces::FACE_ROOT);
-    let mut found: Vec<String> = Vec::new();
-    for line in text.lines() {
-        let Some(path) = line.trim_start().strip_prefix(prefix.as_str()) else {
-            continue;
-        };
-        let face: String = path
-            .chars()
-            .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
-            .collect();
-        if !face.is_empty() && !found.contains(&face) {
-            found.push(face);
+    fn numbered_text(&self, module: &Module) -> String {
+        let mut placed = String::with_capacity(module.text.len());
+        for line in module.text.split_inclusive('\n') {
+            match declared_binding(line) {
+                Some((indent, 0, name, rest)) => {
+                    let number = self
+                        .numbers
+                        .get(&(module.path.clone(), name))
+                        .copied()
+                        .unwrap_or(u32::MAX);
+                    placed.push_str(indent);
+                    placed.push_str(&format!("@group(0) @binding({number}) "));
+                    placed.push_str(rest);
+                }
+                Some(_) | None => placed.push_str(line),
+            }
         }
+        placed
     }
-    found
-}
 
-pub fn unmangle(name: &str) -> Option<(String, String)> {
-    if !name.starts_with("package_") {
-        return None;
+    pub(crate) fn reaches(&self, composed: &Composed, path: &str, name: &str) -> bool {
+        let mangled = if path == composed.module {
+            name.to_owned()
+        } else {
+            match module_path(path) {
+                Ok(module) => wesl::mangler::EscapeMangler.mangle(&module, name),
+                Err(_) => return false,
+            }
+        };
+        declares_var(&composed.text, &mangled)
     }
-    let (path, item) = wesl::mangler::EscapeMangler.unmangle(name)?;
-    let path = path.to_string();
-    let path = path.strip_prefix("package::")?;
-    Some((path.to_owned(), item))
+
+    pub(crate) fn reached(&self, composed: &Composed) -> Vec<(String, Declaration)> {
+        let mut found = Vec::new();
+        for module in &self.modules {
+            for declared in &module.declared {
+                if self.reaches(composed, &module.path, &declared.name) {
+                    found.push((module.path.clone(), declared.clone()));
+                }
+            }
+        }
+        found
+    }
+
+    pub(crate) fn is_core(&self, path: &str) -> bool {
+        self.module(path)
+            .is_some_and(|module| module.package == CORE_PACKAGE)
+    }
+
+    pub(crate) fn defines(&self, path: &str, function: &str) -> bool {
+        self.module(path)
+            .is_some_and(|module| defines_function(&module.text, function))
+    }
 }
 
-pub fn declared_bindings(text: &str) -> Vec<&str> {
-    text.lines()
-        .filter_map(|line| {
-            let (_, name, rest) = declared_binding(line)?;
-            let after = match rest.strip_prefix("var<") {
-                Some(spaced) => rest.len() - spaced.len() + spaced.find('>')? + 1,
-                None => "var".len(),
-            };
-            let at = after + rest.get(after..)?.find(name.as_str())?;
-            let start = line.len() - rest.len() + at;
-            line.get(start..start + name.len())
-        })
-        .collect()
-}
-
-fn module_path(path: &str) -> Result<wesl::syntax::ModulePath, String> {
+pub(crate) fn module_path(path: &str) -> Result<wesl::syntax::ModulePath, String> {
     format!("package::{path}")
         .parse::<wesl::syntax::ModulePath>()
         .map_err(|_| path.to_owned())
 }
 
-fn declared_overrides(text: &str) -> Vec<String> {
+fn defines_function(text: &str, name: &str) -> bool {
+    let declaration = format!("fn {name}(");
+    text.match_indices(&declaration).any(|(at, _)| {
+        at == 0 || !text[..at].ends_with(|character: char| character.is_ascii_alphanumeric() || character == '_')
+    })
+}
+
+fn declares_var(text: &str, name: &str) -> bool {
+    text.lines().any(|line| {
+        declared_binding(line).is_some_and(|(_, _, declared, _)| declared == name)
+    })
+}
+
+fn switch_ids(text: &str) -> Vec<u32> {
+    let mut ids = Vec::new();
+    for (at, _) in text.match_indices("@id(") {
+        let digits: String = text[at + 4..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        if let Ok(id) = digits.parse::<u32>()
+            && !ids.contains(&id)
+        {
+            ids.push(id);
+        }
+    }
+    ids.sort_unstable();
+    ids
+}
+
+fn imports(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for line in text.lines() {
+        let Some(path) = line.trim_start().strip_prefix("import package::") else {
+            continue;
+        };
+        let path: String = path
+            .chars()
+            .take_while(|character| character.is_ascii_alphanumeric() || *character == '_' || *character == ':')
+            .collect();
+        let path = path.trim_end_matches(':').to_owned();
+        if !path.is_empty() && !found.contains(&path) {
+            found.push(path);
+        }
+    }
+    found
+}
+
+fn declarations(text: &str) -> Vec<Declaration> {
     text.lines()
-        .filter_map(|line| line.trim_start().strip_prefix("override "))
-        .filter_map(|rest| {
-            let name: String = rest
-                .chars()
-                .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
-                .collect();
-            (!name.is_empty()).then_some(name)
+        .filter_map(|line| {
+            let (_, group, name, rest) = declared_binding(line)?;
+            let binding = binding_number(line)?;
+            let ty = binding_ty(rest)?;
+            Some(Declaration {
+                group,
+                binding,
+                name,
+                ty,
+            })
         })
         .collect()
 }
 
-fn declares_override(text: &str, name: &str) -> bool {
-    let declaration = format!("override {name}");
-    text.match_indices(&declaration).any(|(at, _)| {
-        !text[at + declaration.len()..]
-            .starts_with(|character: char| character.is_ascii_alphanumeric() || character == '_')
+fn binding_number(line: &str) -> Option<u32> {
+    let after = &line[line.find("@binding(")? + "@binding(".len()..];
+    after[..after.find(')')?].trim().parse().ok()
+}
+
+fn binding_ty(rest: &str) -> Option<Ty> {
+    let declaration = rest.strip_prefix("var")?;
+    let (space, declaration) = match declaration.strip_prefix('<') {
+        Some(spaced) => {
+            let close = spaced.find('>')?;
+            (Some(&spaced[..close]), &spaced[close + 1..])
+        }
+        None => (None, declaration),
+    };
+    if let Some(space) = space {
+        let space = space.replace(' ', "");
+        return Some(match space.as_str() {
+            "uniform" => Ty::Uniform,
+            "storage,read_write" => Ty::Storage { write: true },
+            _ => Ty::Storage { write: false },
+        });
+    }
+    let ty = declaration[declaration.find(':')? + 1..]
+        .trim()
+        .trim_end_matches(';')
+        .replace(' ', "");
+    texture_ty(&ty)
+}
+
+fn texture_ty(ty: &str) -> Option<Ty> {
+    use wgpu::TextureViewDimension as D;
+    if ty == "sampler" {
+        return Some(Ty::Sampler);
+    }
+    if ty == "sampler_comparison" {
+        return Some(Ty::Comparison);
+    }
+    let depth = [
+        ("texture_depth_2d_array", D::D2Array),
+        ("texture_depth_cube_array", D::CubeArray),
+        ("texture_depth_cube", D::Cube),
+        ("texture_depth_2d", D::D2),
+    ];
+    if let Some(&(_, view)) = depth.iter().find(|(name, _)| ty == *name) {
+        return Some(Ty::Texture {
+            sample: Sample::Depth,
+            view,
+        });
+    }
+    let (head, inner) = ty.split_once('<')?;
+    let inner = inner.strip_suffix('>')?;
+    let views = [
+        ("2d_array", D::D2Array),
+        ("cube_array", D::CubeArray),
+        ("cube", D::Cube),
+        ("3d", D::D3),
+        ("2d", D::D2),
+        ("1d", D::D1),
+    ];
+    if let Some(shape) = head.strip_prefix("texture_storage_") {
+        let view = views.iter().find(|(name, _)| shape == *name)?.1;
+        let (format, access) = inner.split_once(',')?;
+        let format = storage_format(format)?;
+        let access = match access {
+            "read" => wgpu::StorageTextureAccess::ReadOnly,
+            "read_write" => wgpu::StorageTextureAccess::ReadWrite,
+            _ => wgpu::StorageTextureAccess::WriteOnly,
+        };
+        return Some(Ty::StorageTexture {
+            format,
+            access,
+            view,
+        });
+    }
+    let shape = head.strip_prefix("texture_")?;
+    let view = views.iter().find(|(name, _)| shape == *name)?.1;
+    let sample = match inner {
+        "u32" => Sample::Uint,
+        "i32" => Sample::Sint,
+        _ => Sample::Float,
+    };
+    Some(Ty::Texture { sample, view })
+}
+
+fn storage_format(format: &str) -> Option<wgpu::TextureFormat> {
+    use wgpu::TextureFormat as F;
+    Some(match format {
+        "r32float" => F::R32Float,
+        "r32uint" => F::R32Uint,
+        "r32sint" => F::R32Sint,
+        "rg32float" => F::Rg32Float,
+        "rg32uint" => F::Rg32Uint,
+        "rgba8unorm" => F::Rgba8Unorm,
+        "rgba8snorm" => F::Rgba8Snorm,
+        "rgba8uint" => F::Rgba8Uint,
+        "rgba16float" => F::Rgba16Float,
+        "rgba16uint" => F::Rgba16Uint,
+        "rgba32float" => F::Rgba32Float,
+        "rgba32uint" => F::Rgba32Uint,
+        "r16float" => F::R16Float,
+        "rg16float" => F::Rg16Float,
+        "bgra8unorm" => F::Bgra8Unorm,
+        _ => return None,
     })
 }
 
@@ -516,34 +646,13 @@ fn hex_floats(text: &str) -> Vec<String> {
     found
 }
 
-fn place_bindings(text: &str, layout: &ResolvedLayout) -> (String, Vec<String>) {
-    let mut placed = String::with_capacity(text.len());
-    let mut unplaced = Vec::new();
-    for line in text.split_inclusive('\n') {
-        match declared_binding(line) {
-            Some((indent, name, rest)) => {
-                let (group, number) = match layout.binding(&name) {
-                    Some(binding) => (binding.group, binding.number),
-                    None => {
-                        unplaced.push(name);
-                        (UNPLACED_GROUP, unplaced.len() as u32)
-                    }
-                };
-                placed.push_str(indent);
-                placed.push_str(&format!("@group({group}) @binding({number}) "));
-                placed.push_str(rest);
-            }
-            None => placed.push_str(line),
-        }
-    }
-    (placed, unplaced)
-}
-
-fn declared_binding(line: &str) -> Option<(&str, String, &str)> {
+fn declared_binding(line: &str) -> Option<(&str, u32, String, &str)> {
     let trimmed = line.trim_start();
     let indent = &line[..line.len() - trimmed.len()];
     let after_group = trimmed.strip_prefix("@group(")?;
-    let after_group = &after_group[after_group.find(')')? + 1..];
+    let close = after_group.find(')')?;
+    let group = after_group[..close].trim().parse().ok()?;
+    let after_group = &after_group[close + 1..];
     let after_binding = after_group.trim_start().strip_prefix("@binding(")?;
     let rest = after_binding[after_binding.find(')')? + 1..].trim_start();
     let declaration = rest.strip_prefix("var")?;
@@ -556,5 +665,5 @@ fn declared_binding(line: &str) -> Option<(&str, String, &str)> {
         .chars()
         .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
         .collect();
-    (!name.is_empty()).then_some((indent, name, rest))
+    (!name.is_empty()).then_some((indent, group, name, rest))
 }

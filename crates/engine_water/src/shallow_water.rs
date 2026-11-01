@@ -1,5 +1,5 @@
-use crate::Bed;
 use engine_core::math::GRAVITY;
+use engine_heightfield::Bed;
 
 pub const THETA: f32 = 1.3;
 pub const THIN: f32 = 0.01;

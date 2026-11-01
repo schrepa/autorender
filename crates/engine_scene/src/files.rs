@@ -4,10 +4,10 @@
     clippy::cast_possible_wrap
 )]
 
-use engine_settings::ErrorCode;
+use engine_settings::{ErrorCode, Expected};
 use std::collections::BTreeMap;
 
-use engine_core::{Error, Expected, MeshLods, MeshVertex, Texture};
+use engine_core::{Error, MeshLods, MeshVertex, Texture};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SceneFileKind {

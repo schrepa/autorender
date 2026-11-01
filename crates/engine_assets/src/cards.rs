@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use engine_settings::{Error, ErrorCode, Expected};
+use engine_codec::{Error, ErrorCode, Expected};
 
 use crate::{MAX_TEXTURE_DIMENSION, Mesh, MeshVertex};
 

@@ -1,10 +1,15 @@
+use std::sync::OnceLock;
+
 use engine::prelude::*;
-use engine::{Error, ErrorCode};
+use engine::{Error, ErrorCode, Expected};
+use serde_json::{Value, json};
 
 use crate::land::{self, RockMaps};
-use crate::views;
+use crate::options::Options;
 
-const SCENE: &str = include_str!("../highlands.scene.json");
+pub(crate) const SCENE: &str = include_str!("../highlands.scene.json");
+
+const SPEED: f32 = 160.0;
 
 const EFFECTS: [&str; 7] = [
     "shadows",
@@ -16,59 +21,59 @@ const EFFECTS: [&str; 7] = [
     "probes",
 ];
 
-#[derive(Resource, Clone, Copy)]
-struct SceneReflections(Option<Reflections>);
+pub(crate) struct Furnished {
+    pub(crate) instance: SceneInstance,
+    pub(crate) start: Camera,
+}
 
-pub(crate) fn create(bodies: u32, rocks: &RockMaps) -> engine::Result<(Engine, SceneInstance)> {
-    let mut engine = Engine::default();
-    let collision = bodies > 0;
-    if collision {
-        engine
-            .app
-            .add_bricks(engine::bricks::standard())
-            .insert_resource(collision_budgets());
-    } else {
-        engine
-            .app
-            .add_bricks(engine::bricks::standard().without(["collision", "physics"]));
-    }
-    let instance = furnish(&mut engine.app, bodies, rocks, true)?;
-    Ok((engine, instance))
+pub(crate) fn set(world: &mut World, key: &str, value: Value) -> engine::Result<()> {
+    engine::host::apply_setting(world, key, &value)
 }
 
 pub(crate) fn furnish(
-    app: &mut App,
-    bodies: u32,
+    world: &mut World,
+    options: &Options,
     rocks: &RockMaps,
     flying: bool,
-) -> engine::Result<SceneInstance> {
+) -> engine::Result<Furnished> {
     let document: SceneDocument = engine::scene::parse_json(SCENE)?;
-    let world = app.world_mut();
     land::provide(world, rocks)?;
     let instance = document.instantiate(world)?;
-    land::populate(world, &document, bodies)?;
-    let reflections = world.get_resource::<Reflections>().copied();
-    world.insert_resource(SceneReflections(reflections));
-    if bodies > 0 {
-        refresh_collision_world(world)?;
+    land::populate(world, &document, options.bodies)?;
+    if options.bodies > 0 {
+        set(world, "collision", collision_budgets())?;
+    } else {
+        set(world, "collision.enabled", json!(false))?;
+        set(world, "physics.enabled", json!(false))?;
     }
-    views::start(world);
     if flying {
-        app.add_plugins(FlyCameraPlugin);
+        set(world, "fly_camera.speed", json!(SPEED))?;
+    } else {
+        set(world, "fly_camera.enabled", json!(false))?;
     }
-    views::add_systems(app);
-    land::add_systems(app);
-    Ok(instance)
+    let start = *world.resource::<Camera>();
+    Ok(Furnished { instance, start })
 }
 
-fn collision_budgets() -> engine::collision::CollisionConfig {
-    engine::collision::CollisionConfig {
-        max_colliders: Some(10_000),
-        max_candidate_pairs: Some(100_000),
-        max_sensor_pairs: Some(16_384),
-        max_query_candidates: Some(10_000),
-        max_query_hits: Some(1024),
-    }
+fn collision_budgets() -> Value {
+    json!({
+        "max_colliders": 10_000,
+        "max_candidate_pairs": 100_000,
+        "max_sensor_pairs": 16_384,
+        "max_query_candidates": 10_000,
+        "max_query_hits": 1024,
+    })
+}
+
+fn scene_reflections() -> Option<&'static Value> {
+    static SECTION: OnceLock<Option<Value>> = OnceLock::new();
+    SECTION
+        .get_or_init(|| {
+            engine::bricks::parse_json::<Value>(SCENE)
+                .ok()
+                .and_then(|mut scene| Some(scene.get_mut("environment")?.get_mut("reflections")?.take()))
+        })
+        .as_ref()
 }
 
 fn exclusions() -> impl Iterator<Item = String> {
@@ -110,31 +115,51 @@ pub(crate) fn set_effects(world: &mut World, name: &str) -> engine::Result<()> {
         particles,
         probes,
     ] = on;
-    world.resource_mut::<Shadows>().enabled = shadows;
-    world.resource_mut::<AmbientOcclusion>().intensity = if occlusion {
-        AmbientOcclusion::default().intensity
+    set(world, "shadows.enabled", json!(shadows))?;
+    if occlusion {
+        set(world, "ambient_occlusion", json!({}))?;
     } else {
-        0.0
-    };
-    world.resource_mut::<Bloom>().intensity = if bloom {
-        Bloom::default().intensity
-    } else {
-        0.0
-    };
-    let scene = world
-        .get_resource::<SceneReflections>()
-        .and_then(|scene| scene.0);
-    if let Some(settings) = scene.filter(|_| reflections) {
-        world.insert_resource(settings);
-    } else {
-        world.remove_resource::<Reflections>();
+        set(world, "ambient_occlusion.intensity", json!(0.0))?;
     }
-    world.resource_mut::<LocalLightSettings>().enabled = lights;
-    world.resource_mut::<ParticleSettings>().enabled = particles;
+    if bloom {
+        set(world, "bloom", json!({}))?;
+    } else {
+        set(world, "bloom.intensity", json!(0.0))?;
+    }
+    match scene_reflections().filter(|_| reflections) {
+        Some(section) => set(world, "reflections", section.clone())?,
+        None => set(world, "reflections.enabled", json!(false))?,
+    }
+    set(world, "local_lights.enabled", json!(lights))?;
+    set(world, "particles.enabled", json!(particles))?;
     if probes {
-        world.insert_resource(ReflectionProbeSettings::default());
+        set(world, "reflection_probes", json!({}))
     } else {
-        world.remove_resource::<ReflectionProbeSettings>();
+        set(world, "reflection_probes.enabled", json!(false))
     }
-    Ok(())
+}
+
+pub(crate) fn stand(world: &mut World, place: &str) -> engine::Result<()> {
+    let malformed = |expected| {
+        Error::new(ErrorCode::InvalidValue, "$.stand")
+            .expected(expected)
+            .got(place)
+    };
+    let numbers: Vec<f32> = place
+        .split(',')
+        .map(|number| number.trim().parse::<f32>())
+        .collect::<Result<_, _>>()
+        .map_err(|_| malformed(Expected::Number))?;
+    let [x, z, yaw, pitch] = numbers[..] else {
+        return Err(malformed(Expected::Array));
+    };
+    if numbers.iter().any(|number| !number.is_finite()) {
+        return Err(malformed(Expected::Finite));
+    }
+    if pitch.abs() >= 90.0 {
+        return Err(Error::new(ErrorCode::OutOfRange, "$.stand")
+            .range(-90.0, 90.0)
+            .got(pitch));
+    }
+    set(world, "highlands.stand", json!([x, z, yaw, pitch]))
 }

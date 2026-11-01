@@ -1,8 +1,8 @@
-use engine_core::smoke::{SmokeResult, SmokeSession};
-use engine_core::{smoke_check, smoke_eq};
+use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use super::scene_kit::{SceneFixture, ask, component, control, near_all, refuse, render};
+use super::requests::seen;
+use super::scene_kit::{ask, component, control, load, near_all, refuse, render};
 
 fn fixture() -> Value {
     json!({
@@ -22,36 +22,48 @@ fn fixture() -> Value {
     })
 }
 
-pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
-    let (_scene, _) = SceneFixture::load(session, &fixture())?;
+pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+    load(session, &fixture())?;
     ask(session, "control", json!({"name": "pause"}))?;
     let rendering = render(session)?;
-    smoke_check!(
-        rendering["frame"].is_u64() && rendering["tick"].is_u64(),
-        "stats_name_frame_and_tick",
-        json!({"frame": rendering["frame"], "tick": rendering["tick"]}),
-        json!({"frame": 0, "tick": 0})
+    let wanted = json!({"frame": 0, "tick": 0});
+    smoke_eq!(
+        seen(
+            rendering["frame"].is_u64() && rendering["tick"].is_u64(),
+            json!({"frame": rendering["frame"], "tick": rendering["tick"]}),
+            &wanted,
+        ),
+        wanted,
+        "stats_name_frame_and_tick"
     );
     let tint = component(session, "tinted", "Tint")?;
-    smoke_check!(
-        near_all(&tint, &[0.2, 0.9, 0.3, 1.0], 1e-6),
-        "tint_inspects",
-        json!(tint),
-        json!([0.2, 0.9, 0.3, 1])
+    let wanted = json!([0.2, 0.9, 0.3, 1]);
+    smoke_eq!(
+        seen(
+            near_all(&tint, &[0.2, 0.9, 0.3, 1.0], 1e-6),
+            json!(tint),
+            &wanted,
+        ),
+        wanted,
+        "tint_inspects"
     );
     let probe = component(session, "probe", "ReflectionProbe")?;
-    smoke_check!(
-        near_all(&probe["extent"], &[12.0, 6.0, 12.0], 1e-6),
-        "probe_inspects",
-        json!(probe),
-        json!({"extent": [12, 6, 12]})
+    let wanted = json!({"extent": [12, 6, 12]});
+    smoke_eq!(
+        seen(
+            near_all(&probe["extent"], &[12.0, 6.0, 12.0], 1e-6),
+            json!(probe),
+            &wanted,
+        ),
+        wanted,
+        "probe_inspects"
     );
     let camera = ask(session, "inspect", json!({"component": "Camera"}))?["value"].clone();
-    smoke_check!(
-        camera["position"].is_array(),
-        "camera_inspects",
-        json!(camera),
-        json!({"position": []})
+    let wanted = json!({"position": []});
+    smoke_eq!(
+        seen(camera["position"].is_array(), json!(camera), &wanted),
+        wanted,
+        "camera_inspects"
     );
     environment(session)?;
     let benchmark = control(
@@ -67,7 +79,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     errors(session)
 }
 
-fn environment(session: &mut dyn SmokeSession) -> SmokeResult {
+fn environment(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let merged = control(
         session,
         "environment",
@@ -101,7 +113,7 @@ fn environment(session: &mut dyn SmokeSession) -> SmokeResult {
     Ok(())
 }
 
-fn errors(session: &mut dyn SmokeSession) -> SmokeResult {
+fn errors(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let unknown = refuse(
         session,
         "control",
@@ -131,11 +143,11 @@ fn errors(session: &mut dyn SmokeSession) -> SmokeResult {
     let catalog = ask(session, "describe", json!({"name": "ErrorCodes"}))?["codes"].clone();
     for code in [&unknown["code"], &mistyped["code"], &game["code"]] {
         let described = catalog.as_array().is_some_and(|codes| codes.contains(code));
-        smoke_check!(
-            described,
-            "catalog_describes_codes",
-            json!(code),
-            json!("described")
+        let wanted = json!("described");
+        smoke_eq!(
+            seen(described, json!(code), &wanted),
+            wanted,
+            "catalog_describes_codes"
         );
     }
     Ok(())

@@ -2,26 +2,6 @@ use serde::Serialize;
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct JobsView {
-    pub workers: u32,
-    pub running: u32,
-    pub submitted: u64,
-    pub completed: u64,
-    pub failed: u64,
-    pub last_failure: Option<String>,
-    pub cancelled: u64,
-    pub shares: u32,
-    pub shared_bytes: u64,
-    pub cache_hits: u64,
-    pub cache_misses: u64,
-    pub cache_bytes: u64,
-    pub cache_mismatches: u64,
-    pub held: u32,
-    pub in_place: u64,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct InputView {
     pub move_forward: f32,
     pub move_right: f32,
@@ -95,7 +75,8 @@ pub struct HierarchyView {
 pub struct CameraView {
     pub position: [f32; 3],
     pub target: [f32; 3],
-    pub vertical_fov_radians: f32,
+    pub vertical_fov_radians: Option<f32>,
+    pub height: Option<f32>,
     pub near: f32,
     pub far: f32,
 }
@@ -156,8 +137,3 @@ pub struct MeshBoundsView {
     pub min: [f32; 3],
     pub max: [f32; 3],
 }
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-#[serde(transparent)]
-pub struct TintView(pub [f32; 4]);

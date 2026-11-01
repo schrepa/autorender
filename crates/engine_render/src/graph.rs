@@ -129,21 +129,6 @@ pub struct Ops {
     pub store: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Targets {
-    Post,
-    Temporal,
-    Debug,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FrameShape {
-    pub gpu: bool,
-    pub targets: Targets,
-    pub phases: u8,
-    pub deferred: bool,
-}
-
 pub const SCENE_CLEAR: [f64; 4] = [0.009, 0.015, 0.025, 1.0];
 pub const TRANSPARENT: [f64; 4] = [0.0, 0.0, 0.0, 0.0];
 pub const WHITE: [f64; 4] = [1.0, 1.0, 1.0, 1.0];
@@ -521,6 +506,8 @@ impl StaticGraph {
         Ok(Plan { passes, written })
     }
 }
+
+pub const PLANS: usize = 16;
 
 #[derive(Debug, Default)]
 pub struct PlanCache {

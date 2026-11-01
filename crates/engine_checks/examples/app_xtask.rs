@@ -2,5 +2,5 @@
 mod app;
 
 fn main() -> std::process::ExitCode {
-    engine_checks::app::main(env!("CARGO_MANIFEST_DIR"), app::build)
+    engine_checks::app::main(env!("CARGO_MANIFEST_DIR"), app::bricks, app::build)
 }

@@ -1,5 +1,5 @@
+use engine_heightfield::rivers::{RIVER_STEP, RiverLine};
 use engine_math::{max, min};
-use engine_terrain::rivers::{RIVER_STEP, RiverLine};
 use glam::Vec2;
 
 pub(crate) struct Channels<'a> {

@@ -19,7 +19,6 @@ pub(crate) struct Bvh {
 const REFIT_LIMIT: f32 = 1.5;
 impl Bvh {
     pub fn rebuild(&mut self, bounds: &[Bounds]) {
-        let _profile = engine_profile::span("collision", "bvh_rebuild");
         self.nodes.clear();
         self.indices.clear();
         self.indices.reserve_exact(bounds.len());
@@ -42,7 +41,6 @@ impl Bvh {
             self.rebuild(bounds);
             return;
         }
-        let _profile = engine_profile::span("collision", "bvh_refit");
         let mut area = 0.0;
         for index in (0..self.nodes.len()).rev() {
             let node = self.nodes[index];
@@ -77,28 +75,6 @@ impl Bvh {
             len: usize::from(!self.nodes.is_empty()),
             predicate,
         }
-    }
-
-    pub fn query_profiled<'a>(
-        &'a self,
-        predicate: impl Fn(Bounds) -> bool + 'a,
-        timing: &'a mut engine_profile::Aggregate,
-    ) -> impl Iterator<Item = usize> + 'a {
-        ProfiledTraversal {
-            inner: self.query(predicate),
-            timing,
-        }
-    }
-}
-
-struct ProfiledTraversal<'a, I> {
-    inner: I,
-    timing: &'a mut engine_profile::Aggregate,
-}
-impl<I: Iterator> Iterator for ProfiledTraversal<'_, I> {
-    type Item = I::Item;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.timing.measure(|| self.inner.next())
     }
 }
 

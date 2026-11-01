@@ -1,6 +1,8 @@
-use engine_collision::{ColliderShape, Solid};
+use engine_places::physics::ColliderShape;
 use glam::{Mat3, Quat, Vec3};
 use rapier3d::prelude::{Pose, SharedShape};
+
+use crate::solids::Solid;
 
 const SQUARE: f32 = 1.0e-4;
 

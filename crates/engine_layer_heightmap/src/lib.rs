@@ -3,22 +3,25 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-include!(concat!(env!("OUT_DIR"), "/source.rs"));
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use std::any::Any;
 use std::sync::Arc;
 
-use engine_core::{Brick, Bricks, Error, ErrorCode, Join};
-use engine_math::{max, min};
-use engine_settings::{InvalidSetting, Rule, Setting};
-use engine_terrain::codec::{Reader, Writer};
-use engine_terrain::given::MAX_CREDIT;
-use engine_terrain::layer::{
-    Below, FineRegion, LayerFiles, LayerKind, Made, Row, TerrainLayer, TerrainLayersList, same_as,
+use engine_codec::{Reader, Writer};
+use engine_core::{
+    Brick, Bricks, Error, ErrorCode, InvalidSetting, Job, JobCx, JobKind, JobRef, Rule, Setting,
+    Source, parse_value,
 };
-use engine_terrain::layers::MAX_HEIGHT;
-use engine_terrain::noise::smooth;
-use engine_terrain::{Blend, HeightImage, Layers, record};
+use engine_heightfield::given::MAX_CREDIT;
+use engine_heightfield::layer::{
+    Below, FineRegion, LayerFiles, LayerKind, Made, Row, TerrainLayer, no_points, same_as,
+};
+use engine_heightfield::layers::MAX_HEIGHT;
+use engine_heightfield::noise::smooth;
+use engine_heightfield::{Blend, HeightImage, Layers};
+use engine_math::{max, min};
+use engine_places::terrain::{self, TerrainLayers};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,24 +29,35 @@ use serde_json::Value;
 pub struct LayerHeightmapBrick;
 
 impl Brick for LayerHeightmapBrick {
+    const SOURCE: &'static Source = &SOURCE;
+    const JOBS: &'static [&'static JobKind] = &[&HEIGHTMAP_JOB];
+
     fn register(bricks: &mut Bricks<'_>) {
-        for &kind in KINDS {
-            bricks.join(Join::<TerrainLayersList>::new().cpu(kind));
-        }
+        bricks.join::<TerrainLayers>(
+            terrain::LayerKind {
+                layer: &HEIGHTMAP,
+                job: JobRef::from(&HEIGHTMAP_JOB),
+            },
+            None,
+        );
     }
 }
 
+pub static HEIGHTMAP_JOB: JobKind = JobKind::new("layer_heightmap::heightmap", &SOURCE, refused);
+
 pub static HEIGHTMAP: LayerKind = LayerKind {
     name: "heightmap",
-    source: SOURCE,
+    source: SOURCE.hash(),
     from_json,
     read,
     files,
-    schema: engine_terrain::layer_schema!(schema),
-    points: engine_terrain::layer::no_points,
+    schema: engine_heightfield::schema::<HeightmapSettings>,
+    points: no_points,
 };
 
-pub static KINDS: &[&LayerKind] = &[&HEIGHTMAP];
+fn refused(_input: &[u8], _cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    Err(Error::new(ErrorCode::JobUnsupported, "$.jobs"))
+}
 
 const MAX_HEIGHTMAP: u32 = 16_384;
 
@@ -57,18 +71,14 @@ const HEIGHTMAP_SIZE: Rule = Rule::Range(1.0e-3, Layers::MAX_COORDINATE as f64);
 const HEIGHTMAP_HEIGHT: Rule = Rule::Range(-MAX_HEIGHT as f64, MAX_HEIGHT as f64);
 const HEIGHTMAP_FALLOFF: Rule = Rule::Range(0.0, Layers::MAX_COORDINATE as f64);
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(transform = state_heightmap_rules)
-)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(transform = state_heightmap_rules)]
 #[serde(deny_unknown_fields)]
 pub struct HeightmapSettings {
     pub uri: String,
-    #[cfg_attr(feature = "schema", schemars(range(min = 2, max = MAX_HEIGHTMAP)))]
+    #[schemars(range(min = 2, max = MAX_HEIGHTMAP))]
     pub width: u32,
-    #[cfg_attr(feature = "schema", schemars(range(min = 2, max = MAX_HEIGHTMAP)))]
+    #[schemars(range(min = 2, max = MAX_HEIGHTMAP))]
     pub height: u32,
     pub min: [f32; 2],
     pub size: [f32; 2],
@@ -79,28 +89,22 @@ pub struct HeightmapSettings {
     #[serde(default)]
     pub blend: Blend,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(length(max = MAX_CREDIT)))]
+    #[schemars(length(max = MAX_CREDIT))]
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "schema", schemars(length(max = MAX_CREDIT)))]
+    #[schemars(length(max = MAX_CREDIT))]
     pub attribution: Option<String>,
 }
 
-#[cfg(feature = "schema")]
 fn state_heightmap_rules(schema: &mut schemars::Schema) {
     for field in ["min", "size", "low", "high", "falloff"] {
         let rule = HeightmapLayer::rule_of(field).expect("heightmap_rule_declared");
-        engine_settings::state(schema, field, rule);
+        engine_core::state(schema, field, rule);
     }
 }
 
-#[cfg(feature = "schema")]
-fn schema() -> schemars::Schema {
-    schemars::schema_for!(HeightmapSettings)
-}
-
 fn from_json(value: &Value, files: &dyn LayerFiles) -> Made {
-    let settings: HeightmapSettings = engine_settings::parse_value(value.clone())?;
+    let settings: HeightmapSettings = parse_value(value.clone())?;
     Ok(Arc::new(settings.prepare(files)?))
 }
 
@@ -120,7 +124,7 @@ fn files(settings: &Value) -> Vec<String> {
 }
 
 fn setting_error(invalid: InvalidSetting) -> Error {
-    invalid.error(ErrorCode::InvalidTerrain, "$")
+    invalid.error(ErrorCode::InvalidValue, "$")
 }
 
 impl HeightmapSettings {
@@ -128,14 +132,14 @@ impl HeightmapSettings {
         for (field, text) in [("source", &self.source), ("attribution", &self.attribution)] {
             let characters = text.as_ref().map_or(0, |text| text.chars().count());
             if characters > MAX_CREDIT {
-                return Err(Error::new(ErrorCode::InvalidTerrain, format!("$.{field}"))
+                return Err(Error::new(ErrorCode::InvalidValue, format!("$.{field}"))
                     .at_most(MAX_CREDIT as u64)
                     .got(characters));
             }
         }
         for (field, samples) in [("width", self.width), ("height", self.height)] {
             if !(2..=MAX_HEIGHTMAP).contains(&samples) {
-                return Err(Error::new(ErrorCode::InvalidTerrain, format!("$.{field}"))
+                return Err(Error::new(ErrorCode::InvalidValue, format!("$.{field}"))
                     .range(2.0, f64::from(MAX_HEIGHTMAP))
                     .got(samples));
             }
@@ -144,7 +148,7 @@ impl HeightmapSettings {
             Some(bytes) => {
                 HeightImage::from_le_bytes(self.width, self.height, &bytes).ok_or_else(|| {
                     let wanted = f64::from(self.width) * f64::from(self.height) * 2.0;
-                    Error::new(ErrorCode::InvalidTerrain, URI_PATH)
+                    Error::new(ErrorCode::InvalidValue, URI_PATH)
                         .range(wanted, wanted)
                         .got(bytes.len())
                 })?
@@ -304,7 +308,7 @@ impl TerrainLayer for HeightmapLayer {
     }
 }
 
-record!(HeightmapLayer {
+engine_codec::record!(HeightmapLayer {
     image,
     min,
     size,

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::{Terrain, TerrainEdit, TerrainRiver, TerrainSurface};
 use crate::{GivenRiver, Stamp};
-use engine_core::content_hash;
+use super::content_hash;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Generation(u128);

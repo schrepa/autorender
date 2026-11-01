@@ -1,4 +1,4 @@
-use engine_core::BrickCosts;
+use engine_registry::BrickCosts;
 use serde_json::{Value, json};
 
 use crate::protocol::{Detail, ProfileRequest};

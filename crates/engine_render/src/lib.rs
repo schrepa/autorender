@@ -19,31 +19,26 @@ use engine_registry::RecordExt;
 
 pub use wgpu;
 
-include!(concat!(env!("OUT_DIR"), "/source.rs"));
-
 mod bindings;
 mod cached;
+mod encode;
+mod fixed_linker;
+mod frame_group;
 mod gpu_calls;
 mod gpu_data;
-mod pipeline_layouts;
-
-mod depth_pyramid;
-mod entries;
-mod faces;
-mod frame_group;
 mod gpu_layouts;
-mod gpu_uploads;
 mod graph;
 mod impostors;
-mod lazy;
+mod install;
 mod linker;
-mod parts;
+mod machine;
 mod pieces;
+mod pipeline_layouts;
 mod pipelines;
 mod places;
 mod registration;
 mod shaders;
-mod uploads;
+mod shared;
 
 mod buffers;
 mod materials;
@@ -51,10 +46,8 @@ mod memory;
 mod mesh_arena;
 mod mipmaps;
 mod platform;
-mod post;
 mod profiling;
 mod renderer;
-mod staging;
 mod targets;
 
 #[doc(hidden)]
@@ -90,9 +83,11 @@ pub trait RenderBricks {
 
 impl RenderBricks for Bricks<'_> {
     fn part<P: GpuPart>(&mut self) -> &mut Self {
-        self.record()
+        let record = self.record();
+        let scope = record.scope();
+        record
             .render
-            .push(Box::new(registration::PartRecord::of::<P>()));
+            .push(Box::new(registration::PartRecord::of::<P>(scope)));
         self
     }
 
@@ -102,12 +97,13 @@ impl RenderBricks for Bricks<'_> {
         draw: fn(&P, &D::Args, &mut Draw<'_, P, D>) -> u32,
     ) -> &mut Self {
         let record = self.record();
+        let scope = record.scope();
         record
             .render
-            .push(Box::new(registration::PartRecord::of::<P>()));
+            .push(Box::new(registration::PartRecord::of::<P>(scope)));
         record
             .render
-            .push(Box::new(registration::DrawRecord::<D>::of::<P>(layer, draw)));
+            .push(Box::new(registration::DrawAny::of::<P, D>(scope, layer, draw)));
         self
     }
 }
@@ -152,10 +148,17 @@ pub struct Own;
 
 pub trait Scope<P> {
     type Tag: 'static;
+    #[doc(hidden)]
+    fn pass_index(&self) -> Option<u32> {
+        None
+    }
 }
 
 impl<P> Scope<P> for Pass<P> {
     type Tag = Own;
+    fn pass_index(&self) -> Option<u32> {
+        Some(self.0)
+    }
 }
 
 impl<P, D: DrawPoint> Scope<P> for D {
@@ -320,8 +323,66 @@ impl SamplerDesc {
     };
 }
 
+fn bound_of<P>(bound: Bind<P>) -> install::Bound {
+    match bound {
+        Bind::Texture(texture) => install::Bound::Texture(texture.0),
+        Bind::Slice {
+            texture,
+            mips,
+            layers,
+        } => install::Bound::Slice {
+            texture: texture.0,
+            mips,
+            layers,
+        },
+        Bind::Buffer(buffer) => install::Bound::Buffer(buffer.0),
+        Bind::Sampler(sampler) => install::Bound::Sampler(sampler.0),
+        Bind::Target(view) => install::Bound::Target(view),
+        Bind::Asset => install::Bound::Asset,
+    }
+}
+
+fn bound_list<P>(bound: &[(Var, Bind<P>)]) -> Vec<(Var, install::Bound)> {
+    bound
+        .iter()
+        .map(|(var, bound)| {
+            let owned = match bound {
+                Bind::Texture(texture) => Bind::Texture(*texture),
+                Bind::Slice {
+                    texture,
+                    mips,
+                    layers,
+                } => Bind::Slice {
+                    texture: *texture,
+                    mips: mips.clone(),
+                    layers: layers.clone(),
+                },
+                Bind::Buffer(buffer) => Bind::Buffer(*buffer),
+                Bind::Sampler(sampler) => Bind::Sampler(*sampler),
+                Bind::Target(view) => Bind::Target(*view),
+                Bind::Asset => Bind::Asset,
+            };
+            (*var, bound_of(owned))
+        })
+        .collect()
+}
+
+fn scoped<P, S: Scope<P>>(scope: &S) -> install::Scoped {
+    match scope.pass_index() {
+        Some(pass) => install::Scoped::Pass(pass),
+        None => install::Scoped::Point(TypeId::of::<S::Tag>()),
+    }
+}
+
+fn copied<P>(copied: Copied<P>) -> install::Copied {
+    match copied {
+        Copied::Buffer(buffer) => install::Copied::Buffer(buffer.0),
+        Copied::Texture(texture) => install::Copied::Texture(texture.0),
+    }
+}
+
 pub struct Install<'i, P> {
-    core: &'i mut engine_registry::InstallCore,
+    core: &'i mut install::InstallCore,
     part: PhantomData<fn() -> P>,
 }
 
@@ -332,31 +393,40 @@ impl<P: GpuPart> Install<'_, P> {
         format: wgpu::TextureFormat,
         lifetime: Lifetime,
     ) -> Texture<P> {
-        todo!()
+        Texture(self.core.texture(label, format, lifetime), PhantomData)
     }
 
     pub fn buffer(&mut self, label: &'static str, lifetime: Lifetime) -> Buffer<P> {
-        todo!()
+        Buffer(self.core.buffer(label, lifetime), PhantomData)
     }
 
     pub fn sampler(&mut self, desc: SamplerDesc) -> Sampler<P> {
-        todo!()
+        Sampler(self.core.sampler(desc), PhantomData)
     }
 
     pub fn frame(&mut self, variable: Var, bound: Bind<P>) -> Result<(), Error> {
-        todo!()
+        self.core.frame(variable, bound_of(bound))
     }
 
     pub fn pass(&mut self, name: &'static str) -> PassBuilder<'_, P> {
-        todo!()
+        let pass = self.core.pass(name, install::Work::Render);
+        PassBuilder {
+            core: &mut *self.core,
+            pass,
+            part: PhantomData,
+        }
     }
 
     pub fn copy(&mut self, name: &'static str, from: Copied<P>, to: Copied<P>) -> Pass<P> {
-        todo!()
+        let work = install::Work::Copy {
+            from: copied(from),
+            to: copied(to),
+        };
+        Pass(self.core.pass(name, work), PhantomData)
     }
 
     pub fn clear(&mut self, name: &'static str, buffer: Buffer<P>) -> Pass<P> {
-        todo!()
+        Pass(self.core.pass(name, install::Work::Clear(buffer.0)), PhantomData)
     }
 
     pub fn render_pipeline<S: Scope<P>>(
@@ -365,7 +435,18 @@ impl<P: GpuPart> Install<'_, P> {
         desc: &RenderPipeline<'_>,
         bound: &[(Var, Bind<P>)],
     ) -> Result<Pipeline<P, S::Tag>, Error> {
-        todo!()
+        let program = install::Program::Render(install::RenderDecl {
+            vertex: desc.vertex,
+            fragment: desc.fragment,
+            debug: desc.debug,
+            vertices: desc.vertices.to_vec(),
+            primitive: desc.primitive,
+            depth: desc.depth,
+            blend: desc.blend,
+            writes: desc.writes,
+        });
+        let pipeline = self.core.pipeline(scoped(&scope), program, bound_list(bound))?;
+        Ok(Pipeline(pipeline, PhantomData))
     }
 
     pub fn compute_pipeline(
@@ -374,39 +455,62 @@ impl<P: GpuPart> Install<'_, P> {
         entry: Entry,
         bound: &[(Var, Bind<P>)],
     ) -> Result<ComputePipeline<P>, Error> {
-        todo!()
+        let pipeline = self.core.pipeline(
+            install::Scoped::Pass(pass.0),
+            install::Program::Compute(entry),
+            bound_list(bound),
+        )?;
+        Ok(ComputePipeline(pipeline, PhantomData))
     }
 
     pub fn draw_input<S: Scope<P>>(&mut self, scope: S, buffer: Buffer<P>) -> DrawInput<P, S::Tag> {
-        todo!()
+        DrawInput(self.core.draw_input(scoped(&scope), buffer.0), PhantomData)
     }
 
     pub fn claim<D: DrawPoint>(&mut self, pass: Pass<P>) -> Result<Draws<D>, Error> {
-        todo!()
+        self.core.claim(TypeId::of::<D>(), D::NAME, pass.0)?;
+        let members = self
+            .core
+            .members::<registration::DrawRecord<D>>()
+            .map(|(part, record)| record.member(part))
+            .collect();
+        Ok(Draws { members })
     }
 }
 
 pub struct PassBuilder<'b, P> {
-    core: &'b mut engine_registry::InstallCore,
+    core: &'b mut install::InstallCore,
     pass: u32,
     part: PhantomData<fn() -> P>,
 }
 
 impl<P: GpuPart> PassBuilder<'_, P> {
     pub fn at(self, layer: Layer) -> Self {
-        todo!()
+        if let Some(pass) = self.core.pass_mut(self.pass) {
+            pass.layer = Some(layer);
+        }
+        self
     }
 
     pub fn after(self, pass: Pass<P>) -> Self {
-        todo!()
+        if let Some(declared) = self.core.pass_mut(self.pass) {
+            declared.after.push(pass.0);
+        }
+        self
     }
 
     pub fn color(self, target: Texture<P>, access: Access) -> Self {
-        todo!()
+        if let Some(pass) = self.core.pass_mut(self.pass) {
+            pass.colors.push((target.0, access));
+        }
+        self
     }
 
     pub fn depth(self, target: Texture<P>, access: Access) -> Self {
-        todo!()
+        if let Some(pass) = self.core.pass_mut(self.pass) {
+            pass.depths.push((target.0, access));
+        }
+        self
     }
 
     pub fn id(self) -> Pass<P> {
@@ -415,25 +519,29 @@ impl<P: GpuPart> PassBuilder<'_, P> {
 }
 
 pub struct Prepare<'f, P> {
-    core: &'f mut engine_registry::FrameCore,
+    core: &'f mut encode::FrameCore,
     part: PhantomData<fn() -> P>,
+}
+
+fn delivered<R: Readback>(world: &mut bevy_ecs::world::World, frame: u64, tag: u32, bytes: &[u8]) {
+    world.get_resource_or_init::<R>().arrived(frame, tag, bytes);
 }
 
 impl<P: GpuPart> Prepare<'_, P> {
     pub fn run(&mut self, pass: Pass<P>) {
-        todo!()
+        self.core.run_pass(pass.0);
     }
 
     pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) {
-        todo!()
+        self.core.allocate(texture.0, size, mips);
     }
 
     pub fn allocate_buffer(&mut self, buffer: Buffer<P>, bytes: u64) {
-        todo!()
+        self.core.allocate_buffer(buffer.0, bytes);
     }
 
     pub fn write<T: bytemuck::Pod>(&mut self, buffer: Buffer<P>, offset: u64, data: &[T]) {
-        todo!()
+        self.core.write(buffer.0, offset, bytemuck::cast_slice(data));
     }
 
     pub fn write_texture(
@@ -444,19 +552,36 @@ impl<P: GpuPart> Prepare<'_, P> {
         layout: wgpu::TexelCopyBufferLayout,
         size: wgpu::Extent3d,
     ) {
-        todo!()
+        self.core.write_texture(texture.0, at, bytes, layout, size);
     }
 
     pub fn copy(&mut self, pass: Pass<P>, regions: &[CopyRegion]) {
-        todo!()
+        let regions = regions
+            .iter()
+            .map(|region| match region {
+                CopyRegion::Bytes { from, to, size } => CopyRegion::Bytes {
+                    from: *from,
+                    to: *to,
+                    size: *size,
+                },
+                CopyRegion::Texels { from, to, size } => CopyRegion::Texels {
+                    from: *from,
+                    to: *to,
+                    size: *size,
+                },
+            })
+            .collect();
+        self.core.copies.retain(|(known, _)| *known != pass.0);
+        self.core.copies.push((pass.0, regions));
+        self.core.run_pass(pass.0);
     }
 
     pub fn cameras(&mut self, views: &[CameraUniform]) {
-        todo!()
+        self.core.cameras(views);
     }
 
     pub fn fill<S>(&mut self, pipeline: &Pipeline<P, S>, textures: &[TextureHandle]) -> Pipeline<P, S> {
-        todo!()
+        Pipeline(self.core.fill(pipeline.0, textures), PhantomData)
     }
 
     pub fn read_back<R: Readback>(
@@ -466,49 +591,163 @@ impl<P: GpuPart> Prepare<'_, P> {
         range: Range<u64>,
         then: AfterRead,
     ) -> bool {
-        todo!()
+        let part = self.core.part;
+        self.core.read_back(encode::Asked {
+            part,
+            tag,
+            buffer: buffer.0,
+            range,
+            then,
+            deliver: delivered::<R>,
+        })
     }
 }
 
 pub struct Encode<'f, P> {
-    core: &'f mut engine_registry::EncodeCore,
+    core: &'f mut encode::EncodeCore,
     part: PhantomData<fn() -> P>,
 }
 
 impl<P: GpuPart> Encode<'_, P> {
     pub fn render(&mut self, attach: Attach<P>, view: Option<u32>) -> Draw<'_, P, Own> {
-        todo!()
+        let raw = match attach {
+            Attach::Declared => encode::AttachRaw::Declared,
+            Attach::Depth(texture, layer) => encode::AttachRaw::Depth(texture.0, layer),
+            Attach::Color(texture, layer) => encode::AttachRaw::Color(texture.0, layer),
+        };
+        if !self.core.begin_render(raw, view) {
+            self.core.end_render();
+        }
+        let part = self.core.part;
+        Draw {
+            raw: encode::RawDraw {
+                run: &mut *self.core,
+                part,
+                point: None,
+            },
+            part: PhantomData,
+        }
     }
 
     pub fn dispatch(&mut self, pipeline: &ComputePipeline<P>, count: Count<P>) -> u32 {
-        todo!()
+        let count = match count {
+            Count::Groups(groups) => encode::CountRaw::Groups(groups),
+            Count::Indirect(input, offset) => encode::CountRaw::Indirect(input.0, offset),
+        };
+        let part = self.core.part;
+        self.core.dispatch(part, pipeline.0, count)
     }
 }
 
 pub struct Draw<'e, P, S> {
-    raw: engine_registry::RawDraw<'e>,
+    raw: encode::RawDraw<'e>,
     part: PhantomData<fn() -> (P, S)>,
+}
+
+fn inputs<P, S>(inputs: &[DrawInput<P, S>]) -> Vec<u32> {
+    inputs.iter().map(|input| input.0).collect()
 }
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
     pub fn draw(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>) {
-        todo!()
+        let shape = match shape {
+            Shape::Pulled {
+                vertices,
+                instances,
+            } => encode::RawShape::Pulled {
+                vertices,
+                instances,
+            },
+            Shape::Buffers {
+                vertices,
+                indices,
+                elements,
+                instances,
+            } => encode::RawShape::Buffers {
+                vertices: inputs(vertices),
+                indices: indices.map(|input| input.0),
+                elements,
+                instances,
+            },
+            Shape::Indirect {
+                vertices,
+                indices,
+                args,
+                offset,
+            } => encode::RawShape::Indirect {
+                vertices: inputs(vertices),
+                indices: indices.map(|input| input.0),
+                args: args.0,
+                offset,
+            },
+            Shape::Mesh {
+                mesh,
+                material,
+                instances,
+            } => encode::RawShape::Mesh {
+                mesh,
+                material,
+                instances,
+            },
+            Shape::MeshIndirect {
+                mesh,
+                material,
+                args,
+                offset,
+            } => encode::RawShape::MeshIndirect {
+                mesh,
+                material,
+                args: args.0,
+                offset,
+            },
+        };
+        let (part, point) = (self.raw.part, self.raw.point);
+        self.raw.run.draw(part, point, pipeline.0, shape);
     }
 }
 
 impl<P: GpuPart> Draw<'_, P, Own> {
     pub fn scissor(&mut self, rect: [u32; 4]) {
-        todo!()
+        self.raw.run.scissor(rect);
     }
 }
 
 pub struct Draws<D: DrawPoint> {
-    members: Box<[engine_registry::DrawMember<D>]>,
+    members: Box<[registration::DrawMember<D>]>,
 }
 
 impl<D: DrawPoint> Draws<D> {
     pub fn draw<P: GpuPart>(&self, owner: &mut Draw<'_, P, Own>, layer: D::Layer, args: &D::Args) -> u32 {
-        todo!()
+        let run = &mut *owner.raw.run;
+        run.reset_scissor();
+        let mut drawn = 0;
+        for member in self.members.iter().filter(|member| member.layer == layer) {
+            let at = member.part as usize;
+            let live = run.live.get(at).copied().unwrap_or(false)
+                && run.faulted.get(at).is_some_and(Option::is_none);
+            if !live {
+                continue;
+            }
+            let Some(held) = run.parts.get_mut(at).and_then(Option::take) else {
+                continue;
+            };
+            let saved = run.part;
+            run.part = member.part;
+            drawn += (member.call)(
+                held.part(),
+                args,
+                &mut encode::RawDraw {
+                    run: &mut *run,
+                    part: member.part,
+                    point: Some(TypeId::of::<D>()),
+                },
+            );
+            run.part = saved;
+            if let Some(slot) = run.parts.get_mut(at) {
+                *slot = Some(held);
+            }
+        }
+        drawn
     }
 }
 

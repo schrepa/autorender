@@ -1,10 +1,11 @@
 use std::path::Path;
 
-use engine::bricks::AddBrick;
 use engine_core::glam::Vec3;
-use engine_core::{Camera, Engine, EngineConfig, RenderSnapshot};
+use engine_core::{BrickList, Camera, Engine, Projection, RenderSnapshot};
+use engine_places::ground::{GroundTiles, TerrainTiles};
+use engine_registry::Registry;
 use engine_scene::SceneDocument;
-use engine_terrain::{RenderTerrains, TerrainSettings};
+use serde_json::{Value, json};
 
 use crate::{Report, hash};
 
@@ -12,6 +13,7 @@ const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const ASPECT: f32 = 16.0 / 9.0;
 const FRAMES: u32 = 400;
 const SAMPLES_PER_FRAME: u32 = 1 << 18;
+const STATS: &str = "terrain_stats";
 
 pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
     let mut engine = load()?;
@@ -21,20 +23,34 @@ pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
         *engine.app.world_mut().resource_mut::<Camera>() = camera(frame);
         engine.advance(1.0 / 60.0);
         engine.extract(ASPECT, &mut snapshot);
-        let terrains = RenderTerrains::of(&snapshot);
-        let mut line = format!("{frame}: {:?}", terrains.stats);
-        for terrain in &terrains.terrains {
-            let mut keys: Vec<_> = terrain.tiles.iter().map(|tile| tile.key()).collect();
+        let world = engine.app.world();
+        let stats = world
+            .get_resource::<Registry>()
+            .and_then(|registry| registry.stats_section(STATS))
+            .map_or(Value::Null, |entry| entry.read(world));
+        let mut line = format!("{frame}: {stats}");
+        let held = world.get_resource::<GroundTiles>();
+        let terrains = world
+            .get_resource::<TerrainTiles>()
+            .map(|tiles| tiles.terrains.clone())
+            .unwrap_or_default();
+        for terrain in terrains.iter() {
+            let mut keys: Vec<_> = terrain.tiles.iter().map(|tile| tile.key).collect();
             keys.sort_unstable();
+            let drawn = held.map_or(0, |held| {
+                held.held
+                    .iter()
+                    .filter(|tile| tile.terrain == terrain.terrain)
+                    .count()
+            });
             line.push_str(&format!(
-                " | {} tiles {} drawn {}",
+                " | {} tiles {} drawn {drawn}",
                 if terrain.surroundings {
                     "surroundings"
                 } else {
                     "terrain"
                 },
                 hash(format!("{keys:?}").as_bytes()),
-                terrain.drawn,
             ));
         }
         lines.push(line);
@@ -76,9 +92,11 @@ fn camera(frame: u32) -> Camera {
     Camera {
         position,
         target,
-        vertical_fov_radians: std::f32::consts::FRAC_PI_3,
         near: 0.5,
         far: 4000.0,
+        projection: Projection::Perspective {
+            vertical_fov_radians: std::f32::consts::FRAC_PI_3,
+        },
     }
 }
 
@@ -90,18 +108,19 @@ fn load() -> Result<Engine, String> {
     let path = root.join(FIXTURE);
     let source = std::fs::read_to_string(&path)
         .map_err(|error| format!("cannot read {FIXTURE}: {error}"))?;
-    let mut engine = Engine::new(EngineConfig::default());
-    engine.app.add_bricks(engine::bricks::standard());
+    let mut engine = engine::engine(engine_standard::standard::<BrickList>)
+        .map_err(|error| error.to_string())?;
     let document = SceneDocument::from_json(&source).map_err(|error| error.to_string())?;
     let files =
         engine_native::files::scene_files(&path, &source).map_err(|error| error.to_string())?;
     let _scene = document
         .instantiate_with(engine.app.world_mut(), &files)
         .map_err(|error| format!("{FIXTURE}: {error}"))?;
-    engine
-        .app
-        .world_mut()
-        .resource_mut::<TerrainSettings>()
-        .samples_per_frame = SAMPLES_PER_FRAME;
+    engine::host::apply_setting(
+        engine.app.world_mut(),
+        "terrain.samples_per_frame",
+        &json!(SAMPLES_PER_FRAME),
+    )
+    .map_err(|error| error.to_string())?;
     Ok(engine)
 }

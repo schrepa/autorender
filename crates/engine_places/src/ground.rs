@@ -5,8 +5,9 @@ use bevy_ecs::prelude::{Component, Entity, Resource};
 use engine_math::{max, sin_cos};
 use engine_place::{JobRef, List, MaterialHandle, MeshHandle, Slot, Stamp, TextureHandle};
 use glam::{Mat4, Vec2, Vec3};
+use serde::{Deserialize, Serialize};
 
-pub use engine_heightfield::grid::{Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
+pub use engine_heightfield::grid::{MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GroundPoint {
@@ -87,13 +88,30 @@ pub struct GroundBridge {
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HeightHeld(pub bool);
 
+#[derive(
+    Component, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[require(GroundedAt)]
+#[serde(default, deny_unknown_fields)]
+pub struct Grounded {
+    pub offset: f32,
+}
+
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
+pub struct GroundedAt {
+    pub position: Vec2,
+    pub offset: f32,
+    pub revision: u64,
+    pub level: Option<u32>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Steep {
     pub material: u8,
     pub gradient: [f32; 2],
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SurfaceProjection {
     #[default]

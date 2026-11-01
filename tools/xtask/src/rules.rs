@@ -6,8 +6,8 @@ use engine_checks::{Errors, Exceptions, Repository, Rules};
 pub const RULES: Rules = Rules {
     exceptions: Exceptions {
         long_files: &[
-            ("crates/engine_terrain/src/steady_water.rs", 2360),
-            ("crates/engine_water/src/sim.wgsl", 1645),
+            ("crates/engine_water/src/shaders/water/sim.wgsl", 1645),
+            ("crates/engine_water/src/steady_water.rs", 2360),
             ("tools/lodbuild/src/simplify.rs", 2009),
         ],
         wide_structs: &[
@@ -51,7 +51,7 @@ pub const RULES: Rules = Rules {
     },
     errors: Some(Errors {
         within: "crates/",
-        file: "crates/engine_settings/src/error.rs",
+        file: "crates/engine_codec/src/error.rs",
     }),
 };
 

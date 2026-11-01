@@ -1,72 +1,38 @@
 use std::sync::Arc;
 
-use engine_terrain::lighting::SKY_LAYERS;
-use engine_terrain::lighting::TerrainLighting;
-use engine_terrain::{RenderTerrains, TerrainSettings};
+use engine_core::Error;
+use engine_places::ground::TerrainTiles;
+use engine_render::{Install, Lifetime, Prepare, Texture, wgpu};
+
+use crate::lighting::{SKY_LAYERS, TerrainLighting};
+use crate::settings::TerrainShading;
+use crate::state::Bakes;
+use crate::terrain::TerrainGpu;
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
-struct Maps {
-    texture: wgpu::Texture,
-    view: wgpu::TextureView,
-    size: u32,
-    terrains: usize,
-}
-
 pub(crate) struct SkyMaps {
-    maps: Option<Maps>,
-    empty: wgpu::TextureView,
+    pub(crate) texture: Texture<TerrainGpu>,
+    shape: Option<(u32, usize)>,
     held: Vec<Option<Arc<TerrainLighting>>>,
-    generation: u64,
     pub(crate) uploaded: u32,
 }
 
 impl SkyMaps {
-    pub(crate) fn new(device: &wgpu::Device, queue: &engine_render::gpu_calls::Queue) -> Self {
-        let empty = engine_render::targets::texture_2d(
-            device,
-            "engine/terrain-sky-empty",
-            (1, 1),
-            1,
-            1,
-            FORMAT,
-            wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        );
-        queue.write_texture(
-            empty.as_image_copy(),
-            &[255; 4],
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(4),
-                rows_per_image: Some(1),
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
-        Self {
-            maps: None,
-            empty: array_view(&empty),
+    pub(crate) fn install(cx: &mut Install<'_, TerrainGpu>) -> Result<Self, Error> {
+        Ok(Self {
+            texture: cx.texture("sky", FORMAT, Lifetime::Kept),
+            shape: None,
             held: Vec::new(),
-            generation: 0,
             uploaded: 0,
-        }
-    }
-
-    pub(crate) fn generation(&self) -> u64 {
-        self.generation
-    }
-
-    pub(crate) fn view(&self) -> &wgpu::TextureView {
-        self.maps.as_ref().map_or(&self.empty, |maps| &maps.view)
+        })
     }
 
     pub(crate) fn layer(&self, index: usize) -> u32 {
-        match self.held.get(index) {
-            Some(Some(_)) => (SKY_LAYERS * index) as u32 + 1,
-            _ => 0,
+        if self.held.get(index).is_some_and(Option::is_some) {
+            (SKY_LAYERS * index) as u32 + 1
+        } else {
+            0
         }
     }
 
@@ -74,122 +40,70 @@ impl SkyMaps {
         self.held.iter().flatten().count() as u32
     }
 
-    pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.maps.as_ref().map_or(0, |maps| {
-            u64::from(maps.size) * u64::from(maps.size) * (SKY_LAYERS * maps.terrains) as u64 * 4
-        })
-    }
-
-    pub(crate) fn release(&mut self) {
+    fn release(&mut self) {
         self.uploaded = 0;
-        if self.maps.take().is_some() {
-            self.generation += 1;
-        }
+        self.shape = None;
         self.held.clear();
     }
 
     pub(crate) fn prepare(
         &mut self,
-        device: &wgpu::Device,
-        queue: &engine_render::gpu_calls::Queue,
-        terrains: &RenderTerrains,
-        settings: &TerrainSettings,
+        cx: &mut Prepare<'_, TerrainGpu>,
+        (tiles, bakes, settings, layers): (&TerrainTiles, &Bakes, &TerrainShading, u32),
     ) {
-        if !(settings.enabled && settings.sky_visibility) || terrains.terrains.is_empty() {
+        if !settings.sky_visibility || tiles.terrains.is_empty() {
             self.release();
             return;
         }
         self.uploaded = 0;
         let size = settings.sky_resolution;
-        let count = terrains
-            .terrains
-            .len()
-            .min(device.limits().max_texture_array_layers as usize / SKY_LAYERS);
-        if self
-            .maps
-            .as_ref()
-            .is_none_or(|maps| maps.size != size || maps.terrains != count)
-        {
-            self.maps = Some(maps(device, size, count));
+        let count = tiles.terrains.len().min(layers as usize / SKY_LAYERS);
+        if self.shape != Some((size, count)) {
+            self.shape = Some((size, count));
             self.held = vec![None; count];
-            self.generation += 1;
         }
-        let Some(maps) = &self.maps else {
-            return;
-        };
-        for (index, terrain) in terrains.terrains.iter().take(count).enumerate() {
-            let lighting = terrain
-                .lighting
-                .as_ref()
+        cx.allocate(
+            self.texture,
+            wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: (SKY_LAYERS * count).max(1) as u32,
+            },
+            1,
+        );
+        for (index, terrain) in tiles.terrains.iter().take(count).enumerate() {
+            let lighting = bakes
+                .of(terrain.terrain)
+                .and_then(|held| held.lighting.made.as_ref())
                 .filter(|lighting| lighting.sky_size == size);
             let held = &mut self.held[index];
             match (lighting, &*held) {
                 (Some(lighting), Some(current)) if Arc::ptr_eq(lighting, current) => {}
                 (Some(lighting), _) => {
-                    write_layers(queue, &maps.texture, index, size, &lighting.sky_layers());
-                    *held = Some(lighting.clone());
+                    cx.write_texture(
+                        self.texture,
+                        wgpu::Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: (SKY_LAYERS * index) as u32,
+                        },
+                        &lighting.sky_layers(),
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(size * 4),
+                            rows_per_image: Some(size),
+                        },
+                        wgpu::Extent3d {
+                            width: size,
+                            height: size,
+                            depth_or_array_layers: SKY_LAYERS as u32,
+                        },
+                    );
+                    *held = Some(Arc::clone(lighting));
                     self.uploaded += 1;
                 }
                 (None, _) => *held = None,
             }
         }
     }
-}
-
-fn write_layers(
-    queue: &engine_render::gpu_calls::Queue,
-    texture: &wgpu::Texture,
-    index: usize,
-    size: u32,
-    texels: &[u8],
-) {
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d {
-                x: 0,
-                y: 0,
-                z: (SKY_LAYERS * index) as u32,
-            },
-            aspect: wgpu::TextureAspect::All,
-        },
-        texels,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(size * 4),
-            rows_per_image: Some(size),
-        },
-        wgpu::Extent3d {
-            width: size,
-            height: size,
-            depth_or_array_layers: SKY_LAYERS as u32,
-        },
-    );
-}
-
-fn maps(device: &wgpu::Device, size: u32, terrains: usize) -> Maps {
-    let texture = engine_render::targets::texture_2d(
-        device,
-        "engine/terrain-sky",
-        (size, size),
-        (SKY_LAYERS * terrains) as u32,
-        1,
-        FORMAT,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-    );
-    Maps {
-        view: array_view(&texture),
-        texture,
-        size,
-        terrains,
-    }
-}
-
-fn array_view(texture: &wgpu::Texture) -> wgpu::TextureView {
-    texture.create_view(&wgpu::TextureViewDescriptor {
-        label: Some("engine/terrain-sky"),
-        dimension: Some(wgpu::TextureViewDimension::D2Array),
-        ..Default::default()
-    })
 }

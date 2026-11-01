@@ -246,8 +246,8 @@ fn ground_bounds(store: &TileStore, pyramid: &Pyramid, key: TileKey) -> Option<[
         for z in first.y as u32..=end.y as u32 {
             for x in first.x as u32..=end.x as u32 {
                 let [patch_low, patch_high] = tile.patch_bounds(x, z);
-                bottom = engine_core::math::min(bottom, patch_low);
-                top = engine_core::math::max(top, patch_high);
+                bottom = engine_math::min(bottom, patch_low);
+                top = engine_math::max(top, patch_high);
             }
         }
         let margin = margin + 4.0 * spacing;
@@ -259,8 +259,8 @@ fn ground_bounds(store: &TileStore, pyramid: &Pyramid, key: TileKey) -> Option<[
 pub(super) struct ViewPlanes(Option<[Vec4; 5]>);
 
 impl ViewPlanes {
-    pub(super) fn new(camera: &Camera, eye: Vec3, viewport: Viewport) -> Self {
-        let aspect = viewport.width as f32 / viewport.height.max(1) as f32;
+    pub(super) fn new(camera: &Camera, eye: Vec3, size: glam::UVec2) -> Self {
+        let aspect = size.x as f32 / size.y.max(1) as f32;
         let from = Camera {
             position: eye,
             target: eye + (camera.target - camera.eye()),
@@ -306,8 +306,8 @@ fn collision_keys(pyramid: &Pyramid, point: Vec3, radius: f32, out: &mut Vec<Til
         return;
     }
     let first = [
-        engine_core::math::max(low.x, 0.0) as u32,
-        engine_core::math::max(low.y, 0.0) as u32,
+        engine_math::max(low.x, 0.0) as u32,
+        engine_math::max(low.y, 0.0) as u32,
     ];
     let last = [
         (high.x as u32).min(tiles_x - 1),

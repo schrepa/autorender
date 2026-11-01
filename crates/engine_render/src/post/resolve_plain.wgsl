@@ -1,16 +1,9 @@
-import package::face::post_scene::apply as post_scene;
-import package::engine::post::frame::{
-    drawn_uv, effect_shade, linear, occlusion, occlusion_at, post, scene,
-};
+import package::engine::post::frame::{drawn_uv, linear, post, scene};
 import package::engine::post::pixel::{PostPixel, SceneLight};
 
-struct Resolved {
-    color: vec3<f32>,
+struct Started {
+    light: SceneLight,
     at: PostPixel,
-}
-
-struct Outputs {
-    @location(0) canvas: vec4<f32>,
 }
 
 fn upscaled_scene(pixel: vec2<f32>) -> vec4<f32> {
@@ -39,7 +32,7 @@ fn scene_tap(pixel: vec2<f32>) -> vec4<f32> {
     return textureSampleLevel(scene, linear, drawn_uv(pixel, post), 0.0);
 }
 
-fn resolve(position: vec4<f32>) -> Resolved {
+fn scene_light(position: vec4<f32>) -> Started {
     let uv = position.xy * post.extent.zw;
     let whole = all(post.size.xy == post.extent.xy);
     let rendered = select(uv * post.size.xy, position.xy, whole);
@@ -48,13 +41,6 @@ fn resolve(position: vec4<f32>) -> Resolved {
     if !whole {
         texel = upscaled_scene(rendered);
     }
-    let visible = occlusion_at(occlusion, pixel, post);
-    let shaded = texel.rgb * effect_shade(texel.a, visible, post);
     let at = PostPixel(position.xy, uv, pixel, 0.0, 1u);
-    let lit = post_scene(SceneLight(shaded, texel.a), at);
-    return Resolved(lit.color, at);
-}
-
-fn output(resolved: Resolved, encoded: vec3<f32>) -> Outputs {
-    return Outputs(vec4<f32>(encoded, 1.0));
+    return Started(SceneLight(texel.rgb, texel.a), at);
 }

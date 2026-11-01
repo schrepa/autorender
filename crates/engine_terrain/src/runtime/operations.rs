@@ -1,37 +1,15 @@
 use super::*;
-use engine_core::{Error, ErrorCode, Operation, TerrainDebug, bounds, missing_brick};
-#[cfg(feature = "schema")]
-use engine_settings::{rule::same, stated};
+use engine_core::bounds;
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct TerrainControl {
-    #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(transform = stated(same(TerrainSettings::rule_of("subdivision_error")))))]
-    pub subdivision_error: Option<f32>,
-    #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(transform = stated(same(TerrainSettings::rule_of("pixel_error")))))]
-    pub pixel_error: Option<f32>,
-    #[serde(default)]
-    pub freeze: Option<bool>,
+#[derive(Serialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum TerrainKey {
+    Authored(String),
+    Entity(u64),
 }
 
-#[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct TerrainControlResult {
-    pub temporary: bool,
-    pub terrain_changed: bool,
-    pub frozen_at: Option<[f32; 3]>,
-    pub subdivision_error: Option<f32>,
-    pub pixel_error: Option<f32>,
-}
-
-fn terrain_setting(value: f32, name: &'static str) -> Result<f32, Error> {
-    let rule = TerrainSettings::rule_of(name).expect("terrain_rule_declared");
-    Setting::check(&value, name, rule)
-        .map(|()| value)
-        .map_err(|invalid| out_of_range(invalid, format!("$.{name}")))
+pub fn terrain_key(entity: Entity) -> TerrainKey {
+    TerrainKey::Entity(entity.to_bits())
 }
 
 pub(super) fn out_of_range(invalid: InvalidSetting, path: impl Into<String>) -> Error {
@@ -42,80 +20,6 @@ pub(super) fn out_of_range(invalid: InvalidSetting, path: impl Into<String>) -> 
     }
 }
 
-impl Operation for TerrainControl {
-    const NAME: &'static str = "terrain";
-    const CONTROL: bool = true;
-    const SHOWS: &'static str = "TerrainDebug";
-    type Request = Self;
-
-    fn run(world: &mut World, request: Self) -> Result<serde_json::Value, Error> {
-        let subdivision_error = request
-            .subdivision_error
-            .map(|value| terrain_setting(value, "subdivision_error"))
-            .transpose()?;
-        let pixel_error = request
-            .pixel_error
-            .map(|value| terrain_setting(value, "pixel_error"))
-            .transpose()?;
-        if subdivision_error.is_some() || pixel_error.is_some() {
-            let mut settings = world
-                .get_resource::<TerrainSettings>()
-                .copied()
-                .unwrap_or_default();
-            if let Some(subdivision_error) = subdivision_error {
-                settings.subdivision_error = subdivision_error;
-            }
-            if let Some(pixel_error) = pixel_error {
-                settings.pixel_error = pixel_error;
-            }
-            world.insert_resource(settings);
-        }
-        let eye = world.resource::<Camera>().eye();
-        let mut debug = world
-            .get_resource::<TerrainDebug>()
-            .copied()
-            .unwrap_or_default();
-        if let Some(freeze) = request.freeze {
-            debug.freeze = freeze.then_some(debug.freeze.unwrap_or(eye));
-        }
-        world.insert_resource(debug);
-        let settings = world.get_resource::<TerrainSettings>();
-        let result = TerrainControlResult {
-            temporary: true,
-            terrain_changed: true,
-            frozen_at: debug.freeze.map(|eye| eye.to_array()),
-            subdivision_error: settings.map(|settings| settings.subdivision_error),
-            pixel_error: settings.map(|settings| settings.pixel_error),
-        };
-        Ok(serde_json::to_value(result).expect("results_serialize"))
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(Self)
-    }
-
-    #[cfg(feature = "schema")]
-    fn result_schema() -> Option<schemars::Schema> {
-        Some(schemars::schema_for!(TerrainControlResult))
-    }
-}
-
-#[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(untagged)]
-pub enum TerrainKey {
-    Authored(String),
-    Entity(u64),
-}
-
-pub fn terrain_key(world: &World, entity: Entity) -> TerrainKey {
-    engine_core::authored_id(world, entity).map_or_else(
-        || TerrainKey::Entity(entity.to_bits()),
-        TerrainKey::Authored,
-    )
-}
-
 pub(super) fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
     match Setting::check(&value, "value", bounds::COORDINATE) {
         Ok(()) => Ok(value as f32),
@@ -123,10 +27,11 @@ pub(super) fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
     }
 }
 
-pub(super) fn terrains(world: &World) -> Result<&Terrains, Error> {
-    world
-        .get_resource::<Terrains>()
-        .ok_or_else(|| missing_brick("terrain", "$.op"))
+pub(super) fn named_terrain(name: Option<&str>) -> Result<(), Error> {
+    match name {
+        Some(name) => Err(Error::new(ErrorCode::UnknownValue, "$.terrain").got(name)),
+        None => Ok(()),
+    }
 }
 
 pub(super) fn reply(result: impl Serialize) -> serde_json::Value {

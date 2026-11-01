@@ -1,27 +1,14 @@
-#![deny(
-    clippy::wildcard_enum_match_arm,
-    clippy::match_wildcard_for_single_variants
-)]
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-mod bindings;
 pub mod bounce;
-mod constants;
-mod entries;
-pub mod gpu_layouts;
+mod debug;
+mod gpu;
 pub mod jobs;
 pub mod lighting;
 pub mod macro_colors;
-mod pipeline_layouts;
-mod residency;
-mod runtime {
-    mod bounce;
-    mod lighting;
-    mod macro_colors;
-    mod shading;
-}
 mod settings;
-pub mod shaders;
 mod shading;
+mod state;
 mod terrain;
 mod terrain_bounce;
 mod terrain_horizons;
@@ -29,38 +16,78 @@ mod terrain_macro;
 mod terrain_maps;
 mod terrain_sky;
 
-use engine_core::{Brick, Bricks, Fill, Join};
-use engine_faces::heightfield::HeightfieldFace;
-use engine_faces::places::{GroundTilesSlot, HeightfieldSlot, HorizonsSlot, TerrainShadingList};
-use engine_render::render_bricks::AddRenderParts;
+use bevy_ecs::prelude::*;
+use engine_core::{Brick, Bricks, JobKind, Schedule, Source};
+use engine_places::ground::{Bounce, GroundTiles, Heightfield, Horizons};
+use engine_places::shadows::{ShadowCasters, ShadowMaps};
+use engine_places::probes::ProbeViews;
+use engine_render::{DebugMode, DebugModes, Layer, MainView, RenderBricks};
 
-use crate::terrain::TerrainPass;
+pub use gpu::HorizonsPiece;
+pub use settings::{MAX_BOUNCE_LEVELS, TerrainShading, TerrainShadingStats};
+pub use shading::TileShading;
+
+use terrain::TerrainGpu;
 
 pub struct TerrainShadingBrick;
 
 impl Brick for TerrainShadingBrick {
+    const SOURCE: &'static Source = &SOURCE;
+    const JOBS: &'static [&'static JobKind] = &[
+        &jobs::BOUNCE,
+        &jobs::LIGHTING,
+        &jobs::MACRO_COLORS,
+        &jobs::SHADING,
+    ];
+
     fn register(bricks: &mut Bricks<'_>) {
+        use shaders::terrain_shading::faces;
         bricks
-            .join(Join::<TerrainShadingList>::new())
-            .fill(Fill::<GroundTilesSlot>::new().wgsl("terrain::faces::ground_tiles"))
-            .fill(
-                Fill::<HeightfieldSlot>::new()
-                    .wgsl("terrain::faces::heightfield")
-                    .gpu(engine_render::offer_face!(TerrainPass => dyn HeightfieldFace)),
+            .when(|shading: Res<TerrainShading>| shading.enabled)
+            .settings::<TerrainShading>()
+            .stats::<TerrainShadingStats>()
+            .resource::<state::Bakes>()
+            .resource::<state::Atlas>()
+            .resource::<state::SurfaceTotals>()
+            .piece::<HorizonsPiece>()
+            .fill::<Heightfield>(Some(faces::heightfield::MODULE))
+            .fill::<GroundTiles>(Some(faces::ground_tiles::MODULE))
+            .within(horizons_on, |bricks| {
+                bricks
+                    .fill::<Horizons>(Some(faces::horizons::MODULE))
+                    .within(bounce_on, |bricks| {
+                        bricks.fill::<Bounce>(Some(faces::bounce::MODULE));
+                    });
+            })
+            .join::<DebugModes>(
+                DebugMode {
+                    name: "terrain",
+                    decode: debug::terrain,
+                },
+                None,
             )
-            .fill(Fill::<HorizonsSlot>::new().wgsl("terrain::faces::horizons"))
-            .render_part(&terrain::PART)
-            .shaders(shaders::MODULES)
-            .places(engine_faces::places::PLACES)
-            .pipeline_layouts(pipeline_layouts::PIPELINE_LAYOUTS)
-            .mirrors(
-                engine_faces::heightfield::LAYOUTS,
-                gpu_layouts::constants::DECLARED,
+            .systems(
+                Schedule::ViewSync,
+                (
+                    state::bake,
+                    state::place_tiles,
+                    state::publish_changes,
+                    state::publish_piece,
+                    state::count,
+                ),
             )
-            .mirrors(
-                gpu_layouts::terrain::LAYOUTS,
-                gpu_layouts::constants::MIRRORED,
-            )
-            .mirrors(gpu_layouts::bounce::LAYOUTS, &[]);
+            .off(state::forget)
+            .part::<TerrainGpu>()
+            .draws::<TerrainGpu, MainView>(Layer::Opaque, TerrainGpu::draw_main)
+            .draws::<TerrainGpu, ShadowCasters>((), TerrainGpu::draw_casters)
+            .draws::<TerrainGpu, ProbeViews>((), TerrainGpu::draw_probe);
     }
+}
+
+fn horizons_on(shading: Res<TerrainShading>, maps: Res<ShadowMaps>) -> bool {
+    maps.on && shading.sun_shadows
+}
+
+fn bounce_on(shading: Res<TerrainShading>) -> bool {
+    shading.bounce
 }

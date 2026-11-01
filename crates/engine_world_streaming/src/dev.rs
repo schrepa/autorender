@@ -1,13 +1,13 @@
-use bevy_ecs::prelude::World;
-use engine_core::{Error, ErrorCode, Operation, missing_brick};
+use bevy_ecs::prelude::*;
+use engine_core::{Error, ErrorCode, Operation};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{STREAMING_GRIDS, WorldCells, WorldChanges};
 
 pub const MAX_CHANGES: usize = 256;
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WorldCellsView {
     pub cells: u32,
     pub loaded: u32,
@@ -22,7 +22,6 @@ pub struct WorldCellsView {
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct StreamingGridView {
     pub cell: f32,
     pub range: f32,
@@ -32,7 +31,6 @@ pub struct StreamingGridView {
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct StreamedCellView {
     pub grid: u8,
     pub key: [i32; 2],
@@ -43,13 +41,44 @@ pub struct StreamedCellView {
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WorldChangesView {
     pub removed: usize,
     pub ids: Vec<String>,
 }
 
-pub(crate) fn world_cells(cells: &WorldCells) -> WorldCellsView {
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorldCellsQuery {}
+
+impl Operation for WorldCellsQuery {
+    const NAME: &'static str = "world_cells";
+    type Params = Res<'static, WorldCells>;
+    type Request = Self;
+
+    fn run(cells: SystemParamItem<'_, '_, Self::Params>, _: Self) -> Result<Value, Error> {
+        Ok(serde_json::to_value(world_cells(&cells)).expect("results_serialize"))
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorldChangesQuery {}
+
+impl Operation for WorldChangesQuery {
+    const NAME: &'static str = "world_removals";
+    type Params = Res<'static, WorldChanges>;
+    type Request = Self;
+
+    fn run(changes: SystemParamItem<'_, '_, Self::Params>, _: Self) -> Result<Value, Error> {
+        Ok(serde_json::to_value(WorldChangesView {
+            removed: changes.removed().len(),
+            ids: changes.removed().take(64).map(str::to_owned).collect(),
+        })
+        .expect("results_serialize"))
+    }
+}
+
+fn world_cells(cells: &WorldCells) -> WorldCellsView {
     let stats = cells.stats();
     WorldCellsView {
         cells: stats.cells,
@@ -86,22 +115,12 @@ pub(crate) fn world_cells(cells: &WorldCells) -> WorldCellsView {
     }
 }
 
-pub(crate) fn world_changes(changes: &WorldChanges) -> WorldChangesView {
-    WorldChangesView {
-        removed: changes.removed().len(),
-        ids: changes.removed().take(64).map(str::to_owned).collect(),
-    }
-}
-
 #[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct WorldChangesControl {
     #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(length(max = MAX_CHANGES)))]
     pub remove: Vec<String>,
     #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(length(max = MAX_CHANGES)))]
     pub restore: Vec<String>,
     #[serde(default)]
     pub clear: bool,
@@ -109,58 +128,49 @@ pub struct WorldChangesControl {
 
 impl Operation for WorldChangesControl {
     const NAME: &'static str = "world_changes";
-    const CONTROL: bool = true;
+    type Params = ResMut<'static, WorldChanges>;
     type Request = Self;
 
-    fn run(world: &mut World, request: Self) -> Result<serde_json::Value, Error> {
-        change_world(world, &request.remove, &request.restore, request.clear)
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(WorldChangesControl)
-    }
-}
-
-fn change_world(
-    world: &mut World,
-    remove: &[String],
-    restore: &[String],
-    clear: bool,
-) -> Result<serde_json::Value, Error> {
-    for (ids, path) in [(remove, "$.remove"), (restore, "$.restore")] {
-        if ids.len() > MAX_CHANGES {
-            return Err(Error::new(ErrorCode::OutOfRange, path)
-                .at_most(MAX_CHANGES as u64)
-                .got(ids.len()));
+    fn run(
+        mut changes: SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
+        for (ids, path) in [
+            (&request.remove, "$.remove"),
+            (&request.restore, "$.restore"),
+        ] {
+            if ids.len() > MAX_CHANGES {
+                return Err(Error::new(ErrorCode::OutOfRange, path)
+                    .at_most(MAX_CHANGES as u64)
+                    .got(ids.len()));
+            }
+            if let Some(index) = ids.iter().position(|id| id.is_empty() || id.len() > 192) {
+                return Err(
+                    Error::new(ErrorCode::OutOfRange, format!("{path}[{index}]"))
+                        .range(1.0, 192.0)
+                        .got(ids[index].len()),
+                );
+            }
         }
-        if let Some(index) = ids.iter().position(|id| id.is_empty() || id.len() > 192) {
-            return Err(
-                Error::new(ErrorCode::OutOfRange, format!("{path}[{index}]"))
-                    .range(1.0, 192.0)
-                    .got(ids[index].len()),
-            );
+        let held = changes.bypass_change_detection();
+        let cleared = request.clear && held.clear();
+        let removed = request.remove.iter().filter(|id| held.remove(id)).count();
+        let restored = request.restore.iter().filter(|id| held.restore(id)).count();
+        let total = held.removed().len();
+        if cleared || removed > 0 || restored > 0 {
+            changes.set_changed();
         }
+        Ok(serde_json::to_value(WorldChangesResult {
+            temporary: true,
+            newly_removed: removed,
+            restored,
+            removed: total,
+        })
+        .expect("results_serialize"))
     }
-    let mut changes = world
-        .get_resource_mut::<WorldChanges>()
-        .ok_or_else(|| missing_brick("world_streaming", "$.op"))?;
-    if clear {
-        changes.clear();
-    }
-    let removed = remove.iter().filter(|id| changes.remove(id)).count();
-    let restored = restore.iter().filter(|id| changes.restore(id)).count();
-    Ok(serde_json::to_value(WorldChangesResult {
-        temporary: true,
-        newly_removed: removed,
-        restored,
-        removed: changes.removed().len(),
-    })
-    .expect("results_serialize"))
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WorldChangesResult {
     pub temporary: bool,
     pub newly_removed: usize,

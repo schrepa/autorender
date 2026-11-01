@@ -3,7 +3,7 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-include!(concat!(env!("OUT_DIR"), "/source.rs"));
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 pub mod bake;
 pub mod expr;
@@ -17,36 +17,37 @@ mod runtime;
 pub mod scene;
 mod select;
 mod sights;
-pub mod smokes;
 mod surface;
-mod terrain;
 mod tile;
 mod tile_errors;
-mod views;
+
+use engine_codec as codec;
+use engine_heightfield::given::MAX_GIVEN_RIVERS;
+use engine_heightfield::layer::TerrainLayer;
+use engine_heightfield::path::PATH_FAR;
+use engine_heightfield::{
+    Bed, Blend, Bridge, GivenRiver, HeightImage, HydrologyBake, HydrologySample, HydrologyStats,
+    Layers, PathSample, Reach, Rivers,
+};
+use engine_heightfield::{hydraulics, hydrology, layer, noise, rivers};
+use engine_places::ground::Placed;
 
 pub use bake::TerrainBake;
-pub use engine_core::{Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
+pub use engine_heightfield::grid::{Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
 pub use expr::Expr;
 pub use layers::{Stamp, StampOp};
-pub use path::{HeightGrid, Route, RouteOptions, route};
+pub use path::{HeightGrid, Route, RouteOptions, height_grid, route};
 pub use placement::{
-    AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Footprint, Obstacle, Placed, PlacementChoice,
-    PlacementLayer, Placing, Solid,
+    AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Footprint, Obstacle, PlacementChoice,
+    PlacementLayer, Placing, Solid, footprint,
 };
 pub use runtime::LayerStats;
 pub use runtime::{
-    BRIDGE_SOLIDS, DECK_DEPTH, DECK_MARGIN, DECK_RISE, FALLS_SHOWN, FallView,
-    LakeView, MAX_COLLIDER_EXTENT,
-    MAX_PLACEMENT_LODS, MAX_PLACEMENT_PARTS, MIN_COLLIDER_EXTENT, MacroMap,
-    MotionDetail, PlacedCollider, PlacedShape, PlacementAsset, PlacementLod,
-    PlacementPart, RenderPlacementAsset, RenderPlacementLayer, RenderPlacementPart,
-    RenderSurfaceMaps, RiverFlowView, RiverSightView,
-    SurfaceMaterial, SurfaceProjection, Surroundings,
-    SurroundingsStatus, Terrain, TerrainBakes, TerrainBrick, TerrainControl, TerrainControlResult,
-    TerrainDebugView, TerrainEdit, TerrainKey, TerrainPrefetch, TerrainRiver, TerrainSample,
-    TerrainSettings, TerrainStats, TerrainSurface, TerrainWaterView, Terrains, TerrainsView,
-    stream_now, terrain_key,
-    work_between_frames,
+    BRIDGE_SOLIDS, DECK_DEPTH, DECK_MARGIN, DECK_RISE, LakeView, MAX_COLLIDER_EXTENT,
+    MIN_COLLIDER_EXTENT, MotionDetail, PlacedCollider, PlacedShape, PlacementAsset, Surroundings,
+    SurroundingsStatus, Terrain, TerrainBakes, TerrainBrick, TerrainEdit, TerrainKey,
+    TerrainPrefetch, TerrainRiver, TerrainSample, TerrainScene, TerrainSettings, TerrainStats,
+    TerrainSurface, Terrains,
 };
 pub use runtime::{
     HeightSample, RouteFound, StandingWater, TerrainEditControl, TerrainEdited, TerrainHeightQuery,
@@ -57,10 +58,10 @@ pub use select::{LodRanges, WantedTile, WantedView, wanted_tiles};
 pub use sights::{FlowSummary, LakeSight, RiverCourse, RiverListing, RiverSight};
 pub use surface::{
     Biome, BiomeLayer, BiomeRules, Biomes, Control, Facing, MAX_BIOMES, MAX_SURFACE_MATERIALS,
-    MacroCauses, NoiseMask, SampleInputs, SampleShape, Steep, SteepLayer,
+    MacroCauses, NoiseMask, SampleInputs, SampleShape, SteepLayer,
 };
 pub use tile::{Generator, RIVER_EDGE_FAR, RIVER_EDGE_STEP, RIVER_EDGE_ZERO, Tile, TileSample};
-pub use tile_errors::{DRY_CELL, ERROR_CELLS, ERROR_MIPS, ERROR_TEXELS, ErrorPyramid};
+pub use tile_errors::{ERROR_CELLS, ERROR_MIPS, ERROR_TEXELS, ErrorPyramid};
 
 pub const MAX_LEVEL: u32 = 15;
 

@@ -3,62 +3,72 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-mod bindings;
-pub mod brick_smokes;
-mod foliage;
-mod gpu_layouts;
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
+
+mod far_cover;
+mod gpu;
+mod groups;
+mod layouts;
 mod occupancy;
-mod pipeline_layouts;
-mod runtime {
-    mod occupancy;
-}
-mod scatter;
-mod scatter_draws;
-mod scatter_pool;
-mod shaders;
+mod pool;
+mod settings;
+mod smokes;
+mod systems;
 
-use engine_core::{Brick, Bricks, Fill, Join};
-use engine_faces::occupancy::OccupancyFace;
-use engine_faces::placed::PlacedFace;
-use engine_faces::places::{OccupancySlot, PlacedSlot, ScatterList};
-use engine_render::render_bricks::AddRenderParts;
+use bevy_ecs::prelude::Res;
+use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source};
+use engine_places::ground::{FarCover, Foliage, Occupancy, PlacedTiles};
+use engine_places::shadows::ShadowCasters;
+use engine_render::{Layer, MainView, RenderBricks};
 
-use crate::occupancy::OccupancyPass;
-use crate::scatter::{PlacedCovers, ScatterCoversSlot, ScatterPass};
+pub use settings::{
+    FoliageSettings, OccupancySettings, PlacedLod, PlacedLook, PlacedPart, ScatterSettings,
+    ScatterStats,
+};
 
 pub struct ScatterBrick;
 
 impl Brick for ScatterBrick {
+    const SOURCE: &'static Source = &SOURCE;
+    const SMOKES: &'static [Smoke] = &[Smoke {
+        name: "foliage_settings",
+        runs: Runs::Gpu,
+        run: smokes::foliage_settings,
+    }];
+
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .join(Join::<ScatterList>::new())
-            .fill(
-                Fill::<OccupancySlot>::new()
-                    .wgsl("scatter::faces::occupancy")
-                    .gpu(engine_render::offer_face!(OccupancyPass => dyn OccupancyFace)),
+            .settings::<ScatterSettings>()
+            .settings::<FoliageSettings>()
+            .settings::<OccupancySettings>()
+            .stats::<ScatterStats>()
+            .resource::<systems::ScatterState>()
+            .resource::<occupancy::OccupancyWindows>()
+            .resource::<far_cover::FarCoverTable>()
+            .piece::<layouts::CanopyPiece>()
+            .fill::<Foliage>(Some(shaders::scatter::faces::foliage::MODULE))
+            .fill::<PlacedTiles>(Some(shaders::scatter::faces::placed_tiles::MODULE))
+            .within(
+                |occupancy: Res<OccupancySettings>| occupancy.runs(),
+                |bricks| {
+                    bricks.fill::<Occupancy>(Some(shaders::scatter::faces::occupancy::MODULE));
+                },
             )
-            .fill(
-                Fill::<PlacedSlot>::new()
-                    .wgsl("scatter::faces::placed")
-                    .gpu(engine_render::offer_face!(ScatterPass => dyn PlacedFace)),
+            .join::<FarCover>((), Some(shaders::scatter::faces::far_cover::MODULE))
+            .systems(
+                Schedule::ViewSync,
+                (
+                    systems::publish_foliage,
+                    systems::place_windows,
+                    systems::place_pool,
+                    systems::mark_moved,
+                    systems::publish_tiles,
+                    systems::publish_changes,
+                    systems::scatter_stats,
+                ),
             )
-            .fill(
-                Fill::<ScatterCoversSlot>::new()
-                    .gpu(engine_render::offer_face!(ScatterPass => dyn PlacedCovers)),
-            )
-            .settings::<engine_core::Foliage>()
-            .settings::<engine_terrain::Occupancy>()
-            .smoke(
-                "foliage_settings",
-                true,
-                engine_core::brick_smokes::foliage_settings,
-            )
-            .render_part(&scatter::PART)
-            .render_part(&occupancy::PART)
-            .shaders(shaders::MODULES)
-            .places(engine_faces::places::PLACES)
-            .pipeline_layouts(pipeline_layouts::PIPELINE_LAYOUTS)
-            .mirrors(gpu_layouts::LAYOUTS, gpu_layouts::DECLARED)
-            .mirrors(engine_faces::placed::LAYOUTS, &[]);
+            .draws::<gpu::ScatterGpu, MainView>(Layer::Occluders, gpu::ScatterGpu::draw_occluders)
+            .draws::<gpu::ScatterGpu, MainView>(Layer::Late, gpu::ScatterGpu::draw_late)
+            .draws::<gpu::ScatterGpu, ShadowCasters>((), gpu::ScatterGpu::draw_casters);
     }
 }

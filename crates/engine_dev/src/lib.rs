@@ -19,15 +19,13 @@ mod watch;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod authoring;
 #[cfg(not(target_arch = "wasm32"))]
-mod consumers;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod schemas;
 
 pub use bricks::operation_names;
 pub use bridge::{Artifact, Effect, HostContext, Outcome, Step};
 pub use controls::{OperationCall, validated_camera, validated_presentation_alpha};
 pub use engine_settings::ErrorCode;
-pub use explain::EntityFacts;
+pub use explain::{DrawState, EntityFacts, ExplainRecord};
 pub use inspect::{
     Context, DevTools, InspectorDescriptor, InspectorKind, RenderedMesh, RendererFacts,
     TOOLING_TYPES, reserved_names,

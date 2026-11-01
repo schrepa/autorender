@@ -12,16 +12,14 @@ enum Kept<T> {
 }
 
 struct Asked {
-    record: RecordKey,
-    id: JobId,
+    input: Vec<u8>,
+    ticket: Ticket,
     ground: Option<AskedGround>,
 }
 
 struct AskedGround {
-    source: GroundSource,
-    surfaces: Surfaces,
     key: TileKey,
-    kind: &'static str,
+    pyramid: Pyramid,
 }
 
 pub(super) enum Resolved {
@@ -32,8 +30,8 @@ pub(super) enum Resolved {
 
 #[derive(Default)]
 pub(super) struct WalkRecords {
-    grounds: BTreeMap<RecordKey, Kept<WalkGround>>,
-    portals: BTreeMap<RecordKey, Kept<TilePortals>>,
+    grounds: BTreeMap<Vec<u8>, Kept<WalkGround>>,
+    portals: BTreeMap<Vec<u8>, Kept<TilePortals>>,
     asked: Vec<Asked>,
     reads: u64,
 }
@@ -43,32 +41,40 @@ impl WalkRecords {
         (here(&self.grounds), here(&self.portals))
     }
 
-    pub(super) fn take(&mut self, jobs: &mut Jobs, tick: u64, failures: &mut JobFailures) {
+    pub(super) fn take(
+        &mut self,
+        records: &Records,
+        jobs: &mut Jobs,
+        tick: u64,
+        failures: &mut Failures,
+    ) {
         let mut grounds = 0;
         for asked in std::mem::take(&mut self.asked) {
             if asked.ground.is_some() && grounds >= GROUNDS_PER_TICK {
                 self.asked.push(asked);
                 continue;
             }
-            let Some(output) = jobs.take(asked.id) else {
+            let Some(output) = records.get(&asked.ticket) else {
                 self.asked.push(asked);
                 continue;
             };
-            match &asked.ground {
+            let Asked {
+                input,
+                ticket,
+                ground,
+            } = asked;
+            jobs.cancel(ticket);
+            match ground {
                 Some(ground) => {
                     grounds += 1;
-                    let made = job_output(ground.kind, output, |bytes| -> Result<_, Error> {
-                        let grid = ground.source.regions.grid(ground.key, bytes)?;
-                        let water = surface_water(&ground.surfaces, ground.key, bytes)?;
-                        Ok(WalkGround::new(&grid, water, &ground.source.pyramid))
-                    });
+                    let made = made(WALK_GROUND_NAME, output, |bytes| walk_ground(&ground, bytes));
                     let kept = kept(made, (tick, &mut self.reads), failures);
-                    self.grounds.insert(asked.record, kept);
+                    self.grounds.insert(input, kept);
                 }
                 None => {
-                    let made = job_output(PortalsJob::KIND, output, portals_output);
+                    let made = made(PORTALS_NAME, output, portals_output);
                     let kept = kept(made, (tick, &mut self.reads), failures);
-                    self.portals.insert(asked.record, kept);
+                    self.portals.insert(input, kept);
                 }
             }
         }
@@ -76,40 +82,29 @@ impl WalkRecords {
         forget(&mut self.portals, PORTALS_KEPT, tick);
     }
 
-    pub(super) fn resolve(
-        &mut self,
-        running: &mut Running,
-        slots: &mut Option<JobBudget<'_>>,
-        tick: u64,
-    ) -> Resolved {
+    pub(super) fn resolve(&mut self, running: &mut Running, jobs: &mut Jobs, tick: u64) -> Resolved {
         let gait = running.search.gait();
         let priority = job_priority(GAMEPLAY_JOBS, 0);
         let mut progress = false;
         for &want in running.search.wants() {
             let found = match want {
                 Want::Ground(key) => {
-                    let GroundRecord {
-                        kind,
-                        input,
-                        key: record,
-                    } = running.source.regions.record(key);
-                    let found = read(&mut self.grounds, record, (tick, &mut self.reads));
+                    let input = ground_input(&running.walked, key);
+                    let found = read(&mut self.grounds, &input, (tick, &mut self.reads));
                     if let Found::Missing = found {
                         let ground = Some(AskedGround {
-                            source: running.source.clone(),
-                            surfaces: running.surfaces.clone(),
                             key,
-                            kind,
+                            pyramid: running.walked.source.pyramid,
                         });
-                        self.ask(slots, (kind, input, record), priority, ground);
+                        self.ask(jobs, (&WALK_GROUND, input), priority, ground);
                     }
                     found.map(|ground| running.held.grounds.insert(key, ground))
                 }
                 Want::Portals(key) => {
-                    let (input, record) = portals_record(&running.source, key, &gait);
-                    let found = read(&mut self.portals, record, (tick, &mut self.reads));
+                    let input = portals_input(&running.walked, key, &gait);
+                    let found = read(&mut self.portals, &input, (tick, &mut self.reads));
                     if let Found::Missing = found {
-                        self.ask(slots, (PortalsJob::KIND, input, record), priority, None);
+                        self.ask(jobs, (&PORTALS, input), priority, None);
                     }
                     found.map(|portals| running.held.portals.insert(key, portals))
                 }
@@ -127,20 +122,13 @@ impl WalkRecords {
         }
     }
 
-    pub(super) fn ask_ahead(
-        &mut self,
-        running: &mut Running,
-        slots: &mut Option<JobBudget<'_>>,
-        tick: u64,
-    ) {
+    pub(super) fn ask_ahead(&mut self, running: &mut Running, jobs: &mut Jobs, tick: u64) {
         let gait = running.search.gait();
         let priority = job_priority(GAMEPLAY_JOBS, 1);
         while let Some(&key) = running.search.ahead().get(running.asked_ahead) {
-            let (input, record) = portals_record(&running.source, key, &gait);
-            if let Found::Missing = read(&mut self.portals, record, (tick, &mut self.reads))
-                && !self.ask(slots, (PortalsJob::KIND, input, record), priority, None)
-            {
-                return;
+            let input = portals_input(&running.walked, key, &gait);
+            if let Found::Missing = read(&mut self.portals, &input, (tick, &mut self.reads)) {
+                self.ask(jobs, (&PORTALS, input), priority, None);
             }
             running.asked_ahead += 1;
         }
@@ -148,35 +136,43 @@ impl WalkRecords {
 
     fn ask(
         &mut self,
-        slots: &mut Option<JobBudget<'_>>,
-        (kind, input, record): (&'static str, Vec<u8>, RecordKey),
+        jobs: &mut Jobs,
+        (kind, input): (&'static JobKind, Vec<u8>),
         priority: u32,
         ground: Option<AskedGround>,
-    ) -> bool {
-        let Some(slots) = slots.as_mut() else {
-            return false;
-        };
-        if !slots.take(priority) {
-            return false;
-        }
-        let id = slots.jobs.submit_record(kind, input, priority, record);
+    ) {
+        let ticket = jobs.fetch(kind, &input, priority);
         if ground.is_some() {
-            self.grounds.insert(record, Kept::Asked);
+            self.grounds.insert(input.clone(), Kept::Asked);
         } else {
-            self.portals.insert(record, Kept::Asked);
+            self.portals.insert(input.clone(), Kept::Asked);
         }
-        self.asked.push(Asked { record, id, ground });
-        true
+        self.asked.push(Asked {
+            input,
+            ticket,
+            ground,
+        });
     }
 
-    pub(super) fn clear(&mut self, jobs: Option<&mut Jobs>) {
-        if let Some(jobs) = jobs {
-            for asked in &self.asked {
-                jobs.cancel(asked.id);
-            }
+    pub(super) fn clear(&mut self, jobs: &mut Jobs) {
+        for asked in std::mem::take(&mut self.asked) {
+            jobs.cancel(asked.ticket);
         }
         *self = Self::default();
     }
+}
+
+fn walk_ground(ground: &AskedGround, bytes: &[u8]) -> Result<WalkGround, Error> {
+    let mut grid: GroundGrid = engine_codec::decode(bytes)?;
+    if grid.key != ground.key {
+        return Err(engine_codec::invalid("$.key").got([
+            u16::from(grid.key.level),
+            grid.key.x,
+            grid.key.z,
+        ]));
+    }
+    let water = grid.water.take();
+    Ok(WalkGround::new(&grid, water, &ground.pyramid))
 }
 
 enum Found<T> {
@@ -200,7 +196,7 @@ impl<T> Found<T> {
     }
 }
 
-fn here<T>(records: &BTreeMap<RecordKey, Kept<T>>) -> u32 {
+fn here<T>(records: &BTreeMap<Vec<u8>, Kept<T>>) -> u32 {
     records
         .values()
         .filter(|kept| matches!(kept, Kept::Here(..)))
@@ -208,11 +204,11 @@ fn here<T>(records: &BTreeMap<RecordKey, Kept<T>>) -> u32 {
 }
 
 fn read<T>(
-    records: &mut BTreeMap<RecordKey, Kept<T>>,
-    record: RecordKey,
+    records: &mut BTreeMap<Vec<u8>, Kept<T>>,
+    input: &[u8],
     (tick, reads): (u64, &mut u64),
 ) -> Found<Arc<T>> {
-    match records.get_mut(&record) {
+    match records.get_mut(input) {
         Some(Kept::Here(value, read)) => {
             *reads += 1;
             *read = *reads;
@@ -227,7 +223,7 @@ fn read<T>(
 fn kept<T>(
     made: Result<T, String>,
     (tick, reads): (u64, &mut u64),
-    failures: &mut JobFailures,
+    failures: &mut Failures,
 ) -> Kept<T> {
     match made {
         Ok(value) => {
@@ -241,25 +237,12 @@ fn kept<T>(
     }
 }
 
-fn surface_water(
-    surfaces: &[Arc<dyn WaterSurfaces>],
-    key: TileKey,
-    ground: &[u8],
-) -> Result<Option<Box<[f32]>>, Error> {
-    for surface in surfaces {
-        if let Some(water) = surface.decode(key, ground)? {
-            return Ok(Some(water));
-        }
-    }
-    Ok(None)
-}
-
-fn forget<T>(records: &mut BTreeMap<RecordKey, Kept<T>>, most: usize, tick: u64) {
+fn forget<T>(records: &mut BTreeMap<Vec<u8>, Kept<T>>, most: usize, tick: u64) {
     records.retain(|_, kept| !matches!(kept, Kept::Failed(at) if tick >= *at + RETRY_AFTER));
-    let mut here: Vec<(u64, RecordKey)> = records
+    let mut here: Vec<(u64, &[u8])> = records
         .iter()
-        .filter_map(|(&record, kept)| match kept {
-            Kept::Here(_, read) => Some((*read, record)),
+        .filter_map(|(input, kept)| match kept {
+            Kept::Here(_, read) => Some((*read, input.as_slice())),
             Kept::Asked | Kept::Failed(_) => None,
         })
         .collect();
@@ -268,7 +251,12 @@ fn forget<T>(records: &mut BTreeMap<RecordKey, Kept<T>>, most: usize, tick: u64)
     }
     here.sort_unstable();
     let over = here.len() - most;
-    for (_, record) in here.into_iter().take(over) {
-        records.remove(&record);
+    let gone: Vec<Vec<u8>> = here
+        .into_iter()
+        .take(over)
+        .map(|(_, input)| input.to_vec())
+        .collect();
+    for input in gone {
+        records.remove(&input);
     }
 }

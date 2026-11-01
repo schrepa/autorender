@@ -1,9 +1,8 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use engine_core::TILE_SAMPLES;
-use engine_terrain::Blend;
-use engine_terrain::layer::{Below, LayerTile, Row, TileFrame};
+use engine_heightfield::layer::{Below, LayerTile, Row, TileFrame};
+use engine_heightfield::{Blend, TILE_SAMPLES};
 use glam::Vec4;
 
 use crate::tables::{NoiseTables, state_len};

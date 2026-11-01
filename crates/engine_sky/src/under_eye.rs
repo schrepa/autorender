@@ -1,37 +1,44 @@
-use engine_core::RenderSnapshot;
-use engine_core::bevy_ecs::prelude::World;
-use engine_places::{Ground, WaterBodies};
-use glam::Vec3;
+use bevy_ecs::prelude::*;
+use engine_core::Camera;
+use engine_places::ground::Ground;
+use engine_places::water::{WaterBody, WaterSample};
+use glam::{Vec2, Vec3};
 
-#[derive(Clone, Copy)]
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct SurfaceUnderEye {
-    height: Option<f32>,
+    pub(crate) height: Option<f32>,
 }
 
-impl SurfaceUnderEye {
-    pub(crate) fn of(snapshot: &RenderSnapshot) -> Option<f32> {
-        snapshot
-            .extracted
-            .get::<Self>()
-            .and_then(|under| under.height)
+pub(crate) fn find_surface_under_eye(
+    camera: Res<Camera>,
+    ground: Res<Ground>,
+    bodies: Query<&WaterBody>,
+    mut under: ResMut<SurfaceUnderEye>,
+) {
+    under.set_if_neq(SurfaceUnderEye {
+        height: surface_under(&ground, &bodies, camera.position),
+    });
+}
+
+fn water_at(bodies: &Query<&WaterBody>, eye: Vec3) -> Option<WaterSample> {
+    let mut found: Option<(i32, WaterSample)> = None;
+    for body in bodies {
+        if found.is_some_and(|(precedence, _)| precedence >= body.precedence) {
+            continue;
+        }
+        if let Some(sample) = body.shape.water(eye) {
+            found = Some((body.precedence, sample));
+        }
     }
+    found.map(|(_, sample)| sample)
 }
 
-pub(crate) fn extract_surface_under_eye(world: &World, snapshot: &mut RenderSnapshot) {
-    let under = SurfaceUnderEye {
-        height: surface_under(world, snapshot.camera_position),
-    };
-    match snapshot.extracted.get_mut::<SurfaceUnderEye>() {
-        Some(held) => *held = under,
-        None => snapshot.extracted.insert(under),
-    }
-}
-
-fn surface_under(world: &World, eye: Vec3) -> Option<f32> {
-    let water = WaterBodies::water_in(world, eye);
+fn surface_under(ground: &Ground, bodies: &Query<&WaterBody>, eye: Vec3) -> Option<f32> {
+    let water = water_at(bodies, eye);
     if let Some(water) = water.filter(|water| water.depth > 0.0) {
         return Some(water.surface);
     }
-    let ground = Ground::sample_in(world, eye.x, eye.z);
-    ground.map(|ground| ground.height)
+    ground
+        .sample(Vec2::new(eye.x, eye.z))
+        .map(|ground| ground.height)
 }

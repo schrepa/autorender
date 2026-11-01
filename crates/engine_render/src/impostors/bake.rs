@@ -420,9 +420,9 @@ fn bake_pipeline(
     let constants = variant.constants();
     let extended = variant.extended();
     let (vertex, fragment) = (entries.card_bake)(extended, shade);
-    let mut buffers = vec![crate::renderer::vertex_layout()];
+    let mut buffers = vec![crate::mesh_arena::vertex_layout()];
     if extended {
-        buffers.push(crate::renderer::extra_layout());
+        buffers.push(crate::mesh_arena::extra_layout());
     }
     let targets = if shade {
         Vec::new()

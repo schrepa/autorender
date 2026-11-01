@@ -5,7 +5,7 @@ pub mod comments;
 pub mod files;
 pub mod formats;
 pub mod generated;
-pub mod leaves;
+pub mod install;
 pub mod policy;
 pub mod stages;
 pub mod structure;

@@ -1,14 +1,19 @@
 use super::*;
+use engine_core::{CookMode, FrameTime, Poses, Projection, View, WorkClock};
+use engine_places::streaming::StreamingFocus;
+use engine_places::terrain::DrawnRivers;
+use glam::UVec2;
+
+pub(super) fn vertical_fov(camera: &Camera) -> f32 {
+    match camera.projection {
+        Projection::Perspective {
+            vertical_fov_radians,
+        } => vertical_fov_radians,
+        Projection::Orthographic { .. } => f32::NAN,
+    }
+}
 
 impl Terrains {
-    pub fn set_device_tiles(&mut self, tiles: Option<u32>) {
-        self.device_tiles = tiles;
-    }
-
-    pub fn set_clock(&mut self, clock: Option<fn() -> f64>) {
-        self.clock = clock;
-    }
-
     pub fn loading(&self) -> bool {
         !self.loaded && self.entries.iter().any(|state| state.around.is_none())
     }
@@ -21,16 +26,13 @@ impl Terrains {
         self.entries.iter().any(|state| !state.missing.is_empty())
     }
 
-    pub fn work_between_frames(
+    fn work_between_frames(
         &mut self,
         settings: &TerrainSettings,
-        milliseconds: f64,
-        jobs: Option<&mut Jobs>,
+        (clock, milliseconds): (Option<fn() -> f64>, f64),
+        asking: &mut Asking<'_, '_, '_>,
     ) -> bool {
-        let Some(clock) = self.clock else {
-            return false;
-        };
-        let Some(mut slots) = jobs.map(JobBudget::of) else {
+        let Some(clock) = clock else {
             return false;
         };
         let work = Work {
@@ -64,7 +66,7 @@ impl Terrains {
                 (&target, &keep, &[]),
                 &work,
                 frame,
-                &mut slots,
+                asking,
             );
             state.missing = missing
                 .into_iter()
@@ -90,7 +92,7 @@ impl Terrains {
         let moved = self.last_eye.map_or(Vec3::ZERO, |last| eye - last);
         self.last_eye = Some(eye);
         self.seconds = if seconds.is_finite() {
-            engine_core::math::max(seconds, 0.0)
+            engine_math::max(seconds, 0.0)
         } else {
             0.0
         };
@@ -113,24 +115,18 @@ impl Terrains {
     fn stream(
         &mut self,
         settings: &TerrainSettings,
-        camera: &Camera,
+        (camera, clock): (&Camera, Option<fn() -> f64>),
         (eye, ahead): (Vec3, Vec3),
-        viewport: Viewport,
+        size: UVec2,
         (focus, places): (&[Vec3], &[(Vec3, f32)]),
-        (jobs, water): (Option<&mut Jobs>, &Water),
+        asking: &mut Asking<'_, '_, '_>,
     ) {
         self.frame += 1;
         self.sync_surroundings();
-        let mut slots = jobs.map(JobBudget::of);
         let retired = std::mem::take(&mut self.retired);
-        let mut released = Vec::new();
-        if let Some(slots) = slots.as_mut() {
-            for id in retired.jobs {
-                slots.jobs.cancel(id);
-            }
-            released.extend(retired.shares);
+        for ticket in retired.jobs {
+            asking.jobs.cancel(ticket);
         }
-        self.colors_gone.extend(retired.textures);
         let mut stats = TerrainStats {
             terrains: self
                 .entries
@@ -149,27 +145,21 @@ impl Terrains {
                 .flat_map(|state| state.bridges.iter())
                 .filter(|bridge| bridge.tunnel)
                 .count() as u32,
-            falls: self
-                .entries
-                .iter()
-                .map(|state| state.falls.len() as u32)
-                .sum(),
-            white_water: self.stats.white_water,
             ..TerrainStats::default()
         };
         let forward = camera.target - camera.eye();
         let forward = Vec2::new(forward.x, forward.z);
-        let planes = ViewPlanes::new(camera, eye, viewport);
-        let fov = camera.vertical_fov_radians;
+        let planes = ViewPlanes::new(camera, eye, size);
+        let fov = vertical_fov(camera);
         let fov = if fov.is_finite() && fov > 0.0 && fov < std::f32::consts::PI {
             fov
         } else {
-            Camera::default().vertical_fov_radians
+            vertical_fov(&Camera::default())
         };
         let work = Work {
             slice: u64::from(settings.samples_per_frame),
-            clock: self.clock,
-            end: self.clock.map_or(0.0, |clock| {
+            clock,
+            end: clock.map_or(0.0, |clock| {
                 clock()
                     + if self.loaded {
                         f64::from(settings.work_ms)
@@ -181,7 +171,6 @@ impl Terrains {
                 u64::from(settings.upload_bytes).saturating_sub(std::mem::take(&mut self.between)),
             ),
         };
-        let mut budget = work.slice;
         let (waiting, unsettled) = match settings.motion_detail {
             Some(detail) => {
                 let speed = self.velocity.length();
@@ -200,13 +189,9 @@ impl Terrains {
                 (0, false)
             }
         };
-        let limit = match (settings.max_tiles, self.device_tiles) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        };
+        let limit = settings.max_tiles;
         let mut remaining = limit.map_or(usize::MAX, |limit| limit as usize);
         let frame = self.frame;
-        let mut unbounced = 0_u32;
         for state in &mut self.entries {
             if state.terrain.validate().is_err() {
                 continue;
@@ -218,13 +203,11 @@ impl Terrains {
             }
             let pyramid = state.terrain.pyramid;
             let origin = state.terrain.origin;
-            let ranges =
-                LodRanges::new(&pyramid, settings.pixel_error, viewport.height as f32, fov);
+            let ranges = LodRanges::new(&pyramid, settings.pixel_error, size.y as f32, fov);
             state.ranges.clear();
             state
                 .ranges
                 .extend((0..pyramid.levels()).map(|level| ranges.range(level)));
-            let local_eye = eye - origin;
             let Plan {
                 collision,
                 ordered,
@@ -286,34 +269,18 @@ impl Terrains {
             state.target.clone_from(&target);
             state.keep.clone_from(&keep);
             state.update_materials(settings.gpu_materials);
-            if let Some(slots) = slots.as_mut() {
-                share_recipe(state, slots.jobs, &mut self.stacks, &mut released);
-            }
-            if let Some(slots) = slots.as_mut()
-                && load_tiles(
-                    state,
-                    &missing,
-                    (&target, &keep, &named),
-                    &work,
-                    frame,
-                    slots,
-                )
-            {
+            share_recipe(state, asking.jobs, &mut self.stacks);
+            if load_tiles(
+                state,
+                &missing,
+                (&target, &keep, &named),
+                &work,
+                frame,
+                asking,
+            ) {
                 stats.baking += 1;
                 continue;
             }
-            if let Some(slots) = slots.as_mut() {
-                light(state, settings, slots, frame);
-                bounce(state, settings, slots, frame);
-                unbounced += u32::from(waits(state, settings));
-            }
-            want_colors(state, settings);
-            stats.lit += u32::from(state.whole.lighting.made.is_some());
-            stats.lighting += u32::from(state.whole.lighting.job.is_some());
-            stats.bounced += u32::from(state.whole.bounce.made.is_some());
-            stats.bouncing += u32::from(state.whole.bounce.job.is_some());
-            stats.colored += u32::from(state.whole.colors.shown());
-            stats.coloring += u32::from(state.whole.colors.asking());
             let missing = std::mem::take(&mut state.missing);
             state.missing = missing
                 .into_iter()
@@ -325,33 +292,12 @@ impl Terrains {
             stats.cached_bytes += state.store.cached_bytes();
             stats.prefetching_tiles += state.prefetched.len() as u32;
             stats.loading_tiles += state.dispatched.len() as u32;
-            let seen = (Vec2::new(local_eye.x, local_eye.z), frame);
-            if let Some(slots) = slots.as_mut() {
-                shading::follow(state, settings, (&mut *slots, &work), &mut released, seen);
-                settled::follow(
-                    state,
-                    water,
-                    (slots, &work),
-                    (&mut self.settling, &mut released),
-                    seen,
-                );
-            }
-            let (settled_records, settling_records) = state.settled.counts();
-            stats.settled_records += settled_records;
-            stats.settling_records += settling_records;
-            let (shaded_tiles, shading_records) = state.shading.counts();
-            stats.shaded_tiles += shaded_tiles;
-            stats.shading_records += shading_records;
-            let [rewatered, stale] = rewater::rewater(state, &work, &mut budget);
-            stats.rewatered_tiles += rewatered;
-            stats.stale_water_tiles += stale;
             state.drawn = settings.enabled && state.store.len() > 0;
             stats.fallback_tiles += fallback;
             if cutout.is_some() {
                 stats.surroundings_tiles += state.store.len() as u32;
             }
         }
-        self.settling.drop_untaken();
         let cached: u64 = self
             .entries
             .iter()
@@ -393,42 +339,20 @@ impl Terrains {
             .map(|state| state.store.kept_tiles() as u32)
             .sum();
         self.upload_left = work.upload.get();
-        if let Some(slots) = slots.as_mut() {
-            let entries = &self.entries;
-            self.stacks.retain(|(stack, key)| {
-                let held = entries.iter().any(|state| {
-                    state
-                        .recipe
-                        .as_ref()
-                        .is_some_and(|recipe| Arc::ptr_eq(&recipe.stack, stack))
-                });
-                if !held {
-                    released.push(key.clone());
-                }
-                held
-            });
-            for key in released {
-                let held = self.stacks.iter().any(|(_, shared)| *shared == key)
-                    || self.entries.iter().any(|state| {
-                        state
-                            .recipe
-                            .as_ref()
-                            .is_some_and(|recipe| recipe.key == key)
-                            || state.settled.holds_share(&key)
-                            || state.shading.holds_share(&key)
-                    });
-                if !held {
-                    slots.jobs.unshare(key);
-                }
-            }
-        }
+        let entries = &self.entries;
+        self.stacks.retain(|(stack, _)| {
+            entries.iter().any(|state| {
+                state
+                    .recipe
+                    .as_ref()
+                    .is_some_and(|recipe| Arc::ptr_eq(&recipe.stack, stack))
+            })
+        });
         if !self.loaded
             && stats.terrains > 0
             && stats.baking == 0
             && stats.loading_tiles == 0
             && stats.fallback_tiles == 0
-            && stats.lighting == 0
-            && unbounced == 0
         {
             self.loaded = true;
         }
@@ -441,10 +365,8 @@ impl Terrains {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct TerrainStreaming {
-    terrains: QueryState<(Entity, &'static Terrain)>,
-    focus: QueryState<Entity, With<engine_core::StreamingFocus>>,
-    prefetch: QueryState<(Entity, &'static TerrainPrefetch)>,
     points: Vec<Vec3>,
     places: Vec<(Vec3, f32)>,
     reliefs: Reliefs,
@@ -452,11 +374,11 @@ pub(crate) struct TerrainStreaming {
 
 #[derive(Default)]
 struct Reliefs {
-    textures: HashMap<engine_assets::TextureHandle, u128>,
+    textures: HashMap<TextureHandle, u128>,
 }
 
 impl Reliefs {
-    fn of(&mut self, materials: &[SurfaceMaterial], assets: Option<&AssetLibrary>) -> u128 {
+    fn of(&mut self, materials: &[SurfaceMaterial], assets: &AssetLibrary) -> u128 {
         let mut bytes = Vec::with_capacity(32 * materials.len());
         for look in materials {
             for value in [look.depth, look.tiling, look.height_contrast] {
@@ -467,7 +389,7 @@ impl Reliefs {
                 SurfaceProjection::Biplanar => 1,
             });
             let map = look.material.and_then(|handle| {
-                let material = assets?.material(handle)?;
+                let material = assets.material(handle)?;
                 Some(material.metallic_roughness_texture()?.texture)
             });
             let content = map.map_or(0, |handle| self.texture(handle, assets));
@@ -476,15 +398,11 @@ impl Reliefs {
         content_hash(&bytes)
     }
 
-    fn texture(
-        &mut self,
-        handle: engine_assets::TextureHandle,
-        assets: Option<&AssetLibrary>,
-    ) -> u128 {
+    fn texture(&mut self, handle: TextureHandle, assets: &AssetLibrary) -> u128 {
         if let Some(&content) = self.textures.get(&handle) {
             return content;
         }
-        let Some(texture) = assets.and_then(|assets| assets.texture(handle)) else {
+        let Some(texture) = assets.texture(handle) else {
             return 0;
         };
         let mut bytes = Vec::new();
@@ -499,150 +417,131 @@ impl Reliefs {
     }
 }
 
-impl FromWorld for TerrainStreaming {
-    fn from_world(world: &mut World) -> Self {
-        Self {
-            terrains: world.query::<(Entity, &Terrain)>(),
-            focus: world.query_filtered::<Entity, With<engine_core::StreamingFocus>>(),
-            prefetch: world.query::<(Entity, &TerrainPrefetch)>(),
-            points: Vec::new(),
-            places: Vec::new(),
-            reliefs: Reliefs::default(),
+pub(crate) type StreamReads<'w> = (
+    Res<'w, DrawnRivers>,
+    Res<'w, Camera>,
+    Res<'w, View>,
+    Res<'w, FrameTime>,
+    Res<'w, WorkClock>,
+    Res<'w, CookMode>,
+    Res<'w, Poses>,
+    Res<'w, AssetLibrary>,
+    Res<'w, Records>,
+);
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "a system's parameters are its reads"
+)]
+pub(crate) fn stream_terrains(
+    settings: Res<TerrainSettings>,
+    (drawn, camera, view, time, clock, cooking, poses, assets, records): StreamReads<'_>,
+    focus: Query<Entity, With<StreamingFocus>>,
+    prefetch: Query<(Entity, &TerrainPrefetch)>,
+    built: Query<(Entity, &TerrainBuilt)>,
+    mut jobs: Jobs,
+    mut terrains: ResMut<Terrains>,
+    mut stats: ResMut<TerrainStats>,
+    mut streaming: Local<TerrainStreaming>,
+) {
+    let streaming = &mut *streaming;
+    let eye = view.detail_eye();
+    let seconds = time.delta_seconds;
+    streaming.points.clear();
+    streaming.points.push(eye);
+    streaming.places.clear();
+    for entity in &focus {
+        if let Some(pose) = poses.of(entity) {
+            streaming.points.push(Vec3::from(pose.translation));
         }
     }
-}
-
-pub(crate) fn stream_terrains(world: &mut World, mut streaming: Local<TerrainStreaming>) {
-    streaming.update(world);
-}
-
-pub fn stream_now(world: &mut World) {
-    world
-        .run_system_cached(stream_terrains)
-        .expect("streaming_takes_no_input");
-}
-
-pub fn work_between_frames(world: &mut World, milliseconds: f64) -> bool {
-    join(world);
-    let Some(settings) = world
-        .get_resource::<TerrainSettings>()
-        .copied()
-        .map(TerrainSettings::sanitized)
-    else {
-        return false;
+    for (entity, prefetch) in &prefetch {
+        let reach = prefetch.reach;
+        if reach.is_finite()
+            && reach > 0.0
+            && let Some(pose) = poses.of(entity)
+        {
+            streaming
+                .places
+                .push((Vec3::from(pose.translation), engine_math::min(reach, 8.0)));
+        }
+    }
+    let present: Vec<(Entity, Terrain)> = built
+        .iter()
+        .filter_map(|(entity, built)| Some((entity, built.0.clone()?)))
+        .collect();
+    let solids: Vec<(Entity, Vec<Option<Solid>>)> = present
+        .iter()
+        .map(|(entity, terrain)| {
+            let solids = terrain.surface.assets.iter();
+            (*entity, solids.map(|asset| asset.solid(&assets)).collect())
+        })
+        .collect();
+    let reliefs: Vec<(Entity, u128)> = present
+        .iter()
+        .map(|(entity, terrain)| {
+            (
+                *entity,
+                streaming.reliefs.of(&terrain.surface.materials, &assets),
+            )
+        })
+        .collect();
+    let terrains = terrains.as_mut();
+    terrains.follow(present);
+    terrains.stand(&solids);
+    terrains.relieve(&reliefs);
+    let ahead = terrains.heading(eye, seconds);
+    let mut asking = Asking {
+        jobs: &mut jobs,
+        records: &records,
+        drawn: drawn.make,
     };
-    let mut jobs = world.remove_resource::<Jobs>();
-    let remaining = world
-        .get_resource_mut::<Terrains>()
-        .is_some_and(|mut terrains| {
-            terrains.work_between_frames(&settings, milliseconds, jobs.as_mut())
-        });
-    if let Some(jobs) = jobs {
-        world.insert_resource(jobs);
-    }
-    remaining
+    terrains.stream(
+        &settings,
+        (&*camera, clock.reading),
+        (eye, ahead),
+        view.render_size(),
+        (&streaming.points, &streaming.places),
+        &mut asking,
+    );
+    let pending = if cooking.cooking {
+        terrains.cook(&settings, &mut asking)
+    } else {
+        u32::from(terrains.loading())
+    };
+    stats.set_if_neq(TerrainStats {
+        pending,
+        ..terrains.stats
+    });
 }
 
-impl TerrainStreaming {
-    pub(crate) fn update(&mut self, world: &mut World) {
-        let _profile = engine_profile::span("cpu", "terrain_stream");
-        join(world);
-        let settings = world
-            .get_resource::<TerrainSettings>()
-            .copied()
-            .map(TerrainSettings::sanitized);
-        let camera = *world.resource::<Camera>();
-        let viewport = world
-            .get_resource::<Viewport>()
-            .copied()
-            .unwrap_or_default();
-        let eye = engine_core::TerrainDebug::detail_eye(world);
-        let seconds = world
-            .get_resource::<engine_core::FrameTime>()
-            .map_or(0.0, |time| time.delta_seconds);
-        self.points.clear();
-        self.points.push(eye);
-        self.places.clear();
-        if let Some(globals) = world.get_resource::<GlobalTransforms>() {
-            for entity in self.focus.iter(world) {
-                if let Some(point) = globals.get(entity).and_then(|global| global.translation()) {
-                    self.points.push(point);
-                }
-            }
-            for (entity, prefetch) in self.prefetch.iter(world) {
-                let reach = prefetch.reach;
-                if reach.is_finite()
-                    && reach > 0.0
-                    && let Some(point) = globals.get(entity).and_then(|global| global.translation())
-                {
-                    self.places
-                        .push((point, engine_core::math::min(reach, 8.0)));
-                }
-            }
-        }
-        let present: Vec<(Entity, Terrain)> = self
-            .terrains
-            .iter(world)
-            .map(|(entity, terrain)| (entity, terrain.clone()))
-            .collect();
-        let assets = world.get_resource::<AssetLibrary>();
-        let solids: Vec<(Entity, Vec<Option<Solid>>)> = present
-            .iter()
-            .map(|(entity, terrain)| {
-                let solids = terrain.surface.assets.iter();
-                (*entity, solids.map(|asset| asset.solid(assets)).collect())
-            })
-            .collect();
-        let reliefs: Vec<(Entity, u128)> = present
-            .iter()
-            .map(|(entity, terrain)| (*entity, self.reliefs.of(&terrain.surface.materials, assets)))
-            .collect();
-        let water = engine_core::section_in::<Water>(world);
-        let mut jobs = world.remove_resource::<Jobs>();
-        let mut cooking = world.remove_resource::<Cooking>();
-        if let Some(mut terrains) = world.get_resource_mut::<Terrains>() {
-            let terrains = terrains.as_mut();
-            terrains.follow(present);
-            terrains.stand(&solids);
-            terrains.relieve(&reliefs);
-            match settings {
-                Some(settings) => {
-                    let ahead = terrains.heading(eye, seconds);
-                    terrains.stream(
-                        &settings,
-                        &camera,
-                        (eye, ahead),
-                        viewport,
-                        (&self.points, &self.places),
-                        (jobs.as_mut(), &water),
-                    );
-                    if let (Some(jobs), Some(cooking)) = (jobs.as_mut(), cooking.as_mut()) {
-                        terrains.cook(&settings, &water, jobs, cooking);
-                    }
-                }
-                None => terrains.stand_still(),
-            }
-        }
-        if let Some(jobs) = jobs {
-            world.insert_resource(jobs);
-        }
-        if let Some(cooking) = cooking {
-            world.insert_resource(cooking);
-        }
-        ask_colors(world);
-    }
+pub(crate) fn work_between_frames(
+    settings: Res<TerrainSettings>,
+    (drawn, time, clock, records): (Res<DrawnRivers>, Res<FrameTime>, Res<WorkClock>, Res<Records>),
+    mut jobs: Jobs,
+    mut terrains: ResMut<Terrains>,
+) {
+    let mut asking = Asking {
+        jobs: &mut jobs,
+        records: &records,
+        drawn: drawn.make,
+    };
+    let milliseconds = f64::from(time.between_frames_micros) / 1000.0;
+    terrains.work_between_frames(&settings, (clock.reading, milliseconds), &mut asking);
 }
 
 impl Terrains {
     fn follow(&mut self, present: Vec<(Entity, Terrain)>) {
-        let retired = &mut self.retired;
-        self.entries.retain(|state| {
-            let kept = present.iter().any(|(entity, _)| *entity == state.entity);
-            if !kept {
-                state.retire(retired);
+        let mut kept = Vec::with_capacity(self.entries.len());
+        for state in std::mem::take(&mut self.entries) {
+            if present.iter().any(|(entity, _)| *entity == state.entity) {
+                kept.push(state);
+            } else {
+                state.retire(&mut self.retired);
+                self.epoch += 1;
             }
-            kept
-        });
+        }
+        self.entries = kept;
         for (entity, terrain) in present {
             match self
                 .entries
@@ -651,9 +550,10 @@ impl Terrains {
             {
                 Some(state) => {
                     if !terrain.same(&state.terrain) {
-                        state.retire(&mut self.retired);
-                        *state = TerrainState::new(entity, terrain);
+                        let old = std::mem::replace(state, TerrainState::new(entity, terrain));
+                        old.retire(&mut self.retired);
                         self.loaded = false;
+                        self.epoch += 1;
                     } else {
                         if !Arc::ptr_eq(&terrain.edits, &state.terrain.edits) {
                             state.edit(terrain.edits.clone());
@@ -672,6 +572,7 @@ impl Terrains {
                 None => {
                     self.entries.push(TerrainState::new(entity, terrain));
                     self.loaded = false;
+                    self.epoch += 1;
                 }
             }
         }
@@ -693,21 +594,5 @@ impl Terrains {
                 state.relief = relief;
             }
         }
-    }
-
-    fn stand_still(&mut self) {
-        for state in &mut self.entries {
-            state.drawn = false;
-        }
-        self.stats = TerrainStats {
-            terrains: self
-                .entries
-                .iter()
-                .filter(|state| state.around.is_none())
-                .count() as u32,
-            white_water: self.stats.white_water,
-            ..TerrainStats::default()
-        };
-        self.loaded = true;
     }
 }

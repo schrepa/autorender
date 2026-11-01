@@ -12,8 +12,9 @@ pub use prelude::*;
 #[doc(hidden)]
 pub mod component {
     pub use bevy_ecs::component::{
-        Component, ComponentCloneBehavior, ComponentId, DefaultCloneBehaviorBase, DefaultCloneBehaviorSpecialization,
-        DefaultCloneBehaviorViaClone, Immutable, Mutable, RequiredComponentsRegistrator, StorageType,
+        Component, ComponentCloneBehavior, ComponentId, DefaultCloneBehaviorBase,
+        DefaultCloneBehaviorSpecialization, DefaultCloneBehaviorViaClone, Immutable, Mutable,
+        RequiredComponentsRegistrator, StorageType,
     };
 }
 

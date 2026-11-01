@@ -1,4 +1,5 @@
-use engine_core::{ErrorCode, Expected};
+use engine_core::ErrorCode;
+use engine_settings::Expected;
 use engine_scene::{SceneDocument, SceneFileKind, SceneFiles};
 pub use engine_worker::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 

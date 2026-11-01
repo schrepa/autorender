@@ -287,7 +287,7 @@ fn check_member(
             continue;
         }
         if let Some(target) = dependency.path.as_deref().and_then(|dir| folders.get(dir)) {
-            if !allowed(kind, target, dependency.build) {
+            if !allowed(member, kind, target, dependency.build) {
                 let target_kind = target.kind.as_deref().unwrap_or("no kind");
                 problems.push(format!(
                     "{edge}: a {kind} crate may not depend on {} ({target_kind})",
@@ -313,7 +313,7 @@ fn check_member(
     Ok(())
 }
 
-fn allowed(kind: &str, target: &Member, build: bool) -> bool {
+fn allowed(member: &Member, kind: &str, target: &Member, build: bool) -> bool {
     let target_kind = target.kind.as_deref().unwrap_or_default();
     let name = target.name.as_str();
     match kind {
@@ -327,13 +327,25 @@ fn allowed(kind: &str, target: &Member, build: bool) -> bool {
             matches!(target_kind, "support" | "place")
                 || matches!(name, "engine_ecs" | "engine_core" | "engine_render")
         }
-        "list" => matches!(target_kind, "place" | "brick") || name == "engine_core",
+        "list" => matches!(target_kind, "place" | "brick" | "list") || name == "engine_core",
         "app" => {
             matches!(target_kind, "host" | "list" | "core") || (build && name == "engine_sources")
         }
-        "tool" => !target.at.starts_with("examples/"),
+        "tool" => {
+            !target.at.starts_with("examples/")
+                || game(&member.at).is_some_and(|own| game(&target.at) == Some(own))
+        }
         _ => false,
     }
+}
+
+fn game(at: &str) -> Option<&str> {
+    let name = at
+        .strip_prefix("examples/")?
+        .split('/')
+        .next()
+        .filter(|name| !name.is_empty())?;
+    at.get(.."examples/".len() + name.len())
 }
 
 fn external(kind: &str, package: &str) -> Option<String> {

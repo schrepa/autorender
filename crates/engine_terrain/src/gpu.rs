@@ -1,55 +1,95 @@
-use crate::hydrology::{FLOW_RANGE, Hydrology, LAKE_RANGE, WETNESS_RANGE};
+use crate::HydrologyBake;
+use crate::hydrology::{FLOW_RANGE, LAKE_RANGE, WETNESS_RANGE};
 use crate::layer::{ChangeMap, TerrainLayer};
-use crate::layers::HeightImage;
 use crate::surface::{BiomeRules, Control, SampleInputs, SampleShape, erosion_row};
 use crate::tile::RiverInputs;
-use crate::{HydrologySample, Layers, PathSample, TILE_STRIDE, Tile};
+use crate::{HeightImage, HydrologySample, Layers, PathSample, TILE_STRIDE, Tile};
+
+engine_core::gpu_consts! {
+    pub const OP_CONSTANT: u32 = 0;
+    pub const OP_HEIGHT: u32 = 1;
+    pub const OP_GRADIENT: u32 = 2;
+    pub const OP_CURVATURE: u32 = 3;
+    pub const OP_FLOW: u32 = 4;
+    pub const OP_WETNESS: u32 = 5;
+    pub const OP_LAKE: u32 = 6;
+    pub const OP_RIVER: u32 = 7;
+    pub const OP_PATH: u32 = 8;
+    pub const OP_NOISE: u32 = 9;
+    pub const OP_MULTIPLY: u32 = 10;
+    pub const OP_ADD: u32 = 11;
+    pub const OP_MIN: u32 = 12;
+    pub const OP_MAX: u32 = 13;
+    pub const OP_INVERT: u32 = 14;
+    pub const OP_REMAP: u32 = 15;
+    pub const OP_GRAIN: u32 = 16;
+    pub const OP_POWER: u32 = 17;
+    pub const OP_FLOOD: u32 = 18;
+    pub const OP_WORN: u32 = 19;
+    pub const OP_DEPOSIT: u32 = 20;
+    pub const OP_FACING: u32 = 21;
+    pub const OP_VALUE: u32 = 22;
+    pub const OP_END: u32 = 23;
+    pub const H_PROGRAM: u32 = 0;
+    pub const H_STACK: u32 = 1;
+    pub const H_BIOMES: u32 = 2;
+    pub const H_MATERIALS: u32 = 3;
+    pub const H_READS: u32 = 4;
+    pub const H_HYDROLOGY: u32 = 5;
+    pub const H_PATHS: u32 = 6;
+    pub const H_FADE: u32 = 7;
+    pub const H_WET_BIOMES: u32 = 8;
+    pub const H_EROSION: u32 = 9;
+    pub const BIOME_WORDS: u32 = 3;
+    pub const MAX_STACK: u32 = 16;
+    pub const MAX_MATERIALS: u32 = 64;
+    pub const NONE: u32 = 0xffffffff;
+    pub const SURFACE_PATH_FAR: f32 = 1.0e9;
+    pub const SURFACE_RIVER_FAR: f32 = 1.0e9;
+}
 
 pub mod op {
-    pub const CONSTANT: u32 = 0;
-    pub const HEIGHT: u32 = 1;
-    pub const GRADIENT: u32 = 2;
-    pub const CURVATURE: u32 = 3;
-    pub const FLOW: u32 = 4;
-    pub const WETNESS: u32 = 5;
-    pub const LAKE: u32 = 6;
-    pub const RIVER: u32 = 7;
-    pub const PATH: u32 = 8;
-    pub const NOISE: u32 = 9;
-    pub const MULTIPLY: u32 = 10;
-    pub const ADD: u32 = 11;
-    pub const MIN: u32 = 12;
-    pub const MAX: u32 = 13;
-    pub const INVERT: u32 = 14;
-    pub const REMAP: u32 = 15;
-    pub const GRAIN: u32 = 16;
-    pub const POWER: u32 = 17;
-    pub const FLOOD: u32 = 18;
-    pub const WORN: u32 = 19;
-    pub const DEPOSIT: u32 = 20;
-    pub const FACING: u32 = 21;
-    pub const VALUE: u32 = 22;
-    pub const END: u32 = 23;
+    pub use super::{
+        OP_CONSTANT as CONSTANT,
+        OP_HEIGHT as HEIGHT,
+        OP_GRADIENT as GRADIENT,
+        OP_CURVATURE as CURVATURE,
+        OP_FLOW as FLOW,
+        OP_WETNESS as WETNESS,
+        OP_LAKE as LAKE,
+        OP_RIVER as RIVER,
+        OP_PATH as PATH,
+        OP_NOISE as NOISE,
+        OP_MULTIPLY as MULTIPLY,
+        OP_ADD as ADD,
+        OP_MIN as MIN,
+        OP_MAX as MAX,
+        OP_INVERT as INVERT,
+        OP_REMAP as REMAP,
+        OP_GRAIN as GRAIN,
+        OP_POWER as POWER,
+        OP_FLOOD as FLOOD,
+        OP_WORN as WORN,
+        OP_DEPOSIT as DEPOSIT,
+        OP_FACING as FACING,
+        OP_VALUE as VALUE,
+        OP_END as END,
+    };
 }
-
-pub const BIOME_WORDS: u32 = 3;
 
 pub mod header {
-    pub const PROGRAM: usize = 0;
-    pub const STACK: usize = 1;
-    pub const BIOMES: usize = 2;
-    pub const MATERIALS: usize = 3;
-    pub const READS: usize = 4;
-    pub const HYDROLOGY: usize = 5;
-    pub const PATHS: usize = 6;
-    pub const FADE: usize = 7;
-    pub const WET_BIOMES: usize = 8;
-    pub const EROSION: usize = 9;
+    pub const PROGRAM: usize = super::H_PROGRAM as usize;
+    pub const STACK: usize = super::H_STACK as usize;
+    pub const BIOMES: usize = super::H_BIOMES as usize;
+    pub const MATERIALS: usize = super::H_MATERIALS as usize;
+    pub const READS: usize = super::H_READS as usize;
+    pub const HYDROLOGY: usize = super::H_HYDROLOGY as usize;
+    pub const PATHS: usize = super::H_PATHS as usize;
+    pub const FADE: usize = super::H_FADE as usize;
+    pub const WET_BIOMES: usize = super::H_WET_BIOMES as usize;
+    pub const EROSION: usize = super::H_EROSION as usize;
     pub const LEN: usize = 16;
 }
-
-pub const MAX_STACK: u32 = 16;
-pub const MAX_MATERIALS: u32 = 64;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SurfaceData {
@@ -104,6 +144,14 @@ impl SurfaceData {
                 .hydrology()
                 .map(|hydrology| (hydrology.spacing, hydrology.flow.levels())),
         })
+    }
+
+    pub fn offset(&self) -> [f32; 2] {
+        self.offset
+    }
+
+    pub fn hydrology(&self) -> Option<(f32, usize)> {
+        self.hydrology
     }
 
     pub fn first_sample(&self, key: crate::TileKey, spacing: f32) -> [i64; 2] {
@@ -219,7 +267,7 @@ fn push_f32(words: &mut Vec<u32>, values: impl IntoIterator<Item = f32>) {
     words.extend(values.into_iter().map(f32::to_bits));
 }
 
-fn write_hydrology(hydrology: &Hydrology, words: &mut Vec<u32>) {
+fn write_hydrology(hydrology: &HydrologyBake, words: &mut Vec<u32>) {
     push_f32(words, [hydrology.spacing]);
     push_f32(
         words,

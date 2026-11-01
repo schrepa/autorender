@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use crate::layer::{LayerBake, TerrainLayer};
-use crate::layers::Layers;
+use crate::Layers;
 use crate::{Generator, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
 
 pub struct TerrainBake {
@@ -94,18 +94,16 @@ impl Gather {
     }
 }
 
-impl Layers {
-    #[must_use]
-    pub fn bake_all(&self, pyramid: &Pyramid) -> Self {
-        let mut layers = self.clone();
-        while let Some(index) = layers.unbaked() {
-            let mut bake = TerrainBake::new(&layers, index, pyramid).expect("unbaked_layer_bakes");
-            let mut budget = u64::MAX;
-            let baked = bake
-                .advance(pyramid, &mut budget)
-                .expect("unlimited_budget_finishes");
-            layers = layers.with_baked(index, baked);
-        }
-        layers
+#[must_use]
+pub fn bake_all(below: &Layers, pyramid: &Pyramid) -> Layers {
+    let mut layers = below.clone();
+    while let Some(index) = layers.unbaked() {
+        let mut bake = TerrainBake::new(&layers, index, pyramid).expect("unbaked_layer_bakes");
+        let mut budget = u64::MAX;
+        let baked = bake
+            .advance(pyramid, &mut budget)
+            .expect("unlimited_budget_finishes");
+        layers = layers.with_baked(index, baked);
     }
+    layers
 }

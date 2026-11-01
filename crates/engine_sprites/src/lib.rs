@@ -12,6 +12,8 @@ use engine_render::{
     Shape, wgpu,
 };
 
+pub use flat::{DARK, LIGHT};
+
 #[derive(Component, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Sprite {
     pub sheet: TextureHandle,
@@ -41,6 +43,7 @@ impl Brick for SpritesBrick {
 }
 
 struct SpritesGpu {
+    flat: flat::Flat,
     pipeline: Pipeline<Self, MainView>,
     instances: Buffer<Self>,
     staged: Vec<SpriteInstance>,
@@ -53,6 +56,7 @@ impl GpuPart for SpritesGpu {
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use shaders::sprites::draw;
+        let flat = flat::Flat::install(cx)?;
         let instances = cx.buffer("instances", Lifetime::Kept);
         let sampler = cx.sampler(SamplerDesc::NEAREST);
         let pipeline = cx.render_pipeline(
@@ -69,10 +73,11 @@ impl GpuPart for SpritesGpu {
             },
             &[(draw::INSTANCES, Bind::Buffer(instances)), (draw::SHEET, Bind::Asset), (draw::SHEET_SAMPLER, Bind::Sampler(sampler))],
         )?;
-        Ok(Self { pipeline, instances, staged: Vec::new(), runs: Vec::new(), drawn: Vec::new() })
+        Ok(Self { flat, pipeline, instances, staged: Vec::new(), runs: Vec::new(), drawn: Vec::new() })
     }
 
     fn prepare(&mut self, (sprites, poses): SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
+        self.flat.prepare(cx);
         if poses.is_changed() || sprites.iter().count() != self.staged.len() || sprites.iter().any(|(_, sprite)| sprite.is_changed()) {
             stage(&sprites, &poses, &mut self.staged, &mut self.runs);
             cx.allocate_buffer(self.instances, std::mem::size_of_val(self.staged.as_slice()) as u64);
@@ -87,10 +92,11 @@ impl GpuPart for SpritesGpu {
 
 impl SpritesGpu {
     fn draw(&self, _: &(), draw: &mut Draw<'_, Self, MainView>) -> u32 {
+        let flat = self.flat.draw(draw);
         for (pipeline, range) in &self.drawn {
             draw.draw(pipeline, Shape::Pulled { vertices: 0..6, instances: range.clone() });
         }
-        self.drawn.len() as u32
+        flat + self.drawn.len() as u32
     }
 }
 

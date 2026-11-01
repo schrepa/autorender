@@ -9,9 +9,11 @@ publish.workspace = true
 engine_place.workspace = true
 engine_settings.workspace = true
 engine_math.workspace = true
-bevy_ecs.workspace = true
+bevy_ecs = { workspace = true, features = ["debug"] }
+bevy_platform.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
+indexmap.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

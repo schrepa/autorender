@@ -31,16 +31,16 @@ gpu_consts! {
 
     pub const PYRAMID_EXTENT_BYTES: usize = 16 => ["size_of Extent" in "engine::pyramid"];
 
-    pub const VARIANT_MAPS: u32 = 1 => ["VARIANT_MAPS" in "meshes::declarations"];
-    pub const VARIANT_NORMAL_MAP: u32 = 2 => ["VARIANT_NORMAL_MAP" in "meshes::declarations"];
-    pub const VARIANT_DOUBLE_SIDED: u32 = 8 => ["VARIANT_DOUBLE_SIDED" in "meshes::declarations"];
-    pub const VARIANT_METALLIC_ROUGHNESS_MAP: u32 = 128 => ["VARIANT_METALLIC_ROUGHNESS_MAP" in "meshes::declarations"];
-    pub const VARIANT_OCCLUSION_MAP: u32 = 256 => ["VARIANT_OCCLUSION_MAP" in "meshes::declarations"];
-    pub const VARIANT_EMISSIVE_MAP: u32 = 512 => ["VARIANT_EMISSIVE_MAP" in "meshes::declarations"];
-    pub const VARIANT_PACKED_OCCLUSION: u32 = 1024 => ["VARIANT_PACKED_OCCLUSION" in "meshes::declarations"];
-    pub const VARIANT_WORLD_MAPPING: u32 = 4096 => ["VARIANT_WORLD_MAPPING" in "meshes::declarations"];
-    pub const VARIANT_TOP_LAYER: u32 = 8192 => ["VARIANT_TOP_LAYER" in "meshes::declarations"];
-    pub const VARIANT_FOLIAGE: u32 = 65536 => ["VARIANT_FOLIAGE" in "meshes::declarations"];
+    pub const VARIANT_MAPS: u32 = 1 => ["VARIANT_MAPS" in "engine::mesh::declarations"];
+    pub const VARIANT_NORMAL_MAP: u32 = 2 => ["VARIANT_NORMAL_MAP" in "engine::mesh::declarations"];
+    pub const VARIANT_DOUBLE_SIDED: u32 = 8 => ["VARIANT_DOUBLE_SIDED" in "engine::mesh::declarations"];
+    pub const VARIANT_METALLIC_ROUGHNESS_MAP: u32 = 128 => ["VARIANT_METALLIC_ROUGHNESS_MAP" in "engine::mesh::declarations"];
+    pub const VARIANT_OCCLUSION_MAP: u32 = 256 => ["VARIANT_OCCLUSION_MAP" in "engine::mesh::declarations"];
+    pub const VARIANT_EMISSIVE_MAP: u32 = 512 => ["VARIANT_EMISSIVE_MAP" in "engine::mesh::declarations"];
+    pub const VARIANT_PACKED_OCCLUSION: u32 = 1024 => ["VARIANT_PACKED_OCCLUSION" in "engine::mesh::declarations"];
+    pub const VARIANT_WORLD_MAPPING: u32 = 4096 => ["VARIANT_WORLD_MAPPING" in "engine::mesh::declarations"];
+    pub const VARIANT_TOP_LAYER: u32 = 8192 => ["VARIANT_TOP_LAYER" in "engine::mesh::declarations"];
+    pub const VARIANT_FOLIAGE: u32 = 65536 => ["VARIANT_FOLIAGE" in "engine::mesh::declarations"];
 
     pub const DEBUG_SPAN_STEPS: f32 = 254.0 => ["DEBUG_SPAN_STEPS"];
     pub const DEBUG_KIND_MESH: u32 = 1 => ["DEBUG_KIND_MESH"];

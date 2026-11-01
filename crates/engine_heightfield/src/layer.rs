@@ -1,11 +1,12 @@
 use std::any::Any;
 use std::fmt::Debug;
-use std::sync::{Arc, PoisonError, RwLock};
+use std::sync::Arc;
 
-use engine_codec::{CodecError, Reader, Writer};
+use engine_codec::{Error, Expected, Reader, Writer};
 use glam::Vec2;
 use serde_json::Value;
 
+use crate::gather::StartTile;
 use crate::{Bridge, GivenRiver, HeightImage, HydrologyBake, Layers, PathSample, Pyramid, TileKey};
 
 pub const TYPE_KEY: &str = "type";
@@ -34,7 +35,9 @@ pub mod maps {
     ];
 }
 
-pub type Made = Result<Arc<dyn TerrainLayer>, CodecError>;
+pub type Made = Result<Arc<dyn TerrainLayer>, Error>;
+
+pub type DrawRivers = fn(&[GivenRiver]) -> Made;
 
 pub struct LayerKind {
     pub name: &'static str,
@@ -56,13 +59,13 @@ impl Debug for LayerKind {
 }
 
 pub trait LayerFiles {
-    fn buffer(&self, uri: &str, path: &str) -> Result<Option<Arc<[u8]>>, CodecError>;
+    fn buffer(&self, uri: &str, path: &str) -> Result<Option<Arc<[u8]>>, Error>;
 }
 
 pub struct NoFiles;
 
 impl LayerFiles for NoFiles {
-    fn buffer(&self, _uri: &str, _path: &str) -> Result<Option<Arc<[u8]>>, CodecError> {
+    fn buffer(&self, _uri: &str, _path: &str) -> Result<Option<Arc<[u8]>>, Error> {
         Ok(None)
     }
 }
@@ -94,7 +97,7 @@ pub trait TerrainLayer: Send + Sync + Debug + 'static {
         Vec::new()
     }
 
-    fn check(&self, _place: Place<'_>) -> Result<(), CodecError> {
+    fn check(&self, _place: Place<'_>) -> Result<(), Error> {
         Ok(())
     }
 
@@ -140,7 +143,7 @@ pub trait TerrainLayer: Send + Sync + Debug + 'static {
         false
     }
 
-    fn bake(&self, _pyramid: &Pyramid) -> Option<Box<dyn LayerBake>> {
+    fn bake(&self, _pyramid: &Pyramid, _tiles: StartTile) -> Option<Box<dyn LayerBake>> {
         None
     }
 
@@ -356,63 +359,6 @@ pub struct FineRegion {
     pub texel: f32,
 }
 
-static KINDS: RwLock<Vec<&'static LayerKind>> = RwLock::new(Vec::new());
-
-pub fn register_kinds(kinds: &[&'static LayerKind]) {
-    let mut held = KINDS.write().unwrap_or_else(PoisonError::into_inner);
-    for &kind in kinds {
-        match held.iter_mut().find(|known| known.name == kind.name) {
-            Some(known) => *known = kind,
-            None => held.push(kind),
-        }
-    }
-}
-
-pub fn layer_kind(name: &str) -> Option<&'static LayerKind> {
-    KINDS
-        .read()
-        .unwrap_or_else(PoisonError::into_inner)
-        .iter()
-        .find(|kind| kind.name == name)
-        .copied()
-}
-
-pub fn layer_kinds() -> Vec<&'static LayerKind> {
-    KINDS.read().unwrap_or_else(PoisonError::into_inner).clone()
-}
-
-pub fn layer_names() -> Vec<&'static str> {
-    layer_kinds().into_iter().map(|kind| kind.name).collect()
-}
-
-pub fn unknown_kind(path: &str, got: &str) -> CodecError {
-    CodecError::new(format!("unknown_variant at {path}"))
-        .got(got)
-        .variants(layer_names())
-}
-
-pub fn layer_from_json(
-    value: &Value,
-    files: &dyn LayerFiles,
-    path: &str,
-) -> Result<Arc<dyn TerrainLayer>, CodecError> {
-    let Some(object) = value.as_object() else {
-        return Err(CodecError::new(format!("invalid_type at {path}")).expected("object"));
-    };
-    let type_path = format!("{path}.{TYPE_KEY}");
-    let Some(name) = object.get(TYPE_KEY) else {
-        return Err(CodecError::new(format!("missing_field at {type_path}")).variants(layer_names()));
-    };
-    let Some(name) = name.as_str() else {
-        return Err(CodecError::new(format!("invalid_type at {type_path}")).expected("string"));
-    };
-    let kind = layer_kind(name).ok_or_else(|| unknown_kind(&type_path, name))?;
-    let mut settings = object.clone();
-    settings.remove(TYPE_KEY);
-    settings.remove(ID_KEY);
-    (kind.from_json)(&Value::Object(settings), files).map_err(|error| error.within(path))
-}
-
 pub fn layer_json(layer: &dyn TerrainLayer) -> Value {
     let mut settings = match layer.settings() {
         Value::Object(settings) => settings,
@@ -430,17 +376,23 @@ pub fn write_entry(out: &mut Writer, layer: &dyn TerrainLayer) {
     layer.write(out);
 }
 
-pub fn read_entry(input: &mut Reader<'_>) -> Result<Arc<dyn TerrainLayer>, CodecError> {
+pub fn read_entry(
+    input: &mut Reader<'_>,
+    kinds: &[&'static LayerKind],
+) -> Result<Arc<dyn TerrainLayer>, Error> {
     let name: String = input.get()?;
     let source: [u8; 32] = input.get()?;
-    let kind = layer_kind(&name).ok_or_else(|| {
-        engine_codec::invalid("$.layer")
-            .got(&name)
-            .variants(layer_names())
-    })?;
+    let kind = kinds
+        .iter()
+        .find(|kind| kind.name == name)
+        .ok_or_else(|| {
+            engine_codec::invalid("$.layer")
+                .got(&name)
+                .variants(kinds.iter().map(|kind| kind.name))
+        })?;
     if kind.source != source {
         return Err(engine_codec::invalid("$.source")
-            .expected("matching")
+            .expected(Expected::Matching)
             .got(&name));
     }
     (kind.read)(input)

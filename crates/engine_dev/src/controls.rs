@@ -3,7 +3,7 @@ use crate::protocol::{
 };
 use crate::results::{DebugMissingAssetResult, result};
 use crate::{BrowserControl, bounded};
-use engine_core::{AssetLibrary, Camera, Engine, Mesh3d, glam::Vec3};
+use engine_core::{AssetLibrary, Camera, Engine, Mesh3d, Projection, glam::Vec3};
 use engine_scene::SceneInstance;
 use engine_settings::{Error, ErrorCode, Expected};
 use serde_json::Value;
@@ -49,12 +49,6 @@ impl BrowserControl {
                     "$.interval_ms",
                 )?;
             }
-            Self::Probe {
-                alpha: Some(alpha), ..
-            } => {
-                validated_presentation_alpha(*alpha)?;
-            }
-            Self::Probe { alpha: None, .. } => {}
             Self::Game { name, .. } => {
                 let valid = name.len() <= 64
                     && name.starts_with(|first: char| first.is_ascii_lowercase())
@@ -220,13 +214,16 @@ pub fn validated_camera(
     let camera = Camera {
         position: Vec3::from_array(position),
         target: Vec3::from_array(target),
-        vertical_fov_radians,
         near,
         far,
+        projection: Projection::Perspective {
+            vertical_fov_radians,
+        },
     };
-    camera
-        .validate()
-        .map_err(|invalid| invalid.error(ErrorCode::InvalidCamera, "$"))?;
+    camera.check().map_err(|invalid| Error {
+        code: ErrorCode::InvalidCamera,
+        ..invalid
+    })?;
     if !camera.view_projection(1.0).is_finite() {
         return Err(Error::new(ErrorCode::InvalidCamera, "$").expected(Expected::Finite));
     }

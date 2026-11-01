@@ -10,9 +10,11 @@ pub use engine_settings as settings;
 pub use glam;
 pub mod game;
 pub use engine_core::{Detail, Error};
-pub use engine_settings::{Allowed, Expected, JS_ERROR_NAME};
+pub use engine_settings::{Allowed, Expected, InvalidSetting, JS_ERROR_NAME};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+pub const DYNAMIC_RESOLUTION: &str = "dynamic_resolution.enabled";
 #[doc(hidden)]
 pub mod surface;
 pub use game::{Game, Inspectors, engine};
@@ -28,26 +30,27 @@ pub use engine_core::smoke_eq;
 mod games {
     pub use engine_core::{
         Aabb, ActionId, ActionInput, AlphaImage, AlphaMode, AssetBudget, AssetLibrary, BrickList,
-        Camera, DynamicResolution, DynamicResolutionStats, Engine, EngineConfig,
-        EngineEntityCommands, Filter, FixedTime, FrameReport, FrameTime, GlobalTransform,
-        GlobalTransforms, Grounding, InputState, InterpolateTransform, Listing, MakeSources,
-        MakeTextures, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, Parent,
-        PresentedTime, PresentedTransform, PresentedTransforms, ProvidedAssets, Resolution,
+        Camera, DynamicResolutionStats, Engine, EngineConfig, Filter, FixedTime, FrameReport,
+        FrameTime, GlobalTransform, GlobalTransforms, Grounding, InputState, InterpolateTransform,
+        Listing, MakeSources, MakeTextures, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle,
+        MeshVertex, Parent, PresentedTransform, PresentedTransforms, Projection, ProvidedAssets,
         ResolutionStats, Sampler, Surface, Texture, TextureHandle, TextureRef, TextureSet,
         TextureSource, TextureUsage, TopLayer, Transform, UvTransform, Wrap, edit_transform, math,
         reset_all_interpolation, reset_interpolation, set_parent, set_parents, trim_cards,
     };
+    pub use crate::resolution::{DynamicResolution, Resolution};
 }
 pub use games::*;
 
 pub use engine_core::{
-    ErrorCode, HierarchyReport, InvalidSetting, LodLevel, MAX_HIERARCHY_DEPTH,
-    MAX_TEXTURE_DIMENSION, MAX_TRANSFORM_NODES, MeshLods, TextureFamily, TextureFormat,
-    TextureSampling, TransformNodeLimit, Viewport,
+    ErrorCode, HierarchyReport, LodLevel, MAX_HIERARCHY_DEPTH, MAX_TEXTURE_DIMENSION,
+    MAX_TRANSFORM_NODES, MeshLods, TextureFamily, TextureFormat, TextureSampling,
+    TransformNodeLimit, Viewport,
 };
 
 pub mod bricks {
     pub use engine_core::{BrickList, Listing};
+    pub use engine_registry::{BrickCost, BrickCosts, BrickRow, BrickTable};
     pub use engine_settings::{parse_json, parse_value, parse_value_at};
 }
 
@@ -72,42 +75,46 @@ pub use engine_render::{AdapterInfo, RenderTarget};
 pub use engine_render::{GpuMark, GpuPreference, NativeWindow, start_native_instances_with};
 pub use game_host::GameHost;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShaderModule {
+    pub path: &'static str,
+    pub source: &'static str,
+}
+
 pub fn shader_modules(
     bricks: impl FnOnce(BrickList) -> BrickList,
-) -> Result<Vec<engine_render::linker::ShaderModule>> {
-    use engine_render::linker::ShaderModule;
-    use engine_render::places::{PLACE_OWNER, place_module};
-    let engine = engine(bricks)?;
-    let mut modules = engine_render::shaders::MODULES.to_vec();
+) -> Result<Vec<ShaderModule>> {
+    let list = bricks(BrickList::default());
+    let mut modules: Vec<ShaderModule> = Vec::new();
+    for (path, source) in engine_render::core_modules() {
+        add_module(&mut modules, path, source);
+    }
+    for listed in list.listed() {
+        for module in listed.source().modules() {
+            add_module(&mut modules, module.path(), module.text());
+        }
+    }
+    let engine = game::listed(list)?;
     let Some(registry) = engine
         .app
         .world()
-        .get_resource::<engine_core::BrickRegistry>()
+        .get_resource::<engine_registry::Registry>()
     else {
         return Ok(modules);
     };
-    for (_, render) in engine_render::render_bricks::render_bricks(registry) {
-        for module in render.modules() {
-            if !modules.iter().any(|known| known.path == module.path) {
-                modules.push(*module);
-            }
-        }
-    }
-    let declared = engine_render::composite::POST_PLACES.iter().copied();
-    for place in declared.chain(registry.places()) {
-        let Some(source) = place.face.wgsl else {
-            continue;
-        };
-        let path = place_module(place.name);
-        if !modules.iter().any(|known| known.path == path) {
-            modules.push(ShaderModule {
-                path: Box::leak(path.into_boxed_str()),
-                brick: PLACE_OWNER,
-                source,
-            });
+    for place in registry.catalog() {
+        if let Some(source) = place.wgsl() {
+            let path = format!("place::{}", place.name());
+            add_module(&mut modules, Box::leak(path.into_boxed_str()), source);
         }
     }
     Ok(modules)
+}
+
+fn add_module(modules: &mut Vec<ShaderModule>, path: &'static str, source: &'static str) {
+    if !modules.iter().any(|known| known.path == path) {
+        modules.push(ShaderModule { path, source });
+    }
 }
 
 #[cfg(target_arch = "wasm32")]

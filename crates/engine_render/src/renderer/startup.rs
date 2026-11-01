@@ -107,25 +107,11 @@ impl Renderer {
                 device_limits.max_texture_array_layers,
             ),
         )?;
-        let pipeline_counts = PipelineCounts::new(&device, display.format());
         let scope = crate::gpu_calls::validation_scope(&device);
         display.configure(&device);
-        let depth = DepthTarget::new(&device, display.size());
-        let materials = MaterialStore::new(&device, &queue);
-        let camera = CameraBindings::new(&device);
-        let debug = crate::debug_targets::DebugFrame::new(&device);
-        let instances = Instances::new(&device);
-        let mesh_pipelines = MeshPipelines::new(&device);
-        let impostor_pipelines = ImpostorPipelines::new(&device);
-        let impostor_atlas = ImpostorAtlas::new(&device, AtlasShape::SPHERE);
-        let gpu_presentation = GpuPresentationPass::new(&device);
+        let assets = new_assets(&device, &queue);
         let validation = Box::pin(scope.pop());
-
         let profiler = GpuProfiler::new(required_features, f64::from(queue.get_timestamp_period()));
-        let mesh_arena = MeshArena::new(
-            &device,
-            [size_of::<Vertex>(), size_of::<ExtraVertex>()].map(|bytes| bytes as u64),
-        );
         let core = Core {
             device,
             queue,
@@ -133,47 +119,18 @@ impl Renderer {
             #[cfg(not(target_arch = "wasm32"))]
             debugger_capture: false,
             display,
-            depth,
-            meshes: BTreeMap::new(),
-            mesh_arena,
-            mesh_layout: 0,
-            mesh_uploads: MeshUploads::default(),
-            materials,
-            plan: BatchPlan::with_instance_limit(instances.limit),
-            draw_order: DrawOrder::default(),
-            structure_keys: StructureKeys::default(),
-            instances,
-            uploads: UploadCache::default(),
-            camera,
-            mesh_pipelines,
-            pipeline_counts,
-            gpu_presentation,
-            culling: Culling { pyramid: None },
-            impostors: ImpostorDraws {
-                atlas: impostor_atlas,
-                pipelines: impostor_pipelines,
-                contents: Contents::default(),
-                records: Vec::new(),
-                cut: engine_core::Cut::default(),
-            },
-            switch_fades: frame::SwitchFades::default(),
-            last_seconds: None,
-            gpu_frame: false,
             health,
             profiler,
-            previous: PreviousFrame::default(),
-            debug,
-            mesh_entries: None,
-            views: None,
         };
         let renderer = Self {
             core,
-            parts: Vec::new(),
-            graph: StaticGraph::default(),
+            run: None,
+            assets: Some(assets),
             plans: PlanCache::default(),
-            passes: &[],
+            passes: Vec::new(),
             installing: None,
-            ran: Vec::new(),
+            previous: None,
+            seconds: None,
         };
         crate::platform::yield_now().await;
         Ok(StartingRenderer {

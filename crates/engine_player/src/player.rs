@@ -1,34 +1,41 @@
-use engine::bricks::BrickList;
-use engine::collision::CollisionConfig;
 use engine::prelude::*;
 use engine::scene::SceneFiles;
 use engine::{Error, ErrorCode, Expected};
+use serde_json::json;
+
+const WALKER: &str = "walker";
+
+const FLIES: &str = "fly_camera.enabled";
+
+const COLLISION: [(&str, u32); 5] = [
+    ("collision.max_colliders", 10_000),
+    ("collision.max_candidate_pairs", 100_000),
+    ("collision.max_sensor_pairs", 16_384),
+    ("collision.max_query_candidates", 10_000),
+    ("collision.max_query_hits", 1024),
+];
+
+#[derive(Clone, Copy)]
+struct Player {
+    entity: Entity,
+    spawn: Vec3,
+}
 
 pub struct ScenePlayer {
     instance: Option<SceneInstance>,
-    player: Option<Entity>,
+    player: Option<Player>,
     view: Camera,
-    bricks: Vec<&'static str>,
 }
 
 impl ScenePlayer {
-    pub fn new(
-        source: &str,
-        files: &SceneFiles,
-        bricks: BrickList,
-    ) -> Result<(Engine, Self), Error> {
-        bricks.check()?;
-        let names = bricks.names().collect();
-        let mut engine = Engine::default();
-        engine.app.add_bricks(bricks).add_plugins(PlayerPlugin);
+    pub fn new(source: &str, files: &SceneFiles, engine: &mut Engine) -> Result<Self, Error> {
         let mut player = Self {
             instance: None,
             player: None,
             view: Camera::default(),
-            bricks: names,
         };
-        player.load(&mut engine, source, files)?;
-        Ok((engine, player))
+        player.load(engine, source, files)?;
+        Ok(player)
     }
 
     fn load(&mut self, engine: &mut Engine, source: &str, files: &SceneFiles) -> Result<(), Error> {
@@ -61,13 +68,16 @@ impl ScenePlayer {
         if let Some(previous) = self.instance.take() {
             previous.despawn(world);
         }
-        self.player = player_id.and_then(|id| instance.entity(&id));
-        if let Some(entity) = self.player {
-            attach_player(world, entity);
-        }
+        self.player = match player_id.and_then(|id| instance.entity(&id)) {
+            Some(entity) => Some(attach_player(world, entity)?),
+            None => None,
+        };
         self.instance = Some(instance);
         self.view = *world.resource::<Camera>();
-        align_fly_camera(world, &self.view);
+        for (key, limit) in COLLISION {
+            engine::host::apply_setting(world, key, &json!(limit))?;
+        }
+        engine::host::apply_setting(world, FLIES, &json!(self.player.is_none()))?;
         engine.reset_clock();
         Ok(())
     }
@@ -76,7 +86,7 @@ impl ScenePlayer {
         let world = engine.app.world();
         let player = self
             .player
-            .and_then(|entity| world.get::<Transform>(entity))
+            .and_then(|player| world.get::<Transform>(player.entity))
             .map(|transform| transform.translation.to_array());
         let assets = world.resource::<AssetLibrary>();
         let scene = self.instance.as_ref();
@@ -95,10 +105,9 @@ impl Game for ScenePlayer {
     fn reset_camera(&mut self, engine: &mut Engine) {
         let world = engine.app.world_mut();
         match self.player {
-            Some(entity) => reset_player(world, entity),
+            Some(player) => reset_player(world, player),
             None => {
                 world.insert_resource(self.view);
-                align_fly_camera(world, &self.view);
             }
         }
         engine.reset_clock();
@@ -109,14 +118,11 @@ impl Game for ScenePlayer {
     }
 
     fn content(&self, _engine: &Engine) -> Option<Vec<u8>> {
-        let mut content = crate::SOURCE.to_vec();
+        let mut content = env!("CARGO_PKG_NAME").as_bytes().to_vec();
+        content.push(0);
         if let Some(scene) = self.scene() {
             content.extend(scene.id().as_bytes());
             content.extend(scene.revision().to_le_bytes());
-        }
-        for brick in &self.bricks {
-            content.extend(brick.as_bytes());
-            content.push(0);
         }
         Some(content)
     }
@@ -129,153 +135,30 @@ impl Game for ScenePlayer {
     ) -> Result<(), Error> {
         self.load(engine, source, files)
     }
-
-    fn inspectors(inspectors: &mut Inspectors) {
-        inspectors.resource::<PlayerWalk>(
-            include_str!("generated/inspectors.json"),
-            "PlayerWalk",
-            |walk| serde_json::to_value(walk).expect("walk_serializes"),
-        );
-    }
 }
 
-pub fn bricks(without: &str, path: &str) -> engine::Result<BrickList> {
-    let left_out = engine::bricks::standard_names(without, path)?;
-    Ok(engine::bricks::standard().without(left_out))
-}
-
-#[derive(Resource, Default, Clone, Copy, Debug, serde::Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct PlayerWalk {
-    pub collision_errors: u32,
-}
-
-#[derive(Component)]
-struct Player {
-    spawn: Vec3,
-    vertical_speed: f32,
-}
-
-fn attach_player(world: &mut World, entity: Entity) {
+fn attach_player(world: &mut World, entity: Entity) -> Result<Player, Error> {
     let spawn = world
         .get::<Transform>(entity)
         .expect("scene_entity_has_transform")
         .translation;
-    world.entity_mut(entity).insert((
-        InterpolateTransform,
-        Player {
-            spawn,
-            vertical_speed: 0.0,
-        },
-    ));
+    walks(world, entity)?;
+    Ok(Player { entity, spawn })
 }
 
-fn reset_player(world: &mut World, entity: Entity) {
-    let Some(spawn) = world.get::<Player>(entity).map(|player| player.spawn) else {
+fn walks(world: &mut World, entity: Entity) -> Result<(), Error> {
+    match engine_core::scene_component(world, WALKER) {
+        Some(walker) => walker.read(world, entity, &json!({})),
+        None => Ok(()),
+    }
+}
+
+fn reset_player(world: &mut World, player: Player) {
+    if world.get_entity(player.entity).is_err() {
         return;
-    };
-    edit_transform(world, entity, |transform| transform.translation = spawn)
+    }
+    edit_transform(world, player.entity, |transform| transform.translation = player.spawn)
         .expect("player_has_transform");
-    if let Some(mut player) = world.get_mut::<Player>(entity) {
-        player.vertical_speed = 0.0;
-    }
-    reset_interpolation(world, entity);
-}
-
-fn align_fly_camera(world: &mut World, camera: &Camera) {
-    if let Some(mut controller) = world.get_resource_mut::<FlyCameraController>() {
-        controller.align_to(camera);
-    }
-}
-
-struct PlayerPlugin;
-
-impl Plugin for PlayerPlugin {
-    fn build(&self, app: &mut App) {
-        app.add_plugins(FlyCameraPlugin)
-            .configure_sets(Presentation, CameraSystems.run_if(flies));
-        if !app
-            .world()
-            .get_resource::<engine::bricks::BrickRegistry>()
-            .is_some_and(|registry| registry.has("collision"))
-        {
-            return;
-        }
-        app.insert_resource(CollisionConfig {
-            max_colliders: Some(10_000),
-            max_candidate_pairs: Some(100_000),
-            max_sensor_pairs: Some(16_384),
-            max_query_candidates: Some(10_000),
-            max_query_hits: Some(1024),
-        })
-        .init_resource::<PlayerWalk>()
-        .add_systems(FixedSimulation, walk);
-    }
-}
-
-fn flies(input: Res<InputState>, players: Query<(), With<Player>>) -> bool {
-    players.is_empty()
-        && [
-            input.move_forward,
-            input.move_right,
-            input.move_up,
-            input.look_yaw,
-            input.look_pitch,
-        ]
-        .iter()
-        .any(|&value| value != 0.0)
-}
-
-const WORLD_LAYER: u32 = 1;
-
-fn walk(
-    time: Res<FixedTime>,
-    input: Res<InputState>,
-    collisions: Res<CollisionWorld>,
-    mut errors: ResMut<PlayerWalk>,
-    mut players: Query<(Entity, &Collider, &mut Transform, &mut Player)>,
-) {
-    let dt = time.delta_seconds;
-    for (entity, collider, mut transform, mut player) in &mut players {
-        player.vertical_speed -= 20.0 * dt;
-        let horizontal =
-            Vec3::new(input.move_right, 0.0, -input.move_forward).normalize_or_zero() * dt * 6.5;
-        let displacement = Vec3::new(horizontal.x, player.vertical_speed * dt, horizontal.z);
-        for axis in [1, 0, 2] {
-            if displacement[axis] == 0.0 {
-                continue;
-            }
-            let mut delta = Vec3::ZERO;
-            delta[axis] = displacement[axis];
-            let result = collisions.cast_shape(
-                collider.shape(),
-                transform.matrix(),
-                delta,
-                QueryFilter {
-                    layers: CollisionLayers {
-                        memberships: collider.layers().memberships,
-                        filter: collider.layers().filter & WORLD_LAYER,
-                    },
-                    sensors: SensorFilter::Exclude,
-                    exclude: Some(entity),
-                },
-                ShapeCastOptions {
-                    stop_at_penetration: false,
-                    target_distance: 0.0,
-                },
-            );
-            match result {
-                Ok(hit) => {
-                    transform.translation += delta * hit.as_ref().map_or(1.0, |hit| hit.fraction);
-                    if hit.is_some() && axis == 1 {
-                        player.vertical_speed = 0.0;
-                    }
-                }
-                Err(_) => {
-                    errors.collision_errors = errors.collision_errors.saturating_add(1);
-                    player.vertical_speed = 0.0;
-                }
-            }
-        }
-    }
+    walks(world, player.entity).expect("player_walks");
+    reset_interpolation(world, player.entity);
 }

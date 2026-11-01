@@ -1,4 +1,27 @@
-mod components;
-mod spline;
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
+
+mod smokes;
 mod spline_mesh;
 mod views;
+
+use engine_core::{Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source};
+use engine_places::splines::SplineMesh;
+
+pub struct SplinesBrick;
+
+impl Brick for SplinesBrick {
+    const SOURCE: &'static Source = &SOURCE;
+    const SMOKES: &'static [Smoke] = &[Smoke {
+        name: "spline",
+        runs: Runs::Gpu,
+        run: smokes::run,
+    }];
+
+    fn register(bricks: &mut Bricks<'_>) {
+        bricks
+            .resource::<spline_mesh::SplineBuilds>()
+            .join::<SceneComponents>(ComponentKind::of::<SplineMesh>("spline"), None)
+            .systems(Schedule::WorldSync, spline_mesh::build)
+            .observation::<views::InspectSplines>();
+    }
+}

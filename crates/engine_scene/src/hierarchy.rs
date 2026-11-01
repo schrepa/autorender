@@ -1,15 +1,12 @@
-use engine_settings::ErrorCode;
+use engine_settings::{ErrorCode, Expected};
 use std::collections::{BTreeMap, BTreeSet};
 
 use engine_core::{
-    Error, Expected, MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform,
-    glam::{Mat4, Vec3},
-    valid_global_matrix,
+    Error, MAX_HIERARCHY_DEPTH as MAX_DEPTH, Transform, glam::Mat4, valid_global_matrix,
 };
 
-use crate::components::{ComponentPath, GROUNDED};
 use crate::validation::{display_name, identifier, reference, unique_ids, unknown};
-use crate::{SceneAlong, SceneDocument, SceneObject, ScenePrefab, SceneTransform};
+use crate::{SceneDocument, SceneObject, ScenePrefab};
 
 pub(crate) struct ExpandedObject {
     pub source: SceneObject,
@@ -17,19 +14,11 @@ pub(crate) struct ExpandedObject {
     pub prefab_id: Option<String>,
     pub prefab_instance: Option<String>,
     pub prefab_local_id: Option<String>,
-    pub reach: Option<f32>,
 }
 
 struct Listed<'a> {
     object: &'a SceneObject,
     path: String,
-    reach: Option<f32>,
-}
-
-struct Placed {
-    object: SceneObject,
-    path: String,
-    reach: Option<f32>,
 }
 
 fn listed<'a>(list: &'a [SceneObject], list_path: &str) -> Vec<Listed<'a>> {
@@ -38,7 +27,6 @@ fn listed<'a>(list: &'a [SceneObject], list_path: &str) -> Vec<Listed<'a>> {
         .map(|(index, object)| Listed {
             object,
             path: format!("{list_path}[{index}]"),
-            reach: None,
         })
         .collect()
 }
@@ -64,41 +52,10 @@ impl SceneDocument {
         &self,
         mesh_ids: &BTreeSet<&str>,
         material_ids: &BTreeSet<&str>,
-    ) -> Result<[ExpandedScene; 2], Error> {
+    ) -> Result<ExpandedScene, Error> {
         let (prefab_ids, prefabs) = self.validate_prefabs(mesh_ids, material_ids)?;
         let ids = (mesh_ids, material_ids, &prefab_ids);
-        let placed = self.placed_along()?;
-        let mut kept = listed(&self.entities, "$.entities");
-        let mut streamed = listed(&self.streamed, "$.streamed");
-        for spot in &placed {
-            let entry = Listed {
-                object: &spot.object,
-                path: spot.path.clone(),
-                reach: spot.reach,
-            };
-            if spot.reach.is_some() {
-                streamed.push(entry);
-            } else {
-                kept.push(entry);
-            }
-        }
-        let entities = expand_list(&kept, ids, &prefabs)?;
-        let streamed = expand_list(&streamed, ids, &prefabs)?;
-        let known: BTreeSet<&str> = entities
-            .entities
-            .iter()
-            .map(|entity| entity.source.id.as_str())
-            .collect();
-        for entity in &streamed.entities {
-            if known.contains(entity.source.id.as_str()) {
-                return Err(
-                    Error::new(ErrorCode::DuplicateId, format!("{}.id", entity.path))
-                        .expected(Expected::Unique)
-                        .got(&entity.source.id),
-                );
-            }
-        }
-        Ok([entities, streamed])
+        expand_list(&listed(&self.entities, "$.entities"), ids, &prefabs)
     }
 
     fn validate_prefabs(
@@ -155,86 +112,6 @@ impl SceneDocument {
             .collect();
         Ok((prefab_ids, prefab_lookup))
     }
-
-    fn placed_along(&self) -> Result<Vec<Placed>, Error> {
-        unique_ids(self.along.iter().map(|along| along.id.as_str()), "$.along")?;
-        let mut placed = Vec::new();
-        for (index, along) in self.along.iter().enumerate() {
-            let path = format!("$.along[{index}]");
-            along
-                .validate()
-                .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, &path))?;
-            let ComponentPath { origin, points, .. } = self.along_path(along, &path)?;
-            let origin = Vec3::from_array(origin);
-            for (number, (point, yaw)) in along.spots(&points, &path)?.into_iter().enumerate() {
-                placed.push(Placed {
-                    object: SceneObject {
-                        id: format!("{}{number}", along.id),
-                        prefab: Some(along.prefab.clone()),
-                        components: along
-                            .grounded
-                            .iter()
-                            .map(|grounded| {
-                                (
-                                    GROUNDED.name.to_owned(),
-                                    serde_json::to_value(grounded).expect("grounded_serializes"),
-                                )
-                            })
-                            .collect(),
-                        transform: SceneTransform {
-                            translation: (origin + Vec3::new(point.x, 0.0, point.y)).to_array(),
-                            rotation_degrees: [0.0, yaw.to_degrees(), 0.0],
-                            ..SceneTransform::default()
-                        },
-                        ..SceneObject::default()
-                    },
-                    path: path.clone(),
-                    reach: along.streamed.map(|streamed| streamed.reach),
-                });
-            }
-        }
-        Ok(placed)
-    }
-
-    fn along_path(&self, along: &SceneAlong, path: &str) -> Result<ComponentPath, Error> {
-        let answered = |index: usize, entity: &SceneObject| {
-            entity.component_paths(&format!("$.entities[{index}]"))
-        };
-        let mut found = None;
-        for (index, entity) in self.entities.iter().enumerate() {
-            if entity.id != along.terrain {
-                continue;
-            }
-            let paths = answered(index, entity)?;
-            if !paths.is_empty() {
-                found = Some(paths);
-                break;
-            }
-        }
-        let Some(mut paths) = found else {
-            return Err(
-                Error::new(ErrorCode::UnknownReference, format!("{path}.terrain"))
-                    .got(&along.terrain)
-                    .variants(
-                        self.entities
-                            .iter()
-                            .enumerate()
-                            .filter(|&(index, entity)| {
-                                answered(index, entity).is_ok_and(|paths| !paths.is_empty())
-                            })
-                            .map(|(_, entity)| entity.id.clone()),
-                    ),
-            );
-        };
-        let Some(chosen) = paths.iter().position(|answer| answer.id == along.layer) else {
-            return Err(
-                Error::new(ErrorCode::UnknownReference, format!("{path}.layer"))
-                    .got(&along.layer)
-                    .variants(paths.iter().map(|answer| answer.id.clone())),
-            );
-        };
-        Ok(paths.swap_remove(chosen))
-    }
 }
 
 fn expand_list(
@@ -277,7 +154,6 @@ fn expand_list(
             prefab_id: entity.prefab.clone(),
             prefab_instance: entity.prefab.as_ref().map(|_| entity.id.clone()),
             prefab_local_id: None,
-            reach: entry.reach,
         });
         transforms.push(entity.transform.transform());
         if let Some(id) = &entity.prefab {
@@ -297,7 +173,6 @@ fn expand_list(
                     prefab_id: Some(id.clone()),
                     prefab_instance: Some(entity.id.clone()),
                     prefab_local_id: Some(local.id.clone()),
-                    reach: None,
                 });
                 transforms.push(local.transform.transform());
             }
@@ -312,7 +187,6 @@ fn expand_list(
                     .got(&entity.source.id),
             );
         }
-        entity.source.check_placement(&entity.path)?;
     }
     validate_graph(
         entities
@@ -333,7 +207,6 @@ fn validate_object(
     material_ids: &BTreeSet<&str>,
     prefab_ids: &BTreeSet<&str>,
 ) -> Result<Transform, Error> {
-    entity.validate_components(path)?;
     match (&entity.mesh, &entity.material) {
         (Some(mesh), Some(material)) if entity.prefab.is_none() => {
             reference(mesh, mesh_ids, &format!("{path}.mesh"))?;
@@ -472,9 +345,6 @@ fn validate_graph<'a>(
                 .expected(Expected::Invertible)
                 .got(entries[index].0.transform));
             }
-            entries[index]
-                .0
-                .validate_world_components(matrix, &entries[index].1)?;
             worlds[index] = Some(matrix);
             depths[index] = depth;
         }

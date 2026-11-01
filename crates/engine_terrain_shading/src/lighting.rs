@@ -2,8 +2,8 @@ use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 
 use engine_math::{clamp, max, min, sin_cos};
 
-use crate::SampleShape;
-use crate::codec::{self, Codec, Error, Reader, Writer};
+use engine_codec::{self as codec, Codec, Error, Reader, Writer};
+use engine_heightfield::SampleShape;
 
 pub const DIRECTIONS: usize = 16;
 

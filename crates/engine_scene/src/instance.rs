@@ -2,44 +2,19 @@ use engine_settings::ErrorCode;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use bevy_ecs::entity::Entity;
+use bevy_ecs::world::{World, WorldId};
+use engine_assets::SceneAssets;
 use engine_core::{
     AssetLibrary, Error, MaterialHandle, Mesh3d, MeshHandle, ProvidedAssets, TextureHandle,
-    Transform,
-    bevy_ecs::{
-        self,
-        prelude::{Component, Entity, World},
-        world::WorldId,
-    },
-    propagate_transforms, set_parents,
+    Transform, propagate_transforms, set_parents,
 };
+use engine_registry::{OperationScene, SceneEntity};
 
 use crate::{
-    SceneDocument, SceneFiles,
-    hierarchy::ExpandedObject,
-    validation::{PreparedEntity, PreparedScene},
+    SceneDocument, SceneFiles, components::Kinds, hierarchy::ExpandedObject,
+    validation::PreparedScene,
 };
-
-#[derive(Component, Debug)]
-pub struct SceneEntity {
-    pub scene_id: String,
-    pub authored_id: String,
-    pub name: String,
-    pub tags: Vec<String>,
-    pub authored_parent: Option<String>,
-    pub prefab_id: Option<String>,
-    pub prefab_instance: Option<String>,
-    pub prefab_local_id: Option<String>,
-}
-
-pub fn authored_id(world: &World, entity: Entity) -> Option<engine_core::AuthoredId> {
-    world
-        .get::<SceneEntity>(entity)
-        .map(|metadata| engine_core::AuthoredId {
-            scene: metadata.scene_id.clone(),
-            id: metadata.authored_id.clone(),
-            name: metadata.name.clone(),
-        })
-}
 
 #[derive(Debug)]
 #[must_use = "retain the instance and explicitly despawn it when the scene is disposed"]
@@ -54,7 +29,7 @@ pub struct SceneInstance {
     mesh_ids: Vec<String>,
     texture_ids: Vec<String>,
     origins: Origins,
-    streamed: bool,
+    skipped: Vec<Error>,
 }
 
 #[derive(Debug, Default)]
@@ -196,6 +171,10 @@ impl SceneInstance {
         self.entities.len()
     }
 
+    pub fn skipped(&self) -> &[Error] {
+        &self.skipped
+    }
+
     pub fn textures(&self) -> impl ExactSizeIterator<Item = (&str, TextureHandle)> {
         self.texture_ids
             .iter()
@@ -237,17 +216,12 @@ impl SceneInstance {
             .map(|(id, entity)| (id.as_str(), *entity))
     }
 
-    pub fn operation_scene(&self) -> engine_core::OperationScene {
-        engine_core::OperationScene {
+    pub fn operation_scene(&self) -> OperationScene {
+        OperationScene {
             id: self.id.clone(),
             entities: self.entities.clone(),
-            streamed: self.streamed,
-            authored: authored_id,
+            streamed: false,
         }
-    }
-
-    pub fn streamed(&self) -> bool {
-        self.streamed
     }
 
     pub fn belongs_to(&self, world: &World) -> bool {
@@ -257,10 +231,10 @@ impl SceneInstance {
     pub fn despawn(self, world: &mut World) {
         assert_eq!(self.world_id, world.id(), "scene_world_matches");
         if world
-            .get_resource::<engine_core::OperationScene>()
+            .get_resource::<OperationScene>()
             .is_some_and(|scene| Arc::ptr_eq(&scene.entities, &self.entities))
         {
-            world.remove_resource::<engine_core::OperationScene>();
+            world.remove_resource::<OperationScene>();
         }
         for &entity in self.entities.values() {
             world.despawn(entity);
@@ -282,10 +256,17 @@ impl SceneDocument {
         files: &SceneFiles,
     ) -> Result<SceneInstance, Error> {
         let mut prepared = self.prepare(Some(files))?;
-        self.check_bricks(world)?;
+        let kinds = Kinds::of(world);
+        let skipped = self.admit(world, &kinds)?;
         let (assets, owned) = self.insert_assets(world, &mut prepared)?;
         let lookups = Lookups::new(self, &assets);
-        let spawned = self.spawn(world, &prepared, &lookups);
+        let spawned = match self.spawn(world, &prepared, &lookups, &kinds) {
+            Ok(spawned) => spawned,
+            Err(error) => {
+                owned.remove(&mut world.resource_mut::<AssetLibrary>());
+                return Err(error);
+            }
+        };
         let entities: BTreeMap<String, Entity> = prepared
             .entities
             .iter()
@@ -320,7 +301,6 @@ impl SceneDocument {
             environment.apply_all(world, "$.environment")?;
         }
         world.insert_resource(crate::SceneViews::of(self));
-        let streamed = !prepared.streamed.items.is_empty();
         let instance = SceneInstance {
             id: self.id.clone(),
             revision: self.revision,
@@ -347,7 +327,7 @@ impl SceneDocument {
                     .collect(),
                 textures: self.textures.iter().map(TextureOrigin::from).collect(),
             },
-            streamed,
+            skipped,
         };
         world.insert_resource(instance.operation_scene());
         Ok(instance)
@@ -423,45 +403,58 @@ impl SceneDocument {
         Ok((handles, owned))
     }
 
-    fn spawn(&self, world: &mut World, prepared: &PreparedScene, lookups: &Lookups) -> Vec<Entity> {
-        prepared
-            .entities
-            .iter()
-            .zip(&prepared.transforms)
-            .zip(&prepared.components)
-            .map(|((expanded, &transform), component)| {
-                spawn_entity(world, lookups, expanded, transform, component)
-            })
-            .collect()
+    fn spawn(
+        &self,
+        world: &mut World,
+        prepared: &PreparedScene,
+        lookups: &Lookups,
+        kinds: &Kinds,
+    ) -> Result<Vec<Entity>, Error> {
+        let mut spawned = Vec::with_capacity(prepared.entities.len());
+        for (expanded, &transform) in prepared.entities.iter().zip(&prepared.transforms) {
+            match spawn_entity(world, lookups, kinds, expanded, transform) {
+                Ok(entity) => spawned.push(entity),
+                Err(error) => {
+                    for entity in spawned {
+                        world.despawn(entity);
+                    }
+                    return Err(error);
+                }
+            }
+        }
+        Ok(spawned)
     }
 }
 
-pub struct Lookups {
+struct Lookups {
     scene_id: String,
-    pub(crate) meshes: BTreeMap<String, MeshHandle>,
-    pub(crate) materials: BTreeMap<String, MaterialHandle>,
-    pub owned_meshes: Vec<MeshHandle>,
-    pub owned_materials: Vec<MaterialHandle>,
+    assets: SceneAssets,
 }
 
 impl Lookups {
-    fn new(document: &SceneDocument, assets: &Handles) -> Self {
+    fn new(document: &SceneDocument, handles: &Handles) -> Self {
         Self {
             scene_id: document.id.clone(),
-            meshes: document
-                .meshes
-                .iter()
-                .zip(&assets.meshes)
-                .map(|(source, handle)| (source.id.clone(), *handle))
-                .collect(),
-            materials: document
-                .materials
-                .iter()
-                .zip(&assets.materials)
-                .map(|(source, handle)| (source.id.clone(), *handle))
-                .collect(),
-            owned_meshes: assets.meshes.clone(),
-            owned_materials: assets.materials.clone(),
+            assets: SceneAssets {
+                meshes: document
+                    .meshes
+                    .iter()
+                    .zip(&handles.meshes)
+                    .map(|(source, handle)| (source.id.clone(), *handle))
+                    .collect(),
+                materials: document
+                    .materials
+                    .iter()
+                    .zip(&handles.materials)
+                    .map(|(source, handle)| (source.id.clone(), *handle))
+                    .collect(),
+                textures: document
+                    .textures
+                    .iter()
+                    .zip(&handles.textures)
+                    .map(|(source, handle)| (source.id.clone(), *handle))
+                    .collect(),
+            },
         }
     }
 }
@@ -469,10 +462,10 @@ impl Lookups {
 fn spawn_entity(
     world: &mut World,
     lookups: &Lookups,
+    kinds: &Kinds,
     expanded: &ExpandedObject,
     transform: Transform,
-    component: &PreparedEntity,
-) -> Entity {
+) -> Result<Entity, Error> {
     let source = &expanded.source;
     let mut entity = world.spawn((
         transform,
@@ -489,12 +482,17 @@ fn spawn_entity(
     ));
     if let (Some(mesh), Some(material)) = (&source.mesh, &source.material) {
         entity.insert(Mesh3d {
-            mesh: lookups.meshes[mesh.as_str()],
-            material: lookups.materials[material.as_str()],
+            mesh: lookups.assets.meshes[mesh.as_str()],
+            material: lookups.assets.materials[material.as_str()],
         });
     }
-    for prepared in &component.components {
-        prepared.spawn(&mut entity, lookups);
+    let entity = entity.id();
+    let read = lookups
+        .assets
+        .scope(|| kinds.read(world, entity, source, &expanded.path));
+    if let Err(error) = read {
+        world.despawn(entity);
+        return Err(error);
     }
-    entity.id()
+    Ok(entity)
 }

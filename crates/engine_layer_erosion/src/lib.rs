@@ -3,7 +3,7 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-include!(concat!(env!("OUT_DIR"), "/source.rs"));
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod bake;
 mod erosion;
@@ -11,13 +11,16 @@ mod erosion;
 use std::any::Any;
 use std::sync::Arc;
 
-use engine_core::{Brick, Bricks, Join, Pyramid};
-use engine_settings::{ErrorCode, parse_value};
-use engine_terrain::codec::{Reader, Writer};
-use engine_terrain::layer::{
-    Below, ChangeMap, LayerBake, LayerFiles, LayerKind, Made, Row, TerrainLayer, TerrainLayersList,
-    maps, no_files, same_as,
+use engine_codec::{Reader, Writer};
+use engine_core::{
+    Brick, Bricks, Error, ErrorCode, Job, JobCx, JobKind, JobRef, Source, parse_value,
 };
+use engine_heightfield::layer::{
+    Below, ChangeMap, LayerBake, LayerFiles, LayerKind, Made, Row, TerrainLayer, maps, no_files,
+    no_points, same_as,
+};
+use engine_heightfield::{Pyramid, StartTile};
+use engine_places::terrain::{self, TerrainLayers};
 use serde_json::Value;
 
 use crate::bake::ErosionWork;
@@ -26,24 +29,35 @@ pub use crate::erosion::{Erosion, ErosionLayer, ErosionStats};
 pub struct LayerErosionBrick;
 
 impl Brick for LayerErosionBrick {
+    const SOURCE: &'static Source = &SOURCE;
+    const JOBS: &'static [&'static JobKind] = &[&EROSION_JOB];
+
     fn register(bricks: &mut Bricks<'_>) {
-        for &kind in KINDS {
-            bricks.join(Join::<TerrainLayersList>::new().cpu(kind));
-        }
+        bricks.join::<TerrainLayers>(
+            terrain::LayerKind {
+                layer: &EROSION,
+                job: JobRef::from(&EROSION_JOB),
+            },
+            None,
+        );
     }
 }
 
+pub static EROSION_JOB: JobKind = JobKind::new("layer_erosion::erosion", &SOURCE, refused);
+
 pub static EROSION: LayerKind = LayerKind {
     name: "erosion",
-    source: SOURCE,
+    source: SOURCE.hash(),
     from_json,
     read,
     files: no_files,
-    schema: engine_terrain::layer_schema!(schema),
-    points: engine_terrain::layer::no_points,
+    schema: engine_heightfield::schema::<ErosionLayer>,
+    points: no_points,
 };
 
-pub static KINDS: &[&LayerKind] = &[&EROSION];
+fn refused(_input: &[u8], _cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    Err(Error::new(ErrorCode::JobUnsupported, "$.jobs"))
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ErosionStage {
@@ -51,13 +65,13 @@ pub struct ErosionStage {
     pub baked: Option<Arc<Erosion>>,
 }
 
-engine_terrain::codec::record!(ErosionStage { layer, baked });
+engine_codec::record!(ErosionStage { layer, baked });
 
 fn made(stage: ErosionStage) -> Made {
     stage
         .layer
         .validate()
-        .map_err(|invalid| invalid.error(ErrorCode::InvalidTerrain, "$"))?;
+        .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, "$"))?;
     Ok(Arc::new(stage))
 }
 
@@ -70,11 +84,6 @@ fn from_json(value: &Value, _files: &dyn LayerFiles) -> Made {
 
 fn read(input: &mut Reader<'_>) -> Made {
     made(input.get()?)
-}
-
-#[cfg(feature = "schema")]
-fn schema() -> schemars::Schema {
-    schemars::schema_for!(ErosionLayer)
 }
 
 impl TerrainLayer for ErosionStage {
@@ -120,11 +129,11 @@ impl TerrainLayer for ErosionStage {
         self.baked.is_none()
     }
 
-    fn bake(&self, pyramid: &Pyramid) -> Option<Box<dyn LayerBake>> {
+    fn bake(&self, pyramid: &Pyramid, tiles: StartTile) -> Option<Box<dyn LayerBake>> {
         if !self.needs_bake() {
             return None;
         }
-        Some(Box::new(ErosionWork::new(&self.layer, pyramid)))
+        Some(Box::new(ErosionWork::new(&self.layer, pyramid, tiles)))
     }
 
     fn unbaked(&self) -> Option<Arc<dyn TerrainLayer>> {

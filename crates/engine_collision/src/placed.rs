@@ -1,13 +1,14 @@
-use bevy_ecs::prelude::{Entity, World};
-use engine_places::{SolidShape, WorldSolid, WorldSolids};
+use bevy_ecs::prelude::{Entity, Query};
+use engine_places::physics::{
+    ColliderShape, CollisionLayers, CollisionRay, PlacedPart, QueryFilter, RayHit, SensorFilter,
+    ShapeCastOptions, ShapeHit,
+};
+use engine_places::solids::{SolidShape, SolidSource, WorldSolid};
 use glam::Vec3;
 
 use crate::bvh::Bvh;
 use crate::geometry::{AffineShape, Bounds, Narrow, intersects};
-use crate::{
-    ColliderShape, CollisionLayers, CollisionRay, Fault, PlacedPart, QueryFilter, RayHit,
-    SensorFilter, ShapeCastOptions, ShapeHit,
-};
+use crate::types::Fault;
 
 #[derive(Clone, Copy)]
 struct Object {
@@ -22,7 +23,6 @@ pub(crate) struct PlacedShapes {
     objects: Vec<Object>,
     bounds: Vec<Bounds>,
     bvh: Bvh,
-    revision: Option<u64>,
 }
 
 fn accepts(filter: QueryFilter, object: &Object) -> bool {
@@ -36,29 +36,13 @@ impl PlacedShapes {
         self.objects.len()
     }
 
-    pub(crate) fn objects_in(
-        &self,
-        bounds: Bounds,
-    ) -> impl Iterator<Item = (Entity, PlacedPart, &AffineShape)> + '_ {
-        self.bvh
-            .query(move |node| node.overlaps(bounds))
-            .map(|index| &self.objects[index])
-            .filter(move |object| object.affine.bounds.overlaps(bounds))
-            .map(|object| (object.entity, object.part, &object.affine))
-    }
-
-    pub(crate) fn sync(&mut self, world: &World) -> bool {
-        let solids = world.get_resource::<WorldSolids>();
-        let revision = solids.map(|solids| solids.revision(world));
-        if revision == self.revision {
+    pub(crate) fn sync(&mut self, sources: &Query<'_, '_, &SolidSource>, changed: bool) -> bool {
+        if !changed {
             return false;
         }
-        self.revision = revision;
         let had = !self.objects.is_empty();
         self.objects.clear();
-        if let Some(solids) = solids {
-            self.collect(solids.solids(world));
-        }
+        self.collect(sources.iter().flat_map(|source| source.field.solids()));
         self.bounds.clear();
         self.bounds
             .extend(self.objects.iter().map(|object| object.affine.bounds));
@@ -66,7 +50,7 @@ impl PlacedShapes {
         had || !self.objects.is_empty()
     }
 
-    fn collect(&mut self, solids: Vec<WorldSolid>) {
+    fn collect<'a>(&mut self, solids: impl Iterator<Item = &'a WorldSolid>) {
         for solid in solids {
             let shape = match solid.shape {
                 SolidShape::Cuboid { half_extents } => ColliderShape::Cuboid { half_extents },

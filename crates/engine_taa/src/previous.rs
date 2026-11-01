@@ -1,143 +1,78 @@
-use engine_render::renderer::*;
-use engine_render::cached::GroupCache;
-use engine_render::gpu_data::{jitter_clip, jittered};
-use engine_render::parts::{Jitter, TemporalFrame};
-use engine_render::targets::{FrameRegion, ScreenTarget};
+use bevy_ecs::prelude::*;
+use engine_core::View;
+use engine_core::glam::{UVec2, Vec2};
+use engine_render::{DebugShown, Layer, Output, Resolve, wgpu};
 
-pub const MOTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+use crate::antialiasing::TemporalAntialiasingStats;
 
-#[derive(Clone, Copy)]
+const JITTER_SAMPLES: u32 = 8;
+
+pub(crate) const MOTION: Output = Output {
+    name: "motion",
+    format: wgpu::TextureFormat::Rg16Float,
+    layers: &[
+        Layer::Occluders,
+        Layer::Opaque,
+        Layer::Late,
+        Layer::Backdrop,
+        Layer::Media,
+    ],
+};
+
+#[derive(Resource, Default)]
 pub(crate) struct History {
-    view_projection: glam::Mat4,
-    size: FrameSize,
-    identity: u64,
-    structure: u64,
-    pose_generation: u64,
+    frames: u32,
+    last: Option<UVec2>,
+    pub(crate) valid: bool,
+    pub(crate) live: bool,
 }
 
-pub struct Motion {
-    texture: wgpu::Texture,
-    pub view: wgpu::TextureView,
+fn halton(mut index: u32, base: u32) -> f32 {
+    let (mut scale, mut value) = (1.0, 0.0);
+    while index > 0 {
+        scale /= base as f32;
+        value += scale * (index % base) as f32;
+        index /= base;
+    }
+    value
 }
 
-impl Drop for Motion {
-    fn drop(&mut self) {
-        self.texture.destroy();
-    }
+fn jitter_offset(frame: u32) -> [f32; 2] {
+    let index = frame % JITTER_SAMPLES + 1;
+    [halton(index, 2) - 0.5, halton(index, 3) - 0.5]
 }
 
-#[derive(Default)]
-pub struct PreviousFrame {
-    history: Option<History>,
-    frames: u64,
-    motion: ScreenTarget<Motion>,
-    pose_layout: Option<engine_render::pipelines::GroupLayout>,
-    pose_groups: [GroupCache<4>; 4],
-    pub(crate) wanted: bool,
+fn turn_of(frame: u32) -> f32 {
+    let turn = (u64::from(frame) % 1024) as f32 * 0.618_034;
+    turn - turn.floor()
 }
 
-impl PreviousFrame {
-    pub(crate) fn reset(&mut self) {
-        self.history = None;
+pub(crate) fn publish_jitter(
+    view: Res<View>,
+    shown: Res<DebugShown>,
+    mut history: ResMut<History>,
+    mut resolve: ResMut<Resolve>,
+) {
+    if shown.owner.is_some() {
+        history.last = None;
+        history.valid = false;
+        history.live = false;
+        resolve.set_if_neq(Resolve::default());
+        return;
     }
-
-    pub(crate) fn release(&mut self) {
-        self.history = None;
-        self.motion.release();
-        for group in &mut self.pose_groups {
-            group.clear();
-        }
-    }
-
-    pub(crate) fn frame(
-        &mut self,
-        device: &wgpu::Device,
-        frame: &RenderFrame<'_>,
-        (region, pose_generation): (FrameRegion, u64),
-        jitter: Option<Jitter>,
-    ) -> TemporalFrame {
-        let (size, render) = (region.display, region.render);
-        if self.motion.resizes(size) {
-            let motion = motion_target(device, size);
-            self.motion.set(size, motion);
-            self.history = None;
-        }
-        let snapshot = frame.snapshot();
-        let view_projection = snapshot.view_projection;
-        let history = History {
-            view_projection,
-            size,
-            identity: frame.identity(),
-            structure: frame.structure_revision(),
-            pose_generation,
-        };
-        let last = self
-            .history
-            .filter(|last| last.size == size && last.identity == history.identity);
-        let Jitter { offset, sequence } = jitter.unwrap_or(Jitter {
-            offset: [0.0; 2],
-            sequence: self.frames,
-        });
-        let clip = jitter_clip(offset, render.width, render.height);
-        let previous = last.map_or(view_projection, |last| last.view_projection);
-        let camera = CameraUniform::temporal(
-            view_projection,
-            snapshot.camera_position,
-            snapshot.elapsed_seconds,
-            previous,
-            clip,
-            render.pixels(),
-            sequence,
-        );
-        TemporalFrame {
-            parity: (sequence & 1) as usize,
-            camera,
-            rasterized: jittered(view_projection, clip),
-            history_valid: last.is_some(),
-            motion_valid: last.is_some_and(|last| {
-                last.structure == history.structure && last.pose_generation == pose_generation
-            }),
-            history,
-        }
-    }
-
-    pub(crate) fn after_submit(&mut self, frame: Option<&TemporalFrame>) {
-        if let Some(frame) = frame {
-            self.history = Some(frame.history);
-            self.frames = self.frames.wrapping_add(1);
-        }
-    }
-
-    pub(crate) fn attachment(&self, resource: &str) -> Option<wgpu::TextureView> {
-        (resource == "motion")
-            .then(|| self.motion.get().map(|motion| motion.view.clone()))
-            .flatten()
-    }
-
-    pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.motion
-            .size()
-            .map_or(0, |size| u64::from(size.width) * u64::from(size.height) * 4)
-    }
+    let frame = history.frames;
+    let size = view.render_size();
+    history.valid = history.last == Some(size);
+    history.last = Some(size);
+    history.live = true;
+    history.frames = frame.wrapping_add(1);
+    resolve.set_if_neq(Resolve {
+        offset: Vec2::from(jitter_offset(frame)),
+        turn: turn_of(frame),
+    });
 }
 
-fn motion_target(device: &wgpu::Device, size: FrameSize) -> Motion {
-    let texture = engine_render::targets::texture_2d(
-        device,
-        "engine/taa-motion",
-        size.pixels(),
-        1,
-        1,
-        MOTION_FORMAT,
-        engine_render::targets::RENDER_TARGET,
-    );
-    let view = texture.create_view(&Default::default());
-    Motion { texture, view }
-}
-
-impl Core {
-    pub fn motion(&self) -> Option<Bound<'_>> {
-        let motion = self.previous.motion.get()?;
-        Some(Bound::of(motion, engine_render::pipelines::view(&motion.view)))
-    }
+pub(crate) fn forget(mut history: ResMut<History>, mut stats: ResMut<TemporalAntialiasingStats>) {
+    *history = History::default();
+    stats.set_if_neq(TemporalAntialiasingStats { active: false });
 }

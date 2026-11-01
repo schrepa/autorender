@@ -16,11 +16,18 @@ impl Default for Interior {
     }
 }
 
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReflectionProbe {
     pub extent: Vec3,
+    #[serde(default = "full_blend")]
     pub blend: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub interior: Option<Interior>,
+}
+
+fn full_blend() -> f32 {
+    1.0
 }
 
 impl ReflectionProbe {

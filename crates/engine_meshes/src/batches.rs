@@ -1,16 +1,11 @@
-#![expect(
-    clippy::expect_used,
-    reason = "materials' textures are validated before they are ranked"
-)]
-
 use std::ops::Range;
 
+use bevy_ecs::prelude::Resource;
+use engine_codec::Expected;
 use engine_core::collections::HashMap;
+use engine_core::{Error, ErrorCode, MaterialHandle, MeshHandle, Stamp, TextureHandle};
 
-use engine_core::{
-    Error, ErrorCode, Expected, MaterialHandle, MeshHandle, RenderFrame, RenderSnapshot,
-    TextureHandle,
-};
+use crate::retained::{RetainedRender, Snapshot};
 
 const UNMAPPED_BUCKET: u32 = u32::MAX;
 
@@ -52,14 +47,13 @@ fn index_by_handle<H: Ord>(
     Ok(())
 }
 
-#[derive(Default)]
+#[derive(Resource, Default)]
 pub struct BatchPlan {
     pub ordered_instances: Vec<usize>,
     pub batches: Vec<DrawBatch>,
     previous_order: Vec<usize>,
     previous_batches: Vec<DrawBatch>,
     generation: u64,
-    rebuilds: u64,
     source_indices: Vec<usize>,
     material_source_indices: Vec<usize>,
     texture_source_indices: Vec<usize>,
@@ -78,25 +72,18 @@ pub struct BatchPlan {
     pub instance_limit: Option<usize>,
     valid: bool,
     order_reused: bool,
-    retained_structure: Option<(u64, u64)>,
-    retained_sources: Option<(u64, u64)>,
+    retained_structure: Option<(Stamp, u64)>,
+    retained_sources: Option<(Stamp, u64)>,
     slot_buckets: Vec<u32>,
     slot_mapping_reused: bool,
     key_resolutions: usize,
 }
 
 impl BatchPlan {
-    pub fn with_instance_limit(limit: usize) -> Self {
-        Self {
-            instance_limit: Some(limit),
-            ..Self::default()
-        }
-    }
-
-    pub fn prepare_frame(&mut self, frame: &RenderFrame<'_>) -> Result<(), Error> {
-        let key = (frame.identity(), frame.structure_revision());
-        let source_key = (frame.identity(), frame.source_revision());
-        let snapshot = frame.snapshot();
+    pub fn prepare_frame(&mut self, retained: &RetainedRender) -> Result<(), Error> {
+        let key = (retained.identity(), retained.structure_revision());
+        let source_key = (retained.identity(), retained.source_revision());
+        let snapshot = retained.snapshot();
         self.key_resolutions = 0;
         let reuse_slots = self.valid
             && self.retained_sources == Some(source_key)
@@ -110,64 +97,20 @@ impl BatchPlan {
             self.order_reused = true;
         } else {
             self.valid = false;
-            if let Err(error) = self.prepare_inner(snapshot, frame.visible_indices(), reuse_slots) {
+            if let Err(error) =
+                self.prepare_inner(snapshot, retained.visible_indices(), reuse_slots)
+            {
                 self.invalidate();
                 return Err(error);
             }
             self.retained_structure = Some(key);
             self.retained_sources = Some(source_key);
         }
-        self.record_stats();
         Ok(())
-    }
-
-    fn record_stats(&self) {
-        if engine_profile::active() {
-            engine_profile::counter(
-                "render.batch_order_reused",
-                if self.order_reused { 1.0 } else { 0.0 },
-            );
-            engine_profile::counter(
-                "render.batch_order_rebuilt",
-                if self.order_reused { 0.0 } else { 1.0 },
-            );
-            engine_profile::counter(
-                "render.batch_slot_mapping_reused",
-                f64::from(self.slot_mapping_reused),
-            );
-            engine_profile::counter("render.batch_key_resolutions", self.key_resolutions as f64);
-            let group_scratch_bytes = (self.instance_buckets.capacity()
-                + self.slot_buckets.capacity()
-                + self.group_order.capacity())
-                * size_of::<u32>()
-                + self.group_keys.capacity() * size_of::<u64>()
-                + self.bucket_cursors.capacity() * size_of::<usize>();
-            let capacity_bytes = (self.ordered_instances.capacity()
-                + self.source_indices.capacity()
-                + self.material_source_indices.capacity()
-                + self.texture_source_indices.capacity()
-                + self.material_sources.capacity()
-                + self.texture_sources.capacity())
-                * size_of::<usize>()
-                + self.batches.capacity() * size_of::<DrawBatch>()
-                + self.mesh_handles.capacity() * size_of::<MeshHandle>()
-                + self.material_handles.capacity() * size_of::<MaterialHandle>()
-                + self.texture_handles.capacity() * size_of::<TextureHandle>()
-                + group_scratch_bytes;
-            engine_profile::counter("memory.batch_plan_capacity_bytes", capacity_bytes as f64);
-            engine_profile::counter(
-                "memory.batch_group_scratch_bytes",
-                group_scratch_bytes as f64,
-            );
-        }
     }
 
     pub fn generation(&self) -> u64 {
         self.generation
-    }
-
-    pub fn rebuilds(&self) -> u64 {
-        self.rebuilds
     }
 
     fn invalidate(&mut self) {
@@ -197,13 +140,11 @@ impl BatchPlan {
 
     fn prepare_inner(
         &mut self,
-        snapshot: &RenderSnapshot,
+        snapshot: &Snapshot,
         selected: &[usize],
         reuse_slot_mapping: bool,
     ) -> Result<(), Error> {
-        self.rebuilds += 1;
         let instance_count = selected.len();
-        let profile_validation = engine_profile::span("render", "batch_source_validation");
         self.source_indices.clear();
         self.material_source_indices.clear();
         self.texture_source_indices.clear();
@@ -222,8 +163,6 @@ impl BatchPlan {
         if !snapshot.view_projection.is_finite() {
             return Err(snapshot_camera());
         }
-        drop(profile_validation);
-        let profile_sources = engine_profile::span("render", "batch_source_index");
         index_by_handle(
             &mut self.source_indices,
             snapshot.meshes.len(),
@@ -262,7 +201,6 @@ impl BatchPlan {
                 }
             }
         }
-        drop(profile_sources);
         if !reuse_slot_mapping {
             self.group_ids.clear();
             self.group_keys.clear();
@@ -289,11 +227,12 @@ impl BatchPlan {
             if self.used_material_sources[index] {
                 self.material_sources.push(index);
                 for handle in source.material.textures() {
-                    let rank = self
+                    if let Ok(rank) = self
                         .texture_source_indices
                         .binary_search_by_key(&handle, |&index| snapshot.textures[index].handle)
-                        .expect("texture_validated");
-                    self.used_texture_sources[self.texture_source_indices[rank]] = true;
+                    {
+                        self.used_texture_sources[self.texture_source_indices[rank]] = true;
+                    }
                 }
             }
         }
@@ -310,10 +249,9 @@ impl BatchPlan {
 
     fn group_instances(
         &mut self,
-        snapshot: &RenderSnapshot,
+        snapshot: &Snapshot,
         selected: &[usize],
     ) -> Result<(), Error> {
-        let _profile = engine_profile::span("render", "batch_instance_group");
         self.instance_buckets.clear();
         self.instance_buckets.reserve_exact(selected.len());
         for &slot in selected {
@@ -358,7 +296,6 @@ impl BatchPlan {
         self.batches.reserve_exact(self.group_order.len());
         let mut start = 0;
         {
-            let _profile_ranges = engine_profile::span("render", "batch_draw_ranges");
             for &group in &self.group_order {
                 let count = &mut self.bucket_cursors[group as usize];
                 let end = start + *count;
@@ -394,7 +331,7 @@ impl BatchPlan {
     }
 
     fn source_ranks(
-        snapshot: &RenderSnapshot,
+        snapshot: &Snapshot,
         mesh_indices: &[usize],
         material_indices: &[usize],
         mesh: MeshHandle,
@@ -411,28 +348,5 @@ impl BatchPlan {
             })
             .transpose()?;
         Ok((mesh_index, material_index))
-    }
-
-    pub fn contains_mesh(&self, handle: MeshHandle) -> bool {
-        self.mesh_handles.binary_search(&handle).is_ok()
-    }
-
-    pub fn contains_material(&self, handle: MaterialHandle) -> bool {
-        self.material_handles.binary_search(&handle).is_ok()
-    }
-
-    pub fn material<'a>(
-        &self,
-        snapshot: &'a RenderSnapshot,
-        handle: MaterialHandle,
-    ) -> Option<&'a engine_core::Material> {
-        self.material_source_indices
-            .binary_search_by_key(&handle, |&index| snapshot.materials[index].handle)
-            .ok()
-            .map(|rank| &snapshot.materials[self.material_source_indices[rank]].material)
-    }
-
-    pub fn contains_texture(&self, handle: TextureHandle) -> bool {
-        self.texture_handles.binary_search(&handle).is_ok()
     }
 }

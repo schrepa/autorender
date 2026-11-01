@@ -2,6 +2,7 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use std::sync::OnceLock;
 
 use engine::prelude::*;
+use engine_core::RecordExchange;
 
 use crate::random::{golden_hash, unit};
 use crate::records;
@@ -35,7 +36,7 @@ fn shadow_record(world: &mut World, seed: u32) -> engine::Result<MeshHandle> {
 }
 
 pub(crate) fn atlas_record(world: &mut World) -> engine::Result<TextureHandle> {
-    let handles = world.resource_scope(|world, mut stored: Mut<Records>| {
+    let handles = world.resource_scope(|world, mut stored: Mut<RecordExchange>| {
         let mut assets = world.resource_mut::<AssetLibrary>();
         records::textures(
             (&mut stored, &mut assets),

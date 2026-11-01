@@ -1,4 +1,5 @@
-use engine_settings::{Error, ErrorCode, Expected, InvalidSetting, Rule, Setting, settings};
+use engine_codec::{Error, ErrorCode, Expected};
+use engine_settings::{InvalidSetting, Rule, Setting, fields};
 
 use crate::TextureHandle;
 
@@ -10,7 +11,7 @@ fn invalid_part(part: &'static str, setting: InvalidSetting) -> Error {
     invalid(setting.within(part))
 }
 
-settings! {
+fields! {
     unauthored;
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct Surface {
@@ -32,7 +33,7 @@ impl Surface {
     pub const MAX_EMISSION: f32 = 16.0;
 }
 
-settings! {
+fields! {
     unauthored;
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct TopLayer {
@@ -44,7 +45,7 @@ settings! {
 
 pub const MAX_WORLD_TILING: f32 = 10_000.0;
 
-settings! {
+fields! {
     unauthored;
     #[derive(Debug, Clone, Copy, PartialEq)]
     pub struct Grounding {

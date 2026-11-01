@@ -1,70 +1,58 @@
-use super::operations::{coordinate, reply, terrains};
+use super::operations::{coordinate, reply};
 use super::*;
 use crate::{HydrologySample, PATH_FAR};
+use engine_core::Operation;
 use engine_core::bounds::MAX_POINTS;
-use engine_core::{Error, ErrorCode, Operation};
-use engine_places::WaterKind;
-#[cfg(feature = "schema")]
-use engine_settings::stated;
+use engine_places::water::{WaterBody, WaterKind, WaterSample};
 use serde_json::Value;
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TerrainHeightQuery {
-    #[cfg_attr(feature = "schema", schemars(length(min = 1, max = MAX_POINTS)))]
+    #[schemars(length(min = 1, max = MAX_POINTS))]
     pub points: Vec<[f64; 2]>,
 }
 
 impl Operation for TerrainHeightQuery {
     const NAME: &'static str = "terrain_height";
-    const CONTROL: bool = false;
+    type Params = (
+        Res<'static, Terrains>,
+        Res<'static, TerrainStats>,
+        Query<'static, 'static, &'static WaterBody>,
+    );
     type Request = Self;
 
-    fn run(world: &mut World, request: Self) -> Result<Value, Error> {
-        heights(world, &request.points)
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(Self)
-    }
-
-    #[cfg(feature = "schema")]
-    fn result_schema() -> Option<schemars::Schema> {
-        Some(schemars::schema_for!(TerrainHeightResult))
+    fn run(
+        (terrains, stats, bodies): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
+        heights((&terrains, &stats, &bodies), &request.points)
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TerrainRouteQuery {
     pub from: [f64; 2],
     pub to: [f64; 2],
     #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(transform = route_rule("level")))]
     pub level: Option<u32>,
     #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(transform = route_rule("max_grade")))]
     pub max_grade: Option<f64>,
     #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(transform = route_rule("grade_cost")))]
     pub grade_cost: Option<f64>,
     #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(transform = route_rule("water_cost")))]
     pub water_cost: Option<f64>,
     #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(transform = route_rule("turn_cost")))]
     pub turn_cost: Option<f64>,
 }
 
 impl Operation for TerrainRouteQuery {
     const NAME: &'static str = "terrain_route";
-    const CONTROL: bool = false;
+    type Params = Res<'static, Terrains>;
     type Request = Self;
 
-    fn run(world: &mut World, request: Self) -> Result<Value, Error> {
+    fn run(terrains: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<Value, Error> {
         let Self {
             from,
             to,
@@ -91,8 +79,6 @@ impl Operation for TerrainRouteQuery {
             code: ErrorCode::OutOfRange,
             ..Error::from(invalid)
         })?;
-        let world = &*world;
-        let terrains = terrains(world)?;
         let Some(sample) = terrains.sample(from.x, from.y) else {
             return Err(Error::new(ErrorCode::InvalidRequest, "$.from").got(from.to_array()));
         };
@@ -102,7 +88,7 @@ impl Operation for TerrainRouteQuery {
         let origin = Vec2::new(terrain.origin.x, terrain.origin.z);
         let route = terrains.route(sample.terrain, from, to, &options);
         Ok(reply(TerrainRouteResult {
-            terrain: terrain_key(world, sample.terrain),
+            terrain: terrain_key(sample.terrain),
             options,
             origin: origin.to_array(),
             route: route.map(|route| RouteFound {
@@ -117,37 +103,23 @@ impl Operation for TerrainRouteQuery {
             }),
         }))
     }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(Self)
-    }
-
-    #[cfg(feature = "schema")]
-    fn result_schema() -> Option<schemars::Schema> {
-        Some(schemars::schema_for!(TerrainRouteResult))
-    }
 }
 
-#[cfg(feature = "schema")]
-fn route_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
-    let state = stated(RouteOptions::rule_of(field).expect("route_rule_declared"));
-    let default = serde_json::to_value(RouteOptions::default()).expect("route_options_serialize")
-        [field]
-        .clone();
-    move |schema| {
-        state(schema);
-        schema.insert("default".into(), default.clone());
-    }
+fn water_at(bodies: &Query<'_, '_, &WaterBody>, point: Vec3) -> Option<WaterSample> {
+    let mut held: Vec<&WaterBody> = bodies.iter().collect();
+    held.sort_by_key(|body| std::cmp::Reverse(body.precedence));
+    held.iter().find_map(|body| body.shape.water(point))
 }
 
-fn heights(world: &World, points: &[[f64; 2]]) -> Result<Value, Error> {
+fn heights(
+    (terrains, stats, bodies): (&Terrains, &TerrainStats, &Query<'_, '_, &WaterBody>),
+    points: &[[f64; 2]],
+) -> Result<Value, Error> {
     if points.is_empty() || points.len() > MAX_POINTS {
         return Err(Error::new(ErrorCode::OutOfRange, "$.points")
             .range(1.0, MAX_POINTS as f64)
             .got(points.len()));
     }
-    let terrains = terrains(world)?;
     let samples = points
         .iter()
         .enumerate()
@@ -161,8 +133,7 @@ fn heights(world: &World, points: &[[f64; 2]]) -> Result<Value, Error> {
                     let local = (x - terrain.origin.x, z - terrain.origin.z);
                     Some(water.at(local.0, local.1, terrain.pyramid.spacing(0)))
                 });
-                let standing = terrains
-                    .water_at(Vec3::new(x, sample.height, z))
+                let standing = water_at(bodies, Vec3::new(x, sample.height, z))
                     .filter(|water| water.kind != WaterKind::Fall)
                     .map(|water| StandingWater {
                         surface: water.surface,
@@ -174,7 +145,7 @@ fn heights(world: &World, points: &[[f64; 2]]) -> Result<Value, Error> {
                     (road.distance < PATH_FAR).then_some(road.edge())
                 });
                 HeightSample {
-                    terrain: terrain_key(world, sample.terrain),
+                    terrain: terrain_key(sample.terrain),
                     height: sample.height,
                     normal: sample.normal.to_array(),
                     hole: sample.hole,
@@ -188,19 +159,17 @@ fn heights(world: &World, points: &[[f64; 2]]) -> Result<Value, Error> {
         .collect::<Result<Vec<_>, Error>>()?;
     Ok(reply(TerrainHeightResult {
         samples,
-        stats: terrains.stats(),
+        stats: stats.clone(),
     }))
 }
 
-#[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct TerrainHeightResult {
     pub samples: Vec<Option<HeightSample>>,
     pub stats: TerrainStats,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct HeightSample {
     pub terrain: TerrainKey,
     pub height: f32,
@@ -212,15 +181,13 @@ pub struct HeightSample {
     pub path: Option<f32>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct StandingWater {
     pub surface: f32,
     pub depth: f32,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct TerrainRouteResult {
     pub terrain: TerrainKey,
     pub options: RouteOptions,
@@ -228,8 +195,7 @@ pub struct TerrainRouteResult {
     pub route: Option<RouteFound>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct RouteFound {
     pub points: Vec<[f64; 2]>,
     pub length: f32,

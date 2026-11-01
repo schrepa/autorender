@@ -1,8 +1,8 @@
-use engine_math::{clamp, max};
-use engine_terrain::noise::{
+use engine_heightfield::noise::{
     gradient_noise, gradient_noise4, gradient_value, gradient_value4, gullies, gullies4, max4,
     min4, smooth, smooth4, sqrt4,
 };
+use engine_math::{clamp, max};
 use glam::Vec4;
 
 use crate::layer::NoiseLayer;

@@ -3,8 +3,6 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-extern crate engine_ecs as bevy_ecs;
-
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Schedule, Source, settings, stats};
 

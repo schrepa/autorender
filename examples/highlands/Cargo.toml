@@ -28,6 +28,9 @@ engine_sources.workspace = true
 
 [dependencies]
 engine.workspace = true
+engine_core.workspace = true
+engine_ecs.workspace = true
+highlands_bricks.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

@@ -2,7 +2,8 @@ use std::any::{Any, TypeId};
 
 use bevy_ecs::component::Mutable;
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::BoxedSystem;
+use bevy_ecs::schedule::{InternedScheduleLabel, IntoScheduleConfigs, ScheduleConfigs};
+use bevy_ecs::system::{BoxedSystem, ScheduleSystem};
 use engine_place::{Error, ErrorCode, GpuStruct, List, PlaceDecl, Slot, Smoke};
 
 use crate::entries::{
@@ -17,6 +18,15 @@ pub trait RecordExt {
 pub(crate) struct ScopeEntry {
     pub(crate) parent: Option<Scope>,
     pub(crate) condition: Option<GateFn>,
+    gated: bool,
+}
+
+type MakeSystems = Box<dyn FnOnce() -> ScheduleConfigs<ScheduleSystem> + Send + Sync>;
+
+pub(crate) struct SystemsCall {
+    pub(crate) scope: Scope,
+    pub(crate) schedule: InternedScheduleLabel,
+    pub(crate) make: MakeSystems,
 }
 
 pub struct BrickRecord {
@@ -26,10 +36,12 @@ pub struct BrickRecord {
     brick: TypeId,
     type_name: &'static str,
     source: [u8; 32],
+    prefix: Option<&'static str>,
     smokes: &'static [Smoke],
     pub(crate) scopes: Vec<ScopeEntry>,
     current: Scope,
     pub(crate) offs: Vec<BoxedSystem>,
+    pub(crate) systems: Vec<SystemsCall>,
     pub(crate) fills: Vec<Filled>,
     pub(crate) joins: Vec<JoinEntry>,
     owned: Vec<Owned>,
@@ -53,13 +65,16 @@ impl BrickRecord {
             brick: TypeId::of::<B>(),
             type_name: std::any::type_name::<B>(),
             source,
+            prefix: None,
             smokes,
             scopes: vec![ScopeEntry {
                 parent: None,
                 condition: None,
+                gated: false,
             }],
             current: Scope::BRICK,
             offs: Vec::new(),
+            systems: Vec::new(),
             fills: Vec::new(),
             joins: Vec::new(),
             owned: Vec::new(),
@@ -83,6 +98,10 @@ impl BrickRecord {
         self.source
     }
 
+    pub fn prefix(&self) -> Option<&'static str> {
+        self.prefix
+    }
+
     pub fn smokes(&self) -> &'static [Smoke] {
         self.smokes
     }
@@ -96,7 +115,23 @@ impl BrickRecord {
     }
 
     pub fn parent(&self, scope: Scope) -> Option<Scope> {
-        self.scopes.get(scope.index()).and_then(|entry| entry.parent)
+        self.scopes
+            .get(scope.index())
+            .and_then(|entry| entry.parent)
+    }
+
+    pub fn gated(&self, scope: Scope) -> bool {
+        let mut at = Some(scope);
+        while let Some(current) = at {
+            let Some(entry) = self.scopes.get(current.index()) else {
+                return false;
+            };
+            if entry.gated {
+                return true;
+            }
+            at = entry.parent;
+        }
+        false
     }
 
     pub fn fills(&self) -> &[Filled] {
@@ -137,6 +172,12 @@ impl BrickRecord {
             .filter_map(|entry| entry.downcast_ref::<T>())
     }
 
+    pub fn render_entries<T: Any>(&self) -> impl Iterator<Item = &T> + '_ {
+        self.render
+            .iter()
+            .filter_map(|entry| entry.downcast_ref::<T>())
+    }
+
     pub fn places(&self) -> impl Iterator<Item = &PlaceDecl> + '_ {
         self.fills
             .iter()
@@ -163,7 +204,9 @@ impl BrickRecord {
                 .push(Error::new(ErrorCode::NameTwice, path).got(self.package));
             return;
         }
-        self.scopes[Scope::BRICK.index()].condition = Some(condition);
+        let brick = &mut self.scopes[Scope::BRICK.index()];
+        brick.condition = Some(condition);
+        brick.gated = true;
     }
 
     pub fn enter(&mut self, condition: GateFn) -> Scope {
@@ -171,6 +214,7 @@ impl BrickRecord {
         self.scopes.push(ScopeEntry {
             parent: Some(self.current),
             condition: Some(condition),
+            gated: true,
         });
         self.current = scope;
         scope
@@ -182,6 +226,22 @@ impl BrickRecord {
 
     pub fn off(&mut self, system: BoxedSystem) {
         self.offs.push(system);
+    }
+
+    pub fn systems<M: 'static>(
+        &mut self,
+        schedule: InternedScheduleLabel,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + Send + Sync + 'static,
+    ) {
+        self.systems.push(SystemsCall {
+            scope: self.current,
+            schedule,
+            make: Box::new(move || systems.chain()),
+        });
+    }
+
+    pub fn shader_prefix(&mut self, prefix: &'static str) {
+        self.prefix = Some(prefix);
     }
 
     pub fn fill<S: Slot>(&mut self, wgsl: Option<Box<dyn Any + Send + Sync>>) {
@@ -234,11 +294,7 @@ impl BrickRecord {
 
     pub fn operation(&mut self, mut entry: OperationEntry) {
         entry.brick = self.package;
-        if self
-            .operations
-            .iter()
-            .any(|known| known.name == entry.name)
-        {
+        if self.operations.iter().any(|known| known.name == entry.name) {
             let path = format!("$.operations.{}", entry.name);
             self.problems
                 .push(Error::new(ErrorCode::NameTwice, path).got(self.package));

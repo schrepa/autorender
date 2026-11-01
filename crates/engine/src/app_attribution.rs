@@ -1,5 +1,9 @@
+use bevy_ecs::change_detection::Mut;
+use engine_core::ErrorCode;
+use engine_registry::{BrickRecord, Registry};
+
 use super::AppHost;
-use crate::Result;
+use crate::{Error, Result};
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
 pub(super) use measured::{Attribution, core_scope};
@@ -8,13 +12,19 @@ pub(super) use unmeasured::core_scope;
 
 impl AppHost {
     pub(super) fn claim_passes(&mut self) -> Result<()> {
-        let world = self.engine.app.world();
-        let Some(registry) = world.get_resource::<engine_core::BrickRegistry>() else {
+        let world = self.engine.app.world_mut();
+        if !world.contains_resource::<Registry>() {
             return Ok(());
-        };
-        self.renderer.install(registry)?;
-        registry.check_passes(self.renderer.installed_passes())?;
-        Ok(())
+        }
+        let renderer = &mut self.renderer;
+        let installed = world.resource_scope(|world, registry: Mut<Registry>| {
+            let bricks: Vec<&BrickRecord> = registry.bricks().iter().collect();
+            renderer.install(world, &bricks)
+        });
+        installed.map_err(|mut problems| match problems.len() {
+            1 => problems.remove(0),
+            _ => Error::new(ErrorCode::RenderFailed, "$.bricks").got(&problems),
+        })
     }
 }
 
@@ -40,9 +50,8 @@ mod unmeasured {
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
 mod measured {
-    use engine_core::{
-        BrickCost, BrickCosts, BrickRegistry, CORE_ROW, GPU_IDLE_ROW, UNATTRIBUTED_ROW,
-        WARMUP_FRAMES,
+    use engine_registry::{
+        BrickCost, BrickCosts, CORE_ROW, GPU_IDLE_ROW, Registry, UNATTRIBUTED_ROW, WARMUP_FRAMES,
     };
     use engine_profile::MAX_BRICKS;
 
@@ -122,9 +131,10 @@ mod measured {
             let memory = self.renderer.take_gpu_memory();
             let world = self.engine.app.world();
             let frame = world.resource::<engine_core::FrameTime>().frame;
-            let registry = world.get_resource::<BrickRegistry>();
+            let registry = world.get_resource::<Registry>();
+            let renderer = &self.renderer;
             let owner = |pass: Option<&str>| {
-                pass.and_then(|pass| registry.and_then(|registry| registry.pass_owner(pass)))
+                pass.and_then(|pass| renderer.pass_owner(pass))
                     .unwrap_or(CORE_ROW)
             };
             let mut names: Vec<&'static str> = registry

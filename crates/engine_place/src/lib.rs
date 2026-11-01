@@ -136,7 +136,10 @@ pub struct JobRef {
 impl JobRef {
     #[doc(hidden)]
     pub fn named(name: &str, source: [u8; 32]) -> Self {
-        Self { name: name.into(), source }
+        Self {
+            name: name.into(),
+            source,
+        }
     }
 
     #[doc(hidden)]
@@ -185,7 +188,12 @@ pub struct SmokeFailure {
 
 impl SmokeFailure {
     #[doc(hidden)]
-    pub fn new(check: &'static str, got: &impl serde::Serialize, expected: &impl serde::Serialize, at: &'static str) -> Self {
+    pub fn new(
+        check: &'static str,
+        got: &impl serde::Serialize,
+        expected: &impl serde::Serialize,
+        at: &'static str,
+    ) -> Self {
         Self {
             smoke: "",
             check,

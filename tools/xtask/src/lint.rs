@@ -66,9 +66,9 @@ pub(crate) const LINT: &[Stage<Path>] = &[
         run: |root| engine_checks::structure::check(repository(root)?, &RULES.exceptions),
     },
     Stage {
-        name: "examples are leaves",
+        name: "install",
         needs: &[],
-        run: |root| engine_checks::leaves::check(repository(root)?),
+        run: install,
     },
     Stage {
         name: "pure",
@@ -119,16 +119,6 @@ pub(crate) const LINT: &[Stage<Path>] = &[
         },
     },
     Stage {
-        name: "clippy brick template",
-        needs: &[],
-        run: |root| {
-            clippy(
-                root,
-                &["-p", "engine_core", "--examples", "--target", WASM_TARGET],
-            )
-        },
-    },
-    Stage {
         name: "wasm",
         needs: &[],
         run: |root| build_wasm(root, false, QUICK),
@@ -152,6 +142,11 @@ pub(crate) const LINT: &[Stage<Path>] = &[
 
 fn kinds(root: &Path) -> Result<(), String> {
     run(root, "cargo", &["run", "-q", "--locked", "-p", "kinds"])
+}
+
+fn install(_: &Path) -> Result<(), String> {
+    let mut engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
+    engine_checks::install::check(&mut engine)
 }
 
 fn clippy(root: &Path, selection: &[&str]) -> Result<(), String> {

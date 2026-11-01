@@ -1,35 +1,32 @@
 use super::*;
 
 pub(super) struct CookGraph {
-    source: GroundSource,
+    walked: Walked,
     gait: Gait,
     tiles: Vec<TileKey>,
     next: usize,
-    flight: Vec<JobId>,
+    pub(super) flight: Vec<Ticket>,
 }
 
 impl NavAgents {
     pub(super) fn cook(
         &mut self,
-        world: &World,
-        agents: &mut Agents,
-        jobs: &mut Jobs,
-        cooking: &mut Cooking,
-    ) {
+        ground: &Ground,
+        agents: &Agents,
+        (records, jobs): (&Records, &mut Jobs),
+    ) -> u64 {
         let mut left = 0;
-        for (_, agent, _, transform) in agents.iter(world) {
+        for (_, agent, _, transform) in agents.iter() {
             let at = Vec2::new(transform.translation.x, transform.translation.z);
-            match ground_source(world, at, at) {
-                GroundRead::Ready(source) => {
-                    let gait = agent.sanitized().options().gait(&source.pyramid);
-                    if !self
-                        .cook
-                        .iter()
-                        .any(|graph| graph.source.ground == source.ground && graph.gait == gait)
-                    {
+            match ground_source(ground, at, at) {
+                GroundRead::Ready(walked) => {
+                    let gait = options(&sanitized(agent)).gait(&walked.source.pyramid);
+                    if !self.cook.iter().any(|graph| {
+                        graph.walked.source.ground == walked.source.ground && graph.gait == gait
+                    }) {
                         self.cook.push(CookGraph {
-                            tiles: source.pyramid.level_tiles(gait.level).collect(),
-                            source,
+                            tiles: walked.source.pyramid.level_tiles(gait.level).collect(),
+                            walked,
                             gait,
                             next: 0,
                             flight: Vec::new(),
@@ -40,40 +37,27 @@ impl NavAgents {
                 GroundRead::Off => {}
             }
         }
-        let mut slots = JobBudget::of(jobs);
         for graph in &mut self.cook {
-            graph.flight.retain(|&id| {
-                let Some(output) = slots.jobs.take(id) else {
-                    return true;
+            let mut flying = Vec::with_capacity(graph.flight.len());
+            for ticket in std::mem::take(&mut graph.flight) {
+                let Some(output) = records.get(&ticket) else {
+                    flying.push(ticket);
+                    continue;
                 };
-                let made = job_output(PortalsJob::KIND, output, portals_output);
-                if let Err(error) = made {
+                jobs.cancel(ticket);
+                if let Err(error) = made(PORTALS_NAME, output, portals_output) {
                     self.failures.record(self.tick, error);
                 }
-                false
-            });
+            }
+            graph.flight = flying;
             while let Some(&key) = graph.tiles.get(graph.next) {
                 let priority = job_priority(IDLE_JOBS, graph.next as u32);
-                if !slots.take(priority) {
-                    break;
-                }
-                let (input, record) = portals_record(&graph.source, key, &graph.gait);
-                graph.flight.push(slots.jobs.submit_record(
-                    PortalsJob::KIND,
-                    input,
-                    priority,
-                    record,
-                ));
+                let input = portals_input(&graph.walked, key, &graph.gait);
+                graph.flight.push(jobs.fetch(&PORTALS, &input, priority));
                 graph.next += 1;
             }
             left += (graph.tiles.len() - graph.next + graph.flight.len()) as u64;
         }
-        cooking.left("navigation", left);
-    }
-
-    pub(super) fn cooking_jobs(&self) -> impl Iterator<Item = JobId> + '_ {
-        self.cook
-            .iter()
-            .flat_map(|graph| graph.flight.iter().copied())
+        left
     }
 }

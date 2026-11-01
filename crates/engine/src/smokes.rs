@@ -1,11 +1,16 @@
-use engine_core::smoke::{SmokeEntry, SmokeFailure, SmokeResult, SmokeSession};
-use engine_core::{AddBrick, BrickList, BrickRegistry, Engine, ErrorCode, MAX_DEV_TICKS};
+mod host;
+
+use std::sync::Arc;
+
+use engine_core::{BrickList, Engine, ErrorCode, MAX_DEV_TICKS, RecordKey};
+pub use engine_core::{Runs, Smoke, SmokeFailure, SmokeSession};
+use engine_registry::{JobOrder, Registry};
 use engine_scene::{SceneFiles, SceneInstance};
 use serde_json::{Map, Value, json};
 
 use crate::{Error, Game, Inspectors, Result};
 
-pub type Build<'b, G> = &'b dyn Fn(Option<&str>, BrickList) -> Result<(Engine, G)>;
+pub type Build<'b, G> = &'b dyn Fn(Option<&str>, &mut Engine) -> Result<G>;
 
 pub const ALL: &str = "all";
 
@@ -13,87 +18,83 @@ pub const LIST: &str = "list";
 
 pub const FRAME_MS: f64 = 1000.0 / 60.0;
 
-fn core_smoke(
-    name: &'static str,
-    gpu: bool,
-    run: fn(&mut dyn SmokeSession) -> SmokeResult,
-) -> SmokeEntry {
-    SmokeEntry {
-        name,
-        brick: engine_core::CORE_ROW,
-        gpu,
-        run,
+const HOST: &str = "engine";
+
+#[derive(Clone, Copy, Debug)]
+pub struct SmokeEntry {
+    pub name: &'static str,
+    pub owner: &'static str,
+    pub runs: Runs,
+    pub run: fn(&mut dyn SmokeSession) -> std::result::Result<(), SmokeFailure>,
+    pub without: Option<&'static str>,
+}
+
+impl SmokeEntry {
+    pub fn of(owner: &'static str, smoke: &Smoke) -> Self {
+        Self {
+            name: smoke.name,
+            owner,
+            runs: smoke.runs,
+            run: smoke.run,
+            without: None,
+        }
+    }
+
+    fn left_out(package: &'static str) -> Self {
+        Self {
+            name: Box::leak(format!("left_out.{package}").into_boxed_str()),
+            owner: package,
+            runs: Runs::Headless,
+            run: left_out,
+            without: Some(package),
+        }
+    }
+
+    pub fn gpu(&self) -> bool {
+        self.runs == Runs::Gpu
+    }
+
+    pub fn bricks(&self, bricks: &BrickList) -> BrickList {
+        match self.without {
+            Some(package) => bricks.clone().without_package(package),
+            None => bricks.clone(),
+        }
+    }
+
+    pub fn run_in(
+        &self,
+        session: &mut dyn SmokeSession,
+    ) -> std::result::Result<(), SmokeFailure> {
+        (self.run)(session)
     }
 }
 
-pub fn core() -> Vec<SmokeEntry> {
-    vec![
-        core_smoke("frame_loop", true, frame_loop::frame_loop),
-        core_smoke("input_keys", false, input::input_keys),
-        core_smoke("input_camera", true, input::input_camera),
-        core_smoke("agent", true, agent::agent),
-        core_smoke("agent_lifecycle", true, agent_lifecycle::agent_lifecycle),
-        core_smoke("host_parity", true, host_parity::host_parity),
-        core_smoke("host_images", true, host_parity::host_images),
-        core_smoke("host_faults", true, host_parity::host_faults),
-        core_smoke("native", true, native::native),
-        core_smoke("plugins", true, plugins::plugins),
-        core_smoke("gpu_presentation", true, gpu_presentation::gpu_presentation),
-        core_smoke("hierarchy", true, hierarchy::run),
-        core_smoke("spline", true, spline::run),
-        core_smoke("meshes", true, meshes::run),
-        core_smoke("surfaces", true, surfaces::run),
-        core_smoke("texture", true, texture::run),
-        core_smoke("streamed_scene", true, streamed_scene::run),
-        core_smoke("scene_views", false, scene_views::run),
-        core_smoke("debug_view_terrain", true, terrain_views::run),
-        core_smoke("core_only_frames", true, engine_frames::core_only_frames),
-        core_smoke("lit_meshes_frames", true, engine_frames::lit_meshes_frames),
-        core_smoke("flat_sprites", true, flat::flat_sprites),
-    ]
-}
-
-pub fn registered(bricks: &BrickList) -> Vec<SmokeEntry> {
-    let mut engine = Engine::default();
-    engine.app.add_bricks(bricks.clone());
-    let Some(registry) = engine.app.world().get_resource::<BrickRegistry>() else {
-        return Vec::new();
-    };
-    let mut smokes: Vec<SmokeEntry> = registry.smokes().copied().collect();
-    smokes.extend(registry.place_smokes());
-    smokes
-}
-
-pub fn run_place(session: &mut dyn SmokeSession, place: &str) -> SmokeResult {
-    let smokes: Vec<SmokeEntry> = session
-        .app()
-        .world()
-        .get_resource::<BrickRegistry>()
-        .map(|registry| {
-            registry
-                .place_smokes()
-                .into_iter()
-                .filter(|smoke| smoke.brick == place)
-                .collect()
-        })
-        .unwrap_or_default();
-    for smoke in smokes {
-        smoke.run_in(session)?;
-    }
+fn left_out(session: &mut dyn SmokeSession) -> std::result::Result<(), SmokeFailure> {
+    session.step(1);
+    let _ = session.frame();
     Ok(())
 }
 
-pub fn standard() -> Vec<SmokeEntry> {
-    let mut smokes = core();
-    smokes.extend(registered(&crate::bricks::standard()));
-    smokes
+pub fn registered(bricks: &BrickList) -> Result<Vec<SmokeEntry>> {
+    let mut smokes: Vec<SmokeEntry> = host::SMOKES
+        .iter()
+        .map(|smoke| SmokeEntry::of(HOST, smoke))
+        .collect();
+    let engine = engine_of(bricks.clone())?;
+    let Some(registry) = engine.app.world().get_resource::<Registry>() else {
+        return Ok(smokes);
+    };
+    smokes.extend(
+        registry
+            .smokes()
+            .map(|(owner, smoke)| SmokeEntry::of(owner, smoke)),
+    );
+    smokes.extend(registry.names().map(SmokeEntry::left_out));
+    Ok(smokes)
 }
 
 pub fn engine_of(bricks: BrickList) -> Result<Engine> {
-    bricks.check()?;
-    let mut engine = Engine::default();
-    engine.app.add_bricks(bricks);
-    Ok(engine)
+    crate::game::listed(bricks)
 }
 
 pub struct SmokeGame;
@@ -107,15 +108,13 @@ pub enum Played<G> {
 
 pub fn played<G>(
     source: Option<&str>,
-    bricks: BrickList,
-    scene: impl FnOnce(&str, &SceneFiles, BrickList) -> Result<(Engine, G)>,
-) -> Result<(Engine, Played<G>)> {
+    engine: &mut Engine,
+    scene: impl FnOnce(&str, &SceneFiles, &mut Engine) -> Result<G>,
+) -> Result<Played<G>> {
     let Some(document) = source else {
-        return Ok((engine_of(bricks)?, Played::Plain(SmokeGame)));
+        return Ok(Played::Plain(SmokeGame));
     };
-    bricks.check()?;
-    let (engine, game) = scene(document, &SceneFiles::default(), bricks)?;
-    Ok((engine, Played::Scene(game)))
+    Ok(Played::Scene(scene(document, &SceneFiles::default(), engine)?))
 }
 
 impl<G: Game> Game for Played<G> {
@@ -187,7 +186,7 @@ pub fn select<'a>(entries: &'a [SmokeEntry], names: &str) -> Result<Vec<&'a Smok
 }
 
 pub fn listed(entry: &SmokeEntry) -> Value {
-    json!({ "smoke": entry.name, "brick": entry.brick, "gpu": entry.gpu })
+    json!({ "smoke": entry.name, "brick": entry.owner, "gpu": entry.gpu() })
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -206,16 +205,19 @@ impl SmokeRecord {
     pub fn of(
         entry: &SmokeEntry,
         ms: f64,
-        outcome: SmokeResult,
+        outcome: std::result::Result<(), SmokeFailure>,
         faults: Vec<SmokeFailure>,
     ) -> Self {
         let failure = outcome
             .err()
             .or_else(|| faults.into_iter().next())
-            .map(|failure| failure.of(entry.name));
+            .map(|failure| SmokeFailure {
+                smoke: entry.name,
+                ..failure
+            });
         Self {
             smoke: entry.name,
-            brick: entry.brick,
+            brick: entry.owner,
             ok: failure.is_none(),
             ms,
             failure,
@@ -230,7 +232,7 @@ impl SmokeRecord {
     pub fn skipped(entry: &SmokeEntry) -> Self {
         Self {
             smoke: entry.name,
-            brick: entry.brick,
+            brick: entry.owner,
             ok: true,
             ms: 0.0,
             failure: None,
@@ -284,16 +286,19 @@ pub struct Headless<G: Game> {
     pub engine: Engine,
     pub game: G,
     tools: engine_dev::DevTools,
+    worker: engine_worker::Worker,
 }
 
 impl<G: Game> Headless<G> {
     pub fn new(engine: Engine, game: G) -> Self {
         let mut tools = engine_dev::DevTools::default();
         G::inspectors(&mut crate::game::Inspectors::new(&mut tools));
+        let worker = engine_worker::Worker::new(engine.job_list(), crate::host::now_ms);
         Self {
             engine,
             game,
             tools,
+            worker,
         }
     }
 
@@ -400,38 +405,42 @@ impl<G: Game> Headless<G> {
     }
 
     fn run_jobs(&mut self) {
-        let world = self.engine.app.world_mut();
-        let Some(mut jobs) = world.get_resource_mut::<engine_core::Jobs>() else {
-            return;
-        };
-        let (mut requests, mut fetches) = (Vec::new(), Vec::new());
-        let (mut shares, mut keeps, mut cancels) = (Vec::new(), Vec::new(), Vec::new());
-        jobs.take_shares(&mut shares);
-        jobs.take_keeps(&mut keeps);
-        jobs.take_cancels(&mut cancels);
-        jobs.take_requests(&mut requests);
-        jobs.take_fetches(&mut fetches);
-        for request in requests {
-            let output = jobs.run_here(request.kind, &request.input);
-            jobs.complete(request.id, output);
-        }
-        for fetch in fetches {
-            jobs.complete(fetch.id, Err(engine_core::MISSING_RECORD.to_owned()));
+        let orders = self
+            .engine
+            .app
+            .world_mut()
+            .get_resource_mut::<engine_registry::JobQueue>()
+            .map(|mut queue| std::mem::take(&mut queue.orders))
+            .unwrap_or_default();
+        for order in orders {
+            match order {
+                JobOrder::Start {
+                    key, kind, input, ..
+                }
+                | JobOrder::Fetch {
+                    key, kind, input, ..
+                } => {
+                    let record = self.worker.run(kind, &input).map(Arc::from);
+                    self.engine.arrive(RecordKey::from_hash(key), record);
+                }
+                JobOrder::Share { key, bytes } => self.worker.share(key, bytes),
+                JobOrder::Cancel { .. } | JobOrder::Keep { .. } => {}
+            }
         }
     }
 }
 
 #[cfg(target_arch = "wasm32")]
 pub mod page {
-    use engine_core::smoke::{SmokeEntry, SmokeFailure, SmokeSession};
-    use engine_core::{App, BrickList};
+    use engine_core::{BrickList, SmokeFailure, SmokeSession};
     use engine_dev::{Effect, HostContext, Outcome, Step};
     use serde_json::Value;
     use wasm_bindgen::JsValue;
     use web_sys::HtmlCanvasElement;
 
     use super::{
-        Build, FRAME_MS, Headless, SmokeRecord, answered, fault, json, request_line, select,
+        Build, FRAME_MS, Headless, SmokeEntry, SmokeRecord, answered, engine_of, fault, json,
+        request_line, select,
     };
     use crate::{Game, GameHost, RenderTarget, Result};
 
@@ -440,16 +449,13 @@ pub mod page {
         Headless(Box<Headless<G>>),
     }
 
-    struct Page<'b, G: Game> {
-        build: Build<'b, G>,
+    struct Page<G: Game> {
         backend: Backend<G>,
-        bricks: BrickList,
         source: Option<String>,
         size: (u32, u32),
         paused: bool,
         clock: f64,
         faults: Vec<SmokeFailure>,
-        refused: Option<Value>,
     }
 
     pub async fn run<G: Game>(
@@ -480,30 +486,27 @@ pub mod page {
         build: Build<'_, G>,
         gpu: &mut Option<bool>,
     ) -> SmokeRecord {
-        if entry.gpu && *gpu == Some(false) {
+        if entry.gpu() && *gpu == Some(false) {
             return SmokeRecord::skipped(entry);
         }
         let started = crate::host::now_ms();
-        let backend = match open(canvas, bricks, build, gpu).await {
+        let backend = match open(canvas, entry.bricks(bricks), build, gpu).await {
             Ok(backend) => backend,
             Err(error) => {
                 let ms = crate::host::now_ms() - started;
                 return SmokeRecord::failed(entry, ms, fault("session", &error));
             }
         };
-        if entry.gpu && matches!(backend, Backend::Headless(_)) {
+        if entry.gpu() && matches!(backend, Backend::Headless(_)) {
             return SmokeRecord::skipped(entry);
         }
         let mut page = Page {
-            build,
             backend,
-            bricks: bricks.clone(),
             source: None,
             size,
             paused: true,
             clock: 0.0,
             faults: Vec::new(),
-            refused: None,
         };
         let outcome = entry.run_in(&mut page);
         let ms = crate::host::now_ms() - started;
@@ -512,13 +515,14 @@ pub mod page {
 
     async fn open<G: Game>(
         canvas: &HtmlCanvasElement,
-        bricks: &BrickList,
+        bricks: BrickList,
         build: Build<'_, G>,
         gpu: &mut Option<bool>,
     ) -> Result<Backend<G>> {
         if *gpu != Some(false) {
             let target = RenderTarget::Canvas(canvas.clone());
-            match GameHost::launch(target, || build(None, bricks.clone())).await {
+            let listed = bricks.clone();
+            match GameHost::launch(target, move |_| listed, |engine| build(None, engine)).await {
                 Ok(mut host) => {
                     prepared(&mut host);
                     *gpu = Some(true);
@@ -528,7 +532,8 @@ pub mod page {
                 Err(_) => {}
             }
         }
-        let (engine, game) = build(None, bricks.clone())?;
+        let mut engine = engine_of(bricks)?;
+        let game = build(None, &mut engine)?;
         *gpu = Some(false);
         Ok(Backend::Headless(Box::new(Headless::new(engine, game))))
     }
@@ -536,7 +541,7 @@ pub mod page {
     fn prepared<G: Game>(host: &mut GameHost<G>) {
         host.set_job_workers(0);
         host.set_job_cache(false, false);
-        host.set_dynamic_resolution(false);
+        let _ = host.set_setting(crate::DYNAMIC_RESOLUTION, Value::Bool(false));
     }
 
     fn carry<G: Game>(
@@ -577,7 +582,7 @@ pub mod page {
         }
     }
 
-    impl<G: Game> Page<'_, G> {
+    impl<G: Game> Page<G> {
         fn context(&self) -> HostContext {
             HostContext {
                 width: self.size.0,
@@ -591,9 +596,6 @@ pub mod page {
         }
 
         fn send(&mut self, line: &str) -> Value {
-            if let Some(error) = &self.refused {
-                return serde_json::json!({ "ok": false, "error": error });
-            }
             let context = self.context();
             match &mut self.backend {
                 Backend::Headless(headless) => headless.request(line),
@@ -631,14 +633,7 @@ pub mod page {
         }
     }
 
-    impl<G: Game> SmokeSession for Page<'_, G> {
-        fn app(&mut self) -> &mut App {
-            match &mut self.backend {
-                Backend::Gpu(host) => &mut host.engine_mut().app,
-                Backend::Headless(headless) => &mut headless.engine.app,
-            }
-        }
-
+    impl<G: Game> SmokeSession for Page<G> {
         fn request(&mut self, verb: &str, body: Value) -> std::result::Result<Value, Value> {
             answered(self.send(&request_line(verb, body)))
         }
@@ -654,9 +649,6 @@ pub mod page {
         }
 
         fn frame(&mut self) -> bool {
-            if self.refused.is_some() {
-                return false;
-            }
             let Backend::Gpu(host) = &mut self.backend else {
                 return false;
             };
@@ -666,34 +658,6 @@ pub mod page {
             }
             let _ = host.take_jobs();
             true
-        }
-
-        fn gpu(&self) -> bool {
-            matches!(self.backend, Backend::Gpu(_))
-        }
-
-        fn bricks(&self) -> BrickList {
-            self.bricks.clone()
-        }
-
-        fn restart(&mut self, bricks: BrickList) {
-            self.bricks = bricks.clone();
-            let (engine, game) = match (self.build)(self.source.as_deref(), bricks) {
-                Ok(built) => built,
-                Err(error) => {
-                    self.refused = Some(json(&error));
-                    return;
-                }
-            };
-            self.refused = None;
-            match &mut self.backend {
-                Backend::Gpu(host) => {
-                    host.replace_engine(engine);
-                    *host.game_mut() = game;
-                    prepared(host.as_mut());
-                }
-                Backend::Headless(headless) => **headless = Headless::new(engine, game),
-            }
         }
 
         fn source(&mut self, document: &str) {

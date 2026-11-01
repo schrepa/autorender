@@ -1,40 +1,40 @@
-use super::operations::{coordinate, reply, terrains};
+use super::operations::{coordinate, named_terrain, reply};
 use super::*;
 use crate::{MAX_GIVEN_RIVERS, StampOp};
-use engine_core::{Error, ErrorCode, Expected, Operation, authored_entity};
-#[cfg(feature = "schema")]
-use engine_settings::{rule::same, stated};
+use engine_core::Operation;
+use engine_places::terrain::DrawnRivers;
 use serde_json::Value;
 
 const CHANGE_SAMPLES: usize = 9;
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+type Editing = (
+    Query<'static, 'static, (Entity, &'static mut TerrainBuilt)>,
+    Res<'static, Terrains>,
+    ResMut<'static, TerrainRedo>,
+);
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TerrainEditControl {
     #[serde(default)]
     pub terrain: Option<String>,
-    #[cfg_attr(
-        feature = "schema",
-        schemars(transform = stated(engine_settings::rule::id()))
-    )]
     pub id: String,
     pub center: [f64; 2],
-    #[cfg_attr(feature = "schema", schemars(transform = stamp_rule("radius")))]
     pub radius: f64,
     #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(transform = stamp_rule("falloff")))]
     pub falloff: f64,
     pub change: StampOp,
 }
 
 impl Operation for TerrainEditControl {
     const NAME: &'static str = "terrain_edit";
-    const CONTROL: bool = true;
-    const SHOWS: &'static str = "Terrain";
+    type Params = Editing;
     type Request = Self;
 
-    fn run(world: &mut World, request: Self) -> Result<Value, Error> {
+    fn run(
+        (mut built, terrains, mut redo): SystemParamItem<'_, '_, Editing>,
+        request: Self,
+    ) -> Result<Value, Error> {
         let Self {
             terrain,
             id,
@@ -43,9 +43,10 @@ impl Operation for TerrainEditControl {
             falloff,
             change,
         } = request;
-        editing(
-            world,
-            terrain.as_deref(),
+        named_terrain(terrain.as_deref())?;
+        edit_terrain(
+            (&mut built, &terrains),
+            &mut redo.0,
             TerrainEditing::Edit {
                 id,
                 center,
@@ -54,40 +55,23 @@ impl Operation for TerrainEditControl {
                 change,
             },
         )
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(Self)
-    }
-
-    #[cfg(feature = "schema")]
-    fn result_schema() -> Option<schemars::Schema> {
-        Some(schemars::schema_for!(TerrainEdited))
+        .map(reply)
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TerrainRiverControl {
     #[serde(default)]
     pub terrain: Option<String>,
-    #[cfg_attr(
-        feature = "schema",
-        schemars(transform = stated(engine_settings::rule::id()))
-    )]
     pub id: String,
     #[serde(default)]
     pub points: Vec<[f64; 2]>,
     #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(transform = stated(same(GivenRiver::rule_of("width")))))]
     pub width: Vec<f64>,
     #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(transform = stated(same(GivenRiver::rule_of("depth")))))]
     pub depth: Vec<f64>,
     #[serde(default)]
-    #[cfg_attr(feature = "schema", schemars(transform = stated(same(GivenRiver::rule_of("discharge")))))]
     pub discharge: Vec<f64>,
     #[serde(default)]
     pub name: Option<String>,
@@ -95,27 +79,22 @@ pub struct TerrainRiverControl {
 
 impl Operation for TerrainRiverControl {
     const NAME: &'static str = "terrain_river";
-    const CONTROL: bool = true;
-    const SHOWS: &'static str = "Terrain";
+    type Params = (
+        Query<'static, 'static, (Entity, &'static mut TerrainBuilt)>,
+        Res<'static, DrawnRivers>,
+    );
     type Request = Self;
 
-    fn run(world: &mut World, request: Self) -> Result<Value, Error> {
-        draw_river(world, &request).map(reply)
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(Self)
-    }
-
-    #[cfg(feature = "schema")]
-    fn result_schema() -> Option<schemars::Schema> {
-        Some(schemars::schema_for!(TerrainEdited))
+    fn run(
+        (mut built, drawn): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
+        named_terrain(request.terrain.as_deref())?;
+        draw_river((&mut built, &drawn), &request).map(reply)
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TerrainUndoControl {
     #[serde(default)]
@@ -124,27 +103,19 @@ pub struct TerrainUndoControl {
 
 impl Operation for TerrainUndoControl {
     const NAME: &'static str = "terrain_undo";
-    const CONTROL: bool = true;
-    const SHOWS: &'static str = "Terrain";
+    type Params = Editing;
     type Request = Self;
 
-    fn run(world: &mut World, request: Self) -> Result<Value, Error> {
-        editing(world, request.terrain.as_deref(), TerrainEditing::Undo)
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(Self)
-    }
-
-    #[cfg(feature = "schema")]
-    fn result_schema() -> Option<schemars::Schema> {
-        Some(schemars::schema_for!(TerrainEdited))
+    fn run(
+        (mut built, terrains, mut redo): SystemParamItem<'_, '_, Editing>,
+        request: Self,
+    ) -> Result<Value, Error> {
+        named_terrain(request.terrain.as_deref())?;
+        edit_terrain((&mut built, &terrains), &mut redo.0, TerrainEditing::Undo).map(reply)
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TerrainRedoControl {
     #[serde(default)]
@@ -153,32 +124,19 @@ pub struct TerrainRedoControl {
 
 impl Operation for TerrainRedoControl {
     const NAME: &'static str = "terrain_redo";
-    const CONTROL: bool = true;
-    const SHOWS: &'static str = "Terrain";
+    type Params = Editing;
     type Request = Self;
 
-    fn run(world: &mut World, request: Self) -> Result<Value, Error> {
-        editing(world, request.terrain.as_deref(), TerrainEditing::Redo)
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(Self)
-    }
-
-    #[cfg(feature = "schema")]
-    fn result_schema() -> Option<schemars::Schema> {
-        Some(schemars::schema_for!(TerrainEdited))
+    fn run(
+        (mut built, terrains, mut redo): SystemParamItem<'_, '_, Editing>,
+        request: Self,
+    ) -> Result<Value, Error> {
+        named_terrain(request.terrain.as_deref())?;
+        edit_terrain((&mut built, &terrains), &mut redo.0, TerrainEditing::Redo).map(reply)
     }
 }
 
-#[cfg(feature = "schema")]
-fn stamp_rule(field: &'static str) -> impl Fn(&mut schemars::Schema) {
-    stated(Stamp::rule_of(field).expect("stamp_rule_declared"))
-}
-
-#[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum TerrainEdited {
     River {
@@ -213,8 +171,7 @@ pub enum TerrainEdited {
     },
 }
 
-#[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct Reach {
     pub min: [f32; 2],
     pub max: [f32; 2],
@@ -233,31 +190,23 @@ enum TerrainEditing {
 }
 
 #[derive(Resource, Default)]
-struct TerrainRedo(Vec<(Entity, TerrainEdit)>);
+pub struct TerrainRedo(Vec<(Entity, TerrainEdit)>);
 
-fn editing(world: &mut World, name: Option<&str>, editing: TerrainEditing) -> Result<Value, Error> {
-    let mut redo = world.remove_resource::<TerrainRedo>().unwrap_or_default();
-    let result = edit_terrain(world, name, &mut redo.0, editing);
-    world.insert_resource(redo);
-    result.map(reply)
-}
-
-fn terrain_entity(world: &mut World, name: Option<&str>) -> Result<Entity, Error> {
-    match name {
-        Some(name) => authored_entity(world, name)
-            .filter(|&entity| world.get::<Terrain>(entity).is_some())
-            .ok_or_else(|| Error::new(ErrorCode::UnknownTerrain, "$.terrain").got(name)),
-        None => world
-            .query::<(Entity, &Terrain)>()
-            .iter(world)
-            .map(|(entity, _)| entity)
-            .next()
-            .ok_or_else(|| Error::new(ErrorCode::UnknownTerrain, "$.terrain")),
-    }
+fn terrain_entity(built: &Query<'_, '_, (Entity, &mut TerrainBuilt)>) -> Result<Entity, Error> {
+    let mut found: Vec<Entity> = built
+        .iter()
+        .filter(|(_, built)| built.0.is_some())
+        .map(|(entity, _)| entity)
+        .collect();
+    found.sort_unstable();
+    found
+        .first()
+        .copied()
+        .ok_or_else(|| Error::new(ErrorCode::UnknownValue, "$.terrain"))
 }
 
 fn valid_id(id: &str) -> Result<(), Error> {
-    if engine_settings::is_id(id) {
+    if engine_core::is_id(id) {
         Ok(())
     } else {
         Err(Error::new(ErrorCode::InvalidRequest, "$.id")
@@ -271,15 +220,15 @@ fn valid_id(id: &str) -> Result<(), Error> {
     reason = "longer than the line ceiling; it may only shrink"
 )]
 fn edit_terrain(
-    world: &mut World,
-    name: Option<&str>,
+    (built, terrains): (&mut Query<'_, '_, (Entity, &mut TerrainBuilt)>, &Terrains),
     redo: &mut Vec<(Entity, TerrainEdit)>,
     editing: TerrainEditing,
 ) -> Result<TerrainEdited, Error> {
-    let entity = terrain_entity(world, name)?;
-    let terrain = world
-        .get::<Terrain>(entity)
-        .cloned()
+    let entity = terrain_entity(built)?;
+    let terrain = built
+        .get(entity)
+        .ok()
+        .and_then(|(_, built)| built.0.clone())
         .expect("terrain_found");
     let origin = terrain.origin;
     let mut edits = terrain.edits.to_vec();
@@ -339,10 +288,10 @@ fn edit_terrain(
                     ..error
                 }
             })?;
-            let before = terrains(world)?.layers(entity).ok_or_else(|| {
-                Error::new(ErrorCode::UnknownTerrain, "$.terrain").expected(Expected::Present)
+            let before = terrains.layers(entity).ok_or_else(|| {
+                Error::new(ErrorCode::UnknownValue, "$.terrain").expected(Expected::Present)
             })?;
-            let after = before.with_stamps(&[stamp]).map_err(|error| Error {
+            let after = crate::layers::with_stamps(&before, &[stamp]).map_err(|error| Error {
                 code: ErrorCode::InvalidRequest,
                 path: "$.change".to_owned(),
                 ..error
@@ -353,9 +302,9 @@ fn edit_terrain(
                 for column in 0..CHANGE_SAMPLES {
                     let at = |index: usize| index as f32 / (CHANGE_SAMPLES - 1) as f32 * 2.0 - 1.0;
                     let point = Vec2::from(stamp.center) + Vec2::new(at(column), at(row)) * span;
-                    let change = after.height_at(&terrain.pyramid, point)
-                        - before.height_at(&terrain.pyramid, point);
-                    largest = engine_core::math::max(largest, change.abs());
+                    let change = crate::tile::height_at(&after, &terrain.pyramid, point)
+                        - crate::tile::height_at(&before, &terrain.pyramid, point);
+                    largest = engine_math::max(largest, change.abs());
                 }
             }
             edits.push(TerrainEdit {
@@ -415,28 +364,29 @@ fn edit_terrain(
             }
         }
     };
-    if let Some(mut terrain) = world.get_mut::<Terrain>(entity) {
+    if let Ok((_, mut built)) = built.get_mut(entity)
+        && let Some(terrain) = built.0.as_mut()
+    {
         terrain.edits = Arc::from(edits);
     }
     Ok(result)
 }
 
-fn draw_river(world: &mut World, drawing: &TerrainRiverControl) -> Result<TerrainEdited, Error> {
-    let entity = terrain_entity(world, drawing.terrain.as_deref())?;
-    terrains(world)?;
-    let terrain = world
-        .get::<Terrain>(entity)
-        .cloned()
+fn draw_river(
+    (built, drawn): (&mut Query<'_, '_, (Entity, &mut TerrainBuilt)>, &DrawnRivers),
+    drawing: &TerrainRiverControl,
+) -> Result<TerrainEdited, Error> {
+    let entity = terrain_entity(built)?;
+    let terrain = built
+        .get(entity)
+        .ok()
+        .and_then(|(_, built)| built.0.clone())
         .expect("terrain_found");
     if !terrain.layers.has_hydrology() {
-        return Err(Error::new(ErrorCode::MissingLayer, "$.terrain").variants(["hydrology"]));
+        return Err(Error::new(ErrorCode::UnknownValue, "$.terrain").variants(["hydrology"]));
     }
-    if world
-        .get_resource::<crate::layer::TerrainLayerKinds>()
-        .and_then(|kinds| kinds.get("rivers"))
-        .is_none()
-    {
-        return Err(Error::new(ErrorCode::MissingLayer, "$.terrain").variants(["rivers"]));
+    if drawn.make.is_none() {
+        return Err(Error::new(ErrorCode::UnknownValue, "$.terrain").variants(["rivers"]));
     }
     valid_id(&drawing.id)?;
     let origin = Vec2::new(terrain.origin.x, terrain.origin.z);
@@ -444,7 +394,7 @@ fn draw_river(world: &mut World, drawing: &TerrainRiverControl) -> Result<Terrai
         let mut bounds: Option<(Vec2, Vec2)> = None;
         for river in rivers {
             let half = river.width.iter().fold(0.0_f32, |widest, &width| {
-                engine_core::math::max(widest, 0.5 * width)
+                engine_math::max(widest, 0.5 * width)
             });
             for &point in &river.points {
                 let point = Vec2::from(point) + origin;
@@ -527,7 +477,9 @@ fn draw_river(world: &mut World, drawing: &TerrainRiverControl) -> Result<Terrai
         rivers: rivers.len(),
         dirty,
     };
-    if let Some(mut terrain) = world.get_mut::<Terrain>(entity) {
+    if let Ok((_, mut built)) = built.get_mut(entity)
+        && let Some(terrain) = built.0.as_mut()
+    {
         terrain.rivers = Arc::from(rivers);
     }
     Ok(result)

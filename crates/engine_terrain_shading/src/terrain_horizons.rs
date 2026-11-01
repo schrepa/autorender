@@ -1,17 +1,18 @@
 use std::sync::Arc;
 
-use bytemuck::Zeroable;
-use engine_terrain::lighting::HORIZON_LAYERS;
-use engine_terrain::lighting::TerrainLighting;
-use engine_terrain::{RenderTerrain, RenderTerrains, TerrainSettings};
+use engine_core::Error;
+use engine_places::ground::{TerrainEntry, TerrainTiles};
+use engine_render::{Install, Lifetime, Prepare, Texture, wgpu};
 
-use crate::gpu_layouts::constants::{HORIZON_RECORD_VECTORS, HORIZON_RECORDS};
-use crate::gpu_layouts::terrain::HorizonsPiece;
+use crate::gpu::{HORIZON_RECORD_VECTORS, HORIZON_RECORDS};
+use crate::lighting::{HORIZON_LAYERS, TerrainLighting};
+use crate::settings::TerrainShading;
+use crate::state::Bakes;
+use crate::terrain::TerrainGpu;
 use crate::terrain_bounce::{BOUNCE_LAYERS, BounceLevels, MOST_LEVELS};
-use engine_render::cached::{Bound, Versioned};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const WINDOW_ROW: u32 = engine_terrain::bounce::MAX_PROBES;
+const WINDOW_ROW: u32 = crate::bounce::MAX_PROBES;
 
 const _: () = assert!(
     MOST_LEVELS <= 4 * (HORIZON_RECORD_VECTORS as usize - 4),
@@ -24,217 +25,150 @@ const NO_RECORD: [[f32; 4]; HORIZON_RECORD_VECTORS as usize] = {
     record
 };
 
-struct Maps {
-    texture: wgpu::Texture,
-    view: Versioned<wgpu::TextureView>,
-    horizon_view: Versioned<wgpu::TextureView>,
-    bounce_view: Option<Versioned<wgpu::TextureView>>,
-    size: u32,
-    terrains: usize,
-    slots: u32,
-}
-
 pub(crate) struct Horizons {
-    maps: Option<Maps>,
-    empty: wgpu::TextureView,
-    sampler: wgpu::Sampler,
-    piece: Box<HorizonsPiece>,
-    records_written: Vec<[f32; 4]>,
+    pub(crate) texture: Texture<TerrainGpu>,
+    shape: Option<(u32, usize, u32)>,
     held: Vec<Option<Arc<TerrainLighting>>>,
     pub(crate) uploaded: u32,
 }
 
 impl Horizons {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let empty = engine_render::targets::texture_2d(
-            device,
-            "engine/terrain-horizons-empty",
-            (1, 1),
-            1,
-            1,
-            FORMAT,
-            wgpu::TextureUsages::TEXTURE_BINDING,
-        )
-        .create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("engine/terrain-horizon-sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-        Self {
-            maps: None,
-            empty,
-            sampler,
-            piece: Box::new(HorizonsPiece::zeroed()),
-            records_written: Vec::new(),
+    pub(crate) fn install(cx: &mut Install<'_, TerrainGpu>) -> Result<Self, Error> {
+        Ok(Self {
+            texture: cx.texture("horizons", FORMAT, Lifetime::Kept),
+            shape: None,
             held: Vec::new(),
             uploaded: 0,
-        }
-    }
-
-    pub(crate) fn entries(&self) -> [(&'static str, Bound<'_>); 2] {
-        let maps = self.maps.as_ref().map_or_else(
-            || Bound::fixed(engine_render::pipelines::view(&self.empty)),
-            |maps| maps.view.bound(),
-        );
-        [
-            ("terrain_horizons", maps),
-            (
-                "terrain_horizon_sampler",
-                Bound::fixed(engine_render::pipelines::sampler(&self.sampler)),
-            ),
-        ]
-    }
-
-    pub(crate) fn bounce_entries(&self) -> Option<([(&'static str, Bound<'_>); 2], Bound<'_>)> {
-        let maps = self.maps.as_ref()?;
-        let written = maps.bounce_view.as_ref()?.bound();
-        Some((
-            [
-                ("terrain_horizons", maps.horizon_view.bound()),
-                (
-                    "terrain_horizon_sampler",
-                    Bound::fixed(engine_render::pipelines::sampler(&self.sampler)),
-                ),
-            ],
-            written,
-        ))
-    }
-
-    pub(crate) fn piece(&self) -> &HorizonsPiece {
-        &self.piece
-    }
-
-    pub(crate) fn bounces(&self) -> bool {
-        self.maps
-            .as_ref()
-            .is_some_and(|maps| maps.bounce_view.is_some())
+        })
     }
 
     pub(crate) fn held(&self, index: usize) -> bool {
         self.held.get(index).is_some_and(Option::is_some)
     }
 
-    pub(crate) fn record_count(&self) -> u32 {
-        (self.records_written.len() / HORIZON_RECORD_VECTORS as usize) as u32
-    }
-
     pub(crate) fn count(&self) -> u32 {
         self.held.iter().flatten().count() as u32
     }
 
-    pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.maps.as_ref().map_or(0, |maps| {
-            u64::from(maps.size)
-                * u64::from(maps.size)
-                * u64::from(maps.texture.depth_or_array_layers())
-                * 8
-        })
+    pub(crate) fn horizon_layers(&self) -> u32 {
+        self.shape.map_or(0, |(_, terrains, _)| (HORIZON_LAYERS * terrains) as u32)
     }
 
     pub(crate) fn prepare(
         &mut self,
-        device: &wgpu::Device,
-        queue: &engine_render::gpu_calls::Queue,
-        terrains: &RenderTerrains,
-        (settings, shadows): (&TerrainSettings, bool),
-        (windows, slots): (&[Option<BounceLevels>], u32),
+        cx: &mut Prepare<'_, TerrainGpu>,
+        (tiles, bakes, settings, shadows, layers): (&TerrainTiles, &Bakes, &TerrainShading, bool, u32),
+        slots: u32,
     ) {
-        if !(shadows && settings.enabled && settings.sun_shadows) || terrains.terrains.is_empty() {
+        if !(shadows && settings.sun_shadows) || tiles.terrains.is_empty() {
             self.rest();
             return;
         }
         self.uploaded = 0;
         let size = settings.shadow_resolution;
-        let (count, _) = room(device, terrains.terrains.len());
-        if self
-            .maps
-            .as_ref()
-            .is_none_or(|maps| maps.size != size || maps.terrains != count || maps.slots != slots)
-        {
-            self.maps = Some(maps(device, size, count, slots));
+        let (count, _) = room(layers, tiles.terrains.len());
+        if self.shape != Some((size, count, slots)) {
+            self.shape = Some((size, count, slots));
             self.held = vec![None; count];
         }
-        let Some(maps) = &self.maps else {
-            return;
-        };
-        let mut records = Vec::with_capacity(HORIZON_RECORD_VECTORS as usize * count);
-        for (index, terrain) in terrains.terrains.iter().take(count).enumerate() {
-            let lighting = terrain
-                .lighting
-                .as_ref()
+        let total = (HORIZON_LAYERS * count) as u32 + BOUNCE_LAYERS as u32 * slots;
+        cx.allocate(
+            self.texture,
+            wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: total.max(1),
+            },
+            1,
+        );
+        for (index, terrain) in tiles.terrains.iter().take(count).enumerate() {
+            let lighting = bakes
+                .of(terrain.terrain)
+                .and_then(|held| held.lighting.made.as_ref())
                 .filter(|lighting| lighting.horizon_size == size);
             let held = &mut self.held[index];
             match (lighting, &*held) {
                 (Some(lighting), Some(current)) if Arc::ptr_eq(lighting, current) => {}
                 (Some(lighting), _) => {
-                    write_layers(
-                        queue,
-                        &maps.texture,
-                        index,
-                        size,
+                    cx.write_texture(
+                        self.texture,
+                        wgpu::Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: (HORIZON_LAYERS * index) as u32,
+                        },
                         &lighting.horizon_layers(),
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(size * 8),
+                            rows_per_image: Some(size),
+                        },
+                        wgpu::Extent3d {
+                            width: size,
+                            height: size,
+                            depth_or_array_layers: HORIZON_LAYERS as u32,
+                        },
                     );
-                    *held = Some(lighting.clone());
+                    *held = Some(Arc::clone(lighting));
                     self.uploaded += 1;
                 }
                 (None, _) => *held = None,
             }
-            match held {
-                Some(lighting) => {
-                    let window = windows
-                        .get(index)
-                        .copied()
-                        .flatten()
-                        .filter(|_| maps.bounce_view.is_some());
-                    let place = Place {
-                        index,
-                        count,
-                        size,
-                        window,
-                    };
-                    records.extend(record(terrain, lighting, place, settings));
-                }
-                None => records.extend(NO_RECORD),
-            }
         }
-        if records != self.records_written {
-            self.piece.records[..records.len()].copy_from_slice(&records);
-            self.records_written = records;
-        }
-        self.write_count();
-    }
-
-    fn write_count(&mut self) {
-        let count = self.record_count() as f32;
-        self.piece.records[HORIZON_RECORDS] = [count, 0.0, 0.0, 0.0];
     }
 
     pub(crate) fn rest(&mut self) {
         self.uploaded = 0;
-        self.maps = None;
+        self.shape = None;
         self.held.clear();
-        self.records_written.clear();
-        self.write_count();
     }
 }
 
-pub(crate) fn room(device: &wgpu::Device, terrains: usize) -> (usize, u32) {
-    let layers = device.limits().max_texture_array_layers as usize;
+pub(crate) fn records(
+    terrains: &[TerrainEntry],
+    bakes: &Bakes,
+    settings: &TerrainShading,
+    windows: Vec<Option<BounceLevels>>,
+    layers: u32,
+) -> Vec<[f32; 4]> {
+    let size = settings.shadow_resolution;
+    let (count, _) = room(layers, terrains.len());
+    let bounces = windows.iter().any(Option::is_some);
+    let mut records = Vec::with_capacity(HORIZON_RECORD_VECTORS as usize * count);
+    for (index, terrain) in terrains.iter().take(count).enumerate() {
+        let lighting = bakes
+            .of(terrain.terrain)
+            .and_then(|held| held.lighting.made.as_ref())
+            .filter(|lighting| lighting.horizon_size == size);
+        match lighting {
+            Some(lighting) => {
+                let window = windows.get(index).copied().flatten().filter(|_| bounces);
+                let place = Place {
+                    index,
+                    count,
+                    size,
+                    window,
+                };
+                records.extend(record(terrain, lighting, place, settings));
+            }
+            None => records.extend(NO_RECORD),
+        }
+    }
+    records
+}
+
+pub(crate) fn room(layers: u32, terrains: usize) -> (usize, u32) {
+    let layers = layers as usize;
     let casting = terrains
         .min(layers / HORIZON_LAYERS)
-        .min(HORIZON_RECORDS / HORIZON_RECORD_VECTORS as usize);
+        .min(HORIZON_RECORDS as usize / HORIZON_RECORD_VECTORS as usize);
     let slots = (layers - HORIZON_LAYERS * casting) / BOUNCE_LAYERS;
     (casting, slots as u32)
 }
 
-fn max_extent(terrain: &RenderTerrain) -> f32 {
+fn max_extent(terrain: &TerrainEntry) -> f32 {
     let extent = terrain.pyramid.extent();
-    engine_core::math::max(extent.x, extent.y)
+    engine_math::max(extent.x, extent.y)
 }
 
 struct Place {
@@ -245,10 +179,10 @@ struct Place {
 }
 
 fn record(
-    terrain: &RenderTerrain,
+    terrain: &TerrainEntry,
     lighting: &TerrainLighting,
     place: Place,
-    settings: &TerrainSettings,
+    settings: &TerrainShading,
 ) -> [[f32; 4]; HORIZON_RECORD_VECTORS as usize] {
     let extent = terrain.pyramid.extent();
     let texel = max_extent(terrain) / lighting.horizon_size as f32;
@@ -283,71 +217,4 @@ fn record(
         }
     }
     record
-}
-
-fn write_layers(
-    queue: &engine_render::gpu_calls::Queue,
-    texture: &wgpu::Texture,
-    index: usize,
-    size: u32,
-    texels: &[u8],
-) {
-    queue.write_texture(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d {
-                x: 0,
-                y: 0,
-                z: (HORIZON_LAYERS * index) as u32,
-            },
-            aspect: wgpu::TextureAspect::All,
-        },
-        texels,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(size * 8),
-            rows_per_image: Some(size),
-        },
-        wgpu::Extent3d {
-            width: size,
-            height: size,
-            depth_or_array_layers: HORIZON_LAYERS as u32,
-        },
-    );
-}
-
-fn maps(device: &wgpu::Device, size: u32, terrains: usize, slots: u32) -> Maps {
-    let horizon_layers = (HORIZON_LAYERS * terrains) as u32;
-    let bounce_layers = BOUNCE_LAYERS as u32 * slots;
-    let bounce = bounce_layers > 0;
-    let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
-    if bounce {
-        usage |= wgpu::TextureUsages::STORAGE_BINDING;
-    }
-    let texture = engine_render::targets::texture_2d(
-        device,
-        "engine/terrain-horizons",
-        (size, size),
-        horizon_layers + bounce_layers,
-        1,
-        FORMAT,
-        usage,
-    );
-    let layers = |first: u32, count: u32| wgpu::TextureViewDescriptor {
-        dimension: Some(wgpu::TextureViewDimension::D2Array),
-        base_array_layer: first,
-        array_layer_count: Some(count),
-        ..Default::default()
-    };
-    Maps {
-        view: Versioned::new(texture.create_view(&layers(0, horizon_layers + bounce_layers))),
-        horizon_view: Versioned::new(texture.create_view(&layers(0, horizon_layers))),
-        bounce_view: bounce
-            .then(|| Versioned::new(texture.create_view(&layers(horizon_layers, bounce_layers)))),
-        texture,
-        size,
-        terrains,
-        slots,
-    }
 }

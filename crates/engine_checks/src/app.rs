@@ -3,8 +3,9 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use engine::Engine;
-use engine::command_line::{self, Command, CommandOption};
+use engine_core::command_line::{self, Command, CommandOption};
 
+use crate::install::List;
 use crate::stages::{self, Stage};
 use crate::{Exceptions, Repository, Rules};
 
@@ -12,28 +13,31 @@ const USAGE: &str = "usage: cargo xtask verify [--level quick|pr|merge] | schema
 
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
-type Build = Box<dyn Fn() -> Result<Engine, String>>;
+type Build = Box<dyn Fn(&mut Engine) -> Result<(), String>>;
 
 pub struct App {
     pub repository: Repository,
+    list: List,
     build: Build,
 }
 
 impl App {
     pub fn engine(&self) -> Result<Engine, String> {
-        (self.build)()
+        let mut engine = crate::install::engine(self.list)?;
+        (self.build)(&mut engine)?;
+        Ok(engine)
     }
 
     pub fn generated(&self) -> Result<Vec<(String, String)>, String> {
         let mut engine = self.engine()?;
         Ok(vec![(
             crate::bricks::FILE.to_owned(),
-            crate::bricks::bricks_json(&self.repository, &mut engine)?,
+            crate::bricks::bricks_json(&self.repository, self.list, &mut engine)?,
         )])
     }
 }
 
-const QUICK: usize = 5;
+const QUICK: usize = 6;
 
 const STAGES: &[Stage<App>] = &[
     Stage {
@@ -68,6 +72,11 @@ const STAGES: &[Stage<App>] = &[
         run: |app| crate::structure::check(&app.repository, &Exceptions::NONE),
     },
     Stage {
+        name: "install",
+        needs: &[],
+        run: |app| crate::install::check(&mut app.engine()?),
+    },
+    Stage {
         name: "clippy",
         needs: &[],
         run: |app| {
@@ -95,9 +104,10 @@ const STAGES: &[Stage<App>] = &[
 
 pub fn main<G: 'static, E: Display + 'static>(
     folder: &str,
-    build: fn() -> Result<(Engine, G), E>,
+    list: List,
+    build: fn(&mut Engine) -> Result<G, E>,
 ) -> ExitCode {
-    match run(folder, build) {
+    match run(folder, list, build) {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
             eprintln!("{message}");
@@ -108,7 +118,8 @@ pub fn main<G: 'static, E: Display + 'static>(
 
 fn run<G: 'static, E: Display + 'static>(
     folder: &str,
-    build: fn() -> Result<(Engine, G), E>,
+    list: List,
+    build: fn(&mut Engine) -> Result<G, E>,
 ) -> Result<(), String> {
     let root = Path::new(folder)
         .parent()
@@ -131,9 +142,10 @@ fn run<G: 'static, E: Display + 'static>(
     }
     let app = App {
         repository: Repository::read(root)?,
-        build: Box::new(move || {
-            build()
-                .map(|(engine, _)| engine)
+        list,
+        build: Box::new(move |engine| {
+            build(engine)
+                .map(drop)
                 .map_err(|error| error.to_string())
         }),
     };

@@ -1,11 +1,15 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use engine_core::{
-    BrickList, Engine, ErrorCode, FrameReport, FrameStats, InputState, JobId, JobRef, JobRequest,
-    JobShare, RecordFetch, RecordKey,
+    BrickList, CookMode, DeviceLimits, Engine, ErrorCode, FrameReport, FrameStats, InputState,
+    JobRef, RecordExchange,
 };
+use engine_registry::Registry;
 use engine_render::{RenderTarget, Renderer};
 
+use crate::host::{HostJobs, JobId, JobMessage};
+use crate::resolution::{DynamicResolution, Resolution};
 use crate::{Error, Result};
 
 #[path = "app_attribution.rs"]
@@ -34,15 +38,6 @@ pub fn now_ms() -> f64 {
     }
 }
 
-#[derive(Debug)]
-pub enum JobMessage {
-    Cancel(JobId),
-    Share(JobShare),
-    Run(JobRequest),
-    Fetch(RecordFetch),
-    Keep(RecordKey, Vec<u8>, engine_core::RecordParity),
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TerrainClock {
     #[default]
@@ -59,21 +54,20 @@ impl TerrainClock {
     }
 }
 
-fn wire(
-    engine: &mut Engine,
-    renderer: &Renderer,
-    (workers, verifying): (u32, bool),
-    clock: TerrainClock,
-) {
+fn wire(engine: &mut Engine, renderer: &Renderer, workers: u32, clock: TerrainClock) {
     engine.set_clock(clock.reading());
     let world = engine.app.world_mut();
-    if let Some(mut records) = world.get_resource_mut::<engine_core::Records>() {
+    if let Some(mut records) = world.get_resource_mut::<RecordExchange>() {
         records.set_sampling(Some(renderer.texture_sampling()));
     }
-    if let Some(mut jobs) = world.get_resource_mut::<engine_core::JobQueue>() {
-        jobs.set_workers(workers);
-        jobs.set_verifying(verifying);
-    }
+    limit(engine, renderer, workers);
+}
+
+fn limit(engine: &mut Engine, renderer: &Renderer, workers: u32) {
+    engine.app.world_mut().insert_resource(DeviceLimits {
+        memory_budget: renderer.memory_budget(),
+        cores: workers,
+    });
 }
 
 pub(crate) struct AppHost {
@@ -86,6 +80,7 @@ pub(crate) struct AppHost {
     gpu_inputs_stale: bool,
     terrain_clock: TerrainClock,
     overlay: BTreeMap<String, serde_json::Value>,
+    jobs: HostJobs,
     pipeline_list: crate::host::PipelineList,
     pixel_ratio: f64,
     refresh_ms: Option<f64>,
@@ -135,7 +130,7 @@ impl AppHost {
     }
 
     fn with(mut engine: Engine, renderer: Box<Renderer>) -> Self {
-        wire(&mut engine, &renderer, (0, false), TerrainClock::Wall);
+        wire(&mut engine, &renderer, 0, TerrainClock::Wall);
         Self {
             engine,
             renderer,
@@ -146,6 +141,7 @@ impl AppHost {
             gpu_inputs_stale: false,
             terrain_clock: TerrainClock::Wall,
             overlay: BTreeMap::new(),
+            jobs: HostJobs::default(),
             pipeline_list: crate::host::PipelineList::default(),
             pixel_ratio: 1.0,
             refresh_ms: None,
@@ -167,13 +163,13 @@ impl AppHost {
     }
 
     pub fn replace_engine(&mut self, mut engine: Engine) -> Engine {
-        let jobs = self
-            .engine
-            .app
-            .world()
-            .get_resource::<engine_core::JobQueue>()
-            .map_or((0, false), |jobs| (jobs.workers(), jobs.verifying()));
-        wire(&mut engine, &self.renderer, jobs, self.terrain_clock);
+        wire(
+            &mut engine,
+            &self.renderer,
+            self.jobs.workers(),
+            self.terrain_clock,
+        );
+        self.jobs.clear();
         self.pipeline_list = crate::host::PipelineList::default();
         self.gpu_inputs_stale = false;
         let replaced = std::mem::replace(&mut self.engine, engine);
@@ -193,10 +189,9 @@ impl AppHost {
     ) -> bool {
         if self.pipeline_list.unasked() {
             let content = content(&self.engine);
-            self.pipeline_list.ask(&mut self.engine, content);
+            self.pipeline_list.ask(&self.engine, content, &mut self.jobs);
         }
-        self.pipeline_list
-            .take(&mut self.engine, &mut self.renderer);
+        self.pipeline_list.take(&mut self.renderer, &mut self.jobs);
         self.pipeline_list.waiting()
     }
 
@@ -246,23 +241,21 @@ impl AppHost {
         self.refresh_ms = milliseconds.filter(|ms| ms.is_finite() && *ms > 0.0);
     }
 
-    fn resolution_settings(&self) -> (engine_core::Resolution, engine_core::DynamicResolution) {
+    fn resolution_settings(&self) -> (Resolution, DynamicResolution) {
         let world = self.engine.app.world();
         (
             world
-                .get_resource::<engine_core::Resolution>()
+                .get_resource::<Resolution>()
                 .copied()
-                .unwrap_or_else(engine_core::Resolution::off)
-                .sanitized(),
+                .unwrap_or_default(),
             world
-                .get_resource::<engine_core::DynamicResolution>()
+                .get_resource::<DynamicResolution>()
                 .copied()
-                .unwrap_or_else(engine_core::DynamicResolution::off)
-                .sanitized(),
+                .unwrap_or_default(),
         )
     }
 
-    fn resolution_budget(&self, settings: &engine_core::DynamicResolution) -> f64 {
+    fn resolution_budget(&self, settings: &DynamicResolution) -> f64 {
         settings.budget_ms.map_or_else(
             || {
                 self.refresh_ms
@@ -327,7 +320,7 @@ impl AppHost {
 
     fn adapt_resolution(
         &mut self,
-        settings: &engine_core::DynamicResolution,
+        settings: &DynamicResolution,
         timing: Option<(f64, (u32, u32))>,
         interval: Option<f64>,
     ) {
@@ -365,63 +358,25 @@ impl AppHost {
         if !milliseconds.is_finite() || milliseconds <= 0.0 {
             return false;
         }
-        self.engine.work_between_frames(milliseconds)
+        let micros = (milliseconds * 1000.0).min(f64::from(u32::MAX)) as u32;
+        self.engine.between_frames(micros);
+        self.engine_loading()
     }
 
     pub fn set_job_workers(&mut self, workers: u32) {
-        if let Some(mut jobs) = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::JobQueue>()
-        {
-            jobs.set_workers(workers);
-        }
-    }
-
-    pub fn set_job_verifying(&mut self, verifying: bool) {
-        if let Some(mut jobs) = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::JobQueue>()
-        {
-            jobs.set_verifying(verifying);
-        }
+        self.jobs.set_workers(workers);
+        limit(&mut self.engine, &self.renderer, workers);
     }
 
     pub fn take_jobs(&mut self) -> Vec<JobMessage> {
-        let Some(mut jobs) = self
+        let orders = self
             .engine
             .app
             .world_mut()
-            .get_resource_mut::<engine_core::JobQueue>()
-        else {
-            return Vec::new();
-        };
-        let mut cancels = Vec::new();
-        let mut shares = Vec::new();
-        let mut requests = Vec::new();
-        let mut fetches = Vec::new();
-        let mut keeps = Vec::new();
-        jobs.take_cancels(&mut cancels);
-        jobs.take_shares(&mut shares);
-        jobs.take_requests(&mut requests);
-        jobs.take_fetches(&mut fetches);
-        jobs.take_keeps(&mut keeps);
-        let cancels = cancels.into_iter().map(JobMessage::Cancel);
-        let shares = shares.into_iter().map(JobMessage::Share);
-        let requests = requests.into_iter().map(JobMessage::Run);
-        let fetches = fetches.into_iter().map(JobMessage::Fetch);
-        let keeps = keeps
-            .into_iter()
-            .map(|(record, bytes, parity)| JobMessage::Keep(record, bytes, parity));
-        cancels
-            .chain(shares)
-            .chain(requests)
-            .chain(fetches)
-            .chain(keeps)
-            .collect()
+            .get_resource_mut::<engine_registry::JobQueue>()
+            .map(|mut queue| std::mem::take(&mut queue.orders))
+            .unwrap_or_default();
+        self.jobs.take(orders)
     }
 
     pub fn run_job_here(
@@ -429,17 +384,10 @@ impl AppHost {
         kind: &JobRef,
         input: &[u8],
     ) -> std::result::Result<Vec<u8>, String> {
-        match self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::JobQueue>()
-        {
-            Some(mut jobs) => jobs.run_here(kind, input),
-            None => Err(Error::new(ErrorCode::MissingResource, "$")
-                .got("JobQueue")
-                .to_string()),
-        }
+        self.jobs.ran_here();
+        engine_worker::Worker::new(self.job_list(), now_ms)
+            .run(kind.name(), input)
+            .map_err(|error| error.to_string())
     }
 
     pub fn complete_job(&mut self, id: JobId, output: Vec<u8>) {
@@ -451,36 +399,21 @@ impl AppHost {
     }
 
     pub fn report_job_cache(&mut self, hits: u64, misses: u64, bytes: u64, mismatches: u64) {
-        if let Some(mut jobs) = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::JobQueue>()
-        {
-            jobs.report_cache(hits, misses, bytes, mismatches);
-        }
+        self.jobs.report_cache(hits, misses, bytes, mismatches);
     }
 
     pub fn report_jobs_held(&mut self, held: u32) {
-        if let Some(mut jobs) = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::JobQueue>()
-        {
-            jobs.report_held(held);
-        }
+        self.jobs.report_held(held);
     }
 
     fn finish_job(&mut self, id: JobId, output: std::result::Result<Vec<u8>, String>) {
-        if let Some(mut jobs) = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::JobQueue>()
-        {
-            jobs.complete(id, output);
-        }
+        let Some((key, output)) = self.jobs.finish(id, output) else {
+            return;
+        };
+        let record = output
+            .map(Arc::from)
+            .map_err(|error| Error::new(ErrorCode::InvalidRecord, "$.jobs").got(error));
+        self.engine.arrive(key, record);
     }
 
     pub fn frame(
@@ -653,7 +586,8 @@ impl AppHost {
             self.engine
                 .app
                 .world()
-                .contains_resource::<engine_core::Cooking>(),
+                .get_resource::<CookMode>()
+                .is_some_and(|mode| mode.cooking),
         );
         let before_extraction = now_ms();
         let culling_enabled = self.engine.frustum_culling();
@@ -725,15 +659,42 @@ impl AppHost {
             bricks: std::collections::BTreeMap::new(),
         };
         self.pipeline_list.after_frame(
-            &mut self.engine,
+            &self.engine,
             &self.renderer,
             self.stats.render.pipelines_created,
+            &mut self.jobs,
         );
         Ok(())
     }
 
+    fn engine_loading(&self) -> bool {
+        let world = self.engine.app.world();
+        world
+            .get_resource::<Registry>()
+            .is_some_and(|registry| registry.pending(world) > 0)
+            || world
+                .get_resource::<RecordExchange>()
+                .is_some_and(RecordExchange::loading)
+    }
+
     fn loading(&self) -> bool {
-        self.engine.loading() || self.pipeline_list.waiting()
+        self.engine_loading() || self.pipeline_list.waiting()
+    }
+
+    pub(crate) fn cook_features(&self) -> Vec<(&'static str, u64)> {
+        let world = self.engine.app.world();
+        let mut features: Vec<(&'static str, u64)> = world
+            .get_resource::<Registry>()
+            .into_iter()
+            .flat_map(|registry| {
+                registry
+                    .stats()
+                    .map(|entry| (entry.key, u64::from(entry.pending(world))))
+            })
+            .collect();
+        features.extend(self.renderer.records_left());
+        features.push(("pipelines", u64::from(self.pipeline_list.making())));
+        features
     }
 
     pub fn job_list(&self) -> std::sync::Arc<engine_registry::JobList> {
@@ -747,18 +708,12 @@ impl AppHost {
             pipelines_listed,
             pipelines_unlisted,
             loading: self.loading(),
-            jobs: self
-                .engine
-                .app
-                .world()
-                .get_resource::<engine_core::JobQueue>()
-                .map(engine_core::JobQueue::stats)
-                .unwrap_or_default(),
+            jobs: self.jobs.stats(),
             bricks: self
                 .engine
                 .app
                 .world()
-                .get_resource::<engine_core::BrickRegistry>()
+                .get_resource::<Registry>()
                 .map(|registry| registry.frame_stats(self.engine.app.world()))
                 .unwrap_or_default(),
             ..self.stats.clone()

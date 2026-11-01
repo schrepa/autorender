@@ -2,13 +2,13 @@ use std::f32::consts::TAU;
 
 use engine_math::{clamp, max, min, sin_cos};
 
-use crate::codec::{self, Codec, Error, Reader, Writer};
-use crate::gpu::control_at;
-use crate::lighting::{Ground, normalized, unorm};
-use crate::{BiomeRules, Layers, SampleShape};
+use engine_codec::{self as codec, Codec, Error, Reader, Writer};
+use engine_heightfield::{BiomeRules, Layers, SampleShape, control_at};
 
-pub const LOW_PROBE: f32 = 1.5;
-pub const HIGH_PROBE: f32 = 24.0;
+use crate::lighting::{Ground, normalized, unorm};
+
+pub const LOW_PROBE: f32 = crate::gpu::BOUNCE_LOW;
+pub const HIGH_PROBE: f32 = crate::gpu::BOUNCE_HIGH;
 
 pub const LAYERS: usize = 2;
 
@@ -21,8 +21,8 @@ pub const LEVEL: f32 = 0.14;
 
 pub const PROBE_BYTES: usize = LAYERS * BINS * 2;
 
-pub const NEAREST: f32 = 0.5;
-pub const DISTANCE_STEPS: f32 = 16.0;
+pub const NEAREST: f32 = crate::gpu::BOUNCE_NEAREST;
+pub const DISTANCE_STEPS: f32 = crate::gpu::BOUNCE_STEPS;
 
 pub const GROUND_PLANES: usize = 5;
 

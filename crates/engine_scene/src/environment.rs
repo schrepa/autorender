@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use engine_core::{BrickRegistry, Error, SettingsEntry, bevy_ecs::prelude::World};
+use bevy_ecs::world::World;
+use engine_core::Error;
+use engine_registry::{Registry, SettingsEntry};
 use engine_settings::ErrorCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -47,22 +49,39 @@ impl SceneEnvironment {
     }
 
     pub fn check(&self, world: &World, path: &str) -> Result<(), Error> {
+        self.check_in(world.get_resource::<Registry>(), path)
+    }
+
+    pub(crate) fn check_in(&self, registry: Option<&Registry>, path: &str) -> Result<(), Error> {
         for key in self.keys() {
-            let at = format!("{path}.{key}");
-            let section = section_of(world, key, &at)?;
-            section.check(self.sections[key].clone(), &at)?;
+            if let Some(section) = registry.and_then(|registry| registry.section(key)) {
+                section.check(&self.sections[key], &format!("{path}.{key}"))?;
+            }
         }
         Ok(())
     }
 
-    pub fn apply_sections(&self, world: &mut World, path: &str) -> Result<(), Error> {
+    pub fn unlisted(&self, world: &World, path: &str) -> Vec<Error> {
+        self.keys()
+            .filter(|key| listed(world, key).is_none())
+            .map(|key| {
+                Error::new(ErrorCode::SectionUnlisted, format!("{path}.{key}"))
+                    .got(key)
+                    .variants(registered(world).map(|section| section.key))
+            })
+            .collect()
+    }
+
+    pub fn apply_sections(&self, world: &mut World, path: &str) -> Result<Vec<Error>, Error> {
         self.check(world, path)?;
+        let skipped = self.unlisted(world, path);
         for key in self.keys() {
-            let at = format!("{path}.{key}");
-            let section = *section_of(world, key, &at)?;
-            section.insert(world, self.sections[key].clone(), &at)?;
+            let Some(section) = listed(world, key) else {
+                continue;
+            };
+            section.set_at(world, &self.sections[key], &format!("{path}.{key}"))?;
         }
-        Ok(())
+        Ok(skipped)
     }
 
     pub(crate) fn apply_all(&self, world: &mut World, path: &str) -> Result<(), Error> {
@@ -82,7 +101,7 @@ impl SceneEnvironment {
         for section in sections {
             match self.value(section.key) {
                 Some(value) => {
-                    section.insert(world, value.clone(), &format!("{path}.{}", section.key))?;
+                    section.set_at(world, value, &format!("{path}.{}", section.key))?;
                 }
                 None => section.reset(world),
             }
@@ -93,20 +112,13 @@ impl SceneEnvironment {
 
 fn registered(world: &World) -> impl Iterator<Item = &SettingsEntry> {
     world
-        .get_resource::<BrickRegistry>()
+        .get_resource::<Registry>()
         .into_iter()
-        .flat_map(BrickRegistry::sections)
+        .flat_map(Registry::sections)
 }
 
-fn section_of<'w>(world: &'w World, key: &str, path: &str) -> Result<&'w SettingsEntry, Error> {
-    world
-        .get_resource::<BrickRegistry>()
-        .and_then(|registry| registry.section(key))
-        .ok_or_else(|| {
-            Error::new(ErrorCode::SectionUnlisted, path)
-                .got(key)
-                .variants(registered(world).map(|section| section.key))
-        })
+fn listed(world: &World, key: &str) -> Option<SettingsEntry> {
+    world.get_resource::<Registry>()?.section(key).copied()
 }
 
 #[cfg(feature = "schema")]
@@ -126,7 +138,7 @@ impl schemars::JsonSchema for SceneEnvironment {
 
 #[cfg(feature = "schema")]
 pub fn section_schemas(
-    registry: &BrickRegistry,
+    registry: &Registry,
     definitions: &mut serde_json::Map<String, Value>,
 ) -> serde_json::Map<String, Value> {
     let mut properties = serde_json::Map::new();
@@ -144,7 +156,10 @@ pub fn section_schemas(
         let title = fields
             .remove("title")
             .and_then(|title| title.as_str().map(str::to_owned))
-            .unwrap_or_else(|| section.name.to_owned());
+            .unwrap_or_else(|| {
+                let name = section.type_name;
+                name.rsplit("::").next().unwrap_or(name).to_owned()
+            });
         definitions.insert(title.clone(), schema);
         properties.insert(
             section.key.to_owned(),

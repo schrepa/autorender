@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
-use engine_core::Pyramid;
-use engine_terrain::Layers;
-use engine_terrain::bake::Gather;
-use engine_terrain::layer::{LayerBake, TerrainLayer};
+use engine_heightfield::layer::{LayerBake, TerrainLayer};
+use engine_heightfield::{Gather, Layers, Pyramid, StartTile};
 
 use crate::ErosionStage;
 use crate::erosion::{ErosionLayer, Scratch, erode_round, finish};
@@ -17,10 +15,10 @@ pub struct ErosionWork {
 }
 
 impl ErosionWork {
-    pub(crate) fn new(layer: &ErosionLayer, pyramid: &Pyramid) -> Self {
+    pub(crate) fn new(layer: &ErosionLayer, pyramid: &Pyramid, tiles: StartTile) -> Self {
         Self {
             layer: *layer,
-            gather: Gather::new(layer.level, pyramid),
+            gather: Gather::new(layer.level, pyramid, tiles),
             original: None,
             rounds: 0,
             scratch: Scratch::default(),

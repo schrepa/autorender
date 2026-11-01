@@ -1,31 +1,50 @@
 use super::*;
-
-pub(super) type Watered = Option<Arc<crate::Rivers>>;
+use engine_places::ground::TileFace;
 
 struct Resident {
     tile: Arc<Tile>,
     made: Generation,
-    watered: Watered,
+    face: TileFace,
 }
 
 struct CachedTile {
     tile: Arc<Tile>,
-    watered: Watered,
     bytes: u64,
     left: u64,
 }
 
 pub(super) struct Left {
     pub(super) tile: Arc<Tile>,
-    pub(super) watered: Watered,
     pub(super) current: bool,
 }
 
 fn memory_bytes(tile: &Tile) -> u64 {
     let arrays = tile.heights().len() + tile.control().map_or(0, <[u32]>::len);
     let holes = tile.hole_bits().map_or(0, <[u64]>::len) * 8;
-    let shading = tile.shading().map_or(0, |shading| shading.bytes());
-    (arrays * 4 + holes + std::mem::size_of_val(tile.placed())) as u64 + shading
+    (arrays * 4 + holes + std::mem::size_of_val(tile.placed())) as u64
+}
+
+fn face_of(tile: &Tile, pyramid: &Pyramid) -> TileFace {
+    let key = tile.key();
+    let corner = pyramid.tile_origin(key);
+    let size = TILE_QUADS as f32 * tile.spacing();
+    let [low, high] = tile.bounds();
+    TileFace {
+        key,
+        stamp: engine_core::Stamp::next(),
+        bounds: (
+            Vec3::new(corner.x, low, corner.y),
+            Vec3::new(corner.x + size, high, corner.y + size),
+        ),
+        level: key.level,
+        heights: Arc::from(tile.heights()),
+        materials: tile.control().map_or_else(
+            || Arc::from(Vec::new()),
+            |control| control.iter().flat_map(|word| word.to_le_bytes()).collect(),
+        ),
+        errors: tile.ground_errors().values().collect(),
+        placed: Arc::from(tile.placed()),
+    }
 }
 
 pub(super) struct TileStore {
@@ -55,10 +74,6 @@ impl TileStore {
         self.tiles.get(key).map(|resident| &resident.tile)
     }
 
-    pub(super) fn watered(&self, key: &TileKey) -> Option<&Watered> {
-        self.tiles.get(key).map(|resident| &resident.watered)
-    }
-
     pub(super) fn contains(&self, key: &TileKey) -> bool {
         self.tiles.contains_key(key)
     }
@@ -85,6 +100,10 @@ impl TileStore {
         self.tiles.iter().map(|(_, resident)| &resident.tile)
     }
 
+    pub(super) fn faces(&self) -> impl Iterator<Item = &TileFace> {
+        self.tiles.iter().map(|(_, resident)| &resident.face)
+    }
+
     pub(super) fn revision(&self) -> u64 {
         self.revision
     }
@@ -93,31 +112,12 @@ impl TileStore {
         &self.errors
     }
 
-    pub(super) fn arrive(&mut self, tile: Arc<Tile>, watered: Watered) {
+    pub(super) fn arrive(&mut self, tile: Arc<Tile>) {
         let made = self.generation;
-        self.put(tile, made, watered);
+        self.put(tile, made);
     }
 
-    pub(super) fn rewater(&mut self, key: &TileKey, tile: Option<Arc<Tile>>, watered: Watered) {
-        let Some(resident) = self.tiles.get_mut(key) else {
-            return;
-        };
-        resident.watered = watered;
-        if let Some(tile) = tile {
-            resident.tile = tile;
-            self.revision += 1;
-        }
-    }
-
-    pub(super) fn reshade(&mut self, key: &TileKey, tile: Arc<Tile>) {
-        let Some(resident) = self.tiles.get_mut(key) else {
-            return;
-        };
-        resident.tile = tile;
-        self.revision += 1;
-    }
-
-    fn put(&mut self, tile: Arc<Tile>, made: Generation, watered: Watered) {
+    fn put(&mut self, tile: Arc<Tile>, made: Generation) {
         let key = tile.key();
         let level = usize::from(key.level);
         if let Some(parent) = self
@@ -126,25 +126,19 @@ impl TileStore {
             .and_then(|parent| self.tiles.get(&parent))
         {
             self.errors[level] =
-                engine_core::math::max(self.errors[level], tile.morph_error(&parent.tile));
+                engine_math::max(self.errors[level], tile.morph_error(&parent.tile));
         }
         if let Some(finer) = level.checked_sub(1) {
             for (dx, dz) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
                 let child = TileKey::new(finer as u8, key.x * 2 + dx, key.z * 2 + dz);
                 if let Some(child) = self.tiles.get(&child) {
                     self.errors[finer] =
-                        engine_core::math::max(self.errors[finer], child.tile.morph_error(&tile));
+                        engine_math::max(self.errors[finer], child.tile.morph_error(&tile));
                 }
             }
         }
-        self.tiles.insert(
-            key,
-            Resident {
-                tile,
-                made,
-                watered,
-            },
-        );
+        let face = face_of(&tile, &self.pyramid);
+        self.tiles.insert(key, Resident { tile, made, face });
         self.revision += 1;
     }
 
@@ -154,7 +148,6 @@ impl TileStore {
         Some(Left {
             current: resident.made == self.generation,
             tile: resident.tile,
-            watered: resident.watered,
         })
     }
 
@@ -174,7 +167,7 @@ impl TileStore {
         self.revision += 1;
     }
 
-    pub(super) fn keep_in_memory(&mut self, tile: Arc<Tile>, watered: Watered, frame: u64) {
+    pub(super) fn keep_in_memory(&mut self, tile: Arc<Tile>, frame: u64) {
         let key = tile.key();
         let bytes = memory_bytes(&tile);
         self.forget(key);
@@ -183,7 +176,6 @@ impl TileStore {
             key,
             CachedTile {
                 tile,
-                watered,
                 bytes,
                 left: frame,
             },
@@ -233,7 +225,7 @@ impl TileStore {
             if let Some(cached) = self.cache.remove(&key) {
                 self.cached_bytes -= cached.bytes;
                 work.upload(2 * TILE_ARRAY_BYTES);
-                self.arrive(cached.tile, cached.watered);
+                self.arrive(cached.tile);
                 restored += 1;
             }
         }

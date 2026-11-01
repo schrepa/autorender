@@ -1,358 +1,96 @@
-use engine_core::{AmbientOcclusion, Applied, RenderStats, Shadows, SkyOcclusion};
-use engine_faces::occupancy::OccupancyFace;
-use engine_render::cached::{Bound, GroupCache, Versioned};
-use engine_render::graph::{
-    Access, Clear, FrameGraph, GraphTable, PassDecl, PassId, ResourceId, Stage, WHITE,
+use bevy_ecs::prelude::*;
+use engine_core::{Entry, Error, View};
+use engine_render::{
+    Access, Attach, Bind, DebugShown, DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass,
+    Pipeline, Prepare, RenderPipeline, Shape, Texture, wgpu,
 };
-use engine_render::lazy::Lazy;
-use engine_render::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View};
-use engine_render::pipeline_layouts::PipelineLayout;
-use engine_render::pipelines::{self, Fullscreen, GroupLayout, fullscreen};
-use engine_render::post::{OCCLUSION_FORMAT, PostPass};
-use engine_render::profiling::Span;
-use engine_render::targets::{FrameRegion, ScreenTarget, fullscreen_pass};
 
-use crate::layouts::{
-    AMBIENT, AMBIENT_OCCLUSION, AMBIENT_OCCLUSION_PIPELINES, OCCLUSION_FILTER,
-    OCCLUSION_FILTER_PIPELINES,
-};
-use crate::shaders::entry::ambient_occlusion;
+use crate::shaders::ambient_occlusion::{apply, occlusion as shading};
 
 const RAW_OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 
-pub static PART: PartEntry = PartEntry {
-    decl: PartDecl {
-        name: "ambient_occlusion",
-        brick: "ambient_occlusion",
-        passes: &[PassDecl {
-            name: "ambient_occlusion",
-            stage: Stage::PostScene,
-        }],
-        resources: &[],
-        hooks: &[],
-        contributes: &[],
-        resolve: None,
-        labels: &["engine/ambient-occlusion"],
-        lazy: true,
-        needs: &[],
-        piece: None,
-    },
-    create,
-};
-
-fn create(_: &Create<'_>) -> Box<dyn GpuPart> {
-    Box::new(OcclusionPass::default())
+pub(crate) struct AmbientGpu {
+    occluding: Pass<Self>,
+    filtering: Pass<Self>,
+    raw: Texture<Self>,
+    occlusion: Texture<Self>,
+    occlusion_pipeline: Pipeline<Self, Own>,
+    filter_pipeline: Pipeline<Self, Own>,
 }
 
-#[derive(Clone, Copy)]
-struct Frame {
-    occlusion: bool,
+fn fullscreen(fragment: Entry) -> RenderPipeline<'static> {
+    RenderPipeline {
+        vertex: shading::VS_FULLSCREEN,
+        fragment: Some(fragment),
+        debug: None,
+        vertices: &[],
+        primitive: wgpu::PrimitiveState::default(),
+        depth: DepthUse::None,
+        blend: None,
+        writes: wgpu::ColorWrites::ALL,
+    }
 }
 
-#[derive(Clone, Copy, Default)]
-struct Ids {
-    pass: Option<PassId>,
-    depth: Option<ResourceId>,
-    occlusion: Option<ResourceId>,
-}
+impl GpuPart for AmbientGpu {
+    type Reads = (Res<'static, View>, Res<'static, DebugShown>);
 
-#[derive(Default)]
-struct OcclusionPass {
-    occlusion: Lazy<Occlusion>,
-    frame: Option<Frame>,
-    ids: Ids,
-}
-
-fn ambient_contributed(shared: &engine_render::bindings::SharedGroups) -> bool {
-    shared
-        .group(AMBIENT)
-        .is_some_and(|bindings| !bindings.is_empty())
-}
-
-impl GpuPart for OcclusionPass {
-    fn install(&mut self, table: &GraphTable) {
-        self.ids = Ids {
-            pass: table.pass_named("ambient_occlusion"),
-            depth: table.resource("depth"),
-            occlusion: table.resource("occlusion"),
-        };
+    fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
+        let raw = cx.texture("raw_occlusion", RAW_OCCLUSION_FORMAT, Lifetime::Frame);
+        let occlusion = cx.texture("occlusion", OCCLUSION_FORMAT, Lifetime::Frame);
+        cx.frame(apply::OCCLUSION, Bind::Texture(occlusion))?;
+        let occluding = cx.pass("ambient_occlusion").color(raw, Access::Clear).id();
+        let filtering = cx.pass("effects_filter").color(occlusion, Access::Clear).id();
+        let occlusion_pipeline =
+            cx.render_pipeline(occluding, &fullscreen(shading::FS_OCCLUSION), &[])?;
+        let filter_pipeline = cx.render_pipeline(
+            filtering,
+            &fullscreen(shading::FS_EFFECTS_FILTER),
+            &[(shading::RAW_OCCLUSION, Bind::Texture(raw))],
+        )?;
+        Ok(Self {
+            occluding,
+            filtering,
+            raw,
+            occlusion,
+            occlusion_pipeline,
+            filter_pipeline,
+        })
     }
 
-    fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
-        self.frame = None;
-        let snapshot = cx.frame.snapshot;
-        let ambient = snapshot.section::<AmbientOcclusion>().enabled();
-        let sky =
-            snapshot.section::<SkyOcclusion>().darkens() && snapshot.section::<Shadows>().enabled;
-        if !ambient && !sky {
-            self.occlusion.release();
-            return;
-        }
-        if cx.frame.kind.debug {
-            return;
-        }
-        let core = &*cx.core;
-        let device = &core.device;
-        let Some(uniform) = cx.parts.post().and_then(PostPass::uniform) else {
-            if let Some(occlusion) = self.occlusion.get_mut() {
-                occlusion.release_targets();
-            }
-            return;
-        };
-        if !ambient_contributed(&core.shared) {
-            return;
-        }
-        self.occlusion
-            .create(device, "engine/ambient-occlusion-", || {
-                Occlusion::new(device)
-            });
-        let Some(occlusion) = self.occlusion.get_mut() else {
-            return;
-        };
-        occlusion.size(device, core.display.region);
-        let share = cx
-            .parts
-            .face::<dyn OccupancyFace>()
-            .map_or(0.0, OccupancyFace::texel_share);
-        occlusion.write_canopy(&core.queue, share);
-        occlusion.bind(device, uniform, &core.depth.view);
-        self.frame = Some(Frame { occlusion: ambient });
-    }
-
-    fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
-        let (Some(_), Some(_), Some(pass), Some(occlusion)) = (
-            self.frame,
-            cx.frame.shape,
-            self.ids.pass,
-            self.ids.occlusion,
-        ) else {
-            return;
-        };
-        let _ = graph
-            .add(cx.table, pass)
-            .read(self.ids.depth)
-            .color(occlusion, Access::Draw(Clear::Color(WHITE)));
-    }
-
-    fn encode(
+    fn prepare(
         &mut self,
-        _pass: usize,
-        cx: &mut Encode<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-    ) -> u32 {
-        let (Some(_), Some(occlusion)) = (self.frame, self.occlusion.get()) else {
-            return 0;
-        };
-        let (Some(targets), Some(raw), Some(filter)) = (
-            occlusion.targets.get(),
-            occlusion.occlusion_group.get(),
-            occlusion.filter_group.get(),
-        ) else {
-            return 0;
-        };
-        let profiler = &cx.core.profiler;
-        {
-            let mut pass = fullscreen_pass(
-                encoder,
-                "engine/ambient-occlusion",
-                (&targets.raw_occlusion, occlusion.region.render.pixels()),
-                profiler.span("ambient_occlusion").map(Span::render),
-            );
-            pass.set_pipeline(&occlusion.occlusion);
-            pass.set_bind_group(0, raw, &[]);
-            pass.set_bind_group(1, cx.core.shared_group(AMBIENT, &[]), &[]);
-            pass.draw(0..3, 0..1);
-        }
-        let mut pass = cx.render_pass(
-            encoder,
-            "engine/ambient-occlusion-filter",
-            profiler.span("effects_filter").map(Span::render),
-        );
-        pass.set_pipeline(&occlusion.filter);
-        pass.set_bind_group(0, filter, &[]);
-        pass.draw(0..3, 0..1);
-        0
-    }
-
-    fn capacity_bytes(&self) -> u64 {
-        self.occlusion.get().map_or(0, Occlusion::capacity_bytes)
-    }
-
-    fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
-        stats.ambient_occlusion = Applied {
-            active: self.frame.is_some_and(|frame| frame.occlusion),
-        };
-    }
-
-    fn poll(&mut self) -> bool {
-        self.occlusion.poll()
-    }
-
-    fn disable(&mut self) -> bool {
-        self.occlusion.disable()
-    }
-
-    fn disabled(&self) -> bool {
-        self.occlusion.disabled()
-    }
-
-    #[cfg(feature = "dev")]
-    fn inject(&mut self) -> bool {
-        self.occlusion.inject()
-    }
-
-    #[cfg(feature = "dev")]
-    fn encode_fault(&self, encoder: &mut wgpu::CommandEncoder) {
-        self.occlusion.encode_fault(encoder);
-    }
-
-    fn produces(&self, resource: ResourceId) -> bool {
-        self.frame.is_some() && self.ids.occlusion == Some(resource)
-    }
-}
-
-struct Targets {
-    texture: wgpu::Texture,
-    raw_occlusion: wgpu::TextureView,
-}
-
-impl Drop for Targets {
-    fn drop(&mut self) {
-        self.texture.destroy();
-    }
-}
-
-struct Occlusion {
-    occlusion_layout: GroupLayout,
-    filter_layout: GroupLayout,
-    occlusion: wgpu::RenderPipeline,
-    filter: wgpu::RenderPipeline,
-    targets: ScreenTarget<Targets>,
-    region: FrameRegion,
-    occlusion_group: GroupCache<3>,
-    filter_group: GroupCache<2>,
-    canopy: wgpu::Buffer,
-    canopy_share: Option<f32>,
-}
-
-impl Occlusion {
-    fn new(device: &wgpu::Device) -> Self {
-        let pipeline = |label, declared: &PipelineLayout, entry, format| {
-            let layout = pipelines::layout_of(device, declared);
-            fullscreen(
-                device,
-                &Fullscreen {
-                    label,
-                    layout: &layout,
-                    vertex: ambient_occlusion::vs_fullscreen,
-                    fragment: entry,
-                    constants: &[],
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    depth: None,
-                },
-            )
-        };
-        Self {
-            occlusion_layout: pipelines::layout(device, &AMBIENT_OCCLUSION),
-            filter_layout: pipelines::layout(device, &OCCLUSION_FILTER),
-            occlusion: pipeline(
-                "engine/ambient-occlusion",
-                &AMBIENT_OCCLUSION_PIPELINES,
-                ambient_occlusion::fs_occlusion,
-                RAW_OCCLUSION_FORMAT,
-            ),
-            filter: pipeline(
-                "engine/ambient-occlusion-filter",
-                &OCCLUSION_FILTER_PIPELINES,
-                ambient_occlusion::fs_effects_filter,
-                OCCLUSION_FORMAT,
-            ),
-            targets: ScreenTarget::default(),
-            region: FrameRegion::default(),
-            occlusion_group: GroupCache::default(),
-            filter_group: GroupCache::default(),
-            canopy: engine_render::buffers::uniform(device, "engine/ambient-occlusion-canopy", 16),
-            canopy_share: None,
-        }
-    }
-
-    fn write_canopy(&mut self, queue: &engine_render::gpu_calls::Queue, share: f32) {
-        if self.canopy_share != Some(share) {
-            queue.write_buffer(&self.canopy, 0, bytemuck::bytes_of(&[share, 0.0, 0.0, 0.0]));
-            self.canopy_share = Some(share);
-        }
-    }
-
-    fn release_targets(&mut self) {
-        self.targets.release();
-        self.occlusion_group.clear();
-        self.filter_group.clear();
-    }
-
-    fn capacity_bytes(&self) -> u64 {
-        self.targets
-            .size()
-            .map_or(0, |size| u64::from(size.width) * u64::from(size.height) * 4)
-    }
-
-    fn size(&mut self, device: &wgpu::Device, region: FrameRegion) {
-        let size = region.display;
-        if self.targets.resizes(size) {
-            let texture = engine_render::targets::texture_2d(
-                device,
-                "engine/ambient-occlusion-raw",
-                size.pixels(),
-                1,
-                1,
-                RAW_OCCLUSION_FORMAT,
-                engine_render::targets::RENDER_TARGET,
-            );
-            let raw_occlusion = texture.create_view(&Default::default());
-            self.targets.set(
-                size,
-                Targets {
-                    texture,
-                    raw_occlusion,
-                },
-            );
-        }
-        self.region = region;
-    }
-
-    fn bind(
-        &mut self,
-        device: &wgpu::Device,
-        uniform: Bound<'_>,
-        depth: &Versioned<wgpu::TextureView>,
+        (view, shown): SystemParamItem<'_, '_, Self::Reads>,
+        cx: &mut Prepare<'_, Self>,
     ) {
-        let Some(targets) = self.targets.get() else {
+        if shown.owner.is_some() {
             return;
+        }
+        let size = view.render_size();
+        let extent = wgpu::Extent3d {
+            width: size.x.max(1),
+            height: size.y.max(1),
+            depth_or_array_layers: 1,
         };
-        self.occlusion_group.bind(
-            device,
-            "engine/ambient-occlusion-group",
-            (&AMBIENT_OCCLUSION, &self.occlusion_layout),
-            [
-                ("post", uniform.clone()),
-                ("canopy", Bound::fixed(self.canopy.as_entire_binding())),
-                ("depth_texture", depth.bound()),
-            ],
+        cx.allocate(self.raw, extent, 1);
+        cx.allocate(self.occlusion, extent, 1);
+        cx.run(self.occluding);
+        cx.run(self.filtering);
+    }
+
+    fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+        let pipeline = if pass == self.occluding {
+            &self.occlusion_pipeline
+        } else {
+            &self.filter_pipeline
+        };
+        cx.render(Attach::Declared, None).draw(
+            pipeline,
+            Shape::Pulled {
+                vertices: 0..3,
+                instances: 0..1,
+            },
         );
-        self.filter_group.bind(
-            device,
-            "engine/ambient-occlusion-filter-group",
-            (&OCCLUSION_FILTER, &self.filter_layout),
-            [
-                ("post", uniform),
-                (
-                    "raw_occlusion",
-                    Bound::of(targets, pipelines::view(&targets.raw_occlusion)),
-                ),
-            ],
-        );
+        0
     }
 }

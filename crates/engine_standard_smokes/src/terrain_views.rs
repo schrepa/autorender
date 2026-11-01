@@ -1,8 +1,8 @@
-use engine_core::smoke::{SmokeFailure, SmokeResult, SmokeSession};
-use engine_core::{smoke_check, smoke_eq};
+use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use super::scene_kit::{SceneFixture, ask, capture, control, render};
+use super::requests::seen;
+use super::scene_kit::{ask, capture, control, load, render};
 
 const VIEWS: [&str; 14] = [
     "water_depth",
@@ -56,8 +56,8 @@ fn fixture() -> Value {
     })
 }
 
-pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
-    let (_scene, _) = SceneFixture::load(session, &fixture())?;
+pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+    load(session, &fixture())?;
     ask(session, "control", json!({"name": "pause"}))?;
     let opened = control(
         session,
@@ -84,11 +84,15 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
             json!({"debug_view": {"view": view}}),
         )?;
         let image = shown(session)?;
-        smoke_check!(
-            image != shaded,
-            "terrain_views_draw",
-            json!({"view": view, "image": image}),
-            json!({"not": shaded})
+        let wanted = json!({"not": shaded});
+        smoke_eq!(
+            seen(
+                image != shaded,
+                json!({"view": view, "image": image}),
+                &wanted,
+            ),
+            wanted,
+            "terrain_views_draw"
         );
     }
     let rendering = render(session)?;
@@ -110,11 +114,11 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
             break;
         }
     }
-    smoke_check!(
-        ground.is_object(),
-        "probe_finds_ground",
-        json!(ground),
-        json!({"kind": "terrain"})
+    let wanted = json!({"kind": "terrain"});
+    smoke_eq!(
+        seen(ground.is_object(), json!(ground), &wanted),
+        wanted,
+        "probe_finds_ground"
     );
     terrain_probe(&ground)?;
     let above = control(session, "probe", json!({"x": (width / 2.0) as u64, "y": 1}))?;
@@ -131,7 +135,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     Ok(())
 }
 
-fn terrain_probe(ground: &Value) -> SmokeResult {
+fn terrain_probe(ground: &Value) -> Result<(), SmokeFailure> {
     let made = &ground["terrain"];
     let tile = made["tile"]
         .as_array()
@@ -141,17 +145,21 @@ fn terrain_probe(ground: &Value) -> SmokeResult {
             .iter()
             .all(|value| value.as_u64().is_some_and(|value| value < 16))
     });
-    smoke_check!(
-        tile && patch,
-        "terrain_probe_tile",
-        json!(made),
-        json!({"patch": "below 16"})
+    let wanted = json!({"patch": "below 16"});
+    smoke_eq!(
+        seen(tile && patch, json!(made), &wanted),
+        wanted,
+        "terrain_probe_tile"
     );
-    smoke_check!(
-        ground["level"].as_u64().is_some_and(|level| level < 8),
-        "terrain_probe_level",
-        json!(ground["level"]),
-        json!({"below": 8})
+    let wanted = json!({"below": 8});
+    smoke_eq!(
+        seen(
+            ground["level"].as_u64().is_some_and(|level| level < 8),
+            json!(ground["level"]),
+            &wanted,
+        ),
+        wanted,
+        "terrain_probe_level"
     );
     let shares: Vec<f64> = made["materials"]
         .as_array()
@@ -160,33 +168,41 @@ fn terrain_probe(ground: &Value) -> SmokeResult {
         .map(|share| share["share"].as_f64().unwrap_or(0.0))
         .collect();
     let total: f64 = shares.iter().sum();
-    smoke_check!(
-        !shares.is_empty()
-            && shares.iter().all(|&share| share > 0.0 && share <= 1.0)
-            && (total - 1.0).abs() < 0.05,
-        "terrain_probe_materials",
-        json!(made["materials"]),
-        json!({"sum": 1})
+    let wanted = json!({"sum": 1});
+    smoke_eq!(
+        seen(
+            !shares.is_empty()
+                && shares.iter().all(|&share| share > 0.0 && share <= 1.0)
+                && (total - 1.0).abs() < 0.05,
+            json!(made["materials"]),
+            &wanted,
+        ),
+        wanted,
+        "terrain_probe_materials"
     );
     let sky = made["sky"].as_f64().unwrap_or(-1.0);
     let detailed = made["detail"]["detailed"].as_f64().unwrap_or(-1.0);
     let averaged = made["detail"]["averaged"].as_f64().unwrap_or(f64::MAX);
-    smoke_check!(
-        (0.0..=1.0).contains(&sky) && detailed >= averaged - 0.01,
-        "terrain_probe_light",
-        json!({"sky": made["sky"], "detail": made["detail"]}),
-        json!({"sky": [0, 1], "detailed": "at least averaged"})
+    let wanted = json!({"sky": [0, 1], "detailed": "at least averaged"});
+    smoke_eq!(
+        seen(
+            (0.0..=1.0).contains(&sky) && detailed >= averaged - 0.01,
+            json!({"sky": made["sky"], "detail": made["detail"]}),
+            &wanted,
+        ),
+        wanted,
+        "terrain_probe_light"
     );
-    smoke_check!(
-        ground["water"].is_null(),
-        "terrain_probe_dry",
-        json!(ground["water"]),
-        json!(null)
+    let wanted = json!(null);
+    smoke_eq!(
+        seen(ground["water"].is_null(), json!(ground["water"]), &wanted),
+        wanted,
+        "terrain_probe_dry"
     );
     Ok(())
 }
 
-fn settle(session: &mut dyn SmokeSession) -> SmokeResult {
+fn settle(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let mut resident = 0;
     let mut rendering = Value::Null;
     for _ in 0..600 {
@@ -200,11 +216,11 @@ fn settle(session: &mut dyn SmokeSession) -> SmokeResult {
             return Ok(());
         }
     }
-    smoke_check!(
-        false,
-        "terrain_settles",
-        json!(rendering["terrain"]),
-        json!({"loading_tiles": 0})
+    let wanted = json!({"loading_tiles": 0});
+    smoke_eq!(
+        seen(false, json!(rendering["terrain"]), &wanted),
+        wanted,
+        "terrain_settles"
     );
     Ok(())
 }
@@ -217,11 +233,11 @@ fn shown(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
             break;
         }
     }
-    smoke_check!(
-        !compiling,
-        "pipelines_compile",
-        json!(compiling),
-        json!(false)
+    let wanted = json!(false);
+    smoke_eq!(
+        seen(!compiling, json!(compiling), &wanted),
+        wanted,
+        "pipelines_compile"
     );
     capture(session)
 }

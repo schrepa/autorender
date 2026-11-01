@@ -57,9 +57,9 @@ impl OperationScene {
             world
                 .iter_entities()
                 .find(|entity| {
-                    entity.get::<SceneEntity>().is_some_and(|scene| {
-                        scene.authored_id == id && scene.scene_id == self.id
-                    })
+                    entity
+                        .get::<SceneEntity>()
+                        .is_some_and(|scene| scene.authored_id == id && scene.scene_id == self.id)
                 })
                 .map(|entity| entity.id())
         })

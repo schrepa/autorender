@@ -1,62 +1,61 @@
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 
+use engine_codec::{Allowed, Error, Expected};
+use engine_core::{InvalidSetting, Rule, Setting};
+use engine_heightfield::bed::{NARROWEST, bankfull};
+use engine_heightfield::given::{GivenRiver, MAX_CREDIT, MAX_GIVEN_RIVERS, MAX_PRECISION};
+use engine_heightfield::hydrology::{Grid, WaterGrid};
+use engine_heightfield::path::distance_to_segment;
+use engine_heightfield::rivers::{FOOTPRINT, GivenLine, RIVER_STEP, RiverLine};
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max, min};
-use engine_settings::{ExtraRules, InvalidSetting, settings};
-use engine_terrain::bed::{NARROWEST, bankfull};
-use engine_terrain::given::{GivenRiver, MAX_CREDIT, MAX_GIVEN_RIVERS, MAX_PRECISION};
-use engine_terrain::hydrology::{Grid, WaterGrid};
-use engine_terrain::path::distance_to_segment;
-use engine_terrain::rivers::{FOOTPRINT, GivenLine, RIVER_STEP, RiverLine};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 
 use crate::rivers::{MEASURED, smooth_line};
 
-settings! {
-    extra_rules;
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-    #[serde(deny_unknown_fields)]
-    pub struct RiversLayer {
-        #[cfg_attr(feature = "schema", schemars(length(min = 1, max = MAX_GIVEN_RIVERS)))]
-        pub lines: Vec<GivenRiver> = Vec::new() => any,
-        #[serde(default)]
-        pub precision: f32 = 0.0 => range(0.0, MAX_PRECISION),
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(feature = "schema", schemars(length(max = MAX_CREDIT)))]
-        pub source: Option<String> = None => any,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[cfg_attr(feature = "schema", schemars(length(max = MAX_CREDIT)))]
-        pub attribution: Option<String> = None => any,
-    }
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RiversLayer {
+    #[schemars(length(min = 1, max = MAX_GIVEN_RIVERS))]
+    pub lines: Vec<GivenRiver>,
+    #[serde(default)]
+    pub precision: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = MAX_CREDIT))]
+    pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = MAX_CREDIT))]
+    pub attribution: Option<String>,
 }
 
-impl ExtraRules for RiversLayer {
-    fn check_extra(&self) -> Result<(), InvalidSetting> {
+impl RiversLayer {
+    pub fn validate(&self) -> Result<(), Error> {
+        for (index, line) in self.lines.iter().enumerate() {
+            line.validate()
+                .map_err(|error| error.within(&format!("$.lines[{index}]")))?;
+        }
+        self.precision
+            .check("precision", Rule::Range(0.0, f64::from(MAX_PRECISION)))?;
         if !(1..=MAX_GIVEN_RIVERS).contains(&self.lines.len()) {
-            return Err(
-                InvalidSetting::new("lines", engine_settings::Expected::Array).allowed(
-                    engine_settings::Allowed::Range {
-                        min: 1.0,
-                        max: MAX_GIVEN_RIVERS as f64,
-                    },
-                ),
-            );
+            return Err(InvalidSetting::new("lines", Expected::Array)
+                .allowed(Allowed::Range {
+                    min: 1.0,
+                    max: MAX_GIVEN_RIVERS as f64,
+                })
+                .into());
         }
         for (field, text) in [("source", &self.source), ("attribution", &self.attribution)] {
             if text
                 .as_ref()
                 .is_some_and(|text| text.chars().count() > MAX_CREDIT)
             {
-                return Err(
-                    InvalidSetting::new(field, engine_settings::Expected::String).allowed(
-                        engine_settings::Allowed::AtMost {
-                            max: MAX_CREDIT as u64,
-                        },
-                    ),
-                );
+                return Err(InvalidSetting::new(field, Expected::String)
+                    .allowed(Allowed::AtMost {
+                        max: MAX_CREDIT as u64,
+                    })
+                    .into());
             }
         }
         Ok(())
@@ -756,7 +755,7 @@ pub(crate) fn courses(
     })
 }
 
-engine_terrain::codec::record!(RiversLayer {
+engine_codec::record!(RiversLayer {
     lines,
     precision,
     source,

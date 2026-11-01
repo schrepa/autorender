@@ -1,10 +1,10 @@
-use engine_assets::{LodInput, LodLevel, MeshLods};
+use engine_codec::Error;
 use engine_math::max;
 use glam::Vec3;
 
 use crate::casters::caster_ranges;
 use crate::distance::{mean_edge, surface_distance};
-use engine_settings::Error;
+use crate::{LodInput, LodLevel, MeshLods};
 
 use crate::simplify::{
     SimplifyInput, SimplifyOptions, VertexFlags, protect_attribute_seams, simplify,

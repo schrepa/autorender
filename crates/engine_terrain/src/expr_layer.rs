@@ -10,8 +10,10 @@ use serde_json::Value;
 use crate::bake::Gather;
 use crate::codec::{Codec, Reader, Writer, get_grid, invalid, on_grid, put_grid};
 use crate::expr::Expr;
+use crate::jobs::TILE_BUILD;
 use crate::layer::{
-    Below, LayerBake, LayerFiles, LayerKind, Made, Place, Row, TerrainLayer, no_files, same_as,
+    Below, LayerBake, LayerFiles, LayerKind, Made, NoFiles, Place, Row, TerrainLayer, no_files,
+    same_as,
 };
 use crate::surface::{
     Compiled, Input, Reads, RowInputs, RowScratch, SampleShape, Scope, terrain_error, unknown_map,
@@ -25,12 +27,11 @@ pub static EXPRESSION: LayerKind = LayerKind {
     from_json,
     read,
     files: no_files,
-    schema: crate::layer_schema!(schema),
+    schema,
     points: crate::layer::no_points,
 };
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExpressionSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -68,7 +69,7 @@ impl ExpressionLayer {
         let mut maps = Vec::with_capacity(settings.maps.len());
         for (name, expr) in &settings.maps {
             let at = format!("$.maps.{name}");
-            if !engine_settings::is_id(name) {
+            if !engine_core::is_id(name) {
                 return Err(Error::new(ErrorCode::InvalidId, at)
                     .expected(Expected::Id)
                     .got(name));
@@ -456,6 +457,19 @@ fn from_json(value: &Value, _files: &dyn LayerFiles) -> Made {
     Ok(Arc::new(ExpressionLayer::new(settings)?))
 }
 
+fn authored(value: &Value) -> Made {
+    from_json(value, &NoFiles)
+}
+
+pub fn expression_kind() -> engine_places::terrain::LayerKind {
+    engine_places::terrain::LayerKind {
+        name: EXPRESSION.name,
+        schema,
+        from_json: authored,
+        job: engine_core::JobRef::from(&TILE_BUILD),
+    }
+}
+
 fn read(input: &mut Reader<'_>) -> Made {
     let height = input.get()?;
     let blend = input.get()?;
@@ -475,7 +489,6 @@ fn read(input: &mut Reader<'_>) -> Made {
     }))
 }
 
-#[cfg(feature = "schema")]
-fn schema() -> schemars::Schema {
-    schemars::schema_for!(ExpressionSettings)
+fn schema() -> Value {
+    engine_heightfield::schema::<ExpressionSettings>()
 }

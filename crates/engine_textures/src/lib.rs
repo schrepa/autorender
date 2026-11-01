@@ -3,16 +3,12 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-include!(concat!(env!("OUT_DIR"), "/source.rs"));
-
 mod astc;
 mod bc7;
 mod mips;
 
 use engine_assets::{Texture, TextureFormat, TextureSummary};
-use engine_settings::{Error, ErrorCode, Expected};
-
-pub const COOK_JOB: &str = "texture_cook";
+use engine_codec::{Error, ErrorCode, Expected};
 
 const COOK_HEADER: usize = 10;
 
@@ -60,52 +56,6 @@ pub fn cook_job(input: &[u8]) -> Result<Vec<u8>, String> {
     cook(&source, family)
         .map(|texture| record(&texture))
         .map_err(|error| error.to_string())
-}
-
-pub fn run(kind: &str, input: &[u8]) -> Option<Result<Vec<u8>, String>> {
-    TextureWorker::runs(kind).then(|| cook_job(input))
-}
-
-#[derive(Default)]
-pub struct TextureWorker {
-    running: Vec<(u64, Vec<u8>)>,
-}
-
-impl TextureWorker {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn runs(kind: &str) -> bool {
-        kind == COOK_JOB
-    }
-
-    pub fn holds(&self, id: u64) -> bool {
-        self.running.iter().any(|(running, _)| *running == id)
-    }
-
-    pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), String> {
-        if !Self::runs(kind) {
-            return Err(format!("unknown job kind {kind}"));
-        }
-        self.cancel(id);
-        self.running.push((id, input.to_vec()));
-        Ok(())
-    }
-
-    pub fn step(&mut self, id: u64, _budget: u64) -> Result<Option<Vec<u8>>, String> {
-        let at = self
-            .running
-            .iter()
-            .position(|(running, _)| *running == id)
-            .ok_or("no such job")?;
-        let (_, input) = self.running.remove(at);
-        cook_job(&input).map(Some)
-    }
-
-    pub fn cancel(&mut self, id: u64) {
-        self.running.retain(|(running, _)| *running != id);
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -28,7 +28,7 @@ const QUICK_STAGES: &[&str] = &[
     "bench",
     "equivalence matrix",
     "structure",
-    "examples are leaves",
+    "install",
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

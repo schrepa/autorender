@@ -7,7 +7,8 @@ pub const MIN_COLLIDER_EXTENT: f32 = 1.0e-4;
 pub const MAX_COLLIDER_EXTENT: f32 = 1.0e4;
 pub const MAX_COLLISION_COORDINATE: f32 = 1.0e6;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ColliderShape {
     Cuboid { half_extents: Vec3 },
     Sphere { radius: f32 },
@@ -65,11 +66,56 @@ impl CollisionLayers {
     }
 }
 
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(from = "AuthoredCollider", into = "AuthoredCollider")]
 pub struct Collider {
     shape: ColliderShape,
     layers: CollisionLayers,
     sensor: bool,
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthoredCollider {
+    shape: ColliderShape,
+    #[serde(default = "one_membership")]
+    memberships: u32,
+    #[serde(default = "every_filter")]
+    filter: u32,
+    #[serde(default)]
+    sensor: bool,
+}
+
+fn one_membership() -> u32 {
+    1
+}
+
+fn every_filter() -> u32 {
+    u32::MAX
+}
+
+impl From<AuthoredCollider> for Collider {
+    fn from(authored: AuthoredCollider) -> Self {
+        Self {
+            shape: authored.shape,
+            layers: CollisionLayers {
+                memberships: authored.memberships,
+                filter: authored.filter,
+            },
+            sensor: authored.sensor,
+        }
+    }
+}
+
+impl From<Collider> for AuthoredCollider {
+    fn from(collider: Collider) -> Self {
+        Self {
+            shape: collider.shape,
+            memberships: collider.layers.memberships,
+            filter: collider.layers.filter,
+            sensor: collider.sensor,
+        }
+    }
 }
 
 impl Collider {

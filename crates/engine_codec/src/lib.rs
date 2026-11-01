@@ -4,74 +4,18 @@
     clippy::cast_possible_wrap
 )]
 
-use std::fmt::Write as _;
+mod codes;
+mod error;
+
 use std::sync::Arc;
 
 use glam::{Vec2, Vec3};
-use serde::Serialize;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CodecError(String);
+pub use codes::ErrorCode;
+pub use error::{Allowed, Detail, Error, Expected, MAX_GOT_BYTES, closest};
 
-impl CodecError {
-    pub fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
-    }
-
-    #[must_use]
-    pub fn expected(mut self, expected: &str) -> Self {
-        let _ = write!(self.0, ", expected {expected}");
-        self
-    }
-
-    #[must_use]
-    pub fn at_least(mut self, min: u64) -> Self {
-        let _ = write!(self.0, ", at least {min}");
-        self
-    }
-
-    #[must_use]
-    pub fn at_most(mut self, max: u64) -> Self {
-        let _ = write!(self.0, ", at most {max}");
-        self
-    }
-
-    #[must_use]
-    pub fn variants<S: Into<String>>(mut self, values: impl IntoIterator<Item = S>) -> Self {
-        let values: Vec<String> = values.into_iter().map(Into::into).collect();
-        let _ = write!(self.0, ", one of [{}]", values.join(", "));
-        self
-    }
-
-    #[must_use]
-    pub fn range(mut self, min: f64, max: f64) -> Self {
-        let _ = write!(self.0, ", in [{min}, {max}]");
-        self
-    }
-
-    #[must_use]
-    pub fn got(mut self, value: impl Serialize) -> Self {
-        let shown = serde_json::to_string(&value).unwrap_or_default();
-        let _ = write!(self.0, ", got {shown}");
-        self
-    }
-
-    #[must_use]
-    pub fn within(self, prefix: &str) -> Self {
-        Self(format!("{prefix}: {}", self.0))
-    }
-}
-
-impl std::fmt::Display for CodecError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for CodecError {}
-
-pub fn invalid(path: impl Into<String>) -> CodecError {
-    CodecError::new(format!("invalid_record at {}", path.into()))
+pub fn invalid(path: impl Into<String>) -> Error {
+    Error::new(ErrorCode::InvalidRecord, path)
 }
 
 #[derive(Default)]
@@ -107,16 +51,16 @@ impl<'a> Reader<'a> {
         Self { bytes }
     }
 
-    pub fn get<T: Codec>(&mut self) -> Result<T, CodecError> {
+    pub fn get<T: Codec>(&mut self) -> Result<T, Error> {
         T::read(self)
     }
 
-    pub fn finish(self) -> Result<(), CodecError> {
+    pub fn finish(self) -> Result<(), Error> {
         if self.bytes.is_empty() {
             Ok(())
         } else {
             Err(invalid("$")
-                .expected("absent")
+                .expected(Expected::Absent)
                 .got(self.bytes.len()))
         }
     }
@@ -125,7 +69,7 @@ impl<'a> Reader<'a> {
         self.bytes.len()
     }
 
-    fn take<const N: usize>(&mut self) -> Result<[u8; N], CodecError> {
+    fn take<const N: usize>(&mut self) -> Result<[u8; N], Error> {
         let Some((head, rest)) = self.bytes.split_first_chunk::<N>() else {
             return Err(invalid("$").at_least(N as u64).got(self.bytes.len()));
         };
@@ -133,7 +77,7 @@ impl<'a> Reader<'a> {
         Ok(*head)
     }
 
-    fn count(&mut self) -> Result<usize, CodecError> {
+    fn count(&mut self) -> Result<usize, Error> {
         let count = size(u64::from_le_bytes(self.take()?), "$.count")?;
         if count > self.bytes.len() {
             return Err(invalid("$.count")
@@ -169,11 +113,11 @@ pub fn put_grid(out: &mut Writer, values: &[f32], stride: usize) {
     }
 }
 
-fn size(count: u64, path: &str) -> Result<usize, CodecError> {
+fn size(count: u64, path: &str) -> Result<usize, Error> {
     usize::try_from(count).map_err(|_| invalid(path).at_most(usize::MAX as u64).got(count))
 }
 
-pub fn get_grid(input: &mut Reader<'_>, stride: usize) -> Result<Box<[f32]>, CodecError> {
+pub fn get_grid(input: &mut Reader<'_>, stride: usize) -> Result<Box<[f32]>, Error> {
     let count = input.count()?;
     let mut steps: Vec<Option<i64>> = Vec::with_capacity(count);
     for at in 0..count {
@@ -220,7 +164,7 @@ pub fn put_planes(out: &mut Writer, planes: &[u8], side: usize) {
     out.raw(&residuals);
 }
 
-pub fn get_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u8]>, CodecError> {
+pub fn get_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u8]>, Error> {
     let count = input.count()?;
     let area = side * side;
     if area == 0 || count % area != 0 {
@@ -251,7 +195,7 @@ pub fn put_wide_planes(out: &mut Writer, planes: &[u16], side: usize) {
     out.raw(&residuals);
 }
 
-pub fn get_wide_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u16]>, CodecError> {
+pub fn get_wide_planes(input: &mut Reader<'_>, side: usize) -> Result<Box<[u16]>, Error> {
     let count = size(u64::from_le_bytes(input.take()?), "$.count")?;
     let area = side * side;
     let bytes = count
@@ -293,7 +237,7 @@ pub fn put_records(out: &mut Writer, values: &[u8], stride: usize) {
     out.raw(&residuals);
 }
 
-pub fn get_records(input: &mut Reader<'_>, stride: usize) -> Result<Box<[u8]>, CodecError> {
+pub fn get_records(input: &mut Reader<'_>, stride: usize) -> Result<Box<[u8]>, Error> {
     let count = input.count()?;
     if stride == 0 || !count.is_multiple_of(stride) {
         return Err(invalid("$.records").got(count));
@@ -363,7 +307,7 @@ fn predict(at: usize, stride: usize, steps: impl Fn(usize) -> Option<i64>) -> i6
     }
 }
 
-pub fn decode<T: Codec>(bytes: &[u8]) -> Result<T, CodecError> {
+pub fn decode<T: Codec>(bytes: &[u8]) -> Result<T, Error> {
     let mut reader = Reader::new(bytes);
     let value = reader.get()?;
     reader.finish()?;
@@ -378,7 +322,7 @@ pub fn encode<T: Codec>(value: &T) -> Vec<u8> {
 
 pub trait Codec: Sized {
     fn write(&self, out: &mut Writer);
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError>;
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error>;
 }
 
 macro_rules! number {
@@ -388,7 +332,7 @@ macro_rules! number {
                 out.raw(&self.to_le_bytes());
             }
 
-            fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+            fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
                 Ok(Self::from_le_bytes(input.take()?))
             }
         }
@@ -402,7 +346,7 @@ impl Codec for usize {
         (*self as u64).write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         size(u64::read(input)?, "$.size")
     }
 }
@@ -412,7 +356,7 @@ impl Codec for bool {
         u8::from(*self).write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         match u8::read(input)? {
             0 => Ok(false),
             1 => Ok(true),
@@ -427,11 +371,11 @@ impl Codec for String {
         out.raw(self.as_bytes());
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         let count = input.count()?;
         let (text, rest) = input.bytes.split_at(count);
         input.bytes = rest;
-        String::from_utf8(text.to_vec()).map_err(|_| CodecError::new("invalid_utf8 at $.text"))
+        String::from_utf8(text.to_vec()).map_err(|_| Error::new(ErrorCode::InvalidUtf8, "$.text"))
     }
 }
 
@@ -443,7 +387,7 @@ impl<T: Codec> Codec for Vec<T> {
         }
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         let count = input.count()?;
         let mut values = Vec::with_capacity(count);
         for _ in 0..count {
@@ -461,7 +405,7 @@ impl<T: Codec> Codec for Box<[T]> {
         }
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         Vec::<T>::read(input).map(Vec::into_boxed_slice)
     }
 }
@@ -474,7 +418,7 @@ impl<T: Codec> Codec for Arc<[T]> {
         }
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         Vec::<T>::read(input).map(Arc::from)
     }
 }
@@ -484,7 +428,7 @@ impl<T: Codec> Codec for Arc<T> {
         self.as_ref().write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         T::read(input).map(Arc::new)
     }
 }
@@ -494,7 +438,7 @@ impl<T: Codec> Codec for Box<T> {
         self.as_ref().write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         T::read(input).map(Box::new)
     }
 }
@@ -510,7 +454,7 @@ impl<T: Codec> Codec for Option<T> {
         }
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         Ok(if bool::read(input)? {
             Some(T::read(input)?)
         } else {
@@ -526,7 +470,7 @@ impl<T: Codec + Copy + Default, const N: usize> Codec for [T; N] {
         }
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         let mut values = [T::default(); N];
         for value in &mut values {
             *value = T::read(input)?;
@@ -541,7 +485,7 @@ impl<A: Codec, B: Codec> Codec for (A, B) {
         self.1.write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         Ok((A::read(input)?, B::read(input)?))
     }
 }
@@ -551,7 +495,7 @@ impl Codec for Vec2 {
         self.to_array().write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         <[f32; 2]>::read(input).map(Vec2::from_array)
     }
 }
@@ -561,7 +505,7 @@ impl Codec for Vec3 {
         self.to_array().write(out);
     }
 
-    fn read(input: &mut Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         <[f32; 3]>::read(input).map(Vec3::from_array)
     }
 }
@@ -576,7 +520,7 @@ macro_rules! record {
 
             fn read(
                 input: &mut $crate::Reader<'_>,
-            ) -> Result<Self, $crate::CodecError> {
+            ) -> Result<Self, $crate::Error> {
                 Ok(Self { $( $field: $crate::Codec::read(input)?, )* })
             }
         }
@@ -598,7 +542,7 @@ macro_rules! tagged {
 
             fn read(
                 input: &mut $crate::Reader<'_>,
-            ) -> Result<Self, $crate::CodecError> {
+            ) -> Result<Self, $crate::Error> {
                 Ok(match input.get::<u8>()? {
                     $($tag => Self::$variant $(({
                         let $field = input.get()?;

@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use engine_core::Pyramid;
-use engine_terrain::Layers;
-use engine_terrain::layer::{LayerBake, TerrainLayer};
+use engine_heightfield::layer::{LayerBake, TerrainLayer};
+use engine_heightfield::{Layers, Pyramid};
 use glam::Vec2;
 
 use crate::TerrainPath;

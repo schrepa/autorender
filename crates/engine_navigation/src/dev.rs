@@ -1,19 +1,17 @@
-use bevy_ecs::prelude::{Entity, World};
-use bevy_ecs::world::Mut;
-use engine_core::{Error, Jobs, Operation, Slot, Transform, missing_brick};
-use engine_places::{Ground, GroundRead, GroundSlot};
-use engine_settings::{ErrorCode, InvalidSetting, Rule, Setting};
+use bevy_ecs::prelude::*;
+use engine_core::{Error, ErrorCode, Jobs, Operation, Records, SceneIds, Transform};
+use engine_places::ground::{Ground, GroundRead};
+use engine_places::navigation::{NavAgent, NavStatus, NavWalk};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{NavAgent, NavAgents, NavOptions, NavQuery, NavStats, NavStatus, NavWalk};
+use crate::{NavAgents, NavOptions, NavQuery, NavStats};
 
-const COORDINATE: Rule = Rule::Range(-1.0e6, 1.0e6);
+const COORDINATE: (f64, f64) = (-1.0e6, 1.0e6);
 const FIRST_AGENTS: usize = 16;
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct NavAgentView {
     pub agent: NavAgent,
     pub status: NavStatus,
@@ -26,7 +24,6 @@ pub struct NavAgentView {
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct NavAgentsView {
     pub agents: u32,
     pub searching: u32,
@@ -43,7 +40,6 @@ pub struct NavAgentsView {
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct NavAgentRow {
     pub id: Option<String>,
     pub status: NavStatus,
@@ -62,13 +58,11 @@ fn remaining(walk: &NavWalk, position: Vec3) -> f32 {
     left
 }
 
-pub(crate) fn agent_view(world: &World, entity: Entity, agent: &NavAgent) -> NavAgentView {
+fn agent_view(agent: &NavAgent, walk: Option<&NavWalk>, at: Option<&Transform>) -> NavAgentView {
     let agent = *agent;
     let still = NavWalk::default();
-    let walk = world.get::<NavWalk>(entity).unwrap_or(&still);
-    let position = world
-        .get::<Transform>(entity)
-        .map(|transform| transform.translation);
+    let walk = walk.unwrap_or(&still);
+    let position = at.map(|transform| transform.translation);
     NavAgentView {
         agent,
         status: walk.status,
@@ -81,44 +75,98 @@ pub(crate) fn agent_view(world: &World, entity: Entity, agent: &NavAgent) -> Nav
     }
 }
 
-pub(crate) fn agents_view(world: &World) -> Option<NavAgentsView> {
-    let navigation = world.get_resource::<NavAgents>()?;
-    let stats = world
-        .get_resource::<NavStats>()
-        .copied()
-        .unwrap_or_default();
-    let (failed_jobs, latest_job_failure) = navigation.job_failures();
-    let latest_job_failure = latest_job_failure.map(str::to_owned);
-    let mut query = world.try_query::<(Entity, &NavAgent, &NavWalk, &Transform)>()?;
-    let first = query
-        .iter(world)
-        .take(FIRST_AGENTS)
-        .map(|(entity, agent, walk, transform)| NavAgentRow {
-            id: engine_core::authored_id(world, entity),
-            status: walk.status,
-            position: transform.translation.to_array(),
-            destination: agent.destination,
-            left: remaining(walk, transform.translation),
-        })
-        .collect();
-    Some(NavAgentsView {
-        agents: stats.agents,
-        searching: stats.searching,
-        waiting: stats.waiting,
-        walking: stats.walking,
-        arrived: stats.arrived,
-        unreachable: stats.unreachable,
-        work: stats.work,
-        grounds: stats.grounds,
-        portals: stats.portals,
-        failed_jobs,
-        latest_job_failure,
-        first,
-    })
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NavAgentQuery {
+    pub entity: String,
+}
+
+impl Operation for NavAgentQuery {
+    const NAME: &'static str = "nav_agent";
+    type Params = (
+        Res<'static, SceneIds>,
+        Query<
+            'static,
+            'static,
+            (
+                &'static NavAgent,
+                Option<&'static NavWalk>,
+                Option<&'static Transform>,
+            ),
+        >,
+    );
+    type Request = Self;
+
+    fn run(
+        (ids, agents): SystemParamItem<'_, '_, Self::Params>,
+        Self { entity: id }: Self,
+    ) -> Result<Value, Error> {
+        let (agent, walk, at) = ids
+            .entity(&id)
+            .and_then(|entity| agents.get(entity).ok())
+            .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&id))?;
+        Ok(json!(agent_view(agent, walk, at)))
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct NavAgentsQuery {}
+
+impl Operation for NavAgentsQuery {
+    const NAME: &'static str = "nav_agents";
+    type Params = (
+        Res<'static, NavStats>,
+        Res<'static, NavAgents>,
+        Res<'static, SceneIds>,
+        Query<
+            'static,
+            'static,
+            (
+                Entity,
+                &'static NavAgent,
+                &'static NavWalk,
+                &'static Transform,
+            ),
+        >,
+    );
+    type Request = Self;
+
+    fn run(
+        (stats, navigation, ids, agents): SystemParamItem<'_, '_, Self::Params>,
+        _: Self,
+    ) -> Result<Value, Error> {
+        let (failed_jobs, latest_job_failure) = navigation.job_failures();
+        let latest_job_failure = latest_job_failure.map(str::to_owned);
+        let first = agents
+            .iter()
+            .take(FIRST_AGENTS)
+            .map(|(entity, agent, walk, transform)| NavAgentRow {
+                id: ids.id(entity).map(str::to_owned),
+                status: walk.status,
+                position: transform.translation.to_array(),
+                destination: agent.destination,
+                left: remaining(walk, transform.translation),
+            })
+            .collect();
+        Ok(json!(NavAgentsView {
+            agents: stats.agents,
+            searching: stats.searching,
+            waiting: stats.waiting,
+            walking: stats.walking,
+            arrived: stats.arrived,
+            unreachable: stats.unreachable,
+            work: stats.work,
+            grounds: stats.grounds,
+            portals: stats.portals,
+            failed_jobs,
+            latest_job_failure,
+            first,
+        }))
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NavGoControl {
     pub entity: String,
@@ -127,7 +175,6 @@ pub struct NavGoControl {
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct NavGoResult {
     pub temporary: bool,
     pub destination: Option<[f32; 2]>,
@@ -135,10 +182,16 @@ pub struct NavGoResult {
 
 impl Operation for NavGoControl {
     const NAME: &'static str = "nav_go";
-    const CONTROL: bool = true;
+    type Params = (
+        Res<'static, SceneIds>,
+        Query<'static, 'static, &'static mut NavAgent>,
+    );
     type Request = Self;
 
-    fn run(world: &mut World, request: Self) -> Result<Value, Error> {
+    fn run(
+        (ids, mut agents): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
         let Self {
             entity: id,
             destination,
@@ -152,38 +205,33 @@ impl Operation for NavGoControl {
                 .range(-1.0e6, 1.0e6)
                 .got(destination));
         }
-        let entity = engine_core::authored_entity(world, &id)
-            .filter(|&entity| world.get::<NavAgent>(entity).is_some())
+        let mut agent = ids
+            .entity(&id)
+            .and_then(|entity| agents.get_mut(entity).ok())
             .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&id))?;
-        let mut agent = world.get_mut::<NavAgent>(entity).expect("agent_found");
         agent.destination = destination;
         Ok(json!(NavGoResult {
             temporary: true,
             destination,
         }))
     }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(NavGoControl)
-    }
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(untagged)]
 pub enum GroundKey {
     Authored(String),
     Entity(u64),
 }
 
-fn ground_key(world: &World, entity: Entity) -> GroundKey {
-    engine_core::authored_id(world, entity)
-        .map_or_else(|| GroundKey::Entity(entity.to_bits()), GroundKey::Authored)
+fn ground_key(ids: &SceneIds, entity: Entity) -> GroundKey {
+    ids.id(entity).map_or_else(
+        || GroundKey::Entity(entity.to_bits()),
+        |id| GroundKey::Authored(id.to_owned()),
+    )
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct NavPathResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terrain: Option<GroundKey>,
@@ -193,7 +241,6 @@ pub struct NavPathResult {
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct WalkResult {
     pub points: Vec<[f64; 3]>,
     pub length: f32,
@@ -202,7 +249,6 @@ pub struct WalkResult {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct NavPathQuery {
     pub from: [f64; 2],
@@ -213,36 +259,41 @@ pub struct NavPathQuery {
 
 impl Operation for NavPathQuery {
     const NAME: &'static str = "nav_path";
-    const CONTROL: bool = false;
+    type Params = (
+        Res<'static, Ground>,
+        Res<'static, Records>,
+        Res<'static, SceneIds>,
+        ResMut<'static, NavAgents>,
+        Jobs<'static, 'static>,
+    );
     type Request = Self;
 
-    fn run(world: &mut World, request: Self) -> Result<Value, Error> {
-        walk(world, request)
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(NavPathQuery)
+    fn run(
+        (ground, records, ids, mut navigation, mut jobs): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
+        walk(
+            (&*ground, &*records, &*ids),
+            (&mut *navigation, &mut jobs),
+            request,
+        )
     }
 }
 
 fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
-    match value.check("value", COORDINATE) {
-        Ok(()) => Ok(value as f32),
-        Err(invalid) => Err(out_of_range(invalid, path)),
-    }
-}
-
-fn out_of_range(invalid: InvalidSetting, path: &str) -> Error {
-    Error {
-        code: ErrorCode::OutOfRange,
-        path: path.to_owned(),
-        ..Error::from(invalid)
+    let (low, high) = COORDINATE;
+    if (low..=high).contains(&value) {
+        Ok(value as f32)
+    } else {
+        Err(Error::new(ErrorCode::OutOfRange, path)
+            .range(low, high)
+            .got(value))
     }
 }
 
 fn walk(
-    world: &mut World,
+    (ground, records, ids): (&Ground, &Records, &SceneIds),
+    (navigation, jobs): (&mut NavAgents, &mut Jobs),
     NavPathQuery { from, to, options }: NavPathQuery,
 ) -> Result<Value, Error> {
     let from = Vec2::new(
@@ -251,27 +302,15 @@ fn walk(
     );
     let to = Vec2::new(coordinate(to[0], "$.to[0]")?, coordinate(to[1], "$.to[1]")?);
     let options = options.unwrap_or_default();
-    options.validate().map_err(|invalid| Error {
-        code: ErrorCode::OutOfRange,
-        ..Error::from(invalid).within("$.options")
-    })?;
-    let ground = world
-        .get_resource::<Ground>()
-        .cloned()
-        .ok_or_else(|| missing_brick(GroundSlot::NAME, "$.op"))?;
-    if !world.contains_resource::<NavAgents>() || !world.contains_resource::<Jobs>() {
-        return Err(missing_brick("navigation", "$.op"));
-    }
-    let terrain = match ground.face().source(world, from, to) {
-        GroundRead::Ready(source) => Some(ground_key(world, source.ground)),
+    options
+        .validate()
+        .map_err(|error| error.within("$.options"))?;
+    let terrain = match ground.0.source(from, to) {
+        GroundRead::Ready(source) => Some(ground_key(ids, source.ground)),
         GroundRead::Waiting => None,
-        GroundRead::Off => return Err(Error::new(ErrorCode::UnknownTerrain, "$")),
+        GroundRead::Off => return Err(Error::new(ErrorCode::UnknownValue, "$")),
     };
-    let found = world.resource_scope(|world, mut navigation: Mut<NavAgents>| {
-        world.resource_scope(|world, mut jobs: Mut<Jobs>| {
-            navigation.query(world, &mut jobs, (from, to), &options)
-        })
-    });
+    let found = navigation.query(ground, (records, jobs), (from, to), &options);
     let round = |value: f32| (f64::from(value) * 100.0).round() / 100.0;
     Ok(json!(NavPathResult {
         terrain,

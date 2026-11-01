@@ -29,7 +29,7 @@ pub(super) fn set(
             overlay(&mut section, value.clone());
             merged.insert(key.clone(), section);
         }
-        engine_scene::parse_json::<engine_scene::SceneEnvironment>(
+        engine_settings::parse_json::<engine_scene::SceneEnvironment>(
             &Value::Object(merged).to_string(),
         )?
     } else {

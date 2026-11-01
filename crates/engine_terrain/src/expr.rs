@@ -1,15 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::layer::LayerKind;
 use crate::surface::{Facing, NoiseMask};
 
-pub use crate::expr_layer::{EXPRESSION, ExpressionLayer, ExpressionSettings};
+pub use crate::expr_layer::{EXPRESSION, ExpressionLayer, ExpressionSettings, expression_kind};
 
 pub const MAX_EXPR_DEPTH: usize = 8;
 pub const MAX_EXPR_LIST: usize = 16;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Expr {
     Constant(f32),
@@ -25,8 +23,7 @@ pub enum Expr {
     Invert(Box<Expr>),
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Ramp {
     pub map: String,
@@ -34,8 +31,7 @@ pub struct Ramp {
     pub to: f32,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Remap {
     pub of: Box<Expr>,
@@ -49,9 +45,7 @@ impl Expr {
     }
 }
 
-impl engine_settings::Setting for Expr {}
-
-pub static KINDS: &[&LayerKind] = &[&EXPRESSION];
+impl engine_core::Setting for Expr {}
 
 crate::codec::tagged!(Expr {
     0 => Constant(value),

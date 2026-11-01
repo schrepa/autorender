@@ -1,15 +1,11 @@
-use std::sync::OnceLock;
-
 use engine_math::max;
 
-use crate::steady_water::{f16_bits, f16_value};
-use crate::tile_water::WaterMesh;
 use crate::{TILE_QUADS, TILE_STRIDE};
 
 pub const ERROR_MIPS: u32 = TILE_QUADS.trailing_zeros();
 pub const ERROR_CELLS: u32 = TILE_QUADS / 2;
 pub const ERROR_TEXELS: usize = (4_usize.pow(ERROR_MIPS) - 1) / 3;
-pub const DRY_CELL: f32 = -1.0;
+const DRY_CELL: f32 = -1.0;
 const LARGEST_HALF: f32 = 65504.0;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,22 +18,14 @@ impl ErrorPyramid {
         Self::over(heights, None)
     }
 
-    pub(crate) fn water(mesh: &WaterMesh) -> Self {
-        let holding: Vec<bool> = (0..mesh.levels().len()).map(|at| mesh.holds(at)).collect();
-        Self::over(mesh.levels(), Some(&holding[..]))
-    }
-
-    pub fn dry() -> &'static Self {
-        static DRY: OnceLock<ErrorPyramid> = OnceLock::new();
-        DRY.get_or_init(|| ErrorPyramid {
-            halves: vec![half_up(DRY_CELL); ERROR_TEXELS].into_boxed_slice(),
-        })
-    }
-
     pub fn mip(&self, mip: u32) -> &[u16] {
         let side = |level: u32| (ERROR_CELLS >> level) as usize;
         let start: usize = (0..mip).map(|finer| side(finer) * side(finer)).sum();
         &self.halves[start..start + side(mip) * side(mip)]
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = f32> + '_ {
+        self.halves.iter().map(|&bits| f16_value(bits))
     }
 
     fn over(values: &[f32], holding: Option<&[bool]>) -> Self {
@@ -138,4 +126,40 @@ fn half_up(value: f32) -> u16 {
     } else {
         bits
     }
+}
+
+fn f16_bits(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let biased = (bits >> 23) & 0xff;
+    let mantissa = bits & 0x7f_ffff;
+    if biased == 0xff {
+        return sign | 0x7c00 | if mantissa == 0 { 0 } else { 0x200 };
+    }
+    let exponent = biased as i32 - 127 + 15;
+    let (kept, whole, shift) = if exponent > 0 {
+        (((exponent as u32) << 10) | (mantissa >> 13), mantissa, 13)
+    } else if exponent >= -10 {
+        let whole = mantissa | 0x80_0000;
+        let shift = (14 - exponent) as u32;
+        (whole >> shift, whole, shift)
+    } else {
+        return sign;
+    };
+    let rest = whole & ((1 << shift) - 1);
+    let halfway = 1 << (shift - 1);
+    let rounded = kept + u32::from(rest > halfway || (rest == halfway && (kept & 1) == 1));
+    sign | rounded.min(0x7bff) as u16
+}
+
+fn f16_value(bits: u16) -> f32 {
+    let sign = u32::from(bits & 0x8000) << 16;
+    let exponent = u32::from((bits >> 10) & 0x1f);
+    let mantissa = u32::from(bits & 0x3ff);
+    let magnitude = match exponent {
+        0 => (f32::from(bits & 0x3ff) / 16_777_216.0).to_bits(),
+        0x1f => 0x7f80_0000 | (mantissa << 13),
+        _ => ((exponent + 112) << 23) | (mantissa << 13),
+    };
+    f32::from_bits(sign | magnitude)
 }

@@ -1,19 +1,52 @@
+use std::hash::{BuildHasher, Hasher};
 use std::sync::Arc;
 
-use bevy_ecs::entity::{Entity, EntityHashMap};
-use engine_collision::{CollisionLayers, CollisionWorld, Solid};
-use engine_core::TileKey;
+use bevy_ecs::prelude::Entity;
 use engine_core::collections::HashMap;
+use engine_places::ground::TileKey;
+use engine_places::physics::CollisionLayers;
 use glam::Vec3;
 use parry3d::shape::Shape;
 use rapier3d::prelude as rp;
 
 use crate::shapes::solid_shape;
+use crate::solids::{Solid, Solids};
 use crate::solver::Solver;
 
 const SLACK: f32 = 8.0;
 const GROUND_FRICTION: f32 = 0.8;
 const SOLID_FRICTION: f32 = 0.7;
+const UPPER_PHI: u64 = 0x9e37_79b9_0000_0001;
+
+#[derive(Clone, Copy, Default)]
+struct EntityHash;
+
+impl BuildHasher for EntityHash {
+    type Hasher = EntityHasher;
+
+    fn build_hasher(&self) -> EntityHasher {
+        EntityHasher::default()
+    }
+}
+
+#[derive(Default)]
+struct EntityHasher {
+    hash: u64,
+}
+
+impl Hasher for EntityHasher {
+    fn finish(&self) -> u64 {
+        self.hash
+    }
+
+    fn write(&mut self, _: &[u8]) {
+        unreachable!("entity_hasher_takes_u64");
+    }
+
+    fn write_u64(&mut self, bits: u64) {
+        self.hash = bits.wrapping_mul(UPPER_PHI);
+    }
+}
 
 struct Ground {
     terrain: Entity,
@@ -46,7 +79,7 @@ pub(crate) struct Statics {
     ground: Vec<Ground>,
     ground_revision: Option<u64>,
     placed: HashMap<PlacedKey, rp::ColliderHandle>,
-    colliders: EntityHashMap<Mirror>,
+    colliders: hashbrown::HashMap<Entity, Mirror, EntityHash>,
     reach: Option<(Vec3, Vec3)>,
     pass: u64,
 }
@@ -71,15 +104,15 @@ impl Statics {
     pub fn sync(
         &mut self,
         solver: &mut Solver,
-        collision: &CollisionWorld,
+        solids: &Solids,
         bodies: Option<(Vec3, Vec3)>,
         is_body: impl Fn(Entity) -> bool,
     ) {
-        let revision = collision.ground_revision();
+        let revision = Some(solids.ground_revision());
         let regrounded = revision != self.ground_revision;
         if regrounded {
             self.ground_revision = revision;
-            self.sync_ground(solver, collision);
+            self.sync_ground(solver, solids);
         }
         let Some((min, max)) = bodies else {
             self.forget_near(solver);
@@ -91,25 +124,25 @@ impl Statics {
         if !inside || regrounded {
             let reach = (min - Vec3::splat(SLACK), max + Vec3::splat(SLACK));
             self.reach = Some(reach);
-            self.sync_placed(solver, collision, reach);
+            self.sync_placed(solver, solids, reach);
         }
         if let Some(reach) = self.reach {
-            self.sync_colliders(solver, collision, reach, is_body);
+            self.sync_colliders(solver, solids, reach, is_body);
         }
     }
 
-    fn sync_ground(&mut self, solver: &mut Solver, collision: &CollisionWorld) {
+    fn sync_ground(&mut self, solver: &mut Solver, solids: &Solids) {
         let mut kept = std::mem::take(&mut self.ground);
-        for solid in collision.ground_solids() {
+        for solid in solids.ground() {
             if let Some(index) = kept.iter().position(|ground| {
                 ground.terrain == solid.terrain
                     && ground.key == solid.key
-                    && Arc::ptr_eq(&ground.field, solid.field)
+                    && Arc::ptr_eq(&ground.field, &solid.shape)
             }) {
                 self.ground.push(kept.swap_remove(index));
                 continue;
             }
-            let field: Arc<dyn Shape> = solid.field.clone();
+            let field: Arc<dyn Shape> = solid.shape.clone();
             let handle = solver.add_solid(
                 fixed(
                     rp::SharedShape(field),
@@ -121,7 +154,7 @@ impl Statics {
             self.ground.push(Ground {
                 terrain: solid.terrain,
                 key: solid.key,
-                field: solid.field.clone(),
+                field: solid.shape.clone(),
                 min: solid.min,
                 max: solid.max,
                 handle,
@@ -132,14 +165,9 @@ impl Statics {
         }
     }
 
-    fn sync_placed(
-        &mut self,
-        solver: &mut Solver,
-        collision: &CollisionWorld,
-        reach: (Vec3, Vec3),
-    ) {
+    fn sync_placed(&mut self, solver: &mut Solver, solids: &Solids, reach: (Vec3, Vec3)) {
         let mut wanted: HashMap<PlacedKey, Solid> = HashMap::default();
-        for placed in collision.placed_solids_in(reach.0, reach.1) {
+        for placed in solids.placed_in(reach.0, reach.1) {
             let center = placed.solid.center.to_array().map(f32::to_bits);
             wanted.insert(
                 (placed.terrain, placed.part.layer, placed.part.asset, center),
@@ -164,13 +192,13 @@ impl Statics {
     fn sync_colliders(
         &mut self,
         solver: &mut Solver,
-        collision: &CollisionWorld,
+        solids: &Solids,
         reach: (Vec3, Vec3),
         is_body: impl Fn(Entity) -> bool,
     ) {
         self.pass += 1;
         let pass = self.pass;
-        for found in collision.collider_solids_in(reach.0, reach.1) {
+        for found in solids.colliders_in(reach.0, reach.1) {
             if is_body(found.entity) {
                 continue;
             }

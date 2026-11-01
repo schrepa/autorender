@@ -12,10 +12,6 @@ crate-type = ["cdylib", "rlib"]
 name = "engine-player-native"
 path = "src/main.rs"
 
-[[bin]]
-name = "schema"
-required-features = ["schema"]
-
 [package.metadata.engine]
 kind = "app"
 page = "player.html"
@@ -26,16 +22,12 @@ native = "engine-player-native"
 default = []
 dev = ["engine/dev", "engine_native/dev"]
 profiling = ["engine/profiling", "engine_native/profiling"]
-schema = ["dep:schemars", "engine/schema"]
-
-[build-dependencies]
-engine_sources.workspace = true
 
 [dependencies]
 engine.workspace = true
-serde.workspace = true
+engine_core.workspace = true
+engine_player_bricks.workspace = true
 serde_json.workspace = true
-schemars = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 engine_native.workspace = true

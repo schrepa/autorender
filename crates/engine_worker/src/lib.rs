@@ -3,11 +3,10 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-use std::any::TypeId;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use engine_core::{Brick, Job, JobCx, JobKind, Listing, PlaceDecl};
+use engine_core::{BrickList, Job, JobCx, JobKind, JobRef, RecordKey};
 use engine_registry::{JobList, Shares};
 use engine_settings::{Error, ErrorCode, Expected};
 
@@ -27,49 +26,30 @@ pub use pack::{
 pub const SLICE_MS: f64 = 8.0;
 pub const STEP_UNITS: u64 = 4096;
 
-#[derive(Default)]
-pub struct JobListing {
-    bricks: Vec<(TypeId, &'static [&'static JobKind])>,
+pub fn job_list(list: impl FnOnce(BrickList) -> BrickList) -> Result<JobList, Error> {
+    let listed = list(BrickList::default());
+    let kinds: Vec<&'static JobKind> = listed
+        .listed()
+        .iter()
+        .flat_map(|brick| brick.jobs().iter().copied())
+        .collect();
+    engine_core::job_list(&kinds)
 }
 
-impl Listing for JobListing {
-    fn with<B: Brick>(mut self) -> Self {
-        let brick = TypeId::of::<B>();
-        if !self.bricks.iter().any(|(listed, _)| *listed == brick) {
-            self.bricks.push((brick, B::JOBS));
-        }
-        self
-    }
-
-    fn without<B: Brick>(mut self) -> Self {
-        let brick = TypeId::of::<B>();
-        self.bricks.retain(|(listed, _)| *listed != brick);
-        self
-    }
-
-    fn places(self, _: &'static [PlaceDecl]) -> Self {
-        self
-    }
-}
-
-impl JobListing {
-    pub fn list(list: impl FnOnce(Self) -> Self) -> Result<JobList, Error> {
-        let listed = list(Self::default());
-        let kinds: Vec<&'static JobKind> = listed
-            .bricks
-            .iter()
-            .flat_map(|(_, jobs)| jobs.iter().copied())
-            .collect();
-        engine_core::job_list(&kinds)
-    }
-}
-
-pub fn share_key(hex: &str) -> Result<[u8; 32], Error> {
+fn hex_key(hex: &str, path: &str) -> Result<[u8; 32], Error> {
     key_from_hex(hex).ok_or_else(|| {
-        Error::new(ErrorCode::InvalidId, "$.key")
+        Error::new(ErrorCode::InvalidId, path)
             .expected(Expected::Id)
             .got(hex)
     })
+}
+
+pub fn share_key(hex: &str) -> Result<RecordKey, Error> {
+    hex_key(hex, "$.key").map(RecordKey::from_hash)
+}
+
+pub fn job_ref(name: &str, source: &str) -> Result<JobRef, Error> {
+    Ok(JobRef::named(name, hex_key(source, "$.source")?))
 }
 
 #[derive(Debug, PartialEq)]
@@ -91,7 +71,7 @@ impl Shares for Shared {
 
 struct Held {
     id: u64,
-    kind: Box<str>,
+    kind: JobRef,
     input: Vec<u8>,
     priority: u32,
     job: Option<Box<dyn Job>>,
@@ -129,12 +109,12 @@ impl Worker {
             .got(pack::hex(hash)))
     }
 
-    pub fn share(&mut self, key: [u8; 32], bytes: impl Into<Arc<[u8]>>) {
-        self.shares.bytes.insert(key, bytes.into());
+    pub fn share(&mut self, key: RecordKey, bytes: impl Into<Arc<[u8]>>) {
+        self.shares.bytes.insert(key.hash(), bytes.into());
     }
 
-    pub fn unshare(&mut self, key: [u8; 32]) {
-        self.shares.bytes.remove(&key);
+    pub fn unshare(&mut self, key: RecordKey) {
+        self.shares.bytes.remove(&key.hash());
     }
 
     pub fn clear(&mut self) {
@@ -143,10 +123,10 @@ impl Worker {
         self.stepped.clear();
     }
 
-    pub fn hold(&mut self, id: u64, kind: &str, input: Vec<u8>, priority: u32) {
+    pub fn hold(&mut self, id: u64, kind: JobRef, input: Vec<u8>, priority: u32) {
         self.held.push(Held {
             id,
-            kind: kind.into(),
+            kind,
             input,
             priority,
             job: None,
@@ -168,7 +148,7 @@ impl Worker {
         let id = self.held[at].id;
         let stepped = {
             let mut cx = JobCx::new(&self.list, &self.shares);
-            sliced(&mut self.held[at], &self.list, &mut cx, self.clock)
+            sliced(&mut self.held[at], &mut cx, self.clock)
         };
         match stepped {
             Ok(Some(output)) => {
@@ -183,9 +163,9 @@ impl Worker {
         }
     }
 
-    pub fn run(&self, kind: &str, input: &[u8]) -> Result<Vec<u8>, Error> {
+    pub fn run(&self, kind: &JobRef, input: &[u8]) -> Result<Vec<u8>, Error> {
         let mut cx = JobCx::new(&self.list, &self.shares);
-        let mut job = begin(&self.list, kind, input, &mut cx)?;
+        let mut job = cx.start(kind, input)?;
         loop {
             if let Some(output) = job.step(u64::MAX, &mut cx)? {
                 return Ok(output);
@@ -193,10 +173,10 @@ impl Worker {
         }
     }
 
-    pub fn start(&mut self, id: u64, kind: &str, input: &[u8]) -> Result<(), Error> {
+    pub fn start(&mut self, id: u64, kind: &JobRef, input: &[u8]) -> Result<(), Error> {
         let job = {
             let mut cx = JobCx::new(&self.list, &self.shares);
-            begin(&self.list, kind, input, &mut cx)?
+            cx.start(kind, input)?
         };
         self.stepped.push((id, job));
         Ok(())
@@ -222,27 +202,14 @@ impl Worker {
     }
 }
 
-fn begin(
-    list: &JobList,
-    kind: &str,
-    input: &[u8],
-    cx: &mut JobCx<'_>,
-) -> Result<Box<dyn Job>, Error> {
-    let listed = list
-        .named(kind)
-        .ok_or_else(|| Error::new(ErrorCode::UnknownValue, "$.kind").got(kind))?;
-    cx.start(&listed, input)
-}
-
 fn sliced(
     held: &mut Held,
-    list: &JobList,
     cx: &mut JobCx<'_>,
     clock: fn() -> f64,
 ) -> Result<Option<Vec<u8>>, Error> {
     let mut job = match held.job.take() {
         Some(job) => job,
-        None => begin(list, &held.kind, &held.input, cx)?,
+        None => cx.start(&held.kind, &held.input)?,
     };
     let start = clock();
     loop {
@@ -270,8 +237,11 @@ pub fn now_ms() -> f64 {
 pub mod __private {
     #[cfg(target_arch = "wasm32")]
     pub use crate::browser::{image, report};
+    pub use engine_core::BrickList;
     #[cfg(target_arch = "wasm32")]
     pub use engine_panic::install;
+    #[cfg(target_arch = "wasm32")]
+    pub use engine_settings::js_error;
     #[cfg(target_arch = "wasm32")]
     pub use js_sys::wasm_bindgen::{self, JsValue, prelude::wasm_bindgen as bindgen};
 }
@@ -288,7 +258,8 @@ macro_rules! export_worker {
 #[macro_export]
 macro_rules! __export_worker {
     ($list:path) => {
-        const _: fn($crate::JobListing) -> $crate::JobListing = |list| $list(list);
+        const _: fn($crate::__private::BrickList) -> $crate::__private::BrickList =
+            |list| $list(list);
     };
 }
 
@@ -313,9 +284,10 @@ macro_rules! __export_worker {
             #[wasm_bindgen(constructor)]
             pub fn new(hash: &[u8]) -> Result<JobWorker, $crate::__private::JsValue> {
                 $crate::__private::install();
-                let list = $crate::JobListing::list(|list| $list(list))?;
+                let list =
+                    $crate::job_list(|list| $list(list)).map_err($crate::__private::js_error)?;
                 let worker = $crate::Worker::new(::std::sync::Arc::new(list), performance_now);
-                worker.handshake(hash)?;
+                worker.handshake(hash).map_err($crate::__private::js_error)?;
                 Ok(Self { worker })
             }
 
@@ -324,7 +296,8 @@ macro_rules! __export_worker {
                 key: &str,
                 bytes: &[u8],
             ) -> Result<(), $crate::__private::JsValue> {
-                self.worker.share($crate::share_key(key)?, bytes);
+                let key = $crate::share_key(key).map_err($crate::__private::js_error)?;
+                self.worker.share(key, bytes);
                 Ok(())
             }
 
@@ -338,8 +311,17 @@ macro_rules! __export_worker {
                 self.worker.clear();
             }
 
-            pub fn hold(&mut self, id: f64, kind: &str, input: Vec<u8>, priority: u32) {
+            pub fn hold(
+                &mut self,
+                id: f64,
+                kind: &str,
+                source: &str,
+                input: Vec<u8>,
+                priority: u32,
+            ) -> Result<(), $crate::__private::JsValue> {
+                let kind = $crate::job_ref(kind, source).map_err($crate::__private::js_error)?;
                 self.worker.hold(id as u64, kind, input, priority);
+                Ok(())
             }
 
             pub fn busy(&self) -> bool {
@@ -359,7 +341,7 @@ macro_rules! __export_worker {
                 stored: &[u8],
                 raw: u32,
             ) -> Result<Vec<u8>, $crate::__private::JsValue> {
-                Ok($crate::unpack_bytes(stored, raw)?)
+                $crate::unpack_bytes(stored, raw).map_err($crate::__private::js_error)
             }
 
             pub fn decode_image(
@@ -367,7 +349,8 @@ macro_rules! __export_worker {
                 uri: &str,
                 bytes: &[u8],
             ) -> Result<$crate::__private::JsValue, $crate::__private::JsValue> {
-                let image = $crate::decode_image(uri, bytes)?;
+                let image =
+                    $crate::decode_image(uri, bytes).map_err($crate::__private::js_error)?;
                 Ok($crate::__private::image(&image))
             }
         }
@@ -384,12 +367,14 @@ macro_rules! __export_worker {
                 header: &[u8],
                 directory: &[u8],
             ) -> Result<PackDirectory, $crate::__private::JsValue> {
-                let index = $crate::PackIndex::open(header, directory)?;
+                let index = $crate::PackIndex::open(header, directory)
+                    .map_err($crate::__private::js_error)?;
                 Ok(Self { index })
             }
 
             pub fn locate(header: &[u8]) -> Result<Vec<f64>, $crate::__private::JsValue> {
-                let (offset, stored, raw) = $crate::pack_directory(header)?;
+                let (offset, stored, raw) =
+                    $crate::pack_directory(header).map_err($crate::__private::js_error)?;
                 Ok(vec![offset as f64, stored as f64, raw as f64])
             }
 
@@ -411,8 +396,8 @@ macro_rules! __export_worker {
                 let entry = self
                     .index
                     .find(key)
-                    .ok_or_else(|| $crate::__pack_missing(key))?;
-                Ok($crate::unpack(&entry, stored)?)
+                    .ok_or_else(|| $crate::__private::js_error($crate::__pack_missing(key)))?;
+                $crate::unpack(&entry, stored).map_err($crate::__private::js_error)
             }
 
             pub fn records(&self) -> u32 {

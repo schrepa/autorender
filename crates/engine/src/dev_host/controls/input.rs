@@ -33,11 +33,12 @@ pub(super) fn step(
     (width, height): (u32, u32),
 ) -> Result<Value, Error> {
     engine_core::check_dev_ticks(ticks)?;
-    app.engine
+    let held = (host.input.held, host.input.pressed, host.input.released);
+    let _ = app
+        .engine
         .app
         .world_mut()
-        .resource_mut::<ActionInput>()
-        .ingest(host.input.held, host.input.pressed, host.input.released);
+        .modify_resource(|actions: &mut ActionInput| actions.ingest(held.0, held.1, held.2));
     let input = InputState {
         move_forward: host.input.forward,
         move_right: host.input.right,

@@ -5,7 +5,7 @@ const COOK_VIEW_HEIGHT: f32 = 2160.0;
 pub(super) struct CookTiles {
     keys: Vec<TileKey>,
     next: usize,
-    flight: TileMap<JobId>,
+    flight: TileMap<Ticket>,
 }
 
 impl CookTiles {
@@ -17,22 +17,25 @@ impl CookTiles {
         }
     }
 
-    pub(super) fn asked(&self) -> Vec<JobId> {
-        self.flight.iter().map(|(_, &id)| id).collect()
+    pub(super) fn asked(self) -> Vec<Ticket> {
+        self.flight.into_values()
     }
 
-    fn take(&mut self, kind: &str, jobs: &mut Jobs, (failures, frame): (&mut JobFailures, u64)) {
-        for (key, id) in self
-            .flight
-            .iter()
-            .map(|(key, &id)| (key, id))
-            .collect::<Vec<_>>()
-        {
-            if let Some(output) = jobs.take(id) {
-                self.flight.remove(&key);
-                if let Err(error) = job_output(kind, output, |_| Ok::<_, String>(())) {
-                    failures.record(frame, error);
-                }
+    fn take(
+        &mut self,
+        kind: &str,
+        asking: &mut Asking<'_, '_, '_>,
+        (failures, frame): (&mut JobFailures, u64),
+    ) {
+        for key in self.flight.keys() {
+            let Some(output) = self.flight.get(&key).and_then(|ticket| asking.take(ticket)) else {
+                continue;
+            };
+            if let Some(ticket) = self.flight.remove(&key) {
+                asking.jobs.cancel(ticket);
+            }
+            if let Err(error) = job_output(kind, output, |_| Ok::<_, Error>(())) {
+                failures.record(frame, error);
             }
         }
     }
@@ -46,78 +49,42 @@ impl Terrains {
     pub(crate) fn cook(
         &mut self,
         settings: &TerrainSettings,
-        water: &Water,
-        jobs: &mut Jobs,
-        cooking: &mut Cooking,
-    ) {
+        asking: &mut Asking<'_, '_, '_>,
+    ) -> u32 {
         self.frame += 1;
         let frame = self.frame;
         self.sync_surroundings();
-        let mut slots = JobBudget::of(jobs);
-        let mut released = Vec::new();
-        let (mut left, mut water_left) = (0, 0);
+        let mut left = 0;
         for state in &mut self.entries {
-            let streams = state.around.is_none() || settings.surroundings;
-            if streams && lit(settings) && state.terrain.validate().is_ok() {
-                left += u64::from(state.whole.lighting.left());
-            }
-            if state.around.is_none() && bounces(settings) && state.terrain.validate().is_ok() {
-                left += u64::from(state.whole.bounce.left());
-            }
-            if streams && settings.enabled && state.terrain.validate().is_ok() {
-                left += u64::from(state.whole.colors.left());
-            }
             let authored = state.terrain.layers.clone();
             if state.terrain.validate().is_err() {
                 continue;
             }
             state.update_materials(settings.gpu_materials);
-            if bake(state, &authored, &mut slots, frame) {
+            if bake(state, &authored, asking, frame) {
                 left += 1;
                 continue;
             }
-            share_recipe(state, slots.jobs, &mut self.stacks, &mut released);
-            let Some(recipe) = state.recipe.as_ref().map(|recipe| recipe.key.clone()) else {
+            share_recipe(state, asking.jobs, &mut self.stacks);
+            let Some(recipe) = state.recipe.as_ref().map(|recipe| recipe.key) else {
                 continue;
             };
             let mut cook = state
                 .cook
                 .take()
                 .unwrap_or_else(|| CookTiles::of(cooked_tiles(state, settings)));
-            cook.take(
-                TileJob::KIND.name(),
-                slots.jobs,
-                (&mut state.failures, frame),
-            );
+            cook.take("terrain::tile", asking, (&mut state.failures, frame));
             while let Some(&key) = cook.keys.get(cook.next) {
                 let priority = job_priority(VIEW_JOBS, cook.next as u32);
-                if !slots.take(priority) {
-                    break;
-                }
-                let (job, record) = state.tile_record(&recipe, key);
-                let id = slots.jobs.submit_record(
-                    TileJob::KIND.name(),
-                    job.identity(),
-                    priority,
-                    record,
-                );
-                cook.flight.insert(key, id);
+                let job = state.tile_job(recipe, key);
+                let ticket = asking.jobs.fetch(&TILE_BUILD, &job.identity(), priority);
+                cook.flight.insert(key, ticket);
                 cook.next += 1;
             }
             left += cook.left();
             state.cook = Some(cook);
-            if state.around.is_none() {
-                state.shading.cooking = true;
-                left += state.shading.left();
-            }
-            let watering = water.enabled && state.around.is_none();
-            if watering {
-                state.settled.cooking = true;
-                water_left += state.settled.left();
-            }
         }
-        cooking.left("terrain", left);
-        cooking.left("water", water_left);
+        u32::try_from(left).unwrap_or(u32::MAX)
     }
 }
 
@@ -127,7 +94,7 @@ fn cooked_tiles(state: &TerrainState, settings: &TerrainSettings) -> Vec<TileKey
         &pyramid,
         settings.pixel_error,
         COOK_VIEW_HEIGHT,
-        Camera::default().vertical_fov_radians,
+        vertical_fov(&Camera::default()),
     );
     let mut keys = Vec::new();
     for level in (0..pyramid.levels()).rev() {

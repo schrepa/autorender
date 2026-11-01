@@ -1,39 +1,35 @@
-#![deny(
-    clippy::wildcard_enum_match_arm,
-    clippy::match_wildcard_for_single_variants
-)]
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-use engine_core::{Brick, Bricks, DetailConsumer, DetailConsumersList, Fill, Join};
-use engine_faces::places::{CoverSlot, GroundCoverList};
-use engine_render::render_bricks::AddRenderParts;
-use engine_terrain::GroundCover;
+mod covers;
+mod growth;
+mod layouts;
+mod part;
+mod settings;
 
-mod bindings;
-pub mod gpu_layouts;
-mod ground_cover;
-pub mod pipeline_layouts;
-mod runtime {
-    mod ground_cover;
-}
-pub mod shaders;
+use engine_core::{Brick, Bricks, Schedule, Source};
+use engine_places::ground::{Cover, FarCover};
+use engine_render::{Layer, MainView, RenderBricks};
+
+pub use settings::{CoverLook, GroundCover, GroundCoverStats};
 
 pub struct GroundCoverBrick;
 
 impl Brick for GroundCoverBrick {
+    const SOURCE: &'static Source = &SOURCE;
+
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .join(Join::<GroundCoverList>::new())
-            .fill(Fill::<CoverSlot>::new().wgsl("cover::faces::cover"))
             .settings::<GroundCover>()
-            .join(Join::<DetailConsumersList>::new().cpu(DetailConsumer {
-                name: "blades",
-                setting: "ground_cover.max_blades",
-                stat: "ground_cover.blade_cut",
-            }))
-            .render_part(&ground_cover::PART)
-            .shaders(shaders::MODULES)
-            .places(engine_faces::places::PLACES)
-            .pipeline_layouts(pipeline_layouts::PIPELINE_LAYOUTS)
-            .mirrors(gpu_layouts::LAYOUTS, gpu_layouts::DECLARED);
+            .stats::<GroundCoverStats>()
+            .resource::<covers::CoverTable>()
+            .resource::<growth::CoverPlan>()
+            .resource::<growth::BladeCounts>()
+            .fill::<Cover>(Some(shaders::cover::faces::cover::MODULE))
+            .join::<FarCover>((), Some(shaders::cover::faces::far::MODULE))
+            .systems(
+                Schedule::ViewSync,
+                (covers::write_covers, growth::plan_cover, growth::cover_stats),
+            )
+            .draws::<part::CoverGpu, MainView>(Layer::Late, part::CoverGpu::draw);
     }
 }

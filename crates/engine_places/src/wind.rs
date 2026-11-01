@@ -3,19 +3,23 @@ use engine_math::sin;
 use engine_place::Slot;
 use glam::Vec2;
 
-pub const GUST_SLOW_SHARE: f32 = 0.6;
-pub const GUST_SLOW_RATE: f32 = 0.9;
-pub const GUST_SLOW_TRAVEL: f32 = 0.05;
-pub const GUST_QUICK_SHARE: f32 = 0.4;
-pub const GUST_QUICK_RATE: f32 = 2.3;
-pub const GUST_QUICK_TRAVEL: f32 = 0.17;
-pub const GUST_QUICK_ACROSS: f32 = 0.31;
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GustWaves {
+    pub slow_share: f32,
+    pub slow_rate: f32,
+    pub slow_travel: f32,
+    pub quick_share: f32,
+    pub quick_rate: f32,
+    pub quick_travel: f32,
+    pub quick_across: f32,
+}
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Wind {
     pub velocity: [f32; 2],
     pub gusts: f32,
     pub clock: f32,
+    pub waves: GustWaves,
 }
 
 impl Wind {
@@ -27,12 +31,13 @@ impl Wind {
         }
         let toward = velocity / speed;
         let travel = x * toward.x + z * toward.y;
+        let waves = self.waves;
         let gust = 1.0
             + self.gusts
-                * (GUST_SLOW_SHARE * sin(seconds * GUST_SLOW_RATE - travel * GUST_SLOW_TRAVEL)
-                    + GUST_QUICK_SHARE
-                        * sin(seconds * GUST_QUICK_RATE - travel * GUST_QUICK_TRAVEL
-                            + x * GUST_QUICK_ACROSS));
+                * (waves.slow_share * sin(seconds * waves.slow_rate - travel * waves.slow_travel)
+                    + waves.quick_share
+                        * sin(seconds * waves.quick_rate - travel * waves.quick_travel
+                            + x * waves.quick_across));
         velocity * gust
     }
 }

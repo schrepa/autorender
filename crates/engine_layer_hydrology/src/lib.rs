@@ -3,7 +3,7 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-include!(concat!(env!("OUT_DIR"), "/source.rs"));
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod bake;
 mod given;
@@ -13,14 +13,18 @@ mod rivers;
 use std::any::Any;
 use std::sync::Arc;
 
-use engine_core::{Brick, Bricks, Error, ErrorCode, Join, parse_value};
-use engine_settings::InvalidSetting;
-use engine_terrain::codec::{Codec, Reader, Writer};
-use engine_terrain::layer::{
-    LayerBake, LayerFiles, LayerKind, Made, Place, TerrainLayer, TerrainLayersList, maps, no_files,
+use bevy_ecs::prelude::ResMut;
+use engine_codec::{Codec, Reader, Writer};
+use engine_core::{
+    Brick, Bricks, Error, ErrorCode, InvalidSetting, Job, JobCx, JobKind, JobRef, Schedule,
+    Source, parse_value,
+};
+use engine_heightfield::layer::{
+    LayerBake, LayerFiles, LayerKind, Made, Place, TerrainLayer, maps, no_files, no_points,
     same_as,
 };
-use engine_terrain::{GivenRiver, Hydrology, Pyramid};
+use engine_heightfield::{GivenRiver, HydrologyBake, Pyramid, StartTile};
+use engine_places::terrain::{self, DrawnRivers, TerrainLayers};
 use glam::Vec2;
 use serde::Serialize;
 use serde_json::Value;
@@ -32,42 +36,71 @@ pub use hydrology::HydrologyLayer;
 pub struct LayerHydrologyBrick;
 
 impl Brick for LayerHydrologyBrick {
+    const SOURCE: &'static Source = &SOURCE;
+    const JOBS: &'static [&'static JobKind] = &[&HYDROLOGY_JOB, &RIVERS_JOB];
+
     fn register(bricks: &mut Bricks<'_>) {
-        for &kind in KINDS {
-            bricks.join(Join::<TerrainLayersList>::new().cpu(kind));
-        }
+        bricks
+            .join::<TerrainLayers>(
+                terrain::LayerKind {
+                    layer: &HYDROLOGY,
+                    job: JobRef::from(&HYDROLOGY_JOB),
+                },
+                None,
+            )
+            .join::<TerrainLayers>(
+                terrain::LayerKind {
+                    layer: &RIVERS,
+                    job: JobRef::from(&RIVERS_JOB),
+                },
+                None,
+            )
+            .fill::<DrawnRivers>(None)
+            .systems(Schedule::Presentation, offer_drawn_rivers);
     }
 }
 
+pub static HYDROLOGY_JOB: JobKind = JobKind::new("layer_hydrology::hydrology", &SOURCE, refused);
+
+pub static RIVERS_JOB: JobKind = JobKind::new("layer_hydrology::rivers", &SOURCE, refused);
+
 pub static HYDROLOGY: LayerKind = LayerKind {
     name: "hydrology",
-    source: crate::SOURCE,
+    source: SOURCE.hash(),
     from_json: hydrology_from_json,
     read: hydrology_read,
     files: no_files,
-    schema: engine_terrain::layer_schema!(hydrology_schema),
-    points: engine_terrain::layer::no_points,
+    schema: engine_heightfield::schema::<HydrologyLayer>,
+    points: no_points,
 };
 
 pub static RIVERS: LayerKind = LayerKind {
     name: "rivers",
-    source: crate::SOURCE,
+    source: SOURCE.hash(),
     from_json: rivers_from_json,
     read: rivers_read,
     files: no_files,
-    schema: engine_terrain::layer_schema!(rivers_schema),
-    points: engine_terrain::layer::no_points,
+    schema: engine_heightfield::schema::<RiversLayer>,
+    points: no_points,
 };
 
-pub static KINDS: &[&LayerKind] = &[&HYDROLOGY, &RIVERS];
+fn refused(_input: &[u8], _cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    Err(Error::new(ErrorCode::JobUnsupported, "$.jobs"))
+}
+
+fn offer_drawn_rivers(mut drawn: ResMut<DrawnRivers>) {
+    if drawn.make.is_none() {
+        drawn.make = Some(drawn_rivers);
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HydrologyStage {
     pub layer: HydrologyLayer,
-    pub baked: Option<Arc<Hydrology>>,
+    pub baked: Option<Arc<HydrologyBake>>,
 }
 
-engine_terrain::codec::record!(HydrologyStage { layer, baked });
+engine_codec::record!(HydrologyStage { layer, baked });
 
 impl TerrainLayer for HydrologyStage {
     fn kind(&self) -> &'static LayerKind {
@@ -102,9 +135,10 @@ impl TerrainLayer for HydrologyStage {
         self.baked.is_none()
     }
 
-    fn bake(&self, pyramid: &Pyramid) -> Option<Box<dyn LayerBake>> {
-        self.needs_bake()
-            .then(|| Box::new(HydrologyWork::new(&self.layer, pyramid)) as Box<dyn LayerBake>)
+    fn bake(&self, pyramid: &Pyramid, tiles: StartTile) -> Option<Box<dyn LayerBake>> {
+        self.needs_bake().then(|| {
+            Box::new(HydrologyWork::new(&self.layer, pyramid, tiles)) as Box<dyn LayerBake>
+        })
     }
 
     fn unbaked(&self) -> Option<Arc<dyn TerrainLayer>> {
@@ -118,7 +152,7 @@ impl TerrainLayer for HydrologyStage {
         true
     }
 
-    fn water(&self) -> Option<&Hydrology> {
+    fn water(&self) -> Option<&HydrologyBake> {
         self.baked.as_deref()
     }
 
@@ -166,7 +200,7 @@ impl TerrainLayer for RiversLayer {
         if place.above().iter().any(|layer| layer.makes_water()) {
             Ok(())
         } else {
-            Err(Error::new(ErrorCode::MissingLayer, "$").variants([HYDROLOGY.name]))
+            Err(Error::new(ErrorCode::InvalidValue, "$").variants([HYDROLOGY.name]))
         }
     }
 
@@ -180,7 +214,13 @@ fn settings_json(settings: &impl Serialize) -> Value {
 }
 
 fn valid(checked: Result<(), InvalidSetting>) -> Result<(), Error> {
-    checked.map_err(|invalid| Error::from(invalid).coded(ErrorCode::InvalidTerrain))
+    checked.map_err(|invalid| Error::from(invalid).coded(ErrorCode::InvalidValue))
+}
+
+fn rivers_valid(layer: &RiversLayer) -> Result<(), Error> {
+    layer
+        .validate()
+        .map_err(|error| error.coded(ErrorCode::InvalidValue))
 }
 
 fn hydrology_from_json(value: &Value, _files: &dyn LayerFiles) -> Made {
@@ -197,22 +237,21 @@ fn hydrology_read(input: &mut Reader<'_>) -> Made {
 
 fn rivers_from_json(value: &Value, _files: &dyn LayerFiles) -> Made {
     let layer: RiversLayer = parse_value(value.clone())?;
-    valid(layer.validate())?;
+    rivers_valid(&layer)?;
     Ok(Arc::new(layer))
 }
 
 fn rivers_read(input: &mut Reader<'_>) -> Made {
     let layer: RiversLayer = input.get()?;
-    valid(layer.validate())?;
+    rivers_valid(&layer)?;
     Ok(Arc::new(layer))
 }
 
-#[cfg(feature = "schema")]
-fn hydrology_schema() -> schemars::Schema {
-    schemars::schema_for!(HydrologyLayer)
-}
-
-#[cfg(feature = "schema")]
-fn rivers_schema() -> schemars::Schema {
-    schemars::schema_for!(RiversLayer)
+fn drawn_rivers(lines: &[GivenRiver]) -> Made {
+    let layer = RiversLayer {
+        lines: lines.to_vec(),
+        ..RiversLayer::default()
+    };
+    rivers_valid(&layer)?;
+    Ok(Arc::new(layer))
 }

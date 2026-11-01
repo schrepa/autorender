@@ -33,7 +33,7 @@ pub fn agent(root: &Path, arguments: &[String]) -> Result<(), Failure> {
 }
 
 pub fn verbs() -> Result<Value, String> {
-    let engine = crate::bricks::standard_engine();
+    let engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
     let verbs = engine_dev::schemas::verbs(engine.app.world())?;
     Ok(Value::Array(
         verbs
@@ -267,12 +267,8 @@ fn scene_command(arguments: &[String]) -> Result<Value, Error> {
             )?))
         }
         [command] if command == "schema" => {
-            let engine = crate::bricks::standard_engine();
-            let registry = engine
-                .app
-                .world()
-                .resource::<engine::bricks::BrickRegistry>();
-            Ok(json!({"schema":engine_scene::SceneDocument::schema_json(registry)}))
+            let engine = crate::bricks::standard_engine()?;
+            Ok(json!({"schema": crate::bricks::scene_schema(&engine)?}))
         }
         _ => Err(Error::new(ErrorCode::InvalidArguments, "$")
             .got(arguments)
@@ -281,12 +277,8 @@ fn scene_command(arguments: &[String]) -> Result<Value, Error> {
 }
 
 fn format_scene(path: &str) -> Result<Value, Error> {
-    let engine = crate::bricks::standard_engine();
-    let registry = engine
-        .app
-        .world()
-        .resource::<engine::bricks::BrickRegistry>();
-    let schema: Value = serde_json::from_str(&engine_scene::SceneDocument::schema_json(registry))
+    let engine = crate::bricks::standard_engine()?;
+    let schema: Value = serde_json::from_str(&crate::bricks::scene_schema(&engine)?)
         .map_err(|_| Error::new(ErrorCode::InvalidJson, "$.schema"))?;
     let source = authoring::read_scene_source(Path::new(path))?;
     let document = engine_scene::SceneDocument::from_json(&source)?;

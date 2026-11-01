@@ -1,13 +1,22 @@
 use engine_core::{Error, ErrorCode};
 
-use crate::bindings::{Kind, Stages};
+use crate::bindings::Stages;
 use crate::pipeline_layouts::StageLimits;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Class {
+    Uniform { dynamic: bool },
+    Storage,
+    Texture,
+    Sampler,
+    StorageTexture,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FrameVariable {
     pub(crate) brick: &'static str,
     pub(crate) name: &'static str,
-    pub(crate) kind: Kind,
+    pub(crate) kind: Class,
 }
 
 #[derive(Clone, Debug)]
@@ -16,7 +25,7 @@ pub(crate) struct Reach {
     pub(crate) pass: u32,
     pub(crate) stages: Stages,
     pub(crate) own_groups: u32,
-    pub(crate) own: Vec<(Kind, Stages)>,
+    pub(crate) own: Vec<(Class, Stages)>,
     pub(crate) reached: Vec<(u32, Stages)>,
 }
 
@@ -39,10 +48,6 @@ impl FramePlan {
     }
 }
 
-pub(crate) fn numbered(variables: &mut [FrameVariable]) {
-    variables.sort_by(|first, second| first.brick.cmp(second.brick));
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Counted {
     uniform_buffers: u32,
@@ -53,13 +58,13 @@ struct Counted {
 }
 
 impl Counted {
-    fn add(&mut self, kind: Kind) {
+    fn add(&mut self, kind: Class) {
         match kind {
-            Kind::Uniform { .. } => self.uniform_buffers += 1,
-            Kind::Read { .. } | Kind::Write => self.storage_buffers += 1,
-            Kind::Texture { .. } => self.sampled_textures += 1,
-            Kind::Sampler(_) => self.samplers += 1,
-            Kind::Storage(_) | Kind::StorageArray(_) => self.storage_textures += 1,
+            Class::Uniform { .. } => self.uniform_buffers += 1,
+            Class::Storage => self.storage_buffers += 1,
+            Class::Texture => self.sampled_textures += 1,
+            Class::Sampler => self.samplers += 1,
+            Class::StorageTexture => self.storage_textures += 1,
         }
     }
 
@@ -83,12 +88,12 @@ const STAGES: [(&str, Stages); 3] = [
     ("compute", Stages::COMPUTE),
 ];
 
-fn dynamic(kind: Kind) -> bool {
-    matches!(kind, Kind::Uniform { dynamic: true, .. })
+fn dynamic(kind: Class) -> bool {
+    matches!(kind, Class::Uniform { dynamic: true })
 }
 
-fn storage(kind: Kind) -> bool {
-    matches!(kind, Kind::Read { .. } | Kind::Write)
+fn storage(kind: Class) -> bool {
+    kind == Class::Storage
 }
 
 fn fits(

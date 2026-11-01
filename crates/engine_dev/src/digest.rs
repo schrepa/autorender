@@ -1,4 +1,4 @@
-use engine_core::bevy_ecs::world::World;
+use bevy_ecs::world::World;
 use engine_core::{AssetLibrary, Mesh, Texture, content_hash};
 use serde_json::{Map, Value, json};
 

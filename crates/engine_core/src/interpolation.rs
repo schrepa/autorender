@@ -2,7 +2,7 @@ mod gpu;
 
 pub use gpu::{
     GpuCurrent, GpuPresentation, NO_PARENT, NODE_ACTIVE, NODE_BLEND, NODE_PARENT_ACTIVE,
-    NODE_VALID, NodeInfo, NodePose,
+    NODE_VALID, NodeInfo, NodePose, PoseRows,
 };
 
 use crate::collections::HashSet;

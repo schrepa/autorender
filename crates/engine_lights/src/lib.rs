@@ -3,42 +3,43 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-use engine_core::{Brick, Bricks, DetailConsumer, DetailConsumersList, Fill, Join};
-use engine_faces::places::LightsSlot;
-use engine_render::render_bricks::AddRenderParts;
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-mod gpu_layouts;
+mod gpu;
 mod lights;
 mod part;
-mod pipeline_layouts;
-pub mod shaders;
+
+use bevy_ecs::prelude::*;
+use engine_core::{Brick, Bricks, ComponentKind, SceneComponents, Schedule, Source};
+use engine_places::lights::{Lights, LocalLight};
+use engine_render::RenderBricks;
+
+pub use lights::{LightStats, LocalLightSettings};
 
 pub struct LightsBrick;
 
 impl Brick for LightsBrick {
+    const SOURCE: &'static Source = &SOURCE;
+
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .settings::<engine_core::LocalLightSettings>()
-            .join(Join::<DetailConsumersList>::new().cpu(DetailConsumer {
-                name: "lights",
-                setting: "local_lights.max_lights",
-                stat: "local_lights.light_cut",
-            }))
-            .join(Join::<DetailConsumersList>::new().cpu(DetailConsumer {
-                name: "cluster_lights",
-                setting: "local_lights.lights_per_cluster",
-                stat: "local_lights.cluster_cut",
-            }))
-            .resource::<engine_core::LightExtractor>()
-            .extract(engine_core::extract_lights)
-            .render_part(&part::PART)
-            .shaders(shaders::MODULES)
-            .fill(
-                Fill::<LightsSlot>::new()
-                    .wgsl("lights::faces::lights")
-                    .gpu(part::LIGHT_LIST),
+            .when(lit)
+            .settings::<LocalLightSettings>()
+            .stats::<LightStats>()
+            .resource::<lights::LightGather>()
+            .resource::<lights::LightList>()
+            .resource::<part::LightTotals>()
+            .fill::<Lights>(Some(shaders::lights::faces::lights::MODULE))
+            .join::<SceneComponents>(ComponentKind::of::<LocalLight>("light"), None)
+            .systems(
+                Schedule::ViewSync,
+                (lights::gather_lights, lights::light_stats),
             )
-            .pipeline_layouts(pipeline_layouts::PIPELINE_LAYOUTS)
-            .mirrors(gpu_layouts::LAYOUTS, gpu_layouts::DECLARED);
+            .off(lights::forget_lights)
+            .part::<part::LightsGpu>();
     }
+}
+
+fn lit(settings: Res<LocalLightSettings>, lights: Query<(), With<LocalLight>>) -> bool {
+    settings.active() && !lights.is_empty()
 }

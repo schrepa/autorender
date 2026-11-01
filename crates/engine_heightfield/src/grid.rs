@@ -1,8 +1,10 @@
-use engine_codec::CodecError;
+use engine_codec::{Error, ErrorCode};
 use glam::Vec2;
 
 pub const TILE_QUADS: u32 = 256;
 pub const TILE_SAMPLES: u32 = TILE_QUADS + 1;
+pub const TILE_STRIDE: u32 = TILE_SAMPLES + 2;
+pub const MAX_LEVEL: u32 = 15;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TileKey {
@@ -24,8 +26,8 @@ pub struct Pyramid {
     levels: u32,
 }
 
-fn grid_error(path: &str) -> CodecError {
-    CodecError::new(format!("invalid_value at {path}"))
+fn grid_error(path: &str) -> Error {
+    Error::new(ErrorCode::InvalidValue, path)
 }
 
 impl Pyramid {
@@ -33,7 +35,7 @@ impl Pyramid {
     pub const MIN_SPACING: f32 = 1.0 / 64.0;
     pub const MAX_SPACING: f32 = 1024.0;
 
-    pub fn new(tiles: [u32; 2], spacing: f32) -> Result<Self, CodecError> {
+    pub fn new(tiles: [u32; 2], spacing: f32) -> Result<Self, Error> {
         for count in tiles {
             if !(1..=Self::MAX_TILES).contains(&count) {
                 return Err(grid_error("$.tiles")
@@ -147,7 +149,7 @@ impl engine_codec::Codec for Pyramid {
         out.put(&self.base_tiles()).put(&self.spacing(0));
     }
 
-    fn read(input: &mut engine_codec::Reader<'_>) -> Result<Self, CodecError> {
+    fn read(input: &mut engine_codec::Reader<'_>) -> Result<Self, Error> {
         let tiles = input.get()?;
         let spacing = input.get()?;
         Self::new(tiles, spacing)

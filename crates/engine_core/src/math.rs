@@ -2,8 +2,6 @@ use glam::Vec4;
 
 pub use engine_math::{REDUCTION_LIMIT, clamp, cos, exp, ln, max, min, pow, sin, sin_cos};
 
-pub const GRAVITY: f32 = 9.81;
-
 #[inline]
 pub fn sin_cos4(x: Vec4) -> (Vec4, Vec4) {
     use engine_math::lanes::*;

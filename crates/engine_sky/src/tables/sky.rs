@@ -3,7 +3,7 @@ use engine_math::{clamp, cos, max, sin};
 use crate::tables::bytes::{Reader, Writer, f16_bits, f16_value};
 
 pub const TRANSMITTANCE_SIZE: (u32, u32) = (256, 64);
-pub const MULTIPLE_SIDE: u32 = 32;
+pub const MULTIPLE_SIDE: u32 = crate::gpu_layouts::SKY_MULTIPLE_SIZE as u32;
 pub const MULTIPLE_SIZE: (u32, u32) = (MULTIPLE_SIDE, MULTIPLE_SIDE);
 
 const TRANSMITTANCE_STEPS: u32 = 40;

@@ -1,39 +1,38 @@
-use engine_core::ErrorCode;
+use engine_codec::{Reader, record};
+use engine_core::{Error, ErrorCode, Job, JobCx, JobKind, RecordKey, codec};
+use engine_heightfield::TileKey;
+use engine_heightfield::tile::{Recipe, Solid, StampOp, TileJob};
 
-use crate::codec::{self, Error, record};
-use crate::steady_water::{SettledReads, Steadying};
-use crate::{Solid, Stamp, SteadySummary, SteadyWater, TileKey, TileWater, WaterPart};
+use crate::SOURCE;
+use crate::steady_water::{PartMaking, SettledReads, Steadying};
+use crate::{SteadySummary, SteadyWater, TileWater, WaterPart};
 
-const SETTLED: u8 = 2;
-const SUMMARY: u8 = 3;
+pub static TILE_WATER: JobKind = JobKind::new("water::tile", &SOURCE, start_tile_water);
+pub static STEADIED: JobKind = JobKind::new("water::steadied", &SOURCE, start_steadied);
+pub static SETTLED: JobKind = JobKind::new("water::settled", &SOURCE, start_settled);
+
+const SETTLED_SHARE: u8 = 2;
+const SUMMARY_SHARE: u8 = 3;
 
 pub fn share_settled(record: &[u8]) -> Vec<u8> {
     let mut shared = Vec::with_capacity(record.len() + 1);
-    shared.push(SETTLED);
+    shared.push(SETTLED_SHARE);
     shared.extend_from_slice(record);
     shared
 }
 
 pub fn share_summary(head: &[u8]) -> Vec<u8> {
     let mut shared = Vec::with_capacity(head.len() + 1);
-    shared.push(SUMMARY);
+    shared.push(SUMMARY_SHARE);
     shared.extend_from_slice(head);
     shared
 }
 
-pub fn settled_key(record: &[u8; 32]) -> String {
-    format!("settled-{}", hex(record))
-}
-
-pub fn summary_key(record: &[u8; 32]) -> String {
-    format!("summary-{}", hex(record))
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaterJob {
-    pub recipe: String,
+    pub recipe: [u8; 32],
     pub key: TileKey,
-    pub stamps: Vec<Stamp>,
+    pub stamps: Vec<StampOp>,
     pub solids: Vec<Option<Solid>>,
     pub cell: f32,
 }
@@ -47,8 +46,6 @@ record!(WaterJob {
 });
 
 impl WaterJob {
-    pub const KIND: JobKind = JobKind::Water;
-
     pub fn input(&self) -> Vec<u8> {
         codec::encode(self)
     }
@@ -57,7 +54,7 @@ impl WaterJob {
 pub fn water_output(bytes: &[u8]) -> Result<WaterPart, Error> {
     let part: WaterPart = codec::decode(bytes)?;
     if !part.valid() {
-        return Err(codec::invalid("$.water_part"));
+        return Err(Error::new(ErrorCode::InvalidValue, "$.water_part"));
     }
     Ok(part)
 }
@@ -76,8 +73,6 @@ record!(SteadiedJob {
 });
 
 impl SteadiedJob {
-    pub const KIND: JobKind = JobKind::Steadied;
-
     pub fn input(&self) -> Vec<u8> {
         codec::encode(self)
     }
@@ -87,60 +82,127 @@ pub fn steadied_output(bytes: &[u8]) -> Result<Option<TileWater>, Error> {
     codec::decode(bytes)
 }
 
-impl TerrainWorker {
-    fn steadying(&self, job: &SteadiedJob) -> Result<Steadying, Error> {
-        let recipe = self.recipe(&job.tile.recipe)?;
-        let (key, cell) = (job.tile.key, job.cell);
-        if !recipe.pyramid.contains(key) {
-            return Err(outside(key));
-        }
-        if !(cell.is_finite() && cell > 0.0) {
-            return Err(Error::new(ErrorCode::OutOfRange, "$.cell").got(cell));
-        }
-        let reads = if key.level == 0 {
-            SettledReads::Records(
-                job.settled
-                    .iter()
-                    .map(|&(at, record)| Ok((at, self.settled(&record, at, cell)?)))
-                    .collect::<Result<_, Error>>()?,
-            )
-        } else {
-            SettledReads::Summaries(
-                job.settled
-                    .iter()
-                    .map(|&(at, record)| Ok((at, self.summary(&record, at, cell)?)))
-                    .collect::<Result<_, Error>>()?,
-            )
-        };
-        Ok(Steadying::new(
-            recipe.stamped(&job.tile.stamps)?,
-            recipe.pyramid,
-            key,
-            (cell, reads),
-        ))
-    }
+fn recipe(cx: &JobCx<'_>, shared: [u8; 32]) -> Result<Recipe, Error> {
+    let key = RecordKey::from_hash(shared);
+    let bytes = cx
+        .share(key)
+        .ok_or_else(|| unshared("$.recipe", &key.hex()))?;
+    codec::decode(bytes)
+}
 
-    fn settled(&self, record: &[u8; 32], key: TileKey, cell: f32) -> Result<SteadyWater, Error> {
-        let name = settled_key(record);
-        let water: SteadyWater = match self.records.get(&name).map(|bytes| bytes.split_first()) {
-            Some(Some((&SETTLED, rest))) => codec::decode(rest)?,
-            _ => return Err(unshared("$.settled", &name)),
-        };
-        if water.key != key || water.cell != cell {
-            return Err(mismatched("$.settled", &name));
-        }
-        Ok(water)
+fn start_tile_water(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    let mut reader = Reader::new(input);
+    let WaterJob {
+        recipe: shared,
+        key,
+        stamps,
+        solids,
+        cell,
+    } = reader.get()?;
+    reader.finish()?;
+    let recipe = recipe(cx, shared)?;
+    if key.level != 0 || !recipe.pyramid.contains(key) {
+        return Err(outside(key));
     }
+    if !(cell.is_finite() && cell > 0.0) {
+        return Err(Error::new(ErrorCode::OutOfRange, "$.cell").got(cell));
+    }
+    if !solids.iter().flatten().all(Solid::valid) {
+        return Err(Error::new(ErrorCode::InvalidValue, "$.solids"));
+    }
+    Ok(Box::new(PartMaking::new(
+        (recipe.stamped(&stamps)?, recipe.rules.clone()),
+        recipe.pyramid,
+        key,
+        (cell, solids),
+    )))
+}
 
-    fn summary(&self, record: &[u8; 32], key: TileKey, cell: f32) -> Result<SteadySummary, Error> {
-        let name = summary_key(record);
-        let (head, _) = match self.records.get(&name).map(|bytes| bytes.split_first()) {
-            Some(Some((&SUMMARY, rest))) => SteadyWater::head(rest)?,
-            _ => return Err(unshared("$.settled", &name)),
-        };
-        if head.key != key || head.cell != cell {
-            return Err(mismatched("$.settled", &name));
-        }
-        Ok(head.summary)
+impl Job for PartMaking {
+    fn step(&mut self, budget: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
+        let mut budget = budget;
+        Ok(self.advance(&mut budget)?.map(|part| codec::encode(&part)))
     }
+}
+
+fn start_steadied(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    let mut reader = Reader::new(input);
+    let job: SteadiedJob = reader.get()?;
+    reader.finish()?;
+    let recipe = recipe(cx, job.tile.recipe)?;
+    let (key, cell) = (job.tile.key, job.cell);
+    if !recipe.pyramid.contains(key) {
+        return Err(outside(key));
+    }
+    if !(cell.is_finite() && cell > 0.0) {
+        return Err(Error::new(ErrorCode::OutOfRange, "$.cell").got(cell));
+    }
+    let reads = if key.level == 0 {
+        SettledReads::Records(
+            job.settled
+                .iter()
+                .map(|&(at, record)| Ok((at, settled(cx, record, at, cell)?)))
+                .collect::<Result<_, Error>>()?,
+        )
+    } else {
+        SettledReads::Summaries(
+            job.settled
+                .iter()
+                .map(|&(at, record)| Ok((at, summary(cx, record, at, cell)?)))
+                .collect::<Result<_, Error>>()?,
+        )
+    };
+    Ok(Box::new(Steadying::new(
+        recipe.stamped(&job.tile.stamps)?,
+        recipe.pyramid,
+        key,
+        (cell, reads),
+    )))
+}
+
+impl Job for Steadying {
+    fn step(&mut self, budget: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
+        let mut budget = budget;
+        Ok(self.advance(&mut budget)?.map(|water| codec::encode(&water)))
+    }
+}
+
+fn start_settled(_: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    Err(Error::new(ErrorCode::JobUnsupported, "water::settled"))
+}
+
+fn settled(cx: &JobCx<'_>, record: [u8; 32], key: TileKey, cell: f32) -> Result<SteadyWater, Error> {
+    let shared = RecordKey::from_hash(record);
+    let water: SteadyWater = match cx.share(shared).map(<[u8]>::split_first) {
+        Some(Some((&SETTLED_SHARE, rest))) => codec::decode(rest)?,
+        _ => return Err(unshared("$.settled", &shared.hex())),
+    };
+    if water.key != key || water.cell != cell {
+        return Err(mismatched("$.settled", &shared.hex()));
+    }
+    Ok(water)
+}
+
+fn summary(cx: &JobCx<'_>, record: [u8; 32], key: TileKey, cell: f32) -> Result<SteadySummary, Error> {
+    let shared = RecordKey::from_hash(record);
+    let (head, _) = match cx.share(shared).map(<[u8]>::split_first) {
+        Some(Some((&SUMMARY_SHARE, rest))) => SteadyWater::head(rest)?,
+        _ => return Err(unshared("$.settled", &shared.hex())),
+    };
+    if head.key != key || head.cell != cell {
+        return Err(mismatched("$.settled", &shared.hex()));
+    }
+    Ok(head.summary)
+}
+
+fn outside(key: TileKey) -> Error {
+    Error::new(ErrorCode::OutOfRange, "$.key").got([u16::from(key.level), key.x, key.z])
+}
+
+fn unshared(path: &str, name: &str) -> Error {
+    Error::new(ErrorCode::UnknownReference, path).got(name)
+}
+
+fn mismatched(path: &str, name: &str) -> Error {
+    Error::new(ErrorCode::InvalidValue, path).got(name)
 }

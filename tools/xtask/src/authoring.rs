@@ -63,7 +63,12 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         + "
 ";
     let repository = crate::rules::repository(root)?;
-    let engine = crate::bricks::standard_engine();
+    let bricks = engine_checks::bricks::bricks_json(
+        repository,
+        engine_standard::standard,
+        &mut crate::bricks::standard_engine().map_err(|error| error.to_string())?,
+    )?;
+    let engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
     let world = engine.app.world();
     let development = engine_dev::schemas::generated(world)?;
     tooling_types(root)?;
@@ -98,10 +103,7 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
             ),
         ),
         ("web/src/generated/errors.ts".to_owned(), error_codes()),
-        (
-            engine_checks::bricks::FILE.to_owned(),
-            engine_checks::bricks::bricks_json(repository, &mut crate::bricks::standard_engine())?,
-        ),
+        (engine_checks::bricks::FILE.to_owned(), bricks),
     ]);
     for client in crate::process::clients()
         .iter()

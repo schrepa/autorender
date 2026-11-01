@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+autoexamples = false
 
 [features]
 default = []
@@ -20,9 +21,6 @@ serde_json.workspace = true
 winit.workspace = true
 pollster.workspace = true
 zstd.workspace = true
-
-[[example]]
-name = "app_native"
 
 [lints]
 workspace = true

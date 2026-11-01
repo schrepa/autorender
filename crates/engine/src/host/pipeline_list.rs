@@ -1,11 +1,11 @@
-use engine_core::{
-    Cooking, Engine, JobId, JobQueue, MISSING_RECORD, RecordKey, URGENT_JOBS, job_priority,
-};
+use engine_core::{CookMode, Engine, RecordKey, URGENT_JOBS, job_priority};
+use engine_registry::Registry;
 use engine_render::Renderer;
+use sha2::{Digest, Sha256};
+
+use super::jobs::{HostJobs, JobId, MISSING_RECORD};
 
 const KIND: &str = "pipeline_list";
-
-const FEATURE: &str = "pipelines";
 
 const QUIET_FRAMES: u32 = 30;
 
@@ -29,6 +29,22 @@ enum State {
     Done,
 }
 
+fn cooking(engine: &Engine) -> bool {
+    engine
+        .app
+        .world()
+        .get_resource::<CookMode>()
+        .is_some_and(|mode| mode.cooking)
+}
+
+fn key_of(identity: &[u8]) -> RecordKey {
+    let mut hash = Sha256::new();
+    hash.update((KIND.len() as u64).to_le_bytes());
+    hash.update(KIND.as_bytes());
+    hash.update(identity);
+    RecordKey::from_hash(hash.finalize().into())
+}
+
 impl PipelineList {
     pub(crate) fn unasked(&self) -> bool {
         matches!(self.state, State::Unasked)
@@ -38,44 +54,43 @@ impl PipelineList {
         matches!(self.state, State::Asked { .. })
     }
 
-    pub(crate) fn ask(&mut self, engine: &mut Engine, content: Option<Vec<u8>>) {
+    pub(crate) fn making(&self) -> bool {
+        matches!(self.state, State::Making { .. })
+    }
+
+    pub(crate) fn ask(&mut self, engine: &Engine, content: Option<Vec<u8>>, jobs: &mut HostJobs) {
         let Some(mut identity) = content else {
             self.state = State::Done;
             return;
         };
-        let world = engine.app.world_mut();
-        if let Some(registry) = world.get_resource::<engine_core::BrickRegistry>() {
-            for brick in registry.names() {
-                identity.extend(brick.bytes());
+        let world = engine.app.world();
+        if let Some(registry) = world.get_resource::<Registry>() {
+            for brick in registry.bricks() {
+                identity.extend(brick.package.bytes());
                 identity.push(0);
+                identity.extend(brick.source());
             }
             for section in registry.sections() {
                 identity.extend(section.key.bytes());
-                identity.extend(section.sanitized(world).to_string().bytes());
+                identity.extend(section.current(world).to_string().bytes());
             }
         }
-        let key = RecordKey::new(&engine_render::SOURCE, KIND, &identity);
-        if world.contains_resource::<Cooking>() {
+        let key = key_of(&identity);
+        if cooking(engine) {
             self.state = State::Making { key, quiet: 0 };
             return;
         }
-        self.state = match world.get_resource_mut::<JobQueue>() {
-            Some(mut jobs) => State::Asked {
-                key,
-                fetch: jobs.fetch(key, job_priority(URGENT_JOBS, 0)),
-            },
-            None => State::Done,
+        self.state = State::Asked {
+            key,
+            fetch: jobs.fetch_here(key, job_priority(URGENT_JOBS, 0)),
         };
     }
 
-    pub(crate) fn take(&mut self, engine: &mut Engine, renderer: &mut Renderer) {
+    pub(crate) fn take(&mut self, renderer: &mut Renderer, jobs: &mut HostJobs) {
         let State::Asked { key, fetch } = self.state else {
             return;
         };
-        let Some(mut jobs) = engine.app.world_mut().get_resource_mut::<JobQueue>() else {
-            return;
-        };
-        let Some(output) = jobs.take(fetch) else {
+        let Some(output) = jobs.take_here(fetch) else {
             return;
         };
         self.state = match output.map(|record| renderer.create_listed_pipelines(&record)) {
@@ -86,30 +101,27 @@ impl PipelineList {
         };
     }
 
-    pub(crate) fn after_frame(&mut self, engine: &mut Engine, renderer: &Renderer, created: u32) {
+    pub(crate) fn after_frame(
+        &mut self,
+        engine: &Engine,
+        renderer: &Renderer,
+        created: u32,
+        jobs: &mut HostJobs,
+    ) {
         let State::Making { key, quiet } = &mut self.state else {
             return;
         };
         let key = *key;
-        let world = engine.app.world_mut();
-        let others = world.get_resource::<Cooking>().map(|cooking| {
-            cooking
-                .features()
-                .iter()
-                .filter(|(feature, _)| *feature != FEATURE)
-                .map(|(_, left)| left)
-                .sum::<u64>()
+        let world = engine.app.world();
+        let others = cooking(engine).then(|| {
+            world
+                .get_resource::<Registry>()
+                .map_or(0, |registry| registry.pending(world))
         });
         let still = created == 0 && others.is_none_or(|others| others == 0);
         *quiet = if still { *quiet + 1 } else { 0 };
-        let done = *quiet >= QUIET_FRAMES;
-        if done && let Some(mut jobs) = world.get_resource_mut::<JobQueue>() {
-            jobs.keep(key, renderer.pipeline_list());
-        }
-        if let Some(mut cooking) = world.get_resource_mut::<Cooking>() {
-            cooking.left(FEATURE, u64::from(!done));
-        }
-        if done {
+        if *quiet >= QUIET_FRAMES {
+            jobs.keep_here(key, renderer.pipeline_list());
             self.state = State::Done;
         }
     }

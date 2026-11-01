@@ -2,10 +2,9 @@ use std::sync::Arc;
 
 use engine_math::{clamp, max, sin_cos};
 
-use crate::layer::ChangeMap;
-use crate::layers::Layers;
-use crate::noise::{gradient_value, smooth};
-use crate::{Generator, MacroCauses, PathSample, Pyramid, TILE_QUADS};
+use engine_heightfield::layer::ChangeMap;
+use engine_heightfield::noise::{gradient_value, smooth};
+use engine_heightfield::{Generator, Layers, MacroCauses, PathSample, Pyramid, TILE_QUADS};
 
 pub const MAX_MACRO_TEXELS: u32 = 4096;
 pub const MACRO_BLOCK: u32 = 4;
@@ -167,7 +166,7 @@ fn ground(
     if shown > 0.0
         && let Some(hydrology) = layers.hydrology()
     {
-        let water = hydrology.masks_at(sx, sz, footprint, crate::hydrology::RIVER_FAR);
+        let water = hydrology.masks_at(sx, sz, footprint, engine_heightfield::RIVER_FAR);
         moisture = max(
             ramp(water.wetness, 7.0, 14.0),
             0.8 * ramp(water.flow, 4.0, 6.0),

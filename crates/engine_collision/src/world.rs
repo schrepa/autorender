@@ -1,10 +1,15 @@
-use engine_core::collections::HashMap;
+use std::any::Any;
 
 use bevy_ecs::prelude::*;
-use bevy_ecs::system::{SystemParam, SystemState};
 use engine_core::{
-    Error, FixedTime, FrameTime, GlobalTransforms, Transform, TransformIndex, propagate_transforms,
+    Error, FixedTime, FrameTime, GlobalTransforms, Section, Transform, TransformIndex,
 };
+use engine_math::collections::HashMap;
+use engine_places::physics::{
+    Collide, Collider, ColliderShape, Collision, CollisionRay, QueryFilter, RayHit, SensorEvent,
+    SensorEventKind, SensorPair, ShapeCastOptions, ShapeHit,
+};
+use engine_places::solids::SolidSource;
 use glam::{Mat4, Vec3};
 
 use crate::{
@@ -15,38 +20,7 @@ use crate::{
     types::*,
 };
 
-type ColliderData = (Entity, &'static Collider, Option<&'static Transform>);
-
-#[derive(SystemParam)]
-pub(crate) struct CollisionSync<'w, 's> {
-    colliders: Query<'w, 's, ColliderData>,
-    globals: Res<'w, GlobalTransforms>,
-    config: Res<'w, CollisionConfig>,
-    frame: Option<Res<'w, FrameTime>>,
-    tick: Option<Res<'w, FixedTime>>,
-    collisions: ResMut<'w, CollisionWorld>,
-}
-
-impl CollisionSync<'_, '_> {
-    fn refresh(&mut self) -> CollisionReport {
-        self.collisions.refresh(
-            *self.config,
-            self.frame.as_ref().map_or(0, |time| time.frame),
-            self.tick.as_ref().map_or(0, |time| time.tick),
-            &self.colliders,
-            &self.globals,
-        )
-    }
-}
-
-#[derive(Resource)]
-struct DirectSyncState(SystemState<CollisionSync<'static, 'static>>);
-
-impl FromWorld for DirectSyncState {
-    fn from_world(world: &mut World) -> Self {
-        Self(SystemState::new(world))
-    }
-}
+type ColliderData = (Entity, &'static Collider, Has<Transform>);
 
 #[derive(Clone, Copy)]
 struct Input {
@@ -80,7 +54,6 @@ struct Entry {
     affine: AffineShape,
 }
 
-#[derive(Resource)]
 pub struct CollisionWorld {
     config: CollisionConfig,
     inputs: Vec<Input>,
@@ -90,14 +63,16 @@ pub struct CollisionWorld {
     bounds: Vec<Bounds>,
     bvh: Bvh,
     next_pairs: Vec<SensorPair>,
-    report: CollisionReport,
+    report: CollisionStats,
     last_error: Option<Fault>,
+    sources: Option<usize>,
+    pub(crate) sensors: SensorEvents,
     pub(crate) terrain: TerrainFields,
     pub(crate) placed: PlacedShapes,
 }
 
-impl FromWorld for CollisionWorld {
-    fn from_world(_world: &mut World) -> Self {
+impl Default for CollisionWorld {
+    fn default() -> Self {
         Self {
             config: CollisionConfig::default(),
             inputs: Vec::new(),
@@ -107,36 +82,37 @@ impl FromWorld for CollisionWorld {
             bounds: Vec::new(),
             bvh: Bvh::default(),
             next_pairs: Vec::new(),
-            report: CollisionReport::default(),
+            report: CollisionStats::default(),
             last_error: None,
+            sources: None,
+            sensors: SensorEvents::default(),
             terrain: TerrainFields::default(),
             placed: PlacedShapes::default(),
         }
     }
 }
 
-impl CollisionWorld {
-    pub(crate) fn entries_in(
-        &self,
-        bounds: Bounds,
-    ) -> impl Iterator<Item = (Entity, Collider, &AffineShape)> + '_ {
-        self.bvh
-            .query(move |node| node.overlaps(bounds))
-            .map(|index| &self.entries[index])
-            .filter(move |entry| entry.affine.bounds.overlaps(bounds))
-            .map(|entry| (entry.entity, entry.collider, &entry.affine))
+pub(crate) fn installed(collision: &mut Collision) -> &mut CollisionWorld {
+    if !(&*collision.0 as &dyn Any).is::<CollisionWorld>() {
+        collision.0 = Box::new(CollisionWorld::default());
     }
+    (&mut *collision.0 as &mut dyn Any)
+        .downcast_mut::<CollisionWorld>()
+        .expect("collision_world_installed")
+}
 
-    pub fn report(&self) -> CollisionReport {
+pub(crate) fn world_of(collision: &Collision) -> Option<&CollisionWorld> {
+    (&*collision.0 as &dyn Any).downcast_ref::<CollisionWorld>()
+}
+
+impl CollisionWorld {
+    pub fn report(&self) -> CollisionStats {
         self.report
     }
     pub fn config(&self) -> CollisionConfig {
         self.config
     }
-    pub fn last_error(&self) -> Option<Error> {
-        self.last_error.map(Fault::error)
-    }
-    pub fn collider_status(&self, entity: Entity) -> Option<ColliderStatus> {
+    pub(crate) fn collider_status(&self, entity: Entity) -> Option<ColliderStatus> {
         self.statuses.get(&entity).copied()
     }
 
@@ -148,6 +124,18 @@ impl CollisionWorld {
         }
     }
 
+    fn sync_ground(&mut self, sources: &Query<'_, '_, &SolidSource>, changed: bool) {
+        let count = sources.iter().len();
+        let changed = changed || self.sources != Some(count);
+        self.sources = Some(count);
+        if self.terrain.sync(sources, changed) {
+            self.report.terrain_tiles = self.terrain.len();
+        }
+        if self.placed.sync(sources, changed) {
+            self.report.placed_colliders = self.placed.len();
+        }
+    }
+
     fn refresh(
         &mut self,
         config: CollisionConfig,
@@ -155,8 +143,7 @@ impl CollisionWorld {
         tick: u64,
         colliders: &Query<'_, '_, ColliderData>,
         globals: &GlobalTransforms,
-    ) -> CollisionReport {
-        let _profile = engine_profile::span("collision", "sync");
+    ) -> CollisionStats {
         let count = colliders.iter().len();
         self.report.frame = frame;
         self.report.tick = tick;
@@ -171,14 +158,13 @@ impl CollisionWorld {
                     old.entity == entity
                         && old.collider == *collider
                         && old.revision != Some(u64::MAX)
-                        && read_pose(globals, entity, local.is_some(), &mut old.hint).1
+                        && read_pose(globals, entity, local, &mut old.hint).1
                             == old.revision
                 },
             );
         if unchanged {
             return self.report;
         }
-        let _rebuild = engine_profile::span("collision", "cache_rebuild");
         let reuse = self.report.revision != 0 && config == self.config;
         self.config = config;
         self.report.revision = self.report.revision.saturating_add(1);
@@ -194,7 +180,7 @@ impl CollisionWorld {
             .reserve_exact(admitted.saturating_sub(self.inputs.len()));
         self.entries.reserve_exact(admitted);
         self.bounds.reserve_exact(admitted);
-        let configuration_valid = config.validate().is_ok();
+        let configuration_valid = config.check().is_ok();
         for (index, (entity, collider, local)) in colliders.iter().take(limit).enumerate() {
             let previous = self
                 .inputs
@@ -202,7 +188,7 @@ impl CollisionWorld {
                 .copied()
                 .filter(|old| old.entity == entity);
             let mut hint = previous.map_or_else(TransformIndex::default, |old| old.hint);
-            let (matrix, revision) = read_pose(globals, entity, local.is_some(), &mut hint);
+            let (matrix, revision) = read_pose(globals, entity, local, &mut hint);
             let kept = previous
                 .filter(|old| {
                     reuse
@@ -277,15 +263,8 @@ impl CollisionWorld {
         self.report
     }
 
-    pub fn raycast(&self, ray: CollisionRay, filter: QueryFilter) -> Result<Option<RayHit>, Error> {
-        self.nearest_ray(ray, filter).map_err(Fault::error)
-    }
-
     fn nearest_ray(&self, ray: CollisionRay, filter: QueryFilter) -> Result<Option<RayHit>, Fault> {
-        let _profile = engine_profile::span("collision.query", "raycast");
-        let mut precise = engine_profile::Aggregate::new("collision.narrow", "ray_tests");
-        let mut broad = engine_profile::Aggregate::new("collision.broad", "bvh_traversal");
-        let ray = ray.normalized()?;
+        let ray = normalized(ray)?;
         self.ready()?;
         let mut nearest: Option<RayHit> = None;
         for entry in candidates(
@@ -293,12 +272,9 @@ impl CollisionWorld {
             self.config.query_candidates(),
             |bounds| bounds.ray(ray),
             filter,
-            &mut broad,
         ) {
             let entry = entry?;
-            if let Some((distance, normal, started_inside)) =
-                precise.measure(|| entry.affine.ray(ray))
-            {
+            if let Some((distance, normal, started_inside)) = entry.affine.ray(ray) {
                 let hit = RayHit {
                     entity: entry.entity,
                     distance,
@@ -323,120 +299,6 @@ impl CollisionWorld {
         Ok(nearest)
     }
 
-    pub fn raycast_all(
-        &self,
-        ray: CollisionRay,
-        filter: QueryFilter,
-        output: &mut Vec<RayHit>,
-        limit: usize,
-    ) -> Result<(), Error> {
-        let _profile = engine_profile::span("collision.query", "raycast_all");
-        let mut precise = engine_profile::Aggregate::new("collision.narrow", "ray_tests");
-        let mut broad = engine_profile::Aggregate::new("collision.broad", "bvh_traversal");
-        output.clear();
-        let result = (|| {
-            let ray = ray.normalized()?;
-            self.ready()?;
-            self.validate_limit(limit)?;
-            for entry in candidates(
-                (&self.bvh, &self.entries),
-                self.config.query_candidates(),
-                |bounds| bounds.ray(ray),
-                filter,
-                &mut broad,
-            ) {
-                let entry = entry?;
-                if let Some((distance, normal, started_inside)) =
-                    precise.measure(|| entry.affine.ray(ray))
-                {
-                    if output.len() == limit {
-                        return Err(Fault::ResultBudget);
-                    }
-                    output.push(RayHit {
-                        entity: entry.entity,
-                        distance,
-                        point: ray.origin + ray.direction * distance,
-                        normal,
-                        started_inside,
-                        placed: None,
-                    });
-                }
-            }
-            self.placed.ray_all(ray, filter, output);
-            self.terrain.ray_all(ray, filter, output);
-            if output.len() > limit {
-                return Err(Fault::ResultBudget);
-            }
-            output.sort_unstable_by(|a, b| {
-                a.distance
-                    .total_cmp(&b.distance)
-                    .then(a.entity.cmp(&b.entity))
-            });
-            Ok(())
-        })();
-        if result.is_err() {
-            output.clear();
-        }
-        result.map_err(Fault::error)
-    }
-
-    pub fn overlap(
-        &self,
-        shape: ColliderShape,
-        matrix: Mat4,
-        filter: QueryFilter,
-        output: &mut Vec<Entity>,
-        limit: usize,
-    ) -> Result<(), Error> {
-        let _profile = engine_profile::span("collision.query", "overlap");
-        let mut precise = engine_profile::Aggregate::new("collision.narrow", "overlap_tests");
-        let mut broad = engine_profile::Aggregate::new("collision.broad", "bvh_traversal");
-        output.clear();
-        let result = (|| {
-            let shape = AffineShape::new(shape, matrix)?;
-            self.ready()?;
-            self.validate_limit(limit)?;
-            for entry in candidates(
-                (&self.bvh, &self.entries),
-                self.config.query_candidates(),
-                |bounds| bounds.overlaps(shape.bounds),
-                filter,
-                &mut broad,
-            ) {
-                let entry = entry?;
-                if precise.measure(|| intersects(&shape, &entry.affine))? {
-                    if output.len() == limit {
-                        return Err(Fault::ResultBudget);
-                    }
-                    output.push(entry.entity);
-                }
-            }
-            self.placed.overlap(&shape, filter, output)?;
-            self.terrain.overlap(&shape, filter, output)?;
-            if output.len() > limit {
-                return Err(Fault::ResultBudget);
-            }
-            output.sort_unstable();
-            Ok(())
-        })();
-        if result.is_err() {
-            output.clear();
-        }
-        result.map_err(Fault::error)
-    }
-
-    pub fn cast_shape(
-        &self,
-        shape: ColliderShape,
-        matrix: Mat4,
-        displacement: Vec3,
-        filter: QueryFilter,
-        options: ShapeCastOptions,
-    ) -> Result<Option<ShapeHit>, Error> {
-        self.nearest_cast(shape, matrix, displacement, filter, options)
-            .map_err(Fault::error)
-    }
-
     fn nearest_cast(
         &self,
         shape: ColliderShape,
@@ -445,9 +307,6 @@ impl CollisionWorld {
         filter: QueryFilter,
         options: ShapeCastOptions,
     ) -> Result<Option<ShapeHit>, Fault> {
-        let _profile = engine_profile::span("collision.query", "shape_cast");
-        let mut precise = engine_profile::Aggregate::new("collision.narrow", "shape_cast_tests");
-        let mut broad = engine_profile::Aggregate::new("collision.broad", "bvh_traversal");
         check_shape_cast(shape, matrix, displacement, options)?;
         self.ready()?;
         let shape = AffineShape::new(shape, matrix)?;
@@ -461,11 +320,10 @@ impl CollisionWorld {
             self.config.query_candidates(),
             |bounds| bounds.overlaps(swept),
             filter,
-            &mut broad,
         ) {
             let entry = entry?;
             if let Some((fraction, point, normal, started_overlapping)) =
-                precise.measure(|| Narrow::cast(&shape, &entry.affine, displacement, options))?
+                Narrow::cast(&shape, &entry.affine, displacement, options)?
             {
                 let hit = ShapeHit {
                     entity: entry.entity,
@@ -498,11 +356,13 @@ impl CollisionWorld {
         }
     }
 
-    fn detect(&mut self, events: &mut SensorEvents, tick: u64) {
-        let _profile = engine_profile::span("collision", "sensor_detect");
-        let mut precise =
-            engine_profile::Aggregate::new("collision.narrow", "sensor_overlap_tests");
-        let mut broad = engine_profile::Aggregate::new("collision.broad", "bvh_traversal");
+    fn detect(&mut self, tick: u64) {
+        let mut events = std::mem::take(&mut self.sensors);
+        self.detect_into(&mut events, tick);
+        self.sensors = events;
+    }
+
+    fn detect_into(&mut self, events: &mut SensorEvents, tick: u64) {
         events.sequence = events.sequence.saturating_add(1);
         events.tick = Some(tick);
         events.events.clear();
@@ -516,10 +376,7 @@ impl CollisionWorld {
                 .enumerate()
                 .filter(|(_, entry)| entry.collider.is_sensor())
             {
-                for other in self
-                    .bvh
-                    .query_profiled(|bounds| bounds.overlaps(a.affine.bounds), &mut broad)
-                {
+                for other in self.bvh.query(|bounds| bounds.overlaps(a.affine.bounds)) {
                     if index == other {
                         continue;
                     }
@@ -531,7 +388,7 @@ impl CollisionWorld {
                     if !a.collider.layers().interacts(b.collider.layers()) {
                         continue;
                     }
-                    if precise.measure(|| intersects(&a.affine, &b.affine))? {
+                    if intersects(&a.affine, &b.affine)? {
                         if self.next_pairs.len() == self.config.sensor_pairs() {
                             return Err(Fault::PairBudget);
                         }
@@ -587,15 +444,132 @@ impl CollisionWorld {
     }
 }
 
+impl Collide for CollisionWorld {
+    fn raycast(&self, ray: CollisionRay, filter: QueryFilter) -> Result<Option<RayHit>, Error> {
+        self.nearest_ray(ray, filter).map_err(Fault::error)
+    }
+
+    fn raycast_all(
+        &self,
+        ray: CollisionRay,
+        filter: QueryFilter,
+        output: &mut Vec<RayHit>,
+        limit: usize,
+    ) -> Result<(), Error> {
+        output.clear();
+        let result = (|| {
+            let ray = normalized(ray)?;
+            self.ready()?;
+            self.validate_limit(limit)?;
+            for entry in candidates(
+                (&self.bvh, &self.entries),
+                self.config.query_candidates(),
+                |bounds| bounds.ray(ray),
+                filter,
+            ) {
+                let entry = entry?;
+                if let Some((distance, normal, started_inside)) = entry.affine.ray(ray) {
+                    if output.len() == limit {
+                        return Err(Fault::ResultBudget);
+                    }
+                    output.push(RayHit {
+                        entity: entry.entity,
+                        distance,
+                        point: ray.origin + ray.direction * distance,
+                        normal,
+                        started_inside,
+                        placed: None,
+                    });
+                }
+            }
+            self.placed.ray_all(ray, filter, output);
+            self.terrain.ray_all(ray, filter, output);
+            if output.len() > limit {
+                return Err(Fault::ResultBudget);
+            }
+            output.sort_unstable_by(|a, b| {
+                a.distance
+                    .total_cmp(&b.distance)
+                    .then(a.entity.cmp(&b.entity))
+            });
+            Ok(())
+        })();
+        if result.is_err() {
+            output.clear();
+        }
+        result.map_err(Fault::error)
+    }
+
+    fn overlap(
+        &self,
+        shape: ColliderShape,
+        matrix: Mat4,
+        filter: QueryFilter,
+        output: &mut Vec<Entity>,
+        limit: usize,
+    ) -> Result<(), Error> {
+        output.clear();
+        let result = (|| {
+            let shape = AffineShape::new(shape, matrix)?;
+            self.ready()?;
+            self.validate_limit(limit)?;
+            for entry in candidates(
+                (&self.bvh, &self.entries),
+                self.config.query_candidates(),
+                |bounds| bounds.overlaps(shape.bounds),
+                filter,
+            ) {
+                let entry = entry?;
+                if intersects(&shape, &entry.affine)? {
+                    if output.len() == limit {
+                        return Err(Fault::ResultBudget);
+                    }
+                    output.push(entry.entity);
+                }
+            }
+            self.placed.overlap(&shape, filter, output)?;
+            self.terrain.overlap(&shape, filter, output)?;
+            if output.len() > limit {
+                return Err(Fault::ResultBudget);
+            }
+            output.sort_unstable();
+            Ok(())
+        })();
+        if result.is_err() {
+            output.clear();
+        }
+        result.map_err(Fault::error)
+    }
+
+    fn cast_shape(
+        &self,
+        shape: ColliderShape,
+        matrix: Mat4,
+        displacement: Vec3,
+        filter: QueryFilter,
+        options: ShapeCastOptions,
+    ) -> Result<Option<ShapeHit>, Error> {
+        self.nearest_cast(shape, matrix, displacement, filter, options)
+            .map_err(Fault::error)
+    }
+
+    fn events(&self) -> &[SensorEvent] {
+        &self.sensors.events
+    }
+
+    fn pairs(&self) -> &[SensorPair] {
+        &self.sensors.pairs
+    }
+}
+
 fn candidates<'a>(
     (bvh, entries): (&'a Bvh, &'a [Entry]),
     limit: usize,
     test: impl Fn(Bounds) -> bool + 'a,
     filter: QueryFilter,
-    broad: &'a mut engine_profile::Aggregate,
 ) -> impl Iterator<Item = Result<Entry, Fault>> + 'a {
     let mut count = 0;
-    bvh.query_profiled(test, broad).filter_map(move |index| {
+    bvh.query(test).filter_map(move |index| {
         if let Err(error) = candidate(&mut count, limit) {
             return Some(Err(error));
         }
@@ -614,8 +588,8 @@ fn candidate(count: &mut usize, limit: usize) -> Result<(), Fault> {
     Ok(())
 }
 
-#[derive(Resource, Default)]
-pub struct SensorEvents {
+#[derive(Default)]
+pub(crate) struct SensorEvents {
     events: Vec<SensorEvent>,
     pairs: Vec<SensorPair>,
     sequence: u64,
@@ -625,67 +599,65 @@ pub struct SensorEvents {
     candidate_pairs: usize,
     error: Option<Fault>,
 }
+
 impl SensorEvents {
-    pub fn events(&self) -> &[SensorEvent] {
+    pub(crate) fn events(&self) -> &[SensorEvent] {
         &self.events
     }
-    pub fn pairs(&self) -> &[SensorPair] {
+    pub(crate) fn pairs(&self) -> &[SensorPair] {
         &self.pairs
     }
-    pub fn sequence(&self) -> u64 {
+    pub(crate) fn sequence(&self) -> u64 {
         self.sequence
     }
-    pub fn tick(&self) -> Option<u64> {
+    pub(crate) fn tick(&self) -> Option<u64> {
         self.tick
     }
-    pub fn committed_tick(&self) -> Option<u64> {
+    pub(crate) fn committed_tick(&self) -> Option<u64> {
         self.committed_tick
     }
-    pub fn complete(&self) -> bool {
+    pub(crate) fn complete(&self) -> bool {
         self.complete
     }
-    pub fn candidate_pairs(&self) -> usize {
+    pub(crate) fn candidate_pairs(&self) -> usize {
         self.candidate_pairs
     }
-    pub fn error(&self) -> Option<Error> {
+    pub(crate) fn error(&self) -> Option<Error> {
         self.error.map(Fault::error)
     }
 }
 
-pub fn refresh_collision_world(world: &mut World) -> Result<CollisionReport, Error> {
-    if !world.contains_resource::<CollisionWorld>() {
-        return Err(Fault::MissingPlugin.error());
-    }
-    propagate_transforms(world);
-    sync_ground(world);
-    world.init_resource::<DirectSyncState>();
-    let report = world.resource_scope(|world, mut state: Mut<DirectSyncState>| {
-        let mut sync = state.0.get_mut(world).expect("collision_resources_added");
-        sync.refresh()
-    });
-    Ok(report)
-}
-
-pub(crate) fn sync_ground(world: &mut World) {
-    world.resource_scope(|world, mut collisions: Mut<CollisionWorld>| {
-        let collisions = &mut *collisions;
-        if collisions.terrain.sync(world) {
-            collisions.report.terrain_tiles = collisions.terrain.len();
-        }
-        if collisions.placed.sync(world) {
-            collisions.report.placed_colliders = collisions.placed.len();
-        }
-    });
-}
-
-pub(crate) fn sync(mut sync: CollisionSync) {
-    sync.refresh();
-}
-
-pub(crate) fn detect(
-    mut collisions: ResMut<CollisionWorld>,
-    mut events: ResMut<SensorEvents>,
-    time: Res<FixedTime>,
+pub(crate) fn sync_ground(
+    sources: Query<&SolidSource>,
+    changed: Query<(), Changed<SolidSource>>,
+    mut collision: ResMut<Collision>,
 ) {
-    collisions.detect(&mut events, time.tick);
+    installed(&mut collision).sync_ground(&sources, !changed.is_empty());
+}
+
+pub(crate) fn sync(
+    colliders: Query<ColliderData>,
+    globals: Res<GlobalTransforms>,
+    config: Res<CollisionConfig>,
+    frame: Res<FrameTime>,
+    tick: Res<FixedTime>,
+    mut collision: ResMut<Collision>,
+    mut stats: ResMut<CollisionStats>,
+) {
+    let report = installed(&mut collision).refresh(
+        *config,
+        frame.frame,
+        tick.tick,
+        &colliders,
+        &globals,
+    );
+    stats.set_if_neq(report);
+}
+
+pub(crate) fn detect(mut collision: ResMut<Collision>, time: Res<FixedTime>) {
+    installed(&mut collision).detect(time.tick);
+}
+
+pub(crate) fn forget(mut stats: ResMut<CollisionStats>) {
+    stats.set_if_neq(CollisionStats::default());
 }

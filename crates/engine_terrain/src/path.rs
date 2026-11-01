@@ -2,15 +2,15 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::sync::Arc;
 
-use crate::MAX_LEVEL;
+use engine_core::fields;
+use engine_heightfield::path::distance_to_segment;
 use engine_math::{max, min};
-use engine_settings::settings;
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-use engine_heightfield::Layers;
-use engine_heightfield::path::distance_to_segment;
-use crate::{Generator, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
+use crate::{
+    Generator, Layers, MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey,
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct HeightGrid {
@@ -21,65 +21,68 @@ pub struct HeightGrid {
     pub heights: Vec<f32>,
 }
 
-impl Layers {
-    pub fn height_grid(&self, pyramid: &Pyramid, level: u32, low: Vec2, high: Vec2) -> HeightGrid {
-        let level = level.min(pyramid.levels() - 1);
-        let spacing = pyramid.spacing(level);
-        let [tiles_x, tiles_z] = pyramid.tiles(level);
-        let quads = i64::from(TILE_QUADS);
-        let last = [i64::from(tiles_x) * quads, i64::from(tiles_z) * quads];
-        let first = [
-            ((low.x / spacing).floor() as i64).clamp(0, last[0]),
-            ((low.y / spacing).floor() as i64).clamp(0, last[1]),
-        ];
-        let end = [
-            ((high.x / spacing).ceil() as i64).clamp(first[0], last[0]),
-            ((high.y / spacing).ceil() as i64).clamp(first[1], last[1]),
-        ];
-        let (width, height) = (
-            (end[0] - first[0] + 1) as usize,
-            (end[1] - first[1] + 1) as usize,
-        );
-        let mut heights = vec![0.0; width * height];
-        let layers = Arc::new(self.clone());
-        let tile_of = |sample: i64, tiles: u32| (sample / quads).min(i64::from(tiles) - 1);
-        let (stride, samples) = (i64::from(TILE_STRIDE), i64::from(TILE_SAMPLES));
-        for tz in tile_of(first[1], tiles_z)..=tile_of(end[1], tiles_z) {
-            for tx in tile_of(first[0], tiles_x)..=tile_of(end[0], tiles_x) {
-                let key = TileKey {
-                    level: level as u8,
-                    x: tx as u16,
-                    z: tz as u16,
-                };
-                let mut unlimited = u64::MAX;
-                let tile = Generator::new(layers.clone(), pyramid, key)
-                    .advance(&mut unlimited)
-                    .expect("unlimited_budget_finishes");
-                let rows = (first[1] - tz * quads).max(0)..=(end[1] - tz * quads).min(samples - 1);
-                let columns =
-                    (first[0] - tx * quads).max(0)..=(end[0] - tx * quads).min(samples - 1);
-                for row in rows {
-                    let to = (tz * quads + row - first[1]) as usize * width;
-                    for column in columns.clone() {
-                        heights[to + (tx * quads + column - first[0]) as usize] =
-                            tile.heights()[((row + 1) * stride + column + 1) as usize];
-                    }
+pub fn height_grid(
+    below: &Layers,
+    pyramid: &Pyramid,
+    level: u32,
+    low: Vec2,
+    high: Vec2,
+) -> HeightGrid {
+    let level = level.min(pyramid.levels() - 1);
+    let spacing = pyramid.spacing(level);
+    let [tiles_x, tiles_z] = pyramid.tiles(level);
+    let quads = i64::from(TILE_QUADS);
+    let last = [i64::from(tiles_x) * quads, i64::from(tiles_z) * quads];
+    let first = [
+        ((low.x / spacing).floor() as i64).clamp(0, last[0]),
+        ((low.y / spacing).floor() as i64).clamp(0, last[1]),
+    ];
+    let end = [
+        ((high.x / spacing).ceil() as i64).clamp(first[0], last[0]),
+        ((high.y / spacing).ceil() as i64).clamp(first[1], last[1]),
+    ];
+    let (width, height) = (
+        (end[0] - first[0] + 1) as usize,
+        (end[1] - first[1] + 1) as usize,
+    );
+    let mut heights = vec![0.0; width * height];
+    let layers = Arc::new(below.clone());
+    let tile_of = |sample: i64, tiles: u32| (sample / quads).min(i64::from(tiles) - 1);
+    let (stride, samples) = (i64::from(TILE_STRIDE), i64::from(TILE_SAMPLES));
+    for tz in tile_of(first[1], tiles_z)..=tile_of(end[1], tiles_z) {
+        for tx in tile_of(first[0], tiles_x)..=tile_of(end[0], tiles_x) {
+            let key = TileKey {
+                level: level as u8,
+                x: tx as u16,
+                z: tz as u16,
+            };
+            let mut unlimited = u64::MAX;
+            let tile = Generator::new(layers.clone(), pyramid, key)
+                .advance(&mut unlimited)
+                .expect("unlimited_budget_finishes");
+            let rows = (first[1] - tz * quads).max(0)..=(end[1] - tz * quads).min(samples - 1);
+            let columns =
+                (first[0] - tx * quads).max(0)..=(end[0] - tx * quads).min(samples - 1);
+            for row in rows {
+                let to = (tz * quads + row - first[1]) as usize * width;
+                for column in columns.clone() {
+                    heights[to + (tx * quads + column - first[0]) as usize] =
+                        tile.heights()[((row + 1) * stride + column + 1) as usize];
                 }
             }
         }
-        HeightGrid {
-            first,
-            width,
-            height,
-            spacing,
-            heights,
-        }
+    }
+    HeightGrid {
+        first,
+        width,
+        height,
+        spacing,
+        heights,
     }
 }
 
-settings! {
-    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+fields! {
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(default, deny_unknown_fields)]
     pub struct RouteOptions {
         pub level: u32 = 3 => range(0, MAX_LEVEL),
@@ -148,7 +151,8 @@ pub fn route(
     options: &RouteOptions,
 ) -> Option<Route> {
     let margin = max(0.5 * from.distance(to), 256.0);
-    let grid = layers.height_grid(
+    let grid = height_grid(
+        layers,
         pyramid,
         options.level,
         from.min(to) - Vec2::splat(margin),

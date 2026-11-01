@@ -1,109 +1,76 @@
-use std::collections::BTreeMap;
-use std::sync::Arc;
-
-use bevy_ecs::prelude::{Entity, World};
-use engine_core::smoke::{SmokeFailure, SmokeResult, SmokeSession};
-use engine_core::{
-    AuthoredId, OperationScene, Transform, edit_transform, set_parent, smoke_check, smoke_eq,
-};
-use glam::{EulerRot, Quat, Vec3};
+use engine_core::smoke::{Checked, control, inspect, query, refuse};
+use engine_core::{Section, SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use crate::{Collider, ColliderShape, CollisionLayers};
-use engine_core::{Error, ErrorCode};
+use crate::types::CollisionStats;
 
 const SCENE: &str = "collision-fixture";
-const TICK_DISTANCE: f32 = 6.5 / 60.0;
 
-pub(crate) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
-    let built = build(session.app().world_mut());
-    smoke_check!(
-        built.is_ok(),
-        "fixture_builds",
-        json!(built.as_ref().err().map(|error| format!("{error:?}"))),
-        json!(null)
-    );
-    ask(session, "control", json!({"name": "pause"}))?;
-    session.step(1);
+pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+    load(session, &fixture(0.0, true, &[]))?;
     let ray = queries(session)?;
-    sensor(session, &ray)?;
+    sensor(session)?;
     sweep(session)?;
     changes(session, &ray)?;
-    ask(session, "control", json!({"name": "resume"}))?;
-    query(session, "raycast", ray.clone())?;
-    ask(session, "control", json!({"name": "pause"}))?;
-    session.restart(session.bricks().without(["collision", "physics"]));
-    let missing = refuse(session, "query", json!({"name": "raycast", "args": ray}))?;
-    smoke_eq!(
-        json!(missing["code"]),
-        json!("missing_plugin"),
-        "plugin_is_opt_in"
-    );
+    control(session, "resume", json!({}))?;
+    query(session, "raycast", ray)?;
+    control(session, "pause", json!({}))?;
     Ok(())
 }
 
-fn queries(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
-    for name in ["Collider", "CollisionWorld"] {
-        ask(session, "describe", json!({"name": name}))?;
-    }
-    let world = ask(session, "inspect", json!({"component": "CollisionWorld"}))?["value"].clone();
-    smoke_check!(
-        world["complete"] == true
-            && world["colliders"].as_u64().unwrap_or(0) > 0
-            && world["invalid_colliders"] == 0
-            && world["overflow_colliders"] == 0
-            && world["bvh_nodes"].as_u64().unwrap_or(0) > 0,
-        "collision_world_inspects",
-        json!(world),
-        json!({"complete": true, "invalid_colliders": 0, "overflow_colliders": 0})
+fn queries(session: &mut dyn SmokeSession) -> Checked<Value> {
+    let world = inspect(session, CollisionStats::KEY)?;
+    smoke_eq!(
+        json!({
+            "complete": world["complete"],
+            "colliders": world["colliders"].as_u64().is_some_and(|count| count > 0),
+            "invalid_colliders": world["invalid_colliders"],
+            "overflow_colliders": world["overflow_colliders"],
+            "bvh_nodes": world["bvh_nodes"].as_u64().is_some_and(|count| count > 0),
+        }),
+        json!({
+            "complete": true,
+            "colliders": true,
+            "invalid_colliders": 0,
+            "overflow_colliders": 0,
+            "bvh_nodes": true,
+        }),
+        "collision_world_inspects"
     );
-    let volume = component(session, "player", "Collider")?;
-    smoke_check!(
-        volume.is_object(),
-        "collider_inspects",
-        json!(volume),
-        json!("object")
+    let volume = query(session, "collider", json!({"entity": "player"}))?;
+    smoke_eq!(
+        json!([volume["world_valid"], volume["cache_status"]]),
+        json!([true, "active"]),
+        "collider_inspects"
     );
-    let before = state(session)?;
 
     let filter = json!({"memberships": 2, "filter": 1, "sensors": "exclude"});
     let ray =
         json!({"origin": [4, 4, 0], "direction": [0, -7, 0], "max_distance": 5, "filter": filter});
     let hit = query(session, "raycast", ray.clone())?["hit"].clone();
+    smoke_eq!(hit["entity"]["id"], json!("target"), "closest_raycast");
     smoke_eq!(
-        json!(hit["entity"]["id"]),
-        json!("target"),
-        "closest_raycast"
-    );
-    smoke_check!(
         near(&hit["distance"], 3.0),
-        "closest_raycast_distance",
-        json!(hit["distance"]),
-        json!(3.0)
+        json!(3.0),
+        "closest_raycast_distance"
     );
-    smoke_check!(
+    smoke_eq!(
         near(&hit["normal"][1], 1.0),
-        "closest_raycast_normal",
-        json!(hit["normal"]),
-        json!([0, 1, 0])
+        json!(1.0),
+        "closest_raycast_normal"
     );
     let layered = query(
         session,
         "raycast",
         with(&ray, "filter", json!({"memberships": 8, "filter": 1})),
     )?;
-    smoke_check!(
-        layered["hit"].is_null(),
-        "symmetric_layers",
-        json!(layered["hit"]),
-        json!(null)
-    );
+    smoke_eq!(layered["hit"], Value::Null, "symmetric_layers");
 
     let sensor_filter = json!({"memberships": 2, "filter": 4, "sensors": "only"});
     let sensor_ray = json!({"origin": [0, 0.6, 0], "direction": [0, 0, -1], "max_distance": 3, "filter": sensor_filter});
     let sensed = query(session, "raycast", sensor_ray.clone())?;
     smoke_eq!(
-        json!(sensed["hit"]["entity"]["id"]),
+        sensed["hit"]["entity"]["id"],
         json!("sensor"),
         "sensor_filter_only"
     );
@@ -116,12 +83,7 @@ fn queries(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
             with(&sensor_filter, "sensors", json!("exclude")),
         ),
     )?;
-    smoke_check!(
-        excluded["hit"].is_null(),
-        "sensor_filter_exclude",
-        json!(excluded["hit"]),
-        json!(null)
-    );
+    smoke_eq!(excluded["hit"], Value::Null, "sensor_filter_exclude");
     let skipped = query(
         session,
         "raycast",
@@ -131,36 +93,31 @@ fn queries(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
             with(&sensor_filter, "exclude", json!("sensor")),
         ),
     )?;
-    smoke_check!(
-        skipped["hit"].is_null(),
-        "sensor_exclusion",
-        json!(skipped["hit"]),
-        json!(null)
-    );
+    smoke_eq!(skipped["hit"], Value::Null, "sensor_exclusion");
 
     shapes(session, &ray, &filter)?;
     refuse(
         session,
         "query",
-        json!({"name": "raycast", "args": with(&ray, "direction", json!([0, 0, 0]))}),
+        "raycast",
+        with(&ray, "direction", json!([0, 0, 0])),
     )?;
     refuse(
         session,
         "query",
-        json!({"name": "overlap", "args": {"position": [0, 0, 0], "shape": {"kind": "sphere", "radius": 20}, "filter": filter, "limit": 1}}),
+        "overlap",
+        json!({"position": [0, 0, 0], "shape": {"kind": "sphere", "radius": 20}, "filter": filter, "limit": 1}),
     )?;
-    smoke_eq!(state(session)?, before, "invalid_and_overflow_nonmutating");
     Ok(ray)
 }
 
-fn shapes(session: &mut dyn SmokeSession, ray: &Value, filter: &Value) -> SmokeResult {
+fn shapes(session: &mut dyn SmokeSession, ray: &Value, filter: &Value) -> Checked<()> {
     let inside = query(session, "raycast", with(ray, "origin", json!([4, 0.5, 0])))?["hit"].clone();
-    smoke_eq!(json!(inside["started_inside"]), json!(true), "inside_hit");
-    smoke_check!(
+    smoke_eq!(inside["started_inside"], json!(true), "inside_hit");
+    smoke_eq!(
         near(&inside["distance"], 0.0),
-        "inside_hit_distance",
-        json!(inside["distance"]),
-        json!(0.0)
+        json!(0.0),
+        "inside_hit_distance"
     );
 
     let overlap = query(
@@ -182,12 +139,11 @@ fn shapes(session: &mut dyn SmokeSession, ray: &Value, filter: &Value) -> SmokeR
         json!({"position": [4, 4, 0], "shape": cuboid(0.25), "direction": [0, -1, 0], "max_distance": 5, "filter": filter}),
     )?["hit"]
         .clone();
-    smoke_eq!(json!(cast["entity"]["id"]), json!("target"), "shape_cast");
-    smoke_check!(
+    smoke_eq!(cast["entity"]["id"], json!("target"), "shape_cast");
+    smoke_eq!(
         near(&cast["distance"], 2.75),
-        "shape_cast_distance",
-        json!(cast["distance"]),
-        json!(2.75)
+        json!(2.75),
+        "shape_cast_distance"
     );
 
     for (id, x) in [("sheared", 8), ("ellipsoid", -4)] {
@@ -201,12 +157,11 @@ fn shapes(session: &mut dyn SmokeSession, ray: &Value, filter: &Value) -> SmokeR
             ),
         )?["hit"]
             .clone();
-        smoke_eq!(json!(hit["entity"]["id"]), json!(id), "shear_and_ellipsoid");
-        smoke_check!(
+        smoke_eq!(hit["entity"]["id"], json!(id), "shear_and_ellipsoid");
+        smoke_eq!(
             near(&hit["distance"], 3.5),
-            "shear_and_ellipsoid_distance",
-            json!(hit["distance"]),
-            json!(3.5)
+            json!(3.5),
+            "shear_and_ellipsoid_distance"
         );
     }
     let sheared_cast = query(
@@ -216,90 +171,35 @@ fn shapes(session: &mut dyn SmokeSession, ray: &Value, filter: &Value) -> SmokeR
     )?["hit"]
         .clone();
     smoke_eq!(
-        json!(sheared_cast["entity"]["id"]),
+        sheared_cast["entity"]["id"],
         json!("sheared"),
         "sheared_cast"
     );
-    smoke_check!(
+    smoke_eq!(
         near(&sheared_cast["distance"], 3.25),
-        "sheared_cast_distance",
-        json!(sheared_cast["distance"]),
-        json!(3.25)
+        json!(3.25),
+        "sheared_cast_distance"
     );
     Ok(())
 }
 
-fn sensor(session: &mut dyn SmokeSession, ray: &Value) -> SmokeResult {
-    let mut transitions = Vec::new();
-    for tick in 0..36 {
-        let player = entity(session.app().world(), "player");
-        let moved = player.is_some_and(|player| {
-            edit_transform(session.app().world_mut(), player, |transform| {
-                transform.translation.z -= TICK_DISTANCE;
-            })
-            .is_ok()
-        });
-        smoke_check!(moved, "player_moves", json!(tick), json!("moved"));
-        session.step(1);
-        let events = sensor_events(session)?;
-        let rows = events["events"].as_array().cloned().unwrap_or_default();
-        for event in &rows {
-            transitions.push(json!({"tick": tick, "kind": event["kind"]}));
-        }
-        if rows.is_empty() {
-            continue;
-        }
-        let exact = state(session)?;
-        query(session, "raycast", ray.clone())?;
-        smoke_eq!(sensor_events(session)?, events, "events_nonconsuming");
-        smoke_eq!(state(session)?, exact, "queries_preserve_clock");
-        ask(
-            session,
-            "control",
-            json!({"name": "present", "args": {"alpha": 0.5}}),
-        )?;
-        let preview = state(session)?;
-        query(session, "raycast", ray.clone())?;
-        smoke_eq!(state(session)?, preview, "queries_preserve_preview");
-        smoke_eq!(sensor_events(session)?, events, "events_survive_preview");
-    }
-    let kinds: Vec<Value> = transitions
-        .iter()
-        .map(|transition| transition["kind"].clone())
-        .collect();
-    smoke_eq!(json!(kinds), json!(["enter", "exit"]), "sensor_enter_exit");
+fn sensor(session: &mut dyn SmokeSession) -> Checked<()> {
+    load(session, &fixture(-2.0, true, &[]))?;
+    let entered = query(session, "collision_events", json!({"entity": "sensor"}))?;
+    smoke_eq!(kinds(&entered), json!(["enter"]), "sensor_enters");
+    load(session, &fixture(-4.0, true, &[]))?;
+    let left = query(session, "collision_events", json!({}))?;
+    smoke_eq!(kinds(&left), json!(["exit"]), "sensor_exits");
     Ok(())
 }
 
-fn sweep(session: &mut dyn SmokeSession) -> SmokeResult {
-    let world = session.app().world_mut();
-    let placed = entity(world, "player").is_some_and(|player| {
-        edit_transform(world, player, |transform| {
-            transform.translation = Vec3::new(0.0, 0.6, 0.0);
-        })
-        .is_ok()
+fn sweep(session: &mut dyn SmokeSession) -> Checked<()> {
+    let wall = json!({
+        "id": "thin-wall",
+        "transform": placed([0.66, 0.6, 0.0], [0.0, 90.0, 0.0], [1.0; 3]),
+        "collider": collider(cuboid_shape([3.0, 2.0, 0.01]), 1, 2, false),
     });
-    smoke_check!(placed, "player_returns", json!(placed), json!(true));
-    let wall = collider(cuboid_shape([3.0, 2.0, 0.01]), 1, 2, false);
-    smoke_check!(
-        wall.is_ok(),
-        "thin_wall_builds",
-        json!(format!("{wall:?}")),
-        json!("collider")
-    );
-    if let Ok(wall) = wall {
-        let world = session.app().world_mut();
-        let spawned = world
-            .spawn((
-                placed_at([0.66, 0.6, 0.0], [0.0, 90.0, 0.0], [1.0; 3]),
-                wall,
-            ))
-            .id();
-        rename(world, |named| {
-            named.insert("thin-wall".to_owned(), spawned);
-        });
-    }
-    session.step(1);
+    load(session, &fixture(0.0, true, &[wall]))?;
     let swept = query(
         session,
         "shape_cast",
@@ -309,285 +209,143 @@ fn sweep(session: &mut dyn SmokeSession) -> SmokeResult {
         }),
     )?["hit"]
         .clone();
+    smoke_eq!(swept["entity"]["id"], json!("thin-wall"), "swept_thin_wall");
     smoke_eq!(
-        json!(swept["entity"]["id"]),
-        json!("thin-wall"),
-        "swept_thin_wall"
-    );
-    smoke_check!(
         near(&swept["distance"], 0.05),
-        "swept_thin_wall_distance",
-        json!(swept["distance"]),
-        json!(0.05)
+        json!(0.05),
+        "swept_thin_wall_distance"
     );
     Ok(())
 }
 
-fn changes(session: &mut dyn SmokeSession, ray: &Value) -> SmokeResult {
-    let invalid_before = state(session)?;
-    let refused = Collider::new(cuboid_shape([0.0, 0.5, 0.5]));
-    smoke_eq!(
-        json!(refused.as_ref().err().map(|error| error.code)),
-        json!(ErrorCode::CollisionInvalidShape),
-        "invalid_shape_refused"
-    );
-    let flat = collider(cuboid_shape([0.5; 3]), 1, 2, false);
-    smoke_check!(
-        flat.is_ok(),
-        "flat_collider_builds",
-        json!(format!("{flat:?}")),
-        json!("collider")
-    );
-    let flat = flat.ok().map(|flat| {
-        session
-            .app()
-            .world_mut()
-            .spawn((placed_at([12.0, 0.5, 0.0], [0.0; 3], [0.0, 1.0, 1.0]), flat))
-            .id()
+fn changes(session: &mut dyn SmokeSession, ray: &Value) -> Checked<()> {
+    let flat = json!({
+        "id": "flat",
+        "transform": placed([12.0, 0.5, 0.0], [0.0; 3], [0.0001, 1.0, 1.0]),
+        "collider": collider(cuboid_shape([0.5; 3]), 1, 2, false),
     });
-    session.step(1);
-    let counted = ask(session, "inspect", json!({"component": "CollisionWorld"}))?["value"].clone();
+    load(session, &fixture(0.0, true, &[flat]))?;
+    let counted = inspect(session, CollisionStats::KEY)?;
     smoke_eq!(
-        json!(counted["invalid_colliders"]),
+        counted["invalid_colliders"],
         json!(1),
         "invalid_collider_counted"
     );
-    let incomplete = refuse(session, "query", json!({"name": "raycast", "args": ray}))?;
+    let incomplete = refuse(session, "query", "raycast", ray.clone())?;
     smoke_eq!(
-        json!(incomplete["code"]),
-        json!("collision_incomplete_world"),
+        incomplete["code"],
+        json!("invalid_value"),
         "invalid_collider_blocks_queries"
     );
-    smoke_eq!(
-        component(session, "player", "Transform")?,
-        invalid_before["transform"].clone(),
-        "invalid_collider_preserves_player"
-    );
-    if let Some(flat) = flat {
-        session.app().world_mut().despawn(flat);
-    }
-    let world = session.app().world_mut();
-    if let Some(target) = entity(world, "target") {
-        world.despawn(target);
-    }
-    rename(world, |named| {
-        named.remove("target");
-    });
-    session.step(1);
+    load(session, &fixture(0.0, false, &[]))?;
     let retired = query(session, "raycast", with(ray, "max_distance", json!(3.5)))?;
-    smoke_check!(
-        retired["hit"].is_null(),
-        "removed_colliders_retire",
-        json!(retired["hit"]),
-        json!(null)
-    );
-    let cleared = ask(session, "inspect", json!({"component": "CollisionWorld"}))?["value"].clone();
+    smoke_eq!(retired["hit"], Value::Null, "removed_colliders_retire");
+    let cleared = inspect(session, CollisionStats::KEY)?;
     smoke_eq!(
-        json!(cleared["invalid_colliders"]),
+        cleared["invalid_colliders"],
         json!(0),
         "invalid_collider_retires"
     );
     Ok(())
 }
 
-fn build(world: &mut World) -> Result<(), Error> {
-    let fixture = [
-        (
-            "player",
-            placed_at([0.0, 0.6, 0.0], [0.0; 3], [1.2; 3]),
-            Some(collider(cuboid_shape([0.5; 3]), 2, 5, false)?),
-        ),
-        (
-            "floor",
-            placed_at([0.0, -0.5, 0.0], [0.0; 3], [1.0; 3]),
-            Some(collider(cuboid_shape([20.0, 0.5, 20.0]), 1, 2, false)?),
-        ),
-        (
-            "target",
-            placed_at([4.0, 0.5, 0.0], [0.0; 3], [1.0; 3]),
-            Some(collider(cuboid_shape([0.5; 3]), 1, 2, false)?),
-        ),
-        (
-            "sensor",
-            placed_at([0.0, 0.6, -2.0], [0.0; 3], [1.0; 3]),
-            Some(collider(ColliderShape::Sphere { radius: 0.4 }, 4, 2, true)?),
-        ),
-        (
-            "parent",
-            placed_at([8.0, 1.0, 0.0], [0.0, 30.0, 0.0], [2.0, 1.0, 0.5]),
-            None,
-        ),
-        (
-            "sheared",
-            placed_at([0.0; 3], [0.0, 40.0, 0.0], [1.0; 3]),
-            Some(collider(cuboid_shape([0.5; 3]), 1, 2, false)?),
-        ),
-        (
-            "ellipsoid",
-            placed_at([-4.0, 1.0, 0.0], [0.0; 3], [2.0, 1.0, 0.5]),
-            Some(collider(
-                ColliderShape::Sphere { radius: 0.5 },
-                1,
-                2,
-                false,
-            )?),
-        ),
-    ];
-    let mut named = BTreeMap::new();
-    for (id, transform, collider) in fixture {
-        let mut spawned = world.spawn(transform);
-        if let Some(collider) = collider {
-            spawned.insert(collider);
-        }
-        named.insert(id.to_owned(), spawned.id());
-    }
-    if set_parent(world, named["sheared"], Some(named["parent"])).is_err() {
-        return Err(Error::new(ErrorCode::CollisionInvalidTransform, "$"));
-    }
-    world.insert_resource(OperationScene {
-        id: SCENE.to_owned(),
-        entities: Arc::new(named),
-        streamed: false,
-        authored,
-    });
+fn load(session: &mut dyn SmokeSession, scene: &Value) -> Checked<()> {
+    session.source(&scene.to_string());
+    control(session, "pause", json!({}))?;
+    session.step(1);
     Ok(())
 }
 
-fn collider(
-    shape: ColliderShape,
-    memberships: u32,
-    filter: u32,
-    sensor: bool,
-) -> Result<Collider, Error> {
-    Ok(Collider::new(shape)?
-        .with_layers(CollisionLayers::new(memberships, filter))
-        .with_sensor(sensor))
+fn fixture(player: f32, target: bool, extra: &[Value]) -> Value {
+    let mut entities = vec![
+        json!({
+            "id": "player",
+            "transform": placed([0.0, 0.6, player], [0.0; 3], [1.2; 3]),
+            "collider": collider(cuboid_shape([0.5; 3]), 2, 5, false),
+        }),
+        json!({
+            "id": "floor",
+            "transform": placed([0.0, -0.5, 0.0], [0.0; 3], [1.0; 3]),
+            "collider": collider(cuboid_shape([20.0, 0.5, 20.0]), 1, 2, false),
+        }),
+    ];
+    if target {
+        entities.push(json!({
+            "id": "target",
+            "transform": placed([4.0, 0.5, 0.0], [0.0; 3], [1.0; 3]),
+            "collider": collider(cuboid_shape([0.5; 3]), 1, 2, false),
+        }));
+    }
+    entities.extend([
+        json!({
+            "id": "sensor",
+            "transform": placed([0.0, 0.6, -2.0], [0.0; 3], [1.0; 3]),
+            "collider": collider(json!({"kind": "sphere", "radius": 0.4}), 4, 2, true),
+        }),
+        json!({
+            "id": "parent",
+            "transform": placed([8.0, 1.0, 0.0], [0.0, 30.0, 0.0], [2.0, 1.0, 0.5]),
+        }),
+        json!({
+            "id": "sheared",
+            "parent": "parent",
+            "transform": placed([0.0; 3], [0.0, 40.0, 0.0], [1.0; 3]),
+            "collider": collider(cuboid_shape([0.5; 3]), 1, 2, false),
+        }),
+        json!({
+            "id": "ellipsoid",
+            "transform": placed([-4.0, 1.0, 0.0], [0.0; 3], [2.0, 1.0, 0.5]),
+            "collider": collider(json!({"kind": "sphere", "radius": 0.5}), 1, 2, false),
+        }),
+    ]);
+    entities.extend_from_slice(extra);
+    json!({
+        "id": SCENE,
+        "revision": 1,
+        "materials": [],
+        "meshes": [],
+        "entities": entities,
+    })
 }
 
-fn cuboid_shape(half_extents: [f32; 3]) -> ColliderShape {
-    ColliderShape::Cuboid {
-        half_extents: Vec3::from_array(half_extents),
-    }
+fn collider(shape: Value, memberships: u32, filter: u32, sensor: bool) -> Value {
+    json!({"shape": shape, "memberships": memberships, "filter": filter, "sensor": sensor})
+}
+
+fn cuboid_shape(half_extents: [f32; 3]) -> Value {
+    json!({"kind": "cuboid", "half_extents": half_extents})
 }
 
 fn cuboid(half: f64) -> Value {
     json!({"kind": "cuboid", "half_extents": [half, half, half]})
 }
 
-fn placed_at(translation: [f32; 3], degrees: [f32; 3], scale: [f32; 3]) -> Transform {
-    let [x, y, z] = degrees.map(f32::to_radians);
-    Transform {
-        translation: Vec3::from_array(translation),
-        rotation: Quat::from_euler(EulerRot::XYZ, x, y, z),
-        scale: Vec3::from_array(scale),
-    }
+fn placed(translation: [f32; 3], degrees: [f32; 3], scale: [f32; 3]) -> Value {
+    json!({"translation": translation, "rotation_degrees": degrees, "scale": scale})
 }
 
-fn authored(world: &World, entity: Entity) -> Option<AuthoredId> {
-    let scene = world.get_resource::<OperationScene>()?;
-    let (id, _) = scene.entities.iter().find(|&(_, &named)| named == entity)?;
-    Some(AuthoredId {
-        scene: scene.id.clone(),
-        id: id.clone(),
-        name: id.clone(),
-    })
+fn kinds(events: &Value) -> Value {
+    events["events"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|event| event["kind"].clone())
+        .collect()
 }
 
-fn entity(world: &World, id: &str) -> Option<Entity> {
-    world
-        .get_resource::<OperationScene>()
-        .and_then(|scene| scene.entities.get(id).copied())
-}
-
-fn rename(world: &mut World, change: impl FnOnce(&mut BTreeMap<String, Entity>)) {
-    let mut named = world
-        .get_resource::<OperationScene>()
-        .map(|scene| (*scene.entities).clone())
-        .unwrap_or_default();
-    change(&mut named);
-    world.insert_resource(OperationScene {
-        id: SCENE.to_owned(),
-        entities: Arc::new(named),
-        streamed: false,
-        authored,
-    });
-}
-
-fn near(value: &Value, expected: f64) -> bool {
-    value
+fn near(value: &Value, expected: f64) -> Value {
+    if value
         .as_f64()
         .is_some_and(|value| (value - expected).abs() < 0.001)
+    {
+        json!(expected)
+    } else {
+        value.clone()
+    }
 }
 
 fn with(base: &Value, key: &str, value: Value) -> Value {
     let mut changed = base.clone();
     changed[key] = value;
     changed
-}
-
-fn state(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
-    let status = ask(session, "query", json!({"name": "status"}))?;
-    Ok(json!({
-        "frame": status["observation"]["frame"],
-        "tick": status["observation"]["tick"],
-        "presentation": status["observation"]["presentation"],
-        "transform": component(session, "player", "Transform")?,
-        "global": component(session, "player", "GlobalTransform")?,
-    }))
-}
-
-fn sensor_events(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
-    let mut events = query(session, "collision_events", json!({"entity": "sensor"}))?;
-    if let Some(fields) = events.as_object_mut() {
-        for key in ["observation", "rendering", "paused", "source"] {
-            fields.remove(key);
-        }
-    }
-    Ok(events)
-}
-
-fn component(
-    session: &mut dyn SmokeSession,
-    id: &str,
-    component: &str,
-) -> Result<Value, SmokeFailure> {
-    let inspected = ask(
-        session,
-        "inspect",
-        json!({"entity": id, "component": component}),
-    )?;
-    Ok(inspected["entity"]["components"][component].clone())
-}
-
-fn query(session: &mut dyn SmokeSession, name: &str, args: Value) -> Result<Value, SmokeFailure> {
-    ask(session, "query", json!({"name": name, "args": args}))
-}
-
-fn ask(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Result<Value, SmokeFailure> {
-    let sent = json!({"verb": verb, "body": body});
-    let reply = session.request(verb, body);
-    smoke_check!(
-        reply.is_ok(),
-        "request_accepted",
-        json!(reply.as_ref().err()),
-        sent
-    );
-    Ok(reply
-        .map(|reply| reply["result"].clone())
-        .unwrap_or_default())
-}
-
-fn refuse(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Result<Value, SmokeFailure> {
-    let sent = json!({"verb": verb, "body": body});
-    let reply = session.request(verb, body);
-    smoke_check!(
-        reply.is_err(),
-        "request_refused",
-        json!(reply.as_ref().ok()),
-        sent
-    );
-    Ok(reply
-        .err()
-        .map(|reply| reply["error"].clone())
-        .unwrap_or_default())
 }

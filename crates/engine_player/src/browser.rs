@@ -1,7 +1,6 @@
-use engine::browser::SceneFileSet;
 use wasm_bindgen::prelude::*;
 
-use crate::{ScenePlayer, bricks};
+use crate::ScenePlayer;
 
 engine::export_game!(
     pub struct PlayerGame(ScenePlayer);
@@ -13,11 +12,9 @@ impl PlayerGame {
         canvas: web_sys::HtmlCanvasElement,
         source: &str,
         files: SceneFileSet,
-        without: &str,
     ) -> Result<PlayerGame, JsValue> {
-        let bricks = bricks(without, "?without")?;
-        Self::launch(canvas, move || {
-            ScenePlayer::new(source, files.files(), bricks)
+        Self::launch(canvas, engine_player_bricks::bricks, move |engine| {
+            ScenePlayer::new(source, files.files(), engine)
         })
         .await
     }
@@ -36,12 +33,14 @@ engine::__if_dev! {
             names: String,
             report: JsValue,
         ) -> Result<bool, JsValue> {
+            let list = engine_player_bricks::bricks(engine::BrickList::default());
+            let entries = engine::smokes::registered(&list).map_err(engine::settings::js_error)?;
             engine::smokes::page::run::<engine::smokes::Played<ScenePlayer>>(
                 canvas,
                 &names,
-                &engine::smokes::standard(),
-                &engine::bricks::standard(),
-                &|source, bricks| engine::smokes::played(source, bricks, ScenePlayer::new),
+                &entries,
+                &list,
+                &|source, engine| engine::smokes::played(source, engine, ScenePlayer::new),
                 &report,
             )
             .await

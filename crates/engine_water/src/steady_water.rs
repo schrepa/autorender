@@ -6,19 +6,17 @@ use engine_core::math::GRAVITY;
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max, min};
 
-use crate::codec::{self, Error, Reader, Writer, record};
-use crate::shading::gradient_word;
+use engine_codec::{self as codec, Error, Reader, Writer, record};
 use crate::shallow_water::{self, CELL_MEANS, DRY, UNHELD, WET_MOST, resistance, velocity};
-use crate::surface::smooth_gradient;
-use crate::tile::on_triangle;
 use crate::tile_water::{
-    NONE, TileWater, WATER_SPAN_LEAST, WaterState, breaking, nearest, pack, pack_state, shears,
+    NONE, TileWater, WATER_SPAN_LEAST, PointState, breaking, nearest, pack, pack_state, shears,
     turbulence, unpack,
 };
-use crate::{
-    Bed, BiomeRules, Footprint, Generator, Layers, Pyramid, Reach, Solid, Stamp, TILE_QUADS,
-    TILE_SAMPLES, TILE_STRIDE, Tile, TileKey,
+use engine_heightfield::tile::{
+    BiomeRules, Footprint, Generator, Solid, StampOp as Stamp, TILE_STRIDE, Tile, gradient_word,
+    on_triangle, smooth_gradient,
 };
+use engine_heightfield::{Bed, Layers, Pyramid, Reach, TILE_QUADS, TILE_SAMPLES, TileKey};
 
 pub const MARGIN: f32 = 64.0;
 pub const REGION_CELLS: u64 = 1 << 22;
@@ -2245,7 +2243,7 @@ impl Tile {
                 continue;
             };
             let local = Vec2::new((at % stride) as f32 - 1.0, (at / stride) as f32 - 1.0) * spacing;
-            info[at][1] = pack_state(WaterState {
+            info[at][1] = pack_state(PointState {
                 turbulence: churning,
                 breaking: white,
                 shear: shears[at],

@@ -1,62 +1,19 @@
-use engine_core::{
-    Cut, ProbeStats, ReflectionProbeSettings, RenderReflectionProbe, RenderSnapshot, RenderStats,
-    glam::{Mat4, Vec3, Vec4},
-    math,
-};
-use engine_faces::environment::EnvironmentFace;
-use engine_render::bindings::{Contribution, Stages, read};
-use engine_render::cached::{Bound, Cached};
-use engine_render::gpu_data::{CameraUniform, STILL_FRAMES};
-use engine_render::graph::{
-    FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId, Stage,
-};
-use engine_render::parts::{
-    Begin, BeginOut, Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Shading, Step, View,
-    Views,
-};
+use bevy_ecs::prelude::*;
+use engine_core::{Cut, DeviceLimits, FrameTime};
+use engine_math as math;
+use engine_places::meshes::STILL_FRAMES;
+use engine_places::probes::{ProbeCaptures, ProbeFace, ProbeView};
+use engine_places::sky::SkyLight;
+use engine_render::{CameraUniform, DebugShown};
+use glam::{Mat4, Vec3, Vec4};
 
-use crate::gpu_layouts::PROBE_ENTRY_WORDS;
+use crate::gather::{ProbeList, RenderReflectionProbe};
+use crate::{PROBE_ENTRY_WORDS, ReflectionProbeSettings, ReflectionProbeStats};
 
 pub(crate) const FACES: usize = 6;
 const CAPTURE_NEAR: f32 = 0.05;
 const CAPTURE_FAR: f32 = 4_000.0;
 const GRID_CELLS: f32 = 64.0;
-
-const FRAME_PROBES: Contribution = Contribution {
-    group: "frame",
-    set: "probes",
-    bindings: &[read("probe_words", Stages::FRAGMENT)],
-};
-
-pub static PART: PartEntry = PartEntry {
-    decl: PartDecl {
-        name: "probes",
-        brick: "reflection_probes",
-        passes: &[PassDecl {
-            name: "probe_captures",
-            stage: Stage::AfterFrame,
-        }],
-        resources: &[ResourceDecl {
-            name: "probes",
-            lifetime: Lifetime::Kept,
-        }],
-        hooks: &[],
-        contributes: &[FRAME_PROBES],
-        resolve: None,
-        labels: &[],
-        lazy: false,
-        needs: &["meshes"],
-        piece: None,
-    },
-    create,
-};
-
-fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
-    Box::new(ProbePass::new(
-        &cx.core.device,
-        size_of::<CameraUniform>() as u64,
-    ))
-}
 
 struct Slot {
     probe: RenderReflectionProbe,
@@ -66,7 +23,7 @@ struct Slot {
 }
 
 #[derive(Default)]
-pub(crate) struct ProbeSlots {
+struct ProbeSlots {
     slots: Vec<Option<Slot>>,
     capturing: Option<(usize, usize)>,
     changed: bool,
@@ -74,7 +31,7 @@ pub(crate) struct ProbeSlots {
 }
 
 impl ProbeSlots {
-    pub(crate) fn plan(
+    fn plan(
         &mut self,
         probes: &[RenderReflectionProbe],
         capacity: usize,
@@ -152,13 +109,13 @@ impl ProbeSlots {
         }
     }
 
-    pub(crate) fn tick(&mut self) {
+    fn tick(&mut self) {
         for slot in self.slots.iter_mut().flatten() {
             slot.age = (slot.age + 1).min(STILL_FRAMES);
         }
     }
 
-    pub(crate) fn next_face(
+    fn next_face(
         &mut self,
         probes: &[RenderReflectionProbe],
     ) -> Option<(u32, usize, RenderReflectionProbe)> {
@@ -179,7 +136,7 @@ impl ProbeSlots {
         Some((slot as u32 + 1, face, probe))
     }
 
-    pub(crate) fn face_drawn(&mut self) -> bool {
+    fn face_drawn(&mut self) -> bool {
         let Some((slot, face)) = self.capturing else {
             return false;
         };
@@ -197,7 +154,7 @@ impl ProbeSlots {
         true
     }
 
-    pub(crate) fn waiting(&self) -> bool {
+    fn waiting(&self) -> bool {
         self.capturing.is_some()
             || self
                 .slots
@@ -206,7 +163,7 @@ impl ProbeSlots {
                 .any(|slot| !slot.ready || slot.stale)
     }
 
-    pub(crate) fn ready(&self) -> u32 {
+    fn ready(&self) -> u32 {
         self.slots
             .iter()
             .flatten()
@@ -232,100 +189,204 @@ impl ProbeSlots {
     }
 }
 
-#[derive(Clone, Copy, Default)]
-struct GraphIds {
-    pass: Option<PassId>,
-    poses: Option<ResourceId>,
-    visible: Option<ResourceId>,
-    leaves: Option<ResourceId>,
-    probes: Option<ResourceId>,
+#[derive(Resource)]
+pub(crate) struct ProbeState {
+    slots: ProbeSlots,
+    pub(crate) size: u32,
+    cubes: u32,
+    counting: bool,
+    counted: u32,
+    still: bool,
+    pub(crate) faces: Vec<ProbeFace>,
+    pub(crate) views: Vec<ProbeView>,
+    pub(crate) cameras: Vec<CameraUniform>,
+    pub(crate) finished: Option<u32>,
+    words: Vec<[u32; 4]>,
+    words_changed: bool,
+    stats: ReflectionProbeStats,
 }
 
-pub(crate) struct ProbePass {
-    pub(crate) slots: ProbeSlots,
-    cameras: [wgpu::Buffer; FACES],
-    depth: Cached<u32, wgpu::TextureView>,
-    words: engine_render::buffers::Growable,
-    staging: Vec<[u32; 4]>,
-    pub(crate) faces: u32,
-    cut: Cut,
-    captures: bool,
-    listed: bool,
-    format: Option<wgpu::TextureFormat>,
-    ids: GraphIds,
-}
-
-impl ProbePass {
-    pub(crate) fn new(device: &wgpu::Device, camera_bytes: u64) -> Self {
-        let _owner = engine_render::memory::owned("reflection_probes");
-        let cameras = std::array::from_fn(|_| {
-            engine_render::buffers::uniform(device, "engine/probe-camera", camera_bytes)
-        });
+impl Default for ProbeState {
+    fn default() -> Self {
         Self {
             slots: ProbeSlots {
                 changed: true,
                 ..ProbeSlots::default()
             },
-            cameras,
-            depth: Cached::default(),
-            words: engine_render::buffers::Growable::new(
-                device,
-                GRID_LABEL,
-                32,
-                wgpu::BufferUsages::empty(),
-            ),
-            staging: Vec::new(),
-            faces: 0,
-            cut: Cut::default(),
-            captures: false,
-            listed: false,
-            format: None,
-            ids: GraphIds::default(),
+            size: ReflectionProbeSettings::default().resolution,
+            cubes: 1,
+            counting: false,
+            counted: 0,
+            still: false,
+            faces: Vec::new(),
+            views: Vec::new(),
+            cameras: Vec::new(),
+            finished: None,
+            words: Vec::new(),
+            words_changed: false,
+            stats: ReflectionProbeStats::default(),
         }
-    }
-
-    pub(crate) fn camera(&self, face: usize) -> &wgpu::Buffer {
-        &self.cameras[face]
-    }
-
-    pub(crate) fn words(&self) -> Bound<'_> {
-        self.words.bound()
-    }
-
-    pub(crate) fn depth(
-        &mut self,
-        device: &wgpu::Device,
-        size: u32,
-        format: wgpu::TextureFormat,
-    ) -> &wgpu::TextureView {
-        self.depth.get_or_insert_with(size, || {
-            let texture = engine_render::targets::texture_2d(
-                device,
-                "engine/probe-depth",
-                (size, size),
-                1,
-                1,
-                format,
-                wgpu::TextureUsages::RENDER_ATTACHMENT,
-            );
-            texture.create_view(&wgpu::TextureViewDescriptor::default())
-        })
-    }
-
-    fn upload(&mut self, device: &wgpu::Device, queue: &engine_render::gpu_calls::Queue) {
-        let Some(ready) = self.slots.changed_ready() else {
-            return;
-        };
-        grid_words(&ready, &mut self.staging);
-        let bytes = (self.staging.len() * 16) as u64;
-        self.words.grow(device, bytes);
-        queue.write_buffer(&self.words, 0, bytemuck::cast_slice(&self.staging));
     }
 }
 
-const GRID_LABEL: &str = "engine/probe-grid";
+impl ProbeState {
+    pub(crate) fn probe_cubes(&self) -> u32 {
+        (self.cubes - 1).max(1)
+    }
 
-pub(crate) fn face_view_projection(center: Vec3, face: usize) -> Mat4 {
+    fn place(&mut self, probes: &[RenderReflectionProbe], size: u32, most_cubes: u32) -> bool {
+        let wanted_cubes = 1 + (probes.len() as u32).min(most_cubes - 1);
+        let cubes = if wanted_cubes == 1 {
+            1
+        } else if wanted_cubes > self.cubes {
+            wanted_cubes.next_power_of_two().min(most_cubes)
+        } else {
+            self.cubes
+        };
+        let lost = size != self.size || cubes != self.cubes;
+        (self.size, self.cubes) = (size, cubes);
+        lost
+    }
+
+    fn settle(&mut self, listed: bool) -> bool {
+        self.still = listed && self.slots.waiting();
+        if self.still {
+            if !self.counting {
+                self.counted = 0;
+            }
+            self.counted = (self.counted + 1).min(STILL_FRAMES);
+        }
+        self.counting = self.still;
+        self.counting && self.counted >= STILL_FRAMES
+    }
+
+    fn capture(&mut self, probes: &[RenderReflectionProbe], faces: u32, seconds: f32) -> u32 {
+        let mut used = [false; FACES];
+        let mut drawn = 0;
+        while drawn < faces {
+            let Some((cube, face, probe)) = self.slots.next_face(probes) else {
+                break;
+            };
+            if used[face] {
+                break;
+            }
+            used[face] = true;
+            let view = face_view_projection(probe.center, face);
+            let index = self.faces.len() as u32;
+            self.faces.push(ProbeFace {
+                face: face as u32,
+                view,
+                cube,
+            });
+            self.views.push(ProbeView {
+                face: face as u32,
+                center: probe.center,
+                still: self.still,
+            });
+            self.cameras.push(probe_camera(
+                view,
+                probe.center,
+                seconds,
+                (self.size, 1 + index),
+            ));
+            drawn += 1;
+            if self.slots.face_drawn() {
+                self.finished = Some(cube);
+                break;
+            }
+        }
+        drawn
+    }
+}
+
+pub(crate) fn plan_captures(
+    settings: Res<ReflectionProbeSettings>,
+    limits: Res<DeviceLimits>,
+    sky: Res<SkyLight>,
+    shown: Res<DebugShown>,
+    time: Res<FrameTime>,
+    gathered: Res<ProbeList>,
+    mut state: ResMut<ProbeState>,
+) {
+    let state = &mut *state;
+    let probes = gathered.list.as_slice();
+    let most_cubes = (limits.texture_layers / FACES as u32).max(1);
+    let lost = state.place(probes, settings.resolution, most_cubes);
+    state
+        .slots
+        .plan(probes, (state.cubes - 1) as usize, lost, sky.is_changed());
+    if let Some(ready) = state.slots.changed_ready() {
+        grid_words(&ready, &mut state.words);
+        state.words_changed = true;
+    }
+    state.faces.clear();
+    state.views.clear();
+    state.cameras.clear();
+    state.finished = None;
+    let listed = !probes.is_empty();
+    let settled = state.settle(listed);
+    let mut drawn = 0;
+    if shown.owner.is_none() && listed {
+        state.slots.tick();
+        if settled {
+            drawn = state.capture(
+                probes,
+                settings.faces_per_frame,
+                time.elapsed_seconds as f32,
+            );
+        }
+    }
+    let count = probes.len() as u64;
+    let kept = count.min(u64::from(most_cubes - 1));
+    let asked = gathered.cut as u64 + count;
+    let counted = |count: u64| count.min(u64::from(u32::MAX)) as u32;
+    state.stats = ReflectionProbeStats {
+        ready: state.slots.ready(),
+        faces: drawn,
+        probe_cut: Cut::of(counted(asked), counted(kept)),
+    };
+}
+
+pub(crate) fn publish_captures(
+    mut state: ResMut<ProbeState>,
+    mut words: ResMut<ProbeWords>,
+    mut captures: ResMut<ProbeCaptures>,
+    mut stats: ResMut<ReflectionProbeStats>,
+) {
+    let state = &mut *state;
+    if std::mem::take(&mut state.words_changed) {
+        std::mem::swap(&mut words.words, &mut state.words);
+    }
+    if captures.faces != state.faces
+        || captures.still != state.still
+        || captures.size != state.size
+    {
+        let captures = &mut *captures;
+        captures.faces.clone_from(&state.faces);
+        captures.still = state.still;
+        captures.size = state.size;
+    }
+    stats.set_if_neq(state.stats.clone());
+}
+
+pub(crate) fn forget_probes(
+    mut gathered: ResMut<ProbeList>,
+    mut state: ResMut<ProbeState>,
+    mut words: ResMut<ProbeWords>,
+    mut stats: ResMut<ReflectionProbeStats>,
+) {
+    *gathered = ProbeList::default();
+    *state = ProbeState::default();
+    *words = ProbeWords::default();
+    *stats = ReflectionProbeStats::default();
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct ProbeWords {
+    pub(crate) words: Vec<[u32; 4]>,
+}
+
+fn face_view_projection(center: Vec3, face: usize) -> Mat4 {
     let (right, up, back) = match face {
         0 => (Vec3::NEG_Z, Vec3::Y, Vec3::NEG_X),
         1 => (Vec3::Z, Vec3::Y, Vec3::X),
@@ -337,6 +398,32 @@ pub(crate) fn face_view_projection(center: Vec3, face: usize) -> Mat4 {
     let row = |axis: Vec3| axis.extend(-axis.dot(center));
     let view = Mat4::from_cols(row(right), row(up), row(back), Vec4::W).transpose();
     Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, CAPTURE_FAR, CAPTURE_NEAR) * view
+}
+
+fn probe_camera(
+    view_projection: Mat4,
+    position: Vec3,
+    seconds: f32,
+    (size, view): (u32, u32),
+) -> CameraUniform {
+    let columns = view_projection.to_cols_array_2d();
+    CameraUniform {
+        view_projection: columns,
+        previous_view_projection: columns,
+        inverse_view_projection: view_projection.inverse().to_cols_array_2d(),
+        position: position.extend(seconds).to_array(),
+        jitter: [0.0; 4],
+        options: [1.0, pixel_angle(view_projection, size), 0.0, 0.0],
+        wind: [0.0, 0.0, 0.0, seconds],
+        region: [size as f32, size as f32, 1.0, 1.0],
+        detail: position.extend(0.0).to_array(),
+        view: [view, 0, 0, 0],
+    }
+}
+
+fn pixel_angle(view_projection: Mat4, height: u32) -> f32 {
+    let row = view_projection.row(1).truncate().length() * height.max(1) as f32;
+    2.0 / math::max(row, 1.0e-12)
 }
 
 fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>) {
@@ -391,7 +478,7 @@ fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>
     for &index in lists.iter().flatten() {
         let (probe, cube) = probes[index as usize];
         let interior = probe.interior;
-        let entry: [[u32; 4]; PROBE_ENTRY_WORDS] = [
+        let entry: [[u32; 4]; PROBE_ENTRY_WORDS as usize] = [
             [
                 probe.center.x.to_bits(),
                 probe.center.y.to_bits(),
@@ -412,113 +499,5 @@ fn grid_words(probes: &[(RenderReflectionProbe, u32)], words: &mut Vec<[u32; 4]>
             ],
         ];
         words.extend(entry);
-    }
-}
-
-impl GpuPart for ProbePass {
-    fn install(&mut self, table: &GraphTable) {
-        self.ids = GraphIds {
-            pass: table.pass_named("probe_captures"),
-            poses: table.resource("poses"),
-            visible: table.resource("visible"),
-            leaves: table.resource("leaves"),
-            probes: table.resource("probes"),
-        };
-    }
-
-    fn begin(&mut self, cx: &mut Begin<'_>, _out: &mut BeginOut) {
-        self.listed = !cx.snapshot.probe_list().is_empty();
-        self.format = cx
-            .parts
-            .face::<dyn EnvironmentFace>()
-            .map(|environment| environment.radiance_face(0).texture().format());
-    }
-
-    fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
-        let snapshot = cx.frame.snapshot;
-        let probe_list = snapshot.probe_list();
-        let plan = cx
-            .parts
-            .face::<dyn EnvironmentFace>()
-            .map(|environment| environment.plan())
-            .unwrap_or_default();
-        let (cubes, most_cubes, lost, sky_changed) = (
-            plan.cubes.max(1),
-            plan.most_cubes.max(1),
-            plan.lost,
-            plan.sky_changed,
-        );
-        self.slots
-            .plan(probe_list, (cubes - 1) as usize, lost, sky_changed);
-        self.upload(&cx.core.device, &cx.core.queue);
-        self.faces = 0;
-        let listed = probe_list.len() as u64;
-        let kept = listed.min(u64::from(most_cubes - 1));
-        let asked = snapshot.reflection_probes.cut as u64 + listed;
-        let counted = |count: u64| count.min(u64::from(u32::MAX)) as u32;
-        self.cut = Cut::of(counted(asked), counted(kept));
-        self.captures = cx.frame.kind.gpu_mode && !cx.frame.kind.debug && !probe_list.is_empty();
-        if probe_list.is_empty() {
-            self.depth.clear();
-        }
-    }
-
-    fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
-        let ids = self.ids;
-        if let (true, Some(pass)) = (self.captures, ids.pass) {
-            let _ = graph
-                .add(cx.table, pass)
-                .read(ids.poses)
-                .read(ids.visible)
-                .read_written(ids.leaves)
-                .write(ids.probes);
-        }
-    }
-
-    fn encode(
-        &mut self,
-        _pass: usize,
-        cx: &mut Encode<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-    ) -> u32 {
-        self.capture(cx, encoder);
-        0
-    }
-
-    fn contribute<'s>(&'s self, group: &str, out: &mut Vec<(&'static str, Bound<'s>)>) {
-        if group == "frame" {
-            out.push(("probe_words", self.words()));
-        }
-    }
-
-    fn capacity_bytes(&self) -> u64 {
-        self.words.size()
-            + self
-                .depth
-                .key()
-                .map_or(0, |size| u64::from(*size) * u64::from(*size) * 4)
-    }
-
-    fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
-        stats.reflection_probes = ProbeStats {
-            ready: self.slots.ready(),
-            faces: self.faces,
-            probe_cut: self.cut,
-        };
-    }
-
-    fn shading(&self, snapshot: &RenderSnapshot, shading: &mut Shading) {
-        let enabled = snapshot.section::<ReflectionProbeSettings>().enabled;
-        shading.set("PROBES", if enabled { 1.0 } else { 0.0 });
-    }
-
-    fn views(&self) -> Option<Views<'_>> {
-        let format = self.format.filter(|_| self.listed)?;
-        Some(Views {
-            cameras: &self.cameras,
-            format,
-            mirrored: true,
-            still: self.slots.waiting(),
-        })
     }
 }

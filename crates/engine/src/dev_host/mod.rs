@@ -2,7 +2,8 @@ pub(crate) mod bridge;
 mod controls;
 
 use crate::app_host::AppHost;
-use engine_core::{Error, ErrorCode, Expected};
+use engine_core::{Error, ErrorCode};
+use engine_settings::Expected;
 use engine_dev::{
     CaptureRequest, Context, Control, DevTools, Envelope, ExplainQuestion, HostControl,
     ProfileRequest, RenderedMesh, RendererFacts, Verb, WatchRequest,

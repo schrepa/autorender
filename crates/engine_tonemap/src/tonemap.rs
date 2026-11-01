@@ -1,43 +1,15 @@
-use std::mem::offset_of;
+use bevy_ecs::prelude::*;
+use engine_places::tonemap::Display;
+use glam::Vec3;
 
-use engine_core::glam::Vec3;
-use engine_core::{Grading, GradingValues};
-use engine_faces::display::MeteredExposure;
-use engine_render::parts::{Create, GpuPart, PartDecl, PartEntry, Prelude, PreludeStage, Step};
-use engine_render::pieces::{PieceAt, PieceDecl};
+use crate::light::{Grading, GradingValues};
 
-use crate::gpu_layouts::DisplayPiece;
-
-pub(crate) const PIECE: &str = "tonemap::piece";
-
-pub(crate) static PART: PartEntry = PartEntry {
-    decl: PartDecl {
-        name: "tonemap",
-        brick: "tonemap",
-        passes: &[],
-        resources: &[],
-        hooks: &[],
-        contributes: &[],
-        resolve: None,
-        labels: &[],
-        lazy: false,
-        needs: &[],
-        piece: Some(PieceDecl {
-            name: "display",
-            module: PIECE,
-            ty: "DisplayPiece",
-            size: size_of::<DisplayPiece>() as u64,
-        }),
-    },
-    create,
-};
-
-fn create(_: &Create<'_>) -> Box<dyn GpuPart> {
-    Box::new(TonemapPass::default())
+pub(crate) fn publish_display(grading: Res<Grading>, mut display: ResMut<Display>) {
+    display.set_if_neq(display_of(&grading.values()));
 }
 
 fn contrast_weight(contrast: f32) -> f32 {
-    engine_core::math::clamp(2.0 * (contrast - 1.0), -2.0, 1.0)
+    engine_math::clamp(2.0 * (contrast - 1.0), -2.0, 1.0)
 }
 
 fn unit_luminance(tint: Vec3) -> [f32; 4] {
@@ -49,60 +21,16 @@ fn unit_luminance(tint: Vec3) -> [f32; 4] {
     }
 }
 
-impl DisplayPiece {
-    fn new(grading: &GradingValues, metered: bool) -> Self {
-        Self {
-            grade: [
-                contrast_weight(grading.contrast),
-                grading.vibrance,
-                grading.saturation,
-                grading.exposure,
-            ],
-            shadow_tint: unit_luminance(grading.shadow_tint),
-            highlight_tint: unit_luminance(grading.highlight_tint),
-            exposure: [0.0, if metered { 1.0 } else { 0.0 }, 0.0, 0.0],
-        }
-    }
-}
-
-#[derive(Default)]
-struct TonemapPass {
-    piece: DisplayPiece,
-    at: PieceAt,
-}
-
-impl GpuPart for TonemapPass {
-    fn prepare(&mut self, cx: &mut Step<'_>, prelude: &mut Prelude) {
-        let metered = cx
-            .parts
-            .face::<dyn MeteredExposure>()
-            .and_then(MeteredExposure::metered);
-        let grading = cx.frame.snapshot.section::<Grading>().values();
-        self.piece = DisplayPiece::new(&grading, metered.is_some());
-        let Some((state, offset)) = metered else {
-            return;
-        };
-        let core = &*cx.core;
-        let encoder = prelude.encoder(
-            &core.device,
-            PreludeStage::Inputs,
-            "pre_inputs",
-            "engine/exposure-copy",
-        );
-        encoder.copy_buffer_to_buffer(
-            state,
-            offset,
-            core.pieces_buffer(),
-            self.at.offset + offset_of!(DisplayPiece, exposure) as u64,
-            4,
-        );
-    }
-
-    fn place_piece(&mut self, at: PieceAt) {
-        self.at = at;
-    }
-
-    fn piece(&self) -> Option<&[u8]> {
-        Some(bytemuck::bytes_of(&self.piece))
+fn display_of(grading: &GradingValues) -> Display {
+    Display {
+        grade: [
+            contrast_weight(grading.contrast),
+            grading.vibrance,
+            grading.saturation,
+            grading.exposure,
+        ],
+        shadow_tint: unit_luminance(grading.shadow_tint),
+        highlight_tint: unit_luminance(grading.highlight_tint),
+        exposure: [grading.exposure, 0.0, 0.0, 0.0],
     }
 }

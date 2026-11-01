@@ -177,7 +177,9 @@ impl JobPool {
         while let Ok(reported) = self.reports.try_recv() {
             match reported {
                 Reported::Job(Report::Done(id, output)) => host.complete_job(JobId(id), output),
-                Reported::Job(Report::Failed(id, error)) => host.fail_job(JobId(id), error),
+                Reported::Job(Report::Failed(id, error)) => {
+                    host.fail_job(JobId(id), error.to_string());
+                }
                 Reported::Read {
                     worker,
                     id,
@@ -335,7 +337,7 @@ impl Drop for JobPool {
 }
 
 fn work(index: u32, list: Arc<JobList>, inbox: &Receiver<Order>, report: &Sender<Reported>) {
-    let mut worker = engine_worker::Worker::new(list);
+    let mut worker = engine_worker::Worker::new(list, engine_worker::now_ms);
     loop {
         let mut next = if worker.busy() {
             inbox.try_recv().ok()
@@ -347,25 +349,15 @@ fn work(index: u32, list: Arc<JobList>, inbox: &Receiver<Order>, report: &Sender
         };
         while let Some(order) = next.take() {
             match order {
-                Order::Share(key, bytes) => {
-                    if let Err(error) = worker.share(key, bytes) {
-                        let record = serde_json::json!({
-                            "event": "share_refused",
-                            "worker": index,
-                            "key": key.hex(),
-                            "error": error,
-                        });
-                        eprintln!("{record}");
-                    }
-                }
-                Order::Unshare(key) => worker.unshare(key),
+                Order::Share(key, bytes) => worker.share(key.hash(), bytes),
+                Order::Unshare(key) => worker.unshare(key.hash()),
                 Order::Clear => worker.clear(),
                 Order::Run {
                     id,
                     kind,
                     input,
                     priority,
-                } => worker.hold(id, kind, input, priority),
+                } => worker.hold(id, kind.name(), input, priority),
                 Order::Cancel(id) => worker.cancel(id),
                 Order::Read {
                     id,

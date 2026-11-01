@@ -1,8 +1,9 @@
-use super::*;
+use glam::Vec3;
+use serde::Serialize;
+
 use crate::RiverFlow;
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PoolView {
     pub at: [f32; 3],
     pub rise: f32,
@@ -13,7 +14,7 @@ pub struct PoolView {
     pub area: f32,
 }
 
-fn pools(flow: &RiverFlow, origin: Vec3) -> Vec<PoolView> {
+pub(crate) fn pools(flow: &RiverFlow, origin: Vec3) -> Vec<PoolView> {
     flow.pools()
         .iter()
         .map(|pool| {

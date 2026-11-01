@@ -1,6 +1,6 @@
 use engine_core::{Error, Expected};
 use engine_math::{clamp, max, min, sin_cos};
-use engine_settings::{ExtraRules, InvalidSetting, settings};
+use engine_core::{ExtraRules, InvalidSetting, fields};
 use serde::{Deserialize, Serialize};
 
 use crate::expr::Expr;
@@ -9,7 +9,7 @@ use crate::surface::{
     Compiled, Control, Reads, RowInputs, RowScratch, Scope, erosion_row, setting_error,
     terrain_error, unknown, unknown_map,
 };
-use crate::{TILE_QUADS, TILE_STRIDE, Tile};
+use crate::{Placed, TILE_QUADS, TILE_STRIDE, Tile};
 
 pub const AUTHORED_LAYER: u16 = u16::MAX - 1;
 
@@ -26,9 +26,8 @@ const MAX_CHOICES: usize = 64;
 const MAX_LEVEL: u8 = crate::MAX_LEVEL as u8;
 const MAX_BED: f32 = 1000.0;
 
-settings! {
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+fields! {
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct PlacementChoice {
         pub asset: String = String::new() => any,
@@ -37,10 +36,9 @@ settings! {
     }
 }
 
-settings! {
+fields! {
     extra_rules;
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct PlacementLayer {
         pub id: String = String::new() => any,
@@ -73,34 +71,33 @@ impl ExtraRules for PlacementLayer {
         if self.density * self.footprint * self.footprint / 10_000.0 > 1.0 {
             return Err(InvalidSetting::new(
                 "density",
-                engine_settings::Expected::Number,
+                engine_core::Expected::Number,
             ));
         }
         if self.scale[0] > self.scale[1] {
             return Err(InvalidSetting::new(
                 "scale",
-                engine_settings::Expected::Sorted,
+                engine_core::Expected::Sorted,
             ));
         }
         if self.assets.iter().map(|choice| choice.weight).sum::<f32>() <= 0.0 {
             return Err(InvalidSetting::new(
                 "assets",
-                engine_settings::Expected::Nonzero,
+                engine_core::Expected::Nonzero,
             ));
         }
         if self.far.is_some_and(|far| far.level <= self.level) {
             return Err(InvalidSetting::new(
                 "far.level",
-                engine_settings::Expected::Above,
+                engine_core::Expected::Above,
             ));
         }
         Ok(())
     }
 }
 
-settings! {
-    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+fields! {
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct FarPlacement {
         pub level: u8 = 1 => range(1, MAX_LEVEL),
@@ -126,9 +123,8 @@ fn unit_scale() -> [f32; 2] {
     [1.0, 1.0]
 }
 
-settings! {
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+fields! {
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct AuthoredPlacement {
         pub asset: String = String::new() => any,
@@ -236,53 +232,15 @@ pub(crate) fn place_authored(
     cost
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Placed {
-    pub position: [f32; 3],
-    pub yaw: f32,
-    pub lean: [f32; 2],
-    pub scale: f32,
-    pub sink: f32,
-    pub ground: [f32; 2],
-    pub asset: u16,
-    pub layer: u16,
-    pub near_level: Option<u8>,
-    pub rank: f32,
-}
-
-impl Placed {
-    pub fn model(&self, origin: glam::Vec3, base: f32) -> glam::Mat4 {
-        use glam::Vec3;
-        let [lean_x, lean_z] = self.lean;
-        let up = Vec3::new(
-            lean_x,
-            max(1.0 - lean_x * lean_x - lean_z * lean_z, 0.01).sqrt(),
-            lean_z,
-        )
-        .normalize();
-        let (sin, cos) = sin_cos(self.yaw);
-        let forward = Vec3::new(cos, 0.0, sin);
-        let tangent = (forward - up * forward.dot(up)).normalize_or(Vec3::X);
-        let across = tangent.cross(up);
-        let [x, _, z] = self.position;
-        glam::Mat4::from_cols(
-            (tangent * self.scale).extend(0.0),
-            (up * self.scale).extend(0.0),
-            (across * self.scale).extend(0.0),
-            (origin + Vec3::new(x, base, z)).extend(1.0),
-        )
-    }
-
-    pub fn footprint(&self, solid: &Solid) -> Footprint {
-        use glam::{Mat3, Mat4, Vec3};
-        let model = self.model(Vec3::ZERO, self.position[1])
-            * Mat4::from_translation(Vec3::from_array(solid.center));
-        let axes = Mat3::from_mat4(model) * Mat3::from_diagonal(Vec3::from_array(solid.half));
-        Footprint {
-            center: model.w_axis.truncate().to_array(),
-            axes: axes.to_cols_array(),
-            round: solid.round,
-        }
+pub fn footprint(placed: &Placed, solid: &Solid) -> Footprint {
+    use glam::{Mat3, Mat4, Vec3};
+    let model = placed.model(Vec3::ZERO, placed.position[1])
+        * Mat4::from_translation(Vec3::from_array(solid.center));
+    let axes = Mat3::from_mat4(model) * Mat3::from_diagonal(Vec3::from_array(solid.half));
+    Footprint {
+        center: model.w_axis.truncate().to_array(),
+        axes: axes.to_cols_array(),
+        round: solid.round,
     }
 }
 
@@ -607,7 +565,7 @@ impl MaskInputs {
             Some(water) if reads.water => {
                 let local = glam::Vec2::from(local);
                 crate::HydrologySample {
-                    lake: tile.water_at(local).map_or(0.0, |water| water.depth),
+                    lake: tile.lake_depth(local),
                     ..tile.river_at(local).with_maps(water, point, spacing)
                 }
             }
@@ -910,18 +868,6 @@ crate::codec::record!(Footprint {
     center,
     axes,
     round
-});
-crate::codec::record!(Placed {
-    position,
-    yaw,
-    lean,
-    scale,
-    sink,
-    ground,
-    asset,
-    layer,
-    near_level,
-    rank,
 });
 
 type MapSources<'a> = (

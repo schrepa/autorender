@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::{Component, Resource};
 use engine_assets::{
-    AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle, MeshLods, Surface, Texture,
-    TextureHandle,
+    AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle, MeshLods, Texture, TextureHandle,
 };
 use glam::{BVec4A, Mat4, Quat, Vec3, Vec4, Vec4Swizzles};
 use serde::Serialize;
@@ -119,11 +118,6 @@ impl Transform {
             self.translation.extend(1.0),
         )
     }
-}
-
-#[derive(Component, Debug, Clone, Copy)]
-pub struct Cube {
-    pub color: [f32; 4],
 }
 
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
@@ -350,50 +344,6 @@ impl Default for Viewport {
     }
 }
 
-#[derive(Resource, Debug, Clone, Copy, Default)]
-pub struct InputState {
-    pub move_forward: f32,
-    pub move_right: f32,
-    pub move_up: f32,
-    pub look_yaw: f32,
-    pub look_pitch: f32,
-}
-
-#[derive(Component, Debug, Clone, Copy, PartialEq)]
-pub struct Tint(pub [f32; 4]);
-
-impl Tint {
-    pub const WHITE: Self = Self([1.0; 4]);
-
-    pub fn apply(&self, color: [f32; 4]) -> [f32; 4] {
-        let mut tinted = color;
-        for (channel, factor) in tinted.iter_mut().zip(self.0) {
-            let factor = if factor.is_finite() {
-                crate::math::clamp(factor, 0.0, 1.0)
-            } else {
-                1.0
-            };
-            *channel *= factor;
-        }
-        tinted
-    }
-}
-
-impl Default for Tint {
-    fn default() -> Self {
-        Self::WHITE
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct RenderInstance {
-    pub mesh: MeshHandle,
-    pub material: Option<MaterialHandle>,
-    pub model: Mat4,
-    pub color: [f32; 4],
-    pub surface: Surface,
-}
-
 #[derive(Debug, Clone)]
 pub struct RenderMesh {
     pub handle: MeshHandle,
@@ -424,28 +374,4 @@ pub struct RenderMaterial {
     pub handle: MaterialHandle,
     pub material: Material,
     pub version: u64,
-}
-
-#[derive(Debug, Default)]
-pub struct RenderSnapshot {
-    pub view_projection: Mat4,
-    pub camera_position: Vec3,
-    pub detail_eye: Vec3,
-    pub elapsed_seconds: f32,
-    pub presented_seconds: f64,
-    pub wind: [f32; 4],
-    pub lights: crate::RenderLights,
-    pub particles: crate::RenderParticles,
-    pub reflection_probes: crate::RenderReflectionProbes,
-    pub tables: crate::RenderTables,
-    pub instances: Vec<RenderInstance>,
-    pub(crate) instance_slots: crate::retained_render::InstanceSlots,
-    pub meshes: Vec<RenderMesh>,
-    pub materials: Vec<RenderMaterial>,
-    pub textures: Vec<RenderTexture>,
-    pub render_candidates: usize,
-    pub visible_instances: usize,
-    pub dropped_instances: usize,
-    pub missing_assets: usize,
-    pub invalid_transforms: usize,
 }

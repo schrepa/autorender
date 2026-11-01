@@ -1,22 +1,21 @@
 use std::sync::Arc;
 
-use engine_math::{max, min};
-use engine_settings::settings;
-use engine_terrain::bed::{HEAD_FLOOD, NARROWEST, bankfull};
-use engine_terrain::hydrology::{
-    Drainage, FLOW_RANGE, Grid, Hydrology, HydrologyStats, LAKE_RANGE, NEIGHBORS, WETNESS_RANGE,
-    WaterGrid, drainage, neighbor_steps,
+use engine_core::fields;
+use engine_heightfield::bed::{HEAD_FLOOD, NARROWEST, bankfull};
+use engine_heightfield::hydrology::{
+    Drainage, FLOW_RANGE, Grid, HydrologyBake, HydrologyStats, LAKE_RANGE, NEIGHBORS,
+    WETNESS_RANGE, WaterGrid, drainage, neighbor_steps,
 };
-use engine_terrain::rivers::{RiverLine, Rivers};
-use engine_terrain::{HeightImage, MAX_LEVEL};
+use engine_heightfield::rivers::{RiverLine, Rivers};
+use engine_heightfield::{HeightImage, MAX_LEVEL};
+use engine_math::{max, min};
 use serde::{Deserialize, Serialize};
 
 use crate::given::{Drained, GivenLayers, courses};
 use crate::rivers::{Channels, trace};
 
-settings! {
-    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+fields! {
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(default, deny_unknown_fields)]
     pub struct HydrologyLayer {
         pub level: u32 = 0 => range(0, MAX_LEVEL),
@@ -131,7 +130,7 @@ pub(crate) fn bake(
     (heights, width, spacing): (&[f32], usize, f32),
     (landscape, across, apart): (&[f32], usize, f32),
     (layer, given, finest): (&HydrologyLayer, &GivenLayers<'_>, f32),
-) -> (Hydrology, Vec<RiverLine>) {
+) -> (HydrologyBake, Vec<RiverLine>) {
     let count = landscape.len();
     let rows = count / across;
     let routed = drainage(landscape, across, apart);
@@ -186,7 +185,7 @@ pub(crate) fn bake(
         (order, receivers, area),
         (layer, given, finest),
     );
-    let hydrology = Hydrology {
+    let hydrology = HydrologyBake {
         spacing: apart,
         flow: image(flow),
         wetness: image(wetness),
@@ -365,4 +364,4 @@ fn water(heights: &[f32], found: &Found<'_>, width: usize, spacing: f32) -> Wate
     }
 }
 
-engine_terrain::codec::record!(HydrologyLayer { level, discharge });
+engine_codec::record!(HydrologyLayer { level, discharge });

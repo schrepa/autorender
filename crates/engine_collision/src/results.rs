@@ -1,11 +1,10 @@
 use engine_core::Error;
 use serde::Serialize;
 
-use crate::CollisionWorldView;
+use crate::views::CollisionWorldView;
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct HitEntity {
+pub(crate) struct HitEntity {
     pub id: Option<String>,
     pub scene: Option<String>,
     pub name: Option<String>,
@@ -14,23 +13,20 @@ pub struct HitEntity {
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct PlacedHit {
+pub(crate) struct PlacedHit {
     pub layer: u16,
     pub asset: u16,
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct RaycastResult {
+pub(crate) struct RaycastResult {
     pub snapshot: CollisionWorldView,
     pub complete: bool,
     pub hit: Option<RayHit>,
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct RayHit {
+pub(crate) struct RayHit {
     pub entity: HitEntity,
     pub distance: f32,
     pub point: [f32; 3],
@@ -40,8 +36,7 @@ pub struct RayHit {
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct OverlapResult {
+pub(crate) struct OverlapResult {
     pub snapshot: CollisionWorldView,
     pub complete: bool,
     pub total: usize,
@@ -49,16 +44,14 @@ pub struct OverlapResult {
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct ShapeCastResult {
+pub(crate) struct ShapeCastResult {
     pub snapshot: CollisionWorldView,
     pub complete: bool,
     pub hit: Option<CastHit>,
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct CastHit {
+pub(crate) struct CastHit {
     pub entity: HitEntity,
     pub fraction: f32,
     pub distance: f32,
@@ -69,8 +62,7 @@ pub struct CastHit {
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct CollisionEventsResult {
+pub(crate) struct CollisionEventsResult {
     pub sensor_only: bool,
     pub sequence: String,
     pub tick: Option<String>,
@@ -85,17 +77,15 @@ pub struct CollisionEventsResult {
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct SensorEventRow {
+pub(crate) struct SensorEventRow {
     pub kind: SensorEventKindView,
     pub first: HitEntity,
     pub second: HitEntity,
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
-pub enum SensorEventKindView {
+pub(crate) enum SensorEventKindView {
     Enter,
     Exit,
 }

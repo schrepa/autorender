@@ -1,5 +1,6 @@
-use engine_core::bevy_ecs::prelude::World;
-use engine_core::{BrickRegistry, OperationEntry};
+use bevy_ecs::prelude::World;
+use engine_core::SceneComponents;
+use engine_registry::{MembersOf, Registry};
 use serde_json::{Map, Value, json};
 
 use crate::protocol::{self, Verb};
@@ -12,10 +13,10 @@ pub struct Generated {
     pub inspectors: Value,
 }
 
-fn registry(world: &World) -> Result<&BrickRegistry, String> {
+fn registry(world: &World) -> Result<&Registry, String> {
     world
-        .get_resource::<BrickRegistry>()
-        .ok_or_else(|| "the schemas' engine adds no bricks: add the standard bricks".to_owned())
+        .get_resource::<Registry>()
+        .ok_or_else(|| "the schemas' engine lists no bricks: list the game's bricks".to_owned())
 }
 
 fn serialized(schema: schemars::Schema) -> Value {
@@ -41,7 +42,7 @@ fn definition_of(mut schema: Value, definitions: &mut Map<String, Value>) -> (St
 }
 
 pub fn reply(world: &World) -> Result<Value, String> {
-    let registry = registry(world)?;
+    registry(world)?;
     let mut reply = serialized(schemars::schema_for!(crate::Reply));
     let mut definitions = reply["$defs"].as_object().cloned().unwrap_or_default();
     for schema in [
@@ -62,12 +63,7 @@ pub fn reply(world: &World) -> Result<Value, String> {
         definitions.insert(name, schema);
     }
     let mut results = Map::new();
-    let typed = crate::results::result_schemas().into_iter().chain(
-        registry
-            .operations()
-            .filter_map(|operation| Some((operation.name, operation.result_schema()?))),
-    );
-    for (op, schema) in typed {
+    for (op, schema) in crate::results::result_schemas() {
         let (name, schema) = definition_of(serialized(schema), &mut definitions);
         if name.is_empty() {
             return Err(format!("{op}'s result schema names no type"));
@@ -109,34 +105,12 @@ pub fn generated(world: &World) -> Result<Generated, String> {
         "Hierarchy": schemars::schema_for!(views::HierarchyView),
         "Camera": schemars::schema_for!(views::CameraView),
         "Mesh3d": schemars::schema_for!(views::Mesh3dView),
-        "SplineMesh": schemars::schema_for!(views::SplineMeshView),
-        "ReflectionProbe": schemars::schema_for!(engine_scene::SceneReflectionProbe),
         "Input": schemars::schema_for!(views::InputView),
-        "LocalLight": schemars::schema_for!(engine_scene::SceneLight),
-        "ParticleEmitter": schemars::schema_for!(engine_scene::SceneEmitter),
-        "Collider": schemars::schema_for!(engine_collision::ColliderView),
-        "RigidBody": schemars::schema_for!(engine_physics::RigidBodyView),
-        "Terrain": schemars::schema_for!(views::TerrainView),
-        "Tint": schemars::schema_for!(views::TintView),
-        "Jobs": schemars::schema_for!(views::JobsView),
-        "StaticTables": schemars::schema_for!(views::StaticTablesView),
-        "StreamedId": schemars::schema_for!(views::StreamedIdView),
-        "FrameStats": frame_stats(world, registry, &mut problems),
+        "FrameStats": frame_stats(registry, &mut problems),
     });
     if let Some(all) = schemas.as_object_mut() {
         for verb in Verb::ALL {
             all.insert(verb.name().to_owned(), verb_schema(registry, verb));
-        }
-        for inspector in registry.inspectors() {
-            match inspector.schema() {
-                Some(schema) => {
-                    all.insert(inspector.name.to_owned(), serialized(schema));
-                }
-                None => problems.push(format!(
-                    "the {} brick's inspector {} has no schema",
-                    inspector.brick, inspector.name
-                )),
-            }
         }
     }
     reserved_inspectors(&mut problems);
@@ -154,19 +128,13 @@ pub fn generated(world: &World) -> Result<Generated, String> {
     }
     let mut sections = Map::new();
     for section in registry.sections() {
-        sections.insert(section.name.to_owned(), serialized(section.schema()));
-        if let Some(component) = section.name.strip_suffix('s')
-            && schemas.get(component).is_some()
-        {
-            problems.push(format!(
-                "settings {} read as a store of {component}s: name them {component}Settings",
-                section.name
-            ));
-        }
+        sections.insert(section.key.to_owned(), serialized(section.schema()));
+    }
+    for stats in registry.stats() {
+        sections.insert(stats.key.to_owned(), serialized(stats.schema()));
     }
     if let Some(all) = schemas.as_object_mut() {
         all.extend(sections);
-        all.insert("bricks".to_owned(), bricks_summary(registry));
     }
     let scene_schema = engine_scene::SceneDocument::schema_json(registry);
     let queries = names(&schemas[Verb::Query.name()], &mut problems);
@@ -186,7 +154,7 @@ pub fn generated(world: &World) -> Result<Generated, String> {
     control_state(registry, &controls, &schemas, &mut problems);
     typed_results(registry, &queries, &controls, &mut problems);
     match serde_json::from_str::<Value>(&scene_schema) {
-        Ok(scene) => authored_parity(registry, &scene, &schemas, &mut problems),
+        Ok(scene) => authored_parity(world, &scene, &schemas, &mut problems),
         Err(error) => problems.push(format!("the scene schema is not JSON: {error}")),
     }
     if !problems.is_empty() {
@@ -231,34 +199,8 @@ pub fn generated(world: &World) -> Result<Generated, String> {
     })
 }
 
-fn bricks_summary(registry: &BrickRegistry) -> Value {
-    registry
-        .bricks()
-        .iter()
-        .map(|brick| {
-            let settings: Vec<&str> = brick.settings.iter().map(|section| section.key).collect();
-            let operations: Vec<&str> = brick
-                .operations
-                .iter()
-                .map(|operation| operation.name)
-                .collect();
-            let inspectors: Vec<&str> = brick
-                .inspectors
-                .iter()
-                .map(|inspector| inspector.name)
-                .collect();
-            json!({
-                "name": brick.name,
-                "settings": settings,
-                "operations": operations,
-                "inspectors": inspectors,
-            })
-        })
-        .collect()
-}
-
 fn core_names(
-    registry: &BrickRegistry,
+    registry: &Registry,
     (listed, declared): (&[String], &[&str]),
     constant: &str,
     problems: &mut Vec<String>,
@@ -276,7 +218,7 @@ fn core_names(
 }
 
 fn typed_results(
-    registry: &BrickRegistry,
+    registry: &Registry,
     queries: &[String],
     controls: &[String],
     problems: &mut Vec<String>,
@@ -319,7 +261,7 @@ fn version_schema() -> Value {
     serialized(schemars::SchemaGenerator::default().subschema_for::<u32>())
 }
 
-fn verb_schema(registry: &BrickRegistry, verb: Verb) -> Value {
+fn verb_schema(registry: &Registry, verb: Verb) -> Value {
     match verb {
         Verb::Describe => enveloped(verb, schemars::schema_for!(protocol::DescribeRequest)),
         Verb::Inspect => enveloped(verb, schemars::schema_for!(protocol::InspectRequest)),
@@ -418,19 +360,10 @@ fn named_variant(verb: Verb, name: &str, args: Value) -> Value {
     })
 }
 
-fn operation_args(operation: &OperationEntry, definitions: &mut Map<String, Value>) -> Value {
-    let (_, mut args) = definition_of(serialized(operation.schema()), definitions);
-    if let Some(fields) = args.as_object_mut() {
-        fields.remove("title");
-        fields.insert("type".to_owned(), json!("object"));
-    }
-    args
-}
-
-fn named_schema(registry: &BrickRegistry, verb: Verb, core: schemars::Schema) -> Value {
+fn named_schema(registry: &Registry, verb: Verb, core: schemars::Schema) -> Value {
     let control = verb == Verb::Control;
     let mut core = serialized(core);
-    let mut definitions = core["$defs"].as_object().cloned().unwrap_or_default();
+    let definitions = core["$defs"].as_object().cloned().unwrap_or_default();
     let mut variants: Vec<Value> = core["oneOf"]
         .as_array()
         .into_iter()
@@ -442,10 +375,7 @@ fn named_schema(registry: &BrickRegistry, verb: Verb, core: schemars::Schema) ->
         registry
             .operations()
             .filter(|operation| operation.control == control)
-            .map(|operation| {
-                let args = operation_args(operation, &mut definitions);
-                named_variant(verb, operation.name, args)
-            }),
+            .map(|operation| named_variant(verb, operation.name, json!({ "type": "object" }))),
     );
     let mut schema = json!({
         "$schema": core["$schema"].take(),
@@ -458,7 +388,7 @@ fn named_schema(registry: &BrickRegistry, verb: Verb, core: schemars::Schema) ->
     schema
 }
 
-fn query_schema(registry: &BrickRegistry) -> Value {
+fn query_schema(registry: &Registry) -> Value {
     named_schema(
         registry,
         Verb::Query,
@@ -466,7 +396,7 @@ fn query_schema(registry: &BrickRegistry) -> Value {
     )
 }
 
-fn control_schema(registry: &BrickRegistry) -> Value {
+fn control_schema(registry: &Registry) -> Value {
     let mut schema = named_schema(
         registry,
         Verb::Control,
@@ -477,7 +407,7 @@ fn control_schema(registry: &BrickRegistry) -> Value {
     for section in registry.sections() {
         let title = serialized(section.schema())["title"]
             .as_str()
-            .unwrap_or(section.name)
+            .unwrap_or(section.key)
             .to_owned();
         sections.insert(
             section.key.to_owned(),
@@ -486,7 +416,7 @@ fn control_schema(registry: &BrickRegistry) -> Value {
                 "default": null,
             }),
         );
-        titles.push((title, section.name));
+        titles.push((title, section.key));
     }
     if let Some(environment) = schema["oneOf"]
         .as_array_mut()
@@ -577,7 +507,7 @@ fn references(value: &Value, names: &mut Vec<String>) {
     }
 }
 
-fn frame_stats(world: &World, registry: &BrickRegistry, problems: &mut Vec<String>) -> Value {
+fn frame_stats(registry: &Registry, problems: &mut Vec<String>) -> Value {
     let mut schema = serialized(schemars::schema_for!(engine_core::FrameStats));
     let mut definitions = schema["$defs"].as_object().cloned().unwrap_or_default();
     let mut properties = schema["properties"]
@@ -608,16 +538,6 @@ fn frame_stats(world: &World, registry: &BrickRegistry, problems: &mut Vec<Strin
     schema["$defs"] = Value::Object(definitions);
     schema["properties"] = Value::Object(properties);
     schema["required"] = Value::Array(required);
-    crate::consumers::check(world, registry, &schema, problems);
-    let render = serialized(schemars::schema_for!(engine_core::RenderStats));
-    for (field, property) in render["properties"].as_object().into_iter().flatten() {
-        if property.get("$ref").is_some() && registry.section(field).is_none() {
-            problems.push(format!(
-                "RenderStats.{field} groups a feature's stats under a key that is no environment \
-                 section's: name it after the section"
-            ));
-        }
-    }
     schema
 }
 
@@ -639,7 +559,7 @@ fn reserved_inspectors(problems: &mut Vec<String>) {
 }
 
 fn control_state(
-    registry: &BrickRegistry,
+    registry: &Registry,
     controls: &[String],
     schemas: &Value,
     problems: &mut Vec<String>,
@@ -649,7 +569,7 @@ fn control_state(
         registry
             .operations()
             .filter(|operation| operation.control)
-            .map(|operation| (operation.name, operation.shows)),
+            .map(|operation| (operation.name, "")),
     );
     for op in controls {
         let listed = state.iter().filter(|(listed, _)| listed == op).count();
@@ -708,7 +628,7 @@ const RENAMED: &[(&str, &str)] = &[
 ];
 
 fn authored_parity(
-    registry: &BrickRegistry,
+    world: &World,
     scene: &Value,
     schemas: &Value,
     problems: &mut Vec<String>,
@@ -718,9 +638,11 @@ fn authored_parity(
         .as_object()
         .cloned()
         .unwrap_or_default();
-    let kinds: Vec<(&str, &str)> = engine_scene::component_kinds_in(registry)
+    let kinds: Vec<(&str, &str)> = world
+        .get_resource::<MembersOf<SceneComponents>>()
         .into_iter()
-        .map(|(_, kind)| (kind.name, kind.shows))
+        .flat_map(MembersOf::all)
+        .map(|kind| (kind.key(), "structure"))
         .collect();
     let authored = || AUTHORED.iter().chain(&kinds);
     for (property, schema) in &object {

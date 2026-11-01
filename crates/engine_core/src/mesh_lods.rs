@@ -1,30 +1,38 @@
 use bevy_ecs::prelude::*;
 use engine_assets::{AssetLibrary, LOD_RECORD, MeshHandle, MeshLods, lod_input};
 
-use crate::{Cooking, JobId, Jobs, RecordKey, VIEW_JOBS, content_hash, job_priority};
-
-mod maker {
-    include!(concat!(env!("OUT_DIR"), "/engine_lodbuild_source.rs"));
-}
+use crate::jobs::record_key;
+use crate::{
+    CookMode, JobExchange, JobId, JobRef, MESH_LODS, RecordKey, VIEW_JOBS, content_hash,
+    job_priority,
+};
 
 #[derive(Resource, Default)]
 pub(crate) struct MeshLevels {
     asked: Vec<(MeshHandle, JobId)>,
 }
 
+impl MeshLevels {
+    pub(crate) fn waiting(&self) -> usize {
+        self.asked.len()
+    }
+}
+
 fn lod_record(input: &[u8]) -> RecordKey {
-    RecordKey::new(
-        &maker::SOURCE,
+    record_key(
+        &crate::sources::LODBUILD,
         LOD_RECORD,
         &content_hash(input).to_le_bytes(),
     )
 }
 
 pub(crate) fn settle(world: &mut World) {
-    let cooking = world.contains_resource::<Cooking>();
+    let cooking = world
+        .get_resource::<CookMode>()
+        .is_some_and(|mode| mode.cooking);
     let awaiting = world.resource_mut::<AssetLibrary>().take_awaiting_lods();
     world.resource_scope(|world, mut levels: Mut<MeshLevels>| {
-        world.resource_scope(|world, mut jobs: Mut<Jobs>| {
+        world.resource_scope(|world, mut jobs: Mut<JobExchange>| {
             let mut assets = world.resource_mut::<AssetLibrary>();
             for handle in awaiting {
                 let Some(input) = assets.mesh(handle).and_then(|mesh| lod_input(mesh)) else {
@@ -34,9 +42,9 @@ pub(crate) fn settle(world: &mut World) {
                 let key = lod_record(&input);
                 let priority = job_priority(VIEW_JOBS, levels.asked.len() as u32);
                 let id = if cooking {
-                    jobs.submit_record(LOD_RECORD, input, priority, key)
+                    jobs.submit_record(JobRef::from(&MESH_LODS), input, priority, key)
                 } else {
-                    jobs.fetch(key, priority)
+                    jobs.fetch(Some(JobRef::from(&MESH_LODS)), key, priority)
                 };
                 levels.asked.push((handle, id));
             }
@@ -53,9 +61,5 @@ pub(crate) fn settle(world: &mut World) {
                 false
             });
         });
-        let left = levels.asked.len() as u64;
-        if let Some(mut cooking) = world.get_resource_mut::<Cooking>() {
-            cooking.left("mesh_lods", left);
-        }
     });
 }

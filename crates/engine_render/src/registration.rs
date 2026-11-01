@@ -1,11 +1,14 @@
 use std::any::{Any, TypeId};
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use bevy_ecs::system::SystemState;
 use bevy_ecs::world::World;
 use engine_core::{DrawPoint, Error, ErrorCode};
-use engine_registry::{DrawMember, EncodeCore, FrameCore, InstallCore, RawDraw};
+use engine_registry::Scope;
 
+use crate::encode::{EncodeCore, FrameCore, RawDraw};
+use crate::install::InstallCore;
 use crate::{Draw, Encode, GpuPart, Install, Pass, Prepare};
 
 pub(crate) type InstallFn = fn(&mut World, &mut InstallCore) -> Result<Box<dyn Installed>, Error>;
@@ -13,15 +16,46 @@ pub(crate) type InstallFn = fn(&mut World, &mut InstallCore) -> Result<Box<dyn I
 pub(crate) struct PartRecord {
     pub(crate) part: TypeId,
     pub(crate) name: &'static str,
+    pub(crate) scope: Scope,
     pub(crate) install: InstallFn,
 }
 
 impl PartRecord {
-    pub(crate) fn of<P: GpuPart>() -> Self {
+    pub(crate) fn of<P: GpuPart>(scope: Scope) -> Self {
         Self {
             part: TypeId::of::<P>(),
             name: std::any::type_name::<P>(),
+            scope,
             install: install::<P>,
+        }
+    }
+}
+
+pub(crate) struct DrawAny {
+    pub(crate) part: TypeId,
+    pub(crate) point: TypeId,
+    pub(crate) scope: Scope,
+    pub(crate) record: Arc<dyn Any + Send + Sync>,
+}
+
+impl DrawAny {
+    pub(crate) fn of<P: GpuPart, D: DrawPoint>(
+        scope: Scope,
+        layer: D::Layer,
+        draw: fn(&P, &D::Args, &mut Draw<'_, P, D>) -> u32,
+    ) -> Self {
+        Self {
+            part: TypeId::of::<P>(),
+            point: TypeId::of::<D>(),
+            scope,
+            record: Arc::new(DrawRecord::<D> {
+                layer,
+                make: Box::new(move |part| DrawMember {
+                    part,
+                    layer,
+                    call: Box::new(trampoline::<P, D>(draw)),
+                }),
+            }),
         }
     }
 }
@@ -29,30 +63,22 @@ impl PartRecord {
 type MakeMember<D> = Box<dyn Fn(u32) -> DrawMember<D> + Send + Sync>;
 
 pub(crate) struct DrawRecord<D: DrawPoint> {
-    pub(crate) part: TypeId,
     pub(crate) layer: D::Layer,
     make: MakeMember<D>,
 }
 
 impl<D: DrawPoint> DrawRecord<D> {
-    pub(crate) fn of<P: GpuPart>(
-        layer: D::Layer,
-        draw: fn(&P, &D::Args, &mut Draw<'_, P, D>) -> u32,
-    ) -> Self {
-        Self {
-            part: TypeId::of::<P>(),
-            layer,
-            make: Box::new(move |part| DrawMember {
-                part,
-                layer,
-                call: Box::new(trampoline::<P, D>(draw)),
-            }),
-        }
-    }
-
     pub(crate) fn member(&self, part: u32) -> DrawMember<D> {
         (self.make)(part)
     }
+}
+
+type Call<D> = Box<dyn Fn(&dyn Any, &<D as DrawPoint>::Args, &mut RawDraw<'_>) -> u32 + Send + Sync>;
+
+pub(crate) struct DrawMember<D: DrawPoint> {
+    pub(crate) part: u32,
+    pub(crate) layer: D::Layer,
+    pub(crate) call: Call<D>,
 }
 
 fn trampoline<P: GpuPart, D: DrawPoint>(
@@ -66,7 +92,10 @@ fn trampoline<P: GpuPart, D: DrawPoint>(
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
     pub(crate) fn retyped<'r>(raw: &'r mut RawDraw<'_>) -> Draw<'r, P, S> {
-        todo!()
+        Draw {
+            raw: raw.reborrow(),
+            part: PhantomData,
+        }
     }
 }
 

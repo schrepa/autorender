@@ -1,13 +1,13 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use crate::codec::{self, Error, Reader, Writer};
-use crate::surface::smooth_gradient;
-use crate::tile::{SurfaceInputs, control_row};
-use crate::{
-    BiomeRules, Control, Generator, Layers, Pyramid, Stamp, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE,
-    Tile, TileKey,
+use engine_codec::{self as codec, Error, Reader, Writer};
+use engine_heightfield::{
+    BiomeRules, Control, Generator, Layers, Pyramid, Stamp, SurfaceInputs, TILE_QUADS, TILE_SAMPLES,
+    Tile, TileKey, control_row, smooth_gradient, stamped,
 };
+
+use crate::gpu::TILE_STRIDE;
 
 const SIDE: usize = TILE_SAMPLES as usize;
 const AREA: usize = SIDE * SIDE;
@@ -444,7 +444,7 @@ impl Ground {
             };
             let key = *key;
             if self.generating.is_none() {
-                let layers = crate::jobs::stamped(&self.layers, stamps)?;
+                let layers = stamped(&self.layers, stamps)?;
                 let generator = Generator::new(layers.clone(), pyramid, key);
                 self.generating = Some((layers, generator));
             }

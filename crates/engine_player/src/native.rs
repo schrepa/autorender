@@ -4,14 +4,12 @@ use std::process::ExitCode;
 use engine::command_line::CommandOption;
 use engine::{Engine, Error, ErrorCode, Expected};
 use engine_native::{Arguments, HostOptions, file_error, files};
+use engine_player_bricks::bricks;
 
-use crate::{ScenePlayer, bricks};
+use crate::ScenePlayer;
 
-fn player_options() -> [CommandOption; 2] {
-    [
-        CommandOption::taking("--source", "PATH").required(),
-        CommandOption::taking("--without", "BRICK,..."),
-    ]
+fn player_options() -> [CommandOption; 1] {
+    [CommandOption::taking("--source", "PATH").required()]
 }
 
 fn options() -> Vec<CommandOption> {
@@ -33,7 +31,6 @@ fn parameters() -> Vec<(String, String)> {
 
 struct Options {
     source: Option<PathBuf>,
-    without: String,
     host: HostOptions,
 }
 
@@ -57,7 +54,6 @@ impl Options {
     fn parse(arguments: Vec<String>) -> Result<Self, Error> {
         let mut options = Self {
             source: None,
-            without: String::new(),
             host: HostOptions::default(),
         };
         let mut arguments = Arguments::new(arguments);
@@ -67,7 +63,6 @@ impl Options {
             }
             match argument.name.as_str() {
                 "--source" => options.source = Some(arguments.value(&argument)?.into()),
-                "--without" => options.without = arguments.value(&argument)?,
                 _ => return Err(argument.unknown()),
             }
         }
@@ -78,12 +73,17 @@ impl Options {
     fn start(&self) -> ExitCode {
         #[cfg(feature = "dev")]
         if let Some(names) = &self.host.smoke {
+            let list = bricks(engine::BrickList::default());
+            let entries = match engine::smokes::registered(&list) {
+                Ok(entries) => entries,
+                Err(error) => return engine_native::exit(Err(error)),
+            };
             return engine_native::smoke::run::<engine::smokes::Played<ScenePlayer>>(
                 &self.host,
                 names,
-                &engine::smokes::standard(),
-                &engine::bricks::standard(),
-                &|source, bricks| engine::smokes::played(source, bricks, ScenePlayer::new),
+                &entries,
+                &list,
+                &|source, engine| engine::smokes::played(source, engine, ScenePlayer::new),
                 &|session| session,
             );
         }
@@ -95,24 +95,23 @@ impl Options {
         if self.host.dev {
             let mut session = self
                 .host
-                .dev_session(|| self.build())?
+                .dev_session(bricks, |engine: &mut Engine| self.build(engine))?
                 .parameters(parameters());
             if let Some(path) = &self.source {
                 session = session.source(path);
             }
             return session.run();
         }
-        self.host.run("Engine Player", || self.build())
+        self.host.run("Engine Player", bricks, |engine: &mut Engine| self.build(engine))
     }
 
-    fn build(&self) -> engine::Result<(Engine, ScenePlayer)> {
+    fn build(&self, engine: &mut Engine) -> engine::Result<ScenePlayer> {
         let path = self.source.as_ref().ok_or_else(|| {
             Error::new(ErrorCode::InvalidArguments, "--source").expected(Expected::Present)
         })?;
         let source =
             std::fs::read_to_string(path).map_err(|error| file_error("--source", path, &error))?;
         let files = files::scene_files(path, &source)?;
-        let bricks = bricks(&self.without, "--without")?;
-        ScenePlayer::new(&source, &files, bricks)
+        ScenePlayer::new(&source, &files, engine)
     }
 }

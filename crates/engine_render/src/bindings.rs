@@ -1,6 +1,5 @@
-pub(crate) use crate::gpu_layouts::constants::PYRAMID_EXTENT_BYTES;
 use crate::gpu_layouts::impostors::{ImpostorBakeUniform, ImpostorRecord};
-use crate::gpu_layouts::scene::{ColorData, GroundData, MaterialUniform, PoseData};
+use crate::gpu_layouts::scene::MaterialUniform;
 
 mod groups;
 mod table;
@@ -11,18 +10,12 @@ pub use table::{
     read_of, sampler, texture, uniform, uniform_of, write,
 };
 
-use Format::R32Float;
-use Sample::{Depth, Float, Unfilterable};
+use Sample::{Depth, Float};
 use Sampling::Filtering;
 use View::{D2, D2Array};
 
-const C: Stages = Stages::COMPUTE;
 const F: Stages = Stages::FRAGMENT;
-const V: Stages = Stages::VERTEX;
 const VF: Stages = Stages::VERTEX_FRAGMENT;
-const POSE: usize = size_of::<PoseData>();
-const COLOR: usize = size_of::<ColorData>();
-const GROUND: usize = size_of::<GroundData>();
 
 macro_rules! tables {
     ($(
@@ -67,25 +60,6 @@ tables! {
         ],
     };
 
-    const RETAINED_POSES: Table = Table {
-        label: "engine/retained-pose-layout",
-        bindings: &[
-            read_of("poses", POSE, VF),
-            read_of("colors", COLOR, V),
-            read_of("grounds", GROUND, F),
-        ],
-    };
-
-    const TEMPORAL_POSES: Table = Table {
-        label: "engine/temporal-pose-layout",
-        bindings: &[
-            read_of("poses", POSE, VF),
-            read_of("colors", COLOR, V),
-            read_of("previous_poses", POSE, V),
-            read_of("grounds", GROUND, F),
-        ],
-    };
-
     const IMPOSTOR_DRAW: Table = Table {
         label: "engine/impostor-layout",
         bindings: &[
@@ -106,100 +80,6 @@ tables! {
         ],
     };
 
-    const PRESENTATION_COMPOSE: Table = Table {
-        label: "engine/presentation-compose-layout",
-        bindings: &[
-            uniform("frame", C),
-            read("locals", C),
-            read("info", C),
-            read("authority", C),
-            write("composed", C),
-            read("parents", C),
-        ],
-    };
-
-    const PRESENTATION_LEVEL: Table = Table {
-        label: "engine/presentation-level-layout",
-        bindings: &[uniform("level", C)],
-    };
-
-    const PRESENTATION_CULL: Table = Table {
-        label: "engine/presentation-cull-layout",
-        bindings: &[
-            uniform("frame", C),
-            read("locals", C),
-            read("info", C),
-            read("authority", C),
-            write("composed", C),
-            read("batches", C),
-            write("poses", C),
-            write("scan", C),
-            read("slot_candidates", C),
-        ],
-    };
-
-    const PRESENTATION_TESTS: Table = Table {
-        label: "engine/presentation-test-layout",
-        bindings: &[
-            uniform("frame", C),
-            read("info", C),
-            read("batches", C),
-            write("poses", C),
-            write("scan", C),
-            write("locals_shift", C),
-            read("slot_candidates", C),
-            texture("depth_pyramid", Unfilterable, D2, C),
-            write("occlusion_counts", C),
-            write("still_frames", C),
-        ],
-    };
-
-    const PRESENTATION_COMPACT: Table = Table {
-        label: "engine/presentation-compact-layout",
-        bindings: &[
-            uniform("frame", C),
-            read("candidates", C),
-            read("batches", C),
-            write("scan", C),
-            write("batch_bases", C),
-            write("visible_ids", C),
-            write("draws", C),
-            write("occlusion_counts", C),
-            write("impostor_ids", C),
-        ],
-    };
-
-    const PRESENTATION_FADES: Table = Table {
-        label: "engine/presentation-fades-layout",
-        bindings: &[
-            uniform("frame", C),
-            read("batches", C),
-            write("poses", C),
-            write("scan", C),
-            read("slot_candidates", C),
-            write("lod_states", C),
-            write("fade_cards", C),
-        ],
-    };
-
-    const POST: Table = Table {
-        label: "engine/post-layout",
-        bindings: &[
-            uniform("post", F),
-            texture("scene", Float, D2, F),
-            texture("occlusion", Float, D2, F),
-            sampler("linear", Filtering, F),
-        ],
-    };
-
-    const TRANSPARENT_COMPOSITE: Table = Table {
-        label: "engine/transparent-composite-layout",
-        bindings: &[
-            texture("accumulated", Unfilterable, D2, F),
-            texture("revealed", Unfilterable, D2, F),
-        ],
-    };
-
     const MIPMAPS: Table = Table {
         label: "engine/texture-mip-layout",
         bindings: &[
@@ -208,21 +88,4 @@ tables! {
         ],
     };
 
-    const PYRAMID_FIRST: Table = Table {
-        label: "engine/depth-pyramid-first-layout",
-        bindings: &[
-            texture("source_depth", Depth, D2, C),
-            bind("target_level", Kind::Storage(R32Float), C),
-            uniform_of("extent", PYRAMID_EXTENT_BYTES, C),
-        ],
-    };
-
-    const PYRAMID_DOWN: Table = Table {
-        label: "engine/depth-pyramid-down-layout",
-        bindings: &[
-            texture("source_level", Unfilterable, D2, C),
-            bind("target_level", Kind::Storage(R32Float), C),
-            uniform_of("extent", PYRAMID_EXTENT_BYTES, C),
-        ],
-    };
 }

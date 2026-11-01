@@ -4,7 +4,7 @@ use engine_core::{
     math,
 };
 
-use crate::gpu_layouts::{SHADOW_APRON, SHADOW_REGIONS};
+use crate::constants::{SHADOW_APRON, SHADOW_REGIONS};
 
 const LOW_SUN: f32 = 0.1;
 
@@ -22,8 +22,8 @@ pub(crate) struct LightBasis {
 }
 
 impl LightBasis {
-    pub(crate) fn new(toward_sun: Vec3) -> Self {
-        let away = -toward_sun.normalize();
+    pub(crate) fn toward(sun: Vec3) -> Self {
+        let away = -sun;
         let reference = if away.y.abs() > 0.99 {
             Vec3::Z
         } else {
@@ -148,6 +148,17 @@ pub(crate) struct MovingTile {
     pub index: u16,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+pub(crate) struct TileState {
+    pub level: usize,
+    pub tile: [i32; 2],
+    pub slot: Option<u16>,
+    pub drawn: bool,
+    pub dirty: bool,
+    pub marked: bool,
+    pub moving: bool,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct ClipPlan {
     pub regions: Vec<Region>,
@@ -178,7 +189,6 @@ pub(crate) struct Clipmap {
     changed: Vec<bool>,
     moving: Vec<(usize, usize)>,
     frame: u32,
-    epoch: u64,
     stats: ClipStats,
 }
 
@@ -200,7 +210,6 @@ impl Clipmap {
             self.table = vec![0; settings.levels as usize * cells];
             self.changed = vec![true; settings.levels as usize];
             self.moving.clear();
-            self.epoch += 1;
         }
         self.frame += 1;
         let light = basis.apply(eye);
@@ -300,10 +309,6 @@ impl Clipmap {
         self.side
     }
 
-    pub(crate) fn epoch(&self) -> u64 {
-        self.epoch
-    }
-
     pub(crate) fn mask_words(&self) -> usize {
         (self.levels.len() * (self.side * self.side) as usize).div_ceil(32)
     }
@@ -352,12 +357,6 @@ impl Clipmap {
                     self.levels[level].cells[beside].moving = frame;
                 }
             }
-        }
-    }
-
-    pub(crate) fn dirty_box(&mut self, min: Vec3, max: Vec3) {
-        for level in 0..self.levels.len() {
-            self.dirty_level_box(level, min, max);
         }
     }
 
@@ -504,7 +503,7 @@ impl Clipmap {
                             .position(|region| region.level == level && region.first == first)
                         {
                             Some(index) => index,
-                            None if out.regions.len() < SHADOW_REGIONS => {
+                            None if out.regions.len() < SHADOW_REGIONS as usize => {
                                 out.regions.push(self.region(level, first, square));
                                 out.regions.len() - 1
                             }
@@ -622,5 +621,40 @@ impl Clipmap {
 
     pub(crate) fn texel(&self, level: usize) -> f32 {
         self.levels.get(level).map_or(0.0, |level| level.texel)
+    }
+
+    pub(crate) fn inspect(&self, point: Vec3) -> Vec<TileState> {
+        let Some(basis) = self.basis else {
+            return Vec::new();
+        };
+        let light = basis.apply(point);
+        let side = self.side as i32;
+        let frame = self.frame;
+        self.levels
+            .iter()
+            .enumerate()
+            .filter_map(|(level, clip)| {
+                let tile = [
+                    (light.x / clip.tile).floor() as i32,
+                    (light.y / clip.tile).floor() as i32,
+                ];
+                let inside = (0..2).all(|axis| {
+                    tile[axis] >= clip.origin[axis] && tile[axis] < clip.origin[axis] + side
+                });
+                inside.then(|| {
+                    let cell = (tile[1] & (side - 1)) * side + (tile[0] & (side - 1));
+                    let held = clip.cells[cell as usize];
+                    TileState {
+                        level,
+                        tile,
+                        slot: held.slot,
+                        drawn: held.drawn,
+                        dirty: held.dirty,
+                        marked: held.marked_at(frame),
+                        moving: held.moving_at(frame),
+                    }
+                })
+            })
+            .collect()
     }
 }

@@ -1,7 +1,4 @@
-mod bodies;
-mod caves;
 mod ground;
-mod hiker;
 mod rocks;
 mod trees;
 
@@ -10,11 +7,12 @@ use engine::host::Image;
 
 use engine::bricks::parse_value_at;
 use engine::prelude::*;
-use engine::terrain::SceneTerrain;
 use engine::{Error, ErrorCode, Expected};
-use serde_json::Value;
+use engine_core::RecordExchange;
+use serde_json::{Value, json};
 
 use crate::records;
+use crate::scene::set;
 
 pub(crate) const SEED: u32 = 1337;
 
@@ -59,6 +57,15 @@ const ROAD: &str = "road";
 
 const CAVE_MOUTH: &str = "cave_mouth";
 
+const HIKER: &str = "hiker";
+const BANK_BOULDER: &str = "highlands_bank_boulder";
+const LOG: &str = "highlands_log";
+const BARK: &str = "highlands_bark";
+const PALE: &str = "highlands_pale";
+const STONE: &str = "highlands_stone";
+const WALL_ROCK: &str = "highlands_wall_rock";
+const CAVE_WALL: &str = "highlands_cave_wall";
+
 const MOSS: TopLayer = TopLayer {
     color: [0.055, 0.07, 0.03],
     coverage: 0.36,
@@ -95,7 +102,7 @@ pub(crate) fn provide(world: &mut World, files: &RockMaps) -> engine::Result<()>
         }
         provided.provide_mesh(format!("spruce{seed}_shadow"), shadow);
     }
-    let grounds = world.resource_scope(|world, mut records: Mut<Records>| {
+    let grounds = world.resource_scope(|world, mut records: Mut<RecordExchange>| {
         let mut assets = world.resource_mut::<AssetLibrary>();
         GROUNDS
             .iter()
@@ -135,11 +142,8 @@ pub(crate) fn provide(world: &mut World, files: &RockMaps) -> engine::Result<()>
             Error::new(ErrorCode::GameRule, "$.cave.wall").expected(Expected::Present)
         })?;
     let wall = assets.insert_material(wall)?;
-    world.insert_resource(CaveRock {
-        boulders,
-        material: wall_rock,
-        wall,
-    });
+    provided.provide_material(WALL_ROCK, wall_rock);
+    provided.provide_material(CAVE_WALL, wall);
     world.insert_resource(provided);
     Ok(())
 }
@@ -151,45 +155,104 @@ pub(crate) fn populate(
 ) -> engine::Result<()> {
     let (path, terrain) = scene_terrain(document)?;
     let terrain = &terrain;
-    let origin = Vec2::new(terrain.origin[0], terrain.origin[2]);
+    let origin = parse_value_at::<[f32; 3]>(terrain["origin"].clone(), &format!("{path}.origin"))?;
+    let origin = Vec2::new(origin[0], origin[2]);
     let (at, road) = scene_layer(terrain, &path, ROAD)?;
     let road = parse_value_at::<Vec<[f32; 2]>>(road["points"].clone(), &format!("{at}.points"))?;
     let (at, mouth) = scene_layer(terrain, &path, CAVE_MOUTH)?;
     let center = parse_value_at::<[f32; 2]>(mouth["center"].clone(), &format!("{at}.center"))?;
     let radius = parse_value_at::<f32>(mouth["radius"].clone(), &format!("{at}.radius"))?;
-    world.insert_resource(CaveMouth {
-        center: Vec2::from(center) + origin,
-        radius,
-    });
-    hiker::hiker(world, &road, origin)?;
-    bodies::request(world, bodies)?;
+    let mouth = Vec2::from(center) + origin;
+    set(world, "highlands.cave", json!([mouth.x, mouth.y, radius]))?;
+    hiker(world, &road, origin)?;
+    request_bodies(world, bodies)?;
     Ok(())
 }
 
-fn scene_terrain(document: &SceneDocument) -> engine::Result<(String, SceneTerrain)> {
+fn hiker(world: &mut World, road: &[[f32; 2]], origin: Vec2) -> engine::Result<()> {
+    let world_point = |[x, z]: [f32; 2]| [x + origin.x, z + origin.y];
+    let start = world_point(road[0]);
+    let far = road
+        .iter()
+        .map(|&point| world_point(point))
+        .find(|point| Vec2::from(*point).distance(Vec2::from(start)) > 350.0)
+        .unwrap_or(world_point(road[road.len() - 1]));
+    let mut assets = world.resource_mut::<AssetLibrary>();
+    let mesh = assets.insert_mesh(Mesh::cube())?;
+    let material = assets.insert_material(Material::new([0.62, 0.1, 0.07, 1.0])?)?;
+    let offset = 0.875_f32;
+    let hiker = world
+        .spawn((
+            Transform {
+                translation: Vec3::new(start[0], 0.0, start[1]),
+                scale: Vec3::new(0.45, 1.75, 0.3),
+                ..Transform::default()
+            },
+            Mesh3d { mesh, material },
+            InterpolateTransform::default(),
+        ))
+        .id();
+    attach(world, hiker, "grounded", json!({ "offset": offset }))?;
+    attach(
+        world,
+        hiker,
+        "nav_agent",
+        json!({ "destination": far, "speed": 1.6_f32, "offset": offset }),
+    )?;
+    attach(
+        world,
+        hiker,
+        HIKER,
+        json!({ "ends": [start, far], "toward": 1, "rest": 0.0_f32 }),
+    )
+}
+
+fn attach(world: &mut World, entity: Entity, key: &str, value: Value) -> engine::Result<()> {
+    let kind = engine_core::scene_component(world, key).ok_or_else(|| {
+        Error::new(ErrorCode::GameRule, format!("$.{key}"))
+            .expected(Expected::Present)
+            .got(key)
+    })?;
+    kind.read(world, entity, &value)
+}
+
+fn request_bodies(world: &mut World, count: u32) -> engine::Result<()> {
+    if count == 0 {
+        return Ok(());
+    }
+    let boulder = rocks::boulder_record(world, SEED ^ 0x5eed)?;
+    let mut assets = world.resource_mut::<AssetLibrary>();
+    let cube = assets.insert_mesh(Mesh::cube())?;
+    let bark = assets.insert_material(Material::new([0.2, 0.13, 0.08, 1.0])?)?;
+    let pale = assets.insert_material(Material::new([0.42, 0.3, 0.19, 1.0])?)?;
+    let stone = assets.insert_material(Material::new([0.38, 0.37, 0.35, 1.0])?)?;
+    world
+        .resource_mut::<ProvidedAssets>()
+        .provide_mesh(BANK_BOULDER, boulder)
+        .provide_mesh(LOG, cube)
+        .provide_material(BARK, bark)
+        .provide_material(PALE, pale)
+        .provide_material(STONE, stone);
+    set(world, "highlands.bodies", json!(count))
+}
+
+fn scene_terrain(document: &SceneDocument) -> engine::Result<(String, Value)> {
     document
         .entities
         .iter()
         .enumerate()
         .find_map(|(index, entity)| {
             let path = format!("$.entities[{index}].terrain");
-            entity.component("terrain").map(|terrain| (path, terrain))
+            entity.component("terrain").map(|terrain| (path, terrain.clone()))
         })
         .ok_or_else(|| Error::new(ErrorCode::GameRule, "$.entities").expected(Expected::Present))
-        .and_then(|(path, terrain)| {
-            let terrain = parse_value_at(terrain.clone(), &path)?;
-            Ok((path, terrain))
-        })
 }
 
-fn scene_layer<'a>(
-    terrain: &'a SceneTerrain,
-    path: &str,
-    id: &str,
-) -> engine::Result<(String, &'a Value)> {
-    terrain
-        .layers
-        .iter()
+fn scene_layer<'a>(terrain: &'a Value, path: &str, id: &str) -> engine::Result<(String, &'a Value)> {
+    terrain["layers"]
+        .as_array()
+        .into_iter()
+        .flatten()
         .enumerate()
         .find(|(_, layer)| layer["id"] == id)
         .map(|(index, layer)| (format!("{path}.layers[{index}]"), layer))
@@ -201,7 +264,7 @@ fn scene_layer<'a>(
 }
 
 fn ground_textures(
-    (records, assets): (&mut Records, &mut AssetLibrary),
+    (records, assets): (&mut RecordExchange, &mut AssetLibrary),
     name: &'static str,
 ) -> engine::Result<Vec<TextureHandle>> {
     records::textures(
@@ -209,210 +272,6 @@ fn ground_textures(
         format!("highlands/{name}"),
         &GROUND_MAPS,
         move || ground::sources(name).map_err(|error| error.to_string()),
-    )
-}
-
-#[derive(Resource, Clone, Copy)]
-struct CaveMouth {
-    center: Vec2,
-    radius: f32,
-}
-
-#[derive(Resource, Clone)]
-struct CaveRock {
-    boulders: Vec<MeshHandle>,
-    material: MaterialHandle,
-    wall: MaterialHandle,
-}
-
-#[derive(Resource)]
-struct CaveOpened;
-
-const CAVE_RADIUS: [f32; 2] = [6.0, 4.5];
-
-const CAVE_MARGIN: f32 = 1.5;
-
-pub(crate) fn add_systems(app: &mut App) {
-    app.add_systems(Presentation, (open_cave, bodies::place))
-        .add_systems(FixedSimulation, hiker::hike.after(NavSystems::Walk));
-}
-
-fn open_cave(world: &mut World) {
-    if world.contains_resource::<CaveOpened>() {
-        return;
-    }
-    let (
-        Some(CaveMouth {
-            center: mouth,
-            radius,
-        }),
-        Some(rock),
-    ) = (
-        world.get_resource::<CaveMouth>().copied(),
-        world.get_resource::<CaveRock>().cloned(),
-    )
-    else {
-        return;
-    };
-    let Some((terrain, layers, bake)) = ({
-        let mut query = world.query::<(Entity, &Terrain)>();
-        let terrains = world.resource::<Terrains>();
-        query.iter(world).find_map(|(entity, terrain)| {
-            Some((
-                terrain.clone(),
-                terrains.layers(entity)?,
-                terrains.bake_record(entity)?,
-            ))
-        })
-    }) else {
-        return;
-    };
-    if layers.hydrology().is_none() {
-        return;
-    }
-    let height = |point: Vec2| {
-        terrain.origin.y
-            + layers.height_at(
-                &terrain.pyramid,
-                Vec2::new(point.x - terrain.origin.x, point.y - terrain.origin.z),
-            )
-    };
-    let gradient = Vec2::new(
-        height(mouth + Vec2::X * 20.0) - height(mouth - Vec2::X * 20.0),
-        height(mouth + Vec2::Y * 20.0) - height(mouth - Vec2::Y * 20.0),
-    ) / 40.0;
-    let slope = gradient.length();
-    let uphill = if slope > 0.02 {
-        gradient / slope
-    } else {
-        Vec2::X
-    };
-    let side = Vec2::new(-uphill.y, uphill.x);
-    let start = mouth - uphill * (radius + 1.0);
-    let center = height(start) - 0.5 + 0.55 * CAVE_RADIUS[1] * 1.15;
-    let fall = math::max(0.75 - slope, 0.25);
-    let at = |along: f32, across: f32, drop: f32| {
-        let point = mouth + uphill * along + side * across;
-        Vec3::new(point.x, center - drop, point.y)
-    };
-    let points = [
-        at(-(radius + 1.0), 0.0, 0.0),
-        at(12.0, 0.0, fall * 18.0),
-        at(28.0, 6.0, fall * 18.0 + fall * 8.0),
-        at(44.0, -5.0, fall * 18.0 + fall * 16.0),
-        at(58.0, 0.0, fall * 18.0 + fall * 22.0),
-    ];
-    let facing = Quat::from_rotation_y((-uphill.x).atan2(-uphill.y));
-    let framing: Vec<(Transform, MeshHandle)> = [
-        (4.0, 0.0, 1.5, 10.0, 0),
-        (-1.0, 10.0, -1.5, 7.0, 1),
-        (-1.0, -10.0, -1.5, 7.0, 2),
-    ]
-    .into_iter()
-    .filter_map(
-        |(along, across, rise, scale, index): (f32, f32, f32, f32, usize)| {
-            let point = mouth + uphill * along + side * across;
-            let mesh = *rock.boulders.get(index % rock.boulders.len().max(1))?;
-            Some((
-                Transform {
-                    translation: Vec3::new(point.x, height(point) + rise, point.y),
-                    rotation: facing,
-                    scale: Vec3::splat(scale),
-                },
-                mesh,
-            ))
-        },
-    )
-    .collect();
-    let inward = Vec3::new(uphill.x, 0.0, uphill.y);
-    let mut identity = bake.hash.to_vec();
-    identity.extend_from_slice(&mouth.x.to_bits().to_le_bytes());
-    identity.extend_from_slice(&mouth.y.to_bits().to_le_bytes());
-    world.insert_resource(CaveOpened);
-    let spawn = move |world: &mut World, mesh: MeshHandle, built: &Mesh| {
-        spawn_cave(world, (mesh, built), &points, inward, (&rock, framing));
-        Ok(())
-    };
-    let made = records::mesh_then(
-        world,
-        "highlands_cave",
-        &identity,
-        move || caves::cave(&points, CAVE_RADIUS, 79),
-        spawn,
-    );
-    if let Err(error) = made {
-        report_failure("highlands_cave_failed", &error);
-    }
-}
-
-fn report_failure(event: &str, error: &engine::Error) {
-    let record = serde_json::json!({
-        "event": event,
-        "error": error,
-    });
-    eprintln!("{record}");
-}
-
-fn spawn_cave(
-    world: &mut World,
-    (mesh, built): (MeshHandle, &Mesh),
-    points: &[Vec3; 5],
-    inward: Vec3,
-    (rock, framing): (&CaveRock, Vec<(Transform, MeshHandle)>),
-) {
-    let (low, high) = cave_interior(built, points, inward);
-    world.spawn((
-        Transform {
-            translation: points[0],
-            ..Transform::default()
-        },
-        Mesh3d {
-            mesh,
-            material: rock.wall,
-        },
-    ));
-    let chamber = points[4] - inward * 6.0 + Vec3::Y * 2.0;
-    world.spawn((
-        Transform {
-            translation: chamber,
-            ..Transform::default()
-        },
-        LocalLight::point(Vec3::new(1.0, 0.62, 0.3), 40.0, 26.0).with_region(LightRegion::Interior),
-    ));
-    world.spawn((
-        Transform {
-            translation: (low + high) * 0.5,
-            ..Transform::default()
-        },
-        ReflectionProbe::new((high - low) * 0.5)
-            .with_blend(CAVE_MARGIN)
-            .with_interior(Interior { sky: 1.0, sun: 1.0 }),
-    ));
-    for (transform, mesh) in framing {
-        world.spawn((
-            transform,
-            Mesh3d {
-                mesh,
-                material: rock.material,
-            },
-        ));
-    }
-}
-
-fn cave_interior(mesh: &Mesh, points: &[Vec3], inward: Vec3) -> (Vec3, Vec3) {
-    let bend = (points[1] - points[0]).dot(inward);
-    let (low, high) = mesh
-        .vertices()
-        .iter()
-        .map(|vertex| points[0] + Vec3::from(vertex.position))
-        .filter(|&point| (point - points[0]).dot(inward) >= bend)
-        .fold(
-            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
-            |(low, high), point| (low.min(point), high.max(point)),
-        );
-    (
-        low - Vec3::splat(CAVE_MARGIN),
-        high + Vec3::splat(CAVE_MARGIN),
     )
 }
 

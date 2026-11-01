@@ -3,7 +3,7 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-include!(concat!(env!("OUT_DIR"), "/source.rs"));
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod bake;
 mod profile;
@@ -11,12 +11,16 @@ mod profile;
 use std::any::Any;
 use std::sync::Arc;
 
-use engine_core::{Brick, Bricks, ErrorCode, Join, Pyramid, parse_value};
-use engine_terrain::codec::{Reader, Writer};
-use engine_terrain::layer::{
-    self, Below, LayerBake, LayerFiles, LayerKind, Made, Row, TerrainLayer, TerrainLayersList, maps,
+use engine_codec::{Reader, Writer};
+use engine_core::{
+    Brick, Bricks, Error, ErrorCode, Job, JobCx, JobKind, JobRef, Source, parse_value,
 };
-use engine_terrain::path::{Bridge, PathSample};
+use engine_heightfield::layer::{
+    self, Below, LayerBake, LayerFiles, LayerKind, Made, Row, TerrainLayer, maps,
+};
+use engine_heightfield::path::{Bridge, PathSample};
+use engine_heightfield::{Pyramid, StartTile};
+use engine_places::terrain::{self, TerrainLayers};
 use glam::Vec2;
 use serde_json::Value;
 
@@ -28,24 +32,35 @@ pub use crate::profile::{
 pub struct LayerPathsBrick;
 
 impl Brick for LayerPathsBrick {
+    const SOURCE: &'static Source = &SOURCE;
+    const JOBS: &'static [&'static JobKind] = &[&PATH_JOB];
+
     fn register(bricks: &mut Bricks<'_>) {
-        for &kind in KINDS {
-            bricks.join(Join::<TerrainLayersList>::new().cpu(kind));
-        }
+        bricks.join::<TerrainLayers>(
+            terrain::LayerKind {
+                layer: &PATH_KIND,
+                job: JobRef::from(&PATH_JOB),
+            },
+            None,
+        );
     }
 }
 
-pub static KINDS: &[&LayerKind] = &[&PATH_KIND];
+pub static PATH_JOB: JobKind = JobKind::new("layer_paths::path", &SOURCE, refused);
 
 pub static PATH_KIND: LayerKind = LayerKind {
     name: "path",
-    source: SOURCE,
+    source: SOURCE.hash(),
     from_json,
     read,
     files: layer::no_files,
-    schema: engine_terrain::layer_schema!(schema),
+    schema: engine_heightfield::schema::<PathLayer>,
     points,
 };
+
+fn refused(_input: &[u8], _cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    Err(Error::new(ErrorCode::JobUnsupported, "$.jobs"))
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainPath {
@@ -73,13 +88,8 @@ fn points(settings: &Value) -> Option<Vec<[f32; 2]>> {
 fn made(settings: Arc<PathLayer>, profile: Option<Arc<PathProfile>>) -> Made {
     settings
         .validate()
-        .map_err(|invalid| invalid.error(ErrorCode::InvalidTerrain, "$"))?;
+        .map_err(|invalid| invalid.error(ErrorCode::InvalidValue, "$"))?;
     Ok(Arc::new(TerrainPath { settings, profile }))
-}
-
-#[cfg(feature = "schema")]
-fn schema() -> schemars::Schema {
-    schemars::schema_for!(PathLayer)
 }
 
 impl TerrainLayer for TerrainPath {
@@ -150,7 +160,7 @@ impl TerrainLayer for TerrainPath {
         self.profile.is_none()
     }
 
-    fn bake(&self, _pyramid: &Pyramid) -> Option<Box<dyn LayerBake>> {
+    fn bake(&self, _pyramid: &Pyramid, _tiles: StartTile) -> Option<Box<dyn LayerBake>> {
         if !self.needs_bake() {
             return None;
         }

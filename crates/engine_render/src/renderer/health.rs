@@ -40,35 +40,47 @@ impl Renderer {
             }
             Some(Poll::Pending) | None => {}
         }
-        let mut named = 0;
-        let linked = self.core.pipeline_counts.take_errors();
         if let Ok(mut reports) = self.core.health.lock() {
-            if let Some(error) = linked.into_iter().next() {
-                reports.fatal.get_or_insert(error);
-            }
             for message in std::mem::take(&mut reports.messages) {
-                match self.parts.named_by(&message) {
-                    0 => {
+                let named = self.run.as_ref().and_then(|run| {
+                    run.machine
+                        .declared
+                        .parts
+                        .iter()
+                        .position(|part| message.contains(part.name))
+                });
+                match (named, self.run.as_mut()) {
+                    (Some(part), Some(run)) => {
+                        let saved = run.part;
+                        run.part = part as u32;
+                        let error = failed("$.gpu").got(&message);
+                        run.fault(error);
+                        run.part = saved;
+                    }
+                    (Some(_) | None, _) => {
                         reports
                             .fatal
                             .get_or_insert_with(|| failed("$.gpu").got(message));
                     }
-                    bits => named |= bits,
                 }
             }
             if let Some(fatal) = &reports.fatal {
                 return Err(fatal.clone());
             }
         }
-        self.parts.disable(named);
         Ok(())
     }
 
-    pub fn disabled_features(&self) -> engine_core::Names {
-        engine_core::Names {
-            bits: self.parts.disabled(),
-            names: self.parts.names(),
-        }
+    pub fn faulted_parts(&self) -> Vec<&'static str> {
+        let Some(run) = self.run.as_ref() else {
+            return Vec::new();
+        };
+        run.faulted
+            .iter()
+            .zip(&run.machine.declared.parts)
+            .filter(|(fault, _)| fault.is_some())
+            .map(|(_, part)| part.name)
+            .collect()
     }
 
     #[cfg(feature = "dev")]
@@ -78,14 +90,20 @@ impl Renderer {
     }
 
     #[cfg(feature = "dev")]
-    pub fn inject_fault(&mut self, feature: &str) -> Result<(), Error> {
-        if self.parts.inject(feature) {
-            return Ok(());
-        }
-        Err(
-            Error::new(engine_core::ErrorCode::UnknownVariant, "$.feature")
-                .got(feature)
-                .variants(self.parts.lazy_names()),
-        )
+    pub fn inject_fault(&mut self, part: &str) -> Result<(), Error> {
+        let Some(run) = self.run.as_mut() else {
+            return Err(Error::new(engine_core::ErrorCode::UnknownVariant, "$.part").got(part));
+        };
+        let Some(index) = run.machine.declared.parts.iter().position(|known| known.name == part) else {
+            let names: Vec<&str> = run.machine.declared.parts.iter().map(|known| known.name).collect();
+            return Err(Error::new(engine_core::ErrorCode::UnknownVariant, "$.part")
+                .got(part)
+                .variants(names));
+        };
+        let saved = run.part;
+        run.part = index as u32;
+        run.fault(failed("$.gpu").got("injected"));
+        run.part = saved;
+        Ok(())
     }
 }

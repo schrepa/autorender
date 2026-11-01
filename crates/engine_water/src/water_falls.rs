@@ -2,9 +2,10 @@ use std::ops::Range;
 
 use engine_core::glam::{Vec2, Vec3};
 use engine_core::math::{clamp, exp, max, min, pow};
-use engine_terrain::Fall;
+use engine_heightfield::Fall;
+use engine_render::wgpu;
 
-use crate::gpu_layouts::water::FallVertex;
+use crate::gpu::FallVertex;
 
 const ROW: f32 = 0.75;
 const COLUMNS: u32 = 8;
@@ -236,13 +237,8 @@ fn fall_jets(fall: &Fall, origin: Vec3, vertices: &mut Vec<FallVertex>, indices:
 }
 
 pub(crate) fn fall_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 5] = engine_render::vertex_attributes!(FallVertex {
-        0 => position as Float32x3,
-        1 => normal as Float32x3,
-        2 => sheet as Float32x4,
-        3 => state as Float32x2,
-        4 => sky as Float32,
-    });
+    const ATTRIBUTES: [wgpu::VertexAttribute; 5] =
+        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x4, 3 => Float32x2, 4 => Float32];
     wgpu::VertexBufferLayout {
         array_stride: size_of::<FallVertex>() as u64,
         step_mode: wgpu::VertexStepMode::Vertex,

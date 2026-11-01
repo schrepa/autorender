@@ -3,15 +3,13 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-mod codes;
 mod error;
 pub mod fields;
 
-pub use codes::ErrorCode;
-pub use error::{
-    Allowed, Detail, Error, Expected, JS_ERROR_NAME, MAX_GOT_BYTES, closest, parse_json,
-    parse_value, parse_value_at,
-};
+pub use engine_codec::{Allowed, Detail, Error, ErrorCode, Expected, MAX_GOT_BYTES, closest};
+#[cfg(target_arch = "wasm32")]
+pub use error::js_error;
+pub use error::{JS_ERROR_NAME, parse_json, parse_value, parse_value_at};
 pub use fields::{ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, is_id};
 #[cfg(feature = "schema")]
 pub use fields::{state, stated};

@@ -5,25 +5,26 @@
     clippy::expect_used
 )]
 
-mod gpu_layouts;
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
+
 mod light;
-pub mod shaders;
 mod tonemap;
 
-use engine_core::{Brick, Bricks, Fill};
-use engine_faces::places::TonemapSlot;
-use engine_render::render_bricks::AddRenderParts;
+use engine_core::{Brick, Bricks, Schedule, Source};
+use engine_places::tonemap::Display;
+
+pub use light::Grading;
 
 pub struct TonemapBrick;
 
 impl Brick for TonemapBrick {
+    const SOURCE: &'static Source = &SOURCE;
+
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .settings::<engine_core::Grading>()
-            .render_part(&tonemap::PART)
-            .shaders(shaders::MODULES)
-            .places(engine_faces::places::PLACES)
-            .fill(Fill::<TonemapSlot>::new().wgsl("tonemap::faces::tonemap"))
-            .mirrors(gpu_layouts::LAYOUTS, &[]);
+            .settings::<Grading>()
+            .piece::<Display>()
+            .fill::<Display>(Some(shaders::tonemap::faces::tonemap::MODULE))
+            .systems(Schedule::ViewSync, tonemap::publish_display);
     }
 }

@@ -1,202 +1,135 @@
-use super::atlas::TileAtlas;
-use super::tables::TerrainTables;
-use super::*;
-use engine_core::glam::Vec2;
-use engine_faces::shadows::ground_level;
-use engine_terrain::{PATCH_QUADS, PATCHES_PER_TILE};
+use engine_places::ground::{TerrainEntry, TerrainTiles, TileKey};
+use engine_places::probes::ProbeCaptures;
+use engine_places::shadows::ground_level;
+use engine_render::{Prepare, wgpu};
+use glam::{DVec3, Mat4, Vec2, Vec3, Vec4};
 
+use super::part::{Handles, TerrainGpu, TerrainViews};
+use super::surface::SurfaceTrees;
+use super::tables::TerrainTables;
+use super::{FrameTerrain, NO_HOLES, TerrainFrame, changed_run};
+use crate::gpu::{
+    PatchRecord, TERRAIN_GRID as GRID, TERRAIN_GRID_VERTICES as GRID_VERTICES, TerrainUniform,
+    ViewUniform,
+};
+use crate::state::Atlas;
+use crate::terrain_macro::MacroMaps;
+use crate::terrain_sky::SkyMaps;
+
+const PATCH_QUADS: u32 = GRID - 1;
+const PATCHES_PER_TILE: u32 = engine_heightfield::TILE_QUADS / PATCH_QUADS;
+
+#[derive(Default)]
 pub(crate) struct PatchDraws {
-    indices: wgpu::Buffer,
     index_count: u32,
-    instances: wgpu::Buffer,
+    indexed: bool,
     records: Vec<PatchRecord>,
     written: Vec<PatchRecord>,
+    record_room: u64,
     fresh: bool,
-    uniforms: Vec<u8>,
-    written_uniforms: Vec<u8>,
-    uniforms_generation: Option<u64>,
-    pub(super) views: wgpu::Buffer,
-    written_views: Option<ViewUniform>,
+    uniforms: Vec<TerrainUniform>,
+    written_uniforms: Vec<TerrainUniform>,
+    written_views: Vec<ViewUniform>,
     kept_stack: Vec<(u32, u32, u32)>,
-    kept_ground: HashMap<(u64, TileKey), (Arc<engine_terrain::Tile>, GroundChange)>,
-    ground_changes: Vec<GroundChange>,
-    eye: Vec3,
-    pub(crate) frame: TerrainFrame,
 }
 
 pub(super) struct Layout<'a> {
-    pub(super) atlas: &'a TileAtlas,
+    pub(super) atlas: &'a Atlas,
     pub(super) tables: &'a TerrainTables,
     pub(super) surface: &'a SurfaceTrees,
     pub(super) sky: &'a SkyMaps,
     pub(super) macro_maps: &'a MacroMaps,
+    pub(super) index: u32,
 }
 
 impl PatchDraws {
-    pub(super) fn new(device: &wgpu::Device) -> Self {
-        let indices = grid_indices();
-        let index_buffer = engine_render::memory::buffer_init(
-            device,
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("engine/terrain-indices"),
-                contents: bytemuck::cast_slice(&indices),
-                usage: wgpu::BufferUsages::INDEX,
-            },
-        );
-        Self {
-            indices: index_buffer,
-            index_count: indices.len() as u32,
-            instances: instance_buffer(device, 256),
-            records: Vec::new(),
-            written: Vec::new(),
-            fresh: true,
-            uniforms: Vec::new(),
-            written_uniforms: Vec::new(),
-            uniforms_generation: None,
-            views: engine_render::buffers::uniform(device, "engine/terrain-views", VIEWS * SLOT),
-            written_views: None,
-            kept_stack: Vec::new(),
-            kept_ground: HashMap::default(),
-            ground_changes: Vec::new(),
-            eye: Vec3::ZERO,
-            frame: TerrainFrame::default(),
-        }
-    }
-
-    pub(super) fn begin(&mut self, eye: Vec3) {
-        let mut terrains = std::mem::take(&mut self.frame.terrains);
-        terrains.clear();
-        self.frame = TerrainFrame {
-            terrains,
-            ..TerrainFrame::default()
-        };
-        self.eye = eye;
-    }
-
-    pub(super) fn eye(&self) -> Vec3 {
-        self.eye
-    }
-
-    #[cfg(debug_assertions)]
-    pub(super) fn records(&self) -> &[PatchRecord] {
-        &self.records
+    pub(super) fn index_count(&self) -> u32 {
+        self.index_count
     }
 
     pub(super) fn lay_out(
         &mut self,
-        device: &wgpu::Device,
-        terrains: &RenderTerrains,
+        cx: &mut Prepare<'_, TerrainGpu>,
+        handles: &Handles,
+        (tiles, atlas, tables, surface, sky, macro_maps): (
+            &TerrainTiles,
+            &Atlas,
+            &TerrainTables,
+            &SurfaceTrees,
+            &SkyMaps,
+            &MacroMaps,
+        ),
         views: &TerrainViews<'_>,
-        parts: &Layout<'_>,
-    ) {
+    ) -> TerrainFrame {
+        if !self.indexed {
+            let indices = grid_indices();
+            self.index_count = indices.len() as u32;
+            cx.allocate_buffer(handles.grid, std::mem::size_of_val(indices.as_slice()) as u64);
+            cx.write(handles.grid, 0, &indices);
+            self.indexed = true;
+        }
         let eye = views.eye.as_dvec3();
         std::mem::swap(&mut self.records, &mut self.written);
         std::mem::swap(&mut self.uniforms, &mut self.written_uniforms);
         self.records.clear();
         self.uniforms.clear();
-        self.uniforms
-            .resize(terrains.terrains.len() * SLOT as usize, 0);
-        for (index, terrain) in terrains.terrains.iter().enumerate() {
-            let uniform = terrain_uniform(index, terrain, eye, views, parts);
-            let at = index * SLOT as usize;
-            self.uniforms[at..at + size_of::<TerrainUniform>()]
-                .copy_from_slice(bytemuck::bytes_of(&uniform));
-            if !terrain.drawn {
+        let mut frame = TerrainFrame::default();
+        for (index, terrain) in tiles.terrains.iter().enumerate() {
+            let parts = Layout {
+                atlas,
+                tables,
+                surface,
+                sky,
+                macro_maps,
+                index: index as u32,
+            };
+            let uniform = terrain_uniform(index, terrain, eye, views, &parts);
+            self.uniforms.push(uniform);
+            if !atlas.slots.keys().any(|(held, _)| *held == terrain.terrain) {
                 continue;
             }
             let screen = ground_rect(views.camera, terrain, eye, uniform.relief[0]);
-            self.frame.terrains.push(FrameTerrain {
+            frame.terrains.push(FrameTerrain {
                 terrain: index,
-                uniform: (index as u64 * SLOT) as u32,
-                holes: parts.atlas.holed.iter().any(|&(id, _)| id == terrain.id),
+                uniform: index as u32,
+                holes: atlas.holed.iter().any(|&(id, _)| id == terrain.terrain),
                 maps: Vec::with_capacity(views.regions.len()),
                 screen,
             });
         }
-        for &(map, region) in views.regions {
-            self.lay_out_kept(terrains, (map, region, eye), parts);
-        }
-        let record_bytes = (self.records.len() * size_of::<PatchRecord>()) as u64;
-        if record_bytes > self.instances.size() {
-            self.instances =
-                instance_buffer(device, (self.records.len() as u64).next_power_of_two());
-            self.fresh = true;
-        }
-    }
-
-    fn lay_out_kept(
-        &mut self,
-        terrains: &RenderTerrains,
-        (map, region, eye): (usize, KeptRefresh, DVec3),
-        parts: &Layout<'_>,
-    ) {
-        let planes = region.planes.map(Vec4::from_array);
-        for frame in &mut self.frame.terrains {
-            let terrain = &terrains.terrains[frame.terrain];
-            let level = ground_level(&terrain.pyramid, region.texel);
-            let first = self.records.len() as u32;
-            kept_patches(
-                (&mut self.records, &mut self.kept_stack),
-                terrain,
-                (&planes[..], level),
-                Anchors::of(terrain, eye),
-                parts,
-            );
-            let range = first..self.records.len() as u32;
-            self.frame.shadow_patches += range.len() as u32;
-            frame.maps.push((map, range));
-        }
-    }
-
-    pub(super) fn follow_ground(&mut self, terrains: &RenderTerrains, atlas: &TileAtlas) {
-        self.ground_changes.clear();
-        for &slot in &atlas.held_changes {
-            let before = self.kept_ground.remove(&slot);
-            let now = atlas.held.get(&slot).and_then(|tile| {
-                let terrain = terrains
-                    .terrains
-                    .iter()
-                    .find(|terrain| terrain.id == slot.0)?;
-                Some((Arc::clone(tile), ground_box(terrain, slot.1, tile.bounds())))
-            });
-            let change = match (&before, &now) {
-                (Some((was, stood)), Some((is, stands)))
-                    if was.heights() == is.heights()
-                        && stood.min == stands.min
-                        && stood.max == stands.max =>
-                {
-                    None
-                }
-                (Some((_, stood)), Some((_, stands))) => Some(GroundChange {
-                    min: stood.min.min(stands.min),
-                    max: stood.max.max(stands.max),
-                    ..*stands
-                }),
-                (Some((_, stood)), None) => Some(*stood),
-                (None, Some((_, stands))) => Some(*stands),
-                (None, None) => None,
-            };
-            self.ground_changes.extend(change);
-            if let Some(now) = now {
-                self.kept_ground.insert(slot, now);
+        for &(map, region) in &views.regions {
+            let planes = region.planes.map(Vec4::from_array);
+            for drawn in &mut frame.terrains {
+                let terrain = &tiles.terrains[drawn.terrain];
+                let parts = Layout {
+                    atlas,
+                    tables,
+                    surface,
+                    sky,
+                    macro_maps,
+                    index: drawn.terrain as u32,
+                };
+                let level = ground_level(&terrain.pyramid, region.texel);
+                let first = self.records.len() as u32;
+                kept_patches(
+                    (&mut self.records, &mut self.kept_stack),
+                    terrain,
+                    (&planes[..], level),
+                    Anchors::of(terrain, eye),
+                    &parts,
+                );
+                let range = first..self.records.len() as u32;
+                frame.shadow_patches += range.len() as u32;
+                drawn.maps.push((map, range));
             }
         }
-    }
-
-    pub(super) fn ground_changes(&self) -> &[GroundChange] {
-        &self.ground_changes
-    }
-
-    pub(super) fn forget_ground_changes(&mut self) {
-        self.ground_changes.clear();
-    }
-
-    pub(super) fn write(
-        &mut self,
-        queue: &engine_render::gpu_calls::Queue,
-        views: &TerrainViews<'_>,
-        (uniforms, generation): (&wgpu::Buffer, u64),
-    ) {
+        let record_bytes = (self.records.len() * size_of::<PatchRecord>()) as u64;
+        if record_bytes > self.record_room {
+            self.record_room =
+                (self.records.len() as u64).next_power_of_two() * size_of::<PatchRecord>() as u64;
+            self.fresh = true;
+        }
+        cx.allocate_buffer(handles.patches, self.record_room.max(size_of::<PatchRecord>() as u64));
         let run = if self.fresh {
             0..self.records.len()
         } else {
@@ -205,14 +138,26 @@ impl PatchDraws {
         self.fresh = false;
         if !run.is_empty() {
             let offset = (run.start * size_of::<PatchRecord>()) as u64;
-            let records = bytemuck::cast_slice(&self.records[run]);
-            queue.write_buffer(&self.instances, offset, records);
+            cx.write(handles.patches, offset, &self.records[run]);
         }
-        if self.uniforms_generation != Some(generation) || self.uniforms != self.written_uniforms {
-            queue.write_buffer(uniforms, 0, &self.uniforms);
-            self.uniforms_generation = Some(generation);
+        cx.allocate_buffer(
+            handles.terrains,
+            (self.uniforms.len().max(1) * size_of::<TerrainUniform>()) as u64,
+        );
+        if self.uniforms != self.written_uniforms {
+            cx.write(handles.terrains, 0, &self.uniforms);
         }
-        let camera = ViewUniform {
+        frame
+    }
+
+    pub(super) fn write_views(
+        &mut self,
+        cx: &mut Prepare<'_, TerrainGpu>,
+        handles: &Handles,
+        views: &TerrainViews<'_>,
+        captures: &ProbeCaptures,
+    ) {
+        let mut written = vec![ViewUniform {
             relative_view_projection: views.camera.to_cols_array_2d(),
             eye_offset: [0.0; 4],
             inverse_relative_view_projection: views
@@ -221,53 +166,33 @@ impl PatchDraws {
                 .inverse()
                 .as_mat4()
                 .to_cols_array_2d(),
-        };
-        if self.written_views != Some(camera) {
-            queue.write_buffer(&self.views, 0, bytemuck::bytes_of(&camera));
-            self.written_views = Some(camera);
+        }];
+        for face in &captures.faces {
+            let relative = face.view;
+            let at = 1 + face.face as usize;
+            if written.len() <= at {
+                written.resize(at + 1, ViewUniform::default());
+            }
+            written[at] = ViewUniform {
+                inverse_relative_view_projection: relative
+                    .as_dmat4()
+                    .inverse()
+                    .as_mat4()
+                    .to_cols_array_2d(),
+                relative_view_projection: relative.to_cols_array_2d(),
+                eye_offset: (views.eye.as_dvec3() - face.center.as_dvec3())
+                    .as_vec3()
+                    .extend(0.0)
+                    .to_array(),
+            };
         }
-    }
-
-    pub(super) fn write_probe_view(
-        &self,
-        queue: &engine_render::gpu_calls::Queue,
-        face: usize,
-        relative: Mat4,
-        eye: Vec3,
-        center: Vec3,
-    ) -> u32 {
-        let view = ViewUniform {
-            inverse_relative_view_projection: relative
-                .as_dmat4()
-                .inverse()
-                .as_mat4()
-                .to_cols_array_2d(),
-            relative_view_projection: relative.to_cols_array_2d(),
-            eye_offset: (eye.as_dvec3() - center.as_dvec3())
-                .as_vec3()
-                .extend(0.0)
-                .to_array(),
-        };
-        let offset = (1 + face as u64) * SLOT;
-        queue.write_buffer(&self.views, offset, bytemuck::bytes_of(&view));
-        offset as u32
-    }
-
-    pub(super) fn draw(
-        &self,
-        pass: &mut wgpu::RenderPass<'_>,
-        group: &wgpu::BindGroup,
-        range: &Range<u32>,
-        (view, uniform): (u32, u32),
-    ) -> u32 {
-        if range.is_empty() {
-            return 0;
+        if written == self.written_views {
+            return;
         }
-        pass.set_bind_group(1, group, &[view, uniform]);
-        pass.set_vertex_buffer(0, self.instances.slice(..));
-        pass.set_index_buffer(self.indices.slice(..), wgpu::IndexFormat::Uint16);
-        pass.draw_indexed(0..self.index_count, 0, range.clone());
-        1
+        let views_bytes = written.len().max(super::VIEWS as usize) * size_of::<ViewUniform>();
+        cx.allocate_buffer(handles.views, views_bytes as u64);
+        cx.write(handles.views, 0, &written);
+        self.written_views = written;
     }
 }
 
@@ -277,19 +202,19 @@ pub(super) struct TileRecord {
     layer: u32,
     spacing: f32,
     holes: u32,
+    terrain: u32,
 }
 
 impl TileRecord {
-    pub(super) fn of(parts: &Layout<'_>, terrain: &RenderTerrain, key: TileKey) -> Option<Self> {
-        let layer = *parts.atlas.slots.get(&(terrain.id, key))?;
-        let holes = (parts.tables.hole_offsets.get(&(terrain.id, key)))
-            .copied()
-            .unwrap_or(NO_HOLES);
+    pub(super) fn of(parts: &Layout<'_>, terrain: &TerrainEntry, key: TileKey) -> Option<Self> {
+        let layer = parts.atlas.layer_of(terrain.terrain, key)?;
+        let holes = parts.tables.holes_of((terrain.terrain, key));
         Some(Self {
             key,
             layer,
             spacing: terrain.pyramid.spacing(u32::from(key.level)),
             holes,
+            terrain: parts.index,
         })
     }
 
@@ -311,6 +236,7 @@ impl TileRecord {
             shape: [self.spacing, SKIRT_SPACINGS * self.spacing],
             atlas: [self.layer, texel],
             holes: if holes { self.holes } else { NO_HOLES },
+            terrain: self.terrain,
         }
     }
 }
@@ -319,7 +245,7 @@ const SKIRT_SPACINGS: f32 = 4.0;
 
 fn kept_patches(
     (records, stack): (&mut Vec<PatchRecord>, &mut Vec<(u32, u32, u32)>),
-    terrain: &RenderTerrain,
+    terrain: &TerrainEntry,
     (planes, level): (&[Vec4], u32),
     anchors: Anchors,
     parts: &Layout<'_>,
@@ -334,11 +260,11 @@ fn kept_patches(
     stack.extend((0..tiles_z * side).flat_map(|z| (0..tiles_x * side).map(move |x| (top, x, z))));
     let stray = |from: u32| {
         let measured: f32 = (finest..from)
-            .map(|at| terrain.errors.get(at as usize).copied().unwrap_or(0.0))
+            .map(|at| terrain.level_errors.get(at as usize).copied().unwrap_or(0.0))
             .sum();
         measured + pyramid.spacing(from)
     };
-    let held = |key: TileKey| parts.atlas.held.get(&(terrain.id, key));
+    let held = |key: TileKey| parts.atlas.tile(terrain.terrain, key);
     let mut shared: Option<(TileKey, Option<TileRecord>)> = None;
     while let Some((at, x, z)) = stack.pop() {
         let spacing = pyramid.spacing(at);
@@ -352,7 +278,7 @@ fn kept_patches(
             continue;
         };
         let (column, row) = (x % side, z % side);
-        let [low, high] = tile.patch_bounds(column, row);
+        let [low, high] = tile.patch_bounds[(row * side + column) as usize];
         let min = terrain.origin + Vec3::new(corner.x, low - SKIRT_SPACINGS * spacing, corner.y);
         let max = terrain.origin + Vec3::new(corner.x + size, high, corner.y + size);
         if at > finest {
@@ -379,7 +305,8 @@ fn kept_patches(
             }
         };
         if let Some(record) = record {
-            let holes = tile.patch_has_holes(column, row);
+            let index = (row * side + column) as usize;
+            let holes = tile.patch_holes[index / 64] & (1 << (index % 64)) != 0;
             records.push(record.kept_record((column as u8, row as u8), holes, anchors));
         }
     }
@@ -394,29 +321,10 @@ fn cut_out(cutout: Option<(Vec2, Vec2)>, corner: Vec2, size: f32) -> bool {
     })
 }
 
-fn ground_box(terrain: &RenderTerrain, key: TileKey, [low, high]: [f32; 2]) -> GroundChange {
-    let pyramid = terrain.pyramid;
-    let level = u32::from(key.level);
-    let corner = pyramid.tile_origin(key);
-    let size = pyramid.tile_size(level);
-    let skirt = SKIRT_SPACINGS * pyramid.spacing(level);
-    GroundChange {
-        min: terrain.origin + Vec3::new(corner.x, low - skirt, corner.y),
-        max: terrain.origin + Vec3::new(corner.x + size, high, corner.y + size),
-        pyramid,
-        level,
-    }
-}
-
-fn ground_rect(view: Mat4, terrain: &RenderTerrain, eye: DVec3, reach: f32) -> Option<[f32; 4]> {
-    let (low, high) = terrain.tiles.iter().map(|tile| tile.bounds()).fold(
+fn ground_rect(view: Mat4, terrain: &TerrainEntry, eye: DVec3, reach: f32) -> Option<[f32; 4]> {
+    let (low, high) = terrain.tiles.iter().map(|tile| (tile.bounds.0.y, tile.bounds.1.y)).fold(
         (f32::INFINITY, f32::NEG_INFINITY),
-        |(low, high), [bottom, top]| {
-            (
-                engine_core::math::min(low, bottom),
-                engine_core::math::max(high, top),
-            )
-        },
+        |(low, high), (bottom, top)| (engine_math::min(low, bottom), engine_math::max(high, top)),
     );
     if low > high {
         return None;
@@ -458,16 +366,16 @@ fn projected_rect(rect: [f32; 4], view: Mat4, min: Vec3, max: Vec3) -> Option<[f
             return None;
         }
         let (x, y) = (clip.x / clip.w, clip.y / clip.w);
-        left = engine_core::math::min(left, x);
-        bottom = engine_core::math::min(bottom, y);
-        right = engine_core::math::max(right, x);
-        top = engine_core::math::max(top, y);
+        left = engine_math::min(left, x);
+        bottom = engine_math::min(bottom, y);
+        right = engine_math::max(right, x);
+        top = engine_math::max(top, y);
     }
     Some([left, bottom, right, top])
 }
 
-const PATCH_ATTRIBUTES: [wgpu::VertexAttribute; 4] =
-    wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x2, 2 => Uint32x2, 3 => Uint32];
+const PATCH_ATTRIBUTES: [wgpu::VertexAttribute; 5] =
+    wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x2, 2 => Uint32x2, 3 => Uint32, 4 => Uint32];
 
 pub(super) fn patch_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
@@ -477,19 +385,7 @@ pub(super) fn patch_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
-fn instance_buffer(device: &wgpu::Device, records: u64) -> wgpu::Buffer {
-    engine_render::memory::buffer(
-        device,
-        &wgpu::BufferDescriptor {
-            label: Some("engine/terrain-patches"),
-            size: records * size_of::<PatchRecord>() as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        },
-    )
-}
-
-fn grid_indices() -> Vec<u16> {
+pub(super) fn grid_indices() -> Vec<u16> {
     let at = |x: u32, z: u32| (z * GRID + x) as u16;
     let skirt = |edge: u32, along: u32| (GRID_VERTICES + edge * GRID + along) as u16;
     let mut indices = Vec::new();
@@ -540,7 +436,7 @@ pub(super) struct Anchors {
 }
 
 impl Anchors {
-    pub(super) fn of(terrain: &RenderTerrain, eye: DVec3) -> Self {
+    pub(super) fn of(terrain: &TerrainEntry, eye: DVec3) -> Self {
         let pyramid = &terrain.pyramid;
         let levels = pyramid.levels();
         let top = f64::from(pyramid.spacing(levels - 1));
@@ -558,8 +454,8 @@ impl Anchors {
 }
 
 fn terrain_uniform(
-    index: usize,
-    terrain: &RenderTerrain,
+    _: usize,
+    terrain: &TerrainEntry,
     eye: DVec3,
     views: &TerrainViews<'_>,
     parts: &Layout<'_>,
@@ -578,18 +474,16 @@ fn terrain_uniform(
     let cover = match views.cover {
         None => [0.0; 4],
         Some((cover, _)) if terrain.surroundings => [0.0, 0.0, cover.density, 0.0],
-        Some((cover, pixels)) => {
-            let terms = tables.cover_terms.get(index).copied().unwrap_or_default();
-            [terms.span(pixels), 0.0, cover.density, 0.0]
-        }
+        Some((cover, pixels)) => [cover.width_of(terrain.terrain) * pixels, 0.0, cover.density, 0.0],
     };
     let deepest = tables
-        .palette_of(index, terrain.surface.len())
+        .palette_of(parts.index as usize, terrain.materials.len())
         .iter()
         .filter(|entry| entry.params[3] > 0.0)
         .map(|entry| entry.relief[0])
-        .fold(0.0, engine_core::math::max);
-    let (first, finest) = parts.surface.of(index);
+        .fold(0.0, engine_math::max);
+    let (first, finest) = parts.surface.of(parts.index as usize);
+    let water = parts.surface.water_slot(parts.index as usize);
     TerrainUniform {
         anchor: [relative.x, relative.y, relative.z, pyramid.spacing(0)],
         eye: eye.as_vec3().extend(0.0).to_array(),
@@ -601,15 +495,15 @@ fn terrain_uniform(
         ],
         origin: terrain.origin.extend(0.0).to_array(),
         directory: [
-            tables.directory_bases.get(index).copied().unwrap_or(0),
+            tables.directory_bases.get(parts.index as usize).copied().unwrap_or(0),
             pyramid.levels(),
-            tables.palette_bases.get(index).copied().unwrap_or(0),
-            parts.sky.layer(index),
+            tables.palette_bases.get(parts.index as usize).copied().unwrap_or(0),
+            parts.sky.layer(parts.index as usize),
         ],
         relief: [deepest, views.settings.relief_steps as f32, finest, 0.0],
         cover,
-        pixel_error: [views.settings.pixel_error, 0.0, 0.0, 0.0],
-        macro_map: [parts.macro_maps.layer(index), 0, 0, 0],
+        pixel_error: [terrain.pixel_error, 0.0, 0.0, 0.0],
+        macro_map: [parts.macro_maps.layer(parts.index as usize), 0, 0, 0],
         steep: {
             let [material, low, high] = terrain.steep.map_or([0.0; 3], |steep| {
                 [
@@ -618,10 +512,10 @@ fn terrain_uniform(
                     steep.gradient[1],
                 ]
             });
-            let averaged = engine_terrain::TileShading::shades(1, terrain.surroundings);
+            let averaged = crate::TileShading::shades(1, terrain.surroundings);
             [material, low, high, if averaged { 1.0 } else { 0.0 }]
         },
-        water: [tables.water_base, 0, 0, 0],
+        water: [0, water.map_or(0, |(slot, _)| slot + 1), water.map_or(0, |(_, first)| first), 0],
     }
 }
 

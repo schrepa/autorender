@@ -1,6 +1,6 @@
 use super::*;
 
-settings! {
+fields! {
     unauthored;
     #[derive(Clone, Copy, Debug, PartialEq)]
     pub struct Surroundings {
@@ -17,7 +17,7 @@ impl Surroundings {
         let extent = base.extent();
         let spacing = base.spacing(base.levels().saturating_sub(1).min(2));
         let tile = TILE_QUADS as f32 * spacing;
-        let wanted = engine_core::math::max(extent.x, extent.y) + 2.0 * self.reach;
+        let wanted = engine_math::max(extent.x, extent.y) + 2.0 * self.reach;
         let mut tiles = ((wanted / tile).ceil() as u32)
             .clamp(1, Pyramid::MAX_TILES)
             .next_power_of_two()
@@ -96,24 +96,26 @@ impl Terrains {
                 wanted.push((state.entity, base, surroundings, layout, surface));
             }
         }
-        let retired = &mut self.retired;
-        self.entries.retain(|state| {
-            let Some(around) = &state.around else {
-                return true;
-            };
-            let kept = wanted
-                .iter()
-                .any(|(entity, base, surroundings, (_, _, cutout), _)| {
-                    *entity == state.entity
-                        && Arc::ptr_eq(base, &around.base)
-                        && *surroundings == around.surroundings
-                        && *cutout == around.cutout
-                });
-            if !kept {
-                state.retire(retired);
+        let mut kept = Vec::with_capacity(self.entries.len());
+        for state in std::mem::take(&mut self.entries) {
+            let held = state.around.as_ref().is_none_or(|around| {
+                wanted
+                    .iter()
+                    .any(|(entity, base, surroundings, (_, _, cutout), _)| {
+                        *entity == state.entity
+                            && Arc::ptr_eq(base, &around.base)
+                            && *surroundings == around.surroundings
+                            && *cutout == around.cutout
+                    })
+            });
+            if held {
+                kept.push(state);
+            } else {
+                state.retire(&mut self.retired);
+                self.epoch += 1;
             }
-            kept
-        });
+        }
+        self.entries = kept;
         for (entity, base, surroundings, (origin, pyramid, cutout), surface) in wanted {
             if self
                 .entries
@@ -149,6 +151,7 @@ impl Terrains {
                 cutout,
             });
             self.entries.push(state);
+            self.epoch += 1;
         }
     }
 }

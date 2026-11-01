@@ -1,16 +1,36 @@
 use bevy_ecs::prelude::{Component, Resource};
 use engine_place::Slot;
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 
 pub const MAX_SPOT_DEGREES: f32 = 89.0;
 pub const MIN_SPOT_DEGREES: f32 = 0.1;
 pub const MAX_LIGHT_RANGE: f32 = 10_000.0;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Spot {
     pub direction: Vec3,
+    #[serde(
+        rename = "inner_angle_degrees",
+        with = "crate::degrees",
+        default = "authored_inner_angle"
+    )]
     pub inner_angle: f32,
+    #[serde(
+        rename = "outer_angle_degrees",
+        with = "crate::degrees",
+        default = "authored_outer_angle"
+    )]
     pub outer_angle: f32,
+}
+
+fn authored_inner_angle() -> f32 {
+    Spot::default().inner_angle.to_degrees().to_radians()
+}
+
+fn authored_outer_angle() -> f32 {
+    Spot::default().outer_angle.to_degrees().to_radians()
 }
 
 impl Default for Spot {
@@ -23,7 +43,8 @@ impl Default for Spot {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LightRegion {
     #[default]
     Both,
@@ -31,16 +52,25 @@ pub enum LightRegion {
     Exterior,
 }
 
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct LocalLight {
     pub color: Vec3,
     pub intensity: f32,
     pub range: f32,
     pub offset: Vec3,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub spot: Option<Spot>,
+    #[serde(skip_serializing_if = "crate::is_zero")]
     pub radius: f32,
+    #[serde(skip_serializing_if = "crate::is_zero")]
     pub length: f32,
+    #[serde(skip_serializing_if = "is_both")]
     pub region: LightRegion,
+}
+
+fn is_both(region: &LightRegion) -> bool {
+    *region == LightRegion::Both
 }
 
 impl Default for LocalLight {

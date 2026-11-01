@@ -1,18 +1,12 @@
-use bevy_ecs::prelude::Resource;
-use engine_core::EnvironmentSection;
-use engine_settings::{InvalidSetting, settings};
-use serde::{Deserialize, Serialize};
+use engine_core::{settings, stats};
 
 settings! {
-    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(
-        feature = "schema",
-        derive(schemars::JsonSchema),
-        schemars(rename = "SceneAutoExposure")
-    )]
-    #[serde(default, deny_unknown_fields)]
+    #[section("auto_exposure")]
+    #[derive(Copy)]
+    #[serde(deny_unknown_fields)]
+    #[schemars(rename = "SceneAutoExposure")]
     pub struct AutoExposure {
-        pub enabled: bool = true => any,
+        pub enabled: bool = false => any,
         pub strength: f32 = 1.0 => range(0.0, 1.0),
         pub compensation: f32 = 0.0 => range(-8.0, 8.0),
         pub night: f32 = 1.0 => range(0.0, 16.0),
@@ -27,34 +21,13 @@ settings! {
     }
 }
 
-impl AutoExposure {
-    pub fn off() -> Self {
-        Self {
-            enabled: false,
-            ..Self::default()
-        }
-    }
-}
-
-impl EnvironmentSection for AutoExposure {
-    const KEY: &'static str = "auto_exposure";
-    const NAME: &'static str = "AutoExposure";
-    const OPT_IN: bool = true;
-
-    fn section_off() -> Self {
-        Self::off()
-    }
-
-    fn section_check(&self) -> Result<(), InvalidSetting> {
-        self.validate()
-    }
-
-    fn section_sanitized(self) -> Self {
-        self.sanitized()
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(AutoExposure)
+stats! {
+    #[section("exposure_stats")]
+    #[derive(Copy, Eq)]
+    pub struct ExposureStats {
+        pub active: bool,
+        pub stops: i32,
+        pub metered: i32,
+        pub view: i32,
     }
 }

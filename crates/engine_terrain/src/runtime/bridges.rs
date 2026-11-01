@@ -2,14 +2,15 @@ use engine_core::collections::HashMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_assets::{
-    AssetLibrary, Material, MaterialHandle, Mesh, MeshHandle, MeshVertex, Surface,
+use engine_core::{
+    AssetLibrary, Material, MaterialHandle, Mesh, Mesh3d, MeshHandle, MeshVertex, Spawner,
+    Surface, Transform,
 };
+use engine_places::splines::SplineMesh;
 use glam::Vec3;
 
-use super::Terrains;
+use super::{TerrainBrick, Terrains};
 use crate::Bridge;
-use engine_core::{Mesh3d, SplineMesh, Transform};
 
 pub const BRIDGE_SOLIDS: u16 = u16::MAX;
 pub const DECK_RISE: f32 = 0.2;
@@ -166,7 +167,7 @@ fn tube_section(width: f32) -> Mesh {
         let mut points = vec![(radius, DECK_RISE, 1.0, 0.0)];
         for segment in 0..=VAULT_SEGMENTS {
             let angle = std::f32::consts::PI * segment as f32 / VAULT_SEGMENTS as f32;
-            let (sin, cos) = engine_core::math::sin_cos(angle);
+            let (sin, cos) = engine_math::sin_cos(angle);
             points.push((radius * cos, TUBE_WALL + radius * sin, cos, sin));
         }
         points.push((-radius, DECK_RISE, -1.0, 0.0));
@@ -233,14 +234,14 @@ fn tube_section(width: f32) -> Mesh {
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
 )]
-pub(crate) fn sync(world: &mut World) {
-    let wanted: Vec<BridgeSet> = match world.get_resource::<Terrains>() {
-        Some(terrains) => terrains.bridge_sets().collect(),
-        None => Vec::new(),
-    };
-    let mut bridges = world
-        .remove_resource::<TerrainBridges>()
-        .unwrap_or_default();
+pub(crate) fn sync(
+    terrains: Res<Terrains>,
+    mut bridges: ResMut<TerrainBridges>,
+    mut assets: ResMut<AssetLibrary>,
+    mut spawner: Spawner<TerrainBrick>,
+) {
+    let wanted: Vec<BridgeSet> = terrains.bridge_sets().collect();
+    let bridges = &mut *bridges;
     let mut stale = Vec::new();
     bridges.spawned.retain(|terrain, spawned| {
         let keep = wanted.iter().any(|(entity, wanted, _, material)| {
@@ -254,16 +255,13 @@ pub(crate) fn sync(world: &mut World) {
         keep
     });
     for entity in stale {
-        if let Ok(entity) = world.get_entity_mut(entity) {
-            entity.despawn();
-        }
+        spawner.despawn(entity);
     }
     for (terrain, set, origin, material) in wanted {
         if set.is_empty() || bridges.spawned.contains_key(&terrain) {
             continue;
         }
         let mut entities = Vec::new();
-        let mut assets = world.resource_mut::<AssetLibrary>();
         let chosen = material;
         let material = match material.or(bridges.stone) {
             Some(material) => material,
@@ -293,7 +291,6 @@ pub(crate) fn sync(world: &mut World) {
                 pier
             }
         };
-        let mut spawns = Vec::new();
         for bridge in set.iter() {
             let (sections, build): (_, fn(f32) -> Mesh) = if bridge.tunnel {
                 (&mut bridges.tubes, tube_section)
@@ -310,46 +307,34 @@ pub(crate) fn sync(world: &mut World) {
                     deck
                 }
             };
-            spawns.push((
+            entities.push(spawner.spawn((
                 Transform {
                     translation: origin,
-                    ..Transform::default()
+                    ..Transform::IDENTITY
                 },
-                Some(SplineMesh {
+                SplineMesh {
                     points: bridge.deck.clone(),
                     mesh: deck,
                     material,
-                }),
-                None,
-            ));
+                },
+            )));
             for &(top, ground) in &bridge.piers {
                 let (high, low) = (top.y - DECK_DEPTH, ground - PIER_FOOTING);
                 if high <= low {
                     continue;
                 }
-                spawns.push((
+                entities.push(spawner.spawn((
                     Transform {
                         translation: origin + Vec3::new(top.x, 0.5 * (high + low), top.z),
                         scale: Vec3::new(PIER_SIDE, high - low, PIER_SIDE),
-                        ..Transform::default()
+                        ..Transform::IDENTITY
                     },
-                    None,
-                    Some(Mesh3d {
+                    Mesh3d {
                         mesh: pier,
                         material,
-                    }),
-                ));
+                    },
+                )));
             }
-        }
-        for (transform, spline, mesh) in spawns {
-            let mut entity = world.spawn(transform);
-            if let Some(spline) = spline {
-                entity.insert(spline);
-            }
-            if let Some(mesh) = mesh {
-                entity.insert(mesh);
-            }
-            entities.push(entity.id());
         }
         bridges.spawned.insert(
             terrain,
@@ -360,5 +345,4 @@ pub(crate) fn sync(world: &mut World) {
             },
         );
     }
-    world.insert_resource(bridges);
 }

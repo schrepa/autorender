@@ -1,51 +1,50 @@
-#![deny(
-    clippy::wildcard_enum_match_arm,
-    clippy::match_wildcard_for_single_variants,
-    clippy::iter_over_hash_type,
-    clippy::expect_used
-)]
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-mod bindings;
-mod constants;
-mod effects;
+mod atlas;
+pub mod constants;
 mod gpu_layouts;
-mod pipeline_layouts;
-pub mod shaders;
+mod inspect;
+mod part;
+mod plan;
+mod regions;
+mod settings;
 mod shadow_fit;
-mod shadows;
-mod sky_occlusion;
+mod sky;
+mod smokes;
 
-use engine_core::{Brick, Bricks, DetailConsumer, DetailConsumersList, Fill, Join};
-use engine_faces::places::ShadowsSlot;
-use engine_render::render_bricks::AddRenderParts;
+use bevy_ecs::prelude::*;
+use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source};
+use engine_places::shadows::{CasterRoutes, ShadowCasters, ShadowMaps};
+use engine_render::RenderBricks;
+
+pub use constants::{MAX_MOVING_TILES, MAX_SHADOW_LEVELS};
+pub use settings::{ShadowSettings, ShadowStats, SkyOcclusion};
 
 pub struct ShadowsBrick;
 
 impl Brick for ShadowsBrick {
+    const SOURCE: &'static Source = &SOURCE;
+    const SMOKES: &'static [Smoke] = &[Smoke {
+        name: "shadow_tiles_settle",
+        runs: Runs::Gpu,
+        run: smokes::tiles_settle,
+    }];
+
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .settings::<engine_core::Shadows>()
-            .settings::<engine_core::SkyOcclusion>()
-            .join(Join::<DetailConsumersList>::new().cpu(DetailConsumer {
-                name: "shadow_tiles",
-                setting: "shadows.atlas_slots",
-                stat: "shadows.tile_cut",
-            }))
-            .join(Join::<DetailConsumersList>::new().cpu(DetailConsumer {
-                name: "moving_tiles",
-                setting: "shadows.moving_tiles",
-                stat: "shadows.moving_cut",
-            }))
-            .render_part(&shadows::PART)
-            .shaders(shaders::MODULES)
-            .fill(
-                Fill::<ShadowsSlot>::new()
-                    .wgsl("shadows::faces::shadows")
-                    .gpu(shadows::SHADOW_CASTERS),
-            )
-            .places(engine_faces::places::PLACES)
-            .pipeline_layouts(pipeline_layouts::PIPELINE_LAYOUTS)
-            .mirrors(gpu_layouts::LAYOUTS, gpu_layouts::DECLARED)
-            .mirrors(&[], gpu_layouts::MIRRORED);
+            .when(|shadows: Res<ShadowSettings>| shadows.enabled)
+            .settings::<ShadowSettings>()
+            .settings::<SkyOcclusion>()
+            .stats::<ShadowStats>()
+            .resource::<plan::ShadowFeedback>()
+            .resource::<plan::ShadowPlan>()
+            .piece::<gpu_layouts::ShadowPiece>()
+            .fill::<ShadowMaps>(Some(shaders::shadows::faces::shadows::MODULE))
+            .fill::<CasterRoutes>(Some(shaders::shadows::faces::routes::MODULE))
+            .fill::<ShadowCasters>(None)
+            .systems(Schedule::ViewSync, (plan::plan_shadows, plan::shadow_stats))
+            .off(plan::forget_shadows)
+            .observation::<inspect::InspectShadowTile>()
+            .part::<part::ShadowsGpu>();
     }
 }

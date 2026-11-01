@@ -17,6 +17,7 @@ use engine_terrain::{
     BiomeRules, Generator, Layers, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, SettleRegion,
     SettleStart, Stamp, StampOp, TILE_QUADS, Terrain, Tile, TileKey, TileShading, WaterPart, codec,
 };
+use engine_core::{JobKind, JobRef, RecordKey};
 use glam::Vec2;
 use serde_json::json;
 
@@ -41,7 +42,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let terrain = load(root)?;
     let authored = &terrain.layers;
     let pyramid = terrain.pyramid;
-    let mut worker = Worker::default();
+    let mut worker = Worker::new()?;
 
     let baked = authored.bake_all(&pyramid);
     let bytes = codec::encode(&baked);
@@ -514,7 +515,7 @@ fn pack(records: &[(&str, Vec<u8>)], observed: &mut Observations) -> Result<Vec<
     let keyed: Vec<([u8; 32], &[u8], Vec<u8>)> = records
         .iter()
         .map(|(kind, bytes)| {
-            let key = engine_sources::record_key(&[0; 32], kind, &codec_identity(bytes));
+            let key = record_key(kind, bytes);
             let stored =
                 zstd::bulk::compress(bytes, PACK_LEVEL).map_err(|error| error.to_string())?;
             Ok((key, bytes.as_slice(), stored))
@@ -551,9 +552,13 @@ fn pack(records: &[(&str, Vec<u8>)], observed: &mut Observations) -> Result<Vec<
 
 const PACK_LEVEL: i32 = 19;
 
-fn codec_identity(bytes: &[u8]) -> Vec<u8> {
+fn record_key(kind: &str, bytes: &[u8]) -> [u8; 32] {
     use sha2::Digest;
-    sha2::Sha256::digest(bytes).to_vec()
+    let mut hash = sha2::Sha256::new();
+    hash.update(kind.as_bytes());
+    hash.update([0]);
+    hash.update(sha2::Sha256::digest(bytes));
+    hash.finalize().into()
 }
 
 fn portals(
@@ -785,7 +790,6 @@ impl Recipe {
     }
 }
 
-#[derive(Default)]
 struct Worker {
     worker: engine_worker::Worker,
     next: u64,
@@ -793,29 +797,53 @@ struct Worker {
 }
 
 impl Worker {
-    fn share(&mut self, key: &str, bytes: &[u8]) -> Result<(), String> {
-        self.log
-            .push(json!({"share": key, "bytes": STANDARD.encode(bytes)}));
-        self.worker.share(key, bytes)
+    fn new() -> Result<Self, String> {
+        let list = engine_worker::job_list(engine_standard::standard::<engine_core::BrickList>)
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            worker: engine_worker::Worker::new(Arc::new(list), engine_worker::now_ms),
+            next: 0,
+            log: Vec::new(),
+        })
     }
 
-    fn run(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
-        let output = self.worker.run(kind, input)?;
+    fn share(&mut self, bytes: &[u8]) -> RecordKey {
+        use sha2::Digest;
+        let key = RecordKey::from_hash(sha2::Sha256::digest(bytes).into());
+        self.log
+            .push(json!({"share": key.hex(), "bytes": STANDARD.encode(bytes)}));
+        self.worker.share(key, bytes.to_vec());
+        key
+    }
+
+    fn run(&mut self, kind: &'static JobKind, input: &[u8]) -> Result<Vec<u8>, String> {
+        let output = self
+            .worker
+            .run(&JobRef::from(kind), input)
+            .map_err(|error| error.to_string())?;
         self.log.push(json!({
-            "job": kind,
+            "job": kind.name(),
+            "source": RecordKey::from_hash(kind.source().hash()).hex(),
             "input": STANDARD.encode(input),
             "output": hash(&output),
         }));
         Ok(output)
     }
 
-    fn sliced(&mut self, kind: &str, input: &[u8]) -> Result<Vec<u8>, String> {
+    fn sliced(&mut self, kind: &'static JobKind, input: &[u8]) -> Result<Vec<u8>, String> {
         self.next += 1;
-        self.worker.start(self.next, kind, input)?;
+        self.worker
+            .start(self.next, &JobRef::from(kind), input)
+            .map_err(|error| error.to_string())?;
         loop {
-            if let Some(output) = self.worker.step(self.next, SLICE)? {
+            let stepped = self
+                .worker
+                .step(self.next, SLICE)
+                .map_err(|error| error.to_string())?;
+            if let Some(output) = stepped {
                 self.log.push(json!({
-                    "job": kind,
+                    "job": kind.name(),
+                    "source": RecordKey::from_hash(kind.source().hash()).hex(),
                     "input": STANDARD.encode(input),
                     "slice": SLICE,
                     "output": hash(&output),

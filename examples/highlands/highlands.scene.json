@@ -3664,10 +3664,13 @@
     }
   ],
   "environment": {
-    "auto_exposure": {},
+    "auto_exposure": {
+      "enabled": true
+    },
     "clouds": {
       "base": 1500.0,
       "coverage": 0.38,
+      "enabled": true,
       "shadows": 0.6,
       "thickness": 1500.0,
       "wind": [
@@ -3680,7 +3683,8 @@
       "intensity": 0.35
     },
     "reflections": {
-      "distance": 4000.0
+      "distance": 4000.0,
+      "enabled": true
     },
     "temporal_antialiasing": {
       "enabled": true
@@ -3807,7 +3811,9 @@
           "distance": 220.0,
           "intensity": 0.5
         },
-        "sky": {},
+        "sky": {
+          "enabled": true
+        },
         "sky_light": {
           "ambient": 1.0,
           "preset": "day"
@@ -3821,6 +3827,7 @@
           "rim": 0.2
         },
         "time_of_day": {
+          "enabled": true,
           "hours": 16.5,
           "latitude": 42.0,
           "north": 30.0

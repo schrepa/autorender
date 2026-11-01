@@ -1,16 +1,17 @@
 use std::ops::Range;
 
 use engine_core::math::GRAVITY;
+use engine_places::ground::TileFace;
 use glam::Vec2;
 
-use crate::hydrology::WaterGrid;
-use crate::noise::smooth;
-use crate::rivers::{RiverRaster, RiverWater, Rivers};
+use engine_heightfield::hydrology::WaterGrid;
+use engine_heightfield::noise::smooth;
+use engine_heightfield::rivers::{RiverRaster, RiverWater, Rivers};
 use crate::shallow_water::DENSITY;
-use crate::{
-    Footprint, Layers, PATCH_QUADS, PATCHES_PER_TILE, Pyramid, Reach, TILE_QUADS, TILE_SAMPLES,
-    TILE_STRIDE, Tile,
+use engine_heightfield::tile::{
+    Footprint, PATCH_QUADS, PATCHES_PER_TILE, TILE_STRIDE, Tile, on_triangle,
 };
+use engine_heightfield::{Layers, Pyramid, Reach, TILE_QUADS, TILE_SAMPLES};
 
 pub const WATER_FLOW_RANGE: f32 = 8.0;
 pub const WATER_SPAN_LEAST: f32 = 0.25;
@@ -35,11 +36,11 @@ pub struct WaterPoint {
     pub flow: Vec2,
     pub span: f32,
     pub lake: bool,
-    pub state: WaterState,
+    pub state: PointState,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct WaterState {
+pub struct PointState {
     pub turbulence: f32,
     pub breaking: f32,
     pub shear: f32,
@@ -185,7 +186,7 @@ impl TileWater {
     }
 
     #[inline]
-    pub(crate) fn sample_state(&self, x: i32, z: i32) -> WaterState {
+    pub(crate) fn sample_state(&self, x: i32, z: i32) -> PointState {
         let stride = TILE_STRIDE as i32;
         unpack_state(self.info[((z + 1) * stride + x + 1) as usize][1])
     }
@@ -199,7 +200,7 @@ impl TileWater {
 
 impl crate::codec::Codec for TileWater {
     fn write(&self, out: &mut crate::codec::Writer) {
-        crate::codec::put_grid(out, &self.surface, TILE_STRIDE as usize);
+        engine_codec::put_grid(out, &self.surface, TILE_STRIDE as usize);
         out.put(&self.info).put(&self.held).put(&self.solids);
     }
 
@@ -278,7 +279,7 @@ fn continued(
     let (x, z) = (at % stride, at / stride);
     let (mut level, mut apart, mut flow, mut lakes, mut span, mut count) =
         (0.0, 0.0, Vec2::ZERO, 0, 0.0, 0);
-    let (mut state, mut reaches) = (WaterState::default(), [0_u32; 6]);
+    let (mut state, mut reaches) = (PointState::default(), [0_u32; 6]);
     for nz in z.saturating_sub(1)..(z + 2).min(stride) {
         for nx in x.saturating_sub(1)..(x + 2).min(stride) {
             let near = nz * stride + nx;
@@ -317,7 +318,7 @@ fn continued(
     });
     let words = [
         pack(flow * share, false, lakes * 2 > count, span * share),
-        pack_state(WaterState {
+        pack_state(PointState {
             turbulence: state.turbulence * share,
             breaking: state.breaking * share,
             shear: state.shear * share,
@@ -434,16 +435,16 @@ fn span_of(code: i8) -> f32 {
         )
 }
 
-pub(crate) fn pack_state(state: WaterState) -> u32 {
+pub(crate) fn pack_state(state: PointState) -> u32 {
     unit(state.turbulence)
         | unit(state.breaking) << 8
         | unit(state.shear / WATER_SHEAR_RANGE) << 16
         | reach_code(state.reach) << 24
 }
 
-pub(crate) fn unpack_state(word: u32) -> WaterState {
+pub(crate) fn unpack_state(word: u32) -> PointState {
     let share = |shift: u32| f32::from((word >> shift) as u8) / 255.0;
-    WaterState {
+    PointState {
         turbulence: share(0),
         breaking: share(8),
         shear: share(16) * WATER_SHEAR_RANGE,
@@ -702,4 +703,76 @@ impl Tile {
         let key = self.key();
         Vec2::new(f32::from(key.x), f32::from(key.z)) * (TILE_QUADS as f32 * self.spacing())
     }
+}
+
+fn cell(spacing: f32, local: Vec2) -> Option<(i32, i32, f32, f32)> {
+    let size = TILE_QUADS as f32;
+    let u = local.x / spacing;
+    let v = local.y / spacing;
+    if !(u.is_finite() && v.is_finite()) || u < 0.0 || v < 0.0 || u > size || v > size {
+        return None;
+    }
+    let i = (u.floor() as i32).min(TILE_QUADS as i32 - 1);
+    let j = (v.floor() as i32).min(TILE_QUADS as i32 - 1);
+    Some((i, j, u - i as f32, v - j as f32))
+}
+
+fn face_height(face: &TileFace, x: i32, z: i32) -> f32 {
+    let stride = TILE_STRIDE as i32;
+    face.heights[((z + 1) * stride + x + 1) as usize]
+}
+
+fn face_hole(face: &TileFace, x: u32, z: u32) -> bool {
+    let Some(bits) = &face.holes else {
+        return false;
+    };
+    let cells = TILE_SAMPLES as usize;
+    if x as usize >= cells || z as usize >= cells {
+        return false;
+    }
+    let index = z as usize * cells + x as usize;
+    bits[index / 64] & (1 << (index % 64)) != 0
+}
+
+pub(crate) fn point(
+    face: &TileFace,
+    water: Option<&TileWater>,
+    local: Vec2,
+) -> Option<Option<WaterPoint>> {
+    let (i, j, fu, fv) = cell(face.spacing, local)?;
+    if face_hole(face, i as u32, j as u32) {
+        return Some(None);
+    }
+    let Some(water) = water else {
+        return Some(None);
+    };
+    let at = [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)];
+    let surfaces = at.map(|(x, z)| water.surface(x, z));
+    let corners = if fu + fv <= 1.0 { [0, 1, 2] } else { [3, 2, 1] };
+    if corners.iter().any(|&corner| !surfaces[corner].is_finite()) {
+        return Some(None);
+    }
+    let surface = on_triangle(surfaces, fu, fv);
+    let depth = surface - on_triangle(at.map(|(x, z)| face_height(face, x, z)), fu, fv);
+    if depth <= 0.0 {
+        return Some(None);
+    }
+    let info = at.map(|(x, z)| water.sample_info(x, z));
+    let states = at.map(|(x, z)| water.sample_state(x, z));
+    Some(Some(WaterPoint {
+        surface,
+        depth,
+        flow: Vec2::new(
+            on_triangle(info.map(|(flow, _, _)| flow.x), fu, fv),
+            on_triangle(info.map(|(flow, _, _)| flow.y), fu, fv),
+        ),
+        span: on_triangle(info.map(|(_, _, span)| span), fu, fv),
+        lake: info[corners[0]].1,
+        state: PointState {
+            turbulence: on_triangle(states.map(|state| state.turbulence), fu, fv),
+            breaking: on_triangle(states.map(|state| state.breaking), fu, fv),
+            shear: on_triangle(states.map(|state| state.shear), fu, fv),
+            reach: states[corners[0]].reach,
+        },
+    }))
 }

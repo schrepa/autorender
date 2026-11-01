@@ -1,24 +1,34 @@
 use std::any::TypeId;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
+use bevy_ecs::query::ComponentAccessKind;
+use bevy_ecs::schedule::graph::Direction;
+use bevy_ecs::schedule::{NodeId, Schedules, SystemSet};
+use bevy_ecs::system::System;
+use bevy_ecs::world::World;
 use engine::Engine;
-use engine::bevy_ecs::prelude::World;
-use engine::bevy_ecs::schedule::graph::Direction;
-use engine::bevy_ecs::schedule::{NodeId, Schedules, SystemSet};
-use engine::bevy_ecs::system::System;
-use engine::bricks::{
-    Absent, BrickRecord, BrickRegistry, BrickSet, DetailConsumer, DetailConsumers, PlaceKind,
-};
-use engine::scene::SceneComponents;
-use engine_render::linker::face_imports;
-use engine_render::pieces::{PieceDecl, place};
-use engine_render::places::{Answer, contract, place_module};
-use engine_render::render_bricks::{RenderBrick, render_bricks};
+use engine_core::{BrickList, PlaceDecl, Runs, Smoke};
+use engine_place::PlaceKind;
+use engine_registry::{BrickRecord, BrickSet, Registry};
+use engine_render::Installation;
 use serde_json::{Value, json};
 
+use crate::install::List;
 use crate::{Package, Repository};
 
 pub const FILE: &str = "bricks.json";
+
+type Scheduled = Vec<(&'static str, String)>;
+
+#[derive(Default)]
+struct Uses {
+    writers: Scheduled,
+    readers: Scheduled,
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
 
 fn dependencies(repository: &Repository, package: &Package) -> Vec<String> {
     let mut dependencies: Vec<String> = package
@@ -37,20 +47,31 @@ fn dependencies(repository: &Repository, package: &Package) -> Vec<String> {
     dependencies
 }
 
-fn accessed(world: &mut World, names: &[&'static str]) -> BTreeMap<&'static str, BTreeSet<TypeId>> {
+fn registry(world: &World) -> Result<&Registry, String> {
+    world
+        .get_resource::<Registry>()
+        .ok_or_else(|| "the engine holds no brick registry".to_owned())
+}
+
+fn uses(
+    world: &mut World,
+    packages: &[&'static str],
+    slots: &[TypeId],
+) -> BTreeMap<TypeId, Uses> {
     let labels: Vec<_> = world
         .resource::<Schedules>()
         .iter()
         .map(|(_, schedule)| schedule.label())
         .collect();
-    let mut accessed: BTreeMap<&'static str, BTreeSet<TypeId>> = BTreeMap::new();
+    let mut uses: BTreeMap<TypeId, Uses> = BTreeMap::new();
     for label in labels {
         let Some(mut schedule) = world.resource_mut::<Schedules>().remove(label) else {
             continue;
         };
+        let named = format!("{label:?}");
         let graph = schedule.graph_mut();
-        for &name in names {
-            let Some(set) = graph.system_sets.get_key(BrickSet(name).intern()) else {
+        for &package in packages {
+            let Some(set) = graph.system_sets.get_key(BrickSet(package).intern()) else {
                 continue;
             };
             let systems: Vec<_> = graph
@@ -67,324 +88,182 @@ fn accessed(world: &mut World, names: &[&'static str]) -> BTreeMap<&'static str,
                     continue;
                 };
                 let access = system.initialize(world);
-                let Ok(ids) = access.combined_access().try_iter_access() else {
+                let Ok(kinds) = access.combined_access().try_iter_access() else {
                     continue;
                 };
-                let types = accessed.entry(name).or_default();
-                for kind in ids {
-                    if let Some(type_id) = world
+                for kind in kinds {
+                    let Some(type_id) = world
                         .components()
                         .get_info(*kind.index())
                         .and_then(|info| info.type_id())
+                        .filter(|type_id| slots.contains(type_id))
+                    else {
+                        continue;
+                    };
+                    let used = uses.entry(type_id).or_default();
+                    let side = match kind {
+                        ComponentAccessKind::Exclusive(_) => &mut used.writers,
+                        ComponentAccessKind::Shared(_) | ComponentAccessKind::Archetypal(_) => {
+                            &mut used.readers
+                        }
+                    };
+                    if !side
+                        .iter()
+                        .any(|(brick, at)| *brick == package && *at == named)
                     {
-                        types.insert(type_id);
+                        side.push((package, named.clone()));
                     }
                 }
             }
         }
         world.resource_mut::<Schedules>().insert(schedule);
     }
-    accessed
+    uses
 }
 
-struct Rendered {
-    needs: Vec<Value>,
-    pieces: Vec<Value>,
-    parts: Vec<&'static str>,
+fn smokes(smokes: &[Smoke]) -> Vec<Value> {
+    smokes
+        .iter()
+        .map(|smoke| json!({ "name": smoke.name, "gpu": smoke.runs == Runs::Gpu }))
+        .collect()
 }
 
-impl Rendered {
-    fn of(brick: &BrickRecord, registry: &BrickRegistry) -> Self {
-        let render = brick.extension::<RenderBrick>();
-        let parts = render.map_or(&[][..], |render| render.parts.as_slice());
-        Self {
-            needs: needs(brick, registry, render),
-            pieces: parts
-                .iter()
-                .filter_map(|part| part.decl.piece)
-                .map(|piece| json!({ "name": piece.name, "size": piece.size }))
-                .collect(),
-            parts: parts.iter().map(|part| part.decl.name).collect(),
-        }
+fn scheduled(used: &Scheduled) -> Vec<Value> {
+    used.iter()
+        .map(|(brick, schedule)| json!({ "brick": brick, "schedule": schedule }))
+        .collect()
+}
+
+fn kind(decl: &PlaceDecl) -> &'static str {
+    match decl.kind() {
+        PlaceKind::Slot => "slot",
+        PlaceKind::List => "list",
+        PlaceKind::Component => "component",
     }
 }
 
-fn answers_empty(registry: &BrickRegistry, name: &str) -> bool {
-    registry.place(name).is_some_and(|place| match place.kind {
-        PlaceKind::Slot => place.face.absent == Absent::Nobody,
-        PlaceKind::List => true,
-    })
-}
-
-fn needs(
+fn record(
     brick: &BrickRecord,
-    registry: &BrickRegistry,
-    render: Option<&RenderBrick>,
-) -> Vec<Value> {
-    let Some(render) = render else {
-        return Vec::new();
-    };
-    let held: Vec<&str> = brick
-        .fills
+    repository: &Repository,
+    listed: &BrickList,
+    installed: &Installation,
+) -> Value {
+    let jobs: Vec<&'static str> = listed
+        .listed()
         .iter()
-        .map(|filled| filled.place)
-        .chain(brick.joins.iter().map(|joined| joined.place))
+        .filter(|entry| entry.package() == brick.package)
+        .flat_map(|entry| entry.jobs().iter().map(|kind| kind.name()))
         .collect();
-    let mut needs: Vec<String> = Vec::new();
-    for module in render.modules() {
-        for face in face_imports(module.source) {
-            if !held.contains(&face.as_str()) && !needs.contains(&face) {
-                needs.push(face);
-            }
-        }
-    }
-    for part in &render.parts {
-        for &name in part.decl.needs {
-            if !needs.iter().any(|known| known == name) {
-                needs.push(name.to_owned());
-            }
-        }
-    }
-    needs
-        .into_iter()
-        .map(|face| {
-            let default = answers_empty(registry, &face);
-            json!({ "face": face, "default": default })
-        })
-        .collect()
-}
-
-fn pieces(registry: &BrickRegistry) -> Vec<(&'static str, PieceDecl)> {
-    render_bricks(registry)
-        .flat_map(|(_, render)| render.parts.iter())
-        .filter_map(|part| Some((part.decl.brick, part.decl.piece?)))
-        .collect()
-}
-
-fn frame(registry: &BrickRegistry) -> Result<Value, String> {
-    let pieces = pieces(registry);
-    let (placed, size) = place(&pieces).map_err(|error| error.to_string())?;
-    let listed: Vec<Value> = pieces
+    let parts: Vec<Value> = installed
+        .parts
         .iter()
-        .zip(&placed)
-        .map(|((brick, piece), at)| {
-            json!({ "name": piece.name, "brick": brick, "offset": at.offset, "size": at.size })
-        })
+        .filter(|part| part.brick == brick.package)
+        .map(|part| json!({ "part": part.part, "passes": part.passes }))
         .collect();
-    Ok(json!({ "pieces": listed, "size": size }))
-}
-
-fn installed_passes(registry: &BrickRegistry) -> Vec<&'static str> {
-    engine_render::parts::installed_parts(registry)
-        .iter()
-        .flat_map(|part| part.decl.passes)
-        .map(|pass| pass.name)
-        .collect()
-}
-
-fn place_face(place: &engine_core::Place) -> Value {
-    let face = &place.face;
-    let wgsl = face.wgsl.map(|source| match contract(source) {
-        Ok(found) => json!({
-            "module": place_module(place.name),
-            "types": found.types,
-            "answers": found
-                .shared
-                .iter()
-                .chain(&found.answers)
-                .map(Answer::signature)
-                .collect::<Vec<_>>(),
-            "absent": face.absent.name(),
-        }),
-        Err(error) => json!({ "error": error }),
-    });
     json!({
-        "cpu": face.cpu.map(|side| (side.name)()),
-        "gpu": face.gpu.map(|side| (side.name)()),
-        "wgsl": wgsl,
+        "name": brick.package,
+        "type": brick.type_name(),
+        "version": hex(&brick.source()),
+        "fills": brick.fills().iter().map(|filled| filled.place.name()).collect::<Vec<_>>(),
+        "joins": brick.joins().iter().map(|joined| joined.place.name()).collect::<Vec<_>>(),
+        "settings": brick
+            .settings_entries()
+            .iter()
+            .map(|entry| json!({ "key": entry.key, "type": entry.type_name }))
+            .collect::<Vec<_>>(),
+        "stats": brick
+            .stats_entries()
+            .iter()
+            .map(|entry| json!({ "key": entry.key, "type": entry.type_name }))
+            .collect::<Vec<_>>(),
+        "operations": brick
+            .operations()
+            .iter()
+            .map(|operation| json!({ "name": operation.name, "control": operation.control }))
+            .collect::<Vec<_>>(),
+        "piece": brick
+            .piece_entry()
+            .map(|piece| json!({ "name": piece.wgsl_name, "size": piece.size })),
+        "resources": brick.owned().iter().map(|owned| owned.name).collect::<Vec<_>>(),
+        "jobs": jobs,
+        "parts": parts,
+        "smokes": smokes(brick.smokes()),
+        "dependencies": repository
+            .package(brick.package)
+            .map(|package| dependencies(repository, package))
+            .unwrap_or_default(),
     })
 }
 
-fn places(registry: &BrickRegistry) -> Vec<Value> {
+fn places(registry: &Registry, uses: &BTreeMap<TypeId, Uses>) -> Vec<Value> {
     registry
-        .places()
-        .into_iter()
-        .map(|place| {
-            let kind = match place.kind {
-                PlaceKind::Slot => "slot",
-                PlaceKind::List => "list",
-            };
+        .catalog()
+        .iter()
+        .map(|decl| {
+            let used = uses.get(&decl.type_id());
             json!({
-                "name": place.name,
-                "kind": kind,
-                "members": registry.members(place.name),
-                "face": place_face(&place),
-                "smokes": place
-                    .smokes
-                    .iter()
-                    .map(|smoke| json!({ "name": smoke.name, "gpu": smoke.gpu }))
-                    .collect::<Vec<_>>(),
+                "name": decl.name(),
+                "kind": kind(decl),
+                "filler": registry.filler_named(decl.name()),
+                "members": registry.members(decl.type_id()).collect::<Vec<_>>(),
+                "contract": decl.wgsl().is_some(),
+                "smokes": smokes(decl.smokes()),
+                "writers": used.map(|used| scheduled(&used.writers)),
+                "readers": used.map(|used| scheduled(&used.readers)),
             })
         })
         .collect()
 }
 
-type Kind = (&'static str, &'static str);
-
-type Consumer = (&'static str, DetailConsumer);
-
-fn record(
-    brick: &BrickRecord,
-    registry: &BrickRegistry,
-    repository: &Repository,
-    types: Option<&BTreeSet<TypeId>>,
-    (kinds, consumers): (&[Kind], &[Consumer]),
-) -> Result<Value, String> {
-    let package = repository.of_crate(brick.crate_name).ok_or_else(|| {
-        format!(
-            "the {} brick's crate {} is no package of the workspace",
-            brick.name, brick.crate_name
-        )
-    })?;
-    let version: String = engine_sources::crate_source(&package.folder)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    let reads: BTreeSet<&str> = types
-        .into_iter()
-        .flatten()
-        .filter_map(|&type_id| registry.owner_of(type_id))
-        .map(|owner| owner.name)
-        .filter(|&owner| owner != brick.name)
-        .collect();
-    let rendered = Rendered::of(brick, registry);
-    Ok(json!({
-        "name": brick.name,
-        "type": brick.type_path,
-        "crate": brick.crate_name,
-        "version": version,
-        "fills": brick
-            .fills
+fn frame(installed: &Installation) -> Value {
+    json!({
+        "pieces": installed
+            .pieces
             .iter()
-            .map(|filled| json!({
-                "place": filled.place,
-                "cpu": filled.cpu,
-                "gpu": filled.gpu.map(|offer| offer.name()),
-                "wgsl": filled.wgsl,
+            .map(|piece| json!({
+                "brick": piece.brick,
+                "name": piece.name,
+                "offset": piece.offset,
+                "size": piece.size,
             }))
             .collect::<Vec<_>>(),
-        "joins": brick
-            .joins
-            .iter()
-            .map(|joined| json!({
-                "place": joined.place,
-                "cpu": joined.cpu,
-                "wgsl": joined.wgsl.map(|member| json!({
-                    "module": member.module,
-                    "functions": member.functions,
-                    "reads": member.reads,
-                })),
-            }))
-            .collect::<Vec<_>>(),
-        "consumers": consumers
-            .iter()
-            .filter(|(owner, _)| *owner == brick.name)
-            .map(|(_, consumer)| json!({
-                "name": consumer.name,
-                "setting": consumer.setting,
-                "stat": consumer.stat,
-            }))
-            .collect::<Vec<_>>(),
-        "records": brick.records,
-        "settings": brick
-            .settings
-            .iter()
-            .map(|section| json!({
-                "key": section.key,
-                "name": section.name,
-                "opt_in": section.opt_in,
-            }))
-            .collect::<Vec<_>>(),
-        "stats": brick.stats.iter().map(|stats| stats.key).collect::<Vec<_>>(),
-        "operations": brick
-            .operations
-            .iter()
-            .map(|operation| json!({
-                "name": operation.name,
-                "control": operation.control,
-            }))
-            .collect::<Vec<_>>(),
-        "inspectors": brick.inspectors.iter().map(|inspector| inspector.name).collect::<Vec<_>>(),
-        "needs": rendered.needs,
-        "pieces": rendered.pieces,
-        "parts": rendered.parts,
-        "passes": brick.passes,
-        "smokes": brick
-            .smokes
-            .iter()
-            .map(|smoke| json!({ "name": smoke.name, "gpu": smoke.gpu }))
-            .collect::<Vec<_>>(),
-        "system_set": brick.name,
-        "resources": brick.resources.iter().map(|owned| owned.name).collect::<Vec<_>>(),
-        "components": kinds
-            .iter()
-            .filter(|&&(owner, _)| owner == brick.name)
-            .map(|&(_, kind)| kind)
-            .collect::<Vec<_>>(),
-        "reads": reads,
-        "dependencies": dependencies(repository, package),
-    }))
+        "size": installed.arena,
+        "layouts": installed.layouts,
+        "frame_variants": installed.frame_variants,
+    })
 }
 
-pub fn bricks_json(repository: &Repository, engine: &mut Engine) -> Result<String, String> {
+pub fn bricks_json(
+    repository: &Repository,
+    list: List,
+    engine: &mut Engine,
+) -> Result<String, String> {
+    let installed = crate::install::noop(engine)?;
     let world = engine.app.world_mut();
-    let names: Vec<&'static str> = world
-        .get_resource::<BrickRegistry>()
-        .map(|registry| registry.names().collect())
-        .unwrap_or_default();
-    let accessed = accessed(world, &names);
-    let Some(registry) = world.get_resource::<BrickRegistry>() else {
-        return Ok(serde_json::to_string_pretty(&json!({ "bricks": [] }))
-            .map_err(|error| format!("cannot write {FILE}: {error}"))?
-            + "\n");
+    let (packages, slots) = {
+        let registry = registry(world)?;
+        let packages: Vec<&'static str> = registry.names().collect();
+        let slots: Vec<TypeId> = registry
+            .catalog()
+            .iter()
+            .filter(|decl| decl.kind() == PlaceKind::Slot)
+            .map(|decl| decl.type_id())
+            .collect();
+        (packages, slots)
     };
-    registry
-        .check_passes(&installed_passes(registry))
-        .map_err(|error| error.to_string())?;
-    let kinds: Vec<(&'static str, &'static str)> = world
-        .get_resource::<SceneComponents>()
-        .map(|held| {
-            held.kinds()
-                .iter()
-                .map(|&(brick, kind)| (brick, kind.name))
-                .collect()
-        })
-        .unwrap_or_default();
-    let consumers: Vec<(&'static str, DetailConsumer)> = world
-        .get_resource::<DetailConsumers>()
-        .map(|held| {
-            held.consumers()
-                .map(|(brick, consumer)| (brick, *consumer))
-                .collect()
-        })
-        .unwrap_or_default();
-    let bricks = registry
+    let uses = uses(world, &packages, &slots);
+    let registry = registry(world)?;
+    let listed = list(BrickList::default());
+    let bricks: Vec<Value> = registry
         .bricks()
         .iter()
-        .map(|brick| {
-            record(
-                brick,
-                registry,
-                repository,
-                accessed.get(brick.name),
-                (&kinds, &consumers),
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|brick| record(brick, repository, &listed, &installed))
+        .collect();
     let text = serde_json::to_string_pretty(&json!({
         "bricks": bricks,
-        "places": places(registry),
-        "frame": frame(registry)?,
+        "places": places(registry, &uses),
+        "left_out": registry.left_out(),
+        "frame": frame(&installed),
     }))
     .map_err(|error| format!("cannot write {FILE}: {error}"))?;
     Ok(text + "\n")

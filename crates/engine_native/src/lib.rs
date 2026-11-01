@@ -29,7 +29,7 @@ pub use offscreen::{Frames, Offscreen, PixRecord, ProfileRecord, Record, Recorde
 pub use options::{Argument, Arguments, HostOptions, Vendor, options, parameters};
 pub use window::{Measure, Window, WindowReport, run};
 
-pub(crate) const DYNAMIC_RESOLUTION: &str = "dynamic_resolution.enabled";
+pub(crate) use engine::DYNAMIC_RESOLUTION;
 
 pub fn main<G: engine::Game, E: Into<engine::Error>>(
     title: &str,

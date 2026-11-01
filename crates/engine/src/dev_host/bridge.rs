@@ -1,12 +1,14 @@
 use bevy_ecs::prelude::Entity;
-use engine_core::{DrawState, Error, ErrorCode, Expected};
+use engine_core::{Error, ErrorCode};
 use engine_dev::results::{
     CaptureResult, FramesResult, GameResult, KeptArtifact, WatchResult, result,
 };
 use engine_dev::{
-    Effect, EntityFacts, ExplainQuestion, HostContext, Outcome, ProfileRequest, Step, WatchRequest,
-    Watcher,
+    DrawState, Effect, EntityFacts, ExplainQuestion, HostContext, Outcome, ProfileRequest, Step,
+    WatchRequest, Watcher,
 };
+use engine_registry::BrickCosts;
+use engine_settings::Expected;
 use engine_scene::SceneFiles;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
@@ -35,10 +37,6 @@ pub(crate) enum Pending {
         revision: String,
     },
     Benchmark(Box<BenchmarkRun>),
-    Probe {
-        reply: Value,
-        waits: u32,
-    },
     DeviceLoss {
         waits: u32,
     },
@@ -55,8 +53,6 @@ pub(crate) enum Pending {
 
 const LOSS_WAITS: u32 = 120;
 
-const PROBE_WAITS: u32 = 120;
-
 const READ_BACK_WAITS: u32 = 120;
 
 const EXPLAIN_FRAMES: u32 = 2;
@@ -64,7 +60,7 @@ const EXPLAIN_FRAMES: u32 = 2;
 pub(crate) struct ProfileRun {
     request: ProfileRequest,
     ran: u32,
-    frames: Vec<engine_core::BrickCosts>,
+    frames: Vec<BrickCosts>,
 }
 
 impl std::fmt::Debug for ProfileRun {
@@ -121,7 +117,7 @@ fn shown(alpha: Option<&Value>) -> Value {
 fn parsed<T: DeserializeOwned>(control: &Map<String, Value>) -> Result<T, Error> {
     let mut fields = control.clone();
     fields.remove("op");
-    engine_core::parse_value(Value::Object(fields))
+    engine_settings::parse_value(Value::Object(fields))
 }
 
 fn failed_frame(code: ErrorCode, frame: u32, frames: u32, failed: &str) -> Error {
@@ -367,12 +363,6 @@ impl<G: Game> GameHost<G> {
                 })
             }
             Pending::Benchmark(run) => self.dev_benchmark(run, &outcome, context),
-            Pending::Probe { reply, waits } => {
-                if let Some(failed) = outcome.failed {
-                    return self.dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(failed));
-                }
-                self.dev_probe(reply, waits, context)
-            }
             Pending::DeviceLoss { waits } => self.dev_device_lost(waits, context),
             Pending::Profile(run) => self.dev_profile(run, &outcome, context),
             Pending::Explain {
@@ -418,60 +408,6 @@ impl<G: Game> GameHost<G> {
             Pending::DeviceLoss { waits: waits + 1 },
             Effect::Wait { within_ms: 1000.0 },
         )
-    }
-
-    fn dev_probe_start(&mut self, control: &Map<String, Value>, context: &HostContext) -> Step {
-        let pixel = |field: &str| {
-            control
-                .get(field)
-                .and_then(Value::as_u64)
-                .map_or(0, |value| u32::try_from(value).unwrap_or(u32::MAX))
-        };
-        let (x, y) = (pixel("x"), pixel("y"));
-        for (path, value, size) in [
-            ("$.args.x", x, context.width),
-            ("$.args.y", y, context.height),
-        ] {
-            if value >= size {
-                return self.dev_refused(
-                    Error::new(ErrorCode::OutOfRange, path)
-                        .range(0.0, f64::from(size.saturating_sub(1)))
-                        .got(value),
-                );
-            }
-        }
-        let frame = shown(control.get("alpha"));
-        self.arm_probe((x, y));
-        let mut reply = Value::Null;
-        for _ in 0..2 {
-            reply = self.dev_invoke(&frame, context);
-            if reply["ok"] != true {
-                return self.dev_done(reply, context);
-            }
-        }
-        self.dev_probe(reply, 0, context)
-    }
-
-    fn dev_probe(&mut self, mut reply: Value, waits: u32, context: &HostContext) -> Step {
-        match self.probe_result() {
-            Some(Ok(probe)) => {
-                reply["result"] = result::probe(probe);
-                self.dev_done(reply, context)
-            }
-            Some(Err(error)) => self.dev_refused(error),
-            None if waits >= PROBE_WAITS => self.dev_refused(
-                Error::new(ErrorCode::RenderFailed, "$")
-                    .at_most(u64::from(PROBE_WAITS))
-                    .got(waits),
-            ),
-            None => self.dev_effect(
-                Pending::Probe {
-                    reply,
-                    waits: waits + 1,
-                },
-                Effect::Wait { within_ms: 1000.0 },
-            ),
-        }
     }
 
     pub fn dev_reloaded(
@@ -578,7 +514,6 @@ impl<G: Game> GameHost<G> {
                     Effect::Wait { within_ms: 1000.0 },
                 )
             }
-            "probe" => self.dev_probe_start(control, context),
             "game" => {
                 let name = text("name");
                 let args = control
@@ -668,7 +603,7 @@ impl<G: Game> GameHost<G> {
             .engine()
             .app
             .world()
-            .get_resource::<engine_core::BrickCosts>()
+            .get_resource::<BrickCosts>()
             .cloned()
         else {
             return self
@@ -727,7 +662,7 @@ impl<G: Game> GameHost<G> {
                     .engine()
                     .app
                     .world()
-                    .get_resource::<engine_core::LevelOfDetail>()
+                    .get_resource::<engine_core::Detail>()
                     .is_some_and(|detail| detail.enabled && detail.fade_seconds > 0.0);
                 let Some(slot) = self.engine().render_slot(entity).filter(|_| readable) else {
                     let slot = self.engine().render_slot(entity);

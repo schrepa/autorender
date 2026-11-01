@@ -1,14 +1,18 @@
 use bevy_ecs::prelude::*;
-use engine_collision::{Collider, CollisionWorld};
-use engine_core::{FixedTime, InterpolateTransform, Parent, Transform, Wind, section_in};
-use engine_places::Ground;
-use glam::{Quat, Vec3};
+use engine_core::{FixedTime, InterpolateTransform, Parent, Transform};
+use engine_places::ground::Ground;
+use engine_places::physics::{BodyMotion, Collider, RigidBody};
+use engine_places::water::{WaterBody, WaterObstacle};
+use engine_places::wind::Wind;
+use glam::{Quat, Vec2, Vec3};
 use rapier3d::prelude as rp;
 
-use crate::body::{BodyMotion, BodyProblem, BodyStatus, RigidBody};
+use crate::body::{self, BodyProblem, BodyStatus};
 use crate::coupling::{self, AIR_SPIN, Form, Motion};
+use crate::obstacles::sorted;
 use crate::settings::{Physics, PhysicsStats};
 use crate::shapes::{BodyShape, body_shape};
+use crate::solids::Solids;
 use crate::solver::Solver;
 use crate::statics::{Statics, groups};
 
@@ -33,6 +37,15 @@ pub(crate) struct Wanted {
     collider: Option<Collider>,
     pose: Option<Transform>,
     root: bool,
+}
+
+struct Surroundings<'a> {
+    settings: &'a Physics,
+    time: &'a FixedTime,
+    wind: &'a Wind,
+    ground: &'a Ground,
+    solids: &'a Solids,
+    waters: &'a [&'a WaterBody],
 }
 
 fn body_type(motion: BodyMotion) -> rp::RigidBodyType {
@@ -142,7 +155,7 @@ impl Body {
 }
 
 #[derive(Resource, Default)]
-pub struct PhysicsWorld {
+pub(crate) struct PhysicsWorld {
     solver: Option<Solver>,
     bodies: Vec<Body>,
     problems: Vec<(Entity, BodyProblem)>,
@@ -154,9 +167,11 @@ pub(crate) type BodyQuery = (
     Entity,
     &'static RigidBody,
     Option<&'static Collider>,
-    Option<&'static Transform>,
+    Option<&'static mut Transform>,
     Has<Parent>,
 );
+
+type Markers<'w, 's> = Query<'w, 's, &'static mut InterpolateTransform, With<RigidBody>>;
 
 impl PhysicsWorld {
     pub fn stats(&self) -> PhysicsStats {
@@ -179,17 +194,17 @@ impl PhysicsWorld {
             })
     }
 
-    pub(crate) fn holds(&self, entity: Entity) -> bool {
+    pub fn holds(&self, entity: Entity) -> bool {
         self.bodies
             .binary_search_by_key(&entity, |body| body.entity)
             .is_ok()
     }
 
-    pub(crate) fn solids(&self) -> impl Iterator<Item = engine_places::WaterObstacle> + '_ {
+    pub fn solids(&self) -> impl Iterator<Item = WaterObstacle> + '_ {
         let solver = self.solver.as_ref();
         self.bodies.iter().filter_map(move |body| {
             let rigid = solver?.bodies.get(body.handle)?;
-            Some(engine_places::WaterObstacle {
+            Some(WaterObstacle {
                 center: rigid.translation(),
                 axes: glam::Mat3::from_quat(*rigid.rotation())
                     * glam::Mat3::from_diagonal(body.form.half),
@@ -203,12 +218,16 @@ impl PhysicsWorld {
         self.solver.is_none() && self.problems.is_empty()
     }
 
-    fn tick(&mut self, world: &mut World, mut wanted: Vec<Wanted>) {
+    fn tick(
+        &mut self,
+        mut wanted: Vec<Wanted>,
+        around: &Surroundings<'_>,
+        poses: &mut Query<'_, '_, BodyQuery>,
+        markers: &mut Markers<'_, '_>,
+    ) {
         wanted.sort_unstable_by_key(|wanted| wanted.entity);
-        let settings = section_in::<Physics>(world);
-        let Some(time) = world.get_resource::<FixedTime>().copied() else {
-            return;
-        };
+        let settings = around.settings;
+        let time = around.time;
         let ready =
             |wanted: &Wanted| wanted.root && wanted.collider.is_some() && wanted.pose.is_some();
         if self.solver.is_none() && !wanted.iter().any(ready) {
@@ -229,47 +248,33 @@ impl PhysicsWorld {
             return;
         }
         let solver = self.solver.get_or_insert_with(Solver::default);
-        let (joined, moved) = join(&mut self.bodies, &mut self.problems, solver, &wanted);
+        let moved = join(&mut self.bodies, &mut self.problems, solver, &wanted);
         if self.bodies.is_empty() {
             self.solver = None;
             self.statics = Statics::default();
             self.stats = PhysicsStats::default();
             return;
         }
-        for entity in joined {
-            if let Ok(mut entity) = world.get_entity_mut(entity)
-                && !entity.contains::<InterpolateTransform>()
-            {
-                entity.insert(InterpolateTransform);
+        for entity in moved {
+            if let Ok(mut marker) = markers.get_mut(entity) {
+                marker.resets = marker.resets.wrapping_add(1);
             }
         }
-        for entity in moved {
-            engine_core::reset_interpolation(world, entity);
-        }
         let reach = reach(&self.bodies, solver);
-        if let Some(collision) = world.get_resource::<CollisionWorld>() {
-            let bodies = &self.bodies;
-            self.statics.sync(solver, collision, reach, |entity| {
-                bodies
-                    .binary_search_by_key(&entity, |body| body.entity)
-                    .is_ok()
-            });
-        }
-        hold(&mut self.bodies, &self.statics, solver, world);
-        let samples = if settings.enabled {
-            push(&mut self.bodies, solver, world, &settings, time)
-        } else {
-            0
-        };
-        if settings.enabled {
-            let _profile = engine_profile::span("physics", "solve");
-            solver.step(
-                time.delta_seconds,
-                Vec3::from_array(settings.gravity),
-                settings.iterations,
-            );
-        }
-        write(&mut self.bodies, solver, world);
+        let bodies = &self.bodies;
+        self.statics.sync(solver, around.solids, reach, |entity| {
+            bodies
+                .binary_search_by_key(&entity, |body| body.entity)
+                .is_ok()
+        });
+        hold(&mut self.bodies, &self.statics, solver, around.ground);
+        let samples = push(&mut self.bodies, solver, around);
+        solver.step(
+            time.delta_seconds,
+            Vec3::from_array(settings.gravity),
+            settings.iterations,
+        );
+        write(&mut self.bodies, solver, poses);
         let count =
             |keep: fn(&Body) -> bool| self.bodies.iter().filter(|body| keep(body)).count() as u32;
         self.stats = PhysicsStats {
@@ -284,6 +289,7 @@ impl PhysicsWorld {
             solids: self.statics.len() as u32,
             contacts: solver.contacts() as u32,
             water_samples: samples,
+            invalid: 0,
         };
     }
 }
@@ -293,9 +299,8 @@ fn join(
     problems: &mut Vec<(Entity, BodyProblem)>,
     solver: &mut Solver,
     wanted: &[Wanted],
-) -> (Vec<Entity>, Vec<Entity>) {
+) -> Vec<Entity> {
     problems.clear();
-    let mut joined = Vec::new();
     let mut moved = Vec::new();
     let mut old = std::mem::take(bodies).into_iter().peekable();
     for wanted in wanted {
@@ -325,9 +330,6 @@ fn join(
             None => {
                 let shape =
                     body_shape(collider.shape(), pose.scale).ok_or(BodyProblem::BadScale)?;
-                if wanted.settings.motion == BodyMotion::Dynamic {
-                    joined.push(wanted.entity);
-                }
                 Ok(Body::join(solver, wanted, collider, pose, &shape))
             }
         });
@@ -339,7 +341,7 @@ fn join(
     for left in old {
         solver.remove_body(left.handle);
     }
-    (joined, moved)
+    moved
 }
 
 fn reach(bodies: &[Body], solver: &Solver) -> Option<(Vec3, Vec3)> {
@@ -357,7 +359,7 @@ fn reach(bodies: &[Body], solver: &Solver) -> Option<(Vec3, Vec3)> {
         .reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
 }
 
-fn hold(bodies: &mut [Body], statics: &Statics, solver: &mut Solver, world: &World) {
+fn hold(bodies: &mut [Body], statics: &Statics, solver: &mut Solver, ground: &Ground) {
     for body in bodies {
         let Some(rigid) = solver.bodies.get_mut(body.handle) else {
             continue;
@@ -365,7 +367,7 @@ fn hold(bodies: &mut [Body], statics: &Statics, solver: &mut Solver, world: &Wor
         let at = rigid.translation();
         let held = body.settings.motion == BodyMotion::Dynamic
             && !statics.grounded(at.x, at.z)
-            && Ground::sample_in(world, at.x, at.z).is_some();
+            && ground.sample(Vec2::new(at.x, at.z)).is_some();
         if held != body.status.held {
             rigid.set_enabled(!held);
             body.status.held = held;
@@ -373,17 +375,7 @@ fn hold(bodies: &mut [Body], statics: &Statics, solver: &mut Solver, world: &Wor
     }
 }
 
-fn push(
-    bodies: &mut [Body],
-    solver: &mut Solver,
-    world: &World,
-    settings: &Physics,
-    time: FixedTime,
-) -> u32 {
-    let _profile = engine_profile::span("physics", "push");
-    let wind = world
-        .contains_resource::<Wind>()
-        .then(|| section_in::<Wind>(world));
+fn push(bodies: &mut [Body], solver: &mut Solver, around: &Surroundings<'_>) -> u32 {
     let mut samples = 0;
     for body in bodies {
         let Some(rigid) = solver.bodies.get_mut(body.handle) else {
@@ -404,11 +396,11 @@ fn push(
             mass: rigid.mass(),
         };
         let pushed = coupling::push(
-            world,
-            settings,
-            wind.as_ref(),
-            time.elapsed_seconds as f32,
-            time.delta_seconds,
+            around.waters,
+            around.settings,
+            around.wind,
+            around.time.elapsed_seconds as f32,
+            around.time.delta_seconds,
             &body.form,
             body.settings.drag,
             &motion,
@@ -425,7 +417,7 @@ fn push(
     samples
 }
 
-fn write(bodies: &mut [Body], solver: &Solver, world: &mut World) {
+fn write(bodies: &mut [Body], solver: &Solver, poses: &mut Query<'_, '_, BodyQuery>) {
     for body in bodies {
         let Some(rigid) = solver.bodies.get(body.handle) else {
             continue;
@@ -447,7 +439,7 @@ fn write(bodies: &mut [Body], solver: &Solver, world: &mut World) {
         if at == body.written {
             continue;
         }
-        if let Some(mut transform) = world.get_mut::<Transform>(body.entity) {
+        if let Ok((_, _, _, Some(mut transform), _)) = poses.get_mut(body.entity) {
             transform.translation = at.0;
             transform.rotation = at.1;
         }
@@ -455,29 +447,51 @@ fn write(bodies: &mut [Body], solver: &Solver, world: &mut World) {
     }
 }
 
-pub(crate) fn step(world: &mut World, query: &mut QueryState<BodyQuery>) {
-    let _profile = engine_profile::span("physics", "step");
-    let wanted: Vec<Wanted> = query
-        .iter(world)
-        .map(|(entity, settings, collider, pose, parented)| Wanted {
-            entity,
-            settings: settings.sanitized(),
-            collider: collider.copied(),
-            pose: pose.copied(),
-            root: !parented,
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each is one of the tick's inputs"
+)]
+pub(crate) fn step(
+    settings: Res<Physics>,
+    time: Res<FixedTime>,
+    wind: Res<Wind>,
+    ground: Res<Ground>,
+    solids: Res<Solids>,
+    waters: Query<&WaterBody>,
+    mut poses: Query<BodyQuery>,
+    mut markers: Markers,
+    mut physics: ResMut<PhysicsWorld>,
+    mut stats: ResMut<PhysicsStats>,
+) {
+    let mut invalid = 0;
+    let wanted: Vec<Wanted> = poses
+        .iter()
+        .map(|(entity, rigid, collider, pose, parented)| {
+            invalid += u32::from(!body::valid(rigid));
+            Wanted {
+                entity,
+                settings: body::sanitized(*rigid),
+                collider: collider.copied(),
+                pose: pose.copied(),
+                root: !parented,
+            }
         })
         .collect();
-    if wanted.is_empty()
-        && world
-            .get_resource::<PhysicsWorld>()
-            .is_none_or(PhysicsWorld::idle)
-    {
+    if wanted.is_empty() && physics.idle() {
         return;
     }
-    world.resource_scope(|world, mut physics: Mut<PhysicsWorld>| {
-        physics.tick(world, wanted);
-        if let Some(mut stats) = world.get_resource_mut::<PhysicsStats>() {
-            stats.set_if_neq(physics.stats());
-        }
+    let waters = sorted(waters.iter());
+    let around = Surroundings {
+        settings: &settings,
+        time: &time,
+        wind: &wind,
+        ground: &ground,
+        solids: &solids,
+        waters: &waters,
+    };
+    physics.tick(wanted, &around, &mut poses, &mut markers);
+    stats.set_if_neq(PhysicsStats {
+        invalid,
+        ..physics.stats()
     });
 }

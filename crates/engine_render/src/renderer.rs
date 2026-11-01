@@ -1,70 +1,33 @@
-use engine_core::collections::HashMap;
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::{Arc, Mutex},
-};
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
-use engine_core::{
-    MaterialHandle, MeshHandle, RecordKey, RenderFrame, RenderSnapshot, TextureHandle,
-};
+use engine_core::{Error, Expected, MeshHandle};
+use glam::Mat4;
 
-use crate::platform::{RenderTarget, failed, failed_with};
-use engine_core::{Error, Expected};
-
-use crate::batches::{BatchPlan, DrawBatch};
-use engine_core::RenderStats;
-use crate::cached::{Bound, Versioned};
-use crate::depth_pyramid::DepthPyramid;
-use crate::entries::{MeshPass, PassKind, Streams};
-use crate::gpu_data::{
-    CameraUniform, ColorData, ExtraVertex, GroundData, LOD_LEVELS, LOD_STATE, PoseData, Variant,
-    Vertex, clamped_extent,
-};
-use crate::gpu_presentation::GpuPresentationPass;
-use crate::gpu_uploads;
-use crate::graph::{PlanCache, StaticGraph};
-use crate::impostors::{
-    AtlasShape, BakeGpu, BakeSource, Contents, IMPOSTOR_MIN_TRIANGLES, ImpostorAtlas,
-    ImpostorPipelines, ImpostorRecord, Supplied,
-};
+use crate::encode::{Assets, Run};
+use crate::gpu_data::{ExtraVertex, Vertex};
+use crate::graph::PlanCache;
 use crate::materials::MaterialStore;
-use crate::mesh_arena::{Bindings, MeshArena, MeshDraw, Placement};
-use crate::parts::{FrameInfo, FrameKind, Passes};
-use crate::pipelines::PipelineCounts;
+use crate::memory::buffer_init;
+use crate::mesh_arena::{MeshArena, MeshDraw, Placement};
+use crate::platform::{RenderTarget, failed, failed_with};
 use crate::profiling::GpuProfiler;
-use crate::registration::Installed;
-use crate::retained_uploads::RetainedUploads;
-use crate::staging::{self, StagingRing};
-use crate::targets::{FrameSize, Targets};
-use crate::uploads::UploadCache;
 
 mod attribution;
-mod camera;
-mod core_state;
 mod display;
 mod frame;
-mod frame_stats;
 mod health;
 mod install;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
-mod opaque;
 mod queries;
-mod records;
 mod startup;
 
 pub use attribution::GpuPassTimes;
-pub use camera::CameraBindings;
-pub(crate) use core_state::Core;
-pub(crate) use display::DisplayFrame;
-pub use display::{DepthTarget, Display};
+pub(crate) use display::{Display, DisplayFrame};
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::GpuMark;
-pub(crate) use opaque::{OPAQUE_PART, OpaqueReads, encode_phase};
 pub use startup::StartingRenderer;
-
-const INITIAL_CAPACITY: usize = 1_024;
-pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 pub struct GpuMesh {
     pub(crate) placement: Result<Placement, OwnMesh>,
@@ -72,14 +35,7 @@ pub struct GpuMesh {
     pub index_count: u32,
     pub byte_len: u64,
     pub lods: Vec<(u32, u32, f32)>,
-    pub plan: Vec<(u32, u32, f32)>,
     pub casters: Vec<(u32, u32)>,
-    pub without_levels: bool,
-}
-
-#[derive(Default)]
-pub(crate) struct MeshUploads {
-    staging: Vec<Vertex>,
 }
 
 pub(crate) struct OwnMesh {
@@ -105,20 +61,6 @@ impl GpuMesh {
             },
         }
     }
-
-    pub fn caster_range(&self, level: usize, own: (u32, u32)) -> (u32, u32) {
-        self.casters.get(level).copied().unwrap_or(own)
-    }
-}
-
-pub fn lod_levels(mesh: &GpuMesh) -> usize {
-    1 + mesh.plan.len().min(LOD_LEVELS - 1)
-}
-
-fn plan_levels(lods: &[(u32, u32, f32)]) -> Vec<(u32, u32, f32)> {
-    let first = lods.first().copied().filter(|&(_, count, _)| count > 0);
-    let empty = lods.last().copied().filter(|&(_, count, _)| count == 0);
-    first.into_iter().chain(empty).collect()
 }
 
 type WithLevels = (Vec<u32>, Vec<(u32, u32, f32)>, Vec<(u32, u32)>);
@@ -139,43 +81,116 @@ fn with_levels(mesh: &engine_core::Mesh, lods: Option<&engine_core::MeshLods>) -
     (indices, levels, lods.casters.clone())
 }
 
-pub(crate) struct Culling {
-    pub(crate) pyramid: Option<DepthPyramid>,
+pub(crate) fn upload_meshes(
+    device: &wgpu::Device,
+    queue: &crate::gpu_calls::Queue,
+    assets: &mut Assets,
+    meshes: &[engine_core::RenderMesh],
+) -> u64 {
+    let mut uploaded = 0;
+    let mut staging: Vec<Vertex> = Vec::new();
+    for rendered in meshes {
+        let std::collections::btree_map::Entry::Vacant(entry) = assets.meshes.entry(rendered.handle) else {
+            continue;
+        };
+        let source = &rendered.mesh;
+        staging.clear();
+        staging.extend(source.vertices().iter().map(Vertex::from));
+        let extras = ExtraVertex::stream(source);
+        let mut streams: Vec<&[u8]> = vec![bytemuck::cast_slice(&staging)];
+        if let Some(extras) = &extras {
+            streams.push(bytemuck::cast_slice(extras));
+        }
+        let (indices, lods, casters) = with_levels(source, rendered.lods.as_deref());
+        let index_count = source.indices().len() as u32;
+        let placement = assets
+            .arena
+            .insert(device, queue, &streams, staging.len() as u32, &indices)
+            .ok_or_else(|| {
+                let buffer = |label, contents: &[u8], usage| {
+                    buffer_init(
+                        device,
+                        &wgpu::util::BufferInitDescriptor {
+                            label: Some(label),
+                            contents,
+                            usage,
+                        },
+                    )
+                };
+                let vertex = wgpu::BufferUsages::VERTEX;
+                OwnMesh {
+                    vertices: buffer("engine/mesh-vertices", streams[0], vertex),
+                    extras: extras.as_ref().map(|stream| {
+                        buffer("engine/mesh-extras", bytemuck::cast_slice(stream), vertex)
+                    }),
+                    indices: buffer(
+                        "engine/mesh-indices",
+                        bytemuck::cast_slice(&indices),
+                        wgpu::BufferUsages::INDEX,
+                    ),
+                }
+            });
+        let byte_len = source.byte_len() as u64;
+        entry.insert(GpuMesh {
+            placement,
+            extended: extras.is_some(),
+            index_count,
+            byte_len,
+            lods,
+            casters,
+        });
+        uploaded += byte_len;
+    }
+    uploaded
 }
 
-pub(crate) type StructureKey = (u64, u64, u64);
+pub(crate) fn new_assets(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Assets {
+    Assets {
+        meshes: BTreeMap::<MeshHandle, GpuMesh>::new(),
+        arena: MeshArena::new(
+            device,
+            [size_of::<Vertex>(), size_of::<ExtraVertex>()].map(|bytes| bytes as u64),
+        ),
+        materials: MaterialStore::new(device, queue),
+    }
+}
 
-#[derive(Default)]
-pub(crate) struct StructureKeys {
-    pub(crate) order: Option<StructureKey>,
-    pub(crate) variants: Option<(StructureKey, PassKind)>,
-    pub(crate) probes: Option<(StructureKey, PassKind)>,
-    pub(crate) impostors: Option<(StructureKey, engine_core::LevelOfDetail, bool, u64)>,
-    pub(crate) residency: Option<(u64, u64)>,
-    pub(crate) uploads: Option<(u64, u64, u64)>,
+pub fn inverse_or_identity(matrix: Mat4) -> Mat4 {
+    let inverse = matrix.inverse();
+    if inverse.is_finite() {
+        inverse
+    } else {
+        Mat4::IDENTITY
+    }
 }
 
 type Validation = std::pin::Pin<Box<dyn std::future::Future<Output = Option<wgpu::Error>>>>;
 
-pub(crate) struct HeldPart {
-    pub(crate) brick: &'static str,
-    pub(crate) part: std::any::TypeId,
-    pub(crate) held: Box<dyn Installed>,
+pub(crate) struct Core {
+    pub(crate) device: wgpu::Device,
+    pub(crate) queue: crate::gpu_calls::Queue,
+    pub(crate) adapter: crate::AdapterInfo,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) debugger_capture: bool,
+    pub(crate) display: Display,
+    pub(crate) health: Arc<Mutex<health::Reports>>,
+    pub(crate) profiler: GpuProfiler,
 }
 
 pub struct Renderer {
     core: Core,
-    parts: Vec<HeldPart>,
-    graph: StaticGraph,
+    run: Option<Run>,
+    assets: Option<Assets>,
     plans: PlanCache,
-    passes: &'static [&'static str],
+    passes: Vec<&'static str>,
     installing: Option<Validation>,
-    ran: Vec<&'static [&'static str]>,
+    previous: Option<Mat4>,
+    seconds: Option<f32>,
 }
 
 impl Renderer {
-    pub fn installed_passes(&self) -> &'static [&'static str] {
-        self.passes
+    pub fn installed_passes(&self) -> &[&'static str] {
+        &self.passes
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -184,10 +199,5 @@ impl Renderer {
 
     pub fn set_render_size(&mut self, width: u32, height: u32) {
         self.core.display.ask_render_size(width, height);
-    }
-
-    pub fn set_cooking(&mut self, cooking: bool) {
-        self.core.mesh_pipelines.cooking = cooking;
-        self.core.impostors.atlas.set_cooking(cooking);
     }
 }

@@ -1,9 +1,19 @@
 use bevy_ecs::resource::Resource;
-use engine_core::{BrickList, Engine, Error, ErrorCode};
+use engine_core::{BrickList, DeviceLimits, Engine, Error, ErrorCode};
 use engine_scene::{SceneFiles, SceneInstance};
 
 pub fn engine(bricks: impl FnOnce(BrickList) -> BrickList) -> crate::Result<Engine> {
-    Engine::listed(bricks(BrickList::default()))
+    listed(bricks(BrickList::default()))
+}
+
+pub(crate) fn listed(list: BrickList) -> crate::Result<Engine> {
+    let mut engine = Engine::listed(list)?;
+    crate::resolution::register(&mut engine);
+    engine.app.world_mut().insert_resource(DeviceLimits {
+        memory_budget: u64::MAX,
+        cores: 0,
+    });
+    Ok(engine)
 }
 
 pub trait Game: 'static {

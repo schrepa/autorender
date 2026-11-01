@@ -3,9 +3,10 @@ use std::sync::Arc;
 use engine::host::RecordKey;
 use engine::prelude::*;
 use engine::scene::{MeshStreams, decode_mesh_buffer, encode_mesh_buffer_with};
+use engine_core::RecordExchange;
 
 pub(crate) fn key(kind: &'static str, identity: &[u8]) -> RecordKey {
-    RecordKey::new(&crate::SOURCE, kind, identity)
+    RecordKey::new(&crate::SOURCE.hash(), kind, identity)
 }
 
 pub(crate) fn mesh(
@@ -14,18 +15,8 @@ pub(crate) fn mesh(
     identity: &[u8],
     make: impl FnOnce() -> engine::Result<Mesh> + Send + Sync + 'static,
 ) -> engine::Result<MeshHandle> {
-    mesh_then(world, kind, identity, make, |_, _, _| Ok(()))
-}
-
-pub(crate) fn mesh_then(
-    world: &mut World,
-    kind: &'static str,
-    identity: &[u8],
-    make: impl FnOnce() -> engine::Result<Mesh> + Send + Sync + 'static,
-    then: impl FnOnce(&mut World, MeshHandle, &Mesh) -> engine::Result<()> + Send + Sync + 'static,
-) -> engine::Result<MeshHandle> {
     let handle = world.resource_mut::<AssetLibrary>().reserve_mesh()?;
-    world.resource_mut::<Records>().request(
+    world.resource_mut::<RecordExchange>().request(
         key(kind, identity),
         move || {
             make()
@@ -34,7 +25,6 @@ pub(crate) fn mesh_then(
         },
         move |world, bytes| {
             let mesh = decode_mesh_buffer(bytes).map_err(|error| error.to_string())?;
-            then(world, handle, &mesh).map_err(|error| error.to_string())?;
             world
                 .resource_mut::<AssetLibrary>()
                 .fill_mesh(handle, mesh)
@@ -57,13 +47,13 @@ fn mesh_bytes(mesh: &Mesh) -> Vec<u8> {
 }
 
 pub(crate) fn textures(
-    (records, assets): (&mut Records, &mut AssetLibrary),
+    (records, assets): (&mut RecordExchange, &mut AssetLibrary),
     name: String,
     textures: &[(&str, TextureUsage)],
     make: impl Fn() -> Result<Vec<TextureSource>, String> + Send + Sync + 'static,
 ) -> engine::Result<Vec<TextureHandle>> {
     let set = TextureSet {
-        source: crate::SOURCE,
+        source: crate::SOURCE.hash(),
         name,
         textures: textures
             .iter()

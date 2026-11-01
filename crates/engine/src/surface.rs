@@ -25,7 +25,7 @@ macro_rules! __game_surface {
                 fn report_job_cache(hits: f64, misses: f64, bytes: f64, mismatches: f64);
                 fn suspend();
                 fn reset_camera();
-                fn reload_scene(source: &str, files: $crate::browser::SceneFileSet) -> Result<(), $crate::__private::JsValue>;
+                fn reload_scene(source: &str, files: SceneFileSet) -> Result<(), $crate::__private::JsValue>;
                 fn set_tick_pipelining(enabled: bool);
                 fn set_pixel_ratio(ratio: f64);
                 fn set_setting(key: &str, value: &str) -> Result<(), $crate::__private::JsValue>;
@@ -40,7 +40,7 @@ macro_rules! __game_surface {
                 fn dev_command(request: &str, width: u32, height: u32, paused: bool) -> String as Json<Reply>;
                 fn dev_request(line: &str, context: &str) -> String as Json<Step>;
                 fn dev_resume(outcome: &str, context: &str) -> String as Json<Step>;
-                fn dev_reloaded(source: &str, context: &str, files: Option<$crate::browser::SceneFileSet>) -> String as Json<Step>;
+                fn dev_reloaded(source: &str, context: &str, files: Option<SceneFileSet>) -> String as Json<Step>;
                 fn dev_refusal(error: &str) -> String as Json<Reply>;
             }
             profiling_mut {
@@ -75,6 +75,85 @@ macro_rules! __export_game {
         profiling_mut { $( fn $pm:ident($($pm_arg:ident: $pm_ty:ty),*) $(-> $pm_ret:ty $(as $pm_json:ty)?)?; )* }
         profiling_ref { $( fn $pr:ident($($pr_arg:ident: $pr_ty:ty),*) $(-> $pr_ret:ty $(as $pr_json:ty)?)?; )* }
     ) => {
+        #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
+        #[derive(Default)]
+        pub struct SceneFileSet {
+            files: $crate::scene::SceneFiles,
+        }
+
+        #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
+        impl SceneFileSet {
+            #[wasm_bindgen(constructor)]
+            pub fn new() -> Self {
+                Self::default()
+            }
+
+            pub fn add_image(&mut self, uri: &str, width: u32, height: u32, pixels: Vec<u8>) {
+                self.files.add_image(uri, width, height, pixels);
+            }
+
+            pub fn add_buffer(&mut self, uri: &str, bytes: Vec<u8>) {
+                self.files.add_buffer(uri, bytes);
+            }
+        }
+
+        impl SceneFileSet {
+            pub fn files(&self) -> &$crate::scene::SceneFiles {
+                &self.files
+            }
+        }
+
+        impl ::core::convert::From<SceneFileSet> for $crate::scene::SceneFiles {
+            fn from(set: SceneFileSet) -> Self {
+                set.files
+            }
+        }
+
+        #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen, js_name = SceneLoad)]
+        pub struct PageSceneLoad {
+            load: $crate::browser::SceneLoading,
+        }
+
+        #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen, js_class = SceneLoad)]
+        impl PageSceneLoad {
+            #[wasm_bindgen(constructor)]
+            pub fn new(source: &str) -> Result<PageSceneLoad, $crate::__private::JsValue> {
+                Ok(Self {
+                    load: $crate::browser::SceneLoading::new(source)?,
+                })
+            }
+
+            pub fn take_reads(
+                &mut self,
+            ) -> Result<$crate::__private::js_sys::Array, $crate::__private::JsValue> {
+                self.load.take_reads()
+            }
+
+            pub fn read(&mut self, uri: &str, bytes: Vec<u8>) -> Result<bool, $crate::__private::JsValue> {
+                self.load.read(uri, bytes)
+            }
+
+            pub fn image(
+                &mut self,
+                uri: &str,
+                width: u32,
+                height: u32,
+                pixels: Vec<u8>,
+            ) -> Result<(), $crate::__private::JsValue> {
+                self.load.image(uri, width, height, pixels)
+            }
+
+            pub fn decode(&mut self, uri: &str, bytes: &[u8]) -> Result<(), $crate::__private::JsValue> {
+                self.load.decode(uri, bytes)
+            }
+
+            pub fn finish(&mut self) -> Result<SceneFileSet, $crate::__private::JsValue> {
+                Ok(SceneFileSet {
+                    files: self.load.finish()?,
+                })
+            }
+        }
+
         $(#[$meta])*
         #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
         $vis struct $name {

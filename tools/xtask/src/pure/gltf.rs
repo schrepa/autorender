@@ -68,7 +68,8 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                 }),
             }
         }
-        let mut engine = crate::bricks::standard_engine();
+        let mut engine = crate::bricks::standard_engine()
+            .map_err(|error| format!("gltf {name}: the standard engine does not build: {error}"))?;
         let scene = reparsed
             .instantiate_with(engine.app.world_mut(), &files)
             .map_err(|error| format!("gltf {name}: the import does not instantiate: {error}"))?;

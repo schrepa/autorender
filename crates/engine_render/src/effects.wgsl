@@ -4,10 +4,8 @@ struct Post {
     eye: vec4<f32>,
     size: vec4<f32>,
     extent: vec4<f32>,
-    occlusion: vec4<f32>,
     previous_view_projection: mat4x4<f32>,
     previous_eye: vec4<f32>,
-    sky: vec4<f32>,
     detail: vec4<f32>,
 }
 
@@ -15,7 +13,6 @@ struct Post {
 @group(0) @binding(1) var depth_texture: texture_depth_2d;
 @group(0) @binding(2) var scene: texture_2d<f32>;
 @group(0) @binding(3) var glow: texture_2d<f32>;
-@group(0) @binding(5) var occlusion: texture_2d<f32>;
 @group(0) @binding(7) var linear: sampler;
 
 fn drawn_uv(pixel: vec2<f32>, settings: Post) -> vec2<f32> {

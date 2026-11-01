@@ -1,8 +1,8 @@
-use engine_core::smoke::{SmokeFailure, SmokeResult, SmokeSession};
-use engine_core::{smoke_check, smoke_eq};
+use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use super::scene_kit::{SceneFixture, ask, component, control, query, render};
+use super::requests::seen;
+use super::scene_kit::{ask, component, control, load, query, reload, render};
 
 fn fixture() -> Value {
     let cube = json!({"shape": {"kind": "cuboid", "half_extents": [0.5, 0.5, 0.5]}});
@@ -33,9 +33,9 @@ fn fixture() -> Value {
     })
 }
 
-pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
+pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let source = fixture();
-    let (mut scene, _) = SceneFixture::load(session, &source)?;
+    load(session, &source)?;
     ask(session, "control", json!({"name": "pause"}))?;
     control(
         session,
@@ -73,57 +73,69 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
         json!([5, 4, 0, 7]),
         "binning_stats"
     );
-    smoke_check!(
-        !loaded(session, "crate-mid")?,
-        "middle_crate_out_of_range",
-        json!("crate-mid"),
-        json!("unloaded")
+    let wanted = json!("unloaded");
+    smoke_eq!(
+        seen(!loaded(session, "crate-mid")?, json!("crate-mid"), &wanted),
+        wanted,
+        "middle_crate_out_of_range"
     );
     grounded(session)?;
     let post = component(session, "lamp-far.post", "Hierarchy")?;
     smoke_eq!(json!(post["parent"]), json!("lamp-far"), "items");
     look(session, 1000.0, 0.0)?;
-    smoke_check!(
-        !loaded(session, "crate-near")?,
-        "far_crate_goes",
-        json!("crate-near"),
-        json!("unloaded")
+    let wanted = json!("unloaded");
+    smoke_eq!(
+        seen(
+            !loaded(session, "crate-near")?,
+            json!("crate-near"),
+            &wanted,
+        ),
+        wanted,
+        "far_crate_goes"
     );
     let missed = query(session, "raycast", down())?;
-    smoke_check!(
-        missed["hit"]["entity"]["id"] != "crate-near",
-        "unloaded_crate_no_longer_collides",
-        json!(missed["hit"]),
-        json!({"not": "crate-near"})
+    let wanted = json!({"not": "crate-near"});
+    smoke_eq!(
+        seen(
+            missed["hit"]["entity"]["id"] != "crate-near",
+            json!(missed["hit"]),
+            &wanted,
+        ),
+        wanted,
+        "unloaded_crate_no_longer_collides"
     );
     let mut fewer = source.clone();
     if let Some(items) = fewer["streamed"].as_array_mut() {
         items.truncate(1);
     }
-    let reloaded = scene.reload(session, &fewer);
-    smoke_check!(
-        reloaded.is_ok(),
-        "reload_accepted",
-        json!(reloaded.as_ref().err()),
-        json!(null)
+    let reloaded = reload(session, &fewer);
+    let wanted = json!(null);
+    smoke_eq!(
+        seen(reloaded.is_ok(), json!(reloaded.as_ref().err()), &wanted),
+        wanted,
+        "reload_accepted"
     );
     let cells = ask(session, "inspect", json!({"component": "WorldCells"}))?["value"].clone();
     smoke_eq!(json!(cells["items"]), json!(1), "reload");
-    refusals(session, &mut scene, &source)
+    refusals(session, &source)
 }
 
-fn grounded(session: &mut dyn SmokeSession) -> SmokeResult {
+fn grounded(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let samples = query(session, "terrain_height", json!({"points": [[20, 0]]}))?;
     let ground = samples["samples"][0].clone();
     let crate_at = component(session, "crate-near", "Transform")?;
     let height = ground["height"].as_f64().unwrap_or(f64::NAN);
-    smoke_check!(
-        crate_at["translation"][1]
-            .as_f64()
-            .is_some_and(|y| (y - (height + 0.5)).abs() < 1e-3),
-        "grounded",
-        json!(crate_at["translation"]),
-        json!({"y": height + 0.5})
+    let wanted = json!({"y": height + 0.5});
+    smoke_eq!(
+        seen(
+            crate_at["translation"][1]
+                .as_f64()
+                .is_some_and(|y| (y - (height + 0.5)).abs() < 1e-3),
+            json!(crate_at["translation"]),
+            &wanted,
+        ),
+        wanted,
+        "grounded"
     );
     let held = component(session, "crate-near", "Grounded")?;
     let level = if ground["level"].is_null() {
@@ -145,11 +157,7 @@ fn grounded(session: &mut dyn SmokeSession) -> SmokeResult {
     Ok(())
 }
 
-fn refusals(
-    session: &mut dyn SmokeSession,
-    scene: &mut SceneFixture,
-    source: &Value,
-) -> SmokeResult {
+fn refusals(session: &mut dyn SmokeSession, source: &Value) -> Result<(), SmokeFailure> {
     for (case, code, path) in [
         ("terrain", "invalid_streamed", "$.streamed[6].terrain"),
         (
@@ -176,7 +184,7 @@ fn refusals(
             "grounded_child" => broken["streamed"][3]["grounded"] = json!({}),
             _ => broken["streamed"][0]["id"] = json!("player"),
         }
-        let refused = scene.reload(session, &broken).err().unwrap_or_default();
+        let refused = reload(session, &broken).err().unwrap_or_default();
         smoke_eq!(
             json!({"case": case, "code": refused["code"], "path": refused["path"]}),
             json!({"case": case, "code": code, "path": path}),
@@ -208,11 +216,15 @@ fn loaded(session: &mut dyn SmokeSession, id: &str) -> Result<bool, SmokeFailure
         .as_ref()
         .err()
         .map(|refused| refused["error"]["code"].clone());
-    smoke_check!(
-        missing.as_ref().is_none_or(|code| code == "unknown_entity"),
-        "loaded_inspects",
-        json!(missing),
-        json!("unknown_entity")
+    let wanted = json!("unknown_entity");
+    smoke_eq!(
+        seen(
+            missing.as_ref().is_none_or(|code| code == "unknown_entity"),
+            json!(missing),
+            &wanted,
+        ),
+        wanted,
+        "loaded_inspects"
     );
     Ok(reply.is_ok())
 }

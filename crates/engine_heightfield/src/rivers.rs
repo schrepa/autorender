@@ -904,7 +904,7 @@ impl engine_codec::Codec for Rivers {
         self.rivers.write(out);
     }
 
-    fn read(input: &mut engine_codec::Reader<'_>) -> Result<Self, engine_codec::CodecError> {
+    fn read(input: &mut engine_codec::Reader<'_>) -> Result<Self, engine_codec::Error> {
         Ok(Self::new(Vec::read(input)?))
     }
 }

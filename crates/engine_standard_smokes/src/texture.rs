@@ -1,9 +1,8 @@
-use engine_core::smoke::{SmokeFailure, SmokeResult, SmokeSession};
-use engine_core::{smoke_check, smoke_eq};
+use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use super::requests::{FRAME_MS, idle};
-use super::scene_kit::{SceneFixture, ask, capture, component, control, query, render, residency};
+use super::requests::{FRAME_MS, idle, seen};
+use super::scene_kit::{ask, capture, component, control, load, query, reload, render, residency};
 
 const TEXTURES: [(&str, u32, u32); 2] = [("bark", 16, 16), ("leaf", 8, 8)];
 
@@ -83,9 +82,9 @@ fn texture_bytes() -> u64 {
         .sum()
 }
 
-pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
+pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let source = fixture(false);
-    let (mut scene, _) = SceneFixture::load(session, &source)?;
+    load(session, &source)?;
     ask(session, "control", json!({"name": "pause"}))?;
     let rendering = render(session)?;
     settled(session, rendering)?;
@@ -126,14 +125,18 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
     let player = component(session, "player", "Transform")?;
     let mut invalid = source.clone();
     invalid["textures"][0]["rgba8"] = json!("!invalid-base64!");
-    let refused = scene.reload(session, &invalid).err().unwrap_or_default();
-    smoke_check!(
-        refused["path"]
-            .as_str()
-            .is_some_and(|path| path.starts_with("$.textures[0]")),
-        "invalid_reload_path",
-        json!(refused),
-        json!({"path": "$.textures[0]"})
+    let refused = reload(session, &invalid).err().unwrap_or_default();
+    let wanted = json!({"path": "$.textures[0]"});
+    smoke_eq!(
+        seen(
+            refused["path"]
+                .as_str()
+                .is_some_and(|path| path.starts_with("$.textures[0]")),
+            json!(refused),
+            &wanted,
+        ),
+        wanted,
+        "invalid_reload_path"
     );
     smoke_eq!(
         component(session, "player", "Transform")?,
@@ -145,10 +148,10 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
         initial.clone(),
         "invalid_reload_keeps_assets"
     );
-    replacement(session, &mut scene, &source, &initial)
+    replacement(session, &source, &initial)
 }
 
-fn textured_entity(session: &mut dyn SmokeSession) -> SmokeResult {
+fn textured_entity(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     let page = ask(
         session,
         "inspect",
@@ -163,11 +166,11 @@ fn textured_entity(session: &mut dyn SmokeSession) -> SmokeResult {
             })
             .and_then(|row| row["id"].as_str().map(str::to_owned))
     });
-    smoke_check!(
-        textured.is_some(),
-        "textured_material_used",
-        json!(page["entities"]),
-        json!("a textured entity")
+    let wanted = json!("a textured entity");
+    smoke_eq!(
+        seen(textured.is_some(), json!(page["entities"]), &wanted),
+        wanted,
+        "textured_material_used"
     );
     let id = textured.unwrap_or_default();
     let view = component(session, &id, "Mesh3d")?;
@@ -175,25 +178,28 @@ fn textured_entity(session: &mut dyn SmokeSession) -> SmokeResult {
     let authored = TEXTURES
         .iter()
         .any(|&(_, width, height)| texture["width"] == width && texture["height"] == height);
-    smoke_check!(
-        texture["alive"] == true && texture["gpu_resident"] == true && authored,
-        "per_texture_gpu_residency",
-        json!(texture),
-        json!({"alive": true, "gpu_resident": true})
+    let wanted = json!({"alive": true, "gpu_resident": true});
+    smoke_eq!(
+        seen(
+            texture["alive"] == true && texture["gpu_resident"] == true && authored,
+            json!(texture),
+            &wanted,
+        ),
+        wanted,
+        "per_texture_gpu_residency"
     );
     Ok(())
 }
 
 fn replacement(
     session: &mut dyn SmokeSession,
-    scene: &mut SceneFixture,
     source: &Value,
     initial: &Value,
-) -> SmokeResult {
-    reloaded(scene, session, source)?;
+) -> Result<(), SmokeFailure> {
+    reloaded(session, source)?;
     let baseline = capture(session)?;
     let changed = fixture(true);
-    let uploaded = reloaded(scene, session, &changed)?;
+    let uploaded = reloaded(session, &changed)?;
     smoke_eq!(
         json!(uploaded),
         json!(texture_bytes()),
@@ -205,14 +211,14 @@ fn replacement(
         "replacement_keeps_residency"
     );
     let changed_capture = capture(session)?;
-    smoke_check!(
-        changed_capture != baseline,
-        "changed_pixels_render",
-        json!(changed_capture),
-        json!({"not": baseline})
+    let wanted = json!({"not": baseline});
+    smoke_eq!(
+        seen(changed_capture != baseline, json!(changed_capture), &wanted),
+        wanted,
+        "changed_pixels_render"
     );
     for _ in 0..3 {
-        reloaded(scene, session, &changed)?;
+        reloaded(session, &changed)?;
         smoke_eq!(
             residency(session)?,
             initial.clone(),
@@ -239,7 +245,7 @@ fn replacement(
             }
         }
     }
-    reloaded(scene, session, &untextured)?;
+    reloaded(session, &untextured)?;
     let retired = query(session, "assets", json!({}))?;
     let cpu = initial["cpu"]
         .as_u64()
@@ -258,17 +264,13 @@ fn replacement(
     Ok(())
 }
 
-fn reloaded(
-    scene: &mut SceneFixture,
-    session: &mut dyn SmokeSession,
-    document: &Value,
-) -> Result<u64, SmokeFailure> {
-    let reloaded = scene.reload(session, document);
-    smoke_check!(
-        reloaded.is_ok(),
-        "reload_accepted",
-        json!(reloaded.as_ref().err()),
-        json!(null)
+fn reloaded(session: &mut dyn SmokeSession, document: &Value) -> Result<u64, SmokeFailure> {
+    let reloaded = reload(session, document);
+    let wanted = json!(null);
+    smoke_eq!(
+        seen(reloaded.is_ok(), json!(reloaded.as_ref().err()), &wanted),
+        wanted,
+        "reload_accepted"
     );
     let rendering = reloaded.unwrap_or_default()["rendering"].clone();
     settled(session, rendering)

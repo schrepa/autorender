@@ -1,10 +1,9 @@
-use engine::collections::HashMap;
-
-use engine_core::bevy_ecs::prelude::*;
+use bevy_ecs::prelude::*;
+use engine_core::collections::HashMap;
 use engine_core::glam::{Quat, Vec3};
 use engine_core::{
-    Cube, Engine, EngineConfig, FixedSimulation, GlobalTransforms, InterpolateTransform, Material,
-    MaterialHandle, Mesh, Mesh3d, MeshHandle, Parent, PresentedTransforms, RenderSnapshot, Tint,
+    Cube, Engine, EngineConfig, GlobalTransforms, InterpolateTransform, Material, MaterialHandle,
+    Mesh, Mesh3d, MeshHandle, Parent, PresentedTransforms, RenderSnapshot, Schedule, Tint,
     Transform, reset_interpolation, set_parent, set_parents,
 };
 
@@ -93,7 +92,9 @@ enum Edit {
 
 fn engine() -> Result<(Engine, Assets), String> {
     let mut engine = Engine::new(EngineConfig::default());
-    engine.app.add_systems(FixedSimulation, drift);
+    engine
+        .app
+        .add_systems(Schedule::FixedSimulation.label(), drift);
     let assets = Assets::add(&mut engine)?;
     Ok((engine, assets))
 }

@@ -7,15 +7,15 @@ use engine_core::collections::HashMap;
 use std::collections::BTreeMap;
 
 use engine_core::{
-    Filter, Material, MaterialHandle, RenderMaterial, RenderSnapshot, Sampler, Texture,
-    TextureFormat, TextureHandle, Wrap,
+    AlphaMode, Filter, Material, MaterialHandle, Sampler, Texture, TextureFormat, TextureHandle,
+    UvTransform, Wrap,
 };
 
-use crate::batches::BatchPlan;
 use crate::bindings::MATERIAL;
-use crate::gpu_data::{MaterialUniform, Variant, mip_chain_bytes, mip_levels};
+use crate::gpu_data::{mip_chain_bytes, mip_levels};
+use crate::gpu_layouts::constants;
+use crate::gpu_layouts::scene::MaterialUniform;
 use crate::mipmaps::MipGenerator;
-use crate::parts::PartAssets;
 
 const COLOR_MAPS: [bool; 5] = [true, false, false, false, true];
 
@@ -111,61 +111,37 @@ impl MaterialStore {
         }
     }
 
-    pub(crate) fn retain(&mut self, plan: &BatchPlan, assets: &PartAssets<'_>) {
-        let extra_material = |handle: &MaterialHandle| {
-            assets
-                .materials
-                .iter()
-                .any(|source| source.handle == *handle)
-        };
-        let extra_texture = |handle: &TextureHandle| {
-            assets
-                .textures
-                .iter()
-                .any(|source| source.handle == *handle)
-        };
+    pub(crate) fn retain(
+        &mut self,
+        mut material: impl FnMut(MaterialHandle) -> bool,
+        mut texture: impl FnMut(TextureHandle) -> bool,
+    ) {
         let count = self.materials.len();
-        self.materials
-            .retain(|handle, _| plan.contains_material(*handle) || extra_material(handle));
+        self.materials.retain(|handle, _| material(*handle));
         if self.materials.len() != count {
             self.generation += 1;
         }
-        self.textures
-            .retain(|(handle, _), _| plan.contains_texture(*handle) || extra_texture(handle));
+        self.textures.retain(|(handle, _), _| texture(*handle));
     }
 
-    pub(crate) fn upload(
+    pub(crate) fn upload<'a>(
         &mut self,
         device: &wgpu::Device,
         queue: &crate::gpu_calls::Queue,
-        snapshot: &RenderSnapshot,
-        plan: &BatchPlan,
-        assets: &PartAssets<'_>,
+        sources: impl IntoIterator<Item = (MaterialHandle, &'a Material, u64)>,
+        texture: impl Fn(TextureHandle) -> Option<&'a Texture>,
         encoder: &mut Option<wgpu::CommandEncoder>,
     ) -> (u64, u32) {
         let mut bytes = 0;
         let mut levels = 0;
-        let built = |materials: &BTreeMap<MaterialHandle, GpuMaterial>, source: &RenderMaterial| {
-            materials
-                .get(&source.handle)
-                .is_some_and(|gpu| gpu.version == source.version)
-        };
-        let extra: Vec<&RenderMaterial> = assets
-            .materials
-            .iter()
-            .copied()
-            .filter(|source| !built(&self.materials, source))
-            .collect();
-        let sources = plan
-            .material_sources
-            .iter()
-            .map(|&index| &snapshot.materials[index])
-            .chain(extra);
-        for source in sources {
-            if built(&self.materials, source) {
+        for (handle, material, version) in sources {
+            if self
+                .materials
+                .get(&handle)
+                .is_some_and(|gpu| gpu.version == version)
+            {
                 continue;
             }
-            let material = &source.material;
             for (map, srgb) in material.maps().iter().zip(COLOR_MAPS) {
                 let Some(map) = map else {
                     continue;
@@ -173,16 +149,11 @@ impl MaterialStore {
                 if let std::collections::btree_map::Entry::Vacant(entry) =
                     self.textures.entry((map.texture, srgb))
                 {
-                    let texture = snapshot
-                        .textures
-                        .iter()
-                        .chain(assets.textures.iter().copied())
-                        .find(|texture| texture.handle == map.texture)
-                        .expect("material_textures_validated");
+                    let source = texture(map.texture).expect("material_textures_validated");
                     let gpu = create_texture(
                         device,
                         queue,
-                        &texture.texture,
+                        source,
                         srgb,
                         &self.mips,
                         encoder,
@@ -192,11 +163,40 @@ impl MaterialStore {
                     entry.insert(gpu);
                 }
             }
-            let gpu = self.create_material(device, material, source.version);
-            self.materials.insert(source.handle, gpu);
+            let gpu = self.create_material(device, material, version);
+            self.materials.insert(handle, gpu);
             self.generation += 1;
         }
         (bytes, levels)
+    }
+
+    pub(crate) fn upload_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &crate::gpu_calls::Queue,
+        (handle, srgb): (TextureHandle, bool),
+        source: &Texture,
+        encoder: &mut Option<wgpu::CommandEncoder>,
+    ) -> (u64, u32) {
+        let std::collections::btree_map::Entry::Vacant(entry) = self.textures.entry((handle, srgb))
+        else {
+            return (0, 0);
+        };
+        let mut levels = 0;
+        let gpu = create_texture(device, queue, source, srgb, &self.mips, encoder, &mut levels);
+        let bytes = gpu.byte_len;
+        entry.insert(gpu);
+        (bytes, levels)
+    }
+
+    pub(crate) fn texture_view(
+        &self,
+        handle: TextureHandle,
+        srgb: bool,
+    ) -> Option<&wgpu::TextureView> {
+        self.textures
+            .get(&(handle, srgb))
+            .map(|texture| &texture.view)
     }
 
     fn create_material(
@@ -512,5 +512,238 @@ fn create_texture(
         } else {
             0
         },
+    }
+}
+
+impl MaterialUniform {
+    pub const DEFAULT: Self = Self {
+        transforms: [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+        ],
+        emissive: [0.0; 4],
+        params: [1.0, 1.0, 0.5, 0.0],
+        variant: [0.0; 4],
+        top: [0.0; 4],
+        layer: [0.0; 4],
+    };
+
+    pub fn new(material: &Material) -> Self {
+        let mut uniform = Self::DEFAULT;
+        for (index, map) in material.maps().iter().enumerate() {
+            if let Some(map) = map {
+                let [first, second] = transform_rows(&map.transform);
+                uniform.transforms[index * 2] = first;
+                uniform.transforms[index * 2 + 1] = second;
+            }
+        }
+        let [r, g, b] = material.emissive();
+        uniform.emissive = [r, g, b, material.world_tiling().unwrap_or(0.0)];
+        if let Some(top) = material.top_layer() {
+            let [r, g, b] = top.color;
+            uniform.top = [r, g, b, top.coverage];
+            uniform.layer = [top.roughness, 0.0, 0.0, 0.0];
+        }
+        let cutoff = match material.alpha_mode() {
+            AlphaMode::Mask { cutoff } => cutoff,
+            AlphaMode::Opaque => 0.5,
+        };
+        let second = material
+            .maps()
+            .iter()
+            .enumerate()
+            .filter(|(_, map)| map.is_some_and(|map| map.tex_coord == 1))
+            .fold(0_u32, |bits, (index, _)| bits | 1 << index);
+        uniform.params = [
+            material.normal_scale(),
+            material.occlusion_strength(),
+            cutoff,
+            second as f32,
+        ];
+        uniform.variant = [f32::from_bits(Variant::of(material).bits()), 0.0, 0.0, 0.0];
+        uniform
+    }
+}
+
+pub fn transform_rows(transform: &UvTransform) -> [[f32; 4]; 2] {
+    let (sin, cos) = engine_core::math::sin_cos(transform.rotation);
+    let [sx, sy] = transform.scale;
+    let [ox, oy] = transform.offset;
+    [
+        [cos * sx, sin * sy, ox, 0.0],
+        [-sin * sx, cos * sy, oy, 0.0],
+    ]
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Variant(u32);
+
+impl Variant {
+    pub const BASIC: Self = Self(0);
+    const MAPS: u32 = constants::VARIANT_MAPS;
+    const NORMAL_MAP: u32 = constants::VARIANT_NORMAL_MAP;
+    const ALPHA_MASK: u32 = 4;
+    const DOUBLE_SIDED: u32 = constants::VARIANT_DOUBLE_SIDED;
+    const EXTENDED: u32 = 16;
+    const METALLIC_ROUGHNESS_MAP: u32 = constants::VARIANT_METALLIC_ROUGHNESS_MAP;
+    const OCCLUSION_MAP: u32 = constants::VARIANT_OCCLUSION_MAP;
+    const EMISSIVE_MAP: u32 = constants::VARIANT_EMISSIVE_MAP;
+    const PACKED_OCCLUSION: u32 = constants::VARIANT_PACKED_OCCLUSION;
+    const UBER: u32 = 2048;
+    const WORLD_MAPPING: u32 = constants::VARIANT_WORLD_MAPPING;
+    const TOP_LAYER: u32 = constants::VARIANT_TOP_LAYER;
+    const GROUNDING: u32 = 16384;
+    const FADING: u32 = 32768;
+    const FOLIAGE: u32 = constants::VARIANT_FOLIAGE;
+    const PREPASS: u32 = 131072;
+    const PRETESTED: u32 = 262144;
+
+    pub fn of(material: &Material) -> Self {
+        let mode = material.alpha_mode();
+        let base = material.base_color_texture();
+        let maps = material.metallic_roughness_texture().is_some()
+            || material.normal_texture().is_some()
+            || material.occlusion_texture().is_some()
+            || material.emissive_texture().is_some()
+            || material.emissive() != [0.0; 3]
+            || base.is_some_and(|map| map.transform != UvTransform::IDENTITY)
+            || matches!(mode, AlphaMode::Mask { .. })
+            || material.world_tiling().is_some();
+        let mut bits = 0;
+        if maps {
+            bits |= Self::MAPS;
+            let metallic_roughness = material.metallic_roughness_texture();
+            let occlusion = material.occlusion_texture();
+            if metallic_roughness.is_some() {
+                bits |= Self::METALLIC_ROUGHNESS_MAP;
+            }
+            if occlusion.is_some() && occlusion == metallic_roughness {
+                bits |= Self::PACKED_OCCLUSION;
+            } else if occlusion.is_some() {
+                bits |= Self::OCCLUSION_MAP;
+            }
+            if material.emissive_texture().is_some() {
+                bits |= Self::EMISSIVE_MAP;
+            }
+        }
+        if material.normal_texture().is_some() {
+            bits |= Self::NORMAL_MAP;
+        }
+        if matches!(mode, AlphaMode::Mask { .. }) {
+            bits |= Self::ALPHA_MASK;
+        }
+        if material.is_double_sided() {
+            bits |= Self::DOUBLE_SIDED;
+        }
+        if material.world_tiling().is_some() {
+            bits |= Self::WORLD_MAPPING;
+        }
+        if material.top_layer().is_some() {
+            bits |= Self::TOP_LAYER;
+        }
+        if material.is_foliage() {
+            bits |= Self::FOLIAGE;
+        }
+        Self(bits)
+    }
+
+    #[must_use]
+    pub fn uber(self) -> Self {
+        let state = Self::EXTENDED | Self::ALPHA_MASK | Self::DOUBLE_SIDED;
+        Self(self.0 & state | Self::UBER)
+    }
+
+    pub fn bits(self) -> u32 {
+        self.0
+    }
+
+    pub fn constants(self) -> [(&'static str, f64); 15] {
+        let set = |bit: u32| if self.0 & bit != 0 { 1.0 } else { 0.0 };
+        [
+            ("WORLD_MAPPING", set(Self::WORLD_MAPPING)),
+            ("TOP_LAYER", set(Self::TOP_LAYER)),
+            ("GROUNDING", set(Self::GROUNDING)),
+            ("FADE_LIST", set(Self::FADING)),
+            ("MATERIAL_MAPS", set(Self::MAPS)),
+            ("NORMAL_MAP", set(Self::NORMAL_MAP)),
+            ("ALPHA_MASK", set(Self::ALPHA_MASK)),
+            ("DOUBLE_SIDED", set(Self::DOUBLE_SIDED)),
+            ("METALLIC_ROUGHNESS_MAP", set(Self::METALLIC_ROUGHNESS_MAP)),
+            ("OCCLUSION_MAP", set(Self::OCCLUSION_MAP)),
+            ("EMISSIVE_MAP", set(Self::EMISSIVE_MAP)),
+            ("PACKED_OCCLUSION", set(Self::PACKED_OCCLUSION)),
+            ("UBER_MATERIALS", set(Self::UBER)),
+            ("FOLIAGE", set(Self::FOLIAGE)),
+            ("PRETESTED", set(Self::PRETESTED)),
+        ]
+    }
+
+    pub fn double_sided(self) -> bool {
+        self.0 & Self::DOUBLE_SIDED != 0
+    }
+
+    pub fn alpha_mask(self) -> bool {
+        self.0 & Self::ALPHA_MASK != 0
+    }
+
+    #[must_use]
+    pub fn opaque(self) -> Self {
+        if self.alpha_mask() {
+            Self(self.0 | Self::PRETESTED)
+        } else {
+            self
+        }
+    }
+
+    #[must_use]
+    pub fn prepass(self) -> Self {
+        Self(self.0 & !Self::PRETESTED | Self::PREPASS)
+    }
+
+    pub fn depth_only(self) -> bool {
+        self.0 & Self::PREPASS != 0
+    }
+
+    pub fn pretested(self) -> bool {
+        self.0 & Self::PRETESTED != 0
+    }
+
+    #[must_use]
+    pub fn with_extended(self, extended: bool) -> Self {
+        Self(if extended {
+            self.0 | Self::EXTENDED
+        } else {
+            self.0 & !Self::EXTENDED
+        })
+    }
+
+    pub fn extended(self) -> bool {
+        self.0 & Self::EXTENDED != 0
+    }
+
+    #[must_use]
+    pub fn with_fading(self, fading: bool) -> Self {
+        Self(if fading {
+            self.0 | Self::FADING
+        } else {
+            self.0 & !Self::FADING
+        })
+    }
+
+    #[must_use]
+    pub fn with_grounding(self, grounding: bool) -> Self {
+        Self(if grounding {
+            self.0 | Self::GROUNDING
+        } else {
+            self.0 & !Self::GROUNDING
+        })
     }
 }

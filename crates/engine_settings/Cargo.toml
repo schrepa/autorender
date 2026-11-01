@@ -8,7 +8,7 @@ description = "Settings and authored values declared once per field: defaults, r
 
 [features]
 default = []
-schema = ["dep:schemars"]
+schema = ["dep:schemars", "engine_codec/schema"]
 
 [dependencies]
 engine_codec.workspace = true

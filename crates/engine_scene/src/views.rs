@@ -1,12 +1,13 @@
 use std::collections::BTreeSet;
 
-use engine_core::bevy_ecs::{
-    self,
-    prelude::{Resource, World},
-};
-use engine_core::{Camera, Error, Expected};
-use engine_settings::ErrorCode;
+use bevy_ecs::resource::Resource;
+use bevy_ecs::system::{Commands, Res, ResMut, SystemParamItem};
+use bevy_ecs::world::World;
+use engine_core::{Camera, Error, Operation};
+use engine_registry::Registry;
+use engine_settings::{ErrorCode, Expected};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 use crate::validation::identifier;
 use crate::{SceneCamera, SceneDocument, SceneEnvironment};
@@ -55,12 +56,16 @@ engine_settings::fields! {
 
 impl engine_settings::ExtraRules for SceneView {
     fn check_extra(&self) -> Result<(), engine_settings::InvalidSetting> {
-        engine_settings::ExtraRules::check_extra(&self.camera())
+        engine_settings::ExtraRules::check_extra(&self.scene_camera())
     }
 }
 
 impl SceneView {
     pub fn camera(&self) -> Camera {
+        self.scene_camera().camera()
+    }
+
+    fn scene_camera(&self) -> SceneCamera {
         SceneCamera {
             position: self.position,
             target: self.target,
@@ -68,7 +73,6 @@ impl SceneView {
             near: self.near,
             far: self.far,
         }
-        .camera()
     }
 }
 
@@ -161,26 +165,102 @@ impl SceneViews {
 }
 
 pub fn show_view(world: &mut World, name: &str, path: &str) -> Result<Camera, Error> {
-    let camera = match world.get_resource::<SceneViews>() {
-        Some(views) => views.camera(name, path)?,
-        None => SceneViews::default().camera(name, path)?,
-    };
+    let camera = view_camera(world.get_resource::<SceneViews>(), name, path)?;
     world.insert_resource(camera);
     Ok(camera)
 }
 
 pub fn show_look(world: &mut World, name: &str, path: &str) -> Result<(), Error> {
-    let (environment, at) = match world.get_resource::<SceneViews>() {
+    let Some(look) = look_named(world.get_resource::<SceneViews>(), name, path)? else {
+        return Ok(());
+    };
+    look.environment.check(world, &look.at)?;
+    look.apply(world)
+}
+
+fn view_camera(views: Option<&SceneViews>, name: &str, path: &str) -> Result<Camera, Error> {
+    match views {
+        Some(views) => views.camera(name, path),
+        None => SceneViews::default().camera(name, path),
+    }
+}
+
+struct Look {
+    environment: SceneEnvironment,
+    at: String,
+    looked: BTreeSet<String>,
+}
+
+impl Look {
+    fn apply(&self, world: &mut World) -> Result<(), Error> {
+        self.environment
+            .apply_where(world, &self.at, |key| self.looked.contains(key))
+    }
+}
+
+fn look_named(views: Option<&SceneViews>, name: &str, path: &str) -> Result<Option<Look>, Error> {
+    let (environment, at) = match views {
         Some(views) => views.environment(name, path)?,
-        None if name == SCENE_LOOK => return Ok(()),
+        None if name == SCENE_LOOK => return Ok(None),
         None => SceneViews::default().environment(name, path)?,
     };
-    let looked: BTreeSet<String> = world
-        .get_resource::<SceneViews>()
-        .map(SceneViews::look_keys)
-        .unwrap_or_default();
-    environment.check(world, &at)?;
-    environment.apply_where(world, &at, |key| looked.contains(key))
+    let looked = views.map(SceneViews::look_keys).unwrap_or_default();
+    Ok(Some(Look {
+        environment,
+        at,
+        looked,
+    }))
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SceneViewControl {
+    pub name: String,
+}
+
+impl Operation for SceneViewControl {
+    const NAME: &'static str = "scene_view";
+    type Params = (Option<Res<'static, SceneViews>>, ResMut<'static, Camera>);
+    type Request = Self;
+
+    fn run(
+        (views, mut camera): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
+        *camera = view_camera(views.as_deref(), &request.name, "$.name")?;
+        Ok(json!({ "temporary": true, "view": request.name }))
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct SceneLookControl {
+    pub name: String,
+}
+
+impl Operation for SceneLookControl {
+    const NAME: &'static str = "scene_look";
+    type Params = (
+        Option<Res<'static, SceneViews>>,
+        Option<Res<'static, Registry>>,
+        Commands<'static, 'static>,
+    );
+    type Request = Self;
+
+    fn run(
+        (views, registry, mut commands): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
+        if let Some(look) = look_named(views.as_deref(), &request.name, "$.name")? {
+            look.environment.check_in(registry.as_deref(), &look.at)?;
+            commands.queue(move |world: &mut World| {
+                let _ = look.apply(world);
+            });
+        }
+        Ok(json!({ "temporary": true, "look": request.name }))
+    }
 }
 
 impl SceneDocument {

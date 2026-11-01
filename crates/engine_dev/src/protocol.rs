@@ -35,7 +35,6 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("debug_fault", "status"),
     ("debug_device_loss", "status"),
     ("debug_missing_asset", ""),
-    ("probe", ""),
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
@@ -115,7 +114,7 @@ impl Envelope {
                 .at_most(MAX_REQUEST_BYTES as u64)
                 .got(source.len()));
         }
-        let request: Value = engine_core::parse_json(source)?;
+        let request: Value = engine_settings::parse_json(source)?;
         let Value::Object(mut fields) = request else {
             return Err(Error::new(ErrorCode::InvalidType, "$").expected(Expected::Object));
         };
@@ -172,7 +171,7 @@ impl Envelope {
     }
 
     pub fn body<T: DeserializeOwned>(&self) -> Result<T, Error> {
-        engine_core::parse_value(Value::Object(self.fields.clone()))
+        engine_settings::parse_value(Value::Object(self.fields.clone()))
     }
 }
 
@@ -206,7 +205,7 @@ pub(crate) fn parse_named<T: DeserializeOwned>(name: &str, args: Value) -> Resul
         }
     };
     fields.insert("op".to_owned(), Value::from(name));
-    engine_core::parse_value(Value::Object(fields)).map_err(|mut error| {
+    engine_settings::parse_value(Value::Object(fields)).map_err(|mut error| {
         let path = match error.path.strip_prefix('$') {
             Some("" | ".op") => "$.args".to_owned(),
             Some(rest) => format!("$.args{rest}"),
@@ -228,7 +227,7 @@ fn check_version(version: Option<Value>) -> Result<(), Error> {
             .expected(Expected::Present)
             .range(accepted, accepted));
     };
-    let Version { version } = engine_core::parse_value(serde_json::json!({ "version": version }))?;
+    let Version { version } = engine_settings::parse_value(serde_json::json!({ "version": version }))?;
     if version != PROTOCOL_VERSION {
         return Err(Error::new(ErrorCode::UnsupportedVersion, "$.version")
             .got(version)
@@ -494,27 +493,27 @@ pub enum BrowserControl {
     Camera {
         #[cfg_attr(
             not(target_arch = "wasm32"),
-            schemars(transform = stated(engine_settings::rule::same(engine_core::Camera::rule_of("position"))))
+            schemars(transform = stated(bounds::COORDINATE))
         )]
         position: [f32; 3],
         #[cfg_attr(
             not(target_arch = "wasm32"),
-            schemars(transform = stated(engine_settings::rule::same(engine_core::Camera::rule_of("target"))))
+            schemars(transform = stated(bounds::COORDINATE))
         )]
         target: [f32; 3],
         #[cfg_attr(
             not(target_arch = "wasm32"),
-            schemars(transform = stated(engine_settings::rule::same(engine_core::Camera::rule_of("vertical_fov_radians"))))
+            schemars(transform = stated(camera_fov()))
         )]
         vertical_fov_radians: f32,
         #[cfg_attr(
             not(target_arch = "wasm32"),
-            schemars(transform = stated(engine_settings::rule::same(engine_core::Camera::rule_of("near"))))
+            schemars(transform = stated(camera_depth()))
         )]
         near: f32,
         #[cfg_attr(
             not(target_arch = "wasm32"),
-            schemars(transform = stated(engine_settings::rule::same(engine_core::Camera::rule_of("far"))))
+            schemars(transform = stated(camera_depth()))
         )]
         far: f32,
     },
@@ -600,26 +599,10 @@ pub enum BrowserControl {
         #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 192)))]
         entity: String,
     },
-    Probe {
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PIXEL)))]
-        x: u32,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PIXEL)))]
-        y: u32,
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "deserialize_optional_alpha"
-        )]
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(with = "f64", transform = stated(bounds::ALPHA))
-        )]
-        alpha: Option<f64>,
-    },
 }
 
 impl BrowserControl {
-    pub const NAMES: [&'static str; 18] = [
+    pub const NAMES: [&'static str; 17] = [
         "present",
         "culling",
         "environment",
@@ -637,7 +620,6 @@ impl BrowserControl {
         "debug_fault",
         "debug_device_loss",
         "debug_missing_asset",
-        "probe",
     ];
 
     pub fn route(self) -> Control {
@@ -688,7 +670,6 @@ impl BrowserControl {
             | Self::Frames { .. }
             | Self::Pause { .. }
             | Self::Resume { .. }
-            | Self::Probe { .. }
             | Self::DebugDeviceLoss { .. }
             | Self::Game { .. }
             | Self::Reload { .. }) => Control::Host(HostControl::Loop(control)),
@@ -706,7 +687,6 @@ impl BrowserControl {
             | Self::Frames { .. }
             | Self::Input { .. }
             | Self::Render { .. }
-            | Self::Probe { .. }
             | Self::Game { .. }
             | Self::Reload { .. }
             | Self::DebugPanic { .. }
@@ -785,8 +765,18 @@ pub(crate) fn default_top() -> usize {
     8
 }
 
-fn deserialize_optional_alpha<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<f64>, D::Error> {
-    f64::deserialize(deserializer).map(Some)
+#[cfg(not(target_arch = "wasm32"))]
+fn camera_fov() -> engine_settings::Rule {
+    engine_settings::Rule::range(
+        f64::from(engine_core::Camera::MIN_FOV_DEGREES.to_radians()),
+        f64::from(engine_core::Camera::MAX_FOV_DEGREES.to_radians()),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn camera_depth() -> engine_settings::Rule {
+    engine_settings::Rule::range(
+        f64::from(engine_core::Camera::MIN_DEPTH),
+        f64::from(engine_core::Camera::REACH),
+    )
 }

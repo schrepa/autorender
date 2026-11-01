@@ -71,8 +71,42 @@ fn grown_capacity(space: &Space, length: u32, bytes: u64, limit: u64) -> Option<
 pub use gpu::*;
 
 mod gpu {
+    use std::collections::BTreeMap;
+
+    use engine_core::{Mesh, MeshHandle, MeshLods};
+
     use super::*;
     use crate::gpu_calls::Queue;
+    use crate::gpu_data::{ExtraVertex, LOD_LEVELS, Vertex};
+    use crate::memory::buffer_init;
+
+    const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+        crate::pipelines::vertex_attributes!(Vertex {
+            0 => position as Float32x3,
+            1 => normal as Snorm16x2,
+            7 => uv as Float32x2,
+        });
+    const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
+        crate::pipelines::vertex_attributes!(ExtraVertex {
+            9 => color as Unorm16x4,
+            10 => uv1 as Float32x2,
+        });
+
+    pub fn extra_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
+        Some(wgpu::VertexBufferLayout {
+            array_stride: size_of::<ExtraVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &EXTRA_ATTRIBUTES,
+        })
+    }
+
+    pub fn vertex_layout() -> Option<wgpu::VertexBufferLayout<'static>> {
+        Some(wgpu::VertexBufferLayout {
+            array_stride: size_of::<Vertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &VERTEX_ATTRIBUTES,
+        })
+    }
 
     #[derive(Clone, Copy)]
     pub struct MeshDraw<'a> {
@@ -320,6 +354,224 @@ mod gpu {
                 base_vertex: placement.base_vertex as i32,
                 index_count: placement.index_count,
             }
+        }
+    }
+
+    pub struct GpuMesh {
+        placement: Result<Placement, OwnMesh>,
+        pub extended: bool,
+        pub index_count: u32,
+        pub byte_len: u64,
+        pub lods: Vec<(u32, u32, f32)>,
+        pub plan: Vec<(u32, u32, f32)>,
+        pub casters: Vec<(u32, u32)>,
+        pub without_levels: bool,
+    }
+
+    struct OwnMesh {
+        vertices: wgpu::Buffer,
+        extras: Option<wgpu::Buffer>,
+        indices: wgpu::Buffer,
+    }
+
+    impl GpuMesh {
+        pub fn draw<'a>(&'a self, arena: &'a MeshArena) -> MeshDraw<'a> {
+            match &self.placement {
+                Ok(placement) => MeshDraw {
+                    index_count: self.index_count,
+                    ..arena.draw(*placement)
+                },
+                Err(own) => MeshDraw {
+                    vertices: &own.vertices,
+                    extras: own.extras.as_ref(),
+                    indices: &own.indices,
+                    first_index: 0,
+                    base_vertex: 0,
+                    index_count: self.index_count,
+                },
+            }
+        }
+
+        pub fn caster_range(&self, level: usize, own: (u32, u32)) -> (u32, u32) {
+            self.casters.get(level).copied().unwrap_or(own)
+        }
+    }
+
+    pub fn lod_levels(mesh: &GpuMesh) -> usize {
+        1 + mesh.plan.len().min(LOD_LEVELS - 1)
+    }
+
+    fn plan_levels(lods: &[(u32, u32, f32)]) -> Vec<(u32, u32, f32)> {
+        let first = lods.first().copied().filter(|&(_, count, _)| count > 0);
+        let empty = lods.last().copied().filter(|&(_, count, _)| count == 0);
+        first.into_iter().chain(empty).collect()
+    }
+
+    type WithLevels = (Vec<u32>, Vec<(u32, u32, f32)>, Vec<(u32, u32)>);
+
+    fn with_levels(mesh: &Mesh, lods: Option<&MeshLods>) -> WithLevels {
+        let mut indices =
+            Vec::with_capacity(mesh.indices().len() + lods.map_or(0, |lods| lods.indices.len()));
+        indices.extend_from_slice(mesh.indices());
+        let Some(lods) = lods else {
+            return (indices, Vec::new(), Vec::new());
+        };
+        indices.extend_from_slice(&lods.indices);
+        let levels = lods
+            .levels
+            .iter()
+            .map(|level| (level.first_index, level.index_count, level.error))
+            .collect();
+        (indices, levels, lods.casters.clone())
+    }
+
+    pub struct GpuMeshes {
+        meshes: BTreeMap<MeshHandle, GpuMesh>,
+        arena: MeshArena,
+        layout: u64,
+        staging: Vec<Vertex>,
+        residency: engine_registry::Residency,
+    }
+
+    impl GpuMeshes {
+        pub fn new(device: &wgpu::Device) -> Self {
+            Self {
+                meshes: BTreeMap::new(),
+                arena: MeshArena::new(
+                    device,
+                    [size_of::<Vertex>(), size_of::<ExtraVertex>()].map(|bytes| bytes as u64),
+                ),
+                layout: 0,
+                staging: Vec::new(),
+                residency: engine_registry::Residency::default(),
+            }
+        }
+
+        pub fn get(&self, handle: MeshHandle) -> Option<&GpuMesh> {
+            self.meshes.get(&handle)
+        }
+
+        pub fn contains(&self, handle: MeshHandle) -> bool {
+            self.meshes.contains_key(&handle)
+        }
+
+        pub fn draw(&self, handle: MeshHandle) -> Option<MeshDraw<'_>> {
+            self.meshes
+                .get(&handle)
+                .map(|mesh| mesh.draw(&self.arena))
+        }
+
+        pub fn arena(&self) -> &MeshArena {
+            &self.arena
+        }
+
+        pub fn len(&self) -> usize {
+            self.meshes.len()
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.meshes.is_empty()
+        }
+
+        pub fn iter(&self) -> impl Iterator<Item = (MeshHandle, &GpuMesh)> {
+            self.meshes.iter().map(|(&handle, mesh)| (handle, mesh))
+        }
+
+        pub fn layout(&self) -> u64 {
+            self.layout
+        }
+
+        pub fn residency(&self) -> &engine_registry::Residency {
+            &self.residency
+        }
+
+        pub fn capacity_bytes(&self) -> u64 {
+            self.arena.capacity_bytes()
+        }
+
+        pub fn retain(&mut self, mut keep: impl FnMut(MeshHandle) -> bool) {
+            let (arena, residency) = (&mut self.arena, &mut self.residency);
+            let resident = self.meshes.len();
+            self.meshes.retain(|handle, mesh| {
+                let kept = keep(*handle);
+                if !kept {
+                    if let Ok(placement) = mesh.placement {
+                        arena.remove(placement);
+                    }
+                    residency.remove(*handle);
+                }
+                kept
+            });
+            if self.meshes.len() != resident {
+                self.layout += 1;
+            }
+        }
+
+        pub fn upload(
+            &mut self,
+            device: &wgpu::Device,
+            queue: &Queue,
+            handle: MeshHandle,
+            source: &Mesh,
+            lods: Option<&MeshLods>,
+        ) -> u64 {
+            let std::collections::btree_map::Entry::Vacant(entry) = self.meshes.entry(handle)
+            else {
+                return 0;
+            };
+            self.staging.clear();
+            self.staging.reserve_exact(source.vertices().len());
+            self.staging
+                .extend(source.vertices().iter().map(Vertex::from));
+            let extras = ExtraVertex::stream(source);
+            let mut streams: Vec<&[u8]> = vec![bytemuck::cast_slice(&self.staging)];
+            if let Some(extras) = &extras {
+                streams.push(bytemuck::cast_slice(extras));
+            }
+            let (indices, levels, casters) = with_levels(source, lods);
+            let index_count = source.indices().len() as u32;
+            let without_levels = lods.is_none();
+            let placement = self
+                .arena
+                .insert(device, queue, &streams, self.staging.len() as u32, &indices)
+                .ok_or_else(|| {
+                    let buffer = |label, contents: &[u8], usage| {
+                        buffer_init(
+                            device,
+                            &wgpu::util::BufferInitDescriptor {
+                                label: Some(label),
+                                contents,
+                                usage,
+                            },
+                        )
+                    };
+                    let vertex = wgpu::BufferUsages::VERTEX;
+                    OwnMesh {
+                        vertices: buffer("engine/mesh-vertices", streams[0], vertex),
+                        extras: extras.as_ref().map(|stream| {
+                            buffer("engine/mesh-extras", bytemuck::cast_slice(stream), vertex)
+                        }),
+                        indices: buffer(
+                            "engine/mesh-indices",
+                            bytemuck::cast_slice(&indices),
+                            wgpu::BufferUsages::INDEX,
+                        ),
+                    }
+                });
+            self.layout += 1;
+            let byte_len = source.byte_len() as u64;
+            entry.insert(GpuMesh {
+                placement,
+                extended: extras.is_some(),
+                index_count,
+                byte_len,
+                plan: plan_levels(&levels),
+                lods: levels,
+                casters,
+                without_levels,
+            });
+            self.residency.insert(handle);
+            byte_len
         }
     }
 }

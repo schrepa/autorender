@@ -3,88 +3,56 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
+
 mod bvh;
 mod geometry;
 mod placed;
 mod queries;
-pub mod results;
-mod scene;
+mod results;
 mod smoke;
-mod solids;
 mod terrain;
 mod terrain_sweep;
 mod types;
 mod views;
 mod world;
 
-pub use queries::{
-    CollisionEventsQuery, CollisionFilterRequest, CollisionSensorFilter, CollisionShapeRequest,
-    OverlapQuery, RaycastQuery, ShapeCastQuery,
-};
-pub use scene::{COLLIDER, SceneCollider, SceneColliderShape};
-pub use solids::{ColliderSolid, GroundSolid, PlacedSolid, Solid};
-pub use terrain_sweep::TerrainSweepQuery;
-pub use types::*;
-pub use views::{
-    ColliderShapeView, ColliderView, CollisionLimitsView, CollisionWorldView, collider_view,
-};
-pub use world::{CollisionWorld, SensorEvents, refresh_collision_world};
+pub use types::{CollisionConfig, CollisionStats};
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, FixedPostSimulation, FixedPreSimulation, Join};
-use engine_scene::SceneComponentsList;
+use engine_core::{
+    Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source,
+};
+use engine_places::physics::{Collider, Collision};
 
-pub struct Collision;
+pub struct CollisionBrick;
 
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum CollisionSystems {
-    Sync,
-    Detect,
-}
+impl Brick for CollisionBrick {
+    const SOURCE: &'static Source = &SOURCE;
+    const SMOKES: &'static [Smoke] = &[Smoke {
+        name: "collision",
+        runs: Runs::Headless,
+        run: smoke::run,
+    }];
 
-impl Brick for Collision {
-    fn register(bricks: &mut Bricks) {
+    fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .resource::<CollisionConfig>()
-            .resource::<CollisionWorld>()
-            .resource::<SensorEvents>()
-            .join(Join::<SceneComponentsList>::new().cpu(&COLLIDER))
+            .when(|config: Res<CollisionConfig>| config.enabled)
+            .settings::<CollisionConfig>()
+            .stats::<CollisionStats>()
+            .fill::<Collision>(None)
+            .join::<SceneComponents>(ComponentKind::of::<Collider>("collider"), None)
             .systems(
-                FixedPreSimulation,
-                (world::sync_ground, world::sync)
-                    .chain()
-                    .in_set(CollisionSystems::Sync),
+                Schedule::FixedPreSimulation,
+                (world::sync_ground, world::sync),
             )
-            .configure_sets(
-                FixedPostSimulation,
-                (CollisionSystems::Sync, CollisionSystems::Detect).chain(),
-            )
-            .systems(
-                FixedPostSimulation,
-                (
-                    (world::sync_ground, world::sync)
-                        .chain()
-                        .in_set(CollisionSystems::Sync),
-                    world::detect.in_set(CollisionSystems::Detect),
-                ),
-            )
-            .inspector::<CollisionWorld, CollisionWorldView>(|_, world| {
-                CollisionWorldView::of(world)
-            })
-            .operation::<RaycastQuery>()
-            .operation::<OverlapQuery>()
-            .operation::<ShapeCastQuery>()
-            .operation::<CollisionEventsQuery>()
-            .operation::<TerrainSweepQuery>()
-            .smoke("collision", false, smoke::run);
+            .systems(Schedule::FixedPostSimulation, (world::sync, world::detect))
+            .off(world::forget)
+            .observation::<queries::RaycastQuery>()
+            .observation::<queries::OverlapQuery>()
+            .observation::<queries::ShapeCastQuery>()
+            .observation::<queries::CollisionEventsQuery>()
+            .observation::<terrain_sweep::TerrainSweepQuery>()
+            .observation::<views::ColliderQuery>();
     }
-}
-
-pub mod prelude {
-    pub use crate::{
-        Collider, ColliderShape, Collision, CollisionConfig, CollisionLayers, CollisionRay,
-        CollisionReport, CollisionSystems, CollisionWorld, PlacedPart, QueryFilter, RayHit,
-        SensorEvent, SensorEventKind, SensorEvents, SensorFilter, SensorPair, ShapeCastOptions,
-        ShapeHit, refresh_collision_world, validate_collider_transform,
-    };
 }

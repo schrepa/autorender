@@ -1,10 +1,13 @@
 use std::cell::Cell;
 
-use bevy_ecs::prelude::{Entity, World};
+use bevy_ecs::prelude::{Entity, Query};
 use std::sync::Arc;
 
-use engine_core::{TILE_QUADS, TILE_SAMPLES, TileKey};
-use engine_places::{FieldSamples, WorldSolids};
+use engine_places::ground::{TILE_QUADS, TILE_SAMPLES, TileKey};
+use engine_places::physics::{
+    CollisionLayers, CollisionRay, QueryFilter, RayHit, SensorFilter, ShapeCastOptions, ShapeHit,
+};
+use engine_places::solids::{FieldSamples, SolidSource};
 use glam::Vec3;
 use parry3d::{
     bounding_volume::Aabb,
@@ -19,10 +22,7 @@ use parry3d::{
 };
 
 use crate::geometry::{AffineShape, Bounds, Support};
-use crate::{
-    CollisionLayers, CollisionRay, Fault, QueryFilter, RayHit, SensorFilter, ShapeCastOptions,
-    ShapeHit,
-};
+use crate::types::Fault;
 
 struct Field {
     entity: Entity,
@@ -36,7 +36,6 @@ struct Field {
 #[derive(Default)]
 pub(crate) struct TerrainFields {
     fields: Vec<Field>,
-    revision: Option<u64>,
 }
 
 fn accepts(filter: QueryFilter, entity: Entity) -> bool {
@@ -50,46 +49,16 @@ impl TerrainFields {
         self.fields.len()
     }
 
-    pub(crate) fn solids(&self) -> impl Iterator<Item = crate::GroundSolid<'_>> {
-        self.fields.iter().map(|field| crate::GroundSolid {
-            terrain: field.entity,
-            key: field.key,
-            samples: &field.samples,
-            center: field.center,
-            min: field.bounds.min,
-            max: field.bounds.max,
-            field: &field.shape,
-        })
+    pub(crate) fn owners(&self) -> impl Iterator<Item = Entity> + '_ {
+        self.fields.iter().map(|field| field.entity)
     }
 
-    pub(crate) fn revision(&self) -> Option<u64> {
-        self.revision
-    }
-
-    pub(crate) fn sync(&mut self, world: &World) -> bool {
-        let Some(solids) = world.get_resource::<WorldSolids>() else {
-            let changed = !self.fields.is_empty();
-            self.fields.clear();
-            self.revision = None;
-            return changed;
-        };
-        let revision = solids.revision(world);
-        let wanted = solids.fields(world);
-        let same = self.revision == Some(revision)
-            && wanted.len() == self.fields.len()
-            && wanted.iter().all(|patch| {
-                self.fields.iter().any(|field| {
-                    field.entity == patch.owner
-                        && field.key == patch.key
-                        && Arc::ptr_eq(&field.samples, &patch.samples)
-                })
-            });
-        if same {
+    pub(crate) fn sync(&mut self, sources: &Query<'_, '_, &SolidSource>, changed: bool) -> bool {
+        if !changed {
             return false;
         }
-        self.revision = Some(revision);
         let mut kept = std::mem::take(&mut self.fields);
-        for patch in wanted {
+        for patch in sources.iter().flat_map(|source| source.field.fields()) {
             let (entity, key, origin) = (patch.owner, patch.key, patch.origin);
             if let Some(position) = kept.iter().position(|field| {
                 field.entity == entity
@@ -98,7 +67,7 @@ impl TerrainFields {
                         || field.samples.same(&*patch.samples))
             }) {
                 let mut field = kept.swap_remove(position);
-                field.samples = patch.samples;
+                field.samples = patch.samples.clone();
                 self.fields.push(field);
                 continue;
             }
@@ -135,7 +104,7 @@ impl TerrainFields {
             self.fields.push(Field {
                 entity,
                 key,
-                samples: patch.samples,
+                samples: patch.samples.clone(),
                 center: corner + Vec3::new(size * 0.5, 0.0, size * 0.5),
                 shape: Arc::new(shape),
                 bounds: Bounds {
@@ -361,7 +330,7 @@ fn cast_triangle(
         let normal = triangle.normal().unwrap_or(Vec3::Y);
         if !options.stop_at_penetration
             && displacement.dot(normal)
-                >= -1.0e-6 * engine_core::math::max(displacement.length(), 1.0)
+                >= -1.0e-6 * engine_math::max(displacement.length(), 1.0)
         {
             return Ok(None);
         }

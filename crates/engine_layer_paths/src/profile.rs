@@ -1,8 +1,9 @@
+use engine_codec::{Allowed, Expected};
+use engine_core::{ExtraRules, InvalidSetting, fields};
+use engine_heightfield::Layers;
+use engine_heightfield::noise::smooth;
+use engine_heightfield::path::{Bridge, PathSample, distance_to_segment};
 use engine_math::{max, min};
-use engine_settings::{ExtraRules, InvalidSetting, settings};
-use engine_terrain::Layers;
-use engine_terrain::noise::smooth;
-use engine_terrain::path::{Bridge, PathSample, distance_to_segment};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -10,13 +11,12 @@ pub const PROFILE_STEP: f32 = 4.0;
 pub const MAX_PATH_POINTS: usize = 4096;
 pub const MASK_MARGIN: f32 = 32.0;
 
-settings! {
+fields! {
     extra_rules;
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct PathLayer {
-        #[cfg_attr(feature = "schema", schemars(length(min = 2, max = MAX_PATH_POINTS)))]
+        #[schemars(length(min = 2, max = MAX_PATH_POINTS))]
         pub points: Vec<[f32; 2]> = Vec::new()
             => range(-Layers::MAX_COORDINATE, Layers::MAX_COORDINATE),
         #[serde(default = "default_width")]
@@ -38,12 +38,10 @@ impl ExtraRules for PathLayer {
             Ok(())
         } else {
             Err(
-                InvalidSetting::new("points", engine_settings::Expected::Array).allowed(
-                    engine_settings::Allowed::Range {
-                        min: 2.0,
-                        max: MAX_PATH_POINTS as f64,
-                    },
-                ),
+                InvalidSetting::new("points", Expected::Array).allowed(Allowed::Range {
+                    min: 2.0,
+                    max: MAX_PATH_POINTS as f64,
+                }),
             )
         }
     }
@@ -598,7 +596,7 @@ fn bridge(
     spans
 }
 
-engine_terrain::codec::record!(PathLayer {
+engine_codec::record!(PathLayer {
     points,
     width,
     shoulder,
@@ -606,7 +604,7 @@ engine_terrain::codec::record!(PathLayer {
     bridge_fill,
     tunnel_cut,
 });
-engine_terrain::codec::record!(PathStats {
+engine_codec::record!(PathStats {
     length,
     samples,
     steepest,
@@ -617,7 +615,7 @@ engine_terrain::codec::record!(PathStats {
     tunnels,
     tunneled,
 });
-engine_terrain::codec::record!(PathProfile {
+engine_codec::record!(PathProfile {
     line,
     along,
     step,

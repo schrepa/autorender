@@ -1,4 +1,4 @@
-use engine_core::DynamicResolution;
+use crate::resolution::DynamicResolution;
 
 use super::policy::{
     DYNAMIC_AIM, DYNAMIC_LOWER_FRAMES, DYNAMIC_OVER, DYNAMIC_PROBE_FRAMES, DYNAMIC_RAISE_FRAMES,

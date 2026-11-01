@@ -18,20 +18,21 @@ engine_places.workspace = true
 engine_terrain.workspace = true
 engine_navigation.workspace = true
 engine_worker.workspace = true
-engine_sources.workspace = true
 zstd.workspace = true
 engine_native.workspace = true
 glam.workspace = true
 gltf.workspace = true
 png.workspace = true
 tiff.workspace = true
-engine_render.workspace = true
 naga = { workspace = true, features = ["wgsl-in", "spv-out"] }
 sha2.workspace = true
 engine_assetc.workspace = true
 engine_profiler = { workspace = true, features = ["load"] }
 engine = { workspace = true, features = ["schema", "dev"] }
 engine_checks.workspace = true
+engine_place.workspace = true
+engine_registry.workspace = true
+engine_standard.workspace = true
 bevy_ecs = { workspace = true, features = ["debug"] }
 serde_json.workspace = true
 toml_edit.workspace = true

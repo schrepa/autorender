@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::World;
 use engine_core::{Error, ErrorCode};
+use engine_settings::Expected;
 use serde_json::Value;
 
 use super::TerrainClock;
@@ -112,6 +113,24 @@ fn overlaid(entry: &str) -> Result<(String, Value), Error> {
 }
 
 pub fn apply_setting(world: &mut World, key: &str, value: &Value) -> Result<(), Error> {
-    engine_registry::settings(world, key)?.set(world, value)?;
-    Ok(())
+    let (section, field) = match key.split_once('.') {
+        Some((section, field)) => (section, Some(field)),
+        None => (key, None),
+    };
+    let entry = engine_registry::settings(world, section)?;
+    let Some(field) = field else {
+        return entry.set(world, value);
+    };
+    let mut current = entry.current(world);
+    let Some(fields) = current.as_object_mut() else {
+        return Err(Error::new(ErrorCode::InvalidType, format!("$.{section}"))
+            .expected(Expected::Object));
+    };
+    if !fields.contains_key(field) {
+        return Err(Error::new(ErrorCode::UnknownField, format!("$.{key}"))
+            .got(field)
+            .variants(fields.keys().cloned()));
+    }
+    fields.insert(field.to_owned(), value.clone());
+    entry.set(world, &current)
 }

@@ -187,7 +187,10 @@ impl PoseTable {
     }
 
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (Entity, Option<Affine3A>)> + '_ {
-        self.entities.iter().copied().zip(self.poses.iter().copied())
+        self.entities
+            .iter()
+            .copied()
+            .zip(self.poses.iter().copied())
     }
 }
 

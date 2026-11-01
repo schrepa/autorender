@@ -2,7 +2,7 @@ use std::any::Any;
 
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
-use engine_place::List;
+use engine_place::{Error, ErrorCode, List};
 
 use crate::gates::{GateId, Gates};
 
@@ -11,6 +11,7 @@ pub struct MembersOf<L: List> {
     members: Vec<L::Member>,
     live: Vec<bool>,
     gates: Vec<GateId>,
+    owners: Vec<&'static str>,
 }
 
 impl<L: List> Default for MembersOf<L> {
@@ -19,6 +20,7 @@ impl<L: List> Default for MembersOf<L> {
             members: Vec::new(),
             live: Vec::new(),
             gates: Vec::new(),
+            owners: Vec::new(),
         }
     }
 }
@@ -36,6 +38,10 @@ impl<L: List> MembersOf<L> {
         &self.members
     }
 
+    pub fn owners(&self) -> &[&'static str] {
+        &self.owners
+    }
+
     pub fn len(&self) -> usize {
         self.members.len()
     }
@@ -44,10 +50,11 @@ impl<L: List> MembersOf<L> {
         self.members.is_empty()
     }
 
-    pub fn push(&mut self, member: L::Member, gate: GateId) {
+    pub fn push(&mut self, member: L::Member, gate: GateId, owner: &'static str) {
         self.members.push(member);
         self.live.push(true);
         self.gates.push(gate);
+        self.owners.push(owner);
     }
 
     pub fn refresh(&mut self, gates: &Gates) {
@@ -55,11 +62,37 @@ impl<L: List> MembersOf<L> {
             *live = gates.on(*gate);
         }
     }
+
+    pub fn names_twice(&self, name: fn(&L::Member) -> &str) -> Vec<Error> {
+        let mut problems = Vec::new();
+        for (index, member) in self.members.iter().enumerate() {
+            let named = name(member);
+            let first = self.members[..index]
+                .iter()
+                .position(|known| name(known) == named);
+            if let Some(first) = first {
+                let path = format!("$.places.{}.{named}", L::NAME);
+                problems.push(
+                    Error::new(ErrorCode::NameTwice, path)
+                        .got(self.owners[first])
+                        .nearest(self.owners[index]),
+                );
+            }
+        }
+        problems
+    }
 }
 
-pub(crate) fn add_member<L: List>(world: &mut World, member: Box<dyn Any + Send + Sync>, gate: GateId) {
+pub(crate) fn add_member<L: List>(
+    world: &mut World,
+    member: Box<dyn Any + Send + Sync>,
+    gate: GateId,
+    owner: &'static str,
+) {
     if let Ok(member) = member.downcast::<L::Member>() {
-        world.get_resource_or_init::<MembersOf<L>>().push(*member, gate);
+        world
+            .get_resource_or_init::<MembersOf<L>>()
+            .push(*member, gate, owner);
     }
 }
 

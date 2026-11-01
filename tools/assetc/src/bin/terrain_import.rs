@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 
 use engine_core::command_line::{self, CommandOption};
 use engine_layer_hydrology::RiversLayer;
-use engine_terrain::GivenRiver;
+use engine_heightfield::GivenRiver;
+use engine_heightfield::given::{MAX_CREDIT, MAX_GIVEN_RIVERS, MAX_PRECISION};
 use serde_json::{Value, json};
 use tiff::decoder::{Decoder, DecodingResult, Limits};
 use tiff::tags::Tag;
@@ -43,11 +44,8 @@ fn command_options() -> Vec<CommandOption> {
         CommandOption::taking("--attribution", "TEXT"),
         CommandOption::taking("--sea", "N").in_unit("m"),
         CommandOption::taking("--rivers", "FILE"),
-        CommandOption::taking(
-            "--river-precision",
-            format!("0-{}", engine_terrain::MAX_PRECISION),
-        )
-        .in_unit("m"),
+        CommandOption::taking("--river-precision", format!("0-{MAX_PRECISION}"))
+            .in_unit("m"),
         CommandOption::taking("--river-attribution", "TEXT"),
         CommandOption::taking("INPUT", "PATH...").required(),
         CommandOption::flag("--help"),
@@ -153,7 +151,7 @@ fn options() -> Result<Options, String> {
                 let precision: f64 = text
                     .parse()
                     .map_err(|error| format!("--river-precision {text}: {error}"))?;
-                let most = f64::from(engine_terrain::MAX_PRECISION);
+                let most = f64::from(MAX_PRECISION);
                 if !(precision.is_finite() && (0.0..=most).contains(&precision)) {
                     return Err(format!("--river-precision must be 0 to {most} meters"));
                 }
@@ -535,7 +533,7 @@ fn read_rivers(
     place: &dyn Fn(f64, f64) -> [f64; 2],
     size: f64,
 ) -> Result<Vec<GivenRiver>, String> {
-    use engine_terrain::{MAX_CREDIT, MAX_DEPTH, MAX_DISCHARGE, MAX_RIVER_POINTS, MAX_WIDTH};
+    use engine_heightfield::given::{MAX_DEPTH, MAX_DISCHARGE, MAX_RIVER_POINTS, MAX_WIDTH};
     let name = path.display().to_string();
     let text = std::fs::read_to_string(path).map_err(|error| format!("{name}: {error}"))?;
     let document: Value =
@@ -782,7 +780,7 @@ fn run() -> Result<(), String> {
                 [east + 0.5 * size, 0.5 * size - north]
             };
             let mut lines = read_rivers(path, &place, size)?;
-            let most = engine_terrain::MAX_GIVEN_RIVERS;
+            let most = MAX_GIVEN_RIVERS;
             if lines.len() > most {
                 let record = json!({
                     "event": "rivers_truncated",
@@ -820,12 +818,12 @@ fn run() -> Result<(), String> {
                 }
                 let named = path.display().to_string();
                 let layer = RiversLayer {
-                    source: Some(named.chars().take(engine_terrain::MAX_CREDIT).collect()),
+                    source: Some(named.chars().take(MAX_CREDIT).collect()),
                     lines,
                     precision: options
                         .river_precision
                         .unwrap_or(spacing)
-                        .min(f64::from(engine_terrain::MAX_PRECISION))
+                        .min(f64::from(MAX_PRECISION))
                         as f32,
                     attribution: options.river_attribution.clone(),
                 };

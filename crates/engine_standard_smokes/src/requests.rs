@@ -1,12 +1,13 @@
-use engine_core::smoke::{SmokeFailure, SmokeResult, SmokeSession};
-use engine_scene::SceneDocument;
-use serde_json::{Map, Value, json};
-
-use crate::camera::FlyCameraController;
+use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
+use serde_json::{Value, json};
 
 pub(crate) type Asked = Result<Value, SmokeFailure>;
 
 pub(crate) const FRAME_MS: f64 = 1000.0 / 60.0;
+
+pub(crate) fn seen(held: bool, got: Value, expected: &Value) -> Value {
+    if held { expected.clone() } else { got }
+}
 
 pub(crate) fn reply(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Value {
     match session.request(verb, body) {
@@ -21,27 +22,11 @@ pub(crate) fn accepted(
     check: &'static str,
 ) -> Asked {
     let reply = reply(session, verb, body);
-    engine_core::smoke_check!(
-        reply["ok"] == true,
-        check,
-        reply["error"].clone(),
-        json!({ "ok": true })
-    );
-    Ok(reply)
-}
-
-pub(crate) fn refused(
-    session: &mut dyn SmokeSession,
-    verb: &str,
-    body: Value,
-    check: &'static str,
-) -> Asked {
-    let reply = reply(session, verb, body);
-    engine_core::smoke_check!(
-        reply["ok"] == false,
-        check,
-        reply["result"].clone(),
-        json!({ "ok": false })
+    let wanted = json!({ "ok": true });
+    smoke_eq!(
+        seen(reply["ok"] == true, reply["error"].clone(), &wanted),
+        wanted,
+        check
     );
     Ok(reply)
 }
@@ -54,11 +39,11 @@ pub(crate) fn refused_with(
     check: &'static str,
 ) -> Asked {
     let reply = reply(session, verb, body);
-    engine_core::smoke_check!(
-        reply["error"]["code"] == code,
-        check,
-        reply["error"].clone(),
-        json!({ "code": code })
+    let wanted = json!({ "code": code });
+    smoke_eq!(
+        seen(reply["error"]["code"] == code, reply["error"].clone(), &wanted),
+        wanted,
+        check
     );
     Ok(reply)
 }
@@ -98,25 +83,6 @@ pub(crate) fn inspected(
     Ok(reply["result"]["value"].clone())
 }
 
-pub(crate) fn component(
-    session: &mut dyn SmokeSession,
-    entity: &str,
-    component: &str,
-    check: &'static str,
-) -> Asked {
-    let body = json!({ "entity": entity, "component": component });
-    let reply = accepted(session, "inspect", body, check)?;
-    Ok(reply["result"]["entity"]["components"][component].clone())
-}
-
-pub(crate) fn environment(
-    session: &mut dyn SmokeSession,
-    args: Value,
-    check: &'static str,
-) -> Asked {
-    control(session, "environment", args, check)
-}
-
 pub(crate) fn frames(session: &mut dyn SmokeSession, count: u32, check: &'static str) -> Asked {
     control(
         session,
@@ -124,27 +90,6 @@ pub(crate) fn frames(session: &mut dyn SmokeSession, count: u32, check: &'static
         json!({ "count": count, "interval_ms": FRAME_MS }),
         check,
     )
-}
-
-pub(crate) fn counter(reply: &Value, field: &str) -> u64 {
-    let observation = &reply["observation"];
-    let observation = if observation.is_object() {
-        observation
-    } else {
-        &reply["result"]["observation"]
-    };
-    observation[field]
-        .as_str()
-        .and_then(|text| text.parse().ok())
-        .unwrap_or(u64::MAX)
-}
-
-pub(crate) fn tick(reply: &Value) -> u64 {
-    counter(reply, "tick")
-}
-
-pub(crate) fn frame(reply: &Value) -> u64 {
-    counter(reply, "frame")
 }
 
 pub(crate) fn number(value: &Value) -> f64 {
@@ -161,56 +106,21 @@ pub(crate) fn names(value: &Value) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn sorted_keys(value: &Value) -> Vec<String> {
-    let mut keys: Vec<String> = value
-        .as_object()
-        .map(|object| object.keys().cloned().collect())
-        .unwrap_or_default();
-    keys.sort();
-    keys
-}
-
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn idle(milliseconds: f64) {
-    let until = crate::host::now_ms() + milliseconds;
-    while crate::host::now_ms() < until {
+    let until =
+        std::time::Instant::now() + std::time::Duration::from_secs_f64(milliseconds / 1000.0);
+    while std::time::Instant::now() < until {
         std::hint::spin_loop();
     }
 }
 
-pub(crate) fn serve(
-    session: &mut dyn SmokeSession,
-    document: &Value,
-    without: &[&str],
-) -> SmokeResult {
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn idle(_: f64) {}
+
+pub(crate) fn serve(session: &mut dyn SmokeSession, document: &Value) -> Result<(), SmokeFailure> {
     session.source(&document.to_string());
-    session.restart(session.bricks().without(without.iter().copied()));
     control(session, "pause", json!({}), "pauses")?;
-    Ok(())
-}
-
-pub(crate) fn spawned(session: &mut dyn SmokeSession, document: &Value) -> Result<(), Value> {
-    let text = document.to_string();
-    let scene = SceneDocument::from_json(&text)
-        .map_err(|error| json!({ "code": error.code, "path": error.path }))?;
-    scene
-        .instantiate(session.app().world_mut())
-        .map(|_| ())
-        .map_err(|error| json!({ "code": error.code, "path": error.path }))
-}
-
-pub(crate) fn spawn(session: &mut dyn SmokeSession, document: &Value) -> SmokeResult {
-    let refusal = spawned(session, document).err();
-    engine_core::smoke_check!(
-        refusal.is_none(),
-        "scene_instantiates",
-        refusal.clone().unwrap_or_default(),
-        json!(null)
-    );
-    let world = session.app().world_mut();
-    let camera = *world.resource::<engine_core::Camera>();
-    if let Some(mut controller) = world.get_resource_mut::<FlyCameraController>() {
-        controller.align_to(&camera);
-    }
     Ok(())
 }
 
@@ -293,7 +203,7 @@ fn checker() -> Vec<u8> {
     pixels
 }
 
-pub(crate) fn base64(bytes: &[u8]) -> String {
+fn base64(bytes: &[u8]) -> String {
     const LETTERS: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut text = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -311,64 +221,4 @@ pub(crate) fn base64(bytes: &[u8]) -> String {
         }
     }
     text
-}
-
-pub(crate) struct Pixels {
-    pub(crate) width: u32,
-    pub(crate) height: u32,
-    pub(crate) rgba: Vec<u8>,
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn pixels(reply: &Value) -> Result<Option<Pixels>, SmokeFailure> {
-    let artifact = &reply["result"]["artifact"];
-    let path = artifact["path"].as_str().unwrap_or_default();
-    let bytes = std::fs::read(path).unwrap_or_default();
-    engine_core::smoke_check!(
-        bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]),
-        "capture_is_png",
-        artifact.clone(),
-        json!({ "mime_type": "image/png" })
-    );
-    engine_core::smoke_eq!(
-        json!(bytes.len()),
-        artifact["bytes"].clone(),
-        "capture_bytes_match"
-    );
-    let image = crate::host::decode_image(path, &bytes);
-    engine_core::smoke_check!(
-        image.is_ok(),
-        "capture_decodes",
-        json!(image.as_ref().err()),
-        json!(null)
-    );
-    Ok(image.ok().map(|image| Pixels {
-        width: image.width,
-        height: image.height,
-        rgba: image.pixels,
-    }))
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn pixels(_: &Value) -> Result<Option<Pixels>, SmokeFailure> {
-    Ok(None)
-}
-
-pub(crate) fn differing(a: &Pixels, b: &Pixels, tolerance: u8) -> Result<usize, SmokeFailure> {
-    engine_core::smoke_eq!(
-        json!([b.width, b.height]),
-        json!([a.width, a.height]),
-        "capture_size_kept"
-    );
-    Ok(a.rgba
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .zip(b.rgba.as_chunks::<4>().0)
-        .filter(|(a, b)| (0..3).any(|channel| a[channel].abs_diff(b[channel]) > tolerance))
-        .count())
-}
-
-pub(crate) fn object(value: &Value) -> Map<String, Value> {
-    value.as_object().cloned().unwrap_or_default()
 }

@@ -13,7 +13,6 @@ attribution = []
 schema = ["engine_assets/schema", "engine_settings/schema"]
 
 [dependencies]
-engine_ecs.workspace = true
 engine_place.workspace = true
 engine_registry.workspace = true
 engine_codec.workspace = true
@@ -28,11 +27,14 @@ glam.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-engine_sources.workspace = true
+sha2.workspace = true
 engine_textures.workspace = true
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+engine_lodbuild.workspace = true
+
 [build-dependencies]
-engine_sources.workspace = true
+sha2.workspace = true
 
 [[example]]
 name = "brick_template"

@@ -6,16 +6,16 @@
 mod casters;
 mod chain;
 mod distance;
+mod lod;
 pub mod simplify;
 
-use engine_assets::{LodInput, MeshLods, MeshVertex};
-use engine_settings::Error;
+use engine_codec::Error;
 
-pub const KIND: &str = engine_assets::LOD_RECORD;
+pub use lod::{LodInput, LodLevel, MeshLods, MeshVertex, input_bytes};
 
-pub fn run(input: &[u8]) -> Result<Vec<u8>, String> {
-    let input = LodInput::from_bytes(input).map_err(|error| error.to_string())?;
-    let lods = chain::levels(&input).map_err(|error| error.to_string())?;
+pub fn run(input: &[u8]) -> Result<Vec<u8>, Error> {
+    let input = LodInput::from_bytes(input)?;
+    let lods = chain::levels(&input)?;
     Ok(lods.to_bytes())
 }
 

@@ -1,729 +1,316 @@
-use engine_core::{Applied, Member, RenderStats};
-use engine_faces::heightfield::{HeightfieldFace, TerrainInfo};
-use engine_faces::placed::PlacedFace;
-use engine_render::bindings::GroupRef;
-use engine_render::cached::{Bound, GroupCache, Versioned};
-use engine_render::depth_pyramid::{DepthPyramid, Reduction};
-use engine_render::gpu_calls::Queue;
-use engine_render::graph::{
-    Access, Clear, FrameGraph, GraphTable, Lifetime, PassDecl, PassId, ResourceDecl, ResourceId,
-    Stage, TRANSPARENT,
+use bevy_ecs::prelude::*;
+use engine_core::{Entry, Error, View};
+use engine_places::ground::{Cover, GroundTiles, PlacedTiles, TerrainTiles};
+use engine_render::{
+    Access, Attach, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DebugShown,
+    DepthUse, Encode, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
+    SamplerDesc, Shape, Texture, ViewTarget, wgpu,
 };
-use engine_render::lazy::Lazy;
-use engine_render::parts::{Create, Encode, GpuPart, PartDecl, PartEntry, Prelude, Step, View};
-use engine_render::pieces::PieceDecl;
-use engine_render::pipeline_layouts::PipelineLayout;
-use engine_render::pipelines::{self, Fullscreen, GroupLayout, fullscreen};
-use engine_render::post::PostPass;
-use engine_render::profiling::GpuProfiler;
-use engine_render::renderer::Core;
-use engine_render::shaders::Entry;
-use engine_render::targets::{
-    FrameRegion, FrameSize, RENDER_TARGET, ScreenTarget, fullscreen_pass,
-};
-use engine_terrain::{GroundCover, RenderTerrains};
 
-use crate::gpu_layouts::ReflectionsPiece;
-use crate::layouts::{
-    COMPOSITE_REFLECTIONS, REFLECTION_LEVEL_PIPELINES, REFLECTION_LEVELS, REFLECTION_PIPELINES,
-    REFLECTIONS,
-};
-use crate::shaders::entry::reflections;
-use crate::world_trace::{Placements, TraceFrame, WorldTrace};
+use crate::gpu::{PYRAMID_GROUP, PyramidExtent};
+use crate::shaders::reflections::{apply, levels, nearest, trace};
+use crate::world_trace::{TraceFrame, WorldTrace};
 
 const SCENE_LEVELS: u32 = 6;
-const TARGET: &str = "reflections";
+const PYRAMID_LEVELS: u32 = 15;
 const REFLECTION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+const NEAREST_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 
-pub(crate) const MEMBER: Member = Member {
-    module: "reflections::apply",
-    functions: &["apply"],
-    reads: &[TARGET],
-};
-
-pub(crate) static PART: PartEntry = PartEntry {
-    decl: PartDecl {
-        name: "reflections",
-        brick: "reflections",
-        passes: &[PassDecl {
-            name: "reflections",
-            stage: Stage::PostScene,
-        }],
-        resources: &[ResourceDecl {
-            name: TARGET,
-            lifetime: Lifetime::Frame,
-        }],
-        hooks: &[],
-        contributes: &[COMPOSITE_REFLECTIONS],
-        resolve: None,
-        labels: &["engine/reflections-"],
-        lazy: true,
-        needs: &[],
-        piece: Some(PieceDecl {
-            name: "reflections",
-            module: "reflections::piece",
-            ty: "ReflectionsPiece",
-            size: size_of::<ReflectionsPiece>() as u64,
-        }),
-    },
-    create,
-};
-
-fn create(cx: &Create<'_>) -> Box<dyn GpuPart> {
-    Box::new(ReflectionsPass::new(&cx.core.device))
+pub(crate) struct TraceGpu {
+    copy: Pass<Self>,
+    chain: Pass<Self>,
+    reduce: Pass<Self>,
+    reflect: Pass<Self>,
+    reflected: Texture<Self>,
+    levels: Texture<Self>,
+    pyramid: Texture<Self>,
+    terrains: Buffer<Self>,
+    placed: Buffer<Self>,
+    extents: Vec<Buffer<Self>>,
+    downs: Vec<Pipeline<Self, Own>>,
+    reductions: Vec<ComputePipeline<Self>>,
+    tracing: Pipeline<Self, Own>,
+    world: WorldTrace,
+    region: Region,
+    count: u32,
+    reduced: Vec<PyramidExtent>,
 }
 
-fn linear_clamp(device: &wgpu::Device, label: &'static str) -> wgpu::Sampler {
-    device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some(label),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Linear,
-        ..Default::default()
-    })
+impl GpuPart for TraceGpu {
+    type Reads = (
+        Res<'static, View>,
+        Res<'static, DebugShown>,
+        Res<'static, TerrainTiles>,
+        Res<'static, GroundTiles>,
+        Res<'static, PlacedTiles>,
+        Res<'static, Cover>,
+    );
+
+    fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
+        let reflected = cx.texture("reflections", REFLECTION_FORMAT, Lifetime::Frame);
+        let levels_texture = cx.texture("scene_levels", SCENE_FORMAT, Lifetime::Frame);
+        let pyramid = cx.texture("nearest_depth", NEAREST_FORMAT, Lifetime::Frame);
+        let terrains = cx.buffer("world_terrains", Lifetime::Kept);
+        let placed = cx.buffer("world_placed", Lifetime::Kept);
+        let extents: Vec<Buffer<Self>> = (0..PYRAMID_LEVELS)
+            .map(|_| cx.buffer("nearest_extent", Lifetime::Kept))
+            .collect();
+        let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
+        cx.frame(apply::REFLECTIONS, Bind::Texture(reflected))?;
+        cx.frame(apply::REFLECTIONS_SAMPLER, Bind::Sampler(sampler))?;
+        let copy = cx.copy(
+            "scene_levels_copy",
+            Copied::Target(ViewTarget::Scene),
+            Copied::Texture(levels_texture),
+        );
+        let chain = cx
+            .pass("scene_levels")
+            .after(copy)
+            .color(levels_texture, Access::Load)
+            .id();
+        let reduce = cx.pass("nearest_depth").id();
+        let reflect = cx
+            .pass("reflections")
+            .color(reflected, Access::Clear)
+            .id();
+        let mut downs = Vec::new();
+        for level in 1..=SCENE_LEVELS {
+            let fragment = if level == 1 {
+                levels::FS_LEVELS_FIRST
+            } else {
+                levels::FS_LEVELS_DOWN
+            };
+            downs.push(cx.render_pipeline(
+                chain,
+                &screen(levels::VS_LEVELS, fragment),
+                &[(levels::SOURCE, mip(levels_texture, level - 1))],
+            )?);
+        }
+        let mut reductions = Vec::new();
+        for (level, uniform) in (0..PYRAMID_LEVELS).zip(&extents) {
+            let reduction = if level == 0 {
+                cx.compute_pipeline(
+                    reduce,
+                    nearest::CS_NEAREST_FIRST,
+                    &[
+                        (nearest::SOURCE_DEPTH, Bind::Target(ViewTarget::Depth)),
+                        (nearest::TARGET_LEVEL, mip(pyramid, 0)),
+                        (nearest::EXTENT, Bind::Buffer(*uniform)),
+                    ],
+                )?
+            } else {
+                cx.compute_pipeline(
+                    reduce,
+                    nearest::CS_NEAREST_DOWN,
+                    &[
+                        (nearest::SOURCE_LEVEL, mip(pyramid, level - 1)),
+                        (nearest::TARGET_LEVEL, mip(pyramid, level)),
+                        (nearest::EXTENT, Bind::Buffer(*uniform)),
+                    ],
+                )?
+            };
+            reductions.push(reduction);
+        }
+        let tracing = cx.render_pipeline(
+            reflect,
+            &screen(trace::VS_TRACE, trace::FS_REFLECTIONS),
+            &[
+                (trace::NEAREST_DEPTH, Bind::Texture(pyramid)),
+                (trace::SCENE_LEVELS, Bind::Texture(levels_texture)),
+                (trace::WORLD_TERRAINS, Bind::Buffer(terrains)),
+                (trace::WORLD_PLACED, Bind::Buffer(placed)),
+            ],
+        )?;
+        Ok(Self {
+            copy,
+            chain,
+            reduce,
+            reflect,
+            reflected,
+            levels: levels_texture,
+            pyramid,
+            terrains,
+            placed,
+            extents,
+            downs,
+            reductions,
+            tracing,
+            world: WorldTrace::default(),
+            region: Region::default(),
+            count: 0,
+            reduced: Vec::new(),
+        })
+    }
+
+    fn prepare(
+        &mut self,
+        (view, shown, tiles, ground, placed, cover): SystemParamItem<'_, '_, Self::Reads>,
+        cx: &mut Prepare<'_, Self>,
+    ) {
+        if view.is_added() {
+            self.world.forget();
+            self.reduced.clear();
+        }
+        self.world.prepare(
+            cx,
+            (self.terrains, self.placed),
+            &TraceFrame {
+                tiles: &tiles,
+                ground: &ground,
+                placed: &placed,
+                cover: &cover,
+                ground_changed: ground.is_changed(),
+                placed_changed: placed.is_changed(),
+            },
+        );
+        if shown.owner.is_some() {
+            return;
+        }
+        let display = view.display_size();
+        let render = view.render_size();
+        self.region = Region::new((display.x, display.y), (render.x, render.y));
+        self.count = SCENE_LEVELS.min(mip_levels(display.x, display.y) - 1);
+        let whole = extent(display.x, display.y);
+        cx.allocate(self.reflected, whole, 1);
+        cx.allocate(self.levels, whole, 1 + self.count);
+        let base = (
+            display.x.div_ceil(2).max(1).next_power_of_two(),
+            display.y.div_ceil(2).max(1).next_power_of_two(),
+        );
+        let reductions = mip_levels(base.0, base.1).min(PYRAMID_LEVELS);
+        cx.allocate(self.pyramid, extent(base.0, base.1), reductions);
+        let reduced = extents(self.region.render, reductions);
+        for buffer in &self.extents {
+            cx.allocate_buffer(*buffer, size_of::<PyramidExtent>() as u64);
+        }
+        if reduced != self.reduced {
+            for (buffer, written) in self.extents.iter().zip(&reduced) {
+                cx.write(*buffer, 0, &[*written]);
+            }
+            self.reduced = reduced;
+        }
+        cx.copy(
+            self.copy,
+            &[CopyRegion::Texels {
+                from: wgpu::Origin3d::ZERO,
+                to: wgpu::Origin3d::ZERO,
+                size: whole,
+            }],
+        );
+        cx.run(self.copy);
+        if self.count > 0 {
+            cx.run(self.chain);
+        }
+        cx.run(self.reduce);
+        cx.run(self.reflect);
+    }
+
+    fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+        if pass == self.chain {
+            for (level, down) in (0..self.count).zip(&self.downs) {
+                let mut draw = cx.render(Attach::ColorMip(self.levels, level + 1, 0), None);
+                draw.scissor(self.region.level(level));
+                draw.draw(down, FULLSCREEN);
+            }
+            return 0;
+        }
+        if pass == self.reduce {
+            for (reduction, written) in self.reductions.iter().zip(&self.reduced) {
+                let [width, height] = written.size;
+                let groups = [width.div_ceil(PYRAMID_GROUP), height.div_ceil(PYRAMID_GROUP), 1];
+                cx.dispatch(reduction, Count::Groups(groups));
+            }
+            return 0;
+        }
+        if pass == self.reflect {
+            let (width, height) = self.region.render;
+            let mut draw = cx.render(Attach::Declared, None);
+            draw.scissor([0, 0, width, height]);
+            draw.draw(&self.tracing, FULLSCREEN);
+        }
+        0
+    }
+}
+
+const FULLSCREEN: Shape<'static, TraceGpu, Own> = Shape::Pulled {
+    vertices: 0..3,
+    instances: 0..1,
+};
+
+fn screen(vertex: Entry, fragment: Entry) -> RenderPipeline<'static> {
+    RenderPipeline {
+        vertex,
+        fragment: Some(fragment),
+        debug: None,
+        vertices: &[],
+        primitive: wgpu::PrimitiveState::default(),
+        depth: DepthUse::None,
+        blend: None,
+        writes: wgpu::ColorWrites::ALL,
+    }
+}
+
+fn mip(texture: Texture<TraceGpu>, level: u32) -> Bind<TraceGpu> {
+    Bind::Slice {
+        texture,
+        mips: level..level + 1,
+        layers: 0..1,
+    }
+}
+
+fn extent(width: u32, height: u32) -> wgpu::Extent3d {
+    wgpu::Extent3d {
+        width,
+        height,
+        depth_or_array_layers: 1,
+    }
+}
+
+fn mip_levels(width: u32, height: u32) -> u32 {
+    u32::BITS - width.max(height).max(1).leading_zeros()
+}
+
+fn extents((width, height): (u32, u32), count: u32) -> Vec<PyramidExtent> {
+    let mut source = (width.max(1), height.max(1));
+    (0..count)
+        .map(|_| {
+            let written = (source.0.div_ceil(2), source.1.div_ceil(2));
+            let extent = PyramidExtent {
+                size: [written.0, written.1],
+                last: [source.0 - 1, source.1 - 1],
+            };
+            source = written;
+            extent
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Default)]
-struct Ids {
-    pass: Option<PassId>,
-    depth: Option<ResourceId>,
-    scene: Option<ResourceId>,
-    glow: Option<ResourceId>,
-    surface: Option<ResourceId>,
-    reflections: Option<ResourceId>,
+struct Region {
+    display: (u32, u32),
+    render: (u32, u32),
 }
 
-struct Composited {
-    sampler: wgpu::Sampler,
-    _off_texture: wgpu::Texture,
-    off: Versioned<wgpu::TextureView>,
-}
-
-struct ReflectionsPass {
-    reflections: Lazy<Reflections>,
-    composited: Composited,
-    active: bool,
-    piece: ReflectionsPiece,
-    ids: Ids,
-}
-
-impl ReflectionsPass {
-    fn new(device: &wgpu::Device) -> Self {
-        let off = engine_render::targets::texture_2d(
-            device,
-            "engine/reflections-off",
-            (1, 1),
-            1,
-            1,
-            REFLECTION_FORMAT,
-            wgpu::TextureUsages::TEXTURE_BINDING,
-        );
+impl Region {
+    fn new(display: (u32, u32), render: (u32, u32)) -> Self {
+        let within = |size: u32, whole: u32| size.clamp(1, whole.max(1));
         Self {
-            reflections: Lazy::default(),
-            composited: Composited {
-                sampler: linear_clamp(device, "engine/reflections-sampler"),
-                off: Versioned::new(off.create_view(&wgpu::TextureViewDescriptor::default())),
-                _off_texture: off,
-            },
-            active: false,
-            piece: ReflectionsPiece::default(),
-            ids: Ids::default(),
+            display,
+            render: (within(render.0, display.0), within(render.1, display.1)),
         }
     }
 
-    fn release(&mut self) {
-        if let Some(reflections) = self.reflections.get_mut() {
-            reflections.release_targets();
-        }
-        self.reflections.release();
-    }
-}
-
-fn shared_group<'c>(
-    core: &'c Core,
-    layout: &'static PipelineLayout,
-) -> Option<&'c wgpu::BindGroup> {
-    match *layout.groups.first()? {
-        GroupRef::Shared { group, without } => Some(core.shared_group(group, without)),
-        GroupRef::Own(_) => None,
-    }
-}
-
-impl GpuPart for ReflectionsPass {
-    fn install(&mut self, table: &GraphTable) {
-        self.ids = Ids {
-            pass: table.pass_named("reflections"),
-            depth: table.resource("depth"),
-            scene: table.resource("scene"),
-            glow: table.resource("glow"),
-            surface: table.resource("surface"),
-            reflections: table.resource(TARGET),
+    fn level(self, level: u32) -> [u32; 4] {
+        let part = |drawn: u32, whole: u32| {
+            let whole = (whole >> (level + 1)).max(1);
+            ((drawn >> (level + 1)).max(1) + 1).min(whole)
         };
-    }
-
-    fn prepare(&mut self, cx: &mut Step<'_>, _prelude: &mut Prelude) {
-        let snapshot = cx.frame.snapshot;
-        let settings = snapshot.section::<crate::Reflections>();
-        self.piece = ReflectionsPiece {
-            surface: [
-                settings.max_roughness,
-                if settings.enabled() { 1.0 } else { 0.0 },
-                0.0,
-                0.0,
-            ],
-            trace: [
-                settings.distance,
-                0.0,
-                0.0,
-                WorldTrace::walked(RenderTerrains::of(snapshot)) as f32,
-            ],
-            applied: [settings.distance, settings.intensity, 0.0, 0.0],
-        };
-        self.active = false;
-        if cx.frame.kind.debug {
-            return;
-        }
-        let core = &*cx.core;
-        let runs = settings.enabled() && cx.parts.face::<dyn HeightfieldFace>().is_some();
-        let Some((post, scene)) = cx
-            .parts
-            .post()
-            .filter(|_| runs)
-            .and_then(|post| Some((post, post.scene_texture()?)))
-        else {
-            self.release();
-            return;
-        };
-        let format = scene.format();
-        let device = &core.device;
-        self.reflections.create(device, "engine/reflections-", || {
-            Reflections::new(device, format)
-        });
-        if let Some(reflections) = self.reflections.get_mut() {
-            self.active = reflections.begin(
-                device,
-                &core.queue,
-                (core.display.region, &core.depth.view),
-                post,
-            );
-        }
-        self.piece.applied[2] = if self.active { 1.0 } else { 0.0 };
-    }
-
-    fn finish(&mut self, cx: &mut Step<'_>) {
-        if !self.active {
-            return;
-        }
-        let Some(reflections) = self.reflections.get_mut() else {
-            return;
-        };
-        let core = &*cx.core;
-        let (Some(terrain), Some(uniform)) = (
-            cx.parts.face::<dyn HeightfieldFace>(),
-            cx.parts.post().and_then(|post| post.uniform()),
-        ) else {
-            reflections.forget();
-            return;
-        };
-        let placed = cx.parts.face::<dyn PlacedFace>();
-        let snapshot = cx.frame.snapshot;
-        let terrains = RenderTerrains::of(snapshot);
-        let infos: Vec<TerrainInfo> = terrains
-            .terrains
-            .iter()
-            .enumerate()
-            .map(|(index, rendered)| {
-                terrain.terrain_info(index, rendered.origin, &rendered.pyramid)
-            })
-            .collect();
-        let cover = snapshot.section::<GroundCover>();
-        let trace = TraceFrame {
-            terrains,
-            infos: &infos,
-            terrain,
-            placed: placed.map_or_else(Placements::default, |placed| {
-                Placements::of(placed.placements())
-            }),
-            cover: if cover.enabled { cover.density } else { 0.0 },
-        };
-        reflections.prepare_reflections(
-            (&core.device, &core.queue),
-            (&core.depth.view, uniform),
-            &trace,
-            (
-                terrain.trace_sources(),
-                placed.map(|placed| placed.slot_buffers()),
-                placed.and_then(|placed| placed.frames()),
-            ),
-        );
-    }
-
-    fn declare(&self, cx: &View<'_>, graph: &mut FrameGraph) {
-        let (true, Some(pass), Some(reflections)) =
-            (self.active, self.ids.pass, self.ids.reflections)
-        else {
-            return;
-        };
-        let ids = self.ids;
-        let _ = graph
-            .add(cx.table, pass)
-            .read(ids.depth)
-            .read(ids.scene)
-            .read(ids.glow)
-            .read(ids.surface)
-            .color(reflections, Access::Clear(Clear::Color(TRANSPARENT)));
-    }
-
-    fn encode(
-        &mut self,
-        _pass: usize,
-        cx: &mut Encode<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-    ) -> u32 {
-        let Some(reflections) = self.reflections.get().filter(|_| self.active) else {
-            return 0;
-        };
-        let (Some(frame), Some(group), Some(scene)) = (
-            shared_group(cx.core, &REFLECTION_PIPELINES),
-            reflections.group.get(),
-            cx.parts.post().and_then(|post| post.scene_texture()),
-        ) else {
-            return 0;
-        };
-        let profiler = &cx.core.profiler;
-        reflections.encode_levels(encoder, scene, profiler);
-        let mut pass = cx.render_pass(
-            encoder,
-            "engine/post-reflections",
-            profiler
-                .span("reflections")
-                .map(|span| span.render_part(false, true)),
-        );
-        pass.set_pipeline(&reflections.pipeline);
-        pass.set_bind_group(0, frame, &[]);
-        pass.set_bind_group(1, group, &[]);
-        pass.draw(0..3, 0..1);
-        0
-    }
-
-    fn attachment(&self, resource: &str) -> Option<wgpu::TextureView> {
-        if resource != TARGET {
-            return None;
-        }
-        let targets = self.reflections.get()?.targets.get()?;
-        Some(targets.reflected_view.clone())
-    }
-
-    fn contribute<'s>(&'s self, group: &str, out: &mut Vec<(&'static str, Bound<'s>)>) {
-        if group != COMPOSITE_REFLECTIONS.group {
-            return;
-        }
-        let shown = self.reflections.get().and_then(Reflections::shown);
-        out.push((
-            "reflections",
-            shown.unwrap_or_else(|| self.composited.off.bound()),
-        ));
-        out.push((
-            "reflections_sampler",
-            Bound::fixed(pipelines::sampler(&self.composited.sampler)),
-        ));
-    }
-
-    fn capacity_bytes(&self) -> u64 {
-        self.reflections
-            .get()
-            .map_or(0, Reflections::capacity_bytes)
-    }
-
-    fn stats(&self, _cx: &View<'_>, stats: &mut RenderStats) {
-        stats.reflections = Applied {
-            active: self.active,
-        };
-    }
-
-    fn poll(&mut self) -> bool {
-        self.reflections.poll()
-    }
-
-    fn disable(&mut self) -> bool {
-        self.reflections.disable()
-    }
-
-    fn disabled(&self) -> bool {
-        self.reflections.disabled()
-    }
-
-    #[cfg(feature = "dev")]
-    fn inject(&mut self) -> bool {
-        self.reflections.inject()
-    }
-
-    #[cfg(feature = "dev")]
-    fn encode_fault(&self, encoder: &mut wgpu::CommandEncoder) {
-        self.reflections.encode_fault(encoder);
-    }
-
-    fn piece(&self) -> Option<&[u8]> {
-        Some(bytemuck::bytes_of(&self.piece))
-    }
-
-    fn produces(&self, resource: ResourceId) -> bool {
-        self.active && self.ids.reflections == Some(resource)
-    }
-}
-
-#[derive(Default)]
-struct Watched {
-    views: Option<[wgpu::TextureView; 2]>,
-    generation: u64,
-}
-
-impl Watched {
-    fn watch(&mut self, views: [wgpu::TextureView; 2]) {
-        if self.views.as_ref() != Some(&views) {
-            self.views = Some(views);
-            self.generation += 1;
-        }
-    }
-}
-
-struct Targets {
-    reflected: wgpu::Texture,
-    reflected_view: wgpu::TextureView,
-    texture: wgpu::Texture,
-    scene: wgpu::Texture,
-    levels: wgpu::TextureView,
-    views: Vec<wgpu::TextureView>,
-    bytes: u64,
-}
-
-impl Drop for Targets {
-    fn drop(&mut self) {
-        self.reflected.destroy();
-        self.texture.destroy();
-    }
-}
-
-impl Targets {
-    fn new(
-        device: &wgpu::Device,
-        FrameSize { width, height }: FrameSize,
-        scene: &wgpu::Texture,
-    ) -> Self {
-        let reflected = engine_render::targets::texture_2d(
-            device,
-            "engine/post-reflections",
-            (width, height),
-            1,
-            1,
-            REFLECTION_FORMAT,
-            RENDER_TARGET,
-        );
-        let count = SCENE_LEVELS.min(engine_render::gpu_data::mip_levels(width, height) - 1);
-        let format = scene.format();
-        let texture = engine_render::targets::texture_2d(
-            device,
-            "engine/post-scene-levels",
-            (width, height),
-            1,
-            1 + count,
-            format,
-            RENDER_TARGET | wgpu::TextureUsages::COPY_DST,
-        );
-        let level_view = |level: u32| {
-            texture.create_view(&wgpu::TextureViewDescriptor {
-                base_mip_level: level,
-                mip_level_count: Some(1),
-                ..Default::default()
-            })
-        };
-        let views = (0..=count).map(level_view).collect();
-        let texel = u64::from(format.block_copy_size(None).unwrap_or(4));
-        let reflected_texel = u64::from(REFLECTION_FORMAT.block_copy_size(None).unwrap_or(4));
-        let bytes = (0..=count)
-            .map(|level| {
-                u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * texel
-            })
-            .sum::<u64>()
-            + u64::from(width) * u64::from(height) * reflected_texel;
-        Self {
-            reflected_view: reflected.create_view(&wgpu::TextureViewDescriptor::default()),
-            reflected,
-            levels: texture.create_view(&wgpu::TextureViewDescriptor::default()),
-            texture,
-            scene: scene.clone(),
-            views,
-            bytes,
-        }
-    }
-}
-
-type TraceInputs<'a> = (
-    engine_faces::heightfield::TraceSources<'a>,
-    Option<(&'a wgpu::Buffer, &'a wgpu::Buffer, u64)>,
-    Option<(&'a wgpu::TextureView, u64)>,
-);
-
-struct Reflections {
-    pipeline: wgpu::RenderPipeline,
-    layout: GroupLayout,
-    levels_first: wgpu::RenderPipeline,
-    levels_down: wgpu::RenderPipeline,
-    levels_layout: GroupLayout,
-    sampler: wgpu::Sampler,
-    nearest: DepthPyramid,
-    world_trace: WorldTrace,
-    targets: ScreenTarget<Targets>,
-    region: FrameRegion,
-    inputs: Watched,
-    level_groups: Vec<GroupCache<3>>,
-    group: GroupCache<19>,
-}
-
-impl Reflections {
-    fn new(device: &wgpu::Device, scene: wgpu::TextureFormat) -> Self {
-        let pipeline_layout = pipelines::layout_of(device, &REFLECTION_PIPELINES);
-        let pipeline = fullscreen(
-            device,
-            &Fullscreen {
-                label: "engine/post-reflections",
-                layout: &pipeline_layout,
-                vertex: reflections::vs_fullscreen,
-                fragment: reflections::fs_reflections,
-                constants: &[],
-                targets: &[Some(REFLECTION_FORMAT.into())],
-                depth: None,
-            },
-        );
-        let levels_pipeline_layout = pipelines::layout_of(device, &REFLECTION_LEVEL_PIPELINES);
-        let level = |label, entry: Entry| {
-            fullscreen(
-                device,
-                &Fullscreen {
-                    label,
-                    layout: &levels_pipeline_layout,
-                    vertex: reflections::vs_fullscreen,
-                    fragment: entry,
-                    constants: &[],
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: scene,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    depth: None,
-                },
-            )
-        };
-        let sampler = linear_clamp(device, "engine/post-reflections-sampler");
-        Self {
-            pipeline,
-            layout: pipelines::layout(device, &REFLECTIONS),
-            levels_first: level("engine/post-levels-first", reflections::fs_levels_first),
-            levels_down: level(
-                "engine/post-scene-down",
-                engine_render::shaders::entry::post::fs_levels_down,
-            ),
-            levels_layout: pipelines::layout(device, &REFLECTION_LEVELS),
-            sampler,
-            nearest: DepthPyramid::new(device, Reduction::Nearest),
-            world_trace: WorldTrace::new(device),
-            targets: ScreenTarget::default(),
-            region: FrameRegion::default(),
-            inputs: Watched::default(),
-            level_groups: Vec::new(),
-            group: GroupCache::default(),
-        }
-    }
-
-    fn release_targets(&mut self) {
-        self.targets.release();
-        self.level_groups.clear();
-        self.group.clear();
-        self.inputs.views = None;
-        self.nearest.release();
-        self.world_trace.release();
-    }
-
-    fn forget(&mut self) {
-        self.group.clear();
-    }
-
-    fn shown(&self) -> Option<Bound<'_>> {
-        let targets = self.targets.get()?;
-        Some(Bound::of(targets, pipelines::view(&targets.reflected_view)))
-    }
-
-    fn capacity_bytes(&self) -> u64 {
-        self.targets.get().map_or(0, |targets| targets.bytes)
-            + self.nearest.capacity_bytes()
-            + self.world_trace.capacity_bytes()
-    }
-
-    fn begin(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &Queue,
-        (region, depth): (FrameRegion, &Versioned<wgpu::TextureView>),
-        post: &PostPass,
-    ) -> bool {
-        let (Some(scene), Some(glow), Some(surface), Some(uniform)) = (
-            post.scene_texture(),
-            post.attachment("glow"),
-            post.attachment("surface"),
-            post.uniform(),
-        ) else {
-            return false;
-        };
-        self.region = region;
-        self.inputs.watch([glow, surface]);
-        let size = region.display;
-        if self
-            .targets
-            .get()
-            .is_some_and(|targets| targets.scene != *scene)
-        {
-            self.targets.release();
-        }
-        if self.targets.resizes(size) {
-            let targets = Targets::new(device, size, scene);
-            self.targets.set(size, targets);
-        }
-        let Some(targets) = self.targets.get() else {
-            return false;
-        };
-        self.level_groups
-            .resize_with(targets.views.len() - 1, GroupCache::default);
-        for (level, cache) in self.level_groups.iter_mut().enumerate() {
-            cache.bind(
-                device,
-                "engine/post-group",
-                (&REFLECTION_LEVELS, &self.levels_layout),
-                [
-                    ("post", uniform.clone()),
-                    (
-                        "source",
-                        Bound::of(targets, pipelines::view(&targets.views[level])),
-                    ),
-                    ("linear", Bound::fixed(pipelines::sampler(&self.sampler))),
-                ],
-            );
-        }
-        self.nearest.prepare(device, queue, depth, region);
-        true
-    }
-
-    fn prepare_reflections(
-        &mut self,
-        (device, queue): (&wgpu::Device, &Queue),
-        (depth, uniform): (&Versioned<wgpu::TextureView>, Bound<'_>),
-        trace: &TraceFrame<'_>,
-        (sources, placed, frames): TraceInputs<'_>,
-    ) {
-        self.world_trace.prepare(device, queue, Some(trace));
-        let (Some(targets), Some(nearest), Some([glow, surface])) = (
-            self.targets.get(),
-            self.nearest.view(),
-            self.inputs.views.as_ref(),
-        ) else {
-            return;
-        };
-        let watched = self.inputs.generation;
-        let world = self.world_trace.bindings(sources, placed, frames);
-        let [
-            heights,
-            directory,
-            control,
-            palette,
-            macro_maps,
-            terrain_sky,
-            terrains,
-            placements,
-            records,
-            poses,
-            groups,
-            placed_frames,
-        ] = world;
-        self.group.bind(
-            device,
-            "engine/post-reflections-group",
-            (&REFLECTIONS, &self.layout),
-            [
-                ("post", uniform),
-                ("depth_texture", depth.bound()),
-                ("glow", Bound::counted(watched, pipelines::view(glow))),
-                ("linear", Bound::fixed(pipelines::sampler(&self.sampler))),
-                ("nearest_depth", nearest.bound()),
-                (
-                    "surface_texture",
-                    Bound::counted(watched, pipelines::view(surface)),
-                ),
-                (
-                    "scene_levels",
-                    Bound::of(targets, pipelines::view(&targets.levels)),
-                ),
-                heights,
-                directory,
-                control,
-                palette,
-                macro_maps,
-                terrain_sky,
-                terrains,
-                placements,
-                records,
-                poses,
-                groups,
-                placed_frames,
-            ],
-        );
-    }
-
-    fn encode_levels(
-        &self,
-        encoder: &mut wgpu::CommandEncoder,
-        scene: &wgpu::Texture,
-        profiler: &GpuProfiler,
-    ) {
-        self.nearest.encode(encoder, profiler.span("reflections"));
-        let Some(targets) = self.targets.get() else {
-            return;
-        };
-        if targets.scene != *scene {
-            return;
-        }
-        encoder.copy_texture_to_texture(
-            scene.as_image_copy(),
-            targets.texture.as_image_copy(),
-            wgpu::Extent3d {
-                width: targets.texture.width(),
-                height: targets.texture.height(),
-                depth_or_array_layers: 1,
-            },
-        );
-        for (level, (view, group)) in targets
-            .views
-            .iter()
-            .skip(1)
-            .zip(&self.level_groups)
-            .enumerate()
-        {
-            let Some(group) = group.get() else {
-                continue;
-            };
-            let mut pass = fullscreen_pass(
-                encoder,
-                "engine/post-scene-levels",
-                (view, self.region.level_region(level as u32)),
-                None,
-            );
-            pass.set_pipeline(if level == 0 {
-                &self.levels_first
-            } else {
-                &self.levels_down
-            });
-            pass.set_bind_group(0, group, &[]);
-            pass.draw(0..3, 0..1);
-        }
+        [
+            0,
+            0,
+            part(self.render.0, self.display.0),
+            part(self.render.1, self.display.1),
+        ]
     }
 }

@@ -4,7 +4,7 @@ use std::sync::{
 };
 
 use bevy_ecs::prelude::Resource;
-use engine_settings::{Error, ErrorCode, Expected};
+use engine_codec::{Error, ErrorCode, Expected};
 
 use crate::{Material, Mesh, MeshLods, Texture, takes_levels};
 
@@ -18,20 +18,20 @@ fn dead(code: ErrorCode, path: &str) -> Error {
 
 static NEXT_LIBRARY: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Id {
     library: u64,
     slot: usize,
     generation: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MeshHandle(Id);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MaterialHandle(Id);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TextureHandle(Id);
 
 impl MeshHandle {

@@ -1,14 +1,16 @@
-use engine_core::collections::HashMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
+use engine_core::collections::HashMap;
+use engine_core::math::{GRAVITY, clamp, max};
+use engine_core::{Spawner, Transform};
+use engine_heightfield::Fall;
+use engine_places::particles::{ParticleBlend, ParticleEmitter};
 use glam::Vec3;
 
-use super::{Terrains, Water};
-use crate::Fall;
+use crate::WaterBrick;
 use crate::shallow_water::DENSITY;
-use engine_core::math::{GRAVITY, clamp, max};
-use engine_core::{ParticleBlend, ParticleEmitter, Transform, section_in};
+use crate::state::WaterState;
 
 #[derive(Resource, Default)]
 pub(crate) struct TerrainFalls {
@@ -169,13 +171,26 @@ fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmi
     spawned
 }
 
-pub(crate) fn sync(world: &mut World) {
-    let drawn = section_in::<Water>(world).enabled;
-    let wanted: Vec<(Entity, Arc<[Fall]>, Vec3)> = match world.get_resource::<Terrains>() {
-        Some(terrains) if drawn => terrains.fall_sets().collect(),
-        _ => Vec::new(),
-    };
-    let mut falls = world.remove_resource::<TerrainFalls>().unwrap_or_default();
+impl TerrainFalls {
+    pub(crate) fn take(&mut self) -> Vec<Entity> {
+        self.spawned
+            .drain()
+            .flat_map(|(_, spawned)| spawned.entities)
+            .collect()
+    }
+}
+
+pub(crate) fn sync(
+    state: Res<WaterState>,
+    mut falls: ResMut<TerrainFalls>,
+    mut spawner: Spawner<WaterBrick>,
+) {
+    let wanted: Vec<(Entity, Arc<[Fall]>, Vec3)> = state
+        .terrains
+        .iter()
+        .map(|terrain| (terrain.entity, terrain.falls.clone(), terrain.origin))
+        .collect();
+    let falls = falls.bypass_change_detection();
     let mut stale = Vec::new();
     falls.spawned.retain(|terrain, spawned| {
         let keep = wanted
@@ -187,9 +202,7 @@ pub(crate) fn sync(world: &mut World) {
         keep
     });
     for entity in stale {
-        if let Ok(entity) = world.get_entity_mut(entity) {
-            entity.despawn();
-        }
+        spawner.despawn(entity);
     }
     for (terrain, set, origin) in wanted {
         if set.is_empty() || falls.spawned.contains_key(&terrain) {
@@ -198,10 +211,9 @@ pub(crate) fn sync(world: &mut World) {
         let mut entities = Vec::with_capacity(3 * set.len());
         for (index, fall) in set.iter().enumerate() {
             for (transform, emitter) in emitters(fall, origin, index as u32) {
-                entities.push(world.spawn((transform, emitter)).id());
+                entities.push(spawner.spawn((transform, emitter)));
             }
         }
         falls.spawned.insert(terrain, Spawned { set, entities });
     }
-    world.insert_resource(falls);
 }

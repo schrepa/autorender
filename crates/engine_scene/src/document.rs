@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use engine_core::{Camera, Error, Expected, Mesh, MeshVertex, Surface, Transform, glam};
-use engine_settings::{ErrorCode, InvalidSetting, Rule, Setting};
+use engine_core::{Camera, Error, Mesh, MeshVertex, Projection, Surface, Transform, glam};
+use engine_settings::{ErrorCode, Expected, InvalidSetting, Rule, Setting, fields};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -30,10 +30,6 @@ pub struct SceneDocument {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prefabs: Vec<ScenePrefab>,
     pub entities: Vec<SceneObject>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub streamed: Vec<SceneObject>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub along: Vec<crate::SceneAlong>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub views: Vec<crate::SceneView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -71,7 +67,7 @@ impl SceneDocument {
     }
 
     #[cfg(feature = "schema")]
-    pub fn schema_json(registry: &engine_core::BrickRegistry) -> String {
+    pub fn schema_json(registry: &engine_registry::Registry) -> String {
         let mut schema =
             serde_json::to_value(schemars::schema_for!(Self)).expect("schema_serializes");
         if let Some(definitions) = schema
@@ -85,19 +81,6 @@ impl SceneDocument {
                 .and_then(serde_json::Value::as_object_mut)
             {
                 properties.extend(sections);
-            }
-            let components = crate::components::component_schemas(registry, definitions);
-            if let Some(object) = definitions
-                .get_mut("SceneObject")
-                .and_then(serde_json::Value::as_object_mut)
-            {
-                if let Some(properties) = object
-                    .get_mut("properties")
-                    .and_then(serde_json::Value::as_object_mut)
-                {
-                    properties.extend(components);
-                }
-                object.insert("additionalProperties".to_owned(), Value::Bool(false));
             }
         }
         let mut source = serde_json::to_string_pretty(&schema).expect("schema_serializes");
@@ -131,10 +114,16 @@ impl std::io::Write for BoundedSource {
 
 fn default_camera() -> SceneCamera {
     let camera = Camera::default();
+    let Projection::Perspective {
+        vertical_fov_radians,
+    } = camera.projection
+    else {
+        unreachable!("default_camera_perspective");
+    };
     SceneCamera {
         position: camera.position.to_array(),
         target: camera.target.to_array(),
-        fov_degrees: camera.vertical_fov_radians.to_degrees(),
+        fov_degrees: vertical_fov_radians.to_degrees(),
         near: camera.near,
         far: camera.far,
     }
@@ -146,18 +135,34 @@ engine_settings::fields! {
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(default, deny_unknown_fields)]
     pub struct SceneCamera {
-        pub position: [f32; 3] = default_camera().position => same(Camera::rule_of("position")),
-        pub target: [f32; 3] = default_camera().target => same(Camera::rule_of("target")),
+        pub position: [f32; 3] = default_camera().position => range(-Camera::REACH, Camera::REACH),
+        pub target: [f32; 3] = default_camera().target => range(-Camera::REACH, Camera::REACH),
         pub fov_degrees: f32 = default_camera().fov_degrees
             => range(Camera::MIN_FOV_DEGREES, Camera::MAX_FOV_DEGREES),
-        pub near: f32 = default_camera().near => same(Camera::rule_of("near")),
-        pub far: f32 = default_camera().far => same(Camera::rule_of("far")),
+        pub near: f32 = default_camera().near => range(Camera::MIN_DEPTH, Camera::REACH),
+        pub far: f32 = default_camera().far => range(Camera::MIN_DEPTH, Camera::REACH),
     }
 }
 
 impl engine_settings::ExtraRules for SceneCamera {
-    fn check_extra(&self) -> Result<(), engine_settings::InvalidSetting> {
-        engine_settings::ExtraRules::check_extra(&self.camera())
+    fn check_extra(&self) -> Result<(), InvalidSetting> {
+        let camera = self.camera();
+        if (camera.target - camera.position).length_squared()
+            < Camera::MIN_DEPTH * Camera::MIN_DEPTH
+        {
+            return Err(
+                InvalidSetting::broken("target", fields::at_least(Camera::MIN_DEPTH))
+                    .got((camera.target - camera.position).length()),
+            );
+        }
+        if camera.far - camera.near < Camera::MIN_DEPTH {
+            return Err(InvalidSetting::broken(
+                "far",
+                fields::range(camera.near + Camera::MIN_DEPTH, Camera::REACH),
+            )
+            .got(camera.far));
+        }
+        Ok(())
     }
 }
 
@@ -166,9 +171,11 @@ impl SceneCamera {
         Camera {
             position: self.position.into(),
             target: self.target.into(),
-            vertical_fov_radians: self.fov_degrees.to_radians(),
             near: self.near,
             far: self.far,
+            projection: Projection::Perspective {
+                vertical_fov_radians: self.fov_degrees.to_radians(),
+            },
         }
     }
 }

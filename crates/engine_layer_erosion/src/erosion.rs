@@ -1,13 +1,12 @@
+use engine_core::fields;
+use engine_heightfield::hydrology::{Drainage, Flood};
+use engine_heightfield::layer::image_row;
+use engine_heightfield::{HeightImage, MAX_LEVEL};
 use engine_math::{max, min};
-use engine_settings::settings;
-use engine_terrain::hydrology::{Drainage, Flood};
-use engine_terrain::layer::image_row;
-use engine_terrain::{HeightImage, MAX_LEVEL};
 use serde::{Deserialize, Serialize};
 
-settings! {
-    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+fields! {
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(default, deny_unknown_fields)]
     pub struct ErosionLayer {
         pub level: u32 = 4 => range(0, MAX_LEVEL),
@@ -181,20 +180,20 @@ pub(crate) fn finish(
     }
 }
 
-engine_terrain::codec::record!(ErosionLayer {
+engine_codec::record!(ErosionLayer {
     level,
     rounds,
     incision,
     debris,
     creep,
 });
-engine_terrain::codec::record!(ErosionStats {
+engine_codec::record!(ErosionStats {
     samples,
     rounds,
     deepest,
     highest,
 });
-engine_terrain::codec::record!(Erosion {
+engine_codec::record!(Erosion {
     spacing,
     change,
     range,

@@ -1,275 +1,169 @@
-use engine_render::renderer::*;
-use engine_render::gpu_layouts::constants::{
-    DEBUG_CASTS, DEBUG_FADING, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS,
-    DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN,
-    DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT, DEBUG_NO_MATERIAL, DEBUG_PATCH_SHIFT, DEBUG_SHADOWED,
-    DEBUG_SOURCE_SHIFT, DEBUG_SPAN_STEPS, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL,
-    WATER_SPAN_LEAST, WATER_SPAN_MOST,
-};
-use engine_render::post::PostPass;
+use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, Vec4};
 use engine_core::math::max;
-use engine_core::{
-    DetailShares, DrawnKind, MaterialShare, PixelProbe, SunLookup, TerrainProbe, WaterProbe,
-    WaterReach,
+use engine_core::{Error, ErrorCode, Joined, Operation, Readback, View};
+use engine_render::debug::{
+    DEBUG_CASTS, DEBUG_FADING, DEBUG_KIND_CARD, DEBUG_KIND_COVER, DEBUG_KIND_FALLS,
+    DEBUG_KIND_MESH, DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN,
+    DEBUG_KIND_WATER, DEBUG_LEVEL_SHIFT,
 };
-use std::{cell::RefCell, rc::Rc};
+use engine_render::{
+    AfterRead, Bind, Buffer, ComputePipeline, Count, DebugModes, Encode, GpuPart, Install,
+    Lifetime, Pass, Prepare, ViewTarget,
+};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
-const IDS: u64 = 0;
-const COUNT: u64 = 256;
-const SCENE: u64 = 512;
-const CANVAS: u64 = 768;
-const TERRAIN: u64 = 1024;
-const DEPTH: u64 = 1280;
-const ROW_ALIGNMENT: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+use crate::DebugView;
+use crate::gpu::ProbedTargets;
 
-type Mapped = Rc<RefCell<Option<Result<Vec<u8>, Error>>>>;
+const TARGETS: u32 = 0;
+const SCENE: u32 = 1;
+const PIXEL_BYTES: u64 = 16;
+const SCENE_BYTES: u64 = 16;
+const TARGET_BYTES: u64 = size_of::<ProbedTargets>() as u64;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+type Decode = fn([u32; 4], [f32; 4]) -> Value;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Stage {
+    #[default]
+    Idle,
+    Armed,
     Debug,
     Shaded,
-    Submitted,
-    Mapping,
+    Waiting,
 }
 
-struct Armed {
-    pixel: (u32, u32),
+#[derive(Resource, Default)]
+pub(crate) struct Probe {
     stage: Stage,
-    buffer: wgpu::Buffer,
+    pixel: (u32, u32),
     armed_size: (u32, u32),
-    depth_row: u32,
     size: (u32, u32),
     view_projection: Mat4,
-    scene: bool,
-    canvas: Option<bool>,
-    mapped: Mapped,
-}
-
-#[derive(Default)]
-pub(crate) struct Probe {
-    armed: Option<Armed>,
+    mode: Option<(&'static str, Decode)>,
+    targets: Option<ProbedTargets>,
+    scene: Option<u32>,
+    result: Option<Value>,
 }
 
 impl Probe {
-    pub(super) fn forces(&self) -> Option<bool> {
-        match self.armed.as_ref()?.stage {
+    pub(crate) fn armed(&self) -> bool {
+        self.stage != Stage::Idle
+    }
+
+    pub(crate) fn forces(&self) -> Option<bool> {
+        match self.stage {
             Stage::Debug => Some(true),
             Stage::Shaded => Some(false),
-            Stage::Submitted | Stage::Mapping => None,
+            Stage::Idle | Stage::Armed | Stage::Waiting => None,
         }
     }
-}
 
-impl Renderer {
-    pub fn arm_probe(&mut self, pixel: (u32, u32)) {
-        let armed_size = self.core.display.size().pixels();
-        let depth_row = (armed_size.0 * 4).next_multiple_of(ROW_ALIGNMENT);
-        let buffer = engine_render::memory::buffer(
-            &self.core.device,
-            &wgpu::BufferDescriptor {
-                label: Some("engine/debug-view-probe"),
-                size: DEPTH + u64::from(depth_row) * u64::from(armed_size.1),
-                usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            },
-        );
-        self.core.display.probe.armed = Some(Armed {
-            pixel,
-            stage: Stage::Debug,
-            buffer,
-            armed_size,
-            depth_row,
-            size: (1, 1),
-            view_projection: Mat4::IDENTITY,
-            scene: false,
-            canvas: None,
-            mapped: Rc::default(),
-        });
-    }
-
-    pub fn probe_result(&mut self) -> Option<Result<PixelProbe, Error>> {
-        if self.core.display.probe.armed.as_ref()?.stage != Stage::Mapping {
-            return None;
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Err(error) = self.wait_for_gpu() {
-            self.core.display.probe.armed = None;
-            return Some(Err(error));
-        }
-        let mapped = self
-            .core
-            .display
-            .probe
-            .armed
-            .as_ref()?
-            .mapped
-            .borrow_mut()
-            .take()?;
-        let armed = self.core.display.probe.armed.take()?;
-        Some(mapped.map(|bytes| armed.result(&bytes)))
-    }
-
-    pub(super) fn encode_probe(
-        &mut self,
-        info: &FrameInfo<'_>,
-        encoder: &mut wgpu::CommandEncoder,
-        canvas: &wgpu::Texture,
-    ) {
-        let size = self.core.display.size();
-        let scene = info
-            .shape
-            .is_some_and(|shape| matches!(shape.targets, Targets::Post | Targets::Temporal));
-        let Some(armed) = self.core.display.probe.armed.as_mut() else {
-            return;
+    fn probed(&self, targets: ProbedTargets, scene: u32) -> PixelProbe {
+        let [record, object, detail, normal] = targets.ids;
+        let kind = drawn_kind(record & 0xf);
+        let (x, y) = self.pixel;
+        let depth = if self.size == self.armed_size {
+            targets.depth
+        } else {
+            0.0
         };
-        let pixel = (
-            armed.pixel.0.min(size.width.saturating_sub(1)),
-            armed.pixel.1.min(size.height.saturating_sub(1)),
+        let fragments = targets.count;
+        let (width, height) = (self.size.0.max(1) as f32, self.size.1.max(1) as f32);
+        let clip = Vec4::new(
+            (x as f32 + 0.5) / width * 2.0 - 1.0,
+            1.0 - (y as f32 + 0.5) / height * 2.0,
+            depth,
+            1.0,
         );
-        let all = wgpu::TextureAspect::All;
-        match armed.stage {
-            Stage::Debug => {
-                if info.kind.debug
-                    && let Some([ids, count, terrain]) = self.core.debug.textures()
-                {
-                    copy_texel(encoder, (ids, all), pixel, (&armed.buffer, IDS));
-                    copy_texel(encoder, (count, all), pixel, (&armed.buffer, COUNT));
-                    copy_texel(encoder, (terrain, all), pixel, (&armed.buffer, TERRAIN));
-                }
-                if size.pixels() == armed.armed_size {
-                    copy_depth(encoder, &self.core.depth.texture, size.pixels(), armed);
-                }
-                armed.size = size.pixels();
-                armed.view_projection = info.snapshot.view_projection;
-                armed.stage = Stage::Shaded;
-            }
-            Stage::Shaded => {
-                if scene && let Some(scene) = self.parts.post().and_then(PostPass::scene_texture) {
-                    copy_texel(encoder, (scene, all), pixel, (&armed.buffer, SCENE));
-                    armed.scene = true;
-                }
-                if canvas.usage().contains(wgpu::TextureUsages::COPY_SRC) {
-                    copy_texel(encoder, (canvas, all), pixel, (&armed.buffer, CANVAS));
-                    armed.canvas = Some(matches!(
-                        canvas.format(),
-                        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
-                    ));
-                }
-                armed.stage = Stage::Submitted;
-            }
-            Stage::Submitted | Stage::Mapping => {}
-        }
-    }
-
-    pub(super) fn map_probe(&mut self) {
-        let Some(armed) = self.core.display.probe.armed.as_mut() else {
-            return;
-        };
-        if armed.stage != Stage::Submitted {
-            return;
-        }
-        armed.stage = Stage::Mapping;
-        let (buffer, mapped) = (armed.buffer.clone(), Rc::clone(&armed.mapped));
-        armed.buffer.slice(..).map_async(
-            wgpu::MapMode::Read,
-            engine_render::platform::map_callback(move |result| {
-                let bytes = result
-                    .map_err(|error| failed_with("$.probe", error))
-                    .and_then(|()| {
-                        let view = buffer
-                            .slice(..)
-                            .get_mapped_range()
-                            .map_err(|error| failed_with("$.probe", error))?;
-                        let bytes = view.to_vec();
-                        drop(view);
-                        buffer.unmap();
-                        Ok(bytes)
-                    });
-                *mapped.borrow_mut() = Some(bytes);
+        let point = self.view_projection.inverse() * clip;
+        let texel = scene.to_le_bytes();
+        let with_object = matches!(
+            kind,
+            Some(DrawnKind::Mesh | DrawnKind::Placed | DrawnKind::Card | DrawnKind::PlacedCard)
+        );
+        let with_detail = matches!(kind, Some(DrawnKind::Card | DrawnKind::PlacedCard));
+        let [first, second] = targets.terrain;
+        PixelProbe {
+            pixel: [x, y],
+            kind,
+            level: (record >> DEBUG_LEVEL_SHIFT) & 0xf,
+            fading: record & DEBUG_FADING != 0,
+            casts_shadows: record & DEBUG_CASTS != 0,
+            object: with_object.then_some(object),
+            detail: with_detail.then_some(detail),
+            normal: (kind.is_some() && kind != Some(DrawnKind::Sky))
+                .then(|| unpacked_normal(normal)),
+            fragments: max(fragments.round(), 0.0) as u32,
+            depth,
+            world: (depth > 0.0 && point.w != 0.0).then(|| (point.truncate() / point.w).to_array()),
+            shaded: [texel[0], texel[1], texel[2]],
+            mode: self.mode.map(|(name, _)| name),
+            decoded: self.mode.map_or(Value::Null, |(_, decode)| {
+                decode(
+                    [record, object, detail, first],
+                    [f32::from_bits(second), fragments, depth, 0.0],
+                )
             }),
-        );
+        }
     }
 }
 
-fn copy_texel(
-    encoder: &mut wgpu::CommandEncoder,
-    (texture, aspect): (&wgpu::Texture, wgpu::TextureAspect),
-    pixel: (u32, u32),
-    (buffer, offset): (&wgpu::Buffer, u64),
-) {
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d {
-                x: pixel.0,
-                y: pixel.1,
-                z: 0,
-            },
-            aspect,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset,
-                bytes_per_row: None,
-                rows_per_image: None,
-            },
-        },
-        wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        },
-    );
-}
-
-fn copy_depth(
-    encoder: &mut wgpu::CommandEncoder,
-    texture: &wgpu::Texture,
-    (width, height): (u32, u32),
-    armed: &Armed,
-) {
-    encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo {
-            texture,
-            mip_level: 0,
-            origin: wgpu::Origin3d::ZERO,
-            aspect: wgpu::TextureAspect::DepthOnly,
-        },
-        wgpu::TexelCopyBufferInfo {
-            buffer: &armed.buffer,
-            layout: wgpu::TexelCopyBufferLayout {
-                offset: DEPTH,
-                bytes_per_row: Some(armed.depth_row),
-                rows_per_image: Some(height),
-            },
-        },
-        wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        },
-    );
-}
-
-fn word(bytes: &[u8], offset: u64) -> u32 {
-    let start = offset as usize;
-    bytes.get(start..start + 4).map_or(0, |word| {
-        u32::from_le_bytes([word[0], word[1], word[2], word[3]])
-    })
-}
-
-fn half(bits: u16) -> f32 {
-    let sign = if bits & 0x8000 == 0 { 1.0 } else { -1.0 };
-    let exponent = i32::from((bits >> 10) & 0x1f);
-    let fraction = f32::from(bits & 0x3ff);
-    match exponent {
-        0 => sign * fraction * 2.0_f32.powi(-24),
-        31 => sign * f32::INFINITY,
-        _ => sign * (1.0 + fraction / 1024.0) * 2.0_f32.powi(exponent - 15),
+impl Readback for Probe {
+    fn arrived(&mut self, _: u64, tag: u32, bytes: &[u8]) {
+        if matches!(self.stage, Stage::Idle | Stage::Armed) {
+            return;
+        }
+        match tag {
+            TARGETS => {
+                self.targets = bytes
+                    .get(..TARGET_BYTES as usize)
+                    .map(bytemuck::pod_read_unaligned);
+            }
+            _ => {
+                self.scene = bytes
+                    .get(..4)
+                    .map(|word| u32::from_le_bytes([word[0], word[1], word[2], word[3]]));
+            }
+        }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum DrawnKind {
+    Mesh,
+    Placed,
+    Card,
+    PlacedCard,
+    #[serde(rename = "terrain")]
+    Ground,
+    #[serde(rename = "cover")]
+    Blades,
+    #[serde(rename = "water")]
+    Lakes,
+    Falls,
+    Sky,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+struct PixelProbe {
+    pixel: [u32; 2],
+    kind: Option<DrawnKind>,
+    level: u32,
+    fading: bool,
+    casts_shadows: bool,
+    object: Option<u32>,
+    detail: Option<u32>,
+    normal: Option<[f32; 3]>,
+    fragments: u32,
+    depth: f32,
+    world: Option<[f32; 3]>,
+    shaded: [u8; 3],
+    mode: Option<&'static str>,
+    decoded: Value,
 }
 
 fn unpacked_normal(packed: u32) -> [f32; 3] {
@@ -298,140 +192,168 @@ fn drawn_kind(kind: u32) -> Option<DrawnKind> {
     })
 }
 
-fn sun_lookup(source: u32) -> (SunLookup, u32) {
-    match source {
-        DEBUG_SUN_HORIZON => (SunLookup::Horizon, 0),
-        DEBUG_SUN_BEYOND => (SunLookup::Beyond, 0),
-        level if (DEBUG_SUN_LEVEL..DEBUG_SUN_HORIZON).contains(&level) => {
-            (SunLookup::Level, level - DEBUG_SUN_LEVEL)
-        }
-        _ => (SunLookup::None, 0),
-    }
-}
-
-fn terrain_probe((record, object, detail): (u32, u32, u32), bytes: &[u8]) -> TerrainProbe {
-    let share = |word: u32, byte: u32| f32::from(((word >> (byte * 8)) & 0xff) as u8) / 255.0;
-    let (tiles, ids) = (word(bytes, TERRAIN), word(bytes, TERRAIN + 4));
-    let mut materials: Vec<MaterialShare> = (0..4)
-        .map(|slot| ((ids >> (slot * 8)) & 0xff, share(detail, slot)))
-        .filter(|&(material, share)| material != DEBUG_NO_MATERIAL && share > 0.0)
-        .map(|(material, share)| MaterialShare { material, share })
-        .collect();
-    materials.sort_by(|a, b| b.share.total_cmp(&a.share));
-    let within = record >> DEBUG_PATCH_SHIFT;
-    TerrainProbe {
-        tile: [
-            i32::from((tiles & 0xffff) as u16 as i16),
-            i32::from((tiles >> 16) as u16 as i16),
-        ],
-        patch: [within & 0xf, (within >> 4) & 0xf],
-        materials,
-        sky: share(object, 0),
-        detail: DetailShares {
-            detailed: share(object, 1),
-            averaged: share(object, 2),
-            canopy: share(object, 3),
-        },
-    }
-}
-
-fn water_reach(code: u32) -> Option<WaterReach> {
-    [
-        WaterReach::Pool,
-        WaterReach::Plane,
-        WaterReach::Steps,
-        WaterReach::Cascade,
-        WaterReach::Falls,
-    ]
-    .into_iter()
-    .zip(1..)
-    .find(|&(_, reach)| reach == code)
-    .map(|(reach, _)| reach)
-}
-
-fn water_span(code: u8) -> f32 {
-    if code == 0 {
-        return 0.0;
-    }
-    WATER_SPAN_LEAST
-        * (WATER_SPAN_MOST / WATER_SPAN_LEAST).powf(f32::from(code - 1) / DEBUG_SPAN_STEPS)
-}
-
-fn water_probe((object, detail): (u32, u32), bytes: &[u8]) -> WaterProbe {
-    let (froudes, state) = (word(bytes, TERRAIN), word(bytes, TERRAIN + 4));
-    let share = |word: u32, byte: u32| f32::from(((word >> (byte * 8)) & 0xff) as u8) / 255.0;
-    let halves = |pair: u32| (half(pair as u16), half((pair >> 16) as u16));
-    let (depth, speed) = halves(object);
-    let (froude, eddies) = halves(froudes);
-    WaterProbe {
-        depth,
-        speed,
-        froude,
-        turbulence: share(state, 0),
-        white: share(state, 1),
-        reach: water_reach(state >> 24),
-        span: water_span((detail & 0xff) as u8),
-        eddies,
-        roughness: share(detail, 1),
-    }
-}
-
-impl Armed {
-    fn result(&self, bytes: &[u8]) -> PixelProbe {
-        let record = word(bytes, IDS);
-        let kind = drawn_kind(record & 0xf);
-        let sun = (record >> DEBUG_SOURCE_SHIFT) & 0xff;
-        let (lookup, sun_index) = sun_lookup(sun & (DEBUG_SHADOWED - 1));
-        let object = word(bytes, IDS + 4);
-        let detail = word(bytes, IDS + 8);
-        let (x, y) = (
-            u64::from(self.pixel.0.min(self.size.0.saturating_sub(1))),
-            u64::from(self.pixel.1.min(self.size.1.saturating_sub(1))),
-        );
-        let depth = f32::from_bits(word(bytes, DEPTH + y * u64::from(self.depth_row) + x * 4));
-        let fragments = half(word(bytes, COUNT) as u16);
-        let (width, height) = (self.size.0.max(1) as f32, self.size.1.max(1) as f32);
-        let clip = Vec4::new(
-            (self.pixel.0 as f32 + 0.5) / width * 2.0 - 1.0,
-            1.0 - (self.pixel.1 as f32 + 0.5) / height * 2.0,
-            depth,
-            1.0,
-        );
-        let point = self.view_projection.inverse() * clip;
-        let color = |offset: u64, blue_first: bool| {
-            let texel = word(bytes, offset).to_le_bytes();
-            if blue_first {
-                [texel[2], texel[1], texel[0]]
+pub(crate) fn advance(
+    view: Res<View>,
+    settings: Res<DebugView>,
+    modes: Joined<DebugModes>,
+    mut probe: ResMut<Probe>,
+) {
+    let stage = probe.stage;
+    match stage {
+        Stage::Idle => {}
+        Stage::Armed => {
+            let size = view.render_size();
+            let mode = if settings.showing() {
+                modes
+                    .iter()
+                    .find(|mode| mode.name == settings.view.as_str())
+                    .map(|mode| (mode.name, mode.decode))
             } else {
-                [texel[0], texel[1], texel[2]]
-            }
-        };
-        let with_object = matches!(
-            kind,
-            Some(DrawnKind::Mesh | DrawnKind::Placed | DrawnKind::Card | DrawnKind::PlacedCard)
-        );
-        let with_detail = matches!(kind, Some(DrawnKind::Card | DrawnKind::PlacedCard));
-        PixelProbe {
-            pixel: [self.pixel.0, self.pixel.1],
-            kind,
-            level: (record >> DEBUG_LEVEL_SHIFT) & 0xf,
-            fading: record & DEBUG_FADING != 0,
-            casts_shadows: record & DEBUG_CASTS != 0,
-            object: with_object.then_some(object),
-            detail: with_detail.then_some(detail),
-            normal: (kind.is_some() && kind != Some(DrawnKind::Sky))
-                .then(|| unpacked_normal(word(bytes, IDS + 12))),
-            sun: lookup,
-            sun_index,
-            shadowed: sun & DEBUG_SHADOWED != 0,
-            fragments: max(fragments.round(), 0.0) as u32,
-            depth,
-            world: (depth > 0.0 && point.w != 0.0).then(|| (point.truncate() / point.w).to_array()),
-            shaded: self.scene.then(|| color(SCENE, false)),
-            displayed: self.canvas.map(|blue_first| color(CANVAS, blue_first)),
-            terrain: (kind == Some(DrawnKind::Ground))
-                .then(|| terrain_probe((record, object, detail), bytes)),
-            water: (kind == Some(DrawnKind::Lakes)).then(|| water_probe((object, detail), bytes)),
+                None
+            };
+            let probe = &mut *probe;
+            probe.stage = Stage::Debug;
+            probe.size = (size.x, size.y);
+            probe.view_projection = view.view_projection();
+            probe.mode = mode;
         }
+        Stage::Debug => probe.stage = Stage::Shaded,
+        Stage::Shaded => probe.stage = Stage::Waiting,
+        Stage::Waiting => {
+            let (Some(targets), Some(scene)) = (probe.targets, probe.scene) else {
+                return;
+            };
+            let result = serde_json::to_value(probe.probed(targets, scene)).unwrap_or(Value::Null);
+            let probe = &mut *probe;
+            probe.stage = Stage::Idle;
+            probe.result = Some(result);
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PixelRequest {
+    x: u32,
+    y: u32,
+}
+
+pub(crate) struct ProbePixel;
+
+impl Operation for ProbePixel {
+    const NAME: &'static str = "probe_pixel";
+    type Params = (Res<'static, View>, ResMut<'static, Probe>);
+    type Request = PixelRequest;
+
+    fn run(
+        (view, mut probe): SystemParamItem<'_, '_, Self::Params>,
+        request: PixelRequest,
+    ) -> Result<Value, Error> {
+        let size = view.render_size();
+        for (path, value, size) in [("$.x", request.x, size.x), ("$.y", request.y, size.y)] {
+            if value >= size {
+                return Err(Error::new(ErrorCode::OutOfRange, path)
+                    .range(0.0, f64::from(size.saturating_sub(1)))
+                    .got(value));
+            }
+        }
+        *probe = Probe {
+            stage: Stage::Armed,
+            pixel: (request.x, request.y),
+            armed_size: (size.x, size.y),
+            ..Probe::default()
+        };
+        Ok(json!({ "pixel": [request.x, request.y] }))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ProbedRequest {}
+
+pub(crate) struct ProbedPixel;
+
+impl Operation for ProbedPixel {
+    const NAME: &'static str = "probed_pixel";
+    type Params = Res<'static, Probe>;
+    type Request = ProbedRequest;
+
+    fn run(probe: SystemParamItem<'_, '_, Self::Params>, _: ProbedRequest) -> Result<Value, Error> {
+        Ok(json!({ "probing": probe.armed(), "probe": probe.result }))
+    }
+}
+
+pub(crate) struct ProbeGpu {
+    pixel: Buffer<Self>,
+    targets: Buffer<Self>,
+    scene: Buffer<Self>,
+    read_targets: Pass<Self>,
+    read_scene: Pass<Self>,
+    reading_targets: ComputePipeline<Self>,
+    reading_scene: ComputePipeline<Self>,
+}
+
+impl GpuPart for ProbeGpu {
+    type Reads = Res<'static, Probe>;
+
+    fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
+        use crate::shaders::debug_view::{probe_scene, probe_targets};
+        let pixel = cx.buffer("debug_view_probe_pixel", Lifetime::Kept);
+        let targets = cx.buffer("debug_view_probe_targets", Lifetime::Kept);
+        let scene = cx.buffer("debug_view_probe_scene", Lifetime::Kept);
+        let read_targets = cx.pass("debug_view_probe_targets").id();
+        let read_scene = cx.pass("debug_view_probe_scene").id();
+        let reading_targets = cx.compute_pipeline(
+            read_targets,
+            probe_targets::CS_PROBE_TARGETS,
+            &[
+                (probe_targets::PROBE_PIXEL, Bind::Buffer(pixel)),
+                (probe_targets::PROBED, Bind::Buffer(targets)),
+                (probe_targets::PROBE_IDS, Bind::Target(ViewTarget::Debug(0))),
+                (probe_targets::PROBE_COUNT, Bind::Target(ViewTarget::Debug(1))),
+                (probe_targets::PROBE_TERRAIN, Bind::Target(ViewTarget::Debug(2))),
+                (probe_targets::PROBE_DEPTH, Bind::Target(ViewTarget::Depth)),
+            ],
+        )?;
+        let reading_scene = cx.compute_pipeline(
+            read_scene,
+            probe_scene::CS_PROBE_SCENE,
+            &[
+                (probe_scene::PROBE_PIXEL, Bind::Buffer(pixel)),
+                (probe_scene::SHADED, Bind::Buffer(scene)),
+                (probe_scene::PROBE_SCENE, Bind::Target(ViewTarget::Scene)),
+            ],
+        )?;
+        Ok(Self {
+            pixel,
+            targets,
+            scene,
+            read_targets,
+            read_scene,
+            reading_targets,
+            reading_scene,
+        })
+    }
+
+    fn prepare(&mut self, probe: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
+        let (pass, buffer, tag, bytes) = match probe.stage {
+            Stage::Debug => (self.read_targets, self.targets, TARGETS, TARGET_BYTES),
+            Stage::Shaded => (self.read_scene, self.scene, SCENE, SCENE_BYTES),
+            Stage::Idle | Stage::Armed | Stage::Waiting => return,
+        };
+        cx.allocate_buffer(self.pixel, PIXEL_BYTES);
+        cx.allocate_buffer(buffer, bytes);
+        cx.write(self.pixel, 0, &[probe.pixel.0, probe.pixel.1, 0, 0]);
+        cx.run(pass);
+        let _ = cx.read_back::<Probe>(tag, buffer, 0..bytes, AfterRead::Keep);
+    }
+
+    fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+        let pipeline = if pass == self.read_targets {
+            &self.reading_targets
+        } else {
+            &self.reading_scene
+        };
+        cx.dispatch(pipeline, Count::Groups([1, 1, 1]))
     }
 }

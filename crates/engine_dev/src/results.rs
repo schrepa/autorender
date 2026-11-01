@@ -45,7 +45,6 @@ results! {
     step: crate::results::StepResult,
     environment: crate::results::EnvironmentResult,
     frames: crate::results::FramesResult,
-    probe: crate::results::ProbeResult,
     game: crate::results::GameResult,
     pause: crate::results::StatusResult,
     resume: crate::results::StatusResult,
@@ -64,11 +63,6 @@ pub struct StatusResult {
     pub culling_enabled: bool,
     pub features: Option<Vec<&'static str>>,
     pub presentation: PresentationStateView,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        schemars(with = "Option<serde_json::Map<String, Value>>")
-    )]
-    pub collision: Option<Value>,
     pub fixed_delta_seconds: Option<f32>,
     pub limits: StatusLimits,
 }
@@ -210,7 +204,6 @@ pub enum DescribeResult {
         name: String,
         kind: TypeKind,
         schema: Value,
-        opt_in_sections: Vec<&'static str>,
     },
     Observation {
         name: String,
@@ -273,8 +266,6 @@ pub struct DescribedBrick {
     pub settings: Vec<DescribedEntry>,
     pub stats: Vec<DescribedEntry>,
     pub operations: Vec<DescribedEntry>,
-    pub inspectors: Vec<DescribedEntry>,
-    pub explains: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -443,7 +434,7 @@ pub struct ExplainResult {
         not(target_arch = "wasm32"),
         schemars(with = "Vec<serde_json::Map<String, Value>>")
     )]
-    pub records: Vec<engine_core::ExplainRecord>,
+    pub records: Vec<crate::explain::ExplainRecord>,
     pub total: usize,
 }
 
@@ -473,14 +464,6 @@ pub struct WatchRecord {
 
 #[derive(Serialize)]
 #[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct ProbeResult {
-    #[serde(flatten)]
-    pub probe: engine_core::PixelProbe,
-    pub entity: Option<AuthoredEntity>,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
 pub struct AuthoredEntity {
     pub id: Option<String>,
     pub scene: Option<String>,
@@ -488,10 +471,7 @@ pub struct AuthoredEntity {
 }
 
 impl AuthoredEntity {
-    pub fn of(
-        world: &engine_core::bevy_ecs::world::World,
-        entity: engine_core::bevy_ecs::entity::Entity,
-    ) -> Self {
+    pub fn of(world: &bevy_ecs::world::World, entity: bevy_ecs::entity::Entity) -> Self {
         let metadata = world.get::<engine_scene::SceneEntity>(entity);
         Self {
             id: metadata.map(|metadata| metadata.authored_id.clone()),

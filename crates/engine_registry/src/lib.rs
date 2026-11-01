@@ -5,6 +5,7 @@ mod entries;
 mod gates;
 mod jobs;
 mod members;
+mod order;
 mod record;
 mod registry;
 mod scene;
@@ -15,7 +16,7 @@ pub use attribution::{
     BrickCost, BrickCosts, BrickRow, BrickTable, CORE_ROW, GPU_IDLE_ROW, UNATTRIBUTED_ROW,
     WARMUP_FRAMES,
 };
-pub use draws::{DrawMember, EncodeCore, FrameCore, InstallCore, RawDraw};
+pub use draws::{DrawMember, RawDraw};
 pub use entries::{
     Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry, access_of,
     parse_section, set_section,

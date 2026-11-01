@@ -1,7 +1,7 @@
 use crate::app_host::AppHost;
 use crate::game::Game;
-use crate::host::{FrameLoop, FramePhase, InputGatherer, JobOrder, JobScheduler};
-use engine_core::{ActionInput, BrickList, Engine, JobId};
+use crate::host::{FrameLoop, FramePhase, InputGatherer, JobId, JobOrder, JobScheduler};
+use engine_core::{ActionInput, BrickList, CookMode, Engine};
 use engine_render::RenderTarget;
 use engine_scene::SceneFiles;
 
@@ -60,15 +60,15 @@ impl<G: Game> GameHost<G> {
             .engine_mut()
             .app
             .world_mut()
-            .insert_resource(engine_core::Cooking::default());
+            .insert_resource(CookMode { cooking: true });
     }
 
-    pub fn cooking(&self) -> Option<&engine_core::Cooking> {
-        self.app
-            .engine()
-            .app
-            .world()
-            .get_resource::<engine_core::Cooking>()
+    pub fn cook_features(&self) -> Vec<(&'static str, u64)> {
+        self.app.cook_features()
+    }
+
+    pub fn cook_left(&self) -> u64 {
+        self.cook_features().iter().map(|(_, left)| left).sum()
     }
 
     pub fn jobs_held(&self) -> u32 {
@@ -101,11 +101,12 @@ impl<G: Game> GameHost<G> {
         let input = self.input.take();
         let engine = self.app.engine_mut();
         self.game.before_frame(engine);
-        engine.app.world_mut().resource_mut::<ActionInput>().ingest(
-            input.held,
-            input.pressed,
-            input.released,
-        );
+        let _ = engine
+            .app
+            .world_mut()
+            .modify_resource(|actions: &mut ActionInput| {
+                actions.ingest(input.held, input.pressed, input.released);
+            });
         self.app.frame(timestamp, width, height, input.state)
     }
 
@@ -180,7 +181,6 @@ impl<G: Game> GameHost<G> {
 
     pub fn set_job_cache(&mut self, caching: bool, verify: bool) {
         self.jobs.set_cache(caching, verify);
-        self.app.set_job_verifying(caching && verify);
     }
 
     pub fn take_jobs(&mut self) -> Vec<JobOrder> {
@@ -345,10 +345,6 @@ impl<G: Game> GameHost<G> {
         self.app.renderer.lose_device();
     }
 
-    pub(crate) fn arm_probe(&mut self, pixel: (u32, u32)) {
-        self.app.renderer.arm_probe(pixel);
-    }
-
     pub(crate) fn read_back(&self, slot: u32) -> Option<(Option<u32>, u64)> {
         self.app.renderer.slot_read_back(slot)
     }
@@ -359,24 +355,6 @@ impl<G: Game> GameHost<G> {
 
     pub(crate) fn dev_scene(&self) -> Option<&engine_scene::SceneInstance> {
         self.game.scene()
-    }
-
-    pub(crate) fn probe_result(
-        &mut self,
-    ) -> Option<Result<engine_dev::results::ProbeResult, crate::Error>> {
-        use engine_core::DrawnKind;
-        let probe = match self.app.renderer.probe_result()? {
-            Ok(probe) => probe,
-            Err(error) => return Some(Err(error)),
-        };
-        let slot = probe
-            .object
-            .filter(|_| matches!(probe.kind, Some(DrawnKind::Mesh | DrawnKind::Card)));
-        let engine = self.app.engine();
-        let entity = slot
-            .and_then(|slot| engine.render_entity(slot))
-            .map(|entity| engine_dev::results::AuthoredEntity::of(engine.app.world(), entity));
-        Some(Ok(engine_dev::results::ProbeResult { probe, entity }))
     }
 
     pub fn dev_command(&mut self, request: &str, width: u32, height: u32, paused: bool) -> String {
@@ -403,7 +381,8 @@ impl<G: Game> GameHost<G> {
         revision: &str,
         files: Option<&SceneFiles>,
     ) -> String {
-        use engine_core::{Error, ErrorCode, Expected};
+        use engine_core::{Error, ErrorCode};
+        use engine_settings::Expected;
         use engine_scene::SceneDocument;
         let none = SceneFiles::default();
         let files = files.unwrap_or(&none);

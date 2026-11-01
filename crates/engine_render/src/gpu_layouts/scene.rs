@@ -37,20 +37,6 @@ gpu_structs! {
         pub layer: [f32; 4],
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-    pub struct PostUniform as ["Post"] {
-        pub inverse_view_projection: [[f32; 4]; 4],
-        pub view_projection: [[f32; 4]; 4],
-        pub eye: [f32; 4],
-        pub size: [f32; 4],
-        pub extent: [f32; 4],
-        pub occlusion: [f32; 4],
-        pub previous_view_projection: [[f32; 4]; 4],
-        pub previous_eye: [f32; 4],
-        pub sky: [f32; 4],
-        pub detail: [f32; 4],
-    }
-
     #[derive(Clone, Copy, Pod, Zeroable)]
     pub struct PresentationFrame as ["Frame" in "presentation::cull"] {
         pub alpha: f32,

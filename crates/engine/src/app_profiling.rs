@@ -1,5 +1,6 @@
 use super::{AppHost, now_ms};
-use engine_core::{Error, ErrorCode, Expected};
+use engine_core::{Error, ErrorCode};
+use engine_settings::Expected;
 use serde_json::{Value, json};
 
 fn linear_memory_bytes() -> Option<usize> {
@@ -62,7 +63,7 @@ impl AppHost {
         let cpu = engine_profile::finish();
         let memory = linear_memory_bytes().map(|bytes| json!({"wasm_linear_bytes": bytes}));
         let captured = std::mem::take(&mut self.attribution.captured);
-        let bricks = engine_core::BrickCosts::table(&captured);
+        let bricks = engine_registry::BrickCosts::table(&captured);
         Ok(json!({
             "bricks": bricks,
             "cpu": cpu,

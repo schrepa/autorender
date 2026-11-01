@@ -22,10 +22,6 @@ pub struct PieceAt {
     pub size: u64,
 }
 
-pub fn ordered(pieces: &mut [Piece]) {
-    pieces.sort_by(|first, second| first.brick.cmp(second.brick));
-}
-
 pub fn place(pieces: &[Piece], most: u64) -> Result<(Vec<PieceAt>, u64), Error> {
     let mut placed = Vec::with_capacity(pieces.len());
     let mut end = 0_u64;

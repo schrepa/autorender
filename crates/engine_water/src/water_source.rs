@@ -1,64 +1,54 @@
+use engine_core::math::{GRAVITY, max, min};
+use engine_heightfield::Fall;
+use engine_places::water::{WaterKind, WaterSample};
 use glam::{Vec2, Vec3};
 
-use super::Terrains;
-use crate::{Fall, Layers};
-use engine_core::math::{GRAVITY, max, min};
-use engine_places::{WaterKind, WaterSample};
+use crate::WaterPoint;
+use crate::state::SurfaceTerrain;
 
 const SHEET: f32 = 1.0;
 
-impl Terrains {
-    pub fn waters(&self) -> impl Iterator<Item = (bevy_ecs::entity::Entity, Vec3, &Layers)> {
-        self.entries
-            .iter()
-            .filter(|state| state.around.is_none())
-            .filter_map(|state| {
-                let layers = state.baked.as_deref()?;
-                layers
-                    .hydrology()
-                    .map(|_| (state.entity, state.terrain.origin, layers))
+pub(crate) fn water_at(terrains: &[SurfaceTerrain], point: Vec3) -> Option<WaterSample> {
+    terrains.iter().find_map(|terrain| {
+        let origin = terrain.origin;
+        let local = point - origin;
+        let held = water_point(terrain, Vec2::new(local.x, local.z)).map(|water| WaterSample {
+            kind: if water.lake {
+                WaterKind::Lake
+            } else {
+                WaterKind::River
+            },
+            surface: water.surface,
+            depth: water.depth,
+            velocity: [water.flow.x, 0.0, water.flow.y],
+            foam: water.state.breaking,
+        });
+        [held, fall(&terrain.falls, local)]
+            .into_iter()
+            .flatten()
+            .max_by(|a, b| a.surface.total_cmp(&b.surface))
+            .map(|sample| WaterSample {
+                surface: sample.surface + origin.y,
+                ..sample
             })
-    }
+    })
+}
 
-    pub fn river_flow(&self, entity: bevy_ecs::entity::Entity) -> Option<&crate::RiverFlow> {
-        self.entries
-            .iter()
-            .find(|state| state.entity == entity)?
-            .hydrology
-            .flow
-            .as_ref()
-    }
-
-    pub fn water_at(&self, point: Vec3) -> Option<WaterSample> {
-        self.entries
-            .iter()
-            .filter(|state| state.around.is_none())
-            .find_map(|state| {
-                let origin = state.terrain.origin;
-                let local = point - origin;
-                let held = state
-                    .water(Vec2::new(local.x, local.z))
-                    .map(|water| WaterSample {
-                        kind: if water.lake {
-                            WaterKind::Lake
-                        } else {
-                            WaterKind::River
-                        },
-                        surface: water.surface,
-                        depth: water.depth,
-                        velocity: [water.flow.x, 0.0, water.flow.y],
-                        foam: water.state.breaking,
-                    });
-                [held, fall(&state.falls, local)]
-                    .into_iter()
-                    .flatten()
-                    .max_by(|a, b| a.surface.total_cmp(&b.surface))
-                    .map(|sample| WaterSample {
-                        surface: sample.surface + origin.y,
-                        ..sample
-                    })
-            })
-    }
+fn water_point(terrain: &SurfaceTerrain, local: Vec2) -> Option<WaterPoint> {
+    let pyramid = &terrain.pyramid;
+    (0..pyramid.levels())
+        .find_map(|level| {
+            let key = pyramid.tile_at(level, local)?;
+            let face = terrain.faces.iter().find(|face| face.key == key)?;
+            let local = local - pyramid.tile_origin(key);
+            let water = terrain
+                .held
+                .iter()
+                .find(|(held, _)| *held == key)
+                .map(|(_, water)| water);
+            crate::tile_water::point(face, water.map(|water| &**water), local)
+        })
+        .flatten()
 }
 
 fn fall(falls: &[Fall], point: Vec3) -> Option<WaterSample> {

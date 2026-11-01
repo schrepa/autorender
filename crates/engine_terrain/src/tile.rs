@@ -7,15 +7,14 @@ use engine_math::{clamp, max, min};
 
 use crate::hydrology::RIVER_FAR;
 use crate::layer::{Below, LayerTile, Row, SamplePoint, TileFrame};
-use crate::layers::Layers;
+use crate::Layers;
 use crate::rivers::RiverRaster;
 use crate::surface::{
     BiomeRules, Control, RowInputs, RowScratch, SampleShape, erosion_row, smooth_gradient,
 };
-use crate::tile_water::{TileWater, WaterMesh, WaterPoint, WaterState};
 use crate::{
-    ErrorPyramid, HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Placing, Pyramid,
-    TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey, TileShading,
+    ErrorPyramid, HydrologySample, PATCH_QUADS, PATCHES_PER_TILE, PathSample, Placed, Placing,
+    Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey,
 };
 
 mod beds;
@@ -54,13 +53,10 @@ pub struct Tile {
     control: Option<Box<[u32]>>,
     river_edges: Option<Box<[u16]>>,
     river_beds: Option<Box<[u16]>>,
-    placed: Option<Arc<[crate::Placed]>>,
+    placed: Option<Arc<[Placed]>>,
     placing: Option<Placing>,
-    water: Option<TileWater>,
-    water_mesh: Option<Arc<WaterMesh>>,
     ground_errors: Arc<ErrorPyramid>,
-    water_errors: Option<Arc<ErrorPyramid>>,
-    shading: Option<Arc<TileShading>>,
+    lake: Option<Arc<[f32]>>,
     bounds: [f32; 2],
     patch_bounds: Box<[[f32; 2]]>,
     patch_holes: [u64; 4],
@@ -128,11 +124,8 @@ impl Tile {
             river_beds: None,
             placed: None,
             placing: None,
-            water: None,
-            water_mesh: None,
             ground_errors,
-            water_errors: None,
-            shading: None,
+            lake: None,
             bounds: [0.0; 2],
             patch_bounds: vec![[0.0; 2]; (PATCHES_PER_TILE * PATCHES_PER_TILE) as usize]
                 .into_boxed_slice(),
@@ -251,82 +244,33 @@ impl Tile {
     }
 
     #[must_use]
-    pub(crate) fn with_water(
-        mut self,
-        surface: Box<[f32]>,
-        info: Box<[[u32; 2]]>,
-        solids: &[crate::Footprint],
-    ) -> Self {
-        let tile = (&self.heights[..], self.spacing, self.origin());
-        let water = TileWater::new(surface, info, tile, solids);
-        self.hold(water);
+    fn with_lake(mut self, mut surface: Vec<f32>) -> Self {
+        if !surface.iter().zip(&self.heights[..]).any(|(s, h)| s > h) {
+            return self;
+        }
+        extend_lake(&mut surface, &self.heights);
+        self.lake = Some(Arc::from(surface));
         self
     }
 
-    fn hold(&mut self, water: Option<TileWater>) {
-        let mesh = water.as_ref().map(|water| water.mesh(&self.heights));
-        self.water_errors = mesh
-            .as_ref()
-            .map(|mesh| Arc::new(ErrorPyramid::water(mesh)));
-        self.water_mesh = mesh.map(Arc::new);
-        self.water = water;
-    }
-
-    pub fn water(&self) -> Option<&TileWater> {
-        self.water.as_ref()
+    pub(crate) fn lake_depth(&self, local: Vec2) -> f32 {
+        let (Some(surface), Some((i, j, fu, fv))) = (self.lake.as_deref(), self.cell(local)) else {
+            return 0.0;
+        };
+        let stride = TILE_STRIDE as i32;
+        let at = [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)];
+        let surfaces = at.map(|(x, z)| surface[((z + 1) * stride + x + 1) as usize]);
+        let corners = if fu + fv <= 1.0 { [0, 1, 2] } else { [3, 2, 1] };
+        if corners.iter().any(|&corner| !surfaces[corner].is_finite()) {
+            return 0.0;
+        }
+        let surface = on_triangle(surfaces, fu, fv);
+        let depth = surface - on_triangle(at.map(|(x, z)| self.height(x, z)), fu, fv);
+        if depth <= 0.0 { 0.0 } else { depth }
     }
 
     pub fn ground_errors(&self) -> &ErrorPyramid {
         &self.ground_errors
-    }
-
-    pub fn water_mesh(&self) -> Option<&WaterMesh> {
-        self.water_mesh.as_deref()
-    }
-
-    pub fn water_errors(&self) -> &ErrorPyramid {
-        match &self.water_errors {
-            Some(errors) => errors,
-            None => ErrorPyramid::dry(),
-        }
-    }
-
-    #[must_use]
-    pub fn holding(&self, water: Option<TileWater>) -> Self {
-        let mut tile = Self {
-            key: self.key,
-            spacing: self.spacing,
-            heights: self.heights.clone(),
-            holes: self.holes.clone(),
-            control: self.control.clone(),
-            river_edges: self.river_edges.clone(),
-            river_beds: self.river_beds.clone(),
-            placed: self.placed.clone(),
-            placing: self.placing,
-            water: None,
-            water_mesh: None,
-            ground_errors: Arc::clone(&self.ground_errors),
-            water_errors: None,
-            shading: self.shading.clone(),
-            bounds: self.bounds,
-            patch_bounds: self.patch_bounds.clone(),
-            patch_holes: self.patch_holes,
-            patch_culling: self.patch_culling.clone(),
-        };
-        tile.hold(water);
-        tile
-    }
-
-    pub fn shading(&self) -> Option<&Arc<TileShading>> {
-        self.shading.as_ref()
-    }
-
-    #[must_use]
-    pub fn shaded(&self, shading: Option<Arc<TileShading>>) -> Self {
-        Self {
-            shading,
-            ..self.clone()
-        }
     }
 
     pub fn key(&self) -> TileKey {
@@ -341,7 +285,7 @@ impl Tile {
         self.control.as_deref()
     }
 
-    pub fn placed(&self) -> &[crate::Placed] {
+    pub fn placed(&self) -> &[Placed] {
         self.placed.as_deref().unwrap_or(&[])
     }
 
@@ -350,7 +294,7 @@ impl Tile {
     }
 
     #[must_use]
-    pub fn with_placed(mut self, placed: Vec<crate::Placed>, placing: Placing) -> Self {
+    pub fn with_placed(mut self, placed: Vec<Placed>, placing: Placing) -> Self {
         self.placed = (!placed.is_empty()).then(|| Arc::from(placed));
         self.placing = Some(placing);
         self
@@ -491,47 +435,84 @@ impl Tile {
             hole: self.is_hole(i as u32, j as u32),
         })
     }
+}
 
-    pub fn water_at(&self, local: Vec2) -> Option<WaterPoint> {
-        let water = self.water.as_ref()?;
-        let (i, j, fu, fv) = self.cell(local)?;
-        let at = [(i, j), (i + 1, j), (i, j + 1), (i + 1, j + 1)];
-        let surfaces = at.map(|(x, z)| water.surface(x, z));
-        let corners = if fu + fv <= 1.0 { [0, 1, 2] } else { [3, 2, 1] };
-        if corners.iter().any(|&corner| !surfaces[corner].is_finite()) {
-            return None;
-        }
-        let surface = on_triangle(surfaces, fu, fv);
-        let depth = surface - on_triangle(at.map(|(x, z)| self.height(x, z)), fu, fv);
-        if depth <= 0.0 {
-            return None;
-        }
-        let info = at.map(|(x, z)| water.sample_info(x, z));
-        let states = at.map(|(x, z)| water.sample_state(x, z));
-        Some(WaterPoint {
-            surface,
-            depth,
-            flow: Vec2::new(
-                on_triangle(info.map(|(flow, _, _)| flow.x), fu, fv),
-                on_triangle(info.map(|(flow, _, _)| flow.y), fu, fv),
-            ),
-            span: on_triangle(info.map(|(_, _, span)| span), fu, fv),
-            lake: info[corners[0]].1,
-            state: WaterState {
-                turbulence: on_triangle(states.map(|state| state.turbulence), fu, fv),
-                breaking: on_triangle(states.map(|state| state.breaking), fu, fv),
-                shear: on_triangle(states.map(|state| state.shear), fu, fv),
-                reach: states[corners[0]].reach,
-            },
-        })
-    }
+const LAKE_REACH: u8 = 4;
+const NO_RING: u8 = u8::MAX;
+const QUEUED: u8 = u8::MAX - 1;
+const STOPPED: u8 = u8::MAX - 2;
 
-    pub fn bed_word(&self, local: Vec2) -> u32 {
-        let (Some(water), Some((i, j, fu, fv))) = (self.water.as_ref(), self.cell(local)) else {
-            return 0;
-        };
-        water.bed_word(i + i32::from(fu >= 0.5), j + i32::from(fv >= 0.5))
+fn extend_lake(surface: &mut [f32], heights: &[f32]) {
+    let stride = TILE_STRIDE as usize;
+    let mut rings: Vec<u8> = surface
+        .iter()
+        .zip(heights)
+        .map(|(level, ground)| if level > ground { 0 } else { NO_RING })
+        .collect();
+    for (at, &ring) in rings.iter().enumerate() {
+        if ring == NO_RING {
+            surface[at] = f32::NAN;
+        }
     }
+    let mut inside: Vec<usize> = (0..rings.len()).filter(|&at| rings[at] == 0).collect();
+    for ring in 1..=LAKE_REACH {
+        let mut queued = Vec::new();
+        for &from in &inside {
+            let (x, z) = (from % stride, from / stride);
+            for nz in z.saturating_sub(1)..(z + 2).min(stride) {
+                for nx in x.saturating_sub(1)..(x + 2).min(stride) {
+                    let near = nz * stride + nx;
+                    if rings[near] == NO_RING {
+                        rings[near] = QUEUED;
+                        queued.push(near);
+                    }
+                }
+            }
+        }
+        let made: Vec<(f32, bool)> = queued
+            .iter()
+            .map(|&at| continued_level(at, ring - 1, (&*surface, heights), &rings))
+            .collect();
+        inside.clear();
+        for (&at, &(level, stops)) in queued.iter().zip(&made) {
+            surface[at] = level;
+            rings[at] = if stops { STOPPED } else { ring };
+            if !stops {
+                inside.push(at);
+            }
+        }
+    }
+}
+
+fn continued_level(
+    at: usize,
+    inner: u8,
+    (surface, heights): (&[f32], &[f32]),
+    rings: &[u8],
+) -> (f32, bool) {
+    let stride = TILE_STRIDE as usize;
+    let (x, z) = (at % stride, at / stride);
+    let (mut level, mut apart, mut count) = (0.0, 0.0, 0);
+    for nz in z.saturating_sub(1)..(z + 2).min(stride) {
+        for nx in x.saturating_sub(1)..(x + 2).min(stride) {
+            let near = nz * stride + nx;
+            if rings[near] != inner {
+                continue;
+            }
+            level += surface[near];
+            apart += (surface[near] - heights[near]).abs();
+            count += 1;
+        }
+    }
+    let share = 1.0 / count as f32;
+    let level = level * share;
+    let stops = heights[at] < level;
+    let standing = if stops {
+        heights[at] - apart * share
+    } else {
+        level
+    };
+    (standing, stops)
 }
 
 #[inline]
@@ -580,7 +561,7 @@ pub struct Generator {
     surface: Option<Arc<BiomeRules>>,
     control: Option<Box<[u32]>>,
     tile: Option<Tile>,
-    placed: Vec<crate::Placed>,
+    placed: Vec<Placed>,
     rasters: Vec<Option<RiverRaster>>,
     river_edges: Option<Box<[u16]>>,
     river_beds: Option<Box<[u16]>>,
@@ -867,7 +848,7 @@ impl Generator {
                     };
                 }
                 Stage::Done => {
-                    let water = self.water_rows(budget);
+                    let lake = self.lake_rows(budget);
                     let heights = std::mem::take(&mut self.heights);
                     self.stage = Stage::Failed;
                     let tile = Tile::new(self.key, self.spacing, heights, self.holes.take())?;
@@ -876,8 +857,8 @@ impl Generator {
                         None => tile,
                     };
                     let tile = tile.with_rivers(self.river_edges.take(), self.river_beds.take())?;
-                    let tile = match water {
-                        Some((surface, info)) => tile.with_water(surface.into(), info.into(), &[]),
+                    let tile = match lake {
+                        Some(surface) => tile.with_lake(surface),
                         None => tile,
                     };
                     self.stage = Stage::Done;
@@ -927,7 +908,7 @@ impl Generator {
             self.river_edges = self
                 .layers
                 .hydrology_layer()
-                .and_then(|(index, _)| self.rasters.get(index)?.as_ref()?.edges());
+                .and_then(|(index, _)| self.rasters.get(index)?.as_ref()?.edges(river_step));
             return Stage::Samples {
                 row: Self::HEIGHT_ROWS.0,
             };
@@ -948,23 +929,36 @@ impl Generator {
         }
     }
 
-    fn water_rows(&mut self, budget: &mut u64) -> Option<(Vec<f32>, Vec<[u32; 2]>)> {
+    fn lake_rows(&mut self, budget: &mut u64) -> Option<Vec<f32>> {
         let stride = TILE_STRIDE as usize;
         let rasters = std::mem::take(&mut self.rasters);
         let (index, hydrology) = self.layers.hydrology_layer()?;
         let raster = rasters.get(index).and_then(Option::as_ref);
         let count = stride * stride;
-        let (mut surface, mut info) = (vec![f32::NAN; count], vec![[0_u32; 2]; count]);
-        crate::tile_water::water_rows(
-            &hydrology.water,
-            &|row, column| raster?.water(&hydrology.rivers, row, column),
-            (0..stride, &|_| 0..stride),
-            (&self.xs, &self.zs),
-            &|x, z| self.layers.shown(x, z),
-            (&mut surface, &mut info),
-        );
+        let mut surface = vec![f32::NAN; count];
+        for row in 0..stride {
+            let z = self.zs[row];
+            for column in 0..stride {
+                let x = self.xs[column];
+                if self.layers.shown(x, z) < 1.0 {
+                    continue;
+                }
+                let water = raster.and_then(|raster| raster.water(&hydrology.rivers, row, column));
+                let at = row * stride + column;
+                match hydrology.water.lake_reach(x, z) {
+                    Some((level, _)) if !water.is_some_and(|water| water.surface > level) => {
+                        surface[at] = level;
+                    }
+                    _ => {
+                        if let Some(water) = water {
+                            surface[at] = water.surface;
+                        }
+                    }
+                }
+            }
+        }
         *budget = budget.saturating_sub(count as u64);
-        Some((surface, info))
+        Some(surface)
     }
 
     fn sample_row(&mut self, row: i32) {
@@ -997,52 +991,50 @@ impl Generator {
     }
 }
 
-impl Layers {
-    pub fn height_cost(&self) -> u64 {
-        self.layers().iter().map(|layer| layer.point_cost()).sum()
-    }
+pub fn height_cost(layers: &Layers) -> u64 {
+    layers.layers().iter().map(|layer| layer.point_cost()).sum()
+}
 
-    pub fn sample_height(&self, pyramid: &Pyramid, level: u32, sample: [i64; 2]) -> f32 {
-        let spacing = pyramid.spacing(level);
-        let [dx, dz] = self.offset_samples(spacing);
-        let sample = [sample[0] + dx, sample[1] + dz];
-        let x = sample[0] as f32 * spacing;
-        let z = sample[1] as f32 * spacing;
-        let point = SamplePoint {
-            sample,
-            x,
-            z,
-            spacing,
-        };
-        let mut height = 0.0_f32;
-        for (index, layer) in self.layers().iter().enumerate() {
-            if layer.makes_water() {
-                if let Some(rivers) = self.rivers_of(index) {
-                    let cut = rivers.cut(x, z, height, spacing);
-                    height = self.faded(height, cut, x, z);
-                }
-            } else {
-                layer.apply_point(Below::new(self, index), &point, &mut height);
+pub fn sample_height(layers: &Layers, pyramid: &Pyramid, level: u32, sample: [i64; 2]) -> f32 {
+    let spacing = pyramid.spacing(level);
+    let [dx, dz] = layers.offset_samples(spacing);
+    let sample = [sample[0] + dx, sample[1] + dz];
+    let x = sample[0] as f32 * spacing;
+    let z = sample[1] as f32 * spacing;
+    let point = SamplePoint {
+        sample,
+        x,
+        z,
+        spacing,
+    };
+    let mut height = 0.0_f32;
+    for (index, layer) in layers.layers().iter().enumerate() {
+        if layer.makes_water() {
+            if let Some(rivers) = layers.rivers_of(index) {
+                let cut = rivers.cut(x, z, height, spacing);
+                height = layers.faded(height, cut, x, z);
             }
-        }
-        height
-    }
-
-    pub fn height_at(&self, pyramid: &Pyramid, point: Vec2) -> f32 {
-        let spacing = pyramid.spacing(0);
-        let u = point.x / spacing;
-        let v = point.y / spacing;
-        let (i, j) = (u.floor(), v.floor());
-        let (fu, fv) = (u - i, v - j);
-        let (i, j) = (i as i64, j as i64);
-        let h = |di: i64, dj: i64| self.sample_height(pyramid, 0, [i + di, j + dj]);
-        if fu + fv <= 1.0 {
-            let h00 = h(0, 0);
-            h00 + fu * (h(1, 0) - h00) + fv * (h(0, 1) - h00)
         } else {
-            let h11 = h(1, 1);
-            h11 + (1.0 - fu) * (h(0, 1) - h11) + (1.0 - fv) * (h(1, 0) - h11)
+            layer.apply_point(Below::new(layers, index), &point, &mut height);
         }
+    }
+    height
+}
+
+pub fn height_at(layers: &Layers, pyramid: &Pyramid, point: Vec2) -> f32 {
+    let spacing = pyramid.spacing(0);
+    let u = point.x / spacing;
+    let v = point.y / spacing;
+    let (i, j) = (u.floor(), v.floor());
+    let (fu, fv) = (u - i, v - j);
+    let (i, j) = (i as i64, j as i64);
+    let h = |di: i64, dj: i64| sample_height(layers, pyramid, 0, [i + di, j + dj]);
+    if fu + fv <= 1.0 {
+        let h00 = h(0, 0);
+        h00 + fu * (h(1, 0) - h00) + fv * (h(0, 1) - h00)
+    } else {
+        let h11 = h(1, 1);
+        h11 + (1.0 - fu) * (h(0, 1) - h11) + (1.0 - fv) * (h(1, 0) - h11)
     }
 }
 
@@ -1065,7 +1057,7 @@ impl crate::codec::Codec for Tile {
                 }
             };
         }
-        out.put(&self.placed).put(&self.placing).put(&self.water);
+        out.put(&self.placed).put(&self.placing);
     }
 
     fn read(input: &mut crate::codec::Reader<'_>) -> Result<Self, crate::codec::Error> {
@@ -1085,9 +1077,8 @@ impl crate::codec::Codec for Tile {
             }
         }
         let [river_edges, river_beds] = rivers;
-        let placed: Option<Arc<[crate::Placed]>> = input.get()?;
+        let placed: Option<Arc<[Placed]>> = input.get()?;
         let placing = input.get()?;
-        let water: Option<TileWater> = input.get()?;
         let mut tile = Self::shaped(key, spacing, heights, holes).ok_or_else(invalid)?;
         if culling.len() != tile.patch_bounds.len() {
             return Err(invalid());
@@ -1099,7 +1090,6 @@ impl crate::codec::Codec for Tile {
         tile = tile
             .with_rivers(river_edges, river_beds)
             .ok_or_else(invalid)?;
-        tile.hold(water);
         tile.placed = placed;
         tile.placing = placing;
         Ok(tile)

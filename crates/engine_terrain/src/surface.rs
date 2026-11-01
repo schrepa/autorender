@@ -1,13 +1,14 @@
 use engine_core::{Error, ErrorCode, Expected};
 use engine_math::{clamp, max, min, sin_cos};
-use engine_settings::{ExtraRules, InvalidSetting, Rule, Setting, settings};
+use engine_core::{ExtraRules, InvalidSetting, Rule, Setting, fields};
 use serde::{Deserialize, Serialize};
 
 use crate::PathSample;
+use engine_places::ground::Steep;
 use crate::expr::{Expr, MAX_EXPR_DEPTH, MAX_EXPR_LIST};
 use crate::gpu::op;
 use crate::layer::maps;
-use crate::layers::Layers;
+use crate::Layers;
 use crate::noise::{gradient_value, gradient_values, smooth};
 
 pub const MAX_SURFACE_MATERIALS: usize = 255;
@@ -22,9 +23,8 @@ fn tangent(degrees: f32) -> f32 {
     sin / cos
 }
 
-settings! {
-    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+fields! {
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct Facing {
         pub heading: f32 = 180.0 => range(-360.0, 360.0),
@@ -32,9 +32,8 @@ settings! {
     }
 }
 
-settings! {
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+fields! {
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct NoiseMask {
         pub wavelength: f32 = 100.0 => range(0.01, 1.0e6),
@@ -61,9 +60,8 @@ fn is_unit(value: &f32) -> bool {
     *value == 1.0
 }
 
-settings! {
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+fields! {
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct BiomeLayer {
         pub material: String = String::new() => any,
@@ -74,8 +72,7 @@ settings! {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Biome {
     pub id: String,
@@ -86,10 +83,9 @@ pub struct Biome {
     pub wetness: Option<Expr>,
 }
 
-settings! {
+fields! {
     extra_rules;
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct SteepLayer {
         pub material: String = String::new() => any,
@@ -104,21 +100,14 @@ impl ExtraRules for SteepLayer {
         } else {
             Err(InvalidSetting::new(
                 "slope",
-                engine_settings::Expected::Sorted,
+                engine_core::Expected::Sorted,
             ))
         }
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Steep {
-    pub material: u8,
-    pub gradient: [f32; 2],
-}
-
-settings! {
-    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+fields! {
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(default, deny_unknown_fields)]
     pub struct MacroCauses {
         pub wet: f32 = 0.3 => range(0.0, 1.0),
@@ -147,12 +136,12 @@ pub struct Biomes {
 }
 
 pub(crate) fn terrain_error(path: impl Into<String>) -> Error {
-    Error::new(ErrorCode::InvalidTerrain, path)
+    Error::new(ErrorCode::InvalidValue, path)
 }
 
 pub(crate) fn setting_error(invalid: InvalidSetting, at: &str) -> Error {
     Error {
-        code: ErrorCode::InvalidTerrain,
+        code: ErrorCode::InvalidValue,
         ..Error::from(invalid).within(at)
     }
 }
@@ -164,7 +153,7 @@ pub(crate) fn unknown(path: impl Into<String>, got: &str, names: &[String]) -> E
 }
 
 pub(crate) fn unknown_map(path: &str, got: &str, published: Vec<String>) -> Error {
-    Error::new(ErrorCode::UnknownMap, path).got(got).variants(
+    Error::new(ErrorCode::UnknownReference, path).got(got).variants(
         maps::GPU
             .iter()
             .map(|name| (*name).to_owned())
@@ -405,7 +394,7 @@ impl Scope {
 
     fn user(&mut self, name: &str, path: String) -> Result<usize, Error> {
         if self.gpu {
-            return Err(Error::new(ErrorCode::UnreadableMap, path)
+            return Err(Error::new(ErrorCode::InvalidValue, path)
                 .got(name)
                 .variants(maps::GPU));
         }

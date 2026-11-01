@@ -3,63 +3,60 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
+
 mod body;
+mod bounds;
 mod coupling;
 mod obstacles;
-mod scene;
 mod settings;
 mod shapes;
 mod smoke;
+mod solids;
 mod solver;
 mod statics;
 mod views;
 mod world;
 
-pub use body::{BodyMotion, BodyProblem, BodyStatus, BodyWater, RigidBody};
-pub use scene::RIGID_BODY;
 pub use settings::{Physics, PhysicsStats};
-pub use views::{PhysicsWorldView, RigidBodyView, rigid_body_view};
-pub use world::PhysicsWorld;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Fill, FixedSimulation, FixedSimulationSystems, Join};
-use engine_places::{PhysicsSlot, WaterObstacles};
-use engine_scene::SceneComponentsList;
+use engine_core::{Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source};
+use engine_places::physics::RigidBody;
+use engine_places::water::WaterObstacles;
 
 pub struct PhysicsBrick;
 
-#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PhysicsSystems {
-    Step,
-    Obstruct,
-}
-
 impl Brick for PhysicsBrick {
-    fn register(bricks: &mut Bricks) {
+    const SOURCE: &'static Source = &SOURCE;
+    const SMOKES: &'static [Smoke] = &[Smoke {
+        name: "physics",
+        runs: Runs::Headless,
+        run: smoke::run,
+    }];
+
+    fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .fill(Fill::<PhysicsSlot>::new())
+            .when(simulating)
             .settings::<Physics>()
             .stats::<PhysicsStats>()
-            .resource::<PhysicsWorld>()
-            .resource::<WaterObstacles>()
-            .resource::<obstacles::WaterReaches>()
-            .configure_sets(
-                FixedSimulation,
-                (PhysicsSystems::Step, PhysicsSystems::Obstruct)
-                    .chain()
-                    .in_set(FixedSimulationSystems::Simulate),
+            .resource::<world::PhysicsWorld>()
+            .resource::<solids::Solids>()
+            .fill::<WaterObstacles>(None)
+            .join::<SceneComponents>(ComponentKind::of::<RigidBody>("rigid_body"), None)
+            .systems(
+                Schedule::FixedPreSimulation,
+                (solids::sync_sources, solids::sync_colliders),
             )
             .systems(
-                FixedSimulation,
-                (
-                    world::step.in_set(PhysicsSystems::Step),
-                    (obstacles::reach_water, obstacles::obstruct)
-                        .chain()
-                        .in_set(PhysicsSystems::Obstruct),
-                ),
+                Schedule::FixedSimulation,
+                (world::step, obstacles::obstruct),
             )
-            .inspector::<PhysicsWorld, PhysicsWorldView>(|_, world| PhysicsWorldView::of(world))
-            .join(Join::<SceneComponentsList>::new().cpu(&RIGID_BODY))
-            .smoke("physics", false, smoke::run);
+            .systems(Schedule::FixedPostSimulation, solids::sync_colliders)
+            .observation::<views::PhysicsBodies>();
     }
+}
+
+fn simulating(physics: Res<Physics>) -> bool {
+    physics.enabled
 }

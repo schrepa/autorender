@@ -1,13 +1,10 @@
-use std::sync::Arc;
-
 use bevy_ecs::prelude::Resource;
-use engine_heightfield::{GivenRiver, TerrainLayer};
-use engine_place::{Error, JobRef, List, Slot};
+use engine_place::{JobRef, List, Slot};
+
+pub use engine_heightfield::layer::DrawRivers;
 
 pub struct LayerKind {
-    pub name: &'static str,
-    pub schema: fn() -> serde_json::Value,
-    pub from_json: fn(&serde_json::Value) -> Result<Arc<dyn TerrainLayer>, Error>,
+    pub layer: &'static engine_heightfield::layer::LayerKind,
     pub job: JobRef,
 }
 
@@ -17,8 +14,6 @@ impl List for TerrainLayers {
     const NAME: &'static str = "terrain_layers";
     type Member = LayerKind;
 }
-
-pub type DrawRivers = fn(&[GivenRiver]) -> Result<Arc<dyn TerrainLayer>, Error>;
 
 #[derive(Resource, Clone, Copy, Default)]
 pub struct DrawnRivers {

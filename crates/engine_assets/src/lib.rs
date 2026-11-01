@@ -11,13 +11,14 @@ mod mesh;
 mod texture;
 
 pub use cards::{AlphaImage, trim_cards};
+pub use engine_lodbuild::{LodInput, LodLevel, MeshLods, MeshVertex};
 pub use library::{AssetBudget, AssetLibrary, MaterialHandle, MeshHandle, TextureHandle};
-pub use lod::{LOD_RECORD, LodInput, LodLevel, MeshLods, lod_input, takes_levels};
+pub use lod::{lod_input, takes_levels};
 pub use material::{
     AlphaMode, Filter, Grounding, MAX_GROUNDING_HEIGHT, MAX_WORLD_TILING, Material,
     MaterialBinding, Sampler, Surface, TextureRef, TopLayer, UvTransform, Wrap,
 };
-pub use mesh::{Aabb, Mesh, MeshVertex};
+pub use mesh::{Aabb, Mesh};
 pub use texture::{
     MAX_TEXTURE_DIMENSION, Texture, TextureFormat, TextureSummary, full_chain, srgb_decoded,
 };

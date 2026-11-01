@@ -288,7 +288,7 @@ impl Runner<'_> {
         let mut arguments: Vec<String> = [
             ("--look", name.clone()),
             ("--stand", eye.stand()),
-            ("--dynamic-resolution", "off".to_owned()),
+            ("--set", "dynamic_resolution.enabled=false".to_owned()),
             ("--offscreen", FRAMES.to_string()),
             ("--size", format!("{}x{}", SIZE.0, SIZE.1)),
             ("--capture", capture.display().to_string()),

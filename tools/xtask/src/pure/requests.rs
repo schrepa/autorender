@@ -21,27 +21,25 @@ const WATCH: &str = "the watch tools answer it (web/scripts/iteration*.mjs and t
 const PAGE: &str = "the page answers it (web/src/engine/dev.ts and the benchmark it runs)";
 const NATIVE_PROFILE: &str = "native profile captures answer it (crates/engine_native)";
 const CHECKS: &str = "the checks report it (crates/engine_checks)";
-const LINKER: &str = "the shader linker answers it when a GPU device links shaders, and the checks report it (crates/engine_render/src/linker.rs)";
-const BRICK_LISTS: &str = "brick lists and the brick registry answer it when two bricks fill one slot (crates/engine_core/src/bricks)";
+const LINKER: &str = "the shader linker answers it at install, which the no-op install runs (crates/engine_render/src/linker.rs)";
+const APP_BUILD: &str = "building the App refuses it, and the no-op install builds every listed brick (crates/engine_registry, crates/engine_render)";
+const SPAWNER: &str = "a spawner reports it when a command reaches another brick's entity (crates/engine_core)";
 const IMPORT: &str = "the glTF importer answers it (tools/assetc)";
 const RECORDS: &str = "records that do not decode answer it (crates/engine_terrain/src/codec.rs)";
-const LAYERS: &str = "terrain layer stacks answer it (crates/engine_terrain/src/layers.rs)";
 const PACKS: &str = "packs that do not read answer it (crates/engine_worker/src/pack.rs)";
-const COLLISION: &str = "engine_collision's own check, after the development tools' and scenes' bounds, \
-                         or its budgets, which overflow only with more colliders than the corpora load";
 
 const UNREACHED: &[(&str, &str)] = &[
     ("activation_committed", WATCH),
     ("activation_expired", WATCH),
     ("activation_failed", WATCH),
     ("activation_not_committed", WATCH),
-    ("ambiguous_passes", "rendering needs a GPU"),
+    ("ambiguous_passes", APP_BUILD),
+    ("attachment_limit", APP_BUILD),
     ("benchmark_failed", PAGE),
     ("benchmark_interrupted", PAGE),
     ("benchmark_timeout", PAGE),
+    ("binding_foreign", LINKER),
     ("binding_limit", LINKER),
-    ("brick_cycle", CHECKS),
-    ("brick_internal_path", CHECKS),
     ("bridge_error", BRIDGE),
     ("bridge_unreachable", BRIDGE),
     ("browser_command_failed", PAGE),
@@ -52,37 +50,18 @@ const UNREACHED: &[(&str, &str)] = &[
     ("build_worker_unavailable", WATCH),
     ("capture_failed", BRIDGE),
     ("capture_requires_pause", BRIDGE),
-    ("collision_candidate_budget", COLLISION),
-    ("collision_incomplete_world", COLLISION),
-    ("collision_invalid_cast", COLLISION),
-    ("collision_invalid_config", COLLISION),
-    ("collision_invalid_ray", COLLISION),
-    ("collision_invalid_shape", COLLISION),
-    ("collision_invalid_transform", COLLISION),
-    ("collision_numerical_failure", COLLISION),
-    ("collision_pair_budget", COLLISION),
-    ("collision_result_budget", COLLISION),
     ("command_busy", PAGE),
     ("command_timeout", BRIDGE),
     ("comment", CHECKS),
     ("content_type", BRIDGE),
-    ("core_uses_brick", CHECKS),
-    ("crate_cycle", CHECKS),
-    (
-        "duplicate_brick",
-        "a game adding a brick twice panics at startup (engine_core::AddBrick)",
-    ),
     ("duplicate_request", BRIDGE),
     ("error_type", CHECKS),
-    ("example_dependency", CHECKS),
-    ("example_named", CHECKS),
     ("exception_unused", CHECKS),
-    ("facade_export", CHECKS),
-    ("face_missing", CHECKS),
     ("file_too_long", CHECKS),
-    ("forbidden_code", CHECKS),
+    ("foreign_access", APP_BUILD),
+    ("foreign_entity", SPAWNER),
     ("game_rule", "a game's own refusal (ErrorCode::GameRule)"),
-    ("generated_stale", CHECKS),
+    ("import_foreign", LINKER),
     (
         "invalid_arguments",
         "hosts' and tools' command lines answer it (crates/engine_native/src/options.rs)",
@@ -109,20 +88,33 @@ const UNREACHED: &[(&str, &str)] = &[
     ("invalid_url", BRIDGE),
     ("iteration_error", WATCH),
     ("iteration_stopped", WATCH),
+    (
+        "job_unsupported",
+        "core's mesh LOD kind answers it on wasm (crates/engine_core/src/mesh_lods.rs)",
+    ),
     ("lint_allowed", CHECKS),
     ("lint_missing", CHECKS),
     ("marker", CHECKS),
-    ("missing_layer", LAYERS),
     ("missing_runtime_identity", BRIDGE),
+    ("module_outside_brick", APP_BUILD),
+    ("name_twice", APP_BUILD),
     ("not_inherited", CHECKS),
     ("origin_rejected", BRIDGE),
+    (
+        "pass_mismatch",
+        "a part's first record of a pass it did not declare answers it, which needs a GPU",
+    ),
+    ("pieces_limit", APP_BUILD),
     ("pix_unavailable", NATIVE_PROFILE),
+    ("place_cycle", APP_BUILD),
+    ("place_not_filled", APP_BUILD),
+    ("place_unlisted", LINKER),
     ("profile_too_large", NATIVE_PROFILE),
     ("profiling_unavailable", NATIVE_PROFILE),
     ("queue_full", BRIDGE),
     ("queue_timeout", BRIDGE),
+    ("read_before_write", APP_BUILD),
     ("render_failed", "rendering needs a GPU"),
-    ("replaces_unknown", CHECKS),
     ("request_outcome_unknown", BRIDGE),
     (
         "response_too_large",
@@ -135,7 +127,10 @@ const UNREACHED: &[(&str, &str)] = &[
     ("runtime_replaced", BRIDGE),
     ("runtime_unavailable", BRIDGE),
     ("safety_missing", CHECKS),
-    ("schedule_ambiguity", CHECKS),
+    (
+        "section_unlisted",
+        "scene load skips and reports a section whose brick is not listed, and the standard list lists every brick the corpora name",
+    ),
     ("session_cancelled", BRIDGE),
     ("session_closed", BRIDGE),
     ("session_mismatch", BRIDGE),
@@ -143,8 +138,7 @@ const UNREACHED: &[(&str, &str)] = &[
     ("session_request_limit", BRIDGE),
     ("session_unavailable", BRIDGE),
     ("shader_link", LINKER),
-    ("slot_filled_twice", BRICK_LISTS),
-    ("slot_unfilled", LINKER),
+    ("slot_filled_twice", APP_BUILD),
     ("source_budget", WATCH),
     (
         "source_changed",
@@ -155,6 +149,8 @@ const UNREACHED: &[(&str, &str)] = &[
     ("struct_too_wide", CHECKS),
     ("unknown_binding", LINKER),
     ("unknown_module", LINKER),
+    ("unknown_variable", APP_BUILD),
+    ("unowned_system", APP_BUILD),
     ("unsafe_output_path", WATCH),
     ("unsafe_unlisted", CHECKS),
     (
@@ -162,18 +158,21 @@ const UNREACHED: &[(&str, &str)] = &[
         "the development bridge answers it while a host carries out a control (crates/engine/src/dev_host/bridge.rs): the native and surfaces smokes reach it",
     ),
     ("unsupported_feature", IMPORT),
+    ("usage_conflict", APP_BUILD),
     ("version_unpinned", CHECKS),
+    ("view_writer_unplaced", APP_BUILD),
     ("watch_locked", WATCH),
+    ("wgsl_unused", LINKER),
 ];
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let fixtures = read_json(root, FIXTURES)?;
     let scenes = read_json(root, SCENES)?;
     let components = scenes["documents"]["components"].to_string();
-    let mut engine = engine_with_features();
+    let mut engine = engine_with_features()?;
     let scene = instantiate(&mut engine, &components)?;
     let mut bare = Engine::default();
-    let mut other = engine_with_features();
+    let mut other = engine_with_features()?;
     let foreign = instantiate(&mut other, &components)?;
     let tools = DevTools::default();
     let mut reached = BTreeSet::new();
@@ -208,12 +207,12 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
                 (_, Some("none")) => query(&tools, &mut engine, None, &source),
                 (_, Some("foreign")) => query(&tools, &mut engine, Some(&foreign), &source),
                 (_, Some("large")) => {
-                    let mut large = engine_with_features();
+                    let mut large = engine_with_features()?;
                     let scene = instantiate(&mut large, &crowd())?;
                     query(&tools, &mut large, Some(&scene), &source)
                 }
                 (_, Some(despawned)) if despawned.starts_with("without ") => {
-                    let mut fresh = engine_with_features();
+                    let mut fresh = engine_with_features()?;
                     let scene = instantiate(&mut fresh, &components)?;
                     let id = &despawned["without ".len()..];
                     if let Some(entity) = scene.entity(id) {
@@ -267,8 +266,8 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     Ok(())
 }
 
-fn engine_with_features() -> Engine {
-    crate::bricks::standard_engine()
+fn engine_with_features() -> Result<Engine, String> {
+    crate::bricks::standard_engine().map_err(|error| error.to_string())
 }
 
 fn instantiate(engine: &mut Engine, document: &str) -> Result<SceneInstance, String> {

@@ -12,6 +12,7 @@ pub mod ground;
 pub mod lighting;
 pub mod lights;
 pub mod meshes;
+pub mod navigation;
 pub mod particles;
 pub mod physics;
 pub mod probes;
@@ -29,6 +30,25 @@ pub mod water;
 pub mod wind;
 
 use engine_place::PlaceDecl;
+
+mod degrees {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub(crate) fn serialize<S: Serializer>(
+        radians: &f32,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_f32(radians.to_degrees())
+    }
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+        f32::deserialize(deserializer).map(f32::to_radians)
+    }
+}
+
+fn is_zero(value: &f32) -> bool {
+    *value == 0.0
+}
 
 pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<sun::SunPath>(),
@@ -51,6 +71,8 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<reflections::Reflected>(),
     PlaceDecl::slot::<dither::DitherPlace>(),
     PlaceDecl::slot::<meshes::Instances>(),
+    PlaceDecl::component::<meshes::Cube>("cube"),
+    PlaceDecl::component::<meshes::Tint>("tint"),
     PlaceDecl::slot::<particles::Transparency>(),
     PlaceDecl::component::<particles::ParticleEmitter>("particle_emitter"),
     PlaceDecl::slot::<ground::Ground>(),
@@ -66,6 +88,10 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<ground::Occupancy>(),
     PlaceDecl::slot::<ground::Foliage>(),
     PlaceDecl::component::<ground::HeightHeld>("height_held"),
+    PlaceDecl::component::<ground::Grounded>("grounded"),
+    PlaceDecl::component::<ground::GroundedAt>("grounded_at"),
+    PlaceDecl::component::<navigation::NavAgent>("nav_agent"),
+    PlaceDecl::component::<navigation::NavWalk>("nav_walk"),
     PlaceDecl::slot::<water::Waterline>(),
     PlaceDecl::slot::<water::WaterObstacles>(),
     PlaceDecl::slot::<water::WaterFlow>(),

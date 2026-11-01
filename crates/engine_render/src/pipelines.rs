@@ -20,7 +20,7 @@ use std::{
 use crate::bindings::{
     Format, Kind, ResolvedBinding, ResolvedLayout, Sample, Sampling, Stages, Table, View,
 };
-use crate::linker::{Composed, Linker};
+use crate::fixed_linker::{Composed, Linker};
 use crate::pipeline_layouts::{PIPELINE_LAYOUTS, PipelineLayout, StageLimits};
 
 pub type Layouts = &'static [(&'static str, &'static PipelineLayout)];

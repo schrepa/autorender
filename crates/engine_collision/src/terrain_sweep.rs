@@ -1,36 +1,37 @@
-use bevy_ecs::prelude::{Entity, World};
-use engine_core::{Error, ErrorCode, Operation, Slot, bounds, missing_brick};
-use engine_places::{Ground, GroundSlot};
-#[cfg(feature = "schema")]
-use engine_settings::stated;
+use bevy_ecs::prelude::*;
+use engine_core::{Error, ErrorCode, Operation};
+use engine_places::ground::Ground;
+use engine_places::physics::{Collide, Collision, CollisionRay, QueryFilter};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::queries::{bounded, reply};
-use crate::{CollisionRay, CollisionWorld, QueryFilter, refresh_collision_world};
+use crate::queries::{COORDINATE, bounded, reply, whole};
+use crate::world::{CollisionWorld, world_of};
 
 const PLACED_RAY_HITS: usize = 16;
+const SWEEP_EXTENT: (f64, f64) = (0.0, 4096.0);
+const SWEEP_SAMPLES: (u64, u64) = (2, 64);
 
 #[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
-pub struct TerrainSweepQuery {
+pub(crate) struct TerrainSweepQuery {
     pub center: [f64; 2],
     #[serde(default = "default_half_extent")]
-    #[cfg_attr(feature = "schema", schemars(transform = stated(bounds::SWEEP_EXTENT)))]
     pub half_extent: f64,
     #[serde(default = "default_sweep_samples")]
-    #[cfg_attr(feature = "schema", schemars(transform = stated(bounds::SWEEP_SAMPLES)))]
     pub samples: u32,
 }
 
 impl Operation for TerrainSweepQuery {
     const NAME: &'static str = "terrain_sweep";
-    const CONTROL: bool = false;
+    type Params = (Res<'static, Collision>, Res<'static, Ground>);
     type Request = Self;
 
-    fn run(world: &mut World, request: Self) -> Result<Value, Error> {
+    fn run(
+        (collision, ground): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Value, Error> {
         let Self {
             center,
             half_extent,
@@ -40,27 +41,23 @@ impl Operation for TerrainSweepQuery {
         let cz = coordinate(center[1], "$.center[1]")?;
         bounded(
             half_extent,
-            bounds::SWEEP_EXTENT,
+            SWEEP_EXTENT,
             ErrorCode::OutOfRange,
             "$.half_extent",
         )?;
-        bounded(
-            samples,
-            bounds::SWEEP_SAMPLES,
+        whole(
+            u64::from(samples),
+            SWEEP_SAMPLES,
             ErrorCode::OutOfRange,
             "$.samples",
         )?;
-        sweep(world, Vec2::new(cx, cz), half_extent as f32, samples)
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(Self)
-    }
-
-    #[cfg(feature = "schema")]
-    fn result_schema() -> Option<schemars::Schema> {
-        Some(schemars::schema_for!(TerrainSweepResult))
+        sweep(
+            world_of(&collision),
+            &ground,
+            Vec2::new(cx, cz),
+            half_extent as f32,
+            samples,
+        )
     }
 }
 
@@ -73,23 +70,19 @@ fn default_sweep_samples() -> u32 {
 }
 
 fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
-    bounded(value, bounds::COORDINATE, ErrorCode::OutOfRange, path).map(|value| value as f32)
+    bounded(value, COORDINATE, ErrorCode::OutOfRange, path).map(|value| value as f32)
 }
 
-fn sweep(world: &mut World, center: Vec2, half_extent: f32, samples: u32) -> Result<Value, Error> {
-    let collision = world.contains_resource::<CollisionWorld>();
-    if collision {
-        refresh_collision_world(world)?;
-    }
-    let world = &*world;
-    if !world.contains_resource::<Ground>() {
-        return Err(missing_brick(GroundSlot::NAME, "$.op"));
-    }
-    let grounds: Vec<Entity> = world
-        .get_resource::<CollisionWorld>()
+fn sweep(
+    collision: Option<&CollisionWorld>,
+    ground: &Ground,
+    center: Vec2,
+    half_extent: f32,
+    samples: u32,
+) -> Result<Value, Error> {
+    let grounds: Vec<Entity> = collision
         .into_iter()
-        .flat_map(|collision| collision.ground_solids())
-        .map(|solid| solid.terrain)
+        .flat_map(|collision| collision.terrain.owners())
         .collect();
     let mut queried = 0;
     let mut level_zero = 0;
@@ -101,7 +94,7 @@ fn sweep(world: &mut World, center: Vec2, half_extent: f32, samples: u32) -> Res
         for column in 0..samples {
             let unit = Vec2::new(column as f32, row as f32) / (samples - 1) as f32 * 2.0 - 1.0;
             let point = center + unit * half_extent;
-            let Some(sample) = Ground::point_in(world, point.x, point.y) else {
+            let Some(sample) = ground.point(point) else {
                 continue;
             };
             queried += 1;
@@ -113,9 +106,9 @@ fn sweep(world: &mut World, center: Vec2, half_extent: f32, samples: u32) -> Res
             if sample.level != 0 {
                 continue;
             }
-            if collision {
+            if let Some(collision) = collision {
                 let mut hits = Vec::new();
-                world.resource::<CollisionWorld>().raycast_all(
+                collision.raycast_all(
                     CollisionRay {
                         origin: Vec3::new(point.x, sample.height + 1000.0, point.y),
                         direction: Vec3::NEG_Y,
@@ -148,7 +141,7 @@ fn sweep(world: &mut World, center: Vec2, half_extent: f32, samples: u32) -> Res
         resident: queried,
         level_zero,
         holes,
-        collision: collision.then_some(SweepRays {
+        collision: collision.map(|_| SweepRays {
             compared: ray_checks,
             missed: ray_misses,
             placed_first,
@@ -159,45 +152,41 @@ fn sweep(world: &mut World, center: Vec2, half_extent: f32, samples: u32) -> Res
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct TerrainSweepResult {
-    pub points: u32,
-    pub resident: usize,
-    pub level_zero: usize,
-    pub holes: usize,
-    pub collision: Option<SweepRays>,
-    pub examples: Vec<SweepExample>,
+struct TerrainSweepResult {
+    points: u32,
+    resident: usize,
+    level_zero: usize,
+    holes: usize,
+    collision: Option<SweepRays>,
+    examples: Vec<SweepExample>,
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct SweepRays {
-    pub compared: usize,
-    pub missed: usize,
-    pub placed_first: usize,
-    pub worst: Worst,
+struct SweepRays {
+    compared: usize,
+    missed: usize,
+    placed_first: usize,
+    worst: Worst,
 }
 
 #[derive(Default, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct Worst {
+struct Worst {
     #[serde(rename = "max_difference")]
-    pub difference: f32,
-    pub at: Option<[f32; 2]>,
+    difference: f32,
+    at: Option<[f32; 2]>,
 }
 
 impl Worst {
     fn add(&mut self, difference: f32, point: Vec2) {
         if difference > self.difference || self.at.is_none() {
-            self.difference = engine_core::math::max(self.difference, difference);
+            self.difference = engine_math::max(self.difference, difference);
             self.at = Some(point.to_array());
         }
     }
 }
 
 #[derive(Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct SweepExample {
-    pub at: [f32; 2],
-    pub height: f32,
+struct SweepExample {
+    at: [f32; 2],
+    height: f32,
 }

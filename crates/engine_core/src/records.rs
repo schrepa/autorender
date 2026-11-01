@@ -7,9 +7,10 @@ pub use engine_textures::{
     Family as TextureFamily, Source as TextureSource, Usage as TextureUsage,
 };
 
+use crate::jobs::record_key;
 use crate::{
-    CookMode, JobFailures, JobId, JobKind, JobQueue, JobRef, RecordKey, TEXTURE_COOK, URGENT_JOBS,
-    VIEW_JOBS, job_priority,
+    CookMode, JobExchange, JobFailures, JobId, JobKind, JobRef, RecordKey, TEXTURE_COOK,
+    URGENT_JOBS, VIEW_JOBS, job_priority,
 };
 
 const TEXTURE_RECORD: &str = "texture";
@@ -56,12 +57,8 @@ impl TextureSet {
     fn key(&self, index: usize, family: TextureFamily) -> RecordKey {
         let mut identity =
             format!("{}/{}/{}", self.name, self.textures[index].0, family.name()).into_bytes();
-        identity.extend_from_slice(&engine_textures::SOURCE);
-        RecordKey::from_hash(engine_sources::record_key(
-            &self.source,
-            TEXTURE_RECORD,
-            &identity,
-        ))
+        identity.extend_from_slice(&crate::sources::TEXTURES);
+        record_key(&self.source, TEXTURE_RECORD, &identity)
     }
 }
 
@@ -224,7 +221,7 @@ impl RecordExchange {
             .retain(|asked| !asked.asked.iter().all(|&done| done));
     }
 
-    fn step_sources(&mut self, id: u64, jobs: &mut JobQueue, priority: u32) {
+    fn step_sources(&mut self, id: u64, jobs: &mut JobExchange, priority: u32) {
         let Some(batch) = self.batches.iter_mut().find(|batch| batch.id == id) else {
             return;
         };
@@ -315,13 +312,17 @@ enum Step {
 fn step(
     records: &mut RecordExchange,
     mut request: Request,
-    (jobs, place): (&mut JobQueue, u32),
+    (jobs, place): (&mut JobExchange, u32),
 ) -> Step {
     let make_priority = job_priority(VIEW_JOBS, place);
     loop {
         match request.stage {
             Stage::Asking => {
-                let id = jobs.fetch(request.key, job_priority(URGENT_JOBS, place));
+                let kind = match request.make {
+                    Make::Here(_) => None,
+                    Make::Texture { .. } => Some(JobRef::from(&TEXTURE_COOK)),
+                };
+                let id = jobs.fetch(kind, request.key, job_priority(URGENT_JOBS, place));
                 request.stage = Stage::Fetching(id);
             }
             Stage::Fetching(id) => match jobs.take(id) {
@@ -409,7 +410,7 @@ pub(crate) fn exchange(world: &mut World) {
     let mut waiting = Vec::with_capacity(requests.len());
     let mut arrived = Vec::new();
     let mut failed = Vec::new();
-    world.resource_scope(|world, mut jobs: Mut<JobQueue>| {
+    world.resource_scope(|world, mut jobs: Mut<JobExchange>| {
         let verifying = jobs.verifying();
         let mut records = world.resource_mut::<RecordExchange>();
         for (place, request) in requests.into_iter().enumerate() {
@@ -422,7 +423,11 @@ pub(crate) fn exchange(world: &mut World) {
                 } => {
                     let key = request.key;
                     if made {
-                        jobs.keep(key, bytes.clone());
+                        let kind = match request.make {
+                            Make::Here(_) => None,
+                            Make::Texture { .. } => Some(JobRef::from(&TEXTURE_COOK)),
+                        };
+                        jobs.keep(key, kind, bytes.clone());
                     }
                     let deliver = request.deliver.take();
                     if !made && verifying {

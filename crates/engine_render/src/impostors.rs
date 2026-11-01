@@ -9,12 +9,13 @@ mod records;
 
 use engine_core::collections::{HashMap, HashSet};
 use engine_core::glam::Vec3;
-use engine_core::{Material, MaterialHandle, MeshHandle, RecordKey};
+use engine_core::{
+    Error, ErrorCode, Job, JobCx, JobKind, Material, MaterialHandle, MeshHandle, RecordKey,
+};
 
 use crate::bindings::{IMPOSTOR_BAKE, IMPOSTOR_DRAW};
 use crate::cached::Cached;
 use crate::entries::MeshEntries;
-use crate::gpu_data::Variant;
 use crate::gpu_layouts::constants::IMPOSTOR_FOLIAGE as FOLIAGE;
 use crate::gpu_layouts::constants::IMPOSTOR_FRAMES_SHIFT as FRAMES_SHIFT;
 pub use crate::gpu_layouts::constants::IMPOSTOR_HEMISPHERE as HEMISPHERE;
@@ -22,13 +23,16 @@ use crate::gpu_layouts::constants::IMPOSTOR_KINDS as KINDS;
 use crate::gpu_layouts::constants::IMPOSTOR_MASKED as MASKED;
 use crate::gpu_layouts::constants::VARIANT_FOLIAGE;
 pub use crate::gpu_layouts::impostors::ImpostorRecord;
-use crate::graph::Targets;
+use crate::materials::Variant;
 use crate::mesh_arena::MeshDraw;
 use crate::mipmaps::MipGenerator;
-use crate::renderer::ShadingSet;
 pub use content::Contents;
 
-const IMPOSTOR_RECORD: &str = "impostor";
+pub static IMPOSTOR: JobKind = JobKind::new("engine::impostor", &crate::SOURCE, made_on_the_gpu);
+
+fn made_on_the_gpu(_: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    Err(Error::new(ErrorCode::JobUnsupported, "engine::impostor"))
+}
 
 pub const IMPOSTOR_MIN_TRIANGLES: usize = 64;
 
@@ -351,7 +355,6 @@ pub struct ImpostorPipelines {
     bake_pipelines: HashMap<Variant, wgpu::RenderPipeline>,
     shade_pipelines: HashMap<Variant, wgpu::RenderPipeline>,
     draw_layout: crate::pipelines::GroupLayout,
-    draw_pipelines: HashMap<(Targets, ShadingSet), wgpu::RenderPipeline>,
     sampler: wgpu::Sampler,
     no_shade: Option<wgpu::TextureView>,
 }
@@ -377,27 +380,9 @@ impl ImpostorPipelines {
             bake_pipelines: HashMap::default(),
             shade_pipelines: HashMap::default(),
             draw_layout,
-            draw_pipelines: HashMap::default(),
             sampler,
             no_shade: None,
         }
-    }
-
-    pub fn pipeline(&self, targets: Targets, shading: ShadingSet) -> Option<&wgpu::RenderPipeline> {
-        self.draw_pipelines.get(&(targets, shading))
-    }
-
-    pub fn insert_pipeline(
-        &mut self,
-        targets: Targets,
-        shading: ShadingSet,
-        pipeline: wgpu::RenderPipeline,
-    ) {
-        self.draw_pipelines.insert((targets, shading), pipeline);
-    }
-
-    pub fn forget_pipelines(&mut self, targets: Targets) {
-        self.draw_pipelines.retain(|(kind, _), _| *kind != targets);
     }
 }
 
@@ -532,11 +517,7 @@ impl ImpostorAtlas {
     }
 
     fn record_key(&self, content: (u128, u128)) -> RecordKey {
-        RecordKey::new(
-            &crate::SOURCE,
-            IMPOSTOR_RECORD,
-            &records::identity(self.shape, self.format, content),
-        )
+        RecordKey::of(&IMPOSTOR, &records::identity(self.shape, self.format, content))
     }
 
     pub fn retain(
@@ -869,55 +850,4 @@ impl ImpostorAtlas {
     pub fn group(&self) -> Option<&wgpu::BindGroup> {
         self.group.get()
     }
-}
-
-const CARD_ATTRIBUTES: [wgpu::VertexAttribute; 2] =
-    wgpu::vertex_attr_array![2 => Uint32, 3 => Uint32];
-
-pub fn draw_pipeline(
-    device: &wgpu::Device,
-    layout: &wgpu::PipelineLayout,
-    (targets, entries): (Targets, &MeshEntries),
-    shading: &[(&'static str, f64)],
-    canvas: wgpu::TextureFormat,
-    depth: wgpu::TextureFormat,
-) -> wgpu::RenderPipeline {
-    let vertex = (entries.card_vertex)(targets);
-    let fragment = (entries.card_fragment)(targets);
-    let color_targets = targets.color_targets(canvas);
-    let mut buffers = vec![Some(wgpu::VertexBufferLayout {
-        array_stride: 8,
-        step_mode: wgpu::VertexStepMode::Instance,
-        attributes: &CARD_ATTRIBUTES,
-    })];
-    if targets == Targets::Debug {
-        buffers = crate::debug_targets::with_record(&buffers);
-    }
-    crate::pipelines::geometry(
-        device,
-        &crate::pipelines::Geometry {
-            label: "engine/impostors",
-            layout,
-            vertex_constants: &[],
-            vertex,
-            buffers: &buffers,
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth: Some(wgpu::DepthStencilState {
-                format: depth,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Greater),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            fragment: Some(crate::pipelines::Fragment {
-                entry: fragment,
-                constants: shading,
-                targets: &color_targets,
-            }),
-        },
-    )
 }

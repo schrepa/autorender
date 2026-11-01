@@ -71,7 +71,7 @@ pub struct JoinEntry {
     pub scope: Scope,
     pub wgsl: Option<Box<dyn Any + Send + Sync>>,
     pub(crate) member: Option<Box<dyn Any + Send + Sync>>,
-    pub(crate) add: fn(&mut World, Box<dyn Any + Send + Sync>, GateId),
+    pub(crate) add: fn(&mut World, Box<dyn Any + Send + Sync>, GateId, &'static str),
     pub(crate) init: fn(&mut World),
     pub(crate) refresh: fn(&mut World),
 }
@@ -291,7 +291,7 @@ impl PieceEntry {
             wgsl: T::WGSL,
             size: size_of::<T>(),
             bytes: bytes_of::<T>,
-            id: World::resource_id::<T>,
+            id: World::component_id::<T>,
         }
     }
 
@@ -343,7 +343,7 @@ fn reset_of<T: Resource + Default>(world: &mut World) {
 }
 
 fn resource_id_of<T: Resource>(world: &mut World) -> ComponentId {
-    world.register_resource::<T>()
+    world.register_component::<T>()
 }
 
 fn current_of<T: Resource + Default + Serialize>(world: &World) -> Value {

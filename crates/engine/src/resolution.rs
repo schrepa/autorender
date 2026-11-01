@@ -1,82 +1,74 @@
-use bevy_ecs::prelude::Resource;
-use serde::{Deserialize, Serialize};
-
-use engine_core::bricks::{Brick, Bricks};
-use engine_core::sections::environment_section;
-use engine_settings::{Expected, ExtraRules, InvalidSetting, settings};
-
-impl Brick for Resolution {
-    fn register(bricks: &mut Bricks<'_>) {
-        bricks
-            .settings::<Resolution>()
-            .settings::<DynamicResolution>();
-    }
-}
+use bevy_ecs::resource::Resource;
+use engine_core::{Engine, Error, ErrorCode, Section, settings};
+use engine_settings::Expected;
+use engine_settings::rule::range;
 
 settings! {
-    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(
-        feature = "schema",
-        derive(schemars::JsonSchema),
-        schemars(rename = "SceneResolution")
-    )]
-    #[serde(default, deny_unknown_fields)]
+    #[section("resolution")]
+    #[derive(Copy)]
+    #[serde(deny_unknown_fields)]
+    #[schemars(rename = "SceneResolution")]
     pub struct Resolution {
         pub scale: f32 = 1.0 => range(0.25, 2.0),
     }
 }
 
-environment_section!(Resolution, "resolution", opt_in: false);
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Resource,
+    engine_core::__private::serde::Serialize,
+    engine_core::__private::serde::Deserialize,
+    engine_core::__private::schemars::JsonSchema,
+)]
+#[component(immutable)]
+#[serde(crate = "engine_core::__private::serde", default, deny_unknown_fields)]
+#[schemars(
+    crate = "engine_core::__private::schemars",
+    rename = "SceneDynamicResolution"
+)]
+pub struct DynamicResolution {
+    pub enabled: bool,
+    pub min_scale: f32,
+    pub max_scale: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub budget_ms: Option<f32>,
+}
 
-impl Resolution {
-    pub fn off() -> Self {
-        Self::default()
+impl Default for DynamicResolution {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_scale: 0.5,
+            max_scale: 1.0,
+            budget_ms: None,
+        }
     }
 }
 
-settings! {
-    extra_rules;
-    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(
-        feature = "schema",
-        derive(schemars::JsonSchema),
-        schemars(rename = "SceneDynamicResolution")
-    )]
-    #[serde(default, deny_unknown_fields)]
-    pub struct DynamicResolution {
-        pub enabled: bool = true => any,
-        pub min_scale: f32 = 0.5 => range(0.25, 1.0),
-        pub max_scale: f32 = 1.0 => range(0.25, 1.0),
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub budget_ms: Option<f32> = None => range(1.0, 1000.0),
-    }
-}
+impl Section for DynamicResolution {
+    const KEY: &'static str = "dynamic_resolution";
 
-impl ExtraRules for DynamicResolution {
-    fn check_extra(&self) -> Result<(), InvalidSetting> {
+    fn check(&self) -> Result<(), Error> {
+        range(0.25, 1.0).check(&self.min_scale, "dynamic_resolution.min_scale")?;
+        range(0.25, 1.0).check(&self.max_scale, "dynamic_resolution.max_scale")?;
+        range(1.0, 1000.0).check(&self.budget_ms, "dynamic_resolution.budget_ms")?;
         if self.min_scale > self.max_scale {
-            return Err(InvalidSetting::new("min_scale", Expected::Sorted)
-                .got(self.min_scale)
-                .nearest(self.max_scale));
+            return Err(
+                Error::new(ErrorCode::InvalidValue, "dynamic_resolution.min_scale")
+                    .expected(Expected::Sorted)
+                    .got(self.min_scale)
+                    .nearest(self.max_scale),
+            );
         }
         Ok(())
     }
-
-    fn sanitize_extra(self) -> Self {
-        Self {
-            min_scale: engine_core::math::min(self.min_scale, self.max_scale),
-            ..self
-        }
-    }
 }
 
-environment_section!(DynamicResolution, "dynamic_resolution", opt_in: true);
-
-impl DynamicResolution {
-    pub fn off() -> Self {
-        Self {
-            enabled: false,
-            ..Self::default()
-        }
-    }
+pub(crate) fn register(engine: &mut Engine) {
+    engine
+        .settings::<Resolution>()
+        .settings::<DynamicResolution>();
 }

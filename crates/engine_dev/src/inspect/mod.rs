@@ -6,22 +6,18 @@ use poses::presentation_view;
 use engine_settings::{Error, ErrorCode, Expected};
 use std::{collections::BTreeMap, io::Write};
 
-use engine_collision::{CollisionWorld, refresh_collision_world};
+use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_core::{
-    ActionId, ActionInput, AssetLibrary, BrickRegistry, Camera, Engine, FixedTime, FrameTime,
-    GlobalTransforms, InputState, InterpolateTransform, LocalLight, MaterialHandle, Mesh3d,
-    MeshHandle, OperationScene, Parent, ParticleEmitter, PresentationMode, PresentationState,
-    ReflectionProbe, TextureHandle, Tint, Transform,
-    bevy_ecs::prelude::{Component, Entity, Resource, World},
+    ActionId, ActionInput, AssetLibrary, Camera, Engine, FixedTime, FrameTime, GlobalTransforms,
+    InputState, InterpolateTransform, MaterialHandle, Mesh3d, MeshHandle, Parent,
+    PresentationMode, PresentationState, Projection, TextureHandle, Transform,
 };
-use engine_scene::{
-    SceneEmitter, SceneEntity, SceneEnvironment, SceneInstance, SceneLight, SceneMaterial,
-    SceneReflectionProbe, TextureOrigin,
-};
+use engine_registry::{BrickRecord, OperationScene, Registry};
+use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::bricks::StandardBricks;
+use crate::explain::source_line;
 use crate::protocol::{
     DescribeRequest, Detail, Envelope, InspectRequest, Query, Verb, parse_named,
 };
@@ -144,7 +140,6 @@ pub struct DevTools {
     pub(crate) inspectors: BTreeMap<String, Inspector>,
     builtins: Option<usize>,
     pub(crate) schemas: Value,
-    pub(crate) standard: StandardBricks,
 }
 
 impl DevTools {
@@ -153,7 +148,6 @@ impl DevTools {
             inspectors: BTreeMap::new(),
             builtins: None,
             schemas: Value::Null,
-            standard: StandardBricks::default(),
         }
     }
 
@@ -161,10 +155,8 @@ impl DevTools {
         let mut tools = Self::bare();
         tools.register_poses(schemas);
         tools.register_components(schemas);
-        tools.register_terrain(schemas);
         tools.builtins = Some(tools.inspectors.len());
         tools.schemas = schemas.clone();
-        tools.standard = StandardBricks::of(schemas);
         tools
     }
 
@@ -351,7 +343,7 @@ impl DevTools {
             Verb::Query => {
                 let name = envelope.name()?;
                 let args = envelope.args()?;
-                if let Some(name) = self.query_operation(engine.app.world(), name)? {
+                if let Some(name) = self.query_operation(engine.app.world(), name) {
                     if wrong_world(engine) {
                         return Err(refused());
                     }
@@ -458,15 +450,6 @@ impl DevTools {
             offset: request.offset,
             limit: request.limit,
         };
-        if selector
-            .component
-            .is_some_and(|component| matches!(component, "Collider" | "CollisionWorld"))
-        {
-            self.inspect(engine.app.world(), context, selector)?;
-            if engine.app.world().contains_resource::<CollisionWorld>() {
-                refresh_collision_world(engine.app.world_mut())?;
-            }
-        }
         engine.refresh_transforms();
         let engine = &*engine;
         let slot = |entity| engine.render_slot(entity);
@@ -480,7 +463,7 @@ impl DevTools {
     fn status(&self, engine: &Engine, scene: Option<&SceneInstance>) -> StatusResult {
         let world = engine.app.world();
         let bricks = self.brick_inspectors(world);
-        let registry = world.get_resource::<BrickRegistry>();
+        let registry = world.get_resource::<Registry>();
         StatusResult {
             world_entities: world.entities().len(),
             authored_entities: scene.map(SceneInstance::entity_count),
@@ -488,9 +471,6 @@ impl DevTools {
             culling_enabled: engine.frustum_culling(),
             features: registry.map(|registry| registry.names().collect()),
             presentation: presentation_view(engine.presentation()),
-            collision: registry
-                .and_then(|registry| registry.inspector("CollisionWorld"))
-                .and_then(|inspector| inspector.read(world, None)),
             fixed_delta_seconds: world
                 .get_resource::<FixedTime>()
                 .map(|time| time.delta_seconds),
@@ -505,7 +485,7 @@ impl DevTools {
 
     fn describe(&self, world: &World, request: &DescribeRequest) -> Result<DescribeResult, Error> {
         let bricks = self.brick_inspectors(world);
-        let registry = world.get_resource::<BrickRegistry>();
+        let registry = world.get_resource::<Registry>();
         let full = request.detail == Detail::Full;
         let Some(name) = request.name.as_deref() else {
             let mut types: Vec<DescribedType> = self
@@ -525,7 +505,7 @@ impl DevTools {
                 verbs: Verb::names().collect(),
                 bricks: registry
                     .into_iter()
-                    .flat_map(BrickRegistry::bricks)
+                    .flat_map(Registry::bricks)
                     .map(|brick| described_brick(brick, full))
                     .collect(),
                 types,
@@ -546,7 +526,6 @@ impl DevTools {
                     name: name.to_owned(),
                     kind: TypeKind::Authoring,
                     schema: scene_schema(request.definition.as_deref())?,
-                    opt_in_sections: SceneEnvironment::opt_in_sections(world),
                 });
             }
             "ErrorCodes" => {
@@ -582,24 +561,14 @@ impl DevTools {
                 brick: described_brick(brick, true),
             });
         }
-        if let Some(stats) =
-            registry.and_then(|registry| registry.stats().find(|stats| stats.key == name))
-        {
+        if let Some(stats) = registry.and_then(|registry| registry.stats_section(name)) {
             return Ok(DescribeResult::Stats {
                 name: name.to_owned(),
                 kind: TypeKind::Stats,
                 brick: stats.brick,
-                at: engine_core::source_line(stats.at),
+                at: source_line(stats.at),
                 schema: stats_schema(name),
             });
-        }
-        if let Some(brick) = self
-            .standard
-            .of_inspector(name)
-            .or_else(|| self.standard.of_operation(name))
-            && !registry.is_some_and(|registry| registry.has(brick))
-        {
-            return Err(engine_core::missing_brick(brick, "$.name"));
         }
         Err(Error::new(ErrorCode::UnknownInspector, "$.name")
             .got(name)
@@ -608,7 +577,7 @@ impl DevTools {
 
     fn described_operation(&self, world: &World, name: &str) -> Option<DescribeResult> {
         let registered = world
-            .get_resource::<BrickRegistry>()
+            .get_resource::<Registry>()
             .and_then(|registry| registry.operation(name));
         let verb = match registered {
             Some(operation) if operation.control => Verb::Control,
@@ -617,25 +586,23 @@ impl DevTools {
             None if BrowserControl::NAMES.contains(&name) => Verb::Control,
             None => return None,
         };
-        let shows = registered.map(|operation| operation.shows).or_else(|| {
-            crate::protocol::CONTROL_STATE
-                .iter()
-                .find(|(control, _)| *control == name)
-                .map(|&(_, shows)| shows)
-        });
+        let shows = crate::protocol::CONTROL_STATE
+            .iter()
+            .find(|(control, _)| *control == name)
+            .map(|&(_, shows)| shows);
         Some(DescribeResult::Operation {
             name: name.to_owned(),
             kind: TypeKind::Operation,
             verb: verb.name(),
             brick: registered.map(|operation| operation.brick),
-            at: registered.map(|operation| engine_core::source_line(operation.at)),
+            at: registered.map(|operation| source_line(operation.at)),
             shows: shows.filter(|shows| !shows.is_empty()),
             args: operation_args(&self.schema_named(verb.name()), name),
         })
     }
 
     fn describable(&self, world: &World, bricks: &BrickInspectors) -> Vec<String> {
-        let registry = world.get_resource::<BrickRegistry>();
+        let registry = world.get_resource::<Registry>();
         let mut names: Vec<String> = Verb::names()
             .chain(DESCRIBED.iter().map(|&(name, _)| name))
             .map(str::to_owned)
@@ -667,20 +634,12 @@ impl DevTools {
 
     fn inspector<'a>(
         &'a self,
-        world: &World,
         bricks: &'a BrickInspectors,
         name: &str,
     ) -> Result<&'a Inspector, Error> {
         validate_name(name, "$.component")?;
         if let Some(inspector) = self.inspectors.get(name).or_else(|| bricks.get(name)) {
             return Ok(inspector);
-        }
-        if let Some(brick) = self.standard.of_inspector(name)
-            && !world
-                .get_resource::<BrickRegistry>()
-                .is_some_and(|registry| registry.has(brick))
-        {
-            return Err(engine_core::missing_brick(brick, "$.component"));
         }
         let known: Vec<String> = self
             .all_inspectors(bricks)
@@ -722,7 +681,7 @@ impl DevTools {
         }
         let bricks = self.brick_inspectors(world);
         let inspector = component
-            .map(|name| self.inspector(world, &bricks, name))
+            .map(|name| self.inspector(&bricks, name))
             .transpose()?;
         if let Some(inspector) =
             inspector.filter(|inspector| inspector.kind == InspectorKind::Resource)
@@ -1006,36 +965,35 @@ fn control_state(world: &World) -> serde_json::Map<String, Value> {
         .map(|&(op, shows)| (op.to_owned(), json!(shows)))
         .collect();
     for operation in world
-        .get_resource::<BrickRegistry>()
+        .get_resource::<Registry>()
         .into_iter()
-        .flat_map(BrickRegistry::operations)
+        .flat_map(Registry::operations)
         .filter(|operation| operation.control)
     {
-        state.insert(operation.name.to_owned(), json!(operation.shows));
+        state.insert(operation.name.to_owned(), json!(""));
     }
     state
 }
 
-fn described_brick(brick: &engine_core::BrickRecord, full: bool) -> DescribedBrick {
-    let at =
-        |at: &'static std::panic::Location<'static>| full.then(|| engine_core::source_line(at));
+fn described_brick(brick: &BrickRecord, full: bool) -> DescribedBrick {
+    let at = |at: &'static std::panic::Location<'static>| full.then(|| source_line(at));
     DescribedBrick {
-        name: brick.name,
-        crate_name: brick.crate_name,
-        fills: brick.fills.iter().map(|filled| filled.place).collect(),
-        joins: brick.joins.iter().map(|joined| joined.place).collect(),
+        name: brick.package,
+        crate_name: brick.package,
+        fills: brick.fills().iter().map(|filled| filled.place.name()).collect(),
+        joins: brick.joins().iter().map(|joined| joined.place.name()).collect(),
         settings: brick
-            .settings
+            .settings_entries()
             .iter()
             .map(|section| DescribedEntry {
-                name: section.name,
+                name: section.key,
                 key: Some(section.key),
                 verb: None,
                 at: at(section.at),
             })
             .collect(),
         stats: brick
-            .stats
+            .stats_entries()
             .iter()
             .map(|stats| DescribedEntry {
                 name: stats.key,
@@ -1045,7 +1003,7 @@ fn described_brick(brick: &engine_core::BrickRecord, full: bool) -> DescribedBri
             })
             .collect(),
         operations: brick
-            .operations
+            .operations()
             .iter()
             .map(|operation| DescribedEntry {
                 name: operation.name,
@@ -1058,35 +1016,15 @@ fn described_brick(brick: &engine_core::BrickRecord, full: bool) -> DescribedBri
                 at: at(operation.at),
             })
             .collect(),
-        inspectors: brick
-            .inspectors
-            .iter()
-            .map(|inspector| DescribedEntry {
-                name: inspector.name,
-                key: None,
-                verb: None,
-                at: at(inspector.at),
-            })
-            .collect(),
-        explains: brick
-            .explainers
-            .iter()
-            .map(|explainer| engine_core::source_line(explainer.at))
-            .collect(),
     }
 }
 
-fn inspector_at(registry: &BrickRegistry, name: &str) -> Option<String> {
+fn inspector_at(registry: &Registry, name: &str) -> Option<String> {
     registry
-        .inspector(name)
-        .map(|inspector| inspector.at)
-        .or_else(|| {
-            registry
-                .sections()
-                .find(|section| section.name == name)
-                .map(|section| section.at)
-        })
-        .map(engine_core::source_line)
+        .section(name)
+        .map(|section| section.at)
+        .or_else(|| registry.stats_section(name).map(|stats| stats.at))
+        .map(source_line)
 }
 
 fn frame_stats_schema() -> Value {

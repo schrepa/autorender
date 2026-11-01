@@ -1,21 +1,17 @@
 use std::sync::Arc;
 
-use bytemuck::Zeroable;
-use engine_core::glam::{Vec2, Vec3};
-use engine_terrain::bounce::{PROBE_BYTES, TerrainBounce, bin_moments};
-use engine_terrain::{MAX_BOUNCE_LEVELS, RenderTerrain, RenderTerrains, TerrainSettings};
+use engine_places::ground::TerrainEntry;
+use glam::{Vec2, Vec3};
 
-use crate::bindings::BOUNCE;
-use crate::gpu_layouts::bounce::{BounceFrame, BounceTerrain};
-use crate::gpu_layouts::constants::BOUNCE_GROUP;
-use crate::shaders::entry::terrain_bounce;
+use crate::bounce::{PROBE_BYTES, TerrainBounce, bin_moments};
+use crate::gpu::{BOUNCE_GROUP, BounceFrame, BounceTerrain};
+use crate::settings::{MAX_BOUNCE_LEVELS, TerrainShading};
+use crate::state::Bakes;
 use crate::terrain_horizons::Horizons;
 use crate::terrain_macro::MacroMaps;
 use crate::terrain_sky::SkyMaps;
-use engine_render::buffers::Growable;
-use engine_render::cached::{Bound, GroupCache};
 
-pub(crate) const BOUNCE_LAYERS: usize = 4 * engine_terrain::bounce::LAYERS;
+pub(crate) const BOUNCE_LAYERS: usize = 4 * crate::bounce::LAYERS;
 
 pub(crate) const MOST_LEVELS: usize = MAX_BOUNCE_LEVELS as usize;
 
@@ -630,11 +626,43 @@ fn terrain_record(
     }
 }
 
+pub(crate) fn windows(
+    terrains: &[TerrainEntry],
+    bakes: &Bakes,
+    (eye, settings): (Vec3, &TerrainShading),
+    (layers, storage_bytes): (u32, u64),
+) -> Vec<Option<BounceLevels>> {
+    let (casting, slots) = crate::terrain_horizons::room(layers, terrains.len());
+    let on = settings.sun_shadows && settings.bounce;
+    let mut next = 0;
+    let mut room = [storage_bytes; 3];
+    terrains
+        .iter()
+        .enumerate()
+        .map(|(index, terrain)| {
+            let relit = on && !terrain.surroundings && index < casting && next < slots;
+            let slot = relit.then_some(next);
+            next += u32::from(relit);
+            let bounce = bakes.of(terrain.terrain)?.bounce.made.as_ref()?;
+            levels(terrain, (bounce, slot?), eye, settings).filter(|levels| {
+                let blocks = u64::from(bounce.texels());
+                let records = bounce.probe_bytes().len() + mean_bytes(bounce.probes);
+                let needs = [blocks * blocks * 4, records as u64, levels.scratch_bytes()];
+                let fits = needs.iter().zip(&room).all(|(need, left)| need <= left);
+                if fits {
+                    room = [room[0] - needs[0], room[1] - needs[1], room[2] - needs[2]];
+                }
+                fits
+            })
+        })
+        .collect()
+}
+
 fn levels(
-    terrain: &RenderTerrain,
+    terrain: &TerrainEntry,
     (bounce, slot): (&TerrainBounce, u32),
     eye: Vec3,
-    settings: &TerrainSettings,
+    settings: &TerrainShading,
 ) -> Option<BounceLevels> {
     let probes = bounce.probes;
     let extent = terrain.pyramid.extent();
@@ -656,11 +684,11 @@ fn levels(
     }
     let local = Vec2::new(eye.x - terrain.origin.x, eye.z - terrain.origin.z);
     let nearest = Vec2::new(
-        engine_core::math::clamp(local.x, 0.0, extent.x),
-        engine_core::math::clamp(local.y, 0.0, extent.y),
+        engine_math::clamp(local.x, 0.0, extent.x),
+        engine_math::clamp(local.y, 0.0, extent.y),
     );
     let away = local.distance(nearest);
-    let spacing = engine_core::math::min(extent.x, extent.y) / probes as f32;
+    let spacing = engine_math::min(extent.x, extent.y) / probes as f32;
     let reach = (columns as f32 * 0.5 - WINDOW_MARGIN) * spacing;
     let finest = (0..levels)
         .find(|&level| reach * (1_u32 << level) as f32 >= away)
@@ -672,7 +700,7 @@ fn levels(
         let start = |position: f32, side: f32| {
             let start = (position / side * along as f32).floor() - (window / 2) as f32;
             let last = (along - window) as f32;
-            (engine_core::math::clamp(start, 0.0, last) as u32) & !1
+            (engine_math::clamp(start, 0.0, last) as u32) & !1
         };
         *first = [start(local.x, extent.x), start(local.y, extent.y)];
     }

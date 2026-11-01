@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use engine::bevy_ecs::world::World;
+use bevy_ecs::world::World;
 use engine::{AssetBudget, AssetLibrary, Engine, EngineConfig, Error, ErrorCode};
 use engine_scene::{MAX_SOURCE_BYTES, SceneDocument, SceneFiles};
 use serde_json::{Value, json};
@@ -172,7 +172,7 @@ fn refuse(source: &str, stage: &str, world: Option<&str>) -> Result<(), Error> {
                     engine.app.world_mut()
                 }
                 Some("standard") => {
-                    engine = crate::bricks::standard_engine();
+                    engine = crate::bricks::standard_engine()?;
                     engine.app.world_mut()
                 }
                 _ => {

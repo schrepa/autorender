@@ -658,10 +658,7 @@ impl HostOptions {
         loop {
             game.frame(f64::from(frame) * 1000.0 / 60.0)?;
             frame += 1;
-            let left = game
-                .host()
-                .cooking()
-                .map_or(0, engine::host::Cooking::remaining);
+            let left = game.host().cook_left();
             let held = game.host().jobs_held();
             if (left, held) != last {
                 (last, moved) = ((left, held), Instant::now());
@@ -685,9 +682,7 @@ impl HostOptions {
                 said = Instant::now();
                 let features: serde_json::Map<String, serde_json::Value> = game
                     .host()
-                    .cooking()
-                    .map(|cooking| cooking.features().to_vec())
-                    .unwrap_or_default()
+                    .cook_features()
                     .into_iter()
                     .map(|(feature, left)| (feature.to_owned(), left.into()))
                     .collect();

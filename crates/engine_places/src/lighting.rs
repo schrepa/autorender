@@ -1,5 +1,16 @@
 use bevy_ecs::prelude::Resource;
 use engine_place::Slot;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LightPreset {
+    Day,
+    #[default]
+    GoldenHour,
+    Dusk,
+    Night,
+}
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Lighting {

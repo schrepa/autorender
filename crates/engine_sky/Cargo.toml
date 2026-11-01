@@ -13,8 +13,15 @@ engine_ecs.workspace = true
 engine_core.workspace = true
 engine_places.workspace = true
 engine_render.workspace = true
+engine_math.workspace = true
 bytemuck.workspace = true
 glam.workspace = true
+libm.workspace = true
+schemars.workspace = true
+serde.workspace = true
+
+[build-dependencies]
+engine_sources.workspace = true
 
 [lints]
 workspace = true

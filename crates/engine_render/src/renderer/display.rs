@@ -3,7 +3,9 @@ use std::rc::Rc;
 
 use super::*;
 use crate::buffers::ReadbackRing;
-use crate::targets::FrameRegion;
+use crate::gpu_data::clamped_extent;
+use crate::targets::{FrameRegion, FrameSize};
+use engine_core::Expected;
 
 pub struct Display {
     instance: wgpu::Instance,
@@ -18,8 +20,6 @@ pub struct Display {
     asked: Option<(u32, u32)>,
     pub region: FrameRegion,
     timer: Option<Rc<FrameTimer>>,
-    #[cfg(feature = "dev")]
-    pub(crate) probe: super::probe::Probe,
 }
 
 impl Display {
@@ -65,8 +65,6 @@ impl Display {
             asked: None,
             region: FrameRegion::whole(FrameSize { width, height }),
             timer: None,
-            #[cfg(feature = "dev")]
-            probe: super::probe::Probe::default(),
         })
     }
 
@@ -116,8 +114,6 @@ impl Display {
 
     pub(crate) fn plan_region(&mut self, drawn: bool) -> FrameRegion {
         let display = self.size();
-        #[cfg(feature = "dev")]
-        let drawn = drawn && self.probe.forces().is_none();
         self.region = match self.asked.filter(|_| drawn) {
             Some((width, height)) => FrameRegion::new(display, FrameSize { width, height }),
             None => FrameRegion::whole(display),
@@ -163,15 +159,10 @@ impl Display {
         self.reconfigure_next_frame = true;
     }
 
-    pub(crate) fn acquire(
-        &mut self,
-        device: &wgpu::Device,
-        depth: &mut DepthTarget,
-    ) -> Result<Option<DisplayFrame>, Error> {
+    pub(crate) fn acquire(&mut self, device: &wgpu::Device) -> Result<Option<DisplayFrame>, Error> {
         let _profile = engine_profile::span("render", "surface_acquisition");
         if self.reconfigure_next_frame {
             self.configure_surface(device);
-            depth.resize(device, self.size());
             self.reconfigure_next_frame = false;
         }
         let timer = self.timer.clone();
@@ -318,34 +309,5 @@ impl FrameTimer {
                 read.set(Some(((end - begin) as f64 * period / 1.0e6, size)));
             }
         });
-    }
-}
-
-pub struct DepthTarget {
-    pub texture: wgpu::Texture,
-    pub view: Versioned<wgpu::TextureView>,
-}
-
-impl DepthTarget {
-    pub(crate) fn new(device: &wgpu::Device, size: FrameSize) -> Self {
-        let texture = crate::targets::texture_2d(
-            device,
-            "engine/depth",
-            size.pixels(),
-            1,
-            1,
-            DEPTH_FORMAT,
-            crate::targets::RENDER_TARGET | wgpu::TextureUsages::COPY_SRC,
-        );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        Self {
-            texture,
-            view: Versioned::new(view),
-        }
-    }
-
-    fn resize(&mut self, device: &wgpu::Device, size: FrameSize) {
-        crate::memory::release_any(&self.texture);
-        *self = Self::new(device, size);
     }
 }

@@ -8,9 +8,8 @@ mod options;
 mod random;
 mod records;
 mod scene;
-mod views;
 
-include!(concat!(env!("OUT_DIR"), "/source.rs"));
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 pub use game::Highlands;
 pub use land::RockMaps;

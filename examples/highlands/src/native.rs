@@ -96,48 +96,59 @@ impl Native {
     fn start(&self) -> ExitCode {
         #[cfg(feature = "dev")]
         if let Some(names) = &self.host.smoke {
-            let build = |source: Option<&str>, bricks| {
-                Highlands::played(self.options.clone(), source, bricks)
-            };
-            let bricks = engine::bricks::standard();
-            let mut smokes = engine::smokes::registered(&bricks);
-            smokes.extend(crate::smokes());
-            return engine_native::smoke::run::<Highlands>(
-                &self.host,
-                names,
-                &smokes,
-                &bricks,
-                &build,
-                &controlled,
-            );
+            return self.smoke(names);
         }
         engine_native::exit(self.run())
     }
 
+    #[cfg(feature = "dev")]
+    fn smoke(&self, names: &str) -> ExitCode {
+        let build = |source: Option<&str>, engine: &mut Engine| {
+            Highlands::played(self.options.clone(), source, engine)
+        };
+        let bricks = highlands_bricks::bricks(engine::BrickList::default());
+        let mut smokes = match engine::smokes::registered(&bricks) {
+            Ok(smokes) => smokes,
+            Err(error) => return engine_native::exit(Err(error)),
+        };
+        smokes.extend(crate::smokes());
+        engine_native::smoke::run::<Highlands>(
+            &self.host,
+            names,
+            &smokes,
+            &bricks,
+            &build,
+            &controlled,
+        )
+    }
+
     fn run(&self) -> engine::Result<()> {
-        let build = || self.build();
+        let build = |engine: &mut Engine| self.build(engine);
         #[cfg(feature = "dev")]
         if self.host.dev {
             return self.run_dev(build);
         }
-        self.host.run("Highlands", build)
+        self.host.run("Highlands", highlands_bricks::bricks, build)
     }
 
-    fn build(&self) -> engine::Result<(Engine, Highlands)> {
+    fn build(&self, engine: &mut Engine) -> engine::Result<Highlands> {
         let rocks = if self.options.rocks {
             rocks(&self.assets.join("highlands/rocks"))
         } else {
             RockMaps::default()
         };
-        Highlands::build(self.options.clone(), &rocks)
+        Highlands::build(engine, self.options.clone(), &rocks)
     }
 
     #[cfg(feature = "dev")]
     fn run_dev(
         &self,
-        build: impl FnOnce() -> engine::Result<(Engine, Highlands)>,
+        build: impl FnOnce(&mut Engine) -> engine::Result<Highlands>,
     ) -> engine::Result<()> {
-        let session = self.host.dev_session(build)?.parameters(options());
+        let session = self
+            .host
+            .dev_session(highlands_bricks::bricks, build)?
+            .parameters(options());
         controlled(session).run()
     }
 }

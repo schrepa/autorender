@@ -3,14 +3,20 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
+
 mod dev;
 mod instance;
+mod scene;
 mod smoke;
-mod views;
 
 pub use dev::{
-    MAX_CHANGES, StreamedCellView, StreamingGridView, WorldCellsView, WorldChangesControl,
-    WorldChangesResult, WorldChangesView,
+    MAX_CHANGES, StreamedCellView, StreamingGridView, WorldCellsQuery, WorldCellsView,
+    WorldChangesControl, WorldChangesQuery, WorldChangesResult, WorldChangesView,
+};
+pub use scene::{
+    AlongStreamed, MAX_ALONG, StreamedAlong, StreamedObject, StreamedPrefab, StreamedScene,
+    StreamedTransform,
 };
 
 use engine_core::collections::HashMap;
@@ -19,14 +25,17 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use glam::{Vec2, Vec3};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use engine_core::math::{max, min};
 use engine_core::{
-    Brick, BrickStats, Bricks, Camera, EnvironmentSection, FrameTime, GlobalTransforms,
-    StreamingFocus, WorldSync, WorldSyncSystems,
+    Brick, Bricks, FrameTime, Poses, Runs, Schedule, Smoke, Source, Spawner, View, settings,
+    stats,
 };
-use engine_settings::{InvalidSetting, settings};
+use engine_places::streaming::StreamingFocus;
+
+use instance::{Content, Tree};
+use scene::Placed;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct StreamingGrid {
@@ -56,13 +65,10 @@ pub const STREAMING_GRIDS: [StreamingGrid; 3] = [
 const JUMP_SPEED: f32 = 1000.0;
 
 settings! {
-    #[derive(Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(
-        feature = "schema",
-        derive(schemars::JsonSchema),
-        schemars(rename = "SceneWorldStreaming")
-    )]
-    #[serde(default, deny_unknown_fields)]
+    #[section("world_streaming")]
+    #[derive(Copy)]
+    #[serde(deny_unknown_fields)]
+    #[schemars(rename = "SceneWorldStreaming")]
     pub struct WorldStreaming {
         pub enabled: bool = true => any,
         pub distance: f32 = 1.0 => range(0.05, 20.0),
@@ -73,106 +79,38 @@ settings! {
     }
 }
 
-impl WorldStreaming {
-    pub fn off() -> Self {
-        Self {
-            enabled: false,
-            ..Self::default()
-        }
+stats! {
+    #[section("world_streaming_stats")]
+    #[derive(Copy, Eq)]
+    pub struct CellStats {
+        pub cells: u32,
+        pub loaded: u32,
+        pub pending: u32,
+        pub items: u32,
+        pub entities: u32,
+        pub spawned: u32,
+        pub despawned: u32,
     }
 }
 
-impl EnvironmentSection for WorldStreaming {
-    const KEY: &'static str = "world_streaming";
-    const NAME: &'static str = "WorldStreaming";
-    const OPT_IN: bool = false;
-
-    fn section_off() -> Self {
-        Self::off()
-    }
-
-    fn section_check(&self) -> Result<(), InvalidSetting> {
-        self.validate()
-    }
-
-    fn section_sanitized(self) -> Self {
-        self.sanitized()
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(WorldStreaming)
-    }
-}
-
-pub trait Streamed: Send + Sync + 'static {
-    fn entities(&self) -> u32;
-    fn spawn(&self, world: &mut World, spawned: &mut Vec<Entity>);
-}
-
-#[derive(Clone)]
-pub struct StreamedItem {
-    pub id: Option<Arc<str>>,
-    pub position: Vec3,
-    pub reach: f32,
-    pub content: Arc<dyn Streamed>,
-}
-
-#[derive(Component, Clone, Debug, PartialEq, Eq)]
-pub struct StreamedId(pub Arc<str>);
-
-#[derive(Resource, Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct WorldChanges {
-    #[serde(default)]
     removed: BTreeSet<String>,
-    #[serde(skip, default = "fresh_revision")]
-    revision: u64,
-}
-
-static REVISIONS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
-fn fresh_revision() -> u64 {
-    REVISIONS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-}
-
-impl Default for WorldChanges {
-    fn default() -> Self {
-        Self {
-            removed: BTreeSet::new(),
-            revision: fresh_revision(),
-        }
-    }
-}
-
-impl PartialEq for WorldChanges {
-    fn eq(&self, other: &Self) -> bool {
-        self.removed == other.removed
-    }
 }
 
 impl WorldChanges {
     pub fn remove(&mut self, id: &str) -> bool {
-        let added = !self.removed.contains(id) && self.removed.insert(id.to_owned());
-        if added {
-            self.revision = fresh_revision();
-        }
-        added
+        !self.removed.contains(id) && self.removed.insert(id.to_owned())
     }
 
     pub fn restore(&mut self, id: &str) -> bool {
-        let restored = self.removed.remove(id);
-        if restored {
-            self.revision = fresh_revision();
-        }
-        restored
+        self.removed.remove(id)
     }
 
-    pub fn clear(&mut self) {
-        if !self.removed.is_empty() {
-            self.removed.clear();
-            self.revision = fresh_revision();
-        }
+    pub fn clear(&mut self) -> bool {
+        let cleared = !self.removed.is_empty();
+        self.removed.clear();
+        cleared
     }
 
     pub fn is_removed(&self, id: &str) -> bool {
@@ -181,34 +119,6 @@ impl WorldChanges {
 
     pub fn removed(&self) -> impl ExactSizeIterator<Item = &str> {
         self.removed.iter().map(String::as_str)
-    }
-
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct StreamSet(u64);
-
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-pub struct CellStats {
-    pub cells: u32,
-    pub loaded: u32,
-    pub pending: u32,
-    pub items: u32,
-    pub entities: u32,
-    pub spawned: u32,
-    pub despawned: u32,
-}
-
-impl BrickStats for CellStats {
-    const KEY: &'static str = "world_streaming";
-
-    #[cfg(feature = "schema")]
-    fn schema() -> schemars::Schema {
-        schemars::schema_for!(CellStats)
     }
 }
 
@@ -223,27 +133,40 @@ struct Cell {
 }
 
 struct Item {
-    set: u64,
-    id: Option<Arc<str>>,
-    content: Arc<dyn Streamed>,
+    index: usize,
+    id: Arc<str>,
     spawned: Vec<Entity>,
+    spawned_in: u64,
+}
+
+struct Acting<'a, 'w, 's> {
+    live: &'a Query<'w, 's, Entity>,
+    spawner: &'a mut Spawner<'w, 's, WorldStreamingBrick>,
+    pass: u64,
+}
+
+impl Acting<'_, '_, '_> {
+    fn despawn(&mut self, entity: Entity, fresh: bool) -> bool {
+        let present = fresh || self.live.contains(entity);
+        if present {
+            self.spawner.despawn(entity);
+        }
+        present
+    }
 }
 
 impl Item {
-    fn spawn(&mut self, world: &mut World) -> u32 {
-        self.content.spawn(world, &mut self.spawned);
-        if let (Some(id), Some(&root)) = (&self.id, self.spawned.first())
-            && let Ok(mut root) = world.get_entity_mut(root)
-        {
-            root.insert(StreamedId(id.clone()));
-        }
+    fn spawn(&mut self, tree: &Tree, act: &mut Acting<'_, '_, '_>) -> u32 {
+        tree.spawn(self.index, act.spawner, &mut self.spawned);
+        self.spawned_in = act.pass;
         self.spawned.len() as u32
     }
 
-    fn despawn(&mut self, world: &mut World) -> u32 {
+    fn despawn(&mut self, act: &mut Acting<'_, '_, '_>) -> u32 {
+        let fresh = self.spawned_in == act.pass;
         let mut count = 0;
         for entity in self.spawned.drain(..) {
-            if world.try_despawn(entity).is_ok() {
+            if act.despawn(entity, fresh) {
                 count += 1;
             }
         }
@@ -251,7 +174,7 @@ impl Item {
     }
 
     fn removed(&self, changes: &WorldChanges) -> bool {
-        self.id.as_ref().is_some_and(|id| changes.is_removed(id))
+        changes.is_removed(&self.id)
     }
 }
 
@@ -264,18 +187,23 @@ impl Cell {
         outside.length()
     }
 
-    fn unload(&mut self, world: &mut World) -> u32 {
-        let count = self.items.iter_mut().map(|item| item.despawn(world)).sum();
+    fn unload(&mut self, act: &mut Acting<'_, '_, '_>) -> u32 {
+        let count = self.items.iter_mut().map(|item| item.despawn(act)).sum();
         self.loaded = false;
         self.spawned = 0;
         count
     }
 
-    fn load(&mut self, world: &mut World, changes: &WorldChanges) -> u32 {
+    fn load(
+        &mut self,
+        tree: &Tree,
+        changes: &WorldChanges,
+        act: &mut Acting<'_, '_, '_>,
+    ) -> u32 {
         let mut count = 0;
         for item in &mut self.items {
             if !item.removed(changes) {
-                count += item.spawn(world);
+                count += item.spawn(tree, act);
             }
         }
         self.loaded = true;
@@ -285,26 +213,28 @@ impl Cell {
 
     fn reconcile(
         &mut self,
-        world: &mut World,
+        tree: &Tree,
+        act: &mut Acting<'_, '_, '_>,
         changes: &mut WorldChanges,
-        revision: u64,
+        (revised, removed): (&mut bool, &mut bool),
     ) -> [u32; 2] {
         let mut counts = [0, 0];
         for item in &mut self.items {
-            let gone = item
-                .spawned
-                .first()
-                .is_some_and(|&root| world.get_entity(root).is_err());
+            let gone = item.spawned_in != act.pass
+                && item
+                    .spawned
+                    .first()
+                    .is_some_and(|&root| !act.live.contains(root));
             if gone {
-                counts[0] += item.despawn(world);
-                if let Some(id) = &item.id {
-                    changes.remove(id);
-                }
-            } else if changes.revision() != revision {
+                counts[0] += item.despawn(act);
+                let added = changes.remove(&item.id);
+                *revised |= added;
+                *removed |= added;
+            } else if *revised {
                 if item.removed(changes) {
-                    counts[0] += item.despawn(world);
+                    counts[0] += item.despawn(act);
                 } else if item.spawned.is_empty() {
-                    counts[1] += item.spawn(world);
+                    counts[1] += item.spawn(tree, act);
                 }
             }
         }
@@ -316,8 +246,11 @@ impl Cell {
         counts
     }
 
-    fn entities(&self) -> u32 {
-        self.items.iter().map(|item| item.content.entities()).sum()
+    fn entities(&self, tree: &Tree) -> u32 {
+        self.items
+            .iter()
+            .map(|item| tree.entities_of(item.index))
+            .sum()
     }
 }
 
@@ -331,10 +264,14 @@ struct Motion {
 pub struct WorldCells {
     cells: Vec<Cell>,
     index: HashMap<(u8, [i32; 2]), usize>,
-    next_set: u64,
+    content: Arc<Content>,
+    kept: Vec<Vec<Entity>>,
+    incoming: Option<Arc<Content>>,
+    pass: u64,
+    placed: Vec<Placed>,
+    waiting: bool,
     motion: Motion,
     stats: CellStats,
-    changes: u64,
     sources: Vec<Vec2>,
     wanted: Vec<(f32, usize)>,
 }
@@ -350,10 +287,8 @@ pub struct CellView {
 }
 
 impl WorldCells {
-    pub fn add(&mut self, items: impl IntoIterator<Item = StreamedItem>) -> StreamSet {
-        let set = self.next_set;
-        self.next_set += 1;
-        for item in items {
+    fn add(&mut self) {
+        for (index, item) in self.content.streamed.items.iter().enumerate() {
             if !item.position.is_finite() || !item.reach.is_finite() {
                 continue;
             }
@@ -368,7 +303,7 @@ impl WorldCells {
                 (item.position.z / side).floor() as i32,
             ];
             let cells = &mut self.cells;
-            let index = *self.index.entry((grid as u8, key)).or_insert_with(|| {
+            let at = *self.index.entry((grid as u8, key)).or_insert_with(|| {
                 cells.push(Cell {
                     grid: grid as u8,
                     key,
@@ -380,7 +315,7 @@ impl WorldCells {
                 });
                 cells.len() - 1
             });
-            let cell = &mut self.cells[index];
+            let cell = &mut self.cells[at];
             let corner = Vec2::new(key[0] as f32, key[1] as f32) * side;
             let local = Vec2::new(item.position.x, item.position.z) - corner;
             let past = max(
@@ -389,13 +324,33 @@ impl WorldCells {
             );
             cell.reach = max(cell.reach, past);
             cell.items.push(Item {
-                set,
-                id: item.id,
-                content: item.content,
+                index,
+                id: item.id.clone(),
                 spawned: Vec::new(),
+                spawned_in: 0,
             });
         }
-        StreamSet(set)
+    }
+
+    fn replace(&mut self, content: Arc<Content>, act: &mut Acting<'_, '_, '_>) {
+        for item in self.cells.iter_mut().flat_map(|cell| cell.items.iter_mut()) {
+            item.despawn(act);
+        }
+        for entity in self.kept.drain(..).flatten() {
+            act.despawn(entity, false);
+        }
+        self.cells.clear();
+        self.index.clear();
+        self.content = content;
+        self.add();
+        let kept = &self.content.kept;
+        self.kept = (0..kept.items.len())
+            .map(|item| {
+                let mut spawned = Vec::new();
+                kept.spawn(item, act.spawner, &mut spawned);
+                spawned
+            })
+            .collect();
     }
 
     pub fn stats(&self) -> CellStats {
@@ -411,6 +366,7 @@ impl WorldCells {
     }
 
     pub fn nearest(&self, count: usize) -> Vec<CellView> {
+        let tree = &self.content.streamed;
         let mut cells: Vec<CellView> = self
             .cells
             .iter()
@@ -418,7 +374,7 @@ impl WorldCells {
                 grid: cell.grid,
                 key: cell.key,
                 items: cell.items.len() as u32,
-                entities: cell.entities(),
+                entities: cell.entities(tree),
                 loaded: cell.loaded,
                 distance: cell.distance,
             })
@@ -438,89 +394,70 @@ impl WorldCells {
     }
 }
 
-pub fn remove_streamed(world: &mut World, set: StreamSet) {
-    if !world.contains_resource::<WorldCells>() {
-        return;
-    }
-    world.resource_scope(|world, mut cells: Mut<WorldCells>| {
-        let cells = &mut *cells;
-        for cell in &mut cells.cells {
-            for item in cell.items.iter_mut().filter(|item| item.set == set.0) {
-                cell.spawned -= item.spawned.len() as u32;
-                for entity in item.spawned.drain(..) {
-                    let _ = world.try_despawn(entity);
-                }
-            }
-            cell.items.retain(|item| item.set != set.0);
-        }
-        cells.cells.retain(|cell| !cell.items.is_empty());
-        cells.index = cells
-            .cells
-            .iter()
-            .enumerate()
-            .map(|(index, cell)| ((cell.grid, cell.key), index))
-            .collect();
-    });
-}
+type StreamReads<'w> = (
+    Res<'w, WorldStreaming>,
+    Res<'w, View>,
+    Res<'w, FrameTime>,
+    Res<'w, Poses>,
+);
 
-pub(crate) type FocusQuery = QueryState<Entity, With<StreamingFocus>>;
-
-pub(crate) fn stream_cells(world: &mut World, focus: &mut FocusQuery) {
-    if !world.contains_resource::<WorldCells>() {
-        return;
+pub(crate) fn stream_cells(
+    (settings, view, frame, poses): StreamReads<'_>,
+    (focus, live): (Query<Entity, With<StreamingFocus>>, Query<Entity>),
+    mut cells: ResMut<WorldCells>,
+    mut tracked: ResMut<WorldChanges>,
+    mut published: ResMut<CellStats>,
+    mut spawner: Spawner<WorldStreamingBrick>,
+) {
+    let settings = *settings;
+    let cells = &mut *cells;
+    cells.pass += 1;
+    let mut act = Acting {
+        live: &live,
+        spawner: &mut spawner,
+        pass: cells.pass,
+    };
+    if let Some(content) = cells.incoming.take() {
+        cells.replace(content, &mut act);
     }
-    let _profile = engine_profile::span("cpu", "world_streaming");
-    let settings = world.get_resource::<WorldStreaming>().copied().map_or(
-        WorldStreaming {
-            enabled: false,
-            ..WorldStreaming::default()
-        },
-        WorldStreaming::sanitized,
-    );
-    if !world.contains_resource::<WorldChanges>() {
-        world.init_resource::<WorldChanges>();
-    }
-    let stats = world.resource_scope(|world, mut cells: Mut<WorldCells>| {
-        let cells = &mut *cells;
-        cells.stats.spawned = 0;
-        cells.stats.despawned = 0;
-        cells.stats.pending = 0;
-        if !cells.cells.is_empty() {
-            sources(world, focus, cells, settings);
-            world.resource_scope(|world, mut tracked: Mut<WorldChanges>| {
-                let (before, revision) = (tracked.revision(), cells.changes);
-                let changes = tracked.bypass_change_detection();
-                for cell in cells.cells.iter_mut().filter(|cell| cell.loaded) {
-                    let [despawned, spawned] = cell.reconcile(world, changes, revision);
-                    cells.stats.despawned += despawned;
-                    cells.stats.spawned += spawned;
-                }
-                cells.changes = changes.revision();
-                load_and_unload(world, cells, changes, settings);
-                if tracked.revision() != before {
-                    tracked.set_changed();
-                }
-            });
+    cells.stats.spawned = 0;
+    cells.stats.despawned = 0;
+    cells.stats.pending = 0;
+    if !cells.cells.is_empty() {
+        sources(view.detail_eye(), &frame, (&*poses, &focus), cells, settings);
+        let mut revised = tracked.is_changed();
+        let mut removed = false;
+        let changes = tracked.bypass_change_detection();
+        let tree = cells.content.clone();
+        for cell in cells.cells.iter_mut().filter(|cell| cell.loaded) {
+            let [despawned, spawned] = cell.reconcile(
+                &tree.streamed,
+                &mut act,
+                changes,
+                (&mut revised, &mut removed),
+            );
+            cells.stats.despawned += despawned;
+            cells.stats.spawned += spawned;
         }
-        cells.stats.cells = cells.cells.len() as u32;
-        cells.stats.loaded = cells.cells.iter().filter(|cell| cell.loaded).count() as u32;
-        cells.stats.items = cells.items() as u32;
-        cells.stats.entities = cells.cells.iter().map(|cell| cell.spawned).sum();
-        cells.stats
-    });
-    if let Some(mut kept) = world.get_resource_mut::<CellStats>() {
-        *kept = stats;
+        load_and_unload(cells, &tree.streamed, changes, settings, &mut act);
+        if removed {
+            tracked.set_changed();
+        }
     }
+    cells.stats.cells = cells.cells.len() as u32;
+    cells.stats.loaded = cells.cells.iter().filter(|cell| cell.loaded).count() as u32;
+    cells.stats.items = cells.items() as u32;
+    cells.stats.entities = cells.cells.iter().map(|cell| cell.spawned).sum();
+    *published = cells.stats;
 }
 
 fn sources(
-    world: &World,
-    focus: &mut FocusQuery,
+    eye: Vec3,
+    frame: &FrameTime,
+    (poses, focus): (&Poses, &Query<Entity, With<StreamingFocus>>),
     cells: &mut WorldCells,
     settings: WorldStreaming,
 ) {
-    let eye = world.resource::<Camera>().eye();
-    let frame = world.resource::<FrameTime>();
     let (number, elapsed) = (frame.frame, frame.elapsed_seconds);
     let motion = &mut cells.motion;
     match motion.last {
@@ -551,11 +488,10 @@ fn sources(
     if ahead.distance_squared(eye) > 1.0 {
         cells.sources.push(flat(ahead));
     }
-    let globals = world.resource::<GlobalTransforms>();
-    for entity in focus.iter(world) {
-        if let Some(position) = globals
-            .get(entity)
-            .and_then(|global| global.translation())
+    for entity in focus {
+        if let Some(position) = poses
+            .of(entity)
+            .map(|pose| Vec3::from(pose.translation))
             .filter(|position| position.is_finite())
         {
             cells.sources.push(flat(position));
@@ -564,10 +500,11 @@ fn sources(
 }
 
 fn load_and_unload(
-    world: &mut World,
     cells: &mut WorldCells,
+    tree: &Tree,
     changes: &WorldChanges,
     settings: WorldStreaming,
+    act: &mut Acting<'_, '_, '_>,
 ) {
     let WorldCells {
         cells: list,
@@ -585,7 +522,7 @@ fn load_and_unload(
         let range = STREAMING_GRIDS[cell.grid as usize].range * settings.distance;
         let leaving = !settings.enabled || cell.distance > range * settings.unload;
         if cell.loaded && leaving && !settings.frozen {
-            stats.despawned += cell.unload(world);
+            stats.despawned += cell.unload(act);
         } else if !cell.loaded && settings.enabled && cell.distance <= range {
             wanted.push((cell.distance / range, index));
         }
@@ -597,7 +534,7 @@ fn load_and_unload(
             if loaded > 0 && stats.spawned >= settings.spawns_per_frame {
                 break;
             }
-            stats.spawned += list[index].load(world, changes);
+            stats.spawned += list[index].load(tree, changes, act);
             loaded += 1;
         }
     }
@@ -607,17 +544,24 @@ fn load_and_unload(
 pub struct WorldStreamingBrick;
 
 impl Brick for WorldStreamingBrick {
-    fn register(bricks: &mut Bricks) {
+    const SOURCE: &'static Source = &SOURCE;
+    const SMOKES: &'static [Smoke] = &[Smoke {
+        name: "world_streaming",
+        runs: Runs::Gpu,
+        run: smoke::run,
+    }];
+
+    fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<WorldStreaming>()
+            .settings::<StreamedScene>()
+            .stats::<CellStats>()
             .resource::<WorldCells>()
             .resource::<WorldChanges>()
-            .resource::<CellStats>()
-            .stats::<CellStats>()
-            .systems(WorldSync, stream_cells.in_set(WorldSyncSystems::Stream))
-            .inspector::<WorldCells, WorldCellsView>(|_, cells| dev::world_cells(cells))
-            .inspector::<WorldChanges, WorldChangesView>(|_, changes| dev::world_changes(changes))
+            .systems(Schedule::Presentation, stream_cells)
+            .systems(Schedule::ViewSync, instance::prepare_streamed)
             .operation::<WorldChangesControl>()
-            .smoke("world_streaming", true, smoke::run);
+            .observation::<WorldCellsQuery>()
+            .observation::<WorldChangesQuery>();
     }
 }

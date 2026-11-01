@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
+use engine_heightfield::bed::NARROWEST;
+use engine_heightfield::given::GivenRiver;
+use engine_heightfield::hydraulics::{Across, BESIDE, Course, Flow, river};
+use engine_heightfield::hydrology::{Grid, MAP_LEVELS};
+use engine_heightfield::layer::{FineRegion, LayerBake, TerrainLayer};
+use engine_heightfield::rivers::Rivers;
+use engine_heightfield::{Gather, Layers, Pyramid, StartTile};
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max, min};
-use engine_terrain::bake::Gather;
-use engine_terrain::bed::NARROWEST;
-use engine_terrain::given::GivenRiver;
-use engine_terrain::hydraulics::{Across, BESIDE, Course, Flow, river};
-use engine_terrain::hydrology::{Grid, MAP_LEVELS};
-use engine_terrain::layer::{FineRegion, LayerBake, TerrainLayer};
-use engine_terrain::rivers::Rivers;
-use engine_terrain::{Layers, Pyramid};
 use glam::Vec2;
 
 use crate::hydrology::{HydrologyLayer, bake};
@@ -22,11 +21,11 @@ pub struct HydrologyWork {
 }
 
 impl HydrologyWork {
-    pub fn new(layer: &HydrologyLayer, pyramid: &Pyramid) -> Self {
+    pub fn new(layer: &HydrologyLayer, pyramid: &Pyramid, tiles: StartTile) -> Self {
         Self {
             layer: *layer,
-            gather: Gather::new(layer.level, pyramid),
-            landscape: Gather::new(layer.level + MAP_LEVELS, pyramid),
+            gather: Gather::new(layer.level, pyramid, tiles),
+            landscape: Gather::new(layer.level + MAP_LEVELS, pyramid, tiles),
         }
     }
 }

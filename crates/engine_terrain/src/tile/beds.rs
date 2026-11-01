@@ -7,7 +7,7 @@ use super::{
     river_meters, river_step,
 };
 use crate::hydrology::RIVER_FAR;
-use crate::{Bed, Hydrology, HydrologySample, Reach, Rivers, TILE_STRIDE};
+use crate::{Bed, HydrologyBake as Hydrology, HydrologySample, Reach, Rivers, TILE_STRIDE};
 
 const SAMPLES: usize = (TILE_STRIDE * TILE_STRIDE) as usize;
 

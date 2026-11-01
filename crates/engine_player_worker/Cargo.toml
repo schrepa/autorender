@@ -1,0 +1,20 @@
+[package]
+name = "engine_player_worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.engine]
+kind = "app"
+worker = true
+
+[dependencies]
+engine_worker.workspace = true
+engine_player_bricks.workspace = true
+
+[lints]
+workspace = true

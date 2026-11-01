@@ -1,12 +1,14 @@
 use bevy_ecs::prelude::{Component, Resource};
 use engine_place::Slot;
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 
 pub const MAX_EMITTER_PARTICLES: u32 = 1 << 24;
 
 pub const MAX_SPREAD_DEGREES: f32 = 180.0;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ParticleBlend {
     #[default]
     Alpha,
@@ -14,12 +16,14 @@ pub enum ParticleBlend {
     Mist,
 }
 
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct ParticleEmitter {
     pub rate: f32,
     pub lifetime: f32,
     pub speed: f32,
     pub direction: Vec3,
+    #[serde(rename = "spread_degrees", with = "crate::degrees", default = "authored_spread")]
     pub spread: f32,
     pub acceleration: Vec3,
     pub size: [f32; 2],
@@ -51,6 +55,10 @@ impl Default for ParticleEmitter {
             seed: 0,
         }
     }
+}
+
+fn authored_spread() -> f32 {
+    ParticleEmitter::default().spread.to_degrees().to_radians()
 }
 
 impl ParticleEmitter {

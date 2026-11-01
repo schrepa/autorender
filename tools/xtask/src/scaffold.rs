@@ -1,5 +1,8 @@
 use std::{fs, path::Path};
 
+use engine_checks::Repository;
+use engine_place::PlaceKind;
+use engine_registry::Registry;
 use serde_json::json;
 
 use crate::process::{WASM_TARGET, clients, project_option, run};
@@ -12,28 +15,20 @@ const APP_NATIVE: &str = "crates/engine_native/examples/app_native.rs";
 
 const APP_XTASK: &str = "crates/engine_checks/examples/app_xtask.rs";
 
-const BRICK_TEMPLATE: &str = "crates/engine_core/examples/brick_template.rs";
+const STANDARD_LIST: &str = "crates/engine_standard/src/lib.rs";
+
+const STANDARD_MANIFEST: &str = "crates/engine_standard/Cargo.toml";
 
 const TEMPLATE_GAME: &str = "#[path = \"../../engine/examples/app_template.rs\"]\nmod app;";
 
-const TEMPLATE_IMPORTS: &str = "use engine_settings::{InvalidSetting, settings};\n";
+const TEMPLATE_LIST: &str =
+    "pub fn bricks<L: Listing>(list: L) -> L {\n    engine_standard::standard(list)\n}\n";
 
-const CORE_IMPORTS: &str = "use engine_core::{Brick, BrickStats, Bricks, Engine, EnvironmentSection, Error, Presentation};\n";
+const STANDARD_FN: &str = "pub fn standard<L: Listing>(list: L) -> L {";
 
-const SLOT_IMPORTS: &str = "use engine_core::{
-    Brick, BrickStats, Bricks, Engine, EnvironmentSection, Error, Fill, Presentation,
-};
-";
+const LIST_FN: &str = "pub fn bricks<L: Listing>(list: L) -> L {";
 
-const LIST_IMPORTS: &str = "use engine_core::{
-    Brick, BrickStats, Bricks, Engine, EnvironmentSection, Error, Join, Presentation,
-};
-";
-
-const GPU_IMPORTS: &str = "use engine_render::linker::ShaderModule;
-use engine_render::parts::{Create, GpuPart, PartDecl, PartEntry};
-use engine_render::render_bricks::AddRenderParts;
-";
+const RESERVED: [&str; 4] = ["engine", "generated", "face", "place"];
 
 pub fn new(root: &Path, options: &[String]) -> Result<(), String> {
     match options.split_first() {
@@ -85,6 +80,14 @@ fn template(root: &Path, path: &str) -> Result<String, String> {
         .map_err(|error| format!("cannot read {path}: {error}"))
 }
 
+fn dependencies_table(manifest: &str) -> Option<&str> {
+    let start = manifest.find("[dependencies]\n")? + "[dependencies]\n".len();
+    let end = manifest[start..]
+        .find("\n[")
+        .map_or(manifest.len(), |end| start + end);
+    Some(&manifest[start..end])
+}
+
 fn app(root: &Path, options: &[String]) -> Result<(), String> {
     let (project, rest) = project_option(options)?;
     let (Some(project), true) = (project, rest.is_empty()) else {
@@ -120,7 +123,16 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
     {
         return Err(format!("a client named {name} already exists"));
     }
-    let source = template(root, APP_TEMPLATE)?.replace("Template", &pascal);
+    let source = template(root, APP_TEMPLATE)?;
+    if !source.contains(TEMPLATE_LIST) {
+        return Err(format!(
+            "{APP_TEMPLATE} no longer lists its bricks as `{}`",
+            TEMPLATE_LIST.trim_end()
+        ));
+    }
+    let source = source
+        .replace(TEMPLATE_LIST, &format!("pub use {wasm}_bricks::bricks;\n"))
+        .replace("Template", &pascal);
     let native = template(root, APP_NATIVE)?;
     let xtask = template(root, APP_XTASK)?;
     for (path, text) in [(APP_NATIVE, &native), (APP_XTASK, &xtask)] {
@@ -130,6 +142,16 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
             ));
         }
     }
+    let list = template(root, STANDARD_LIST)?;
+    if !list.contains(STANDARD_FN) {
+        return Err(format!(
+            "{STANDARD_LIST} no longer lists the standard bricks as `{STANDARD_FN}`"
+        ));
+    }
+    let list = list.replace(STANDARD_FN, LIST_FN);
+    let standard = template(root, STANDARD_MANIFEST)?;
+    let listed = dependencies_table(&standard)
+        .ok_or_else(|| format!("{STANDARD_MANIFEST} has no [dependencies]"))?;
     let game = format!("use {wasm} as app;");
     let files = [
         (crate_dir.join("Cargo.toml"), app_manifest(&name, &page)),
@@ -139,6 +161,16 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
             native
                 .replace(TEMPLATE_GAME, &game)
                 .replace("Template", &pascal),
+        ),
+        (
+            crate_dir.join("bricks/Cargo.toml"),
+            list_manifest(&name, listed),
+        ),
+        (crate_dir.join("bricks/src/lib.rs"), list),
+        (crate_dir.join("worker/Cargo.toml"), worker_manifest(&name)),
+        (
+            crate_dir.join("worker/src/lib.rs"),
+            format!("engine_worker::export_worker!({wasm}_bricks::bricks);\n"),
         ),
         (crate_dir.join("xtask/Cargo.toml"), xtask_manifest(&name)),
         (
@@ -156,17 +188,23 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
         ),
     ];
     write_files(root, &files)?;
-    join_workspace(root, &project)?;
-    join_workspace(root, &format!("{project}/xtask"))?;
+    for member in ["", "/bricks", "/worker", "/xtask"] {
+        join_workspace(root, &format!("{project}{member}"))?;
+    }
+    let bricks = format!("{name}-bricks");
+    let worker = format!("{name}-worker");
+    let tool = format!("{name}-xtask");
     join_dependencies(root, &name, &project)?;
-    run(root, "cargo", &["check", "-p", &name])?;
-    run(root, "cargo", &["check", "-p", &format!("{name}-xtask")])?;
+    join_dependencies(root, &bricks, &format!("{project}/bricks"))?;
+    for package in [name.as_str(), bricks.as_str(), worker.as_str(), tool.as_str()] {
+        run(root, "cargo", &["check", "-p", package])?;
+    }
+    for package in [name.as_str(), worker.as_str()] {
+        run(root, "cargo", &["check", "-p", package, "--target", WASM_TARGET])?;
+    }
+    run(root, "cargo", &["run", "-q", "-p", "kinds"])?;
     run(root, "cargo", &["xtask", "schema"])?;
-    run(
-        root,
-        "cargo",
-        &["run", "-p", &format!("{name}-xtask"), "--", "schema"],
-    )?;
+    run(root, "cargo", &["run", "-p", &tool, "--", "schema"])?;
     println!(
         "{}",
         json!({
@@ -174,7 +212,9 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
             "project": project,
             "page": format!("web/{page}"),
             "native": format!("{name}-native"),
-            "xtask": format!("{name}-xtask"),
+            "list": bricks,
+            "worker": worker,
+            "xtask": tool,
         })
     );
     Ok(())
@@ -197,6 +237,7 @@ name = "{name}-native"
 path = "src/main.rs"
 
 [package.metadata.engine]
+kind = "app"
 page = "{page}"
 game = "{name}"
 native = "{name}-native"
@@ -208,6 +249,8 @@ profiling = ["engine/profiling", "engine_native/profiling"]
 
 [dependencies]
 engine.workspace = true
+{name}-bricks.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 engine_native.workspace = true
@@ -216,6 +259,52 @@ engine_native.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
 web-sys.workspace = true
+
+[lints]
+workspace = true
+"#
+    )
+}
+
+fn list_manifest(name: &str, dependencies: &str) -> String {
+    format!(
+        r#"[package]
+name = "{name}-bricks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+{dependencies}
+[lints]
+workspace = true
+
+[package.metadata.engine]
+kind = "list"
+"#
+    )
+}
+
+fn worker_manifest(name: &str) -> String {
+    format!(
+        r#"[package]
+name = "{name}-worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[package.metadata.engine]
+kind = "app"
+worker = true
+
+[dependencies]
+engine_worker.workspace = true
+{name}-bricks.workspace = true
 
 [lints]
 workspace = true
@@ -238,6 +327,9 @@ engine_checks.workspace = true
 
 [lints]
 workspace = true
+
+[package.metadata.engine]
+kind = "tool"
 "#
     )
 }
@@ -276,6 +368,30 @@ startGame({{
     )
 }
 
+enum Shape {
+    Slot { contract: Option<&'static str> },
+    List,
+    Draw,
+}
+
+impl Shape {
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::Slot { .. } => "slot",
+            Self::List => "list",
+            Self::Draw => "draw_point",
+        }
+    }
+}
+
+struct Claim {
+    shape: Shape,
+    place: String,
+    path: String,
+    package: String,
+    filler: Option<&'static str>,
+}
+
 fn brick(root: &Path, options: &[String]) -> Result<(), String> {
     let [part, name] = options else {
         return Err(USAGE.into());
@@ -291,49 +407,114 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
             .to_string());
         }
     }
+    if RESERVED.contains(&name.as_str()) {
+        return Err(json!({
+            "code": "invalid_name",
+            "path": "NAME",
+            "got": name,
+            "expected": format!("a prefix no core module uses, not {}", RESERVED.join(", ")),
+        })
+        .to_string());
+    }
     let package = format!("engine_{name}");
     let folder = format!("crates/{package}");
     let repository = crate::rules::repository(root)?;
     if root.join(&folder).exists() || repository.package(&package).is_some() {
         return Err(format!("{folder} already exists"));
     }
+    let engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
+    let registry = engine
+        .app
+        .world()
+        .get_resource::<Registry>()
+        .ok_or("the standard engine holds no brick registry")?;
+    for key in [name.clone(), format!("{name}_stats")] {
+        let owner = registry
+            .section(&key)
+            .map(|entry| entry.brick)
+            .or_else(|| registry.stats_section(&key).map(|entry| entry.brick));
+        if let Some(owner) = owner {
+            return Err(json!({
+                "code": "name_twice",
+                "path": format!("$.sections.{key}"),
+                "got": owner,
+            })
+            .to_string());
+        }
+    }
     let pascal = pascal(name, '_');
-    let claim = part_claim(root, repository, part)?;
-    let mut source = template(root, BRICK_TEMPLATE)?
-        .replace("Template", &pascal)
-        .replace("\"template\"", &format!("\"{name}\""));
-    let stats = format!(".stats::<{pascal}Stats>()");
-    let mut dependencies = String::new();
-    let mut metadata = String::new();
-    match &claim {
-        Some(claim) if claim.kind == "slot" => {
-            let fill = format!("fill(Fill::<{}>::new())", claim.path);
-            source = place_source(&source, SLOT_IMPORTS, &stats, &fill)?;
-            if claim.gpu {
-                source = gpu_source(&source, &pascal, name, &stats);
-            }
-        }
-        Some(claim) => {
-            let join = format!("join(Join::<{}>::new())", claim.path);
-            source = place_source(&source, LIST_IMPORTS, &stats, &join)?;
-        }
-        None => println!(
+    let claim = claim(root, repository, registry, part)?;
+    if claim.is_none() {
+        println!(
             "{}",
             json!({"event": "part_undeclared", "part": part, "brick": name})
+        );
+    }
+    let mut files = vec![
+        (
+            root.join(&folder).join("Cargo.toml"),
+            brick_manifest(&package, claim.as_ref()),
         ),
+        (
+            root.join(&folder).join("build.rs"),
+            "fn main() {\n    engine_sources::emit();\n}\n".to_owned(),
+        ),
+        (
+            root.join(&folder).join("src/lib.rs"),
+            brick_source(&pascal, name, claim.as_ref()),
+        ),
+    ];
+    if let Some(Claim {
+        shape: Shape::Slot {
+            contract: Some(contract),
+        },
+        place,
+        ..
+    }) = &claim
+    {
+        files.push((
+            root.join(&folder)
+                .join(format!("src/shaders/{name}/faces/{place}.wgsl")),
+            answers(place, contract),
+        ));
     }
-    if let Some(claim) = &claim {
-        if claim.package != "engine_core" {
-            dependencies = format!("{}.workspace = true\n", claim.package);
-        }
-        if claim.gpu {
-            dependencies.push_str("engine_render.workspace = true\n");
-        }
-        if let Some(replaced) = &claim.replaces {
-            metadata = format!("\n[package.metadata.engine]\nreplaces = \"{replaced}\"\n");
-        }
+    write_files(root, &files)?;
+    join_workspace(root, &folder)?;
+    join_dependencies(root, &package, &folder)?;
+    run(root, "cargo", &["fmt", "-p", &package])?;
+    run(root, "cargo", &["check", "-p", &package])?;
+    run(
+        root,
+        "cargo",
+        &["check", "-p", &package, "--target", WASM_TARGET],
+    )?;
+    run(root, "cargo", &["run", "-q", "-p", "kinds"])?;
+    println!(
+        "{}",
+        json!({
+            "event": "brick_created",
+            "crate": package,
+            "brick": format!("{package}::{pascal}Brick"),
+            "part": part,
+            "claims": claim.as_ref().map(|claim| claim.shape.name()),
+            "filled_by": claim.as_ref().and_then(|claim| claim.filler),
+        })
+    );
+    Ok(())
+}
+
+fn brick_manifest(package: &str, claim: Option<&Claim>) -> String {
+    let mut dependencies = String::new();
+    let draws = claim.is_some_and(|claim| matches!(claim.shape, Shape::Draw));
+    if let Some(claim) = claim
+        && !matches!(claim.package.as_str(), "engine_core" | "engine_render")
+    {
+        dependencies.push_str(&format!("{}.workspace = true\n", claim.package));
     }
-    let manifest = format!(
+    if draws || claim.is_some_and(|claim| claim.package == "engine_render") {
+        dependencies.push_str("engine_render.workspace = true\n");
+    }
+    format!(
         r#"[package]
 name = "{package}"
 version.workspace = true
@@ -341,130 +522,187 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
-[features]
-default = []
-schema = ["dep:schemars", "engine_core/schema", "engine_settings/schema"]
-
 [dependencies]
+engine_ecs.workspace = true
 engine_core.workspace = true
-engine_settings.workspace = true
-{dependencies}bevy_ecs.workspace = true
-serde.workspace = true
-schemars = {{ workspace = true, optional = true }}
+{dependencies}
+[build-dependencies]
+engine_sources.workspace = true
 
 [lints]
 workspace = true
-{metadata}"#
-    );
-    let crate_dir = root.join(&folder);
-    write_files(
-        root,
-        &[
-            (crate_dir.join("Cargo.toml"), manifest),
-            (crate_dir.join("src/lib.rs"), source),
-        ],
-    )?;
-    join_workspace(root, &folder)?;
-    join_dependencies(root, &package, &folder)?;
-    run(root, "cargo", &["check", "-p", &package])?;
-    run(
-        root,
-        "cargo",
-        &["check", "-p", &package, "--features", "schema"],
-    )?;
-    run(
-        root,
-        "cargo",
-        &["check", "-p", &package, "--target", WASM_TARGET],
-    )?;
-    println!(
-        "{}",
-        json!({
-            "event": "brick_created",
-            "crate": package,
-            "brick": name,
-            "part": part,
-            "claims": claim.as_ref().map(|claim| claim.kind),
-            "replaces": claim.as_ref().and_then(|claim| claim.replaces.clone()),
-        })
-    );
-    Ok(())
+
+[package.metadata.engine]
+kind = "brick"
+"#
+    )
 }
 
-fn place_source(
-    source: &str,
-    imports: &str,
-    stats: &str,
-    registration: &str,
-) -> Result<String, String> {
-    if !source.contains(CORE_IMPORTS) {
-        return Err(format!(
-            "{BRICK_TEMPLATE} no longer imports engine_core as `{}`",
-            CORE_IMPORTS.trim_end()
-        ));
-    }
-    Ok(source
-        .replace(CORE_IMPORTS, imports)
-        .replace(stats, &format!("{stats}\n            .{registration}")))
-}
+fn brick_source(pascal: &str, name: &str, claim: Option<&Claim>) -> String {
+    let mut core = vec!["Brick", "Bricks", "Schedule", "Source", "settings", "stats"];
+    let mut render = String::new();
+    let mut registered = String::new();
+    let mut part = String::new();
+    match claim {
+        Some(Claim {
+            shape: Shape::Slot { contract },
+            place,
+            path,
+            ..
+        }) => {
+            let wgsl = match contract {
+                Some(_) => format!("Some(shaders::{name}::faces::{place}::MODULE)"),
+                None => "None".to_owned(),
+            };
+            registered = format!("\n            .fill::<{path}>({wgsl})");
+        }
+        Some(Claim {
+            shape: Shape::List,
+            path,
+            ..
+        }) => {
+            registered = format!("\n            .join::<{path}>(Default::default(), None)");
+        }
+        Some(Claim {
+            shape: Shape::Draw,
+            path,
+            ..
+        }) => {
+            core.extend(["DrawPoint", "Error"]);
+            render = "use engine_render::{Draw, GpuPart, Install, Layer, Prepare, RenderBricks};\n"
+                .to_owned();
+            registered = format!(
+                "\n            .draws::<{pascal}Gpu, {path}>(Layer::Opaque, {pascal}Gpu::draw)"
+            );
+            part = format!(
+                r#"
+struct {pascal}Gpu;
 
-struct Claim {
-    kind: &'static str,
-    path: String,
-    package: String,
-    replaces: Option<String>,
-    gpu: bool,
-}
+impl GpuPart for {pascal}Gpu {{
+    type Reads = ();
 
-fn gpu_source(source: &str, pascal: &str, name: &str, stats: &str) -> String {
-    let part = format!(
-        r#"
-pub const MODULES: &[ShaderModule] = &[];
+    fn install(_: &mut Install<'_, Self>) -> Result<Self, Error> {{
+        Ok(Self)
+    }}
 
-struct {pascal}Part;
-
-impl GpuPart for {pascal}Part {{}}
-
-fn create(_: &Create<'_>) -> Box<dyn GpuPart> {{
-    Box::new({pascal}Part)
+    fn prepare(&mut self, _: SystemParamItem<'_, '_, Self::Reads>, _: &mut Prepare<'_, Self>) {{}}
 }}
 
-pub static PART: PartEntry = PartEntry {{
-    decl: PartDecl {{
-        name: "{name}",
-        brick: "{name}",
-        passes: &[],
-        resources: &[],
-        hooks: &[],
-        contributes: &[],
-        resolve: None,
-        labels: &[],
-        lazy: false,
-        needs: &[],
-        piece: None,
-    }},
-    create,
-}};
+impl {pascal}Gpu {{
+    fn draw(&self, _: &<{path} as DrawPoint>::Args, _: &mut Draw<'_, Self, {path}>) -> u32 {{
+        0
+    }}
+}}
 "#
-    );
-    let registered = format!(
-        "{stats}\n            .render_part(&PART)\n            .shaders(MODULES)\n            \
-         .places(engine_faces::places::PLACES)"
-    );
-    source
-        .replace(
-            TEMPLATE_IMPORTS,
-            &format!("{GPU_IMPORTS}{TEMPLATE_IMPORTS}"),
-        )
-        .replace(stats, &registered)
-        + &part
+            );
+        }
+        None => {}
+    }
+    core.sort_unstable();
+    let core = core.join(", ");
+    format!(
+        r#"include!(concat!(env!("OUT_DIR"), "/brick.rs"));
+
+use bevy_ecs::prelude::*;
+use engine_core::{{{core}}};
+{render}
+settings! {{
+    #[section("{name}")]
+    pub struct {pascal} {{
+        pub enabled: bool = true => any,
+    }}
+}}
+
+stats! {{
+    #[section("{name}_stats")]
+    pub struct {pascal}Stats {{
+        pub frames: u32,
+    }}
+}}
+
+fn enabled(settings: Res<{pascal}>) -> bool {{
+    settings.enabled
+}}
+
+fn count_frames(mut stats: ResMut<{pascal}Stats>) {{
+    stats.frames = stats.frames.wrapping_add(1);
+}}
+
+pub struct {pascal}Brick;
+
+impl Brick for {pascal}Brick {{
+    const SOURCE: &'static Source = &SOURCE;
+
+    fn register(bricks: &mut Bricks<'_>) {{
+        bricks
+            .when(enabled)
+            .settings::<{pascal}>()
+            .stats::<{pascal}Stats>(){registered}
+            .systems(Schedule::Presentation, count_frames);
+    }}
+}}
+{part}"#
+    )
 }
 
-fn part_claim(
+fn claim(
     root: &Path,
-    repository: &engine_checks::Repository,
+    repository: &Repository,
+    registry: &Registry,
     part: &str,
 ) -> Result<Option<Claim>, String> {
+    let Some(decl) = registry.place(part).copied() else {
+        return Ok(None);
+    };
+    let Some(declared) = declared(root, repository, part)? else {
+        return Ok(None);
+    };
+    let kind = declared.kind.as_str();
+    let core = matches!(declared.package.as_str(), "engine_core" | "engine_render");
+    if kind != "place" && !core {
+        return Err(format!(
+            "{part} is declared in {} (kind {kind}), which a brick cannot depend on",
+            declared.package
+        ));
+    }
+    let shape = match (decl.kind(), declared.layer.as_deref()) {
+        (PlaceKind::Slot, Some("Layer")) => Shape::Draw,
+        (PlaceKind::Slot, Some(layer)) => {
+            return Err(format!(
+                "the draw point {part} orders its members by {layer}; register its draws by hand"
+            ));
+        }
+        (PlaceKind::Slot, None) => Shape::Slot {
+            contract: decl.wgsl(),
+        },
+        (PlaceKind::List, _) => Shape::List,
+        (PlaceKind::Component, _) => return Ok(None),
+    };
+    let filler = match shape {
+        Shape::Slot { .. } => registry.filler_named(part),
+        Shape::List | Shape::Draw => None,
+    };
+    Ok(Some(Claim {
+        shape,
+        place: part.to_owned(),
+        path: declared.path,
+        package: declared.package,
+        filler,
+    }))
+}
+
+struct Declared {
+    path: String,
+    package: String,
+    kind: String,
+    layer: Option<String>,
+}
+
+fn declared(
+    root: &Path,
+    repository: &Repository,
+    part: &str,
+) -> Result<Option<Declared>, String> {
     let declaration = format!("const NAME: &'static str = \"{part}\";");
     for path in engine_checks::files::sources(root)? {
         if !path.ends_with(".rs") || !path.starts_with("crates/") {
@@ -472,7 +710,7 @@ fn part_claim(
         }
         let text = fs::read_to_string(root.join(&path))
             .map_err(|error| format!("cannot read {path}: {error}"))?;
-        for (kind, marker) in [("slot", "impl Slot for "), ("list", "impl List for ")] {
+        for marker in ["impl Slot for ", "impl List for "] {
             for (at, _) in text.match_indices(marker) {
                 let rest = &text[at + marker.len()..];
                 let block = &rest[..rest.find('}').unwrap_or(rest.len())];
@@ -497,37 +735,27 @@ fn part_claim(
                 } else {
                     format!("{module}::{name}")
                 };
-                let filler = if kind == "slot" {
-                    let engine = crate::bricks::standard_engine();
-                    engine
-                        .app
-                        .world()
-                        .get_resource::<engine::bricks::BrickRegistry>()
-                        .and_then(|registry| {
-                            registry
-                                .bricks()
-                                .iter()
-                                .find(|brick| brick.fills.iter().any(|filled| filled.place == part))
-                                .map(|brick| {
-                                    let render = brick
-                                        .extension::<engine_render::render_bricks::RenderBrick>();
-                                    (brick.crate_name.to_owned(), render.is_some())
-                                })
-                        })
-                } else {
-                    None
-                };
-                return Ok(Some(Claim {
-                    kind,
+                return Ok(Some(Declared {
                     path: format!("{}::{inner}", package.crate_name()),
                     package: package.name.clone(),
-                    gpu: filler.as_ref().is_some_and(|&(_, gpu)| gpu),
-                    replaces: filler.map(|(replaced, _)| replaced),
+                    kind: package.engine["kind"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned(),
+                    layer: draw_layer(&text, &name),
                 }));
             }
         }
     }
     Ok(None)
+}
+
+fn draw_layer(text: &str, name: &str) -> Option<String> {
+    let marker = format!("impl DrawPoint for {name} ");
+    let rest = &text[text.find(&marker)? + marker.len()..];
+    let block = &rest[..rest.find('}').unwrap_or(rest.len())];
+    let layer = block.split_once("type Layer = ")?.1;
+    Some(layer[..layer.find(';')?].trim().to_owned())
 }
 
 fn module_of(path: &str, folder: &str) -> String {
@@ -540,6 +768,85 @@ fn module_of(path: &str, folder: &str) -> String {
         return String::new();
     }
     inside.replace('/', "::")
+}
+
+fn items(text: &str) -> Vec<&str> {
+    let mut items = Vec::new();
+    let mut depth = 0_u32;
+    let mut start = 0;
+    for (at, character) in text.char_indices() {
+        let ends = match character {
+            '{' => {
+                depth += 1;
+                false
+            }
+            '}' => {
+                depth = depth.saturating_sub(1);
+                depth == 0
+            }
+            ';' => depth == 0,
+            _ => false,
+        };
+        if ends {
+            let item = text[start..=at].trim();
+            if !item.is_empty() && item != ";" {
+                items.push(item);
+            }
+            start = at + 1;
+        }
+    }
+    items
+}
+
+fn declared_name(item: &str) -> Option<&str> {
+    let rest = ["struct ", "const ", "alias ", "override "]
+        .into_iter()
+        .find_map(|keyword| item.strip_prefix(keyword))?;
+    let end = rest
+        .find(|character: char| !(character.is_alphanumeric() || character == '_'))
+        .unwrap_or(rest.len());
+    Some(&rest[..end]).filter(|name| !name.is_empty())
+}
+
+fn mentions(text: &str, name: &str) -> bool {
+    let word = |character: char| character.is_alphanumeric() || character == '_';
+    text.match_indices(name).any(|(at, _)| {
+        !text[..at].chars().next_back().is_some_and(word)
+            && !text[at + name.len()..].chars().next().is_some_and(word)
+    })
+}
+
+fn answers(place: &str, contract: &str) -> String {
+    let items = items(contract);
+    let functions: Vec<&str> = items
+        .iter()
+        .copied()
+        .filter(|item| item.starts_with("fn "))
+        .collect();
+    let named: Vec<&str> = items
+        .iter()
+        .filter_map(|item| declared_name(item))
+        .filter(|name| functions.iter().any(|function| mentions(function, name)))
+        .collect();
+    let mut text = String::new();
+    match named.as_slice() {
+        [] => {}
+        [one] => text.push_str(&format!("import package::place::{place}::{one};\n")),
+        many => text.push_str(&format!(
+            "import package::place::{place}::{{{}}};\n",
+            many.join(", ")
+        )),
+    }
+    for import in items.iter().filter(|item| item.starts_with("import ")) {
+        text.push_str(import);
+        text.push('\n');
+    }
+    if !text.is_empty() {
+        text.push('\n');
+    }
+    text.push_str(&functions.join("\n\n"));
+    text.push('\n');
+    text
 }
 
 fn join_workspace(root: &Path, project: &str) -> Result<(), String> {

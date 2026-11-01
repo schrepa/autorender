@@ -120,31 +120,3 @@ struct TemporalOutput {
     @location(2) @interpolate(flat) material: vec4<u32>,
     @location(3) previous: vec3<f32>,
 }
-
-struct SceneTargets {
-    @location(0) color: vec4<f32>,
-    @location(1) glow: vec2<f32>,
-    @location(2) surface: vec4<u32>,
-}
-
-struct TemporalTargets {
-    @location(0) color: vec4<f32>,
-    @location(1) motion: vec2<f32>,
-    @location(2) glow: vec2<f32>,
-    @location(3) surface: vec4<u32>,
-}
-
-struct DepthSceneTargets {
-    @location(0) color: vec4<f32>,
-    @location(1) glow: vec2<f32>,
-    @location(2) surface: vec4<u32>,
-    @builtin(frag_depth) depth: f32,
-}
-
-struct DepthTemporalTargets {
-    @location(0) color: vec4<f32>,
-    @location(1) motion: vec2<f32>,
-    @location(2) glow: vec2<f32>,
-    @location(3) surface: vec4<u32>,
-    @builtin(frag_depth) depth: f32,
-}

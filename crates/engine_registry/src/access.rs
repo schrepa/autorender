@@ -32,7 +32,7 @@ enum Catalogued {
     Shared,
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct AccessRule {
     packages: Vec<&'static str>,
     places: HashMap<TypeId, Catalogued>,

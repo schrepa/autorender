@@ -1,9 +1,11 @@
-use engine::host::TerrainDebug;
 use engine::prelude::*;
+use engine::scene::SceneFiles;
 use engine::{Error, ErrorCode};
+use serde_json::{Value, json};
 
 use crate::options::{CONTROLS, WATCH_BODIES};
-use crate::{Options, RockMaps, scene, views};
+use crate::scene::{self, Furnished, set};
+use crate::{Options, RockMaps};
 
 const FREEZE_DETAIL: ActionId = ActionId::new(2).expect("action_index_valid");
 
@@ -13,21 +15,21 @@ pub struct Highlands {
     options: Options,
     freeze_held: bool,
     scene: Option<SceneInstance>,
+    start: Option<Camera>,
 }
 
 impl Highlands {
-    pub fn build(options: Options, rocks: &RockMaps) -> engine::Result<(Engine, Self)> {
-        let (mut engine, instance) = scene::create(options.bodies, rocks)?;
+    pub fn build(engine: &mut Engine, options: Options, rocks: &RockMaps) -> engine::Result<Self> {
+        let world = engine.app.world_mut();
+        let Furnished { instance, start } = scene::furnish(world, &options, rocks, true)?;
         for name in APPLIED {
-            apply(engine.app.world_mut(), &options, name)?;
+            apply(world, &options, name)?;
         }
-        Ok((
-            engine,
-            Self {
-                scene: Some(instance),
-                ..Self::new(options)
-            },
-        ))
+        Ok(Self {
+            scene: Some(instance),
+            start: Some(start),
+            ..Self::new(options)
+        })
     }
 
     fn new(options: Options) -> Self {
@@ -35,6 +37,7 @@ impl Highlands {
             options,
             freeze_held: false,
             scene: None,
+            start: None,
         }
     }
 
@@ -50,41 +53,42 @@ impl Highlands {
         self.options = options;
         Ok(())
     }
+
+    fn load(&mut self, world: &mut World, source: &str) -> engine::Result<()> {
+        if let Some(instance) = self.scene.take() {
+            instance.despawn(world);
+        }
+        if source != scene::SCENE {
+            self.scene = Some(SceneDocument::from_json(source)?.instantiate(world)?);
+            return set(world, "fly_camera.enabled", json!(false));
+        }
+        let options = Options {
+            rocks: false,
+            ..Options::default()
+        };
+        let Furnished { instance, start } =
+            scene::furnish(world, &options, &RockMaps::default(), false)?;
+        for name in APPLIED {
+            apply(world, &options, name)?;
+        }
+        self.scene = Some(instance);
+        self.start = Some(start);
+        Ok(())
+    }
 }
 
 engine::__if_dev! {
     impl Highlands {
-        #[cfg(any(feature = "dev", target_arch = "wasm32"))]
         pub(crate) fn played(
             options: Options,
             source: Option<&str>,
-            bricks: engine::bricks::BrickList,
-        ) -> engine::Result<(Engine, Self)> {
-            let mut engine = engine::smokes::engine_of(bricks)?;
-            let scene = source
-                .map(|source| {
-                    SceneDocument::from_json(source)?.instantiate(engine.app.world_mut())
-                })
-                .transpose()?;
-            Ok((
-                engine,
-                Self {
-                    scene,
-                    ..Self::new(options)
-                },
-            ))
-        }
-
-        pub(crate) fn furnish(
-            app: &mut App,
-            options: &Options,
-            rocks: &RockMaps,
-        ) -> engine::Result<SceneInstance> {
-            let instance = scene::furnish(app, options.bodies, rocks, false)?;
-            for name in APPLIED {
-                apply(app.world_mut(), options, name)?;
+            engine: &mut Engine,
+        ) -> engine::Result<Self> {
+            let mut highlands = Self::new(options);
+            if let Some(source) = source {
+                highlands.load(engine.app.world_mut(), source)?;
             }
-            Ok(instance)
+            Ok(highlands)
         }
     }
 }
@@ -92,23 +96,31 @@ engine::__if_dev! {
 fn apply(world: &mut World, options: &Options, name: &str) -> engine::Result<()> {
     match name {
         "lod" | "impostors" => {
-            if let Some(mut detail) = world.get_resource_mut::<LevelOfDetail>() {
-                detail.enabled = options.lod;
-                detail.impostors = options.impostors;
-            }
-            Ok(())
+            set(world, "detail.enabled", json!(options.lod))?;
+            set(world, "impostors.enabled", json!(options.impostors))
         }
         "effects" => scene::set_effects(world, &options.effects),
         "stand" => options
             .stand
             .as_deref()
-            .map_or(Ok(()), |place| views::stand(world, place)),
-        WATCH_BODIES => {
-            views::watch_bodies(world, options.watch_bodies);
-            Ok(())
-        }
+            .map_or(Ok(()), |place| scene::stand(world, place)),
+        WATCH_BODIES => set(world, "highlands.watch_bodies", json!(options.watch_bodies)),
         _ => Ok(()),
     }
+}
+
+fn freeze_detail(world: &mut World) -> engine::Result<()> {
+    let view = engine::host::run_operation(world, "view", json!({}))?;
+    let freeze = view["frozen_at"].is_null();
+    engine::host::run_operation(world, "view", json!({ "freeze": freeze })).map(drop)
+}
+
+fn report_failure(event: &str, error: &Error) {
+    let record = json!({
+        "event": event,
+        "error": error,
+    });
+    eprintln!("{record}");
 }
 
 impl Game for Highlands {
@@ -117,23 +129,25 @@ impl Game for Highlands {
     fn before_frame(&mut self, engine: &mut Engine) {
         let world = engine.app.world_mut();
         let held = world.resource::<ActionInput>().pressed(FREEZE_DETAIL);
-        if held && !self.freeze_held {
-            let eye = world.resource::<Camera>().eye();
-            let mut debug = world
-                .get_resource::<TerrainDebug>()
-                .copied()
-                .unwrap_or_default();
-            debug.freeze = match debug.freeze {
-                Some(_) => None,
-                None => Some(eye),
-            };
-            world.insert_resource(debug);
+        if held
+            && !self.freeze_held
+            && let Err(error) = freeze_detail(world)
+        {
+            report_failure("highlands_freeze_failed", &error);
         }
         self.freeze_held = held;
     }
 
     fn reset_camera(&mut self, engine: &mut Engine) {
-        views::reset(engine.app.world_mut());
+        let world = engine.app.world_mut();
+        let cleared = set(world, "highlands.stand", Value::Null)
+            .and_then(|()| set(world, "highlands.watch_bodies", json!(false)));
+        if let Err(error) = cleared {
+            report_failure("highlands_reset_failed", &error);
+        }
+        if let Some(start) = self.start {
+            world.insert_resource(start);
+        }
     }
 
     fn scene(&self) -> Option<&SceneInstance> {
@@ -142,11 +156,20 @@ impl Game for Highlands {
 
     fn content(&self, _engine: &Engine) -> Option<Vec<u8>> {
         let options = &self.options;
-        let mut content = crate::SOURCE.to_vec();
+        let mut content = crate::SOURCE.hash().to_vec();
         content.extend(options.bodies.to_le_bytes());
         content.extend(options.effects.as_bytes());
         content.push(0);
         content.extend([u8::from(options.lod), u8::from(options.impostors)]);
         Some(content)
+    }
+
+    fn reload_scene(
+        &mut self,
+        engine: &mut Engine,
+        source: &str,
+        _files: &SceneFiles,
+    ) -> Result<(), Error> {
+        self.load(engine.app.world_mut(), source)
     }
 }

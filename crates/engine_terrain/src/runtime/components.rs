@@ -1,6 +1,6 @@
 use super::*;
 use crate::surface::{setting_error, terrain_error};
-use engine_core::{Error, Expected};
+use engine_places::solids::SolidSource;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainSurface {
@@ -14,17 +14,11 @@ pub struct TerrainSurface {
 pub struct PlacementAsset {
     pub mesh: MeshHandle,
     pub material: MaterialHandle,
-    pub lods: Vec<PlacementLod>,
-    pub parts: Vec<PlacementPart>,
-    pub shadow: Option<MeshHandle>,
-    pub sway: f32,
     pub collider: Option<PlacedCollider>,
 }
 
 impl PlacementAsset {
-    pub const SWAY: Rule = Rule::range(0.0, 10.0);
-
-    pub fn solid(&self, assets: Option<&AssetLibrary>) -> Option<Solid> {
+    pub fn solid(&self, assets: &AssetLibrary) -> Option<Solid> {
         if let Some(collider) = self.collider {
             let (half, round) = match collider.shape {
                 PlacedShape::Cuboid { half_extents } => (half_extents, false),
@@ -36,40 +30,13 @@ impl PlacementAsset {
                 round,
             });
         }
-        let bounds = assets?.mesh(self.mesh)?.bounds();
+        let bounds = assets.mesh(self.mesh)?.bounds();
         let half = 0.5 * (bounds.max() - bounds.min());
         (half.min_element() >= MIN_COLLIDER_EXTENT).then(|| Solid {
             center: (0.5 * (bounds.max() + bounds.min())).to_array(),
             half: half.to_array(),
             round: false,
         })
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct PlacementPart {
-    pub material: MaterialHandle,
-    pub meshes: Vec<MeshHandle>,
-}
-
-pub const MAX_PLACEMENT_PARTS: usize = 2;
-
-impl PlacementPart {
-    pub fn check(parts: &[usize], levels: usize) -> Result<(), Error> {
-        if parts.len() > MAX_PLACEMENT_PARTS {
-            return Err(terrain_error("$.parts")
-                .at_most(MAX_PLACEMENT_PARTS as u64)
-                .got(parts.len()));
-        }
-        match parts
-            .iter()
-            .position(|&meshes| meshes == 0 || meshes > levels)
-        {
-            Some(index) => Err(terrain_error(format!("$.parts[{index}].meshes"))
-                .range(1.0, levels as f64)
-                .got(parts[index])),
-            None => Ok(()),
-        }
     }
 }
 
@@ -117,8 +84,8 @@ impl Setting for PlacedCollider {
             Ok(())
         } else {
             Err(
-                InvalidSetting::new(field, engine_settings::Expected::Finite).allowed(
-                    engine_settings::Allowed::Range {
+                InvalidSetting::new(field, engine_core::Expected::Finite).allowed(
+                    engine_core::Allowed::Range {
                         min: MIN_COLLIDER_EXTENT as f64,
                         max: MAX_COLLIDER_EXTENT as f64,
                     },
@@ -128,68 +95,22 @@ impl Setting for PlacedCollider {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PlacementLod {
-    pub mesh: MeshHandle,
-    pub error: f32,
-}
-
-pub const MAX_PLACEMENT_LODS: usize = 4;
-
-impl PlacementLod {
-    pub fn check(errors: &[f32]) -> Result<(), Error> {
-        if errors.len() > MAX_PLACEMENT_LODS {
-            return Err(terrain_error("$.lods")
-                .at_most(MAX_PLACEMENT_LODS as u64)
-                .got(errors.len()));
-        }
-        let mut last = 0.0;
-        for (level, &error) in errors.iter().enumerate() {
-            if !(error.is_finite() && error > last) {
-                return Err(terrain_error(format!("$.lods[{level}].error"))
-                    .expected(Expected::Sorted)
-                    .got(error));
-            }
-            last = error;
-        }
-        Ok(())
+pub fn surface_color(color: [f32; 3], roughness: f32) -> SurfaceMaterial {
+    SurfaceMaterial {
+        color,
+        roughness,
+        ..SurfaceMaterial::default()
     }
 }
 
-settings! {
-    unauthored;
-    #[derive(Clone, Copy, Debug, PartialEq)]
-    pub struct SurfaceMaterial {
-        pub material: Option<MaterialHandle> = None => any,
-        pub color: [f32; 3] = [0.5; 3] => range(0.0, 1.0),
-        pub roughness: f32 = 0.9 => range(0.03, 1.0),
-        pub tiling: f32 = 4.0 => range(0.01, 1000.0),
-        pub height_contrast: f32 = 0.5 => range(0.0, 1.0),
-        pub projection: SurfaceProjection = SurfaceProjection::Top => any,
-        pub cover: Option<Cover> = None => any,
-        pub depth: f32 = 0.0 => range(0.0, 2.0),
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum SurfaceProjection {
-    #[default]
-    Top,
-    Biplanar,
-}
-
-impl Setting for SurfaceProjection {}
-
-impl SurfaceMaterial {
-    pub fn color(color: [f32; 3], roughness: f32) -> Self {
-        Self {
-            color,
-            roughness,
-            ..Self::default()
-        }
-    }
+pub fn check_material(material: &SurfaceMaterial) -> Result<(), InvalidSetting> {
+    material.color.check("color", Rule::Range(0.0, 1.0))?;
+    material.roughness.check("roughness", Rule::Range(0.03, 1.0))?;
+    material.tiling.check("tiling", Rule::Range(0.01, 1000.0))?;
+    material
+        .height_contrast
+        .check("height_contrast", Rule::Range(0.0, 1.0))?;
+    material.depth.check("depth", Rule::Range(0.0, 2.0))
 }
 
 impl TerrainSurface {
@@ -218,20 +139,12 @@ impl TerrainSurface {
         }
         for (index, asset) in assets.iter().enumerate() {
             let at = format!("$.assets[{index}]");
-            if let Err(invalid) = asset.sway.check("sway", PlacementAsset::SWAY) {
-                return Err(setting_error(invalid, &at));
-            }
             if let Some(Err(invalid)) = asset
                 .collider
                 .map(|collider| collider.check("collider", Rule::Any))
             {
                 return Err(setting_error(invalid, &at));
             }
-            let errors: Vec<f32> = asset.lods.iter().map(|lod| lod.error).collect();
-            PlacementLod::check(&errors).map_err(|error| error.within(&at))?;
-            let parts: Vec<usize> = asset.parts.iter().map(|part| part.meshes.len()).collect();
-            PlacementPart::check(&parts, 1 + asset.lods.len())
-                .map_err(|error| error.within(&at))?;
         }
         self.assets = assets;
         Ok(self)
@@ -241,19 +154,17 @@ impl TerrainSurface {
         if self.materials.len() != self.rules.authored().materials.len() {
             return Err(InvalidSetting::new(
                 "materials",
-                engine_settings::Expected::Matching,
+                engine_core::Expected::Matching,
             ));
         }
         if self.assets.len() != self.rules.authored().assets.len() {
             return Err(InvalidSetting::new(
                 "assets",
-                engine_settings::Expected::Matching,
+                engine_core::Expected::Matching,
             ));
         }
         for material in &self.materials {
-            material
-                .validate()
-                .map_err(|invalid| invalid.within("materials"))?;
+            check_material(material).map_err(|invalid| invalid.within("materials"))?;
         }
         Ok(())
     }
@@ -329,10 +240,10 @@ impl TerrainSurface {
 
     pub fn default_materials() -> Vec<SurfaceMaterial> {
         vec![
-            SurfaceMaterial::color([0.105, 0.135, 0.045], 0.92),
-            SurfaceMaterial::color([0.21, 0.165, 0.11], 0.92),
-            SurfaceMaterial::color([0.25, 0.235, 0.22], 0.82),
-            SurfaceMaterial::color([0.82, 0.84, 0.88], 0.55),
+            surface_color([0.105, 0.135, 0.045], 0.92),
+            surface_color([0.21, 0.165, 0.11], 0.92),
+            surface_color([0.25, 0.235, 0.22], 0.82),
+            surface_color([0.82, 0.84, 0.88], 0.55),
         ]
     }
 }
@@ -344,7 +255,7 @@ impl Default for TerrainSurface {
     }
 }
 
-#[derive(Component, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Terrain {
     pub origin: Vec3,
     pub pyramid: Pyramid,
@@ -398,7 +309,7 @@ impl Terrain {
         if !self.origin.is_finite() {
             return Err(InvalidSetting::new(
                 "origin",
-                engine_settings::Expected::Finite,
+                engine_core::Expected::Finite,
             ));
         }
         self.surface
@@ -407,9 +318,18 @@ impl Terrain {
     }
 }
 
-settings! {
-    #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Component, Clone, Debug, Default, PartialEq)]
+pub struct TerrainBuilt(pub Option<Terrain>);
+
+#[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[require(TerrainBuilt, SolidSource)]
+#[serde(transparent)]
+pub struct TerrainScene(pub crate::scene::SceneTerrain);
+
+fields! {
+    #[derive(
+        Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
+    )]
     #[serde(default, deny_unknown_fields)]
     pub struct TerrainPrefetch {
         pub reach: f32 = LOAD_REACH => range(0.0, 8.0),

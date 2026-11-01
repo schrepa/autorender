@@ -6,13 +6,18 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+bevy_ecs.workspace = true
 engine = { workspace = true, features = ["schema"] }
 engine_core.workspace = true
 engine_dev.workspace = true
+engine_place.workspace = true
+engine_registry.workspace = true
 engine_render.workspace = true
-engine_sources.workspace = true
 serde_json.workspace = true
 toml_edit.workspace = true
+
+[dev-dependencies]
+engine_standard.workspace = true
 
 [lints]
 workspace = true

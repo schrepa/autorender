@@ -1,10 +1,6 @@
 use super::*;
 
 impl DevTools {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub(super) fn register_components(&mut self, schemas: &Value) {
         self.register_resource::<Camera>(
             InspectorDescriptor::generated(schemas, "Camera")
@@ -26,128 +22,12 @@ impl DevTools {
             }),
         })
         .expect("descriptor_bounded");
-        self.register_component::<LocalLight>(
-            InspectorDescriptor::generated(schemas, "LocalLight")
-                .with_default(json!(SceneLight::default())),
-            |light| json!(SceneLight::from(light)),
-        )
-        .expect("descriptor_bounded");
-        self.register_component::<Tint>(
-            InspectorDescriptor::generated(schemas, "Tint")
-                .with_default(json!(crate::views::TintView(Tint::WHITE.0))),
-            |tint| json!(crate::views::TintView(tint.0)),
-        )
-        .expect("descriptor_bounded");
-        self.insert(Inspector {
-            brick: None,
-            descriptor: InspectorDescriptor::generated(schemas, "SplineMesh"),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| {
-                entity.is_some_and(|entity| world.get::<engine_core::SplineMesh>(entity).is_some())
-            }),
-            read: Box::new(spline_mesh_view),
-        })
-        .expect("descriptor_bounded");
-        self.register_component::<ReflectionProbe>(
-            InspectorDescriptor::generated(schemas, "ReflectionProbe"),
-            |probe| json!(SceneReflectionProbe::from(probe)),
-        )
-        .expect("descriptor_bounded");
         self.insert(Inspector {
             brick: None,
             descriptor: InspectorDescriptor::generated(schemas, "Input"),
             kind: InspectorKind::Resource,
             has: Box::new(|world, _| world.get_resource::<InputState>().is_some()),
             read: Box::new(input_view),
-        })
-        .expect("descriptor_bounded");
-        self.register_resource::<engine_core::Jobs>(
-            InspectorDescriptor::generated(schemas, "Jobs"),
-            |jobs| {
-                let stats = jobs.stats();
-                json!(crate::views::JobsView {
-                    workers: stats.workers,
-                    running: stats.running,
-                    submitted: stats.submitted,
-                    completed: stats.completed,
-                    failed: stats.failed,
-                    last_failure: jobs.last_failure().map(str::to_owned),
-                    cancelled: stats.cancelled,
-                    shares: stats.shares,
-                    shared_bytes: stats.shared_bytes,
-                    cache_hits: stats.cache_hits,
-                    cache_misses: stats.cache_misses,
-                    cache_bytes: stats.cache_bytes,
-                    cache_mismatches: stats.cache_mismatches,
-                    held: stats.held,
-                    in_place: stats.in_place,
-                })
-            },
-        )
-        .expect("descriptor_bounded");
-        self.register_resource::<engine_core::StaticTables>(
-            InspectorDescriptor::generated(schemas, "StaticTables"),
-            |tables| {
-                let (failed_jobs, latest_job_failure) = tables.job_failures();
-                json!(crate::views::StaticTablesView {
-                    tables: tables
-                        .tables()
-                        .into_iter()
-                        .map(
-                            |(kind, parts, arrived, showing)| crate::views::StaticTableRow {
-                                kind: kind.to_owned(),
-                                parts,
-                                arrived,
-                                showing,
-                            }
-                        )
-                        .collect(),
-                    failed_jobs,
-                    latest_job_failure: latest_job_failure.map(str::to_owned),
-                })
-            },
-        )
-        .expect("descriptor_bounded");
-        self.register_component::<ParticleEmitter>(
-            InspectorDescriptor::generated(schemas, "ParticleEmitter")
-                .with_default(json!(SceneEmitter::default())),
-            |emitter| json!(SceneEmitter::from(emitter)),
-        )
-        .expect("descriptor_bounded");
-        self.register_component::<engine_world_streaming::StreamedId>(
-            InspectorDescriptor::generated(schemas, "StreamedId"),
-            |id| {
-                json!(crate::views::StreamedIdView {
-                    id: id.0.to_string()
-                })
-            },
-        )
-        .expect("descriptor_bounded");
-        self.insert(Inspector {
-            descriptor: InspectorDescriptor::generated(schemas, "Collider"),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| {
-                entity
-                    .is_some_and(|entity| world.get::<engine_collision::Collider>(entity).is_some())
-            }),
-            read: Box::new(|world, entity, _context| {
-                engine_collision::collider_view(world, entity?).map(|view| json!(view))
-            }),
-            brick: Some("collision"),
-        })
-        .expect("descriptor_bounded");
-        self.insert(Inspector {
-            descriptor: InspectorDescriptor::generated(schemas, "RigidBody")
-                .with_default(json!(engine_physics::RigidBody::default())),
-            kind: InspectorKind::Component,
-            has: Box::new(|world, entity| {
-                entity
-                    .is_some_and(|entity| world.get::<engine_physics::RigidBody>(entity).is_some())
-            }),
-            read: Box::new(|world, entity, _context| {
-                engine_physics::rigid_body_view(world, entity?).map(|view| json!(view))
-            }),
-            brick: Some("physics"),
         })
         .expect("descriptor_bounded");
     }
@@ -268,10 +148,17 @@ pub(super) fn mesh_view(
 }
 
 pub(super) fn camera_value(value: &Camera) -> Value {
+    let (vertical_fov_radians, height) = match value.projection {
+        Projection::Perspective {
+            vertical_fov_radians,
+        } => (Some(vertical_fov_radians), None),
+        Projection::Orthographic { height } => (None, Some(height)),
+    };
     json!(CameraView {
         position: value.position.to_array(),
         target: value.target.to_array(),
-        vertical_fov_radians: value.vertical_fov_radians,
+        vertical_fov_radians,
+        height,
         near: value.near,
         far: value.far
     })

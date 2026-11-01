@@ -3,27 +3,79 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-use engine_core::{Brick, Bricks, Fill};
-use engine_faces::places::LightingSlot;
-use engine_render::render_bricks::AddRenderParts;
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-mod gpu_layouts;
 mod highlights;
 mod light;
-mod part;
-mod shaders;
+
+use bevy_ecs::prelude::*;
+use engine_core::{Brick, Bricks, Schedule, Source, gpu_struct};
+use engine_places::lighting::Lighting;
+use engine_places::sky::SkyLight;
+
+pub use highlights::Highlights;
+pub use light::SurfaceLight;
+
+gpu_struct! {
+    #[derive(Resource)]
+    pub struct LightingPiece {
+        pub model: [f32; 4],
+        pub highlights: [f32; 4],
+    }
+}
 
 pub struct LightingModelBrick;
 
 impl Brick for LightingModelBrick {
+    const SOURCE: &'static Source = &SOURCE;
+
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .settings::<engine_core::SurfaceLight>()
-            .settings::<engine_core::Highlights>()
-            .render_part(&part::PART)
-            .shaders(shaders::MODULES)
-            .fill(Fill::<LightingSlot>::new().wgsl("lighting::faces::lighting"))
-            .places(engine_faces::places::PLACES)
-            .mirrors(gpu_layouts::LAYOUTS, &[]);
+            .settings::<SurfaceLight>()
+            .settings::<Highlights>()
+            .piece::<LightingPiece>()
+            .fill::<Lighting>(Some(shaders::lighting_model::faces::lighting::MODULE))
+            .systems(Schedule::ViewSync, (publish_lighting, publish_piece));
     }
+}
+
+fn publish_lighting(highlights: Res<Highlights>, mut lighting: ResMut<Lighting>) {
+    lighting.set_if_neq(Lighting {
+        highlights: highlights.enabled,
+    });
+}
+
+fn publish_piece(
+    surface: Res<SurfaceLight>,
+    highlights: Res<Highlights>,
+    sky: Res<SkyLight>,
+    mut piece: ResMut<LightingPiece>,
+) {
+    let surface = surface.values();
+    piece.set_if_neq(LightingPiece {
+        model: [surface.rim, surface.emission, surface.specular, 0.0],
+        highlights: sized_highlights(&highlights, &sky),
+    });
+}
+
+fn sized_highlights(highlights: &Highlights, sky: &SkyLight) -> [f32; 4] {
+    let cap = if highlights.capped {
+        highlights.cap
+    } else {
+        0.0
+    };
+    if !highlights.enabled {
+        return if cap > 0.0 {
+            [1.0, 0.0, cap, 0.0]
+        } else {
+            [0.0; 4]
+        };
+    }
+    let radius = if sky.on {
+        sky.sun_size
+    } else {
+        highlights.sun_size
+    };
+    let (sine, cosine) = engine_math::sin_cos(radius.to_radians());
+    [cosine, sine, cap, highlights.light_radius]
 }

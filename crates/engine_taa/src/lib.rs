@@ -5,35 +5,43 @@
     clippy::expect_used
 )]
 
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
+
 mod antialiasing;
-mod bindings;
-pub mod brick_smokes;
-mod gpu_layouts;
-mod pipeline_layouts;
+mod brick_smokes;
 mod previous;
-pub mod shaders;
 mod temporal;
 
-use engine_core::{Brick, Bricks, Fill};
-use engine_faces::places::AntialiasingSlot;
-use engine_render::render_bricks::AddRenderParts;
+use bevy_ecs::prelude::*;
+use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source};
+use engine_render::{Resolve, ViewOutputs};
+
+pub use antialiasing::{TemporalAntialiasing, TemporalAntialiasingStats};
 
 pub struct TaaBrick;
 
 impl Brick for TaaBrick {
+    const SOURCE: &'static Source = &SOURCE;
+    const SMOKES: &'static [Smoke] = &[Smoke {
+        name: "temporal_antialiasing",
+        runs: Runs::Gpu,
+        run: brick_smokes::temporal_antialiasing,
+    }];
+
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .fill(Fill::<AntialiasingSlot>::new())
-            .settings::<engine_core::TemporalAntialiasing>()
-            .smoke(
-                "temporal_antialiasing",
-                true,
-                engine_core::brick_smokes::temporal_antialiasing,
+            .when(|taa: Res<TemporalAntialiasing>| taa.enabled)
+            .settings::<TemporalAntialiasing>()
+            .stats::<TemporalAntialiasingStats>()
+            .resource::<previous::History>()
+            .piece::<temporal::TaaPiece>()
+            .fill::<Resolve>(Some(shaders::taa::resolve::MODULE))
+            .join::<ViewOutputs>(previous::MOTION, Some(shaders::taa::motion::MODULE))
+            .join::<ViewOutputs>(temporal::HISTORY, Some(shaders::taa::history::MODULE))
+            .systems(
+                Schedule::ViewSync,
+                (previous::publish_jitter, temporal::publish_resolve),
             )
-            .render_part(&temporal::PART)
-            .shaders(shaders::MODULES)
-            .places(engine_faces::places::PLACES)
-            .pipeline_layouts(pipeline_layouts::PIPELINE_LAYOUTS)
-            .mirrors(gpu_layouts::LAYOUTS, &[]);
+            .off(previous::forget);
     }
 }

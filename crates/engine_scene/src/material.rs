@@ -1,8 +1,7 @@
 use engine_core::{
-    AlphaMode, Error, Expected, Filter, Material, Sampler, TextureHandle, TextureRef, UvTransform,
-    Wrap,
+    AlphaMode, Error, Filter, Material, Sampler, TextureHandle, TextureRef, UvTransform, Wrap,
 };
-use engine_settings::ErrorCode;
+use engine_settings::{ErrorCode, Expected};
 use serde::{Deserialize, Serialize};
 
 use crate::SceneSurface;

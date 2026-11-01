@@ -1,8 +1,18 @@
-use super::*;
+use std::collections::HashSet;
+use std::sync::Arc;
+
+use bevy_ecs::prelude::*;
+use engine_core::{FrameTime, Jobs, RecordKey, Records, View};
+use engine_places::ground::{TerrainTiles, TileFace};
+use glam::Vec2;
+
 use crate::codec::Error;
-use crate::jobs::{SteadiedJob, WaterJob, settled_key, share_settled, share_summary, summary_key};
-use crate::{SettleRegion, SettleStart, SettledKey, SteadyCell, SteadyWater, TileWater, WaterPart};
-use engine_core::{MISSING_RECORD, RecordParity};
+use crate::jobs::{SETTLED, SteadiedJob, WaterJob, share_settled, share_summary};
+use crate::state::{SettleFeedback, WaterState, WaterTerrain};
+use crate::{
+    Layers, SettleRegion, SettleStart, SettledKey, Solid, SteadyCell, SteadyWater, TileJob, TileKey,
+    TileWater, Water, WaterPart,
+};
 
 pub const SETTLED_KIND: &str = "settled_water";
 
@@ -137,13 +147,13 @@ impl Terrains {
 type Checked = (Generation, Arc<[Option<Solid>]>, u128);
 
 #[derive(Default)]
-pub(super) struct Settled {
+pub(crate) struct Settled {
     cell: f32,
     watered: Option<(Arc<Layers>, Arc<[TileKey]>)>,
     regions: Arc<[([u32; 4], Vec<TileKey>)]>,
     checked: Option<Checked>,
     records: TileMap<Keys>,
-    pub(super) held: TileMap<(Arc<SteadyWater>, RecordKey)>,
+    pub(crate) held: TileMap<(Arc<SteadyWater>, RecordKey)>,
     shared: TileMap<RecordKey>,
     summaries: TileMap<RecordKey>,
     asked: TileMap<Asked>,
@@ -165,6 +175,14 @@ pub(super) struct Settled {
 }
 
 impl Settled {
+    pub(crate) fn counts(&self) -> [u32; 3] {
+        [
+            self.held.len() as u32,
+            self.asked.len() as u32,
+            self.making.len() as u32,
+        ]
+    }
+
     pub(super) fn asked(&self) -> Vec<JobId> {
         let fetches = self
             .asked
@@ -1341,5 +1359,37 @@ fn give_waters(state: &mut TerrainState, work: &Work) {
         let given = Arc::new(tile.holding(Option::clone(&water)));
         state.store.rewater(&key, Some(given.clone()), None);
         state.settled.given.insert(key, (given, record));
+    }
+}
+
+pub(crate) fn request_settle(
+    tiles: Res<TerrainTiles>,
+    water: Res<Water>,
+    view: Res<View>,
+    time: Res<FrameTime>,
+    records: Res<Records>,
+    mut work: Jobs,
+    mut state: ResMut<WaterState>,
+) {
+    let eye = view.detail_eye();
+    let eye = Vec2::new(eye.x, eye.z);
+    for terrain in &mut state.terrains {
+        let faces = tiles
+            .terrains
+            .iter()
+            .find(|entry| entry.terrain == terrain.entity)
+            .map_or(&[][..], |entry| &entry.tiles[..]);
+        follow(terrain, &water, faces, (&records, &mut work), (eye, time.frame));
+    }
+}
+
+pub(crate) fn take_settled(
+    mut feedback: ResMut<SettleFeedback>,
+    mut work: Jobs,
+    mut state: ResMut<WaterState>,
+) {
+    while let Some((input, bytes)) = feedback.joined() {
+        let kept = work.keep(&SETTLED, &input, bytes);
+        state.kept.push(kept);
     }
 }

@@ -1,7 +1,5 @@
-use engine::smoke::{
-    Checked, SmokeResult, SmokeSession, above, control, environment, number, render,
-};
-use engine::{smoke_check, smoke_eq};
+use engine_core::smoke::{Checked, control, environment, number, render};
+use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
 use super::{aim, open};
@@ -28,7 +26,7 @@ const QUIET_FRAMES: u32 = 20_000;
 
 const PROBES_ACROSS: u32 = 7;
 
-pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
+pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     open(session, false)?;
     for stream in STREAMS {
         aim(session, stream)?;
@@ -38,13 +36,12 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
             environment(session, json!({"debug_view": {"view": view}}))?;
             let shown = quiet(session)?;
             let passes = &shown["render_passes"];
-            smoke_check!(
+            smoke_eq!(
                 passes
                     .as_array()
                     .is_some_and(|passes| passes.iter().any(|pass| pass == "debug_view")),
-                "the_water_views_draw",
-                passes,
-                &json!({ "includes": "debug_view" })
+                true,
+                "the_water_views_draw"
             );
         }
     }
@@ -87,36 +84,31 @@ fn probed(session: &mut dyn SmokeSession) -> Checked<()> {
     smoke_eq!(&probe["terrain"], &Value::Null, "water_is_probed_as_water");
     let water = &probe["water"];
     let depth = number(&water["depth"]);
-    smoke_check!(
+    smoke_eq!(
         depth > 0.0 && depth.is_finite(),
-        "the_probe_reads_a_depth",
-        water,
-        &json!({ "depth": above(0) })
+        true,
+        "the_probe_reads_a_depth"
     );
-    smoke_check!(
+    smoke_eq!(
         number(&water["speed"]) >= 0.0 && number(&water["froude"]) >= 0.0,
-        "the_probe_reads_the_flow",
-        water,
-        &json!({"speed": {"at_least": 0}, "froude": {"at_least": 0}})
+        true,
+        "the_probe_reads_the_flow"
     );
     let share = |field: &str| (0.0..=1.0).contains(&number(&water[field]));
-    smoke_check!(
+    smoke_eq!(
         share("turbulence") && share("white") && share("roughness"),
-        "the_probe_reads_its_shares",
-        water,
-        &json!({"turbulence": [0, 1], "white": [0, 1], "roughness": [0, 1]})
+        true,
+        "the_probe_reads_its_shares"
     );
-    smoke_check!(
+    smoke_eq!(
         water["reach"].is_null() || REACHES.iter().any(|reach| water["reach"] == *reach),
-        "the_probe_names_its_reach",
-        &water["reach"],
-        &REACHES
+        true,
+        "the_probe_names_its_reach"
     );
-    smoke_check!(
+    smoke_eq!(
         number(&water["span"]) > 0.0 && number(&water["eddies"]) >= 0.0,
-        "the_probe_reads_span_and_eddies",
-        water,
-        &json!({"span": above(0), "eddies": {"at_least": 0}})
+        true,
+        "the_probe_reads_span_and_eddies"
     );
     Ok(())
 }
@@ -150,11 +142,10 @@ fn quiet(session: &mut dyn SmokeSession) -> Checked<Value> {
         "pipelines_compiling": rendering["pipelines_compiling"],
         "changing": changing,
     });
-    smoke_check!(
-        calm >= 3,
-        "the_view_settles",
-        &unsettled,
-        &json!({"loading": false, "pipelines_compiling": false, "changing": []})
+    smoke_eq!(
+        if calm >= 3 { Value::Null } else { unsettled },
+        Value::Null,
+        "the_view_settles"
     );
     for _ in 0..30 {
         rendering = render(session)?;

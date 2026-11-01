@@ -1,7 +1,6 @@
-use bevy_ecs::prelude::World;
-use engine_core::Wind;
 use engine_core::math::clamp;
-use engine_places::{WaterBodies, WaterSample};
+use engine_places::water::{WaterBody, WaterSample};
+use engine_places::wind::Wind;
 use glam::{Quat, Vec3};
 
 use crate::body::BodyWater;
@@ -105,7 +104,7 @@ struct Along {
 }
 
 impl Along {
-    fn sample(world: &World, form: &Form, motion: &Motion, samples: &mut u32) -> Self {
+    fn sample(waters: &[&WaterBody], form: &Form, motion: &Motion, samples: &mut u32) -> Self {
         let mut axis = Vec3::ZERO;
         axis[form.long] = form.half[form.long];
         let cells = f32::from(form.cells[form.long]);
@@ -118,7 +117,7 @@ impl Along {
             let at = station * reach;
             let point = motion.translation + motion.rotation * (axis * at);
             *samples += 1;
-            along.stations[along.count] = (at, WaterBodies::water_in(world, point));
+            along.stations[along.count] = (at, water_at(waters, point));
             along.count += 1;
         }
         along
@@ -162,14 +161,18 @@ impl Along {
     }
 }
 
+fn water_at(waters: &[&WaterBody], point: Vec3) -> Option<WaterSample> {
+    waters.iter().find_map(|body| body.shape.water(point))
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "each is one of the tick's inputs"
 )]
 pub(crate) fn push(
-    world: &World,
+    waters: &[&WaterBody],
     settings: &Physics,
-    wind: Option<&Wind>,
+    wind: &Wind,
     time: f32,
     seconds: f32,
     form: &Form,
@@ -186,7 +189,7 @@ pub(crate) fn push(
     };
     let mut submerged = 0.0;
     if settings.water_density > 0.0 {
-        let along = Along::sample(world, form, motion, samples);
+        let along = Along::sample(waters, form, motion, samples);
         if let Some(middle) = along.middle() {
             let gravity = Vec3::from_array(settings.gravity);
             submerged = if form.round {
@@ -212,10 +215,7 @@ pub(crate) fn push(
     }
     let share = clamp(submerged / form.volume, 0.0, 1.0);
     push.damping = AIR_SPIN + WATER_SPIN * share;
-    if let Some(wind) = wind
-        && settings.air_density > 0.0
-        && share < 1.0
-    {
+    if settings.air_density > 0.0 && share < 1.0 {
         let blowing = wind.at(motion.center.x, motion.center.z, time);
         let relative = Vec3::new(blowing.x, 0.0, blowing.y) - motion.velocity;
         let speed = relative.length();

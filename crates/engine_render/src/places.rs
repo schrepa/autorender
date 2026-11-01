@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use engine_core::{Absent, BrickRegistry, Error, ErrorCode, Member, Place, PlaceKind};
+use engine_core::{Error, ErrorCode, PlaceKind};
 use wesl::syntax::{
     AssignmentOperator, Attribute, DeclarationKind, Expression, Function, GlobalDeclaration,
     ImportContent, ImportStatement, PathOrigin, Statement, TranslationUnit, TypeExpression,
@@ -8,16 +8,7 @@ use wesl::syntax::{
 };
 
 pub const PLACE_ROOT: &str = "place";
-
-pub const PLACE_OWNER: &str = "place";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FaceShape {
-    Reexport,
-    Forward,
-}
-
-pub const FACE_SHAPE: FaceShape = FaceShape::Reexport;
+pub const FACE_ROOT: &str = "face";
 
 const CONSTRUCTED: [&str; 17] = [
     "bool", "i32", "u32", "f32", "f16", "vec2", "vec3", "vec4", "mat2x2", "mat2x3", "mat2x4",
@@ -26,6 +17,10 @@ const CONSTRUCTED: [&str; 17] = [
 
 pub fn place_module(place: &str) -> String {
     format!("{PLACE_ROOT}::{place}")
+}
+
+pub fn face_module(place: &str) -> String {
+    format!("{FACE_ROOT}::{place}")
 }
 
 pub fn place_of(module: &str) -> Option<&str> {
@@ -47,19 +42,16 @@ impl Answer {
         if self.constant {
             return format!("const {}: {returns}", self.name);
         }
-        let parameters = self.spelled_parameters();
+        let parameters = self
+            .parameters
+            .iter()
+            .map(|(name, ty)| format!("{name}: {ty}"))
+            .collect::<Vec<_>>()
+            .join(", ");
         match &self.returns {
             Some(returns) => format!("fn {}({parameters}) -> {returns}", self.name),
             None => format!("fn {}({parameters})", self.name),
         }
-    }
-
-    fn spelled_parameters(&self) -> String {
-        self.parameters
-            .iter()
-            .map(|(name, ty)| format!("{name}: {ty}"))
-            .collect::<Vec<_>>()
-            .join(", ")
     }
 
     fn arguments(&self) -> String {
@@ -79,33 +71,18 @@ pub struct Contract {
     pub answers: Vec<Answer>,
 }
 
-impl Contract {
-    pub fn names(&self) -> Vec<&str> {
-        self.types
-            .iter()
-            .map(String::as_str)
-            .chain(self.shared.iter().map(|answer| answer.name.as_str()))
-            .chain(self.answers.iter().map(|answer| answer.name.as_str()))
-            .collect()
-    }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fed {
+    pub module: String,
+    pub switch: Option<u32>,
+    pub implements: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Answered {
-    Filler {
-        brick: &'static str,
-        module: &'static str,
-    },
+    Filler(Fed),
     Nobody,
-    Members(Vec<(&'static str, Member)>),
-}
-
-#[derive(Clone, Debug)]
-pub struct LinkedPlace {
-    pub place: Place,
-    pub contract: Contract,
-    pub answered: Option<Answered>,
-    pub source: Option<String>,
+    Members(Vec<Fed>),
 }
 
 fn parsed(source: &str) -> Result<TranslationUnit, String> {
@@ -279,7 +256,7 @@ fn function_problems(item: &Function, kind: PlaceKind) -> Vec<String> {
                 ));
             }
         }
-        PlaceKind::Slot => {
+        PlaceKind::Slot | PlaceKind::Component => {
             let mut locals: Vec<String> = Vec::new();
             for (index, statement) in statements.iter().enumerate() {
                 let last = index + 1 == statements.len();
@@ -380,98 +357,77 @@ fn constant_value(expression: &Expression) -> bool {
     false
 }
 
-fn shared_imports(imports: &mut String, body: &mut String, module: &str, contract: &Contract) {
+fn shared_imports(imports: &mut String, module: &str, contract: &Contract) {
     let names: Vec<&str> = contract
         .types
         .iter()
         .map(String::as_str)
         .chain(contract.shared.iter().map(|answer| answer.name.as_str()))
         .collect();
-    match FACE_SHAPE {
-        FaceShape::Reexport => {
-            if !names.is_empty() {
-                let _ = writeln!(
-                    imports,
-                    "import package::{module}::{{{}}};",
-                    names.join(", ")
-                );
-            }
-        }
-        FaceShape::Forward => {
-            for name in &contract.types {
-                let _ = writeln!(imports, "import package::{module}::{name} as place_{name};");
-                let _ = writeln!(body, "alias {name} = place_{name};");
-            }
-            forwarded(imports, body, module, &contract.shared);
-        }
+    if !names.is_empty() {
+        let _ = writeln!(imports, "import package::{module}::{{{}}};", names.join(", "));
     }
 }
 
-fn forwarded(imports: &mut String, body: &mut String, module: &str, answers: &[Answer]) {
-    for answer in answers {
+fn switch(body: &mut String, id: u32) -> String {
+    let name = format!("switch_{id}");
+    let _ = writeln!(body, "@id({id}) override {name}: bool = true;");
+    name
+}
+
+fn switched(imports: &mut String, body: &mut String, place: &str, filler: &Fed, contract: &Contract) {
+    let Some(id) = filler.switch else {
+        let names: Vec<&str> = contract.answers.iter().map(|answer| answer.name.as_str()).collect();
+        if !names.is_empty() {
+            let _ = writeln!(imports, "import package::{}::{{{}}};", filler.module, names.join(", "));
+        }
+        return;
+    };
+    let on = switch(body, id);
+    for answer in &contract.answers {
         let name = &answer.name;
-        let _ = writeln!(
-            imports,
-            "import package::{module}::{name} as answer_{name};"
-        );
+        let _ = writeln!(imports, "import package::{}::{name} as answer_{name};", filler.module);
         if answer.constant {
             let ty = answer.returns.as_deref().unwrap_or_default();
             let _ = writeln!(body, "const {name}: {ty} = answer_{name};");
             continue;
         }
+        let _ = writeln!(imports, "import package::{}::{name} as nobody_{name};", place_module(place));
         let arguments = answer.arguments();
         let _ = match &answer.returns {
             Some(_) => writeln!(
                 body,
-                "\n{} {{\n    return answer_{name}({arguments});\n}}",
+                "\n{} {{\n    if {on} {{\n        return answer_{name}({arguments});\n    }}\n    return nobody_{name}({arguments});\n}}",
                 answer.signature()
             ),
             None => writeln!(
                 body,
-                "\n{} {{\n    answer_{name}({arguments});\n}}",
+                "\n{} {{\n    if {on} {{\n        answer_{name}({arguments});\n    }} else {{\n        nobody_{name}({arguments});\n    }}\n}}",
                 answer.signature()
             ),
         };
     }
 }
 
-fn answers_from(imports: &mut String, body: &mut String, module: &str, answers: &[Answer]) {
-    match FACE_SHAPE {
-        FaceShape::Reexport => {
-            let names: Vec<&str> = answers.iter().map(|answer| answer.name.as_str()).collect();
-            if !names.is_empty() {
-                let _ = writeln!(
-                    imports,
-                    "import package::{module}::{{{}}};",
-                    names.join(", ")
-                );
-            }
+fn folds(imports: &mut String, body: &mut String, contract: &Contract, members: &[Fed]) {
+    let mut ons: Vec<(usize, String)> = Vec::new();
+    for (index, member) in members.iter().enumerate() {
+        if let Some(id) = member.switch {
+            ons.push((index, switch(body, id)));
         }
-        FaceShape::Forward => forwarded(imports, body, module, answers),
     }
-}
-
-fn folds(
-    imports: &mut String,
-    body: &mut String,
-    contract: &Contract,
-    members: &[(&'static str, Member)],
-) {
     for answer in contract.answers.iter().filter(|answer| !answer.constant) {
         let Some((folded, _)) = answer.parameters.first() else {
             continue;
         };
         let name = &answer.name;
-        let fed: Vec<&'static str> = members
+        let fed: Vec<(usize, &Fed)> = members
             .iter()
-            .filter(|(_, member)| member.implements(name))
-            .map(|(_, member)| member.module)
+            .enumerate()
+            .filter(|(_, member)| member.implements.contains(name))
             .collect();
-        for (index, module) in fed.iter().enumerate() {
-            let _ = writeln!(
-                imports,
-                "import package::{module}::{name} as {name}_{index};"
-            );
+        for (index, member) in &fed {
+            let _ = writeln!(imports, "import package::{}::{name} as {name}_{index};", member.module);
         }
         let rest: String = answer
             .parameters
@@ -481,8 +437,15 @@ fn folds(
             .collect();
         let _ = writeln!(body, "\n{} {{", answer.signature());
         let _ = writeln!(body, "    var folded = {folded};");
-        for index in 0..fed.len() {
-            let _ = writeln!(body, "    folded = {name}_{index}(folded{rest});");
+        for (index, _) in &fed {
+            match ons.iter().find(|(member, _)| member == index) {
+                Some((_, on)) => {
+                    let _ = writeln!(body, "    if {on} {{\n        folded = {name}_{index}(folded{rest});\n    }}");
+                }
+                None => {
+                    let _ = writeln!(body, "    folded = {name}_{index}(folded{rest});");
+                }
+            }
         }
         let _ = writeln!(body, "    return folded;\n}}");
     }
@@ -493,62 +456,33 @@ pub fn face_source(place: &str, contract: &Contract, answered: &Answered) -> Str
     let mut imports = String::new();
     let mut body = String::new();
     match answered {
-        Answered::Filler { module: filler, .. } => {
-            shared_imports(&mut imports, &mut body, &module, contract);
-            answers_from(&mut imports, &mut body, filler, &contract.answers);
+        Answered::Filler(filler) => {
+            shared_imports(&mut imports, &module, contract);
+            switched(&mut imports, &mut body, place, filler, contract);
         }
         Answered::Nobody => {
-            shared_imports(&mut imports, &mut body, &module, contract);
-            answers_from(&mut imports, &mut body, &module, &contract.answers);
+            shared_imports(&mut imports, &module, contract);
+            let names: Vec<&str> = contract.answers.iter().map(|answer| answer.name.as_str()).collect();
+            if !names.is_empty() {
+                let _ = writeln!(imports, "import package::{module}::{{{}}};", names.join(", "));
+            }
         }
         Answered::Members(members) => {
             for import in &contract.imports {
                 let _ = writeln!(imports, "{import}");
             }
-            shared_imports(&mut imports, &mut body, &module, contract);
+            shared_imports(&mut imports, &module, contract);
             folds(&mut imports, &mut body, contract, members);
         }
     }
     format!("{imports}{body}")
 }
 
-pub fn places_of(registry: &BrickRegistry) -> Result<Vec<LinkedPlace>, Error> {
-    let places = registry.places();
-    let mut linked = Vec::new();
-    for place in places {
-        let Some(source) = place.face.wgsl else {
-            continue;
-        };
-        let contract = contract(source).map_err(|error| {
-            Error::new(ErrorCode::ShaderLink, format!("$.places.{}", place.name)).got(error)
-        })?;
-        let answered = match place.kind {
-            PlaceKind::Slot => {
-                let filled = registry
-                    .filled(place.name)
-                    .and_then(|(brick, filled)| Some((brick, filled.wgsl?)));
-                match filled {
-                    Some((brick, module)) => Some(Answered::Filler { brick, module }),
-                    None => (place.face.absent == Absent::Nobody).then_some(Answered::Nobody),
-                }
-            }
-            PlaceKind::List => Some(Answered::Members(
-                registry
-                    .joined(place.name)
-                    .into_iter()
-                    .filter_map(|(brick, joined)| Some((brick, joined.wgsl?)))
-                    .collect(),
-            )),
-        };
-        let source = answered
-            .as_ref()
-            .map(|answered| face_source(place.name, &contract, answered));
-        linked.push(LinkedPlace {
-            place,
-            contract,
-            answered,
-            source,
-        });
+pub fn checked(name: &str, source: &str, kind: PlaceKind, core: &dyn Fn(&str) -> bool) -> Result<Contract, Error> {
+    let path = format!("$.places.{name}");
+    let problems = contract_problems(source, kind, core);
+    if !problems.is_empty() {
+        return Err(Error::new(ErrorCode::ShaderLink, path).got(problems));
     }
-    Ok(linked)
+    contract(source).map_err(|error| Error::new(ErrorCode::ShaderLink, path).got(error))
 }

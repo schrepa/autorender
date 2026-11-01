@@ -1,15 +1,60 @@
-use engine_core::bevy_ecs::prelude::{Entity, World};
-use engine_core::{
-    AssetLibrary, BrickCost, BrickCosts, BrickRegistry, DetailConsumers, DrawState, ExplainRecord,
-    ExplainRequest, ExplainedEntity, Mesh3d,
-};
+use std::panic::Location;
+
+use bevy_ecs::prelude::{Entity, World};
+use engine_core::{AssetLibrary, Mesh3d};
+use engine_registry::{BrickCost, BrickCosts, Registry};
 use engine_scene::{SceneDocument, SceneFiles, SceneInstance};
 use engine_settings::{Error, ErrorCode, Expected};
-use serde_json::Value;
+use serde::Serialize;
+use serde_json::{Map, Value};
 
 use crate::DevTools;
 use crate::protocol::{Detail, MAX_EXPLAINED};
 use crate::results::ExplainResult;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DrawState {
+    Unread,
+    Culled,
+    Level(u32),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ExplainRecord {
+    pub brick: &'static str,
+    pub decided: &'static str,
+    #[serde(flatten)]
+    pub facts: Map<String, Value>,
+}
+
+impl ExplainRecord {
+    pub fn new(decided: &'static str) -> Self {
+        Self {
+            brick: "",
+            decided,
+            facts: Map::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn of(mut self, brick: &'static str) -> Self {
+        self.brick = brick;
+        self
+    }
+
+    #[must_use]
+    pub fn with(mut self, fact: &str, value: impl Serialize) -> Self {
+        self.facts.insert(
+            fact.to_owned(),
+            serde_json::to_value(value).expect("facts_serialize"),
+        );
+        self
+    }
+}
+
+pub(crate) fn source_line(at: &Location<'_>) -> String {
+    format!("{}:{}", at.file().replace('\\', "/"), at.line())
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct EntityFacts {
@@ -52,16 +97,7 @@ impl DevTools {
         stats: &Value,
     ) -> ExplainResult {
         let mut records = vec![core_entity(world, id, entity, facts)];
-        if let Some(registry) = world.get_resource::<BrickRegistry>() {
-            let request = ExplainRequest::Entity(ExplainedEntity {
-                id: id.to_owned(),
-                entity,
-                slot: facts.slot,
-                drawn: facts.drawn,
-            });
-            records.extend(registry.explain(world, &request));
-            records.extend(cuts(world, registry, stats));
-        }
+        records.extend(cuts(world, stats));
         finished("entity", records)
     }
 
@@ -78,13 +114,7 @@ impl DevTools {
                 .got("BrickCosts")
         })?;
         let mut records = slow_frame(costs, top, detail);
-        if let Some(registry) = world.get_resource::<BrickRegistry>() {
-            let request = ExplainRequest::Frame {
-                stats: stats.clone(),
-            };
-            records.extend(registry.explain(world, &request));
-            records.extend(cuts(world, registry, stats));
-        }
+        records.extend(cuts(world, stats));
         Ok(finished("frame", records))
     }
 
@@ -134,7 +164,7 @@ fn core_entity(world: &World, id: &str, entity: Entity, facts: EntityFacts) -> E
         .with("frustum_culling", facts.frustum_culling)
 }
 
-fn cuts(world: &World, registry: &BrickRegistry, stats: &Value) -> Vec<ExplainRecord> {
+fn cuts(world: &World, stats: &Value) -> Vec<ExplainRecord> {
     let mut records = Vec::new();
     if let Some(cut) = stats["dropped_instances"].as_u64().filter(|&cut| cut > 0) {
         records.push(
@@ -145,42 +175,39 @@ fn cuts(world: &World, registry: &BrickRegistry, stats: &Value) -> Vec<ExplainRe
                 .with("cut", cut),
         );
     }
-    let consumers = world
-        .get_resource::<DetailConsumers>()
-        .into_iter()
-        .flat_map(DetailConsumers::consumers);
-    for (brick, consumer) in consumers {
-        let reported = consumer
-            .stat
-            .split('.')
-            .try_fold(stats, |value, field| value.get(field));
-        let Some(reported) = reported else {
-            continue;
-        };
-        let Some(cut) = reported["cut"].as_u64().filter(|&cut| cut > 0) else {
-            continue;
-        };
-        let limit = consumer
-            .setting
-            .split_once('.')
-            .and_then(|(key, field)| {
-                registry
-                    .section(key)
-                    .map(|section| section.current(world)[field].clone())
-            })
-            .unwrap_or(Value::Null);
-        records.push(
-            ExplainRecord::new("cut")
-                .of(brick)
-                .with("consumer", consumer.name)
-                .with("setting", consumer.setting)
-                .with("limit", limit)
-                .with("asked", reported["asked"].as_u64())
-                .with("kept", reported["kept"].as_u64())
-                .with("cut", cut),
-        );
+    let Some(registry) = world.get_resource::<Registry>() else {
+        return records;
+    };
+    for entry in registry.stats() {
+        cut_fields(entry.brick, entry.key, &stats[entry.key], &mut records);
     }
     records
+}
+
+fn cut_fields(brick: &'static str, path: &str, value: &Value, records: &mut Vec<ExplainRecord>) {
+    let Value::Object(fields) = value else {
+        return;
+    };
+    let counted = |field: &str| fields.get(field).and_then(Value::as_u64);
+    if fields.len() == 3
+        && let (Some(asked), Some(kept), Some(cut)) =
+            (counted("asked"), counted("kept"), counted("cut"))
+    {
+        if cut > 0 {
+            records.push(
+                ExplainRecord::new("cut")
+                    .of(brick)
+                    .with("stat", path)
+                    .with("asked", asked)
+                    .with("kept", kept)
+                    .with("cut", cut),
+            );
+        }
+        return;
+    }
+    for (field, value) in fields {
+        cut_fields(brick, &format!("{path}.{field}"), value, records);
+    }
 }
 
 fn slow_frame(costs: &BrickCosts, top: usize, detail: Detail) -> Vec<ExplainRecord> {
@@ -248,7 +275,7 @@ fn refused(world: &World, error: &Error) -> ExplainRecord {
         .and_then(|rest| rest.split(['.', '[']).next())
         .and_then(|key| {
             world
-                .get_resource::<BrickRegistry>()?
+                .get_resource::<Registry>()?
                 .section(key)
                 .map(|section| section.brick)
         })

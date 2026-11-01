@@ -1,9 +1,12 @@
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 
+use bevy_ecs::component::ComponentId;
 use bevy_ecs::resource::Resource;
-use bevy_ecs::schedule::SystemSet;
-use bevy_ecs::system::System;
+use bevy_ecs::schedule::{
+    Chain, InternedScheduleLabel, IntoScheduleConfigs, ScheduleConfigs, Schedules, SystemSet,
+};
+use bevy_ecs::system::{IntoSystem, ScheduleSystem, System};
 use bevy_ecs::world::World;
 use engine_place::{Error, ErrorCode, PlaceDecl, PlaceKind, Slot, Smoke};
 use serde_json::Value;
@@ -11,8 +14,9 @@ use serde_json::Value;
 use crate::access::AccessRule;
 use crate::attribution::CORE_ROW;
 use crate::entries::{OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
-use crate::gates::{Gate, GateDriver, GateId, Gates, Off, Scope};
+use crate::gates::{Gate, GateDriver, GateId, Gates, Off, Scope, gate_on};
 use crate::jobs::JobQueue;
+use crate::order::{self, PlaceRules};
 use crate::record::{BrickRecord, crate_segment, is_package};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -33,6 +37,7 @@ pub struct Registry {
     catalog: Vec<PlaceDecl>,
     core_fills: Vec<PlaceDecl>,
     bases: Vec<u32>,
+    listed: Vec<&'static str>,
     left_out: Vec<&'static str>,
     rule: AccessRule,
     problems: Vec<Error>,
@@ -61,6 +66,7 @@ impl Registry {
         };
         self.check_names(&record);
         self.left_out.retain(|&left| left != package);
+        self.listed.push(package);
         self.bricks.insert(at, record);
     }
 
@@ -150,6 +156,11 @@ impl Registry {
 
     pub fn of_type(&self, brick: TypeId) -> Option<(BrickId, &BrickRecord)> {
         self.iter().find(|(_, record)| record.brick() == brick)
+    }
+
+    pub fn render_entries<T: Any>(&self) -> impl Iterator<Item = (BrickId, &T)> + '_ {
+        self.iter()
+            .flat_map(|(id, record)| record.render_entries::<T>().map(move |entry| (id, entry)))
     }
 
     pub fn system_set(&self, brick: BrickId) -> Option<BrickSet> {
@@ -262,7 +273,7 @@ impl Registry {
             .fold(0_u32, |sum, entry| sum.saturating_add(entry.pending(world)))
     }
 
-    pub fn install(mut self, world: &mut World) -> GateDriver {
+    pub fn install(mut self, world: &mut World, schedules: &[InternedScheduleLabel]) -> GateDriver {
         self.number();
         self.catalog_records();
         self.check_smokes();
@@ -281,8 +292,12 @@ impl Registry {
         if !world.contains_resource::<JobQueue>() {
             world.init_resource::<JobQueue>();
         }
+        self.order_schedules(world, schedules);
+        self.add_systems(world);
         let driver = self.driver(world, refresh);
         self.check_operations(world);
+        let mut refused = order::build(world, schedules);
+        self.problems.append(&mut refused);
         world.insert_resource(self);
         driver
     }
@@ -301,15 +316,34 @@ impl Registry {
                 .or_else(|| self.stats_section(key).map(|entry| entry.brick));
             if let Some(owner) = owner {
                 let path = format!("$.sections.{key}");
-                self.problems
-                    .push(Error::new(ErrorCode::NameTwice, path).got(owner).nearest(package));
+                self.problems.push(
+                    Error::new(ErrorCode::NameTwice, path)
+                        .got(owner)
+                        .nearest(package),
+                );
             }
+        }
+        if let Some(prefix) = record.prefix()
+            && let Some(owner) = self
+                .bricks
+                .iter()
+                .find(|known| known.prefix() == Some(prefix))
+        {
+            let path = format!("$.modules.{prefix}");
+            self.problems.push(
+                Error::new(ErrorCode::NameTwice, path)
+                    .got(owner.package)
+                    .nearest(package),
+            );
         }
         for entry in record.operations() {
             if let Some(owner) = self.operation(entry.name).map(|known| known.brick) {
                 let path = format!("$.operations.{}", entry.name);
-                self.problems
-                    .push(Error::new(ErrorCode::NameTwice, path).got(owner).nearest(package));
+                self.problems.push(
+                    Error::new(ErrorCode::NameTwice, path)
+                        .got(owner)
+                        .nearest(package),
+                );
             }
         }
         for filled in record.fills() {
@@ -368,7 +402,11 @@ impl Registry {
             match seen.iter().find(|(name, _)| *name == smoke.name) {
                 Some(&(_, first)) => {
                     let path = format!("$.smokes.{}", smoke.name);
-                    twice.push(Error::new(ErrorCode::NameTwice, path).got(first).nearest(owner));
+                    twice.push(
+                        Error::new(ErrorCode::NameTwice, path)
+                            .got(first)
+                            .nearest(owner),
+                    );
                 }
                 None => seen.push((smoke.name, owner)),
             }
@@ -409,10 +447,11 @@ impl Registry {
         let mut lists: Vec<(TypeId, fn(&mut World))> = Vec::new();
         for (index, record) in self.bricks.iter_mut().enumerate() {
             let base = self.bases[index];
+            let package = record.package;
             for joined in &mut record.joins {
                 (joined.init)(world);
                 if let Some(member) = joined.member.take() {
-                    (joined.add)(world, member, GateId(base + joined.scope.0));
+                    (joined.add)(world, member, GateId(base + joined.scope.0), package);
                 }
                 if !lists.iter().any(|(list, _)| *list == joined.list) {
                     lists.push((joined.list, joined.refresh));
@@ -434,6 +473,72 @@ impl Registry {
             }
         }
         Gates::new(parents, bricks)
+    }
+
+    fn order_schedules(&self, world: &mut World, schedules: &[InternedScheduleLabel]) {
+        let bricks: Box<[_]> = self
+            .iter()
+            .map(|(id, record)| (BrickSet(record.package).intern(), id))
+            .collect();
+        let slots: Box<[(ComponentId, Option<BrickId>)]> = self
+            .catalog
+            .iter()
+            .filter(|decl| decl.kind() == PlaceKind::Slot)
+            .filter_map(|decl| {
+                let id = world.components().get_id(decl.type_id())?;
+                Some((id, self.filler_id(decl.type_id())))
+            })
+            .collect();
+        let mut all = world.get_resource_or_init::<Schedules>();
+        for &schedule in schedules {
+            let rules = PlaceRules {
+                schedule,
+                bricks: bricks.clone(),
+                slots: slots.clone(),
+                rule: self.rule.clone(),
+            };
+            order::order(all.entry(schedule), rules);
+        }
+    }
+
+    fn add_systems(&mut self, world: &mut World) {
+        let mut all = world.get_resource_or_init::<Schedules>();
+        for index in 0..self.listed.len() {
+            let package = self.listed[index];
+            let Some(brick) = self.id(package) else {
+                continue;
+            };
+            let calls = std::mem::take(&mut self.bricks[brick.index()].systems);
+            let mut groups: Vec<Group> = Vec::new();
+            for call in calls {
+                let mut configs = (call.make)();
+                if self.bricks[brick.index()].gated(call.scope)
+                    && let Some(gate) = self.gate(brick, call.scope)
+                {
+                    configs.run_if_dyn(Box::new(IntoSystem::into_system(gate_on(gate))));
+                }
+                match groups
+                    .iter_mut()
+                    .find(|group| group.schedule == call.schedule)
+                {
+                    Some(group) => group.configs.push(configs),
+                    None => groups.push(Group {
+                        schedule: call.schedule,
+                        configs: vec![configs],
+                    }),
+                }
+            }
+            for group in groups {
+                let mut chain = Chain::Unchained;
+                chain.set_chained();
+                let chained = ScheduleConfigs::Configs {
+                    configs: group.configs,
+                    collective_conditions: Vec::new(),
+                    metadata: chain,
+                };
+                all.add_systems(group.schedule, chained.in_set(BrickSet(package)));
+            }
+        }
     }
 
     fn driver(&mut self, world: &mut World, refresh: Vec<fn(&mut World)>) -> GateDriver {
@@ -488,6 +593,11 @@ impl Registry {
                 .check_into(brick, entry.name, &access, world, &mut self.problems);
         }
     }
+}
+
+struct Group {
+    schedule: InternedScheduleLabel,
+    configs: Vec<ScheduleConfigs<ScheduleSystem>>,
 }
 
 pub fn settings(world: &World, key: &str) -> Result<SettingsEntry, Error> {

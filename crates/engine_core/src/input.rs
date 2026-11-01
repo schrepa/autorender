@@ -13,60 +13,52 @@ impl ActionId {
             None
         }
     }
-
-    const fn mask(self) -> u32 {
-        1_u32 << self.0
-    }
-}
-
-#[derive(Debug, Default)]
-struct ActionBits {
-    held: u32,
-    pending_pressed: u32,
-    pending_released: u32,
-    tick_pressed: u32,
-    tick_released: u32,
 }
 
 #[derive(Resource, Default)]
 #[component(immutable)]
 pub struct ActionInput {
-    state: ActionBits,
+    state: engine_registry::InputState,
 }
 
 impl ActionInput {
     pub fn pressed(&self, action: ActionId) -> bool {
-        self.state.held & action.mask() != 0
+        self.state.pressed(action.0)
     }
 
     pub fn just_pressed(&self, action: ActionId) -> bool {
-        self.state.tick_pressed & action.mask() != 0
+        self.state.just_pressed(action.0)
     }
 
     pub fn just_released(&self, action: ActionId) -> bool {
-        self.state.tick_released & action.mask() != 0
+        self.state.just_released(action.0)
     }
 
     #[doc(hidden)]
     pub fn ingest(&mut self, held: u32, pressed: u32, released: u32) {
-        let state = &mut self.state;
-        state.pending_pressed |= pressed | (held & !state.held);
-        state.pending_released |= released | (state.held & !held);
-        state.held = held;
+        self.state.ingest(held, pressed, released);
     }
 
     #[doc(hidden)]
     pub fn clear(&mut self) {
-        self.state = ActionBits::default();
+        self.state.clear();
     }
 
     pub(crate) fn begin_tick(&mut self) {
-        self.state.tick_pressed = std::mem::take(&mut self.state.pending_pressed);
-        self.state.tick_released = std::mem::take(&mut self.state.pending_released);
+        self.state.begin_tick();
     }
 
     pub(crate) fn end_tick(&mut self) {
-        self.state.tick_pressed = 0;
-        self.state.tick_released = 0;
+        self.state.end_tick();
     }
+}
+
+#[derive(Resource, Debug, Clone, Copy, Default)]
+#[component(immutable)]
+pub struct MoveInput {
+    pub move_forward: f32,
+    pub move_right: f32,
+    pub move_up: f32,
+    pub look_yaw: f32,
+    pub look_pitch: f32,
 }

@@ -1,47 +1,20 @@
-use engine_core::collections::HashMap;
-use engine_settings::ErrorCode;
-use std::collections::{BTreeMap, BTreeSet};
+use engine_settings::{ErrorCode, Expected};
+use std::collections::BTreeSet;
 
-use engine_core::{
-    Error, Expected, Mesh, Texture, Transform,
-    glam::{Mat4, Vec3},
-};
+use engine_core::{Error, Mesh, Texture, Transform};
 
 use crate::{
-    MeshSource, SceneDocument, SceneFile, SceneFileKind, SceneFiles,
-    components::{PreparedComponent, Reach},
-    hierarchy::{ExpandedObject, ExpandedScene},
+    MeshSource, SceneDocument, SceneFile, SceneFileKind, SceneFiles, hierarchy::ExpandedObject,
     material::PreparedMaterial,
 };
 
 pub(crate) struct PreparedScene {
     pub environment: Option<crate::SceneEnvironment>,
-    pub components: Vec<PreparedEntity>,
     pub meshes: Vec<Mesh>,
     pub materials: Vec<PreparedMaterial>,
     pub textures: Vec<Texture>,
     pub transforms: Vec<Transform>,
     pub entities: Vec<ExpandedObject>,
-    pub streamed: PreparedStreamed,
-}
-
-#[derive(Default)]
-pub(crate) struct PreparedStreamed {
-    pub entities: Vec<ExpandedObject>,
-    pub transforms: Vec<Transform>,
-    pub components: Vec<PreparedEntity>,
-    pub parents: Vec<Option<usize>>,
-    pub items: Vec<PreparedItem>,
-}
-
-pub(crate) struct PreparedItem {
-    pub entities: Vec<usize>,
-    pub position: Vec3,
-    pub reach: f32,
-}
-
-pub(crate) struct PreparedEntity {
-    pub components: Vec<Box<dyn PreparedComponent>>,
 }
 
 struct CpuAssets {
@@ -84,15 +57,6 @@ impl SceneDocument {
                 | MeshSource::Provided { .. } => {}
             }
         }
-        let entities = self
-            .entities
-            .iter()
-            .chain(self.prefabs.iter().flat_map(|prefab| &prefab.entities));
-        for entity in entities {
-            for uri in entity.component_files() {
-                add(&uri, SceneFileKind::Buffer);
-            }
-        }
         files
     }
 
@@ -118,159 +82,20 @@ impl SceneDocument {
                 )?;
             }
         }
-        let [expanded, streamed] = self.expand(&mesh_ids, &material_ids)?;
-        let components = expanded
-            .entities
-            .iter()
-            .map(|entity| self.prepare_entity(entity, files))
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let streamed_components = self.prepare_streamed(&streamed, files)?;
-
+        let expanded = self.expand(&mesh_ids, &material_ids)?;
         let CpuAssets {
             textures,
             meshes,
             materials,
         } = self.prepare_assets(files)?;
-        let streamed = self.streamed_items(streamed, streamed_components, &meshes);
         Ok(PreparedScene {
             environment: self.environment.clone(),
-            components,
             meshes,
             materials,
             textures,
             transforms: expanded.transforms,
             entities: expanded.entities,
-            streamed,
         })
-    }
-
-    fn prepare_streamed(
-        &self,
-        streamed: &ExpandedScene,
-        files: Option<&SceneFiles>,
-    ) -> Result<Vec<PreparedEntity>, Error> {
-        streamed
-            .entities
-            .iter()
-            .map(|entity| {
-                entity.source.check_streamed(&entity.path)?;
-                self.prepare_entity(entity, files)
-            })
-            .collect()
-    }
-
-    fn streamed_items(
-        &self,
-        streamed: ExpandedScene,
-        components: Vec<PreparedEntity>,
-        meshes: &[Mesh],
-    ) -> PreparedStreamed {
-        let indices: BTreeMap<&str, usize> = streamed
-            .entities
-            .iter()
-            .enumerate()
-            .map(|(index, entity)| (entity.source.id.as_str(), index))
-            .collect();
-        let parents: Vec<Option<usize>> = streamed
-            .entities
-            .iter()
-            .map(|entity| {
-                entity
-                    .source
-                    .parent
-                    .as_ref()
-                    .map(|parent| indices[parent.as_str()])
-            })
-            .collect();
-        let roots = item_roots(&streamed.entities, &indices);
-        let mut worlds: Vec<Option<Mat4>> = vec![None; streamed.entities.len()];
-        let mut chain = Vec::new();
-        for start in 0..worlds.len() {
-            let mut cursor = Some(start);
-            while let Some(index) = cursor.filter(|&index| worlds[index].is_none()) {
-                chain.push(index);
-                cursor = parents[index];
-            }
-            while let Some(index) = chain.pop() {
-                let local = streamed.transforms[index];
-                let local = Mat4::from_scale_rotation_translation(
-                    local.scale,
-                    local.rotation,
-                    local.translation,
-                );
-                worlds[index] = Some(parents[index].map_or(local, |parent| {
-                    worlds[parent].expect("parent_composed_first") * local
-                }));
-            }
-        }
-        let mesh_indices: BTreeMap<&str, usize> = self
-            .meshes
-            .iter()
-            .enumerate()
-            .map(|(index, mesh)| (mesh.id.as_str(), index))
-            .collect();
-        let mut items: Vec<PreparedItem> = Vec::new();
-        let mut item_of = HashMap::default();
-        for (index, &root) in roots.iter().enumerate() {
-            let item = *item_of.entry(root).or_insert_with(|| {
-                items.push(PreparedItem {
-                    entities: Vec::new(),
-                    position: worlds[root]
-                        .expect("world_matrix_composed")
-                        .w_axis
-                        .truncate(),
-                    reach: 0.0,
-                });
-                items.len() - 1
-            });
-            items[item].entities.push(index);
-            let position = items[item].position;
-            let world = worlds[index].expect("world_matrix_composed");
-            let from = world.w_axis.truncate().distance(position);
-            let standing = Reach {
-                world,
-                position,
-                from,
-                meshes: (meshes, &mesh_indices),
-            };
-            let source = &streamed.entities[index].source;
-            let component = &components[index];
-            let mut reach = from;
-            let mut extend = |value: f32| reach = engine_core::math::max(reach, value);
-            if let Some(mesh) = source
-                .mesh
-                .as_ref()
-                .and_then(|id| mesh_indices.get(id.as_str()))
-            {
-                let bounds = meshes[*mesh].bounds();
-                extend(standing.of_box(bounds.min(), bounds.max()));
-            }
-            for prepared in &component.components {
-                prepared.reach(&standing, &mut extend);
-            }
-            if reach.is_finite() {
-                items[item].reach = engine_core::math::max(items[item].reach, reach);
-            }
-        }
-        for item in &mut items {
-            item.entities
-                .sort_by_key(|&index| (parents[index].is_some(), index));
-            if let Some(reach) = item
-                .entities
-                .iter()
-                .find_map(|&index| streamed.entities[index].reach)
-            {
-                item.reach = reach;
-            }
-        }
-        PreparedStreamed {
-            entities: streamed.entities,
-            transforms: streamed.transforms,
-            components,
-            parents,
-            items,
-        }
     }
 
     fn prepare_assets(&self, files: Option<&SceneFiles>) -> Result<CpuAssets, Error> {
@@ -314,40 +139,11 @@ impl SceneDocument {
         })
     }
 
-    fn prepare_entity(
-        &self,
-        entity: &ExpandedObject,
-        files: Option<&SceneFiles>,
-    ) -> Result<PreparedEntity, Error> {
-        let (source, path) = (&entity.source, &entity.path);
-        Ok(PreparedEntity {
-            components: source.prepare_components(path, self, files)?,
-        })
-    }
-
     fn validate_camera(&self) -> Result<(), Error> {
         self.camera
             .validate()
             .map_err(|invalid| invalid.error(ErrorCode::InvalidCamera, "$.camera"))
     }
-}
-
-fn item_roots(entities: &[ExpandedObject], indices: &BTreeMap<&str, usize>) -> Vec<usize> {
-    let parent = |index: usize| {
-        entities[index]
-            .source
-            .parent
-            .as_ref()
-            .map(|parent| indices[parent.as_str()])
-    };
-    (0..entities.len())
-        .map(|mut index| {
-            while let Some(next) = parent(index) {
-                index = next;
-            }
-            index
-        })
-        .collect()
 }
 
 pub fn identifier(id: &str, path: &str) -> Result<(), Error> {

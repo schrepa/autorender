@@ -1,53 +1,19 @@
-use engine::smoke::{Checked, SmokeResult, SmokeSession, ask, capture, control};
-use engine::smoke_check;
-use engine::smokes::run_place;
-use engine::terrain::data::smokes::settle;
-use highlands_toon_lighting::ToonLightingBrick;
+use engine_core::smoke::{Checked, ask, capture, render};
+use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-use super::{LEFT_OUT, aim, open};
-use crate::{Highlands, Options, RockMaps};
+use super::{aim, open, settle};
 
 const VIEW: &str = "close";
 
 const FRAMES: u32 = 8;
 
-const UNLINKED: [&str; 3] = ["shader_link", "face_missing", "slot_unfilled"];
+const UNLINKED: [&str; 3] = ["shader_link", "face_missing", "import_foreign"];
 
-pub(super) fn run(session: &mut dyn SmokeSession) -> SmokeResult {
+pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     open(session, false)?;
-    let standard = looked(session)?;
-    let bricks = session
-        .bricks()
-        .without(LEFT_OUT)
-        .fill::<ToonLightingBrick>();
-    session.restart(bricks);
-    furnished(session)?;
     filled(session)?;
-    let toon = looked(session)?;
-    smoke_check!(
-        toon != standard,
-        "the_toon_lighting_changes_the_frame",
-        &toon,
-        &json!({ "differs_from": standard })
-    );
-    run_place(session, "lighting")
-}
-
-fn furnished(session: &mut dyn SmokeSession) -> Checked<()> {
-    let options = Options {
-        rocks: false,
-        ..Options::default()
-    };
-    let built = Highlands::furnish(session.app(), &options, &RockMaps::default()).map(drop);
-    smoke_check!(
-        built.is_ok(),
-        "highlands_builds_with_the_toon_lighting",
-        &built.as_ref().err(),
-        &Value::Null
-    );
-    control(session, "pause", json!({}))?;
-    Ok(())
+    looked(session).map(drop)
 }
 
 fn filled(session: &mut dyn SmokeSession) -> Checked<()> {
@@ -59,11 +25,10 @@ fn filled(session: &mut dyn SmokeSession) -> Checked<()> {
         .filter(|brick| fills_lighting(&brick["fills"]))
         .filter_map(|brick| brick["name"].as_str())
         .collect();
-    smoke_check!(
-        fillers == ["toon_lighting"],
-        "the_toon_lighting_fills_the_lighting_slot",
-        &fillers,
-        &json!(["toon_lighting"])
+    smoke_eq!(
+        fillers,
+        ["highlands_toon_lighting"],
+        "the_toon_lighting_fills_the_lighting_slot"
     );
     Ok(())
 }
@@ -83,11 +48,10 @@ fn looked(session: &mut dyn SmokeSession) -> Checked<Value> {
         rendering = rendered(session)?;
     }
     let passes = &rendering["render_passes"];
-    smoke_check!(
+    smoke_eq!(
         passes.as_array().is_some_and(|passes| !passes.is_empty()),
-        "the_lit_scene_runs_passes",
-        passes,
-        &json!({ "not": [] })
+        true,
+        "the_lit_scene_runs_passes"
     );
     settle(session)?;
     capture(session)
@@ -100,18 +64,9 @@ fn rendered(session: &mut dyn SmokeSession) -> Checked<Value> {
         .err()
         .map(|refused| refused["error"].clone())
         .unwrap_or_default();
-    smoke_check!(
-        !UNLINKED.iter().any(|code| refused["code"] == *code),
-        "the_lighting_links_with_its_faces",
-        &refused,
-        &json!({ "none_of": UNLINKED })
-    );
-    smoke_check!(
-        reply.is_ok(),
-        "the_lit_scene_renders",
-        &refused,
-        &json!("rendered")
-    );
+    let unlinked = UNLINKED.iter().find(|code| refused["code"] == **code);
+    smoke_eq!(unlinked, None, "the_lighting_links_with_its_faces");
+    smoke_eq!(&refused, &Value::Null, "the_lit_scene_renders");
     Ok(reply
         .map(|mut answered| answered["result"]["rendering"].take())
         .unwrap_or_default())

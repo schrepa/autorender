@@ -1,6 +1,18 @@
 use super::*;
 use crate::hierarchy::Link;
-use crate::retained_render::{PoseRows, pose_rows};
+use glam::Mat4;
+
+pub type PoseRows = [[f32; 4]; 3];
+
+#[inline]
+pub(crate) fn pose_rows(model: Mat4) -> PoseRows {
+    let rows = model.transpose();
+    [
+        rows.x_axis.to_array(),
+        rows.y_axis.to_array(),
+        rows.z_axis.to_array(),
+    ]
+}
 
 pub type NodePose = [f32; 10];
 

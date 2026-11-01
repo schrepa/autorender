@@ -1,48 +1,33 @@
-use engine_settings::ErrorCode;
 use std::sync::Arc;
 
-use engine_core::bevy_ecs::world::{EntityWorldMut, World};
-use engine_core::glam::{Vec2, Vec3};
-use engine_core::{Error, Expected, MaterialHandle, MeshHandle, missing_brick};
-use engine_scene::{
-    ComponentContext, ComponentKind, ComponentPath, Lookups, Placement, Prepared,
-    PreparedComponent, SceneFiles, SceneMaterial, SceneMesh, added, identifier, no_files, no_paths,
-    object_example, parsed, ruled, unknown, valid_uri, valid_world,
+use bevy_ecs::prelude::*;
+use engine_core::{
+    Error, ErrorCode, Expected, Joined, MaterialHandle, MeshHandle, Setting, parse_value_at,
 };
-use engine_settings::{Rule, Setting};
+use engine_places::ground::{SurfaceMaterial, SurfaceProjection};
+use engine_places::terrain::{LayerKind, TerrainLayers};
+use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
-use serde_json::{Number, Value, json};
+use serde_json::{Number, Value};
 
-use crate::layer::{self, LayerFiles, TerrainLayer, TerrainLayerKinds};
+use crate::layer::{self, TerrainLayer};
+use crate::runtime::{TerrainBuilt, TerrainScene, Terrains, check_material};
 use crate::{
-    Biome, Biomes, Cover, Layers, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer,
-    PlacementLod, PlacementPart, Pyramid, SurfaceMaterial, SurfaceProjection, Surroundings,
-    Terrain, TerrainPrefetch, TerrainSurface,
+    Biome, Biomes, Layers, PlacedCollider, PlacedShape, PlacementAsset, PlacementLayer, Pyramid,
+    Surroundings, Terrain, TerrainSurface,
 };
-
-const TERRAIN_BRICK: &str = "terrain";
 
 pub const GROUND_HEIGHT: &str = "ground_height";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrain {
     pub origin: [f32; 3],
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(inner(range(min = 1, max = crate::Pyramid::MAX_TILES)))
-    )]
     pub tiles: Option<[u32; 2]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(range(min = crate::Pyramid::MIN_SPACING, max = crate::Pyramid::MAX_SPACING))
-    )]
     pub spacing: Option<f32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[cfg_attr(feature = "schema", schemars(schema_with = "layer_list_schema"))]
     pub layers: Vec<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<SceneTerrainSurface>,
@@ -53,11 +38,6 @@ pub struct SceneTerrain {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(transform = Surroundings::state_rules)
-)]
 #[serde(deny_unknown_fields)]
 pub struct SceneSurroundings {
     pub reach: f32,
@@ -82,7 +62,6 @@ fn is_true(value: &bool) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrainSurface {
     pub materials: Vec<SceneTerrainMaterial>,
@@ -90,7 +69,7 @@ pub struct SceneTerrainSurface {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub steep: Option<crate::SteepLayer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bridge: Option<String>,
+    pub bridge: Option<MaterialHandle>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Vec<SceneTerrainAsset>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -106,59 +85,23 @@ fn is_default_causes(causes: &crate::MacroCauses) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(transform = state_asset_rules)
-)]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrainAsset {
     pub id: String,
-    pub mesh: String,
-    pub material: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub lods: Vec<SceneTerrainLod>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub parts: Vec<SceneTerrainPart>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shadow: Option<String>,
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub sway: f32,
+    pub mesh: MeshHandle,
+    pub material: MaterialHandle,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collider: Option<SceneTerrainCollider>,
 }
 
-#[cfg(feature = "schema")]
-fn state_asset_rules(schema: &mut schemars::Schema) {
-    engine_settings::state(schema, "sway", PlacementAsset::SWAY);
-}
-
-fn is_zero(value: &f32) -> bool {
-    *value == 0.0
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SceneColliderShape {
-    Cuboid {
-        #[cfg_attr(
-            feature = "schema",
-            schemars(inner(range(min = crate::MIN_COLLIDER_EXTENT, max = crate::MAX_COLLIDER_EXTENT)))
-        )]
-        half_extents: [f32; 3],
-    },
-    Sphere {
-        #[cfg_attr(
-            feature = "schema",
-            schemars(range(min = crate::MIN_COLLIDER_EXTENT, max = crate::MAX_COLLIDER_EXTENT))
-        )]
-        radius: f32,
-    },
+    Cuboid { half_extents: [f32; 3] },
+    Sphere { radius: f32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrainCollider {
     pub shape: SceneColliderShape,
@@ -194,47 +137,14 @@ impl SceneTerrainCollider {
             filter: self.filter,
         }
     }
-
-    pub(crate) fn authored(collider: PlacedCollider) -> Self {
-        Self {
-            shape: match collider.shape {
-                PlacedShape::Cuboid { half_extents } => SceneColliderShape::Cuboid { half_extents },
-                PlacedShape::Sphere { radius } => SceneColliderShape::Sphere { radius },
-            },
-            center: collider.center,
-            memberships: collider.memberships,
-            filter: collider.filter,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct SceneTerrainLod {
-    pub mesh: String,
-    pub error: f32,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(deny_unknown_fields)]
-pub struct SceneTerrainPart {
-    pub material: String,
-    pub meshes: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(transform = SurfaceMaterial::state_rules)
-)]
 #[serde(deny_unknown_fields)]
 pub struct SceneTerrainMaterial {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub material: Option<String>,
+    pub material: Option<MaterialHandle>,
     #[serde(default = "gray")]
     pub color: [f32; 3],
     #[serde(default = "rough")]
@@ -245,8 +155,6 @@ pub struct SceneTerrainMaterial {
     pub height_contrast: f32,
     #[serde(default)]
     pub projection: SurfaceProjection,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cover: Option<Cover>,
     #[serde(default, skip_serializing_if = "is_flat")]
     pub depth: f32,
 }
@@ -269,227 +177,6 @@ fn four_meters() -> f32 {
 
 fn half() -> f32 {
     SurfaceMaterial::default().height_contrast
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct PreparedTerrain {
-    pub terrain: Terrain,
-    pub materials: Vec<Option<usize>>,
-    pub bridge: Option<usize>,
-    pub assets: Vec<PreparedAsset>,
-}
-
-pub(crate) type PreparedAsset = (
-    usize,
-    usize,
-    Vec<(usize, f32)>,
-    Vec<(usize, Vec<usize>)>,
-    Option<usize>,
-    f32,
-    Option<PlacedCollider>,
-);
-
-fn prepared_parts(
-    asset: &SceneTerrainAsset,
-    (materials, meshes): (&[SceneMaterial], &[SceneMesh]),
-    (at, invalid): (&str, &dyn Fn(String) -> Error),
-) -> Result<Vec<(usize, Vec<usize>)>, Error> {
-    let mut prepared = Vec::with_capacity(asset.parts.len());
-    for (index, part) in asset.parts.iter().enumerate() {
-        let field = format!("{at}.parts[{index}]");
-        let material = materials
-            .iter()
-            .position(|candidate| candidate.id == part.material)
-            .ok_or_else(|| {
-                unknown(
-                    invalid(format!("{field}.material")),
-                    &part.material,
-                    materials.iter().map(|material| material.id.as_str()),
-                )
-            })?;
-        let part_meshes = part
-            .meshes
-            .iter()
-            .enumerate()
-            .map(|(level, mesh)| {
-                meshes
-                    .iter()
-                    .position(|candidate| candidate.id == *mesh)
-                    .ok_or_else(|| {
-                        unknown(
-                            invalid(format!("{field}.meshes[{level}]")),
-                            mesh,
-                            meshes.iter().map(|mesh| mesh.id.as_str()),
-                        )
-                    })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        prepared.push((material, part_meshes));
-    }
-    let counts: Vec<usize> = prepared.iter().map(|(_, meshes)| meshes.len()).collect();
-    let levels = 1 + asset.lods.len();
-    if let Err(error) = PlacementPart::check(&counts, levels) {
-        return Err(error.within(at));
-    }
-    Ok(prepared)
-}
-
-impl PreparedTerrain {
-    pub(crate) fn runtime(&self, materials: &[MaterialHandle], meshes: &[MeshHandle]) -> Terrain {
-        let mut terrain = self.terrain.clone();
-        for (look, index) in terrain.surface.materials.iter_mut().zip(&self.materials) {
-            look.material = index.map(|index| materials[index]);
-        }
-        terrain.surface.bridge = self.bridge.map(|index| materials[index]);
-        terrain.surface.assets = self
-            .assets
-            .iter()
-            .map(
-                |(mesh, material, lods, parts, shadow, sway, collider)| PlacementAsset {
-                    mesh: meshes[*mesh],
-                    material: materials[*material],
-                    lods: lods
-                        .iter()
-                        .map(|&(mesh, error)| PlacementLod {
-                            mesh: meshes[mesh],
-                            error,
-                        })
-                        .collect(),
-                    parts: parts
-                        .iter()
-                        .map(|(material, part)| PlacementPart {
-                            material: materials[*material],
-                            meshes: part.iter().map(|&mesh| meshes[mesh]).collect(),
-                        })
-                        .collect(),
-                    shadow: shadow.map(|mesh| meshes[mesh]),
-                    sway: *sway,
-                    collider: *collider,
-                },
-            )
-            .collect();
-        terrain
-    }
-}
-
-#[cfg(feature = "schema")]
-const LAYER_DEFINITION: &str = "SceneTerrainLayer";
-
-#[cfg(feature = "schema")]
-fn layer_list_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    let mut kinds = layer::layer_kinds();
-    kinds.sort_by_key(|kind| kind.name);
-    let definitions = generator.definitions_mut();
-    let variants: Vec<Value> = kinds
-        .into_iter()
-        .map(|kind| {
-            let definition = kind_definition(kind, definitions);
-            serde_json::json!({
-                "allOf": [{ "$ref": format!("#/$defs/{definition}") }],
-                "properties": {
-                    (layer::TYPE_KEY): { "const": kind.name },
-                    (layer::ID_KEY): { "type": "string" },
-                },
-                "required": [layer::TYPE_KEY],
-                "unevaluatedProperties": false,
-            })
-        })
-        .collect();
-    definitions.insert(
-        LAYER_DEFINITION.to_owned(),
-        serde_json::json!({ "oneOf": variants }),
-    );
-    schemars::json_schema!({
-        "type": "array",
-        "items": { "$ref": format!("#/$defs/{LAYER_DEFINITION}") },
-    })
-}
-
-#[cfg(feature = "schema")]
-fn kind_definition(
-    kind: &layer::LayerKind,
-    definitions: &mut serde_json::Map<String, Value>,
-) -> String {
-    let mut schema = serde_json::to_value((kind.schema)()).expect("schema_serializes");
-    let Some(fields) = schema.as_object_mut() else {
-        definitions.insert(kind.name.to_owned(), schema);
-        return kind.name.to_owned();
-    };
-    fields.remove("$schema");
-    if let Some(Value::Object(nested)) = fields.remove("$defs") {
-        for (name, definition) in nested {
-            definitions.entry(name).or_insert(definition);
-        }
-    }
-    fields.remove("additionalProperties");
-    let title = fields
-        .remove("title")
-        .and_then(|title| title.as_str().map(str::to_owned))
-        .unwrap_or_else(|| kind.name.to_owned());
-    definitions.insert(title.clone(), schema);
-    title
-}
-
-struct LayerBuffers<'a>(Option<&'a SceneFiles>);
-
-impl LayerFiles for LayerBuffers<'_> {
-    fn buffer(&self, uri: &str, path: &str) -> Result<Option<Arc<[u8]>>, Error> {
-        self.0
-            .map(|files| files.buffer(uri, path).map(Arc::<[u8]>::from))
-            .transpose()
-    }
-}
-
-fn kind_settings(item: &Value) -> Option<(&'static layer::LayerKind, Value)> {
-    let object = item.as_object()?;
-    let kind = object
-        .get(layer::TYPE_KEY)
-        .and_then(Value::as_str)
-        .and_then(layer::layer_kind)?;
-    let mut settings = object.clone();
-    settings.remove(layer::TYPE_KEY);
-    settings.remove(layer::ID_KEY);
-    Some((kind, Value::Object(settings)))
-}
-
-fn layer_files(item: &Value) -> Vec<String> {
-    kind_settings(item).map_or_else(Vec::new, |(kind, settings)| (kind.files)(&settings))
-}
-
-fn layer_points(item: &Value) -> Option<Vec<[f32; 2]>> {
-    kind_settings(item).and_then(|(kind, settings)| (kind.points)(&settings))
-}
-
-fn file_field(item: &Value, uri: &str, at: &str) -> String {
-    item.as_object()
-        .and_then(|object| object.iter().find(|(_, value)| value.as_str() == Some(uri)))
-        .map_or_else(|| at.to_owned(), |(field, _)| format!("{at}.{field}"))
-}
-
-fn authored_layers(terrain: &Value) -> impl Iterator<Item = &Value> {
-    terrain
-        .get("layers")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-}
-
-fn check_layers(terrain: &Value, world: &World, path: &str) -> Result<(), Error> {
-    let offered = world.get_resource::<TerrainLayerKinds>();
-    for (index, item) in authored_layers(terrain).enumerate() {
-        let Some(name) = item.get(layer::TYPE_KEY).and_then(Value::as_str) else {
-            continue;
-        };
-        if offered.is_none_or(|kinds| kinds.get(name).is_none()) {
-            return Err(Error::new(
-                ErrorCode::MissingPlugin,
-                format!("{path}.layers[{index}].{}", layer::TYPE_KEY),
-            )
-            .expected(Expected::Present)
-            .got(name));
-        }
-    }
-    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -548,7 +235,7 @@ fn ground_height(
     pyramid: &Pyramid,
     path: &str,
 ) -> Result<Value, Error> {
-    let GroundHeight { through, at }: GroundHeight = engine_core::parse_value_at(rule, path)?;
+    let GroundHeight { through, at }: GroundHeight = parse_value_at(rule, path)?;
     let Some((_, layers)) = named.iter().find(|(id, _)| *id == through) else {
         return Err(
             Error::new(ErrorCode::UnknownReference, format!("{path}.through"))
@@ -567,125 +254,51 @@ fn ground_height(
             );
         }
     }
-    let height = layers.height_at(pyramid, Vec2::from(at));
+    let height = crate::tile::height_at(layers, pyramid, Vec2::from(at));
     Number::from_f64(f64::from(height))
         .map(Value::Number)
         .ok_or_else(|| Error::new(ErrorCode::InvalidNumber, path).expected(Expected::Finite))
 }
 
 impl SceneTerrain {
-    #[expect(clippy::type_complexity, reason = "the surface and its indices")]
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
-    fn surface(
-        &self,
-        path: &str,
-        materials: &[SceneMaterial],
-        meshes: &[SceneMesh],
-    ) -> Result<(TerrainSurface, Vec<Option<usize>>, Vec<PreparedAsset>), Error> {
-        let invalid = |field: String| {
-            Error::new(ErrorCode::InvalidTerrain, format!("{path}.surface.{field}"))
-        };
-        let broken = |error: engine_settings::InvalidSetting, at: &str| {
-            error.error(ErrorCode::InvalidTerrain, &format!("{path}.surface.{at}"))
+    fn surface(&self, path: &str) -> Result<TerrainSurface, Error> {
+        let broken = |error: engine_core::InvalidSetting, at: &str| {
+            error.error(ErrorCode::InvalidValue, &format!("{path}.surface.{at}"))
         };
         let Some(surface) = &self.surface else {
-            let looks = TerrainSurface::default();
-            let count = looks.materials.len();
-            return Ok((looks, vec![None; count], Vec::new()));
+            return Ok(TerrainSurface::default());
         };
         let mut looks = Vec::with_capacity(surface.materials.len());
-        let mut indices = Vec::with_capacity(surface.materials.len());
         for (index, material) in surface.materials.iter().enumerate() {
             let at = format!("materials[{index}]");
             let look = SurfaceMaterial {
-                material: None,
+                material: material.material,
                 color: material.color,
                 roughness: material.roughness,
                 tiling: material.tiling,
                 height_contrast: material.height_contrast,
                 projection: material.projection,
-                cover: material.cover,
                 depth: material.depth,
             };
-            if let Err(error) = look.validate() {
+            if let Err(error) = check_material(&look) {
                 return Err(broken(error, &at));
             }
-            let document = material
-                .material
-                .as_ref()
-                .map(|id| {
-                    materials
-                        .iter()
-                        .position(|candidate| candidate.id == *id)
-                        .ok_or_else(|| {
-                            unknown(
-                                invalid(format!("{at}.material")),
-                                id,
-                                materials.iter().map(|material| material.id.as_str()),
-                            )
-                        })
-                })
-                .transpose()?;
             looks.push(look);
-            indices.push(document);
         }
         let mut assets = Vec::with_capacity(surface.assets.len());
-        let mesh_index = |id: &str, field: String| {
-            meshes
-                .iter()
-                .position(|candidate| candidate.id == id)
-                .ok_or_else(|| {
-                    unknown(
-                        invalid(field),
-                        id,
-                        meshes.iter().map(|mesh| mesh.id.as_str()),
-                    )
-                })
-        };
         for (index, asset) in surface.assets.iter().enumerate() {
             let at = format!("assets[{index}]");
-            let mesh = mesh_index(&asset.mesh, format!("{at}.mesh"))?;
-            let material = materials
-                .iter()
-                .position(|candidate| candidate.id == asset.material)
-                .ok_or_else(|| {
-                    unknown(
-                        invalid(format!("{at}.material")),
-                        &asset.material,
-                        materials.iter().map(|material| material.id.as_str()),
-                    )
-                })?;
-            let lods = asset
-                .lods
-                .iter()
-                .enumerate()
-                .map(|(level, lod)| {
-                    mesh_index(&lod.mesh, format!("{at}.lods[{level}].mesh"))
-                        .map(|mesh| (mesh, lod.error))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let errors: Vec<f32> = lods.iter().map(|&(_, error)| error).collect();
-            if let Err(error) = PlacementLod::check(&errors) {
-                return Err(error.within(&at));
-            }
-            let parts = prepared_parts(asset, (materials, meshes), (&at, &invalid))?;
-            let shadow = asset
-                .shadow
-                .as_deref()
-                .map(|id| mesh_index(id, format!("{at}.shadow")))
-                .transpose()?;
-            if let Err(error) = asset.sway.check("sway", PlacementAsset::SWAY) {
-                return Err(broken(error, &at));
-            }
             let collider = asset.collider.map(SceneTerrainCollider::runtime);
-            if let Some(Err(error)) = collider.map(|collider| collider.check("collider", Rule::Any))
+            if let Some(Err(error)) =
+                collider.map(|collider| collider.check("collider", engine_core::Rule::Any))
             {
                 return Err(broken(error, &at));
             }
-            assets.push((mesh, material, lods, parts, shadow, asset.sway, collider));
+            assets.push(PlacementAsset {
+                mesh: asset.mesh,
+                material: asset.material,
+                collider,
+            });
         }
         let biomes = Biomes {
             materials: surface
@@ -704,69 +317,26 @@ impl SceneTerrain {
             placed: surface.placed.clone(),
             macro_colors: surface.macro_colors,
         };
-        let surface = TerrainSurface::new(&biomes, looks).map_err(|error| {
-            let error = if matches!(error.code, ErrorCode::UnknownMap | ErrorCode::UnreadableMap) {
+        let mut built = TerrainSurface::new(&biomes, looks).map_err(|error| {
+            let error = if matches!(error.code, ErrorCode::UnknownReference) {
                 error
             } else {
-                error.coded(ErrorCode::InvalidTerrain)
+                error.coded(ErrorCode::InvalidValue)
             };
             error.within(&format!("{path}.surface"))
         })?;
-        Ok((surface, indices, assets))
+        built.assets = assets;
+        built.bridge = surface.bridge;
+        Ok(built)
     }
 
-    pub(crate) fn prepare(
+    pub(crate) fn runtime<'k>(
         &self,
         path: &str,
-        files: Option<&SceneFiles>,
-        (materials, meshes): (&[SceneMaterial], &[SceneMesh]),
-    ) -> Result<PreparedTerrain, Error> {
-        let (surface, indices, assets) = self.surface(path, materials, meshes)?;
-        let bridge = match self
-            .surface
-            .as_ref()
-            .and_then(|surface| surface.bridge.as_ref())
-        {
-            Some(id) => Some(
-                materials
-                    .iter()
-                    .position(|material| material.id == *id)
-                    .ok_or_else(|| {
-                        unknown(
-                            Error::new(ErrorCode::InvalidTerrain, format!("{path}.surface.bridge")),
-                            id,
-                            materials.iter().map(|material| material.id.as_str()),
-                        )
-                    })?,
-            ),
-            None => None,
-        };
-        let terrain = self.terrain(path, files, surface)?;
-        Ok(PreparedTerrain {
-            terrain,
-            materials: indices,
-            bridge,
-            assets,
-        })
-    }
-
-    pub fn prepare_component(
-        &self,
-        path: &str,
-        files: Option<&SceneFiles>,
-        (materials, meshes): (&[SceneMaterial], &[SceneMesh]),
+        kinds: &dyn Fn(&str) -> Option<&'k LayerKind>,
     ) -> Result<Terrain, Error> {
-        Ok(self.prepare(path, files, (materials, meshes))?.terrain)
-    }
-
-    fn terrain(
-        &self,
-        path: &str,
-        files: Option<&SceneFiles>,
-        surface: TerrainSurface,
-    ) -> Result<Terrain, Error> {
-        let invalid =
-            |field: &str| Error::new(ErrorCode::InvalidTerrain, format!("{path}.{field}"));
+        let surface = self.surface(path)?;
+        let invalid = |field: &str| Error::new(ErrorCode::InvalidValue, format!("{path}.{field}"));
         if !self.origin.iter().all(|value| value.is_finite()) {
             return Err(invalid("origin")
                 .expected(Expected::Finite)
@@ -778,7 +348,7 @@ impl SceneTerrain {
             blend: surroundings.blend,
         });
         if let Some(Err(error)) = surroundings.map(|surroundings| surroundings.validate()) {
-            return Err(error.error(ErrorCode::InvalidTerrain, &format!("{path}.surroundings")));
+            return Err(error.error(ErrorCode::InvalidValue, &format!("{path}.surroundings")));
         }
         if self.layers.is_empty() {
             return Err(invalid("layers").expected(Expected::NonEmpty));
@@ -792,8 +362,8 @@ impl SceneTerrain {
             return Err(invalid(field).expected(Expected::Present));
         };
         let pyramid = Pyramid::new(tiles, spacing)
-            .map_err(|error| error.coded(ErrorCode::InvalidTerrain).within(path))?;
-        let source = self.layers(path, files, &pyramid)?;
+            .map_err(|error| error.coded(ErrorCode::InvalidValue).within(path))?;
+        let source = self.layers(path, kinds, &pyramid)?;
         surface
             .rules
             .check_maps(&source)
@@ -804,19 +374,18 @@ impl SceneTerrain {
             layers: Arc::new(source),
             surface,
             collision: self.collision,
-            edits: std::sync::Arc::from(Vec::new()),
-            rivers: std::sync::Arc::from(Vec::new()),
+            edits: Arc::from(Vec::new()),
+            rivers: Arc::from(Vec::new()),
             surroundings,
         })
     }
 
-    fn layers(
+    fn layers<'k>(
         &self,
         path: &str,
-        files: Option<&SceneFiles>,
+        kinds: &dyn Fn(&str) -> Option<&'k LayerKind>,
         pyramid: &Pyramid,
     ) -> Result<Layers, Error> {
-        let buffers = LayerBuffers(files);
         let mut layers: Vec<Arc<dyn TerrainLayer>> = Vec::with_capacity(self.layers.len());
         let mut ids: Vec<&str> = Vec::new();
         let mut named: Vec<(String, Arc<Layers>)> = Vec::new();
@@ -824,10 +393,24 @@ impl SceneTerrain {
             let at = format!("{path}.layers[{index}]");
             let mut item = authored.clone();
             resolve_values(&mut item, &named, pyramid, &at)?;
-            for uri in layer_files(&item) {
-                valid_uri(&uri, &file_field(&item, &uri, &at))?;
+            let name = item
+                .get(layer::TYPE_KEY)
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    Error::new(ErrorCode::MissingField, format!("{at}.{}", layer::TYPE_KEY))
+                        .expected(Expected::Present)
+                })?;
+            let kind = kinds(name).ok_or_else(|| {
+                Error::new(ErrorCode::UnknownValue, format!("{at}.{}", layer::TYPE_KEY))
+                    .expected(Expected::Present)
+                    .got(name)
+            })?;
+            let mut settings = item.clone();
+            if let Some(fields) = settings.as_object_mut() {
+                fields.remove(layer::TYPE_KEY);
+                fields.remove(layer::ID_KEY);
             }
-            layers.push(layer::layer_from_json(&item, &buffers, &at)?);
+            layers.push((kind.from_json)(&settings).map_err(|error| error.within(&at))?);
             let Some(id) = authored.get(layer::ID_KEY) else {
                 continue;
             };
@@ -835,7 +418,12 @@ impl SceneTerrain {
             let id = id.as_str().ok_or_else(|| {
                 Error::new(ErrorCode::InvalidType, &id_path).expected(Expected::String)
             })?;
-            identifier(id, &id_path)?;
+            if !engine_core::is_id(id) {
+                return Err(Error::new(ErrorCode::InvalidId, id_path)
+                    .expected(Expected::Id)
+                    .at_most(engine_core::MAX_ID_BYTES as u64)
+                    .got(id));
+            }
             if ids.contains(&id) {
                 return Err(Error::new(ErrorCode::DuplicateId, id_path)
                     .expected(Expected::Unique)
@@ -846,199 +434,27 @@ impl SceneTerrain {
                 named.push((id.to_owned(), Arc::new(through)));
             }
         }
-        Layers::new(layers).map_err(|error| error.coded(ErrorCode::InvalidTerrain).within(path))
+        Layers::new(layers).map_err(|error| error.coded(ErrorCode::InvalidValue).within(path))
     }
+}
 
-    pub fn from_runtime(
-        terrain: &Terrain,
-        materials: impl Fn(MaterialHandle) -> Option<String>,
-        meshes: impl Fn(MeshHandle) -> Option<String>,
-    ) -> Self {
-        let surface = (terrain.surface != TerrainSurface::default()).then(|| {
-            let authored = terrain.surface.rules.authored();
-            SceneTerrainSurface {
-                materials: authored
-                    .materials
-                    .iter()
-                    .zip(&terrain.surface.materials)
-                    .map(|(id, look)| SceneTerrainMaterial {
-                        id: id.clone(),
-                        material: look.material.and_then(&materials),
-                        color: look.color,
-                        roughness: look.roughness,
-                        tiling: look.tiling,
-                        height_contrast: look.height_contrast,
-                        projection: look.projection,
-                        cover: look.cover,
-                        depth: look.depth,
-                    })
-                    .collect(),
-                biomes: authored.biomes.clone(),
-                steep: authored.steep.clone(),
-                bridge: terrain.surface.bridge.and_then(&materials),
-                assets: authored
-                    .assets
-                    .iter()
-                    .zip(&terrain.surface.assets)
-                    .map(|(id, asset)| SceneTerrainAsset {
-                        id: id.clone(),
-                        mesh: meshes(asset.mesh).unwrap_or_default(),
-                        material: materials(asset.material).unwrap_or_default(),
-                        lods: asset
-                            .lods
-                            .iter()
-                            .map(|lod| SceneTerrainLod {
-                                mesh: meshes(lod.mesh).unwrap_or_default(),
-                                error: lod.error,
-                            })
-                            .collect(),
-                        parts: asset
-                            .parts
-                            .iter()
-                            .map(|part| SceneTerrainPart {
-                                material: materials(part.material).unwrap_or_default(),
-                                meshes: part
-                                    .meshes
-                                    .iter()
-                                    .map(|&mesh| meshes(mesh).unwrap_or_default())
-                                    .collect(),
-                            })
-                            .collect(),
-                        shadow: asset.shadow.and_then(&meshes),
-                        sway: asset.sway,
-                        collider: asset.collider.map(SceneTerrainCollider::authored),
-                    })
-                    .collect(),
-                placements: authored.placements.clone(),
-                placed: authored.placed.clone(),
-                macro_colors: authored.macro_colors,
-            }
-        });
-        let layers = terrain
-            .layers
-            .layers()
-            .iter()
-            .map(|kept| layer::layer_json(&**kept))
-            .collect();
-        Self {
-            origin: terrain.origin.to_array(),
-            tiles: Some(terrain.pyramid.base_tiles()),
-            spacing: Some(terrain.pyramid.spacing(0)),
-            layers,
-            surface,
-            collision: terrain.collision,
-            surroundings: terrain.surroundings.map(|surroundings| SceneSurroundings {
-                reach: surroundings.reach,
-                blend: surroundings.blend,
-            }),
+pub(crate) fn build_terrains(
+    kinds: Joined<TerrainLayers>,
+    mut built: Query<(Entity, Ref<TerrainScene>, &mut TerrainBuilt)>,
+    mut terrains: ResMut<Terrains>,
+) {
+    let found = |name: &str| kinds.iter().find(|kind| kind.name == name);
+    for (entity, scene, mut terrain) in &mut built {
+        if !scene.is_changed() {
+            continue;
         }
-    }
-}
-
-pub(crate) static TERRAIN: ComponentKind = ComponentKind {
-    name: "terrain",
-    shows: "Terrain.terrain",
-    placement: Placement::Entities(ErrorCode::InvalidStreamed),
-    schema: engine_scene::component_schema!(SceneTerrain),
-    example: terrain_example,
-    validate: validate_terrain,
-    validate_world: valid_world,
-    prepare: prepare_terrain,
-    files: terrain_files,
-    admit: admit_terrain,
-    paths: terrain_paths,
-};
-
-fn terrain_example() -> Value {
-    json!({
-        "origin": [-128.0, 0.0, -128.0],
-        "tiles": [2, 2],
-        "spacing": 1.0,
-        "layers": [{ "type": "noise", "seed": 3, "height": 8.0, "wavelength": 120.0 }]
-    })
-}
-
-fn validate_terrain(value: &Value, path: &str) -> Result<(), Error> {
-    parsed::<SceneTerrain>(value, path).map(drop)
-}
-
-fn prepare_terrain(value: &Value, context: &ComponentContext<'_>) -> Prepared {
-    let terrain: SceneTerrain = parsed(value, context.path)?;
-    let document = context.document;
-    Ok(Box::new(terrain.prepare(
-        context.path,
-        context.files,
-        (&document.materials, &document.meshes),
-    )?))
-}
-
-fn terrain_files(value: &Value) -> Vec<String> {
-    authored_layers(value).flat_map(layer_files).collect()
-}
-
-fn admit_terrain(value: &Value, world: &World, path: &str) -> Result<(), Error> {
-    if !added(world, TERRAIN_BRICK) {
-        return Err(missing_brick(TERRAIN_BRICK, path));
-    }
-    check_layers(value, world, path)
-}
-
-fn terrain_paths(value: &Value, path: &str) -> Result<Vec<ComponentPath>, Error> {
-    let terrain: SceneTerrain = parsed(value, path)?;
-    Ok(terrain
-        .layers
-        .iter()
-        .enumerate()
-        .filter_map(|(index, item)| {
-            let id = item.get(layer::ID_KEY).and_then(Value::as_str)?;
-            Some(ComponentPath {
-                id: id.to_owned(),
-                origin: terrain.origin,
-                points: layer_points(item)?,
-                at: format!("{path}.layers[{index}].points"),
-            })
-        })
-        .collect())
-}
-
-impl PreparedComponent for PreparedTerrain {
-    fn spawn(&self, entity: &mut EntityWorldMut<'_>, lookups: &Lookups) {
-        entity.insert(self.runtime(&lookups.owned_materials, &lookups.owned_meshes));
-    }
-}
-
-pub(crate) static PREFETCH: ComponentKind = ComponentKind {
-    name: "prefetch",
-    shows: "TerrainPrefetch",
-    placement: Placement::Anywhere,
-    schema: engine_scene::component_schema!(TerrainPrefetch),
-    example: object_example,
-    validate: validate_prefetch,
-    validate_world: valid_world,
-    prepare: prepare_prefetch,
-    files: no_files,
-    admit: admit_prefetch,
-    paths: no_paths,
-};
-
-fn validate_prefetch(value: &Value, path: &str) -> Result<(), Error> {
-    ruled::<TerrainPrefetch>(value, path, PREFETCH.name, Rule::Any).map(drop)
-}
-
-fn prepare_prefetch(value: &Value, context: &ComponentContext<'_>) -> Prepared {
-    Ok(Box::new(parsed::<TerrainPrefetch>(value, context.path)?))
-}
-
-fn admit_prefetch(_value: &Value, world: &World, path: &str) -> Result<(), Error> {
-    if added(world, TERRAIN_BRICK) {
-        Ok(())
-    } else {
-        Err(missing_brick(TERRAIN_BRICK, path))
-    }
-}
-
-impl PreparedComponent for TerrainPrefetch {
-    fn spawn(&self, entity: &mut EntityWorldMut<'_>, _: &Lookups) {
-        entity.insert(*self);
+        terrains.refused.retain(|(refused, _)| *refused != entity);
+        match scene.0.runtime("$.terrain", &found) {
+            Ok(made) => terrain.0 = Some(made),
+            Err(error) => {
+                terrain.0 = None;
+                terrains.refused.push((entity, error));
+            }
+        }
     }
 }

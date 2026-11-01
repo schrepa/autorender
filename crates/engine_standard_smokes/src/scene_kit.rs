@@ -1,47 +1,37 @@
-use engine_core::smoke::{SmokeFailure, SmokeSession};
-use engine_core::smoke_check;
-use engine_scene::{SceneDocument, SceneInstance};
+use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
-pub(super) struct SceneFixture {
-    instance: Option<SceneInstance>,
+use super::requests::seen;
+
+pub(super) fn load(
+    session: &mut dyn SmokeSession,
+    document: &Value,
+) -> Result<Value, SmokeFailure> {
+    session.source(&document.to_string());
+    let loaded = session
+        .request("control", json!({"name": "render"}))
+        .map(|reply| reply["result"].clone())
+        .map_err(|reply| reply["error"].clone());
+    let wanted = json!(null);
+    smoke_eq!(
+        seen(loaded.is_ok(), json!(loaded.as_ref().err()), &wanted),
+        wanted,
+        "fixture_loads"
+    );
+    Ok(loaded.unwrap_or_default())
 }
 
-impl SceneFixture {
-    pub(super) fn load(
-        session: &mut dyn SmokeSession,
-        document: &Value,
-    ) -> Result<(Self, Value), SmokeFailure> {
-        let mut fixture = Self { instance: None };
-        let loaded = fixture.reload(session, document);
-        smoke_check!(
-            loaded.is_ok(),
-            "fixture_loads",
-            json!(loaded.as_ref().err()),
-            json!(null)
-        );
-        Ok((fixture, loaded.unwrap_or_default()))
-    }
-
-    pub(super) fn reload(
-        &mut self,
-        session: &mut dyn SmokeSession,
-        document: &Value,
-    ) -> Result<Value, Value> {
-        let parsed = SceneDocument::from_json(&document.to_string())
-            .map_err(|error| json!({"code": error.code, "path": error.path}))?;
-        let world = session.app().world_mut();
-        let instance = parsed
-            .instantiate(world)
-            .map_err(|error| json!({"code": error.code, "path": error.path}))?;
-        if let Some(previous) = self.instance.replace(instance) {
-            previous.despawn(world);
-        }
-        session
-            .request("control", json!({"name": "render"}))
-            .map(|reply| reply["result"].clone())
-            .map_err(|reply| reply["error"].clone())
-    }
+pub(super) fn reload(session: &mut dyn SmokeSession, document: &Value) -> Result<Value, Value> {
+    session.source(&document.to_string());
+    let revision = document["revision"].as_u64().unwrap_or_default().to_string();
+    let args = json!({"expected_revision": revision, "revision": revision});
+    session
+        .request("control", json!({"name": "reload", "args": args}))
+        .map_err(|reply| reply["error"].clone())?;
+    session
+        .request("control", json!({"name": "render"}))
+        .map(|reply| reply["result"].clone())
+        .map_err(|reply| reply["error"].clone())
 }
 
 pub(super) fn ask(
@@ -51,11 +41,10 @@ pub(super) fn ask(
 ) -> Result<Value, SmokeFailure> {
     let sent = json!({"verb": verb, "body": body});
     let reply = session.request(verb, body);
-    smoke_check!(
-        reply.is_ok(),
-        "request_accepted",
-        json!(reply.as_ref().err()),
-        sent
+    smoke_eq!(
+        seen(reply.is_ok(), json!(reply.as_ref().err()), &sent),
+        sent,
+        "request_accepted"
     );
     Ok(reply
         .map(|reply| reply["result"].clone())
@@ -69,11 +58,10 @@ pub(super) fn refuse(
 ) -> Result<Value, SmokeFailure> {
     let sent = json!({"verb": verb, "body": body});
     let reply = session.request(verb, body);
-    smoke_check!(
-        reply.is_err(),
-        "request_refused",
-        json!(reply.as_ref().ok()),
-        sent
+    smoke_eq!(
+        seen(reply.is_err(), json!(reply.as_ref().ok()), &sent),
+        sent,
+        "request_refused"
     );
     Ok(reply
         .err()
@@ -117,11 +105,11 @@ pub(super) fn render(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailu
 pub(super) fn capture(session: &mut dyn SmokeSession) -> Result<Value, SmokeFailure> {
     let captured = ask(session, "capture", json!({}))?;
     let image = captured["artifact"]["sha256"].clone();
-    smoke_check!(
-        image.is_string(),
-        "capture_keeps_image",
-        json!(captured["artifact"]),
-        json!("sha256")
+    let wanted = json!("sha256");
+    smoke_eq!(
+        seen(image.is_string(), json!(captured["artifact"]), &wanted),
+        wanted,
+        "capture_keeps_image"
     );
     Ok(image)
 }

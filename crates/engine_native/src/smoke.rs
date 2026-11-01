@@ -2,13 +2,12 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
+use engine::Game;
 use engine::bricks::BrickList;
-use engine::smoke::{SmokeEntry, SmokeFailure, SmokeSession};
 use engine::smokes::{
-    Build, FRAME_MS, Headless, LIST, SmokeRecord, answered, fault, listed, request_line, select,
-    step_lines,
+    Build, FRAME_MS, Headless, LIST, SmokeEntry, SmokeFailure, SmokeRecord, SmokeSession,
+    answered, engine_of, fault, listed, request_line, select, step_lines,
 };
-use engine::{App, Game};
 use serde_json::Value;
 
 use crate::dev::DevSession;
@@ -70,29 +69,24 @@ struct Runner<'a, G: Game> {
 enum Backend<G: Game> {
     Gpu(Box<DevSession<G>>),
     Headless(Box<Headless<G>>),
-    Closed(Box<App>, Value),
 }
 
-impl<'a, G: Game> Runner<'a, G> {
+impl<G: Game> Runner<'_, G> {
     fn record(&mut self, entry: &SmokeEntry) -> SmokeRecord {
-        if entry.gpu && self.gpu == Some(false) {
+        if entry.gpu() && self.gpu == Some(false) {
             return SmokeRecord::skipped(entry);
         }
         let started = Instant::now();
         let elapsed = || started.elapsed().as_secs_f64() * 1000.0;
-        let bricks = self.bricks.clone();
-        let backend = match self.open(None, bricks.clone()) {
+        let backend = match self.open(entry.bricks(self.bricks)) {
             Ok(backend) => backend,
             Err(error) => return SmokeRecord::failed(entry, elapsed(), fault("session", &error)),
         };
-        if entry.gpu && matches!(backend, Backend::Headless(_)) {
+        if entry.gpu() && matches!(backend, Backend::Headless(_)) {
             return SmokeRecord::skipped(entry);
         }
         let mut session = Native {
-            runner: self,
             backend,
-            bricks,
-            source: None,
             clock: 0.0,
             faults: Vec::new(),
         };
@@ -101,28 +95,30 @@ impl<'a, G: Game> Runner<'a, G> {
         SmokeRecord::of(entry, elapsed(), outcome, faults)
     }
 
-    fn open(&mut self, source: Option<&str>, bricks: BrickList) -> engine::Result<Backend<G>> {
+    fn open(&mut self, bricks: BrickList) -> engine::Result<Backend<G>> {
+        let build = self.build;
         if self.gpu != Some(false) {
             let size = self.options.size.unwrap_or(SIZE);
-            let build = self.build;
             let listed = bricks.clone();
-            match Offscreen::launch(size, self.options.gpu, &self.options.jobs, || {
-                build(source, listed)
-            }) {
+            match Offscreen::launch(
+                size,
+                self.options.gpu,
+                &self.options.jobs,
+                move |_| listed,
+                |engine| build(None, engine),
+            ) {
                 Ok(mut game) => {
-                    self.options.settings.apply(game.host_mut());
+                    self.options.settings.apply(game.host_mut())?;
                     self.gpu = Some(true);
-                    let mut session = DevSession::new(game, self.artifacts());
-                    if let Some(document) = source {
-                        session.play(document);
-                    }
+                    let session = DevSession::new(game, self.artifacts());
                     return Ok(Backend::Gpu(Box::new((self.attach)(session))));
                 }
                 Err(error) if self.gpu == Some(true) => return Err(error),
                 Err(_) => {}
             }
         }
-        let (engine, game) = (self.build)(source, bricks)?;
+        let mut engine = engine_of(bricks)?;
+        let game = build(None, &mut engine)?;
         self.gpu = Some(false);
         Ok(Backend::Headless(Box::new(Headless::new(engine, game))))
     }
@@ -135,16 +131,13 @@ impl<'a, G: Game> Runner<'a, G> {
     }
 }
 
-struct Native<'r, 'a, G: Game> {
-    runner: &'r mut Runner<'a, G>,
+struct Native<G: Game> {
     backend: Backend<G>,
-    bricks: BrickList,
-    source: Option<String>,
     clock: f64,
     faults: Vec<SmokeFailure>,
 }
 
-impl<G: Game> Native<'_, '_, G> {
+impl<G: Game> Native<G> {
     fn send(&mut self, line: &str) -> Value {
         match &mut self.backend {
             Backend::Headless(headless) => headless.request(line),
@@ -153,20 +146,11 @@ impl<G: Game> Native<'_, '_, G> {
                 session.game.exchange_jobs();
                 reply
             }
-            Backend::Closed(_, error) => serde_json::json!({"ok": false, "error": error}),
         }
     }
 }
 
-impl<G: Game> SmokeSession for Native<'_, '_, G> {
-    fn app(&mut self) -> &mut App {
-        match &mut self.backend {
-            Backend::Gpu(session) => &mut session.game.host_mut().engine_mut().app,
-            Backend::Headless(headless) => &mut headless.engine.app,
-            Backend::Closed(app, _) => app,
-        }
-    }
-
+impl<G: Game> SmokeSession for Native<G> {
     fn request(&mut self, verb: &str, body: Value) -> Result<Value, Value> {
         answered(self.send(&request_line(verb, body)))
     }
@@ -192,33 +176,7 @@ impl<G: Game> SmokeSession for Native<'_, '_, G> {
         true
     }
 
-    fn gpu(&self) -> bool {
-        matches!(self.backend, Backend::Gpu(_))
-    }
-
-    fn bricks(&self) -> BrickList {
-        self.bricks.clone()
-    }
-
-    fn restart(&mut self, bricks: BrickList) {
-        self.backend = Backend::Closed(Box::new(App::new()), Value::Null);
-        self.bricks = bricks.clone();
-        match self.runner.open(self.source.as_deref(), bricks) {
-            Ok(backend) => {
-                self.backend = backend;
-                self.clock = 0.0;
-            }
-            Err(error) => {
-                self.backend = Backend::Closed(
-                    Box::new(App::new()),
-                    serde_json::to_value(&error).unwrap_or(Value::Null),
-                );
-            }
-        }
-    }
-
     fn source(&mut self, document: &str) {
-        self.source = Some(document.to_owned());
         if let Backend::Gpu(session) = &mut self.backend {
             session.play(document);
         }
