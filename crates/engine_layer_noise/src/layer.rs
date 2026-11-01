@@ -2,7 +2,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use engine_codec::{Reader, Writer};
-use engine_core::{Error, ErrorCode, InvalidSetting, Rule, Setting, fields, parse_value};
+use engine_core::{Error, ErrorCode, fields, parse_value};
 use engine_heightfield::Blend;
 use engine_heightfield::layer::{
     Below, LayerFiles, LayerKind, LayerTile, Made, SamplePoint, TerrainLayer, TileFrame, same_as,
@@ -16,67 +16,21 @@ use crate::tile::{
     COARSE_COST, GRID_STEP, NOISE_SAMPLE_COST, NoiseTile, QUARTER_WEIGHTS, interpolate,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[schemars(transform = state_noise_rules)]
-#[serde(default, deny_unknown_fields)]
-pub struct NoiseLayer {
-    pub seed: u32,
-    pub height: f32,
-    pub offset: f32,
-    pub wavelength: f32,
-    pub ridges: f32,
-    pub warp: f32,
-    pub erosion: f32,
-    pub smoothing: f32,
-    pub valleys: f32,
-    pub roughness: f32,
-    pub blend: Blend,
-}
-
-impl Default for NoiseLayer {
-    fn default() -> Self {
-        Self {
-            seed: 0,
-            height: 900.0,
-            offset: 0.0,
-            wavelength: 3000.0,
-            ridges: 0.3,
-            warp: 0.35,
-            erosion: 0.7,
-            smoothing: 1.0,
-            valleys: 0.7,
-            roughness: 0.5,
-            blend: Blend::Add,
-        }
-    }
-}
-
-impl NoiseLayer {
-    fn rules(&self) -> [(&'static str, f32, Rule); 9] {
-        [
-            ("height", self.height, fields::range(0.0, MAX_HEIGHT)),
-            ("offset", self.offset, fields::range(-MAX_HEIGHT, MAX_HEIGHT)),
-            ("wavelength", self.wavelength, fields::range(16.0, 1.0e6)),
-            ("ridges", self.ridges, fields::range(0.0, 1.0)),
-            ("warp", self.warp, fields::range(0.0, 1.0)),
-            ("erosion", self.erosion, fields::range(0.0, 1.0)),
-            ("smoothing", self.smoothing, fields::range(0.0, 1.0)),
-            ("valleys", self.valleys, fields::range(0.0, 1.0)),
-            ("roughness", self.roughness, fields::range(0.0, 1.0)),
-        ]
-    }
-
-    pub fn validate(&self) -> Result<(), InvalidSetting> {
-        for (field, value, rule) in self.rules() {
-            value.check(field, rule)?;
-        }
-        Ok(())
-    }
-}
-
-fn state_noise_rules(schema: &mut schemars::Schema) {
-    for (field, _, rule) in NoiseLayer::default().rules() {
-        fields::state(schema, field, rule);
+fields! {
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+    #[serde(default, deny_unknown_fields)]
+    pub struct NoiseLayer {
+        pub seed: u32 = 0 => any,
+        pub height: f32 = 900.0 => range(0.0, MAX_HEIGHT),
+        pub offset: f32 = 0.0 => range(-MAX_HEIGHT, MAX_HEIGHT),
+        pub wavelength: f32 = 3000.0 => range(16.0, 1.0e6),
+        pub ridges: f32 = 0.3 => range(0.0, 1.0),
+        pub warp: f32 = 0.35 => range(0.0, 1.0),
+        pub erosion: f32 = 0.7 => range(0.0, 1.0),
+        pub smoothing: f32 = 1.0 => range(0.0, 1.0),
+        pub valleys: f32 = 0.7 => range(0.0, 1.0),
+        pub roughness: f32 = 0.5 => range(0.0, 1.0),
+        pub blend: Blend = Blend::Add => any,
     }
 }
 

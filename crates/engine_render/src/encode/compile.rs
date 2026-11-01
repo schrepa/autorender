@@ -1,6 +1,13 @@
 use super::*;
 
 impl Run {
+    fn part_label(&self, part: u32, entry: &str) -> String {
+        match self.machine.declared.parts.get(part as usize).and_then(|part| part.labels.first()) {
+            Some(prefix) => format!("{prefix} {entry}"),
+            None => entry.to_owned(),
+        }
+    }
+
     pub(super) fn pipeline_of(&self, handle: u32) -> Option<(u32, Option<usize>)> {
         let count = self.machine.pipelines.len() as u32;
         if handle < count {
@@ -51,6 +58,19 @@ impl Run {
         let key = hasher.finish();
         if let Some((_, made)) = built.made.iter().find(|(known, _)| *known == key) {
             return Some((key, made.clone()));
+        }
+        let program_key = built.program_key;
+        let shared = self
+            .machine
+            .pipelines
+            .iter()
+            .filter(|other| other.program_key == program_key)
+            .find_map(|other| other.made.iter().find(|(known, _)| *known == key).map(|(_, made)| made.clone()));
+        if let Some(made) = shared {
+            if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize) {
+                built.made.push((key, made.clone()));
+            }
+            return Some((key, made));
         }
         let constants: Vec<Vec<(String, f64)>> = built
             .stages
@@ -136,8 +156,9 @@ impl Run {
             .collect();
         let vertex_module = built.modules.first()?;
         let fragment_module = fragment_entry.and_then(|_| built.modules.get(fragment_at));
+        let label = self.part_label(built.decl.part, desc.vertex.name());
         let made = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(desc.vertex.name()),
+            label: Some(&label),
             layout: Some(&built.layout),
             vertex: wgpu::VertexState {
                 module: vertex_module,
@@ -236,13 +257,27 @@ impl Run {
         if let Some((_, made)) = built.computed.iter().find(|(known, _)| *known == key) {
             return Some(made.clone());
         }
+        let program_key = built.program_key;
+        let shared = self
+            .machine
+            .pipelines
+            .iter()
+            .filter(|other| other.program_key == program_key)
+            .find_map(|other| other.computed.iter().find(|(known, _)| *known == key).map(|(_, made)| made.clone()));
+        if let Some(made) = shared {
+            if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize) {
+                built.computed.push((key, made.clone()));
+            }
+            return Some(made);
+        }
         let constants: Vec<(String, f64)> = switches
             .iter()
             .map(|(id, on)| (id.to_string(), f64::from(u8::from(*on))))
             .collect();
         let named: Vec<(&str, f64)> = constants.iter().map(|(name, value)| (name.as_str(), *value)).collect();
+        let label = self.part_label(built.decl.part, stage.entry.name());
         let made = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some(stage.entry.name()),
+            label: Some(&label),
             layout: Some(&built.layout),
             module,
             entry_point: Some(stage.entry.name()),

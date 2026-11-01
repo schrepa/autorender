@@ -5,10 +5,8 @@
 
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-mod brick_smokes;
-
 use bevy_ecs::prelude::Res;
-use engine_core::{Brick, Bricks, Runs, Smoke, Source, settings};
+use engine_core::{Brick, Bricks, Source, settings};
 use engine_places::dither::DitherPlace;
 use engine_render::PostDisplay;
 
@@ -26,11 +24,6 @@ pub struct DitherBrick;
 
 impl Brick for DitherBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const SMOKES: &'static [Smoke] = &[Smoke {
-        name: "dither_settings",
-        runs: Runs::Gpu,
-        run: brick_smokes::dither,
-    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

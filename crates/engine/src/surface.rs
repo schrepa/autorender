@@ -38,7 +38,6 @@ macro_rules! __game_surface {
                 fn distribution(values: Vec<f64>) -> String as Json<Option<Distribution>>;
             }
             dev_mut {
-                fn dev_command(request: &str, width: u32, height: u32, paused: bool) -> String as Json<Reply>;
                 fn dev_request(line: &str, context: &str) -> String as Json<Step>;
                 fn dev_resume(outcome: &str, context: &str) -> String as Json<Step>;
                 fn dev_reloaded(source: &str, context: &str, files: Option<SceneFileSet>) -> String as Json<Step>;

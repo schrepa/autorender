@@ -538,6 +538,7 @@ fn freeze(session: &mut dyn SmokeSession) -> Checked<()> {
 
 fn prefetch(session: &mut dyn SmokeSession) -> Checked<()> {
     let spawn = [380.0, 90.0, 380.0];
+    session.without(&[]);
     fixture::prefetched(session, spawn);
     opened(session)?;
     let reach = component(session, "spawn-point", "prefetch")?;

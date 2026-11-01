@@ -22,6 +22,7 @@ pub fn ground_level(pyramid: &Pyramid, texel: f32) -> u32 {
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct ShadowMaps {
     pub on: bool,
+    pub writes: bool,
     pub sky_darkens: bool,
     pub levels: u32,
     pub regions: Vec<Region>,
@@ -35,7 +36,8 @@ impl Slot for ShadowMaps {
         DEBUG_SUN_LEVEL,
         DEBUG_SUN_HORIZON,
         DEBUG_SUN_BEYOND,
-        DEBUG_SHADOWED,
+        DEBUG_SHADOWED;
+        GROUND_TEXELS,
     ));
     const SMOKES: &'static [engine_place::Smoke] = &[crate::smokes::SHADOWS];
 }

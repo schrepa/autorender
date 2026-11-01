@@ -306,10 +306,15 @@ impl GpuPart for ParticlesGpu {
         let accumulate = cx
             .pass("transparent")
             .at(Layer::Blend)
+            .span("transparent")
             .color(accumulated, Access::Clear)
             .color_cleared(revealed, wgpu::Color::WHITE)
             .id();
-        let composite_pass = cx.pass("transparent_composite").at(Layer::Blend).id();
+        let composite_pass = cx
+            .pass("transparent_composite")
+            .at(Layer::Blend)
+            .span("transparent_composite")
+            .id();
         let bound = || {
             [
                 (draw::PARTICLES, Bind::Buffer(uniform)),

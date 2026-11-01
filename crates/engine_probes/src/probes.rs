@@ -270,10 +270,6 @@ impl Default for ProbeState {
 }
 
 impl ProbeState {
-    pub(crate) fn probe_cubes(&self) -> u32 {
-        (self.cubes - 1).max(1)
-    }
-
     fn place(&mut self, probes: &[RenderReflectionProbe], size: u32, most_cubes: u32) -> bool {
         let wanted_cubes = 1 + (probes.len() as u32).min(most_cubes - 1);
         let cubes = if wanted_cubes == 1 {
@@ -425,14 +421,19 @@ pub(crate) fn publish_captures(
     if std::mem::take(&mut state.words_changed) {
         std::mem::swap(&mut words.words, &mut state.words);
     }
+    let finished = state.finished.map(|(cube, _)| cube);
     if captures.faces != state.faces
         || captures.size != state.size
+        || captures.cubes != state.cubes
+        || captures.finished != finished
         || captures.views != state.views
         || captures.still != state.still
     {
         let captures = &mut *captures;
         captures.faces.clone_from(&state.faces);
         captures.size = state.size;
+        captures.cubes = state.cubes;
+        captures.finished = finished;
         captures.views = state.views;
         captures.still = state.still;
     }

@@ -99,6 +99,15 @@ pub struct WaterBody {
     pub shape: Arc<dyn WaterQuery>,
 }
 
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WaterWork {
+    pub uploaded: u64,
+}
+
+impl Slot for WaterWork {
+    const NAME: &'static str = "water_work";
+}
+
 #[derive(Resource, Clone, Default)]
 pub struct Hydrology {
     pub bakes: Vec<(Entity, Arc<HydrologyBake>)>,

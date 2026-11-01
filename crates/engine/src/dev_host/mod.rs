@@ -4,8 +4,8 @@ mod controls;
 use crate::app_host::AppHost;
 use engine_core::{Error, ErrorCode};
 use engine_dev::{
-    CaptureRequest, Context, Control, DevTools, Envelope, ExplainQuestion, HostControl,
-    ProfileRequest, RendererFacts, Verb, WatchRequest,
+    BrowserControl, CaptureRequest, Context, Control, DevTools, Envelope, ExplainQuestion,
+    ProfileRequest, RendererFacts, ToolCall, Verb, WatchRequest,
 };
 use engine_scene::SceneInstance;
 use engine_settings::Expected;
@@ -37,6 +37,29 @@ struct InputBatch {
     released: u32,
 }
 
+pub(crate) enum Call<'a> {
+    Tool(ToolCall<'a>),
+    Control(&'a str, Value),
+}
+
+pub(crate) enum Handled {
+    Reply(Value),
+    Loop(Looped),
+}
+
+pub(crate) enum Looped {
+    Control(BrowserControl),
+    Capture(CaptureRequest),
+    Profile(ProfileRequest),
+    Explain(ExplainQuestion),
+    Watch(WatchRequest),
+}
+
+enum Done {
+    Result(Value),
+    Loop(Looped),
+}
+
 impl DevHost {
     pub fn clear_input(&mut self) {
         self.input = InputBatch::default();
@@ -54,20 +77,44 @@ impl DevHost {
         if envelope.verb != Verb::Control {
             return false;
         }
-        match self.tools.parse_control(world, &envelope, paused) {
+        let (Ok(name), Ok(args)) = (envelope.name(), envelope.args()) else {
+            return false;
+        };
+        self.submits(world, (name, args), paused)
+    }
+
+    pub fn submits(
+        &self,
+        world: &bevy_ecs::prelude::World,
+        named: (&str, Value),
+        paused: bool,
+    ) -> bool {
+        match self.tools.control(world, named, paused) {
             Ok(Control::Operation(_)) => true,
             Ok(Control::Host(
-                HostControl::Loop(_) | HostControl::Input { .. } | HostControl::DebugPanic,
+                BrowserControl::Benchmark { .. }
+                | BrowserControl::Frames { .. }
+                | BrowserControl::Pause { .. }
+                | BrowserControl::Resume { .. }
+                | BrowserControl::Probe { .. }
+                | BrowserControl::Jobs { .. }
+                | BrowserControl::DebugDeviceLoss { .. }
+                | BrowserControl::Game { .. }
+                | BrowserControl::Reload { .. }
+                | BrowserControl::Environment(_)
+                | BrowserControl::DebugMissingAsset { .. }
+                | BrowserControl::Parent { .. }
+                | BrowserControl::Input { .. }
+                | BrowserControl::DebugPanic {},
             ))
             | Err(_) => false,
             Ok(Control::Host(
-                HostControl::Present { .. }
-                | HostControl::Culling { .. }
-                | HostControl::Environment(_)
-                | HostControl::Camera { .. }
-                | HostControl::Step { .. }
-                | HostControl::Render
-                | HostControl::DebugFault { .. },
+                BrowserControl::Present { .. }
+                | BrowserControl::Culling { .. }
+                | BrowserControl::Camera { .. }
+                | BrowserControl::Step { .. }
+                | BrowserControl::Render {}
+                | BrowserControl::DebugFault { .. },
             )) => true,
         }
     }
@@ -77,68 +124,104 @@ impl DevHost {
         app: &mut AppHost,
         scene: Option<&SceneInstance>,
         source: &str,
-        width: u32,
-        height: u32,
+        size: (u32, u32),
         paused: bool,
-    ) -> String {
+    ) -> Handled {
         let envelope = match Envelope::parse(source) {
             Ok(envelope) => envelope,
-            Err(error) => return self.refusal(app, scene, &error),
+            Err(error) => return Handled::Reply(self.refusal(app, scene, &error)),
         };
         app.engine.complete_pending_tick();
         let answered = match envelope.verb {
             Verb::Describe | Verb::Inspect | Verb::Query => {
-                let status = envelope.verb == Verb::Query
-                    && envelope.name().is_ok_and(|name| name == "status");
-                return self.tools_request(app, scene, source, status);
+                return Handled::Reply(match ToolCall::of(&envelope) {
+                    Ok(call) => self.tool(app, scene, call),
+                    Err(error) => self.refusal(app, scene, &error),
+                });
             }
-            Verb::Control => self.control(app, scene, &envelope, (width, height), paused),
+            Verb::Control => self
+                .tools
+                .parse_control(app.engine.app.world(), &envelope, paused)
+                .and_then(|control| controls::run(self, app, scene, control, size)),
             Verb::Capture | Verb::Profile | Verb::Explain | Verb::Watch => {
-                looped(&envelope, paused)
+                looped(&envelope, paused).map(Done::Loop)
             }
             Verb::Check => {
                 Err(Error::new(ErrorCode::UnsupportedCommand, "$.verb").got(Verb::Check.name()))
             }
         };
-        match answered {
-            Ok(result) => self.result(app, scene, result),
-            Err(error) => self.refusal(app, scene, &error),
-        }
+        self.answered(app, scene, answered)
     }
 
-    fn tools_request(
+    pub fn call(
         &mut self,
         app: &mut AppHost,
         scene: Option<&SceneInstance>,
-        source: &str,
-        status: bool,
-    ) -> String {
-        let response = execute(&self.tools, app, scene, source);
-        if !status {
-            return response;
+        call: Call<'_>,
+        size: (u32, u32),
+        paused: bool,
+    ) -> Value {
+        app.engine.complete_pending_tick();
+        match call {
+            Call::Tool(call) => self.tool(app, scene, call),
+            Call::Control(name, args) => {
+                let answered = self
+                    .tools
+                    .control(app.engine.app.world(), (name, args), paused)
+                    .and_then(|control| controls::run(self, app, scene, control, size));
+                match self.answered(app, scene, answered) {
+                    Handled::Reply(reply) => reply,
+                    Handled::Loop(_) => self.refusal(
+                        app,
+                        scene,
+                        &Error::new(ErrorCode::UnsupportedCommand, "$.name").got(name),
+                    ),
+                }
+            }
         }
-        let mut envelope: Value = serde_json::from_str(&response).expect("reply_json");
-        if envelope["ok"] == true {
-            envelope["result"]["build"] = build_identity();
-            envelope["result"]["adapter"] =
+    }
+
+    fn answered(
+        &mut self,
+        app: &mut AppHost,
+        scene: Option<&SceneInstance>,
+        answered: Result<Done, Error>,
+    ) -> Handled {
+        match answered {
+            Ok(Done::Result(result)) => Handled::Reply(self.result(app, scene, result)),
+            Ok(Done::Loop(looped)) => Handled::Loop(looped),
+            Err(error) => Handled::Reply(self.refusal(app, scene, &error)),
+        }
+    }
+
+    fn tool(
+        &mut self,
+        app: &mut AppHost,
+        scene: Option<&SceneInstance>,
+        call: ToolCall<'_>,
+    ) -> Value {
+        let status = matches!(call, ToolCall::Query("status", _));
+        let mut reply = self.reply(app, scene, call);
+        if status && reply["ok"] == true {
+            reply["result"]["build"] = build_identity();
+            reply["result"]["adapter"] =
                 json!(crate::host::AdapterStatus::of(app.renderer.adapter()));
         }
-        envelope.to_string()
+        reply
     }
 
-    fn control(
-        &mut self,
+    fn reply(
+        &self,
         app: &mut AppHost,
         scene: Option<&SceneInstance>,
-        envelope: &Envelope,
-        (width, height): (u32, u32),
-        paused: bool,
-    ) -> Result<Value, Error> {
-        let control = self
-            .tools
-            .parse_control(app.engine.app.world(), envelope, paused)?;
-        let args = envelope.args()?;
-        controls::run(self, app, scene, (args, control), (width, height))
+        call: ToolCall<'_>,
+    ) -> Value {
+        let facts = Facts(&app.renderer);
+        let context = Context {
+            scene,
+            renderer: Some(&facts),
+        };
+        self.tools.call(&mut app.engine, context, call)
     }
 
     pub fn result(
@@ -146,11 +229,11 @@ impl DevHost {
         app: &mut AppHost,
         scene: Option<&SceneInstance>,
         result: Value,
-    ) -> String {
-        let mut envelope = self.observation(app, scene);
+    ) -> Value {
+        let mut envelope = self.reply(app, scene, ToolCall::status());
         envelope["ok"] = json!(true);
         envelope["result"] = result;
-        envelope.to_string()
+        envelope
     }
 
     pub fn refusal(
@@ -158,29 +241,24 @@ impl DevHost {
         app: &mut AppHost,
         scene: Option<&SceneInstance>,
         error: &Error,
-    ) -> String {
-        let mut envelope = self.observation(app, scene);
+    ) -> Value {
+        let mut envelope = self.reply(app, scene, ToolCall::status());
         envelope["ok"] = json!(false);
         envelope
             .as_object_mut()
             .expect("envelope_object")
             .remove("result");
         envelope["error"] = json!(error);
-        envelope.to_string()
-    }
-
-    fn observation(&mut self, app: &mut AppHost, scene: Option<&SceneInstance>) -> Value {
-        let status = engine_dev::named(Verb::Query, "status", json!({}));
-        serde_json::from_str(&execute(&self.tools, app, scene, &status)).expect("envelope_object")
+        envelope
     }
 }
 
-fn looped(envelope: &Envelope, paused: bool) -> Result<Value, Error> {
-    let needs_pause = match envelope.verb {
+fn looped(envelope: &Envelope, paused: bool) -> Result<Looped, Error> {
+    let (needs_pause, looped) = match envelope.verb {
         Verb::Capture => {
             let request: CaptureRequest = envelope.body()?;
             request.validate()?;
-            true
+            (true, Looped::Capture(request))
         }
         Verb::Profile => {
             let request: ProfileRequest = envelope.body()?;
@@ -189,17 +267,17 @@ fn looped(envelope: &Envelope, paused: bool) -> Result<Value, Error> {
                 return Err(Error::new(ErrorCode::ProfilingUnavailable, "$.deep")
                     .expected(Expected::Absent));
             }
-            true
+            (true, Looped::Profile(request))
         }
         Verb::Explain => {
             let question: ExplainQuestion = envelope.body()?;
             question.validate()?;
-            question.needs_pause()
+            (question.needs_pause(), Looped::Explain(question))
         }
         Verb::Watch => {
             let request: WatchRequest = envelope.body()?;
             request.validate()?;
-            true
+            (true, Looped::Watch(request))
         }
         verb @ (Verb::Describe | Verb::Inspect | Verb::Query | Verb::Control | Verb::Check) => {
             return Err(Error::new(ErrorCode::UnsupportedCommand, "$.verb").got(verb.name()));
@@ -210,23 +288,7 @@ fn looped(envelope: &Envelope, paused: bool) -> Result<Value, Error> {
             .expected(Expected::Paused)
             .got(envelope.verb.name()));
     }
-    let mut control = envelope.fields.clone();
-    control.insert("op".to_owned(), json!(envelope.verb.name()));
-    Ok(json!({ "control": control }))
-}
-
-fn execute(
-    tools: &DevTools,
-    app: &mut AppHost,
-    scene: Option<&SceneInstance>,
-    source: &str,
-) -> String {
-    let facts = Facts(&app.renderer);
-    let context = Context {
-        scene,
-        renderer: Some(&facts),
-    };
-    tools.execute(&mut app.engine, context, source)
+    Ok(looped)
 }
 
 fn build_identity() -> Value {

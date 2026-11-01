@@ -18,7 +18,7 @@ mod views;
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, JobKind, Schedule, Slot, Source};
 use engine_places::probes::ProbeViews;
-use engine_places::sky::SkyLight;
+use engine_places::sky::{EnvironmentLayers, SkyLight};
 use engine_render::{Layer, MainView, PostLight, RenderBricks};
 
 pub use settings::{Clouds, Haze, NightSky, Sky, SkyLighting, SkyLightingValues};
@@ -52,6 +52,7 @@ impl Brick for SkyBrick {
             .resource::<under_eye::SurfaceUnderEye>()
             .resource::<sky::SkyPlan>()
             .fill::<SkyLight>(Some(shaders::sky::faces::sky::MODULE))
+            .fill::<EnvironmentLayers>(None)
             .within(casts_cloud_shadows, |bricks| {
                 bricks.fill::<CloudShadows>(Some(shaders::sky::faces::cloud_shadows::MODULE));
             })

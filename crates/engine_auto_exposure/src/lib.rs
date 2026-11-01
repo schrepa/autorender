@@ -11,10 +11,13 @@ mod gpu_layouts;
 mod meter;
 mod settings;
 
+use std::any::TypeId;
 use std::mem::offset_of;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, FrameTime, GpuStruct, Readback, Schedule, Source, View};
+use engine_core::{
+    Brick, Bricks, FrameTime, GpuStruct, PartFaults, Readback, Schedule, Source, View,
+};
 use engine_places::exposure::Exposure;
 use engine_render::RenderBricks;
 
@@ -78,9 +81,10 @@ fn hundredths(stops: f32) -> i32 {
 fn exposure_stats(
     feedback: Res<ExposureFeedback>,
     view: Res<View>,
+    faults: Res<PartFaults>,
     mut stats: ResMut<ExposureStats>,
 ) {
-    let active = !view.debug();
+    let active = !view.debug() && !faults.faulted(TypeId::of::<meter::MeterGpu>());
     let [stops, metered, viewed] = feedback.read.filter(|_| active).unwrap_or_default();
     stats.set_if_neq(ExposureStats {
         active,

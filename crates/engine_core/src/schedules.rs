@@ -35,8 +35,15 @@ pub(crate) struct Waiting;
 #[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct Stream;
 
+#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct FrameStart;
+
+#[derive(ScheduleLabel, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Rendered;
+
 impl Schedule {
-    pub(crate) const ALL: [Self; 10] = [
+    pub(crate) const ALL: [Self; 12] = [
+        Self::FrameStart,
         Self::FixedPreSimulation,
         Self::FixedMove,
         Self::FixedSimulation,
@@ -47,11 +54,13 @@ impl Schedule {
         Self::BetweenFrames,
         Self::Waiting,
         Self::Stream,
+        Self::Rendered,
     ];
 
     #[doc(hidden)]
     pub fn label(self) -> InternedScheduleLabel {
         match self {
+            Self::FrameStart => FrameStart.intern(),
             Self::FixedPreSimulation => FixedPreSimulation.intern(),
             Self::FixedMove => FixedMove.intern(),
             Self::FixedSimulation => FixedSimulation.intern(),
@@ -62,6 +71,7 @@ impl Schedule {
             Self::BetweenFrames => BetweenFrames.intern(),
             Self::Waiting => Waiting.intern(),
             Self::Stream => Stream.intern(),
+            Self::Rendered => Rendered.intern(),
         }
     }
 }

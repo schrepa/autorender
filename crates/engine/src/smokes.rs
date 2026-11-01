@@ -115,6 +115,27 @@ pub fn joined(world: &bevy_ecs::world::World, list: TypeId, each: &mut dyn FnMut
     }
 }
 
+pub fn members(world: &bevy_ecs::world::World, place: &str) -> Vec<&'static str> {
+    world
+        .get_resource::<Registry>()
+        .map(|registry| registry.place_members(place))
+        .unwrap_or_default()
+}
+
+pub fn slot(world: &bevy_ecs::world::World, slot: TypeId, each: &mut dyn FnMut(&dyn Any)) {
+    if let Some(registry) = world.get_resource::<Registry>() {
+        registry.each_slot(world, slot, each);
+    }
+}
+
+pub fn without(bricks: &BrickList, packages: &[&'static str]) -> BrickList {
+    packages
+        .iter()
+        .fold(bricks.clone(), |listed, package| {
+            listed.without_package(package)
+        })
+}
+
 fn left_out(
     session: &mut dyn SmokeSession,
     package: &'static str,
@@ -284,6 +305,8 @@ pub struct SmokeRecord {
     pub ms: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<SmokeFailure>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub faults: Vec<SmokeFailure>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub skipped: bool,
 }
@@ -295,19 +318,28 @@ impl SmokeRecord {
         outcome: std::result::Result<(), SmokeFailure>,
         faults: Vec<SmokeFailure>,
     ) -> Self {
-        let failure = outcome
-            .err()
-            .or_else(|| faults.into_iter().next())
-            .map(|failure| SmokeFailure {
+        let mut faults: Vec<SmokeFailure> = faults
+            .into_iter()
+            .map(|fault| SmokeFailure {
+                smoke: entry.name,
+                ..fault
+            })
+            .collect();
+        let failure = match outcome {
+            Err(failure) => Some(SmokeFailure {
                 smoke: entry.name,
                 ..failure
-            });
+            }),
+            Ok(()) if faults.is_empty() => None,
+            Ok(()) => Some(faults.remove(0)),
+        };
         Self {
             smoke: entry.name,
             brick: entry.owner,
             ok: failure.is_none(),
             ms,
             failure,
+            faults,
             skipped: false,
         }
     }
@@ -323,6 +355,7 @@ impl SmokeRecord {
             ok: true,
             ms: 0.0,
             failure: None,
+            faults: Vec::new(),
             skipped: true,
         }
     }
@@ -405,6 +438,7 @@ pub struct Headless<G: Game> {
     tools: engine_dev::DevTools,
     source: Option<String>,
     files: BTreeMap<String, Vec<u8>>,
+    paused: bool,
 }
 
 impl<G: Game> Headless<G> {
@@ -417,6 +451,7 @@ impl<G: Game> Headless<G> {
             tools,
             source: None,
             files: BTreeMap::new(),
+            paused: true,
         }
     }
 
@@ -478,10 +513,10 @@ impl<G: Game> Headless<G> {
 
     fn control(&mut self, envelope: &engine_dev::Envelope) -> Value {
         use engine_dev::results::{RenderResult, StepResult, result};
-        use engine_dev::{BrowserControl, Control, HostControl};
+        use engine_dev::{BrowserControl, Control};
         let control = match self
             .tools
-            .parse_control(self.engine.app.world(), envelope, true)
+            .parse_control(self.engine.app.world(), envelope, self.paused)
         {
             Ok(control) => control,
             Err(error) => return self.refused(json(&error)),
@@ -494,14 +529,22 @@ impl<G: Game> Headless<G> {
             Control::Operation(call) => call
                 .apply(&mut self.engine, self.game.scene())
                 .map_err(|error| json(&error)),
-            Control::Host(HostControl::Loop(BrowserControl::Reload {
-                expected_revision,
-                revision,
-            })) => self.reload(&expected_revision, &revision),
-            Control::Host(HostControl::Loop(BrowserControl::Jobs { workers: 0 })) => {
+            Control::Host(BrowserControl::Pause {}) => {
+                self.paused = true;
                 Ok(self.status()["result"].clone())
             }
-            Control::Host(HostControl::Step { ticks }) => match self.engine.step_fixed(ticks) {
+            Control::Host(BrowserControl::Resume {}) => {
+                self.paused = false;
+                Ok(self.status()["result"].clone())
+            }
+            Control::Host(BrowserControl::Reload {
+                expected_revision,
+                revision,
+            }) => self.reload(&expected_revision, &revision),
+            Control::Host(BrowserControl::Jobs { workers: 0 }) => {
+                Ok(self.status()["result"].clone())
+            }
+            Control::Host(BrowserControl::Step { ticks }) => match self.engine.step_fixed(ticks) {
                 Ok(_) => Ok(result::step(StepResult {
                     ticks,
                     temporary: true,
@@ -512,18 +555,25 @@ impl<G: Game> Headless<G> {
                         .range(1.0, f64::from(MAX_DEV_TICKS)),
                 )),
             },
-            Control::Host(HostControl::Render) => {
+            Control::Host(BrowserControl::Render {}) => {
                 Ok(result::render(RenderResult { rendered: false }))
             }
             Control::Host(
-                HostControl::Present { .. }
-                | HostControl::Culling { .. }
-                | HostControl::Environment(_)
-                | HostControl::Camera { .. }
-                | HostControl::Input { .. }
-                | HostControl::DebugPanic
-                | HostControl::DebugFault { .. }
-                | HostControl::Loop(_),
+                BrowserControl::Present { .. }
+                | BrowserControl::Culling { .. }
+                | BrowserControl::Environment(_)
+                | BrowserControl::Camera { .. }
+                | BrowserControl::Input { .. }
+                | BrowserControl::DebugPanic {}
+                | BrowserControl::DebugFault { .. }
+                | BrowserControl::Benchmark { .. }
+                | BrowserControl::Frames { .. }
+                | BrowserControl::Probe { .. }
+                | BrowserControl::Jobs { .. }
+                | BrowserControl::DebugDeviceLoss { .. }
+                | BrowserControl::Game { .. }
+                | BrowserControl::DebugMissingAsset { .. }
+                | BrowserControl::Parent { .. },
             ) => Err(unsupported()),
         };
         match done {
@@ -542,11 +592,12 @@ impl<G: Game> Headless<G> {
     }
 
     fn status(&mut self) -> Value {
-        self.execute(&engine_dev::named(
-            engine_dev::Verb::Query,
-            "status",
-            json!({}),
-        ))
+        let context = engine_dev::Context {
+            scene: self.game.scene(),
+            ..engine_dev::Context::default()
+        };
+        self.tools
+            .call(&mut self.engine, context, engine_dev::ToolCall::status())
     }
 
     fn answered(&mut self, result: Value) -> Value {
@@ -612,8 +663,10 @@ pub mod page {
         Headless(Box<Headless<G>>),
     }
 
-    struct Page<G: Game> {
+    struct Page<'b, G: Game> {
         backend: Backend<G>,
+        bricks: BrickList,
+        build: Build<'b, G>,
         source: Option<String>,
         files: BTreeMap<String, Vec<u8>>,
         size: (u32, u32),
@@ -690,20 +743,22 @@ pub mod page {
         SmokeRecord::of(entry, elapsed(), outcome, faults)
     }
 
-    async fn session<G: Game>(
+    async fn session<'b, G: Game>(
         entry: &SmokeEntry,
         canvas: &HtmlCanvasElement,
         size: (u32, u32),
         bricks: BrickList,
-        build: Build<'_, G>,
+        build: Build<'b, G>,
         gpu: &mut Option<bool>,
-    ) -> Result<Option<Page<G>>> {
-        let backend = open(canvas, bricks, build, gpu).await?;
+    ) -> Result<Option<Page<'b, G>>> {
+        let backend = open(canvas, bricks.clone(), build, gpu).await?;
         if entry.gpu() && matches!(backend, Backend::Headless(_)) {
             return Ok(None);
         }
         Ok(Some(Page {
             backend,
+            bricks,
+            build,
             source: None,
             files: BTreeMap::new(),
             size,
@@ -783,7 +838,14 @@ pub mod page {
         }
     }
 
-    impl<G: Game> Page<G> {
+    impl<G: Game> Page<'_, G> {
+        fn world(&self) -> &bevy_ecs::world::World {
+            match &self.backend {
+                Backend::Headless(headless) => headless.engine.app.world(),
+                Backend::Gpu(host) => host.engine().app.world(),
+            }
+        }
+
         fn context(&self) -> HostContext {
             HostContext {
                 width: self.size.0,
@@ -846,12 +908,9 @@ pub mod page {
         }
     }
 
-    impl<G: Game> SmokeSession for Page<G> {
+    impl<G: Game> SmokeSession for Page<'_, G> {
         fn request(&mut self, verb: &str, body: Value) -> std::result::Result<Value, Value> {
-            let line = match &self.backend {
-                Backend::Headless(headless) => routed(headless.engine.app.world(), verb, body),
-                Backend::Gpu(host) => routed(host.engine().app.world(), verb, body),
-            };
+            let line = routed(self.world(), verb, body);
             answered(self.send(&line))
         }
 
@@ -899,11 +958,47 @@ pub mod page {
         }
 
         fn joined(&mut self, list: TypeId, each: &mut dyn FnMut(&dyn Any)) {
-            let world = match &self.backend {
-                Backend::Headless(headless) => headless.engine.app.world(),
-                Backend::Gpu(host) => host.engine().app.world(),
+            super::joined(self.world(), list, each);
+        }
+
+        fn members(&mut self, place: &str) -> Vec<&'static str> {
+            super::members(self.world(), place)
+        }
+
+        fn slot(&mut self, slot: TypeId, each: &mut dyn FnMut(&dyn Any)) {
+            super::slot(self.world(), slot, each);
+        }
+
+        fn without(&mut self, bricks: &[&'static str]) {
+            let listed = super::without(&self.bricks, bricks);
+            let built = engine_of(listed).and_then(|mut engine| {
+                let game = (self.build)(None, &mut engine)?;
+                Ok((engine, game))
+            });
+            let (engine, game) = match built {
+                Ok(built) => built,
+                Err(error) => {
+                    self.faults.push(fault("without", &error));
+                    return;
+                }
             };
-            super::joined(world, list, each);
+            match &mut self.backend {
+                Backend::Gpu(host) => {
+                    host.replace_engine(engine);
+                    *host.game_mut() = game;
+                    prepared(host.as_mut());
+                }
+                Backend::Headless(headless) => {
+                    **headless = Headless::new(engine, game);
+                    for (name, bytes) in &self.files {
+                        headless.file(name, bytes);
+                    }
+                }
+            }
+            self.clock = 0.0;
+            if let Some(document) = self.source.clone() {
+                self.source(&document);
+            }
         }
 
         fn file(&mut self, name: &str, bytes: &[u8]) {
@@ -911,6 +1006,20 @@ pub mod page {
             if let Backend::Headless(headless) = &mut self.backend {
                 headless.file(name, bytes);
             }
+        }
+
+        fn artifact(&mut self, _path: &str) -> Option<Vec<u8>> {
+            None
+        }
+
+        fn decode_image(
+            &mut self,
+            path: &str,
+            bytes: &[u8],
+        ) -> std::result::Result<(u32, u32, Vec<u8>), Value> {
+            engine_worker::decode_image(path, bytes)
+                .map(|image| (image.width, image.height, image.pixels))
+                .map_err(|error| json(&error))
         }
     }
 }

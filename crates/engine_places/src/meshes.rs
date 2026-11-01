@@ -14,6 +14,7 @@ pub struct Instances {
     pub slots: Vec<(Entity, u32)>,
     pub capacity: u32,
     pub candidates: u32,
+    pub casters: bool,
 }
 
 impl Instances {

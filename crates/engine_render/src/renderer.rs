@@ -88,7 +88,11 @@ impl Renderer {
             return Some(package);
         }
         let machine = &self.run.as_ref()?.machine;
-        let declared = machine.declared.passes.iter().find(|known| known.name == pass)?;
+        let declared = machine
+            .declared
+            .passes
+            .iter()
+            .find(|known| known.group.unwrap_or(known.name) == pass || known.name == pass)?;
         machine.declared.parts.get(declared.part as usize).map(|part| part.package)
     }
 

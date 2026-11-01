@@ -1,28 +1,27 @@
-mod environment;
 mod input;
 mod view;
 
 use engine_core::{Error, ErrorCode};
-use engine_dev::{Control, HostControl};
+use engine_dev::{BrowserControl, Control};
 use engine_scene::SceneInstance;
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use super::{DevHost, InputBatch};
+use super::{DevHost, Done, InputBatch, Looped};
 use crate::app_host::AppHost;
 
 pub(super) fn run(
     host: &mut DevHost,
     app: &mut AppHost,
     scene: Option<&SceneInstance>,
-    (args, control): (Value, Control),
+    control: Control,
     size: (u32, u32),
-) -> Result<Value, Error> {
+) -> Result<Done, Error> {
     match control {
         Control::Operation(call) => {
             let result = call.apply(&mut app.engine, scene)?;
-            then_render(app, size, result)
+            then_render(app, size, result).map(Done::Result)
         }
-        Control::Host(control) => host_control(host, app, (args, control), size).map_err(in_args),
+        Control::Host(control) => host_control(host, app, control, size).map_err(in_args),
     }
 }
 
@@ -37,13 +36,13 @@ fn in_args(error: Error) -> Error {
 fn host_control(
     host: &mut DevHost,
     app: &mut AppHost,
-    (args, control): (Value, HostControl),
+    control: BrowserControl,
     size: (u32, u32),
-) -> Result<Value, Error> {
-    match control {
-        HostControl::Present { alpha } => view::present(app, alpha, size),
-        HostControl::Culling { enabled } => view::culling(app, enabled, size),
-        HostControl::Camera {
+) -> Result<Done, Error> {
+    let done = match control {
+        BrowserControl::Present { alpha } => view::present(app, alpha, size),
+        BrowserControl::Culling { enabled } => view::culling(app, enabled, size),
+        BrowserControl::Camera {
             position,
             target,
             vertical_fov_radians,
@@ -56,8 +55,7 @@ fn host_control(
             (near, far),
             size,
         ),
-        HostControl::Environment(control) => environment::set(app, args, control, size),
-        HostControl::Input {
+        BrowserControl::Input {
             forward,
             right,
             up,
@@ -79,14 +77,26 @@ fn host_control(
                 released,
             },
         ),
-        HostControl::Step { ticks } => input::step(host, app, ticks, size),
-        HostControl::Render => view::render(app, size),
-        HostControl::DebugPanic => {
+        BrowserControl::Step { ticks } => input::step(host, app, ticks, size),
+        BrowserControl::Render {} => view::render(app, size),
+        BrowserControl::DebugPanic {} => {
             panic!("debug_panic")
         }
-        HostControl::DebugFault { feature } => view::fault(app, &feature, size),
-        HostControl::Loop(control) => Ok(json!({ "control": control })),
-    }
+        BrowserControl::DebugFault { feature } => view::fault(app, &feature, size),
+        control @ (BrowserControl::Benchmark { .. }
+        | BrowserControl::Frames { .. }
+        | BrowserControl::Pause { .. }
+        | BrowserControl::Resume { .. }
+        | BrowserControl::Probe { .. }
+        | BrowserControl::Jobs { .. }
+        | BrowserControl::DebugDeviceLoss { .. }
+        | BrowserControl::Game { .. }
+        | BrowserControl::Reload { .. }
+        | BrowserControl::Environment(_)
+        | BrowserControl::DebugMissingAsset { .. }
+        | BrowserControl::Parent { .. }) => return Ok(Done::Loop(Looped::Control(control))),
+    };
+    done.map(Done::Result)
 }
 
 fn then_render(

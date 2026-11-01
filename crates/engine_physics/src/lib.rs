@@ -21,7 +21,10 @@ mod world;
 pub use settings::{Physics, PhysicsStats};
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, ComponentKind, Runs, SceneComponents, Schedule, Smoke, Source};
+use engine_core::{
+    Brick, Bricks, ComponentKind, ErrorCode, Placement, Runs, SceneComponents, Schedule, Smoke,
+    Source,
+};
 use engine_places::physics::RigidBody;
 use engine_places::water::WaterObstacles;
 
@@ -46,7 +49,7 @@ impl Brick for PhysicsBrick {
             .join::<SceneComponents>(
                 ComponentKind::of::<RigidBody>("rigid_body")
                     .check(body::check_body)
-                    .check_placed(body::placed_body)
+                    .placement(Placement::Roots(ErrorCode::InvalidRigidBody))
                     .schema(body::body_schema)
                     .example(body::body_example),
                 None,

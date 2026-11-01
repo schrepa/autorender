@@ -131,7 +131,7 @@ fn hold_standing_eye(
         eye: Vec3::new(standing.x, found.height + EYE_HEIGHT, standing.z),
         ..standing
     };
-    **camera = held.camera();
+    *camera.bypass_change_detection() = held.camera();
     views.standing = Some(held);
 }
 

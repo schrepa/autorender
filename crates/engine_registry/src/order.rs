@@ -26,6 +26,7 @@ pub(crate) struct PlaceRules {
     pub(crate) bricks: Box<[(InternedSystemSet, BrickId)]>,
     pub(crate) slots: Box<[(ComponentId, Option<BrickId>)]>,
     pub(crate) firsts: Box<[ComponentId]>,
+    pub(crate) orders: Box<[(BrickId, BrickId)]>,
     pub(crate) rule: AccessRule,
 }
 
@@ -109,6 +110,19 @@ impl ScheduleBuildPass for PlaceRules {
                 });
                 for (reader, _, _) in readers {
                     flat.add_edge(*writer, *reader);
+                }
+            }
+        }
+        for &(first, then) in &*self.orders {
+            for (early, _, early_access) in found.iter().filter(|(_, brick, _)| *brick == first) {
+                let lates = found.iter().filter(|(_, brick, access)| {
+                    *brick == then
+                        && !early_access
+                            .combined_access()
+                            .is_compatible(access.combined_access())
+                });
+                for (late, _, _) in lates {
+                    flat.add_edge(*early, *late);
                 }
             }
         }

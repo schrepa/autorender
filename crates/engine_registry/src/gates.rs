@@ -34,6 +34,7 @@ pub struct Gates {
     parents: Vec<Option<GateId>>,
     bricks: Vec<BrickId>,
     flipped: Vec<(GateId, bool)>,
+    faulted: Vec<bool>,
     generation: u64,
 }
 
@@ -42,6 +43,7 @@ impl Gates {
         Self {
             own: vec![true; parents.len()],
             on: vec![true; parents.len()],
+            faulted: vec![false; parents.len()],
             parents,
             bricks,
             flipped: Vec::new(),
@@ -63,6 +65,16 @@ impl Gates {
 
     pub fn flipped(&self) -> &[(GateId, bool)] {
         &self.flipped
+    }
+
+    pub fn fault(&mut self, gate: GateId) {
+        if let Some(faulted) = self.faulted.get_mut(gate.index()) {
+            *faulted = true;
+        }
+    }
+
+    pub fn faulted(&self, gate: GateId) -> bool {
+        self.faulted.get(gate.index()).copied().unwrap_or(false)
     }
 
     pub fn generation(&self) -> u64 {
@@ -100,10 +112,23 @@ impl Gates {
     pub fn settle(&mut self) {
         self.flipped.clear();
     }
+
+    fn net(&mut self, before: &[bool]) {
+        self.flipped.clear();
+        for (index, (&was, &on)) in before.iter().zip(&self.on).enumerate() {
+            if was != on {
+                self.flipped.push((GateId(index as u32), on));
+            }
+        }
+    }
 }
 
 pub fn gate_on(gate: GateId) -> impl FnMut(Res<Gates>) -> bool + Clone + Send + Sync + 'static {
     move |gates: Res<Gates>| gates.on(gate)
+}
+
+pub fn gate_off(gate: GateId) -> impl FnMut(Res<Gates>) -> bool + Clone + Send + Sync + 'static {
+    move |gates: Res<Gates>| !gates.on(gate)
 }
 
 pub(crate) struct Gate {
@@ -156,21 +181,43 @@ impl GateDriver {
     }
 
     pub fn run(&mut self, world: &mut World) {
-        self.scratch.clear();
-        for gate in self.gates.iter_mut() {
-            let on = match gate.condition.run_readonly((), world) {
-                Ok(on) => on,
-                Err(error) => {
-                    self.faults.push((gate.brick, error));
+        let mut before: Vec<bool> = Vec::new();
+        let mut flipped = false;
+        for round in 0..self.gates.len().max(1) {
+            self.scratch.clear();
+            for gate in self.gates.iter_mut() {
+                let faulted = world
+                    .get_resource::<Gates>()
+                    .is_some_and(|gates| gates.faulted(gate.id));
+                let on = if faulted {
                     false
+                } else {
+                    match gate.condition.run_readonly((), world) {
+                        Ok(on) => on,
+                        Err(error) => {
+                            if round == 0 {
+                                self.faults.push((gate.brick, error));
+                            }
+                            false
+                        }
+                    }
+                };
+                if on != gate.on {
+                    gate.on = on;
+                    self.scratch.push((gate.id, on));
                 }
-            };
-            if on != gate.on {
-                gate.on = on;
-                self.scratch.push((gate.id, on));
             }
+            if self.scratch.is_empty() {
+                break;
+            }
+            let mut gates = world.resource_mut::<Gates>();
+            if !flipped {
+                before.clone_from(&gates.on);
+                flipped = true;
+            }
+            gates.flip(&self.scratch);
         }
-        if self.scratch.is_empty() {
+        if !flipped {
             if world
                 .get_resource::<Gates>()
                 .is_some_and(|gates| !gates.flipped().is_empty())
@@ -181,7 +228,7 @@ impl GateDriver {
         }
         {
             let mut gates = world.resource_mut::<Gates>();
-            gates.flip(&self.scratch);
+            gates.net(&before);
             self.changed.clear();
             self.changed.extend_from_slice(gates.flipped());
         }

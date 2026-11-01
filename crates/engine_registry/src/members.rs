@@ -51,6 +51,13 @@ impl<L: List> MembersOf<L> {
         &self.members
     }
 
+    pub fn every(&self) -> impl Iterator<Item = (TypeId, u32, &L::Member)> + '_ {
+        self.members
+            .iter()
+            .zip(self.bricks.iter().zip(&self.locals))
+            .map(|(member, (&brick, &local))| (brick, local, member))
+    }
+
     pub fn owners(&self) -> &[&'static str] {
         &self.owners
     }

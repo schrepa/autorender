@@ -33,6 +33,7 @@ pub(super) struct TerrainState {
     pub(super) store: TileStore,
     pub(super) failed: TileMap<u64>,
     pub(super) drawn: bool,
+    pub(super) streamed: bool,
     pub(super) collision: Vec<TileKey>,
     pub(super) standing: u64,
     pub(super) solids: Arc<[Option<Solid>]>,
@@ -81,6 +82,7 @@ impl TerrainState {
             terrain,
             failed: TileMap::default(),
             drawn: false,
+            streamed: false,
             collision: Vec::new(),
             standing: 0,
             solids: Arc::from(Vec::new()),
@@ -273,7 +275,7 @@ impl TerrainState {
         if let Some(left) = self.store.leave(key)
             && left.current
         {
-            self.store.keep_in_memory(left.tile, left.stamps, frame);
+            self.store.keep_in_memory(left, frame);
         }
     }
 
@@ -313,6 +315,7 @@ pub struct Terrains {
     pub(super) seconds: f32,
     pub(super) fast_ago: Option<f32>,
     pub(super) loaded: bool,
+    pub(super) settled: bool,
     pub(super) stacks: Vec<(Arc<Layers>, engine_core::RecordKey)>,
     pub(super) retired: Retired,
     pub(super) restored: u64,

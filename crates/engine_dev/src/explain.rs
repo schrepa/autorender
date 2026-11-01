@@ -1,3 +1,5 @@
+pub use engine_registry::ExplainRecord;
+
 use std::panic::Location;
 
 use bevy_ecs::prelude::{Entity, World};
@@ -5,8 +7,7 @@ use engine_core::{AssetLibrary, Mesh3d};
 use engine_registry::{BrickCost, BrickCosts, Registry};
 use engine_scene::{SceneDocument, SceneFiles, SceneInstance, SceneKinds};
 use engine_settings::{Error, ErrorCode, Expected};
-use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::DevTools;
 use crate::protocol::{Detail, MAX_EXPLAINED};
@@ -17,39 +18,6 @@ pub enum DrawState {
     Unread,
     Culled,
     Level(u32),
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ExplainRecord {
-    pub brick: &'static str,
-    pub decided: &'static str,
-    #[serde(flatten)]
-    pub facts: Map<String, Value>,
-}
-
-impl ExplainRecord {
-    pub fn new(decided: &'static str) -> Self {
-        Self {
-            brick: "",
-            decided,
-            facts: Map::new(),
-        }
-    }
-
-    #[must_use]
-    pub fn of(mut self, brick: &'static str) -> Self {
-        self.brick = brick;
-        self
-    }
-
-    #[must_use]
-    pub fn with(mut self, fact: &str, value: impl Serialize) -> Self {
-        self.facts.insert(
-            fact.to_owned(),
-            serde_json::to_value(value).expect("facts_serialize"),
-        );
-        self
-    }
 }
 
 pub(crate) fn source_line(at: &Location<'_>) -> String {
@@ -94,9 +62,10 @@ impl DevTools {
         world: &World,
         (id, entity): (&str, Entity),
         facts: EntityFacts,
-        stats: &Value,
+        (stats, bricks): (&Value, Vec<ExplainRecord>),
     ) -> ExplainResult {
         let mut records = vec![core_entity(world, id, entity, facts)];
+        records.extend(bricks);
         records.extend(cuts(world, stats));
         finished("entity", records)
     }
@@ -104,7 +73,7 @@ impl DevTools {
     pub fn explain_frame(
         &self,
         world: &World,
-        stats: &Value,
+        (stats, bricks): (&Value, Vec<ExplainRecord>),
         top: usize,
         detail: Detail,
     ) -> Result<ExplainResult, Error> {
@@ -114,6 +83,7 @@ impl DevTools {
                 .got("BrickCosts")
         })?;
         let mut records = slow_frame(costs, top, detail);
+        records.extend(bricks);
         records.extend(cuts(world, stats));
         Ok(finished("frame", records))
     }

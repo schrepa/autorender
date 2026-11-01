@@ -135,7 +135,10 @@ pub fn generated(world: &World) -> Result<Generated, String> {
     }
     let mut sections = Map::new();
     for section in registry.sections() {
-        sections.insert(section.key.to_owned(), serialized(section.schema()));
+        let schema = registry
+            .section_schema(section.key)
+            .unwrap_or_else(|| section.schema());
+        sections.insert(section.key.to_owned(), serialized(schema));
     }
     for stats in registry.stats() {
         sections.insert(stats.key.to_owned(), serialized(stats.schema()));

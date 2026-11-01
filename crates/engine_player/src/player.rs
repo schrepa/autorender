@@ -15,7 +15,7 @@ const COLLISION_LIMITS: [(&str, u32); 5] = [
     ("collision.max_query_hits", 1024),
 ];
 
-const FLIES: &str = "fly_camera.enabled";
+pub(crate) const FLIES: &str = "fly_camera.enabled";
 
 const STEERED: &str = "fly_camera.steered_only";
 

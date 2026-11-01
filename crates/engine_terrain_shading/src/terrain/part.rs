@@ -150,6 +150,7 @@ impl GpuPart for TerrainGpu {
         Frame,
         (Res<'static, DeviceLimits>, Res<'static, AssetLibrary>),
     );
+    const NAME: &'static str = "terrain";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::terrain_shading::{
@@ -240,11 +241,12 @@ impl GpuPart for TerrainGpu {
             Bind::Sampler(h.linear),
         )?;
 
-        let normals_pass = cx.pass("tile_normals").id();
-        let control_pass = cx.pass("tile_control").id();
+        let normals_pass = cx.pass("tile_normals").label("engine/terrain-normals").id();
+        let control_pass = cx.pass("tile_control").label("engine/terrain-control").id();
         let clear_counters = cx.clear("clear_surface_counters", h.counters);
         let begin = cx
             .pass("subdivision_begin")
+            .label("engine/terrain-subdivision-arguments")
             .after(clear_counters)
             .after(control_pass)
             .after(normals_pass)
@@ -256,17 +258,25 @@ impl GpuPart for TerrainGpu {
         );
         let subdivide = cx
             .pass("terrain_subdivision")
+            .label("engine/terrain-subdivision")
+            .span("terrain_subdivision")
             .after(copy_args)
             .after(begin)
             .id();
-        let bounce_pass = cx.pass("bounce").id();
+        let bounce_pass = cx
+            .pass("bounce")
+            .label("engine/terrain-bounce")
+            .span("bounce")
+            .id();
         let ids_pass = cx
             .pass("terrain_ids")
+            .label("engine/terrain-ids")
             .at(Layer::Opaque)
             .color(h.ids, engine_render::Access::Clear)
             .id();
         let resolve_pass = cx
             .pass("terrain_resolve")
+            .label("engine/terrain-resolve")
             .at(Layer::Opaque)
             .after(ids_pass)
             .id();

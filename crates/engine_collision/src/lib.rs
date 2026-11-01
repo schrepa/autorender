@@ -38,7 +38,7 @@ impl Brick for CollisionBrick {
         bricks
             .when(|config: Res<CollisionConfig>| config.enabled)
             .settings::<CollisionConfig>()
-            .stats::<CollisionStats>()
+            .settled_stats::<CollisionStats, _>(world::refresh)
             .fill::<Collision>(None)
             .join::<SceneComponents>(
                 ComponentKind::of::<Collider>("collider")

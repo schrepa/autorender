@@ -3,12 +3,11 @@ use std::sync::Arc;
 
 use engine_codec::Error;
 use engine_core::math::GRAVITY;
-use engine_heightfield::hydrology::WaterGrid;
 use engine_heightfield::noise::smooth;
-use engine_heightfield::rivers::{RiverRaster, RiverWater, Rivers};
+use engine_heightfield::rivers::{RiverRaster, Rivers};
 use engine_heightfield::tile::{
-    Footprint, Generator, PATCH_QUADS, PATCHES_PER_TILE, TILE_STRIDE, Tile, hole_at, on_triangle,
-    tile_cell,
+    Footprint, Generator, LAKE_REACH, PATCH_QUADS, PATCHES_PER_TILE, TILE_STRIDE, Tile,
+    extend_water, hole_at, on_triangle, tile_cell, water_rows,
 };
 use engine_heightfield::{Layers, Pyramid, Reach, TILE_QUADS, TILE_SAMPLES, TileKey};
 use engine_places::ground::TileFace;
@@ -22,7 +21,6 @@ pub use crate::gpu::{
 use crate::shallow_water::DENSITY;
 
 pub(crate) const NONE: u32 = u32::MAX;
-pub const WATER_REACH: u32 = 4;
 const NO_RING: u8 = u8::MAX;
 const QUEUED: u8 = u8::MAX - 1;
 const STOPPED: u8 = u8::MAX - 2;
@@ -88,7 +86,7 @@ impl TileWater {
         {
             return None;
         }
-        extend(&mut surface, &mut info, heights);
+        extend_water(&mut surface, &mut info, heights, ([0; 2], &mixed));
         let mut held = [0_u64; 4];
         let (patch, patches) = (PATCH_QUADS as usize, PATCHES_PER_TILE as usize);
         for pz in 0..patches {
@@ -217,90 +215,23 @@ impl crate::codec::Codec for TileWater {
     }
 }
 
-fn extend(surface: &mut [f32], info: &mut [[u32; 2]], heights: &[f32]) {
-    let stride = TILE_STRIDE as usize;
-    let mut rings: Vec<u8> = surface
-        .iter()
-        .zip(heights)
-        .map(|(level, ground)| if level > ground { 0 } else { NO_RING })
-        .collect();
-    for (at, &ring) in rings.iter().enumerate() {
-        if ring == NO_RING {
-            surface[at] = f32::NAN;
-            info[at] = [0; 2];
-        }
-    }
-    let mut inside: Vec<usize> = (0..rings.len()).filter(|&at| rings[at] == 0).collect();
-    for ring in 1..=WATER_REACH as u8 {
-        let mut queued = Vec::new();
-        for &from in &inside {
-            let (x, z) = (from % stride, from / stride);
-            for nz in z.saturating_sub(1)..(z + 2).min(stride) {
-                for nx in x.saturating_sub(1)..(x + 2).min(stride) {
-                    let near = nz * stride + nx;
-                    if rings[near] == NO_RING {
-                        rings[near] = QUEUED;
-                        queued.push(near);
-                    }
-                }
-            }
-        }
-        let made: Vec<(f32, [u32; 2], bool)> = queued
-            .iter()
-            .map(|&at| continued(at, ring - 1, (&*surface, &*info, heights), &rings))
-            .collect();
-        inside.clear();
-        for (&at, &(level, words, stops)) in queued.iter().zip(&made) {
-            surface[at] = level;
-            info[at] = words;
-            rings[at] = if stops { STOPPED } else { ring };
-            if !stops {
-                inside.push(at);
-            }
-        }
-    }
-}
-
-fn continued(
-    at: usize,
-    inner: u8,
-    (surface, info, heights): (&[f32], &[[u32; 2]], &[f32]),
-    rings: &[u8],
-) -> (f32, [u32; 2], bool) {
-    let stride = TILE_STRIDE as usize;
-    let (x, z) = (at % stride, at / stride);
-    let (mut level, mut apart, mut flow, mut lakes, mut span, mut count) =
-        (0.0, 0.0, Vec2::ZERO, 0, 0.0, 0);
+fn mixed(near: &[usize], info: &[[u32; 2]]) -> [u32; 2] {
+    let count = near.len();
+    let (mut flow, mut lakes, mut span) = (Vec2::ZERO, 0, 0.0);
     let (mut state, mut reaches) = (PointState::default(), [0_u32; 6]);
-    for nz in z.saturating_sub(1)..(z + 2).min(stride) {
-        for nx in x.saturating_sub(1)..(x + 2).min(stride) {
-            let near = nz * stride + nx;
-            if rings[near] != inner {
-                continue;
-            }
-            let [packed, stirred] = info[near];
-            let (near_flow, lake, near_span) = unpack(packed);
-            let near_state = unpack_state(stirred);
-            level += surface[near];
-            apart += (surface[near] - heights[near]).abs();
-            flow += near_flow;
-            lakes += usize::from(lake);
-            span += near_span;
-            state.turbulence += near_state.turbulence;
-            state.breaking += near_state.breaking;
-            state.shear += near_state.shear;
-            reaches[reach_code(near_state.reach) as usize] += 1;
-            count += 1;
-        }
+    for &near in near {
+        let [packed, stirred] = info[near];
+        let (near_flow, lake, near_span) = unpack(packed);
+        let near_state = unpack_state(stirred);
+        flow += near_flow;
+        lakes += usize::from(lake);
+        span += near_span;
+        state.turbulence += near_state.turbulence;
+        state.breaking += near_state.breaking;
+        state.shear += near_state.shear;
+        reaches[reach_code(near_state.reach) as usize] += 1;
     }
     let share = 1.0 / count as f32;
-    let level = level * share;
-    let stops = heights[at] < level;
-    let standing = if stops {
-        heights[at] - apart * share
-    } else {
-        level
-    };
     let most = (0..reaches.len()).fold(0, |most, code| {
         if reaches[code] > reaches[most] {
             code
@@ -308,7 +239,7 @@ fn continued(
             most
         }
     });
-    let words = [
+    [
         pack(flow * share, false, lakes * 2 > count, span * share),
         pack_state(PointState {
             turbulence: state.turbulence * share,
@@ -316,8 +247,7 @@ fn continued(
             shear: state.shear * share,
             reach: reach_of(most as u32),
         }),
-    ];
-    (standing, words, stops)
+    ]
 }
 
 fn drawn_surfaces(surfaces: &[f32], heights: &[f32]) -> Vec<f32> {
@@ -335,7 +265,7 @@ fn drawn_surfaces(surfaces: &[f32], heights: &[f32]) -> Vec<f32> {
             (x.saturating_sub(1)..(x + 2).min(stride)).map(move |nx| nz * stride + nx)
         })
     };
-    for ring in 1..=WATER_REACH as u8 {
+    for ring in 1..=LAKE_REACH {
         let inner = ring - 1;
         let mut queued = Vec::new();
         for &from in &inside {
@@ -581,41 +511,6 @@ pub(crate) fn nearest(seeds: &[bool]) -> Vec<u32> {
     nearest
 }
 
-pub(crate) fn water_rows(
-    lakes: &WaterGrid,
-    river: &dyn Fn(usize, usize) -> Option<RiverWater>,
-    (rows, columns): (Range<usize>, &dyn Fn(usize) -> Range<usize>),
-    (xs, zs): (&[f32], &[f32]),
-    shown: &dyn Fn(f32, f32) -> f32,
-    (surface, info): (&mut [f32], &mut [[u32; 2]]),
-) {
-    let stride = TILE_STRIDE as usize;
-    let first = rows.start;
-    for row in rows {
-        let z = zs[row];
-        for column in columns(row) {
-            let x = xs[column];
-            if shown(x, z) < 1.0 {
-                continue;
-            }
-            let water = river(row, column);
-            let at = (row - first) * stride + column;
-            match lakes.lake_reach(x, z) {
-                Some((level, span)) if !water.is_some_and(|water| water.surface > level) => {
-                    surface[at] = level;
-                    info[at] = [pack(Vec2::ZERO, false, true, span), 0];
-                }
-                _ => {
-                    if let Some(water) = water {
-                        surface[at] = water.surface;
-                        info[at] = [pack(water.flow, water.sheeted, false, water.span), 0];
-                    }
-                }
-            }
-        }
-    }
-}
-
 pub(crate) fn positions(layers: &Layers, pyramid: &Pyramid, key: TileKey) -> [Vec<f32>; 2] {
     let spacing = pyramid.spacing(u32::from(key.level));
     let [x, z] = pyramid.first_sample(key);
@@ -645,6 +540,9 @@ fn tile_rows(layers: &Layers, pyramid: &Pyramid, key: TileKey) -> Option<Rows> {
         (&xs, &zs),
         &|x, z| layers.shown(x, z),
         (&mut surface, &mut info),
+        (&|span| [pack(Vec2::ZERO, false, true, span), 0], &|water| {
+            [pack(water.flow, water.sheeted, false, water.span), 0]
+        }),
     );
     Some((surface, info))
 }
@@ -790,6 +688,9 @@ pub(crate) fn rewatered(
         (&xs, &zs),
         &|x, z| layers.shown(x, z),
         (&mut surface[at.clone()], &mut info[at]),
+        (&|span| [pack(Vec2::ZERO, false, true, span), 0], &|water| {
+            [pack(water.flow, water.sheeted, false, water.span), 0]
+        }),
     );
     let solids = water.map_or(&[][..], TileWater::solids);
     TileWater::new(

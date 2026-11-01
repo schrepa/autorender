@@ -35,14 +35,24 @@ fn fullscreen(fragment: Entry) -> RenderPipeline<'static> {
 
 impl GpuPart for AmbientGpu {
     type Reads = (Res<'static, View>, Res<'static, DebugShown>);
+    const NAME: &'static str = "ambient_occlusion";
+    const LAZY: bool = true;
+    const LABELS: &'static [&'static str] = &["engine/ambient-occlusion"];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let raw = cx.texture("raw_occlusion", RAW_OCCLUSION_FORMAT, Lifetime::Kept);
         let occlusion = cx.texture("occlusion", OCCLUSION_FORMAT, Lifetime::Frame);
         cx.frame(apply::OCCLUSION, Bind::Texture(occlusion))?;
-        let occluding = cx.pass("ambient_occlusion").color(raw, Access::Load).id();
+        let occluding = cx
+            .pass("ambient_occlusion")
+            .label("engine/ambient-occlusion")
+            .span("ambient_occlusion")
+            .color(raw, Access::Load)
+            .id();
         let filtering = cx
             .pass("effects_filter")
+            .label("engine/ambient-occlusion-filter")
+            .span("effects_filter")
             .color_cleared(occlusion, wgpu::Color::WHITE)
             .id();
         let occlusion_pipeline =

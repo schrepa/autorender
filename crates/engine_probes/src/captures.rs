@@ -1,8 +1,9 @@
 use bevy_ecs::prelude::*;
 use engine_core::{DeviceLimits, Error};
 use engine_places::probes::{ProbeView, ProbeViews};
+use engine_places::sky::{EnvironmentFaces, EnvironmentLayers};
 use engine_render::{
-    Access, Attach, Bind, Buffer, DEPTH_FORMAT, DepthUse, Draws, Encode, GpuPart, Install,
+    Access, Attach, Bind, Buffer, DEPTH_FORMAT, DepthUse, Draw, Draws, Encode, GpuPart, Install,
     Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, SamplerDesc, Shape, Texture, wgpu,
 };
 
@@ -19,11 +20,10 @@ pub(crate) struct ProbesGpu {
     captures: Pass<Self>,
     filter: Pass<Self>,
     radiance: Texture<Self>,
-    maps: Texture<Self>,
     depth: Texture<Self>,
     words: Buffer<Self>,
     down: Vec<Pipeline<Self, Own>>,
-    prefilter: Vec<Pipeline<Self, Own>>,
+    prefilter: Vec<Pipeline<Self, EnvironmentLayers>>,
     views: Draws<ProbeViews>,
     drawn: Vec<(ProbeView, u32)>,
     finished: Option<(u32, u32)>,
@@ -43,13 +43,10 @@ impl GpuPart for ProbesGpu {
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use shaders::probes::{filter, sample};
         let radiance = cx.texture("radiance", PROBE_FORMAT, Lifetime::Kept);
-        let maps = cx.texture("maps", PROBE_FORMAT, Lifetime::Previous);
         let depth = cx.texture("depth", DEPTH_FORMAT, Lifetime::Kept);
         let words = cx.buffer("words", Lifetime::Kept);
         let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
         cx.frame(sample::PROBE_WORDS, Bind::Buffer(words))?;
-        cx.frame(sample::PROBE_MAPS, Bind::Texture(maps))?;
-        cx.frame(sample::PROBE_SAMPLER, Bind::Sampler(sampler))?;
         let captures = cx
             .pass("probe_captures")
             .label("engine/probe-face")
@@ -61,8 +58,9 @@ impl GpuPart for ProbesGpu {
             .label("engine/environment")
             .after(captures)
             .color_cleared(radiance, wgpu::Color::BLACK)
-            .color_cleared(maps, wgpu::Color::BLACK)
             .id();
+        cx.group(captures, "probe_captures");
+        cx.group(filter_pass, "probe_captures");
         let faces = |fragment| RenderPipeline {
             vertex: filter::VS_FACE,
             fragment: Some(fragment),
@@ -95,7 +93,7 @@ impl GpuPart for ProbesGpu {
                 )?);
             }
             prefilter.push(cx.render_pipeline(
-                filter_pass,
+                EnvironmentLayers,
                 &faces(filter::FS_PREFILTER),
                 &[
                     (
@@ -115,7 +113,6 @@ impl GpuPart for ProbesGpu {
             captures,
             filter: filter_pass,
             radiance,
-            maps,
             depth,
             words,
             down,
@@ -143,23 +140,11 @@ impl GpuPart for ProbesGpu {
             depth_or_array_layers: layers,
         };
         let placed = (state.size, state.cubes);
-        let kept = self
-            .placed
-            .is_some_and(|(size, cubes)| size == placed.0 && placed.1 > cubes);
         if self.placed != Some(placed) {
             cx.release(self.radiance);
-            if !kept {
-                cx.release(self.maps);
-            }
             self.placed = Some(placed);
         }
         cx.allocate(self.radiance, extent(SETS * SIDES), self.levels);
-        let maps = extent(state.probe_cubes() * SIDES);
-        if kept {
-            cx.grow(self.maps, maps, self.levels);
-        } else {
-            cx.allocate(self.maps, maps, self.levels);
-        }
         if words.is_changed() {
             let room = limits.storage_room / 16 * 16;
             if self.grid == 0 {
@@ -194,8 +179,8 @@ impl GpuPart for ProbesGpu {
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
         if pass == self.filter {
-            if let Some((cube, set)) = self.finished {
-                self.filter_cube((cube, set), cx);
+            if let Some((_, set)) = self.finished {
+                self.down_cube(set, cx);
             }
             return 0;
         }
@@ -214,20 +199,31 @@ impl GpuPart for ProbesGpu {
 }
 
 impl ProbesGpu {
-    fn filter_cube(&self, (cube, set): (u32, u32), cx: &mut Encode<'_, Self>) {
+    pub(crate) fn draw_environment(
+        &self,
+        faces: &EnvironmentFaces,
+        draw: &mut Draw<'_, Self, EnvironmentLayers>,
+    ) -> u32 {
+        let Some((_, set)) = self.finished else {
+            return 0;
+        };
+        let item = faces.level * SIDES + faces.first;
+        draw.draw(
+            &self.prefilter[set as usize],
+            Shape::Pulled {
+                vertices: 0..3,
+                instances: item..item + 1,
+            },
+        );
+        0
+    }
+
+    fn down_cube(&self, set: u32, cx: &mut Encode<'_, Self>) {
         let first_layer = set * SIDES;
         for level in 1..self.levels {
             let down = &self.down[(set * (MOST_LEVELS - 1) + level - 1) as usize];
             for first in (0..SIDES).step_by(FACES_PER_PASS as usize) {
                 faces_pass(cx, (self.radiance, level, first_layer + first), down, first);
-            }
-        }
-        let base = (cube - 1) * SIDES;
-        let prefilter = &self.prefilter[set as usize];
-        for level in 0..self.levels {
-            for first in (0..SIDES).step_by(FACES_PER_PASS as usize) {
-                let start = level * SIDES + first;
-                faces_pass(cx, (self.maps, level, base + first), prefilter, start);
             }
         }
     }

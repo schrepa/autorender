@@ -1,7 +1,7 @@
-use engine_render::{Count, Encode, Pass};
+use engine_render::{Count, Encode, PYRAMID_GROUP, Pass};
 
 use crate::gpu::{Compaction, MeshesGpu};
-use crate::layouts::{ARGS_GROUP, CULL_GROUP, GROUP, PARENT_GROUP, PYRAMID_GROUP};
+use crate::layouts::{ARGS_GROUP, CULL_GROUP, GROUP, PARENT_GROUP};
 
 impl MeshesGpu {
     pub(crate) fn encode_pass(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
@@ -30,6 +30,9 @@ impl MeshesGpu {
     }
 
     fn encode_presentation(&self, cx: &mut Encode<'_, Self>) {
+        if self.state.candidates != 0 {
+            cx.clear(self.presented.counts);
+        }
         let computes = &self.computes;
         let nodes = &self.state.nodes;
         if nodes.shift {

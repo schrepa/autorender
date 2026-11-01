@@ -4,7 +4,8 @@ use engine_places::ground::{Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, Te
 use engine_render::{
     Access, Attach, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DepthUse, Encode,
     FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
-    SCENE_FORMAT, SamplerDesc, Shape, Texture, ViewTarget, level_region, mip_levels, wgpu,
+    SCENE_FORMAT, SamplerDesc, Shape, Texture, ViewTarget, level_region, mip_levels,
+    pyramid_extents, wgpu,
 };
 
 use crate::gpu::{CANOPY_GROUP, PYRAMID_GROUP, PyramidExtent};
@@ -49,6 +50,9 @@ impl GpuPart for TraceGpu {
         Res<'static, PlacedTiles>,
         Res<'static, Cover>,
     );
+    const NAME: &'static str = "reflections";
+    const LAZY: bool = true;
+    const LABELS: &'static [&'static str] = &["engine/reflections-"];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let reflected = cx.texture("reflections", REFLECTION_FORMAT, Lifetime::Frame);
@@ -299,17 +303,12 @@ fn extent(width: u32, height: u32) -> wgpu::Extent3d {
     }
 }
 
-fn extents((width, height): (u32, u32), count: u32) -> Vec<PyramidExtent> {
-    let mut source = (width.max(1), height.max(1));
-    (0..count)
-        .map(|_| {
-            let written = (source.0.div_ceil(2), source.1.div_ceil(2));
-            let extent = PyramidExtent {
-                size: [written.0, written.1],
-                last: [source.0 - 1, source.1 - 1],
-            };
-            source = written;
-            extent
+fn extents(render: (u32, u32), count: u32) -> Vec<PyramidExtent> {
+    pyramid_extents(render, count)
+        .into_iter()
+        .map(|[width, height, last_x, last_y]| PyramidExtent {
+            size: [width, height],
+            last: [last_x, last_y],
         })
         .collect()
 }

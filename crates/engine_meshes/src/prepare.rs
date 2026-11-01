@@ -1,6 +1,10 @@
+use std::ops::Range;
+
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{GpuPresentation, ImpostorRecord, NodeInfo, NodePose, PoseRows};
-use engine_render::{AfterRead, CopyRegion, GpuPart, Prepare, wgpu};
+use engine_render::{
+    AfterRead, CopyRegion, GpuPart, MIN_STAGED_BYTES, Prepare, mip_levels, pyramid_extents, wgpu,
+};
 
 use crate::batches::{BatchPlan, capacity_for};
 use crate::casters::{CasterPlan, ID_CAPACITIES, MAPS, STILLNESS_BYTES, Source};
@@ -12,11 +16,10 @@ use crate::layouts::{
 use crate::order::{DrawOrder, MeshPlan};
 use crate::presentation::{
     CASTER_TOTALS_BYTES, CasterTotals, DrawnBatch, FADE_MARGIN, Kept, PresentationTotals,
-    TOTALS_BYTES, WATCHED, frustum_uniform, grow, mip_levels, pyramid_extents, rasterized,
-    storage_bytes,
+    TOTALS_BYTES, WATCHED, frustum_uniform, grow, rasterized, storage_bytes,
 };
 use crate::retained::RetainedRender;
-use crate::uploads::{ColorData, PoseData};
+use crate::uploads::{ColorData, PoseData, RetainedUploads};
 
 const TOTALS: u32 = 0;
 const CASTERS: u32 = 1;
@@ -157,6 +160,7 @@ impl MeshesGpu {
         state.motion_key = temporal.then_some(key);
         state.temporal = temporal;
         if temporal {
+            engine_core::profile::counter("render.taa_object_motion", f64::from(u8::from(motion)));
             let bytes = (state.capacity * size_of::<PoseData>()) as u64;
             cx.copy(
                 self.passes.keep_poses,
@@ -264,6 +268,7 @@ impl MeshesGpu {
             cx.allocate_buffer(instances.previous_poses, storage_bytes(0));
         }
         let slot_key = Some((retained.identity(), retained.structure_revision()));
+        let mut slot_bytes = 0;
         if !gpu {
             let count = plan.ordered_instances.len();
             if state.slot_capacity == 0 || count > state.slot_capacity {
@@ -280,6 +285,7 @@ impl MeshesGpu {
                 if !state.slot_staging.is_empty() {
                     cx.write(instances.slots, 0, &state.slot_staging);
                 }
+                slot_bytes = (state.slot_staging.len() * size_of::<u32>()) as u64;
             }
         }
         if state.color_staging.capacity() < state.capacity {
@@ -288,21 +294,59 @@ impl MeshesGpu {
                 .reserve_exact(state.capacity - state.color_staging.len());
         }
         state.uploads.prepare(retained, &mut state.color_staging);
+        let mut pose_bytes = 0;
         if !gpu {
             let rows: &[PoseRows] = retained.pose_rows();
             let stride = size_of::<PoseData>();
-            for range in state.uploads.pose_ranges() {
-                cx.write(instances.poses, (range.start * stride) as u64, &rows[range.start..range.end]);
+            let ranges: Vec<Range<usize>> = state
+                .uploads
+                .pose_ranges()
+                .iter()
+                .map(|range| range.start..range.end)
+                .collect();
+            pose_bytes = ranges
+                .iter()
+                .map(|range| ((range.end - range.start) * stride) as u64)
+                .sum();
+            let mut staged = false;
+            if pose_bytes as usize >= MIN_STAGED_BYTES {
+                staged = cx.write_staged(instances.poses, rows, &ranges);
+                engine_core::profile::counter("render.pose_staged", f64::from(u8::from(staged)));
+                engine_core::profile::counter(
+                    "render.pose_staging_unavailable",
+                    f64::from(u8::from(!staged)),
+                );
+            }
+            if !staged {
+                for range in &ranges {
+                    cx.write(instances.poses, (range.start * stride) as u64, &rows[range.clone()]);
+                }
             }
         }
+        let mut color_bytes = 0;
         for range in state.uploads.color_ranges() {
-            cx.write(
-                instances.colors,
-                (range.start * size_of::<ColorData>()) as u64,
-                &state.color_staging[range.start..range.end],
-            );
+            let records = &state.color_staging[range.start..range.end];
+            cx.write(instances.colors, (range.start * size_of::<ColorData>()) as u64, records);
+            color_bytes += std::mem::size_of_val(records) as u64;
         }
+        cx.count_upload(pose_bytes + color_bytes + slot_bytes);
         state.uploads.commit();
+        let (pose, color) = (size_of::<PoseData>() as u64, size_of::<ColorData>() as u64);
+        cx.memory("memory.gpu_temporal_bytes", if temporal { capacity * pose } else { 0 });
+        cx.memory("memory.render_upload_cache_bytes", state.uploads.capacity_bytes() as u64);
+        cx.memory(
+            "memory.render_upload_range_bytes",
+            RetainedUploads::range_scratch_bytes() as u64,
+        );
+        cx.memory(
+            "memory.render_staging_capacity_bytes",
+            (state.color_staging.capacity() * size_of::<ColorData>()
+                + state.slot_staging.capacity() * size_of::<u32>()) as u64,
+        );
+        cx.memory(
+            "memory.gpu_instance_buffer_bytes",
+            capacity * (pose + color) + (state.slot_capacity * size_of::<u32>()) as u64,
+        );
         state.slot_revision = slot_key;
     }
 
@@ -393,7 +437,6 @@ impl MeshesGpu {
         };
         let group_bytes = self.rebuild_groups(retained, plan, casters, gpu, cx);
         self.write_frame_uniform(gpu.alpha, view, decided, cx);
-        cx.run(self.passes.clear_counts);
         cx.run(self.passes.presentation);
         if self.state.occlusion {
             cx.run(self.passes.occlusion);

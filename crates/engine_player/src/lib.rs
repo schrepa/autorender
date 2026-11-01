@@ -31,3 +31,9 @@ pub fn bricks<L: Listing>(list: L) -> L {
 }
 
 engine_worker::export_worker!(bricks);
+
+engine::__if_dev! {
+    mod smokes;
+
+    pub use smokes::smokes;
+}
