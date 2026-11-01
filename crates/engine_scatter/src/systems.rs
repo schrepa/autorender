@@ -3,9 +3,9 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, AssetResidency, AssetUses, AtlasRole, Cut, Detail, DeviceLimits, FrameTime,
-    ImpostorAsks, ImpostorPolicy, ImpostorRecord, ImpostorRecords, MaterialHandle, MeshHandle,
-    Readback, Spawner, TextureHandle, View,
+    AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, FrameTime, ImpostorAsks,
+    ImpostorPolicy, ImpostorRecord, ImpostorRecords, MaterialHandle, MeshHandle, Readback,
+    Spawner, TextureHandle, View,
 };
 use engine_math::collections::HashMap;
 use engine_places::ground::{
@@ -16,7 +16,7 @@ use glam::Vec3;
 
 use crate::ScatterBrick;
 use crate::far_cover::FarCoverTable;
-use crate::groups::{Groups, Kept, Resolved, ScatterKey, placed_shape, resolve, scatter_key};
+use crate::groups::{Groups, Kept, Resolved, ScatterKey, resolve, scatter_key};
 use crate::layouts::{
     CanopyPiece, CullFrame, CullGroup, CullView, DEAD, DrawArgs, GroundData, LEVELS, PlacedRecord,
     PoseData, SlotColor, draw_args,
@@ -558,13 +558,12 @@ pub(crate) fn plan_cull(
 }
 
 pub(crate) fn publish_assets(
-    (state, policy): (Res<ScatterState>, Res<ImpostorPolicy>),
+    state: Res<ScatterState>,
     own: Query<(Entity, &AssetUses, &ImpostorAsks), With<Placements>>,
     mut spawner: Spawner<ScatterBrick>,
 ) {
     let asks = ImpostorAsks {
-        role: AtlasRole::Placed,
-        shape: placed_shape(policy.pixels),
+        hemisphere: true,
         asks: state.groups.asks.clone(),
     };
     match own.single() {

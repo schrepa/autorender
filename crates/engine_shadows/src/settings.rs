@@ -1,7 +1,5 @@
 use engine_core::{Cut, settings, stats};
 
-use crate::constants::{MAX_MOVING_TILES, MAX_SHADOW_LEVELS};
-
 settings! {
     #[section("shadows")]
     #[derive(Copy)]
@@ -9,12 +7,12 @@ settings! {
     #[schemars(rename = "SceneShadows")]
     pub struct ShadowSettings {
         pub enabled: bool = true => any,
-        pub levels: u32 = 16 => range(1, MAX_SHADOW_LEVELS),
+        pub levels: u32 = 16 => at_least(1),
         pub finest_texel: f32 = 0.04 => range(0.005, 1.0),
         pub tile_texels: u32 = 128 => power_of_two(64, 512),
         pub atlas_slots: u32 = 1024 => range(64, 4096),
         pub redraw_budget: u32 = 32 => range(1, 4096),
-        pub moving_tiles: u32 = MAX_MOVING_TILES => range(0, MAX_MOVING_TILES),
+        pub moving_tiles: u32 = 256 => any,
     }
 }
 
@@ -76,5 +74,7 @@ stats! {
         pub sky_drawn: u32,
         pub tile_cut: Cut,
         pub moving_cut: Cut,
+        pub level_cut: Cut,
+        pub moving_slot_cut: Cut,
     }
 }

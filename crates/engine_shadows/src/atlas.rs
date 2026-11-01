@@ -1,4 +1,4 @@
-use crate::constants::SHADOW_APRON;
+use crate::constants::{LEVEL_WORDS, SHADOW_APRON};
 use crate::shadow_fit::{LEVEL_TEXELS, region_tiles};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,6 +49,7 @@ pub(crate) struct MapsKey {
 
 impl MapsKey {
     pub(crate) fn new(settings: &crate::ShadowSettings, limit: u32) -> Self {
+        let side = (LEVEL_TEXELS / settings.tile_texels).max(1);
         Self {
             atlas: AtlasLayout::new(
                 settings.tile_texels,
@@ -56,9 +57,13 @@ impl MapsKey {
                 limit,
             ),
             tile_texels: settings.tile_texels,
-            levels: settings.levels,
-            side: (LEVEL_TEXELS / settings.tile_texels).max(1),
+            levels: settings.levels.min(limit / (side + 1)).max(1),
+            side,
         }
+    }
+
+    pub(crate) fn table_size(&self) -> (u32, u32) {
+        (self.side.max(LEVEL_WORDS), (self.side + 1) * self.levels)
     }
 
     pub(crate) fn region_side(&self) -> u32 {

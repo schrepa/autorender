@@ -7,9 +7,9 @@ use crate::ground::Pyramid;
 pub const GROUND_TEXELS: f32 = 2.0;
 pub const SHADOW_REGIONS: u32 = 7;
 pub const DEBUG_SUN_NONE: u32 = 0;
-pub const DEBUG_SUN_LEVEL: u32 = 1;
-pub const DEBUG_SUN_HORIZON: u32 = 21;
-pub const DEBUG_SUN_BEYOND: u32 = DEBUG_SUN_HORIZON + 1;
+pub const DEBUG_SUN_HORIZON: u32 = 1;
+pub const DEBUG_SUN_BEYOND: u32 = 2;
+pub const DEBUG_SUN_LEVEL: u32 = 3;
 pub const DEBUG_SHADOWED: u32 = 0x80;
 
 pub fn ground_level(pyramid: &Pyramid, texel: f32) -> u32 {
@@ -23,7 +23,6 @@ pub fn ground_level(pyramid: &Pyramid, texel: f32) -> u32 {
 pub struct ShadowMaps {
     pub on: bool,
     pub writes: bool,
-    pub sky_darkens: bool,
     pub levels: u32,
     pub regions: Vec<Region>,
 }

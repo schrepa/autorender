@@ -73,7 +73,9 @@ impl MeshesGpu {
             return;
         }
         self.copy_draws(&plan, &order);
-        self.take_impostors(records.single().ok().map(|held| held.records.as_slice()));
+        let held = records.single().ok().map(|held| held.records.as_slice());
+        self.take_impostors(held);
+        self.write_impostors(held.unwrap_or_default(), cx);
         self.state.casts = maps.on;
         self.state.groups.first_instance = limits.indirect_first_instance;
         let gpu = decided.gpu;
@@ -202,6 +204,18 @@ impl MeshesGpu {
         }
         self.state.cards =
             records.is_some_and(|records| records.iter().any(|record| record.sphere[3] > 0.0));
+    }
+
+    fn write_impostors(&mut self, records: &[ImpostorRecord], cx: &mut Prepare<'_, Self>) {
+        let bytes = (records.len().max(1) * size_of::<ImpostorRecord>()) as u64;
+        cx.allocate_buffer(self.instances.impostors, bytes);
+        if self.state.impostor_records.as_slice() == records {
+            return;
+        }
+        if !records.is_empty() {
+            cx.write(self.instances.impostors, 0, records);
+        }
+        self.state.impostor_records = records.to_vec();
     }
 
     fn copy_draws(&mut self, plan: &BatchPlan, order: &DrawOrder) {

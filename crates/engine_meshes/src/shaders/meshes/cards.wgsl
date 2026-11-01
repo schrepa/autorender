@@ -1,7 +1,5 @@
 import package::engine::impostors::{impostor_albedo, impostor_emissive, impostor_geometry,
-    impostor_records, impostor_sampler, impostor_surface, placed_impostor_albedo,
-    placed_impostor_emissive, placed_impostor_geometry, placed_impostor_records,
-    placed_impostor_surface};
+    impostor_sampler, impostor_surface};
 import package::engine::materials::MASK_MIP_SCALE;
 import package::engine::math::maximum_abs;
 import package::engine::mesh::impostor_frames::{IMPOSTOR_CUTOFF, IMPOSTOR_FADING,
@@ -14,6 +12,7 @@ import package::engine::view::{camera, fade_noise, material_detail, stable_norma
 import package::face::debug::DEBUG_FADING;
 import package::face::foliage::foliage;
 import package::face::lighting::{finish, local_light, widened};
+import package::face::placed_tiles::placed_impostor;
 import package::face::sun::sun_direction;
 import package::face::wind::slot_sway;
 import package::generated::targets::{DepthViewTargets, depth_view_targets};
@@ -24,6 +23,8 @@ import package::meshes::slots::{instance_colors, instance_poses, instance_previo
 import package::meshes::vertex::{posed, slot_wind};
 import package::place::instances::{AffinePose, CardDebugTargets, CardShaded, CardVertex,
     MOVED_SLOT, SlotColor};
+
+@group(0) @binding(0) var<storage, read> impostor_records: array<ImpostorRecord>;
 
 struct CardInput {
     @builtin(vertex_index) vertex: u32,
@@ -162,8 +163,7 @@ fn card_previous(local: vec3<f32>, pose: AffinePose, color: SlotColor) -> vec3<f
 
 fn placed_card(vertex: u32, batch: u32, pose: AffinePose, previous: AffinePose,
         color: SlotColor) -> CardVertex {
-    let made = posed_card(vertex, batch, pose, color,
-        placed_impostor_records[impostor_index(batch)]);
+    let made = posed_card(vertex, batch, pose, color, placed_impostor(impostor_index(batch)));
     var output = made.output;
     output.previous = card_previous(made.local, previous, color);
     return output;
@@ -192,9 +192,7 @@ fn card_vertex(input: CardOutput) -> CardVertex {
         input.batch, input.previous, input.crossings, input.slopes_ab, input.slope_c);
 }
 
-fn card_point(input: CardVertex, record: ImpostorRecord, albedo_atlas: texture_2d_array<f32>,
-        emissive_atlas: texture_2d_array<f32>, geometry_atlas: texture_2d_array<f32>,
-        surface_atlas: texture_2d_array<f32>) -> SurfacePoint {
+fn card_point(input: CardVertex, record: ImpostorRecord) -> SurfacePoint {
     let weights = vec3<f32>(input.normal_x.w, input.normal_y.w,
         1.0 - input.normal_x.w - input.normal_y.w);
     let packed = input.material.w;
@@ -220,7 +218,7 @@ fn card_point(input: CardVertex, record: ImpostorRecord, albedo_atlas: texture_2
         cells[k] = vec2<f32>(f32(shown[k] % frames), f32(shown[k] / frames)) * span;
         facings[k] = impostor_facing(slopes[k]);
         uvs[k] = clamp(crossed[k], cells[k] + inset, cells[k] + span - inset);
-        covered[k] = textureSampleLevel(albedo_atlas, impostor_sampler, uvs[k],
+        covered[k] = textureSampleLevel(impostor_albedo, impostor_sampler, uvs[k],
             record.layer, level).a;
     }
     let probed = dot(weights, covered);
@@ -229,7 +227,7 @@ fn card_point(input: CardVertex, record: ImpostorRecord, albedo_atlas: texture_2
     }
     var met = 0.0;
     for (var k = 0u; k < 3u; k++) {
-        let sampled = textureSampleLevel(geometry_atlas, impostor_sampler, uvs[k],
+        let sampled = textureSampleLevel(impostor_geometry, impostor_sampler, uvs[k],
             record.layer, level).w;
         met += weights[k] * impostor_met(sampled, covered[k], input.crossings[k], facings[k]);
     }
@@ -238,7 +236,7 @@ fn card_point(input: CardVertex, record: ImpostorRecord, albedo_atlas: texture_2
     for (var k = 0u; k < 3u; k++) {
         uvs[k] = clamp(crossed[k] + slopes[k] * (0.5 * span * along), cells[k] + inset,
             cells[k] + span - inset);
-        let texel = textureSampleLevel(albedo_atlas, impostor_sampler, uvs[k], record.layer,
+        let texel = textureSampleLevel(impostor_albedo, impostor_sampler, uvs[k], record.layer,
             level);
         covered[k] = texel.a;
         albedo += weights[k] * texel;
@@ -263,13 +261,13 @@ fn card_point(input: CardVertex, record: ImpostorRecord, albedo_atlas: texture_2
     var surface = vec4<f32>(0.0);
     var sight = 0.0;
     for (var k = 0u; k < 3u; k++) {
-        emissive += weights[k] * textureSampleLevel(emissive_atlas, impostor_sampler, uvs[k],
+        emissive += weights[k] * textureSampleLevel(impostor_emissive, impostor_sampler, uvs[k],
             record.layer, level);
-        let sampled = textureSampleLevel(geometry_atlas, impostor_sampler, uvs[k],
+        let sampled = textureSampleLevel(impostor_geometry, impostor_sampler, uvs[k],
             record.layer, level);
         geometry += weights[k] * sampled;
         sight += weights[k] * impostor_met(sampled.w, covered[k], input.crossings[k], facings[k]);
-        surface += weights[k] * textureSampleLevel(surface_atlas, impostor_sampler, uvs[k],
+        surface += weights[k] * textureSampleLevel(impostor_surface, impostor_sampler, uvs[k],
             record.layer, level);
     }
     let unpremultiply = 1.0 / max(coverage, 1.0e-4);
@@ -316,14 +314,11 @@ fn card_point(input: CardVertex, record: ImpostorRecord, albedo_atlas: texture_2
 }
 
 fn mesh_card_point(input: CardVertex) -> SurfacePoint {
-    return card_point(input, impostor_records[impostor_index(input.batch)], impostor_albedo,
-        impostor_emissive, impostor_geometry, impostor_surface);
+    return card_point(input, impostor_records[impostor_index(input.batch)]);
 }
 
 fn placed_card_point(input: CardVertex) -> SurfacePoint {
-    return card_point(input, placed_impostor_records[impostor_index(input.batch)],
-        placed_impostor_albedo, placed_impostor_emissive, placed_impostor_geometry,
-        placed_impostor_surface);
+    return card_point(input, placed_impostor(impostor_index(input.batch)));
 }
 
 fn card_shaded(input: CardVertex, point: SurfacePoint, light: vec3<f32>) -> CardShaded {

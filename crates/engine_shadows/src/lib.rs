@@ -19,7 +19,6 @@ use engine_places::lighting::SunBlockers;
 use engine_places::shadows::{CasterRoutes, ShadowCasters, ShadowMaps};
 use engine_render::{DebugModes, PostScene, RenderBricks};
 
-pub use constants::{MAX_MOVING_TILES, MAX_SHADOW_LEVELS};
 pub use settings::{ShadowSettings, ShadowStats, SkyOcclusion};
 
 pub struct ShadowsBrick;

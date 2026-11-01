@@ -86,6 +86,7 @@ pub(crate) struct Passes {
 
 pub(crate) struct Instances {
     pub records: Buffer<MeshesGpu>,
+    pub impostors: Buffer<MeshesGpu>,
     pub poses: Buffer<MeshesGpu>,
     pub previous_poses: Buffer<MeshesGpu>,
     pub colors: Buffer<MeshesGpu>,
@@ -287,6 +288,7 @@ fn install_instances(cx: &mut Install<'_, MeshesGpu>) -> Result<Instances, Error
     use crate::shaders::meshes::slots;
     let instances = Instances {
         records: cx.buffer("debug_view_records", Lifetime::Kept),
+        impostors: cx.buffer("impostor_records", Lifetime::Kept),
         poses: cx.buffer("poses", Lifetime::Kept),
         previous_poses: cx.buffer("previous_poses", Lifetime::Previous),
         colors: cx.buffer("colors", Lifetime::Kept),
@@ -297,6 +299,7 @@ fn install_instances(cx: &mut Install<'_, MeshesGpu>) -> Result<Instances, Error
     cx.frame(slots::INSTANCE_PREVIOUS_POSES, Bind::Buffer(instances.previous_poses))?;
     cx.frame(slots::INSTANCE_COLORS, Bind::Buffer(instances.colors))?;
     cx.frame(slots::INSTANCE_STILL, Bind::Buffer(instances.still_frames))?;
+    cx.frame(cards::IMPOSTOR_RECORDS, Bind::Buffer(instances.impostors))?;
     Ok(instances)
 }
 

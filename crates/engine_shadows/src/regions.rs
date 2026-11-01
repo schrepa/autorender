@@ -4,14 +4,13 @@ use engine_places::shadows::{CasterMap, KeptRefresh, Refresh, Region as MapView,
 use engine_render::CameraUniform;
 
 use crate::atlas::AtlasLayout;
-use crate::constants::{MAX_SHADOW_LEVELS, SKY_REFRESH};
-use crate::gpu_layouts::{CasterCull, ComposeData, Routes, ShadowPiece};
+use crate::constants::{LEVEL_BAND, LEVEL_WINDOW, LEVEL_WORDS, SKY_REFRESH};
+use crate::gpu_layouts::{CasterCull, ComposeData, Route, ShadowPiece};
 use crate::shadow_fit::{ClipPlan, Clipmap, LightBasis, MapRegion, Region, region_tiles};
 use crate::sky::SkyDraw;
 
 const NORMAL_OFFSET_TEXELS: f32 = 0.5;
 const SLOPE_LIMIT_TEXELS: f32 = 16.0;
-const LEVELS: usize = MAX_SHADOW_LEVELS as usize;
 const REGIONS: usize = SHADOW_REGIONS as usize;
 const PASS_ALL: [[f32; 4]; 6] = [[0.0, 0.0, 0.0, 1.0]; 6];
 
@@ -118,8 +117,9 @@ impl FrameRegions<'_> {
         }
     }
 
-    pub(crate) fn routes(&self, routes: &mut Routes) {
-        *routes = Routes::zeroed();
+    pub(crate) fn routes(&self, routes: &mut Vec<Route>) {
+        routes.clear();
+        routes.resize(self.layout.moving.max(1) as usize, Route::zeroed());
         let (width, height) = self.layout.size();
         let (width, height) = (width as f32, height as f32);
         let side = self.layout.slot as f32;
@@ -144,10 +144,13 @@ impl FrameRegions<'_> {
                     1.0,
                 ),
             );
-            routes.clips[index] = (onto * clip).to_cols_array_2d();
-            routes.slots[index] = slot;
+            if let Some(route) = routes.get_mut(index) {
+                *route = Route {
+                    clip: (onto * clip).to_cols_array_2d(),
+                    slot,
+                };
+            }
         }
-        routes.atlas = [2.0 / width, 2.0 / height, 0.0, 0.0];
     }
 
     pub(crate) fn composes(&self, tile_texels: u32, out: &mut Vec<ComposeData>) {
@@ -179,16 +182,11 @@ impl FrameRegions<'_> {
             regions[index] = region.rect;
             region_depths[index] = [region.depth[1], 0.0, 0.0, 0.0];
         }
-        let mut windows = [[0.0; 4]; LEVELS];
-        for (level, window) in windows.iter_mut().enumerate().take(self.clipmap.len()) {
-            let [x, y, tile, _] = self.clipmap.window(level);
-            *window = [x, y, tile, 0.0];
-        }
+        let (width, height) = self.layout.size();
         let mut cull = CasterCull {
             light: self.basis.rows.map(row),
             regions,
             region_depths,
-            windows,
             counts: [
                 self.plan.regions.len() as u32,
                 self.clipmap.len() as u32,
@@ -200,6 +198,7 @@ impl FrameRegions<'_> {
             sky: [[0.0; 4]; 3],
             sky_rect: [0.0; 4],
             sky_depths: [0.0; 4],
+            atlas: [2.0 / width as f32, 2.0 / height as f32, 0.0, 0.0],
         };
         if let Some(draw) = sky {
             cull.sky = draw.rows;
@@ -217,20 +216,6 @@ impl FrameRegions<'_> {
     ) -> ShadowPiece {
         let (width, height) = self.layout.size();
         let levels = self.clipmap.len();
-        let mut windows = [[0.0; 4]; LEVELS];
-        let mut bands = [[0.0; 4]; LEVELS];
-        for level in 0..levels.min(LEVELS) {
-            windows[level] = self.clipmap.window(level);
-            let texel = self.clipmap.texel(level);
-            let [near, far] = self.clipmap.band(level);
-            let depth = engine_core::math::max(far - near, 1.0e-6);
-            bands[level] = [
-                near,
-                1.0 / depth,
-                texel * NORMAL_OFFSET_TEXELS,
-                SLOPE_LIMIT_TEXELS * texel / depth,
-            ];
-        }
         ShadowPiece {
             light: self.basis.rows.map(|row| row.extend(0.0).to_array()),
             state: [1.0, crown_depth, shown as f32, 0.0],
@@ -246,9 +231,27 @@ impl FrameRegions<'_> {
                 1.0 / width as f32,
                 1.0 / height as f32,
             ],
-            windows,
-            bands,
             sky,
+        }
+    }
+
+    pub(crate) fn levels(&self, out: &mut Vec<[u32; LEVEL_WORDS as usize]>) {
+        out.clear();
+        for level in 0..self.clipmap.len() {
+            let texel = self.clipmap.texel(level);
+            let [near, far] = self.clipmap.band(level);
+            let depth = engine_core::math::max(far - near, 1.0e-6);
+            let band = [
+                near,
+                1.0 / depth,
+                texel * NORMAL_OFFSET_TEXELS,
+                SLOPE_LIMIT_TEXELS * texel / depth,
+            ];
+            let mut words = [0; LEVEL_WORDS as usize];
+            words[LEVEL_WINDOW as usize..][..4]
+                .copy_from_slice(&self.clipmap.window(level).map(f32::to_bits));
+            words[LEVEL_BAND as usize..][..4].copy_from_slice(&band.map(f32::to_bits));
+            out.push(words);
         }
     }
 }

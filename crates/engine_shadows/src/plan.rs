@@ -1,9 +1,8 @@
 use std::any::TypeId;
 
 use bevy_ecs::prelude::*;
-use bytemuck::Zeroable;
 use engine_core::glam::{Mat4, Vec3};
-use engine_core::{DeviceLimits, FrameTime, PartDraws, Readback, View};
+use engine_core::{Cut, DeviceLimits, FrameTime, PartDraws, Readback, View};
 use engine_places::ground::Foliage;
 use engine_places::shadows::{GROUND_TEXELS, Region as MapView, ShadowChanges, ShadowMaps};
 use engine_places::sun::Sun;
@@ -11,7 +10,8 @@ use engine_places::wind::Wind;
 use engine_render::{CameraUniform, DebugShown, pixel_angle};
 
 use crate::atlas::MapsKey;
-use crate::gpu_layouts::{CasterCull, ComposeData, Routes, ShadowPiece};
+use crate::constants::LEVEL_WORDS;
+use crate::gpu_layouts::{CasterCull, ComposeData, Route, ShadowPiece};
 use crate::part::ShadowsGpu;
 use crate::regions::FrameRegions;
 use crate::shadow_fit::{ClipPlan, ClipSettings, Clipmap, LightBasis, region_tiles};
@@ -79,7 +79,8 @@ pub(crate) struct ShadowPlan {
     sky_view: Option<(Mat4, [f32; 4])>,
     pub(crate) views: Vec<MapView>,
     pub(crate) cameras: Vec<CameraUniform>,
-    pub(crate) routes: Box<Routes>,
+    pub(crate) routes: Vec<Route>,
+    pub(crate) levels: Vec<[u32; LEVEL_WORDS as usize]>,
     pub(crate) cull: CasterCull,
     pub(crate) composes: Vec<ComposeData>,
     pub(crate) moving: u32,
@@ -102,7 +103,8 @@ impl Default for ShadowPlan {
             sky_view: None,
             views: Vec::new(),
             cameras: Vec::new(),
-            routes: Box::new(Routes::zeroed()),
+            routes: Vec::new(),
+            levels: Vec::new(),
             cull: CasterCull::default(),
             composes: Vec::new(),
             moving: 0,
@@ -142,7 +144,7 @@ impl ShadowPlan {
             basis,
             eye,
             ClipSettings {
-                levels: settings.levels,
+                levels: key.levels,
                 finest_texel: settings.finest_texel,
                 tile_texels: settings.tile_texels,
                 slots: key.atlas.still,
@@ -252,6 +254,7 @@ pub(crate) fn plan_shadows(
     regions.views(plan.sky_draw.as_ref(), &mut plan.views);
     regions.cameras((wind.velocity, gusting), (viewer, plan.sky_view), &mut plan.cameras);
     regions.routes(&mut plan.routes);
+    regions.levels(&mut plan.levels);
     regions.composes(settings.tile_texels, &mut plan.composes);
     plan.cull = regions.cull(plan.sky_draw.as_ref());
     let open = [
@@ -266,21 +269,24 @@ pub(crate) fn plan_shadows(
     ));
     plan.moving = plan.plan.moving.len() as u32;
     plan.table();
-    if maps.regions != plan.views || maps.levels != settings.levels || !maps.on {
+    if maps.regions != plan.views || maps.levels != key.levels || !maps.on {
         let maps = &mut *maps;
         maps.regions.clear();
         maps.regions.extend_from_slice(&plan.views);
-        (maps.levels, maps.on) = (settings.levels, true);
+        (maps.levels, maps.on) = (key.levels, true);
     }
 }
 
 pub(crate) fn shadow_stats(
-    plan: Res<ShadowPlan>,
+    (settings, plan): (Res<ShadowSettings>, Res<ShadowPlan>),
     draws: Res<PartDraws>,
     mut stats: ResMut<ShadowStats>,
 ) {
     let tiles = plan.clipmap.stats();
     let (sky_maps, sky_drawn) = plan.sky.counts();
+    let (levels, moving) = plan
+        .key
+        .map_or((0, 0), |key| (key.levels, key.atlas.moving));
     stats.set_if_neq(ShadowStats {
         active: true,
         draws: draws.of(TypeId::of::<ShadowsGpu>()),
@@ -292,6 +298,8 @@ pub(crate) fn shadow_stats(
         sky_drawn,
         tile_cut: tiles.tile_cut,
         moving_cut: tiles.moving_cut,
+        level_cut: Cut::of(settings.levels, levels),
+        moving_slot_cut: Cut::of(settings.moving_tiles, moving),
     });
 }
 

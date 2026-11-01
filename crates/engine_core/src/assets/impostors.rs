@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use bevy_ecs::change_detection::{DetectChanges, Mut, Ref};
@@ -90,6 +90,8 @@ impl ImpostorRecord {
 
 const RGBA8_SIZE: u32 = 512;
 
+const ATLAS_FRAMES: u32 = 12;
+
 const LOAD_BUDGET: usize = 16 << 20;
 
 const FIRST_BYTES: u64 = 16 << 20;
@@ -107,11 +109,18 @@ pub struct AtlasShape {
 }
 
 impl AtlasShape {
-    pub const SPHERE: Self = Self {
-        frames: 8,
-        texels: 16,
-        hemisphere: false,
-    };
+    fn of(pixels: f32) -> Self {
+        let texels = (pixels.ceil() as u32).clamp(2, 1 << 15);
+        Self {
+            frames: ATLAS_FRAMES,
+            texels: texels.next_power_of_two(),
+            hemisphere: false,
+        }
+    }
+
+    fn facing(self, hemisphere: bool) -> Self {
+        Self { hemisphere, ..self }
+    }
 
     pub fn size(self) -> u32 {
         self.frames * self.texels
@@ -295,12 +304,6 @@ impl Slot for ImpostorPolicy {
     const NAME: &'static str = "impostor_policy";
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum AtlasRole {
-    Scene,
-    Placed,
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImpostorAsk {
     pub mesh: MeshHandle,
@@ -310,8 +313,7 @@ pub struct ImpostorAsk {
 
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct ImpostorAsks {
-    pub role: AtlasRole,
-    pub shape: AtlasShape,
+    pub hemisphere: bool,
     pub asks: Vec<Option<ImpostorAsk>>,
 }
 
@@ -546,7 +548,7 @@ fn grown_layers(needed: u32, bytes: u64, limit: u32) -> u32 {
     needed.max(first).next_power_of_two().min(limit).max(needed)
 }
 
-type ImpostorKey = (MeshHandle, Option<MaterialHandle>);
+type ImpostorKey = (MeshHandle, Option<MaterialHandle>, bool);
 
 struct Baked {
     record: ImpostorRecord,
@@ -603,11 +605,12 @@ pub enum AtlasWork {
         material: Option<MaterialHandle>,
         parts: Vec<(MeshHandle, MaterialHandle)>,
         bounds: (Vec3, Vec3),
+        hemisphere: bool,
     },
     DropTargets,
 }
 
-type SettleKey = (u64, u64, u64, ImpostorPolicyKey, bool, bool, u64, u32);
+type SettleKey = (u64, u64, u64, ImpostorPolicyKey, bool, bool, u64);
 
 type ImpostorPolicyKey = (bool, u32, Option<u32>);
 
@@ -627,7 +630,6 @@ struct Book {
     generation: u64,
     contents: Contents,
     key: Option<SettleKey>,
-    records: ImpostorRecords,
     work: Vec<(u64, AtlasWork)>,
 }
 
@@ -664,7 +666,6 @@ impl Book {
             generation: 0,
             contents: Contents::default(),
             key: None,
-            records: ImpostorRecords::default(),
             work: Vec::new(),
         }
     }
@@ -818,7 +819,7 @@ impl Book {
             .filter(|supply| supply.material.as_ref() == bake.material.as_ref())
             .map(|supply| supply.identity);
         let Some(identity) = asked else {
-            let identity = identity(self.shape, cx.device.format, bake.content);
+            let identity = identity(self.shape.facing(key.2), cx.device.format, bake.content);
             let ticket = cx
                 .jobs
                 .fetch(&IMPOSTOR, &identity, job_priority(VIEW_JOBS, 0));
@@ -894,8 +895,9 @@ impl Book {
         bytes: &Arc<[u8]>,
         budget: Option<u32>,
     ) -> bool {
-        let header = impostor_record_header(self.shape, cx.device.format);
-        if bytes.len() != record_bytes(self.shape, cx.device.format)
+        let shape = self.shape.facing(key.2);
+        let header = impostor_record_header(shape, cx.device.format);
+        if bytes.len() != record_bytes(shape, cx.device.format)
             || bytes.get(..IMPOSTOR_RECORD_HEADER) != Some(header.as_slice())
         {
             return false;
@@ -922,7 +924,7 @@ impl Book {
             bake.bounds.1,
             layer,
             (emissive, bake.masked, bake.foliage),
-            self.shape,
+            self.shape.facing(key.2),
         );
         self.baked.insert(
             key,
@@ -951,6 +953,7 @@ impl Book {
                 material: key.1,
                 parts: bake.parts.clone(),
                 bounds: bake.bounds,
+                hemisphere: key.2,
             },
         );
     }
@@ -1000,10 +1003,10 @@ impl Book {
 #[derive(Resource, Default)]
 pub struct ImpostorBooks {
     device: Option<AtlasDevice>,
-    books: BTreeMap<AtlasRole, Book>,
+    book: Option<Book>,
     next: u64,
     acked: u64,
-    made: Vec<(AtlasRole, ImpostorIdentity, Option<Vec<u8>>)>,
+    made: Vec<(ImpostorIdentity, Option<Vec<u8>>)>,
 }
 
 impl ImpostorBooks {
@@ -1013,49 +1016,24 @@ impl ImpostorBooks {
     }
 
     #[doc(hidden)]
-    pub fn shape(&self, role: AtlasRole) -> Option<AtlasShape> {
-        self.books.get(&role).map(|book| book.shape)
+    pub fn contains(&self, mesh: MeshHandle, material: Option<MaterialHandle>) -> bool {
+        self.book.as_ref().is_some_and(|book| {
+            book.baked
+                .keys()
+                .any(|&(baked, held, _)| baked == mesh && held == material)
+        })
     }
 
     #[doc(hidden)]
-    pub fn records(&self, role: AtlasRole) -> &[ImpostorRecord] {
-        self.books
-            .get(&role)
-            .map(|book| book.records.records.as_slice())
-            .unwrap_or_default()
-    }
-
-    #[doc(hidden)]
-    pub fn live(&self, role: AtlasRole) -> u32 {
-        self.books.get(&role).map_or(0, |book| book.layers.live())
-    }
-
-    #[doc(hidden)]
-    pub fn contains(
-        &self,
-        role: AtlasRole,
-        mesh: MeshHandle,
-        material: Option<MaterialHandle>,
-    ) -> bool {
-        self.books
-            .get(&role)
-            .is_some_and(|book| book.baked.contains_key(&(mesh, material)))
-    }
-
-    #[doc(hidden)]
-    pub fn work(&self) -> impl Iterator<Item = (u64, AtlasRole, &AtlasWork)> + '_ {
-        let mut work: Vec<(u64, AtlasRole, &AtlasWork)> = self
-            .books
+    pub fn work(&self) -> impl Iterator<Item = (u64, &AtlasWork)> + '_ {
+        self.book
             .iter()
-            .flat_map(|(&role, book)| book.work.iter().map(move |(at, work)| (*at, role, work)))
-            .collect();
-        work.sort_by_key(|&(at, _, _)| at);
-        work.into_iter()
+            .flat_map(|book| book.work.iter().map(|(at, work)| (*at, work)))
     }
 
     #[doc(hidden)]
     pub fn left(&self) -> u64 {
-        self.books.values().map(Book::left).sum()
+        self.book.as_ref().map_or(0, Book::left)
     }
 }
 
@@ -1063,7 +1041,7 @@ impl ImpostorBooks {
 pub fn deliver_impostors(
     world: &mut World,
     done: u64,
-    made: Vec<(AtlasRole, ImpostorIdentity, Option<Vec<u8>>)>,
+    made: Vec<(ImpostorIdentity, Option<Vec<u8>>)>,
 ) {
     if let Some(mut books) = world.get_resource_mut::<ImpostorBooks>() {
         books.acked = books.acked.max(done);
@@ -1077,7 +1055,7 @@ pub(super) fn configure(world: &mut World, atlas: AtlasDevice) {
         .map_or(0, |books| books.next);
     world.insert_resource(ImpostorBooks {
         device: Some(atlas),
-        books: BTreeMap::new(),
+        book: None,
         next,
         acked: next,
         made: Vec::new(),
@@ -1156,12 +1134,7 @@ pub(super) fn settle_impostors(world: &mut World) {
     }
 }
 
-fn settle_key(
-    book: &Book,
-    frame: &Frame,
-    (library, residency): Sources<'_>,
-    scene_live: u32,
-) -> SettleKey {
+fn settle_key(book: &Book, frame: &Frame, (library, residency): Sources<'_>) -> SettleKey {
     (
         residency.generation(),
         residency.materials_generation(),
@@ -1174,7 +1147,6 @@ fn settle_key(
         frame.detail,
         frame.gpu,
         library.material_revision(),
-        scene_live,
     )
 }
 
@@ -1191,7 +1163,7 @@ fn settle_books(
     let acked = books.acked;
     let made = std::mem::take(&mut books.made);
     let ImpostorBooks {
-        books: held, next, ..
+        book: held, next, ..
     } = books;
     let mut cx = Supplying {
         device,
@@ -1199,60 +1171,46 @@ fn settle_books(
         next,
         cooking: frame.cooking,
     };
-    for book in held.values_mut() {
+    if let Some(book) = held.as_mut() {
         book.work.retain(|(at, _)| *at > acked);
     }
-    for (role, identity, bytes) in made {
+    for (identity, bytes) in made {
         if let Some(bytes) = &bytes {
             let ticket = cx.jobs.keep(&IMPOSTOR, &identity, bytes.clone());
             cx.jobs.cancel(ticket);
         }
-        if let Some(book) = held.get_mut(&role) {
+        if let Some(book) = held.as_mut() {
             book.answer(identity, bytes.map(Arc::from));
         }
     }
-    let mut served = BTreeMap::new();
-    for (entity, asked) in asks.iter() {
-        served.entry(asked.role).or_insert((entity, asked));
+    let asked: Vec<(Entity, Ref<'_, ImpostorAsks>)> = asks.iter().collect();
+    if asked.is_empty() {
+        return Vec::new();
     }
-    let mut written = Vec::new();
-    for (role, (entity, asked)) in served {
-        let scene_live = match role {
-            AtlasRole::Scene => 0,
-            AtlasRole::Placed => held
-                .get(&AtlasRole::Scene)
-                .map_or(0, |book| book.layers.live()),
-        };
-        let created = !held.contains_key(&role);
-        let book = held
-            .entry(role)
-            .or_insert_with(|| Book::new(asked.shape, &device));
-        if created {
-            let shape = book.shape;
-            book.push(&mut cx, AtlasWork::Reset { shape });
-        }
-        book.poll(&mut cx, records);
-        book.loaded = 0;
-        if std::mem::take(&mut book.deferred) {
-            book.generation += 1;
-        }
-        if !asked.is_changed() && book.key == Some(settle_key(book, frame, sources, scene_live)) {
-            continue;
-        }
-        let settled = match role {
-            AtlasRole::Scene => settle_scene(book, &mut cx, frame, sources, &asked),
-            AtlasRole::Placed => settle_placed(book, &mut cx, frame, sources, &asked, scene_live),
-        };
-        book.records = settled;
-        book.key = Some(settle_key(book, frame, sources, scene_live));
-        written.push((entity, book.records.clone()));
+    let created = held.is_none();
+    let book = held.get_or_insert_with(|| Book::new(AtlasShape::of(frame.policy.pixels), &device));
+    if created {
+        let shape = book.shape;
+        book.push(&mut cx, AtlasWork::Reset { shape });
     }
+    book.poll(&mut cx, records);
+    book.loaded = 0;
+    if std::mem::take(&mut book.deferred) {
+        book.generation += 1;
+    }
+    if !asked.iter().any(|(_, asks)| asks.is_changed())
+        && book.key == Some(settle_key(book, frame, sources))
+    {
+        return Vec::new();
+    }
+    let written = settle(book, &mut cx, frame, sources, &asked);
+    book.key = Some(settle_key(book, frame, sources));
     written
 }
 
 fn keep_key(residency: &AssetResidency) -> impl Fn(&ImpostorKey) -> bool + '_ {
     move |key: &ImpostorKey| {
-        let &(mesh, material) = key;
+        let &(mesh, material, _) = key;
         residency.resident(mesh)
             && material.is_none_or(|handle| residency.material_resident(handle))
     }
@@ -1331,14 +1289,14 @@ fn supply_ask(
     book: &mut Book,
     cx: &mut Supplying<'_, '_, '_>,
     sources: Sources<'_>,
-    ask: &ImpostorAsk,
+    (ask, hemisphere): (&ImpostorAsk, bool),
     budget: Option<u32>,
 ) -> Option<Supplied> {
     if !sources.1.resident(ask.mesh) {
         return None;
     }
     let material = ask.material.and_then(current_material(sources));
-    let key = (ask.mesh, ask.material);
+    let key = (ask.mesh, ask.material, hemisphere);
     if let Some(resident) = book.record(key, material.as_ref()) {
         return Some(Supplied::Resident(resident));
     }
@@ -1350,12 +1308,12 @@ fn supply_all(
     book: &mut Book,
     cx: &mut Supplying<'_, '_, '_>,
     sources: Sources<'_>,
-    (asks, enabled, budget): (&[Option<ImpostorAsk>], bool, Option<u32>),
+    (asked, enabled, budget): (&ImpostorAsks, bool, Option<u32>),
     settled: &mut ImpostorRecords,
 ) {
-    for ask in asks {
+    for ask in &asked.asks {
         let supplied = match ask {
-            Some(ask) if enabled => supply_ask(book, cx, sources, ask, budget),
+            Some(ask) if enabled => supply_ask(book, cx, sources, (ask, asked.hemisphere), budget),
             Some(_) | None => None,
         };
         let record = match supplied {
@@ -1370,66 +1328,45 @@ fn supply_all(
     }
 }
 
-fn settle_scene(
-    book: &mut Book,
-    cx: &mut Supplying<'_, '_, '_>,
-    frame: &Frame,
-    sources: Sources<'_>,
-    asked: &ImpostorAsks,
-) -> ImpostorRecords {
-    let mut settled = ImpostorRecords::default();
-    book.fit(cx, asked.shape);
-    retain_book(book, cx, sources);
-    retain_contents(book, sources.1);
-    if !(frame.detail && frame.policy.enabled) {
-        book.release(cx);
-        settled.live = book.layers.live();
-        return settled;
-    }
-    if !frame.gpu {
-        settled.live = book.layers.live();
-        return settled;
-    }
-    book.enforce_budget(frame.policy.max, cx.cooking);
-    supply_all(
-        book,
-        cx,
-        sources,
-        (&asked.asks, true, frame.policy.max),
-        &mut settled,
-    );
-    book.drawn |= book.capacity > 0 && !settled.records.is_empty();
-    settled.live = book.layers.live();
-    settled
+fn live_layers(records: &[ImpostorRecord]) -> u32 {
+    records
+        .iter()
+        .filter(|record| record.framed())
+        .map(|record| record.layer)
+        .collect::<BTreeSet<u32>>()
+        .len() as u32
 }
 
-fn settle_placed(
+fn settle(
     book: &mut Book,
     cx: &mut Supplying<'_, '_, '_>,
     frame: &Frame,
     sources: Sources<'_>,
-    asked: &ImpostorAsks,
-    scene_live: u32,
-) -> ImpostorRecords {
-    let mut settled = ImpostorRecords::default();
-    let enabled = frame.gpu && frame.detail && frame.policy.enabled;
-    book.fit(cx, asked.shape);
-    retain_contents(book, sources.1);
+    asked: &[(Entity, Ref<'_, ImpostorAsks>)],
+) -> Vec<(Entity, ImpostorRecords)> {
+    book.fit(cx, AtlasShape::of(frame.policy.pixels));
     retain_book(book, cx, sources);
-    let budget = frame
-        .policy
-        .max
-        .map(|budget| budget.saturating_sub(scene_live));
-    book.enforce_budget(budget, cx.cooking);
-    supply_all(
-        book,
-        cx,
-        sources,
-        (&asked.asks, enabled, budget),
-        &mut settled,
-    );
+    retain_contents(book, sources.1);
+    let shown = frame.detail && frame.policy.enabled;
+    if !shown {
+        book.release(cx);
+    } else if frame.gpu {
+        book.enforce_budget(frame.policy.max, cx.cooking);
+    }
+    let mut written = Vec::with_capacity(asked.len());
+    for (entity, asks) in asked {
+        let mut settled = ImpostorRecords::default();
+        supply_all(
+            book,
+            cx,
+            sources,
+            (&**asks, shown && frame.gpu, frame.policy.max),
+            &mut settled,
+        );
+        book.drawn |= book.capacity > 0 && !settled.records.is_empty();
+        settled.live = live_layers(&settled.records);
+        written.push((*entity, settled));
+    }
     book.release_targets(cx);
-    book.drawn |= book.capacity > 0 && !settled.records.is_empty();
-    settled.live = book.layers.live();
-    settled
+    written
 }

@@ -1,4 +1,4 @@
-import package::engine::impostors::{IMPOSTOR_KINDS, placed_impostor_atlas};
+import package::engine::impostors::{IMPOSTOR_KINDS, impostor_atlas};
 import package::engine::mesh::impostor_frames::ImpostorRecord;
 import package::generated::scatter::{DEAD, HIDDEN, PlacedGroup};
 import package::place::placed_tiles::{Pose, Record};
@@ -34,9 +34,9 @@ fn placed_color(group: u32) -> vec2<u32> {
 }
 
 fn placed_frame(at: vec2<f32>, layer: u32, level: f32) -> vec4<f32> {
-    return textureSampleLevel(placed_impostor_atlas, placed_frames_sampler, at, layer, level);
+    return textureSampleLevel(impostor_atlas, placed_frames_sampler, at, layer, level);
 }
 
 fn placed_frame_layers() -> u32 {
-    return textureNumLayers(placed_impostor_atlas) / IMPOSTOR_KINDS;
+    return textureNumLayers(impostor_atlas) / IMPOSTOR_KINDS;
 }
