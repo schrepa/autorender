@@ -6,7 +6,7 @@ use engine::scene::SceneKinds;
 use engine::{Engine, Error, ErrorCode, Expected};
 use engine_native::{Arguments, HostOptions, file_error, files};
 
-use crate::{ScenePlayer, bricks};
+use crate::{ScenePlayer, listed};
 
 fn player_options() -> [CommandOption; 2] {
     [
@@ -79,7 +79,7 @@ impl Options {
     fn start(&self) -> ExitCode {
         #[cfg(feature = "dev")]
         if let Some(names) = &self.host.smoke {
-            let list = engine_player_bricks::bricks(engine::BrickList::default());
+            let list = crate::bricks(engine::BrickList::default());
             let entries = match engine::smokes::registered(&list) {
                 Ok(entries) => entries,
                 Err(error) => return engine_native::exit(Err(error)),
@@ -97,7 +97,7 @@ impl Options {
     }
 
     fn run(&self) -> engine::Result<()> {
-        let bricks = bricks(&self.without, "--without")?;
+        let bricks = listed(&self.without, "--without")?;
         #[cfg(feature = "dev")]
         if self.host.dev {
             let mut session = self

@@ -143,7 +143,7 @@ impl Game for ScenePlayer {
     }
 }
 
-pub fn bricks(
+pub fn listed(
     without: &str,
     path: &str,
 ) -> Result<impl FnOnce(BrickList) -> BrickList + use<>, Error> {
@@ -169,7 +169,7 @@ pub fn bricks(
         })
         .collect::<Result<Vec<&'static str>, Error>>()?;
     Ok(move |list: BrickList| {
-        let mut list = engine_player_bricks::bricks(list);
+        let mut list = crate::bricks(list);
         for package in left_out {
             list = list.without_package(package);
         }

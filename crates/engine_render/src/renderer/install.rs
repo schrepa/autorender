@@ -525,7 +525,7 @@ impl Renderer {
         self.resolver = installed.resolve.map(|(names, package)| (names.pass, package));
         run.switches = switches_of(&run.machine, world, &[]);
         let scope = crate::gpu_calls::validation_scope(&self.core.device);
-        run.warm();
+        run.warm(false);
         self.installing = Some(Box::pin(scope.pop()));
         self.spans = installed
             .passes
@@ -558,7 +558,7 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     let mut run = Run::new(device.clone(), wgpu::Queue::clone(&queue), installed.machine, installed.run_parts, assets);
     run.gates = installed.gates;
     run.switches = switches_of(&run.machine, world, &[]);
-    run.warm();
+    run.warm(true);
     match crate::platform::ready(scope.pop()) {
         Some(Some(error)) => Err(vec![failed_with("$.pipelines", error)]),
         Some(None) | None => Ok(listed),
@@ -585,7 +585,7 @@ fn noop_device() -> Result<(wgpu::Device, wgpu::Queue), Error> {
         .map_err(|error| failed_with("$.adapter", error))?;
     let (device, queue) = crate::platform::ready(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("engine/noop-device"),
-        required_limits: adapter.limits(),
+        required_limits: super::startup::device_limits(&adapter.limits()),
         ..Default::default()
     }))
     .ok_or_else(|| failed("$.device"))?

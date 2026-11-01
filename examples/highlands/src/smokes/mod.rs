@@ -54,21 +54,21 @@ pub fn smokes(bricks: &BrickList) -> engine::Result<Vec<SmokeEntry>> {
     });
     smokes.extend(SMOKES.iter().map(|smoke| SmokeEntry::of(GAME, smoke)));
     smokes.push(SmokeEntry {
-        list: Some(highlands_bricks::toon),
+        list: Some(crate::toon),
         restart: Some(Restart {
             first: toon_lighting::standard,
             then: toon_lighting::toon,
         }),
         ..SmokeEntry::of(GAME, &TOON)
     });
-    let toon = highlands_bricks::toon(BrickList::default());
+    let toon = crate::toon(BrickList::default());
     for entry in engine::smokes::registered(&toon)? {
         if entry.owner != LIGHTING || entry.without.is_some() {
             continue;
         }
         smokes.push(SmokeEntry {
             name: Box::leak(format!("{}.{}", TOON.name, entry.name).into_boxed_str()),
-            list: Some(highlands_bricks::toon),
+            list: Some(crate::toon),
             ..entry
         });
     }

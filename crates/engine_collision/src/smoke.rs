@@ -16,8 +16,11 @@ pub(crate) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     sweep(session)?;
     changes(session, &ray)?;
     control(session, "resume", json!({}))?;
-    query(session, "raycast", ray)?;
+    query(session, "raycast", ray.clone())?;
     control(session, "pause", json!({}))?;
+    session.without(&["engine_collision", "engine_physics"]);
+    let missing = refuse(session, "query", "raycast", ray)?;
+    smoke_eq!(missing["code"], json!("missing_plugin"), "plugin_is_opt_in");
     Ok(())
 }
 
@@ -192,12 +195,11 @@ fn sensor(session: &mut dyn SmokeSession, ray: &Value) -> Checked<()> {
     let mut z = 0.0_f32;
     for tick in 0..36 {
         z -= TICK_DISTANCE;
-        let moved = edit(session, "player", [0.0, 0.6, z]);
-        smoke_eq!(
-            if moved { json!("moved") } else { json!(tick) },
-            json!("moved"),
-            "player_moves"
-        );
+        let moved = match edit(session, "player", [0.0, 0.6, z]) {
+            Ok(()) => json!("moved"),
+            Err(error) => json!({"tick": tick, "error": error}),
+        };
+        smoke_eq!(moved, json!("moved"), "player_moves");
         session.step(1);
         let events = sensor_events(session)?;
         let rows = events["events"].as_array().cloned().unwrap_or_default();
@@ -221,8 +223,8 @@ fn sensor(session: &mut dyn SmokeSession, ray: &Value) -> Checked<()> {
 
 fn sweep(session: &mut dyn SmokeSession) -> Checked<()> {
     smoke_eq!(
-        edit(session, "player", [0.0, 0.6, 0.0]),
-        true,
+        edit(session, "player", [0.0, 0.6, 0.0]).err(),
+        None,
         "player_returns"
     );
     smoke_eq!(
@@ -317,13 +319,14 @@ fn load(session: &mut dyn SmokeSession, scene: &Value) -> Checked<()> {
     Ok(())
 }
 
-fn edit(session: &mut dyn SmokeSession, id: &str, translation: [f32; 3]) -> bool {
+fn edit(session: &mut dyn SmokeSession, id: &str, translation: [f32; 3]) -> Result<(), Value> {
     session
         .request(
             "control",
             json!({"name": "edit_transform", "args": {"entity": id, "translation": translation}}),
         )
-        .is_ok()
+        .map(drop)
+        .map_err(|mut refused| refused["error"].take())
 }
 
 fn fixture(target: bool, extra: &[Value]) -> Value {

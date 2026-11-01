@@ -13,7 +13,7 @@ name = "highlands-native"
 path = "src/main.rs"
 
 [package.metadata.engine]
-kind = "app"
+kind = "game"
 page = "highlands.html"
 game = "highlands"
 native = "highlands-native"
@@ -30,7 +30,16 @@ engine_sources.workspace = true
 engine.workspace = true
 engine_core.workspace = true
 engine_ecs.workspace = true
-highlands_bricks.workspace = true
+engine_fly_camera.workspace = true
+engine_heightfield.workspace = true
+engine_lighting.workspace = true
+engine_places.workspace = true
+engine_render.workspace = true
+engine_standard.workspace = true
+engine_worker.workspace = true
+glam.workspace = true
+schemars.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

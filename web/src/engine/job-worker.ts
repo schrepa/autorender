@@ -1,10 +1,28 @@
-import type { JobWorker } from "../../pkg/engine_worker";
-
-type Bindings = typeof import("../../pkg/engine_worker");
 import { fatal, panicReport } from "./panic";
 
+interface JobWorker {
+  free(): void;
+  share(key: string, bytes: Uint8Array): void;
+  unshare(key: string): void;
+  clear(): void;
+  hold(id: number, kind: string, source: string, input: Uint8Array, priority: number): void;
+  busy(): boolean;
+  slice(): unknown;
+  cancel(id: number): void;
+}
+
+export interface WorkerBindings {
+  default(init: { module_or_path: WebAssembly.Module }): Promise<unknown>;
+  JobWorker: {
+    new (hash: Uint8Array): JobWorker;
+    start(): void;
+    unpack(stored: Uint8Array, raw: number): Uint8Array;
+    decode_image(uri: string, bytes: Uint8Array): unknown;
+  };
+}
+
 type Request =
-  | { type: "init"; bindings?: string; module?: WebAssembly.Module }
+  | { type: "init"; bindings?: string; module: WebAssembly.Module }
   | { type: "list"; hash: Uint8Array }
   | { type: "clear" }
   | { type: "share"; key: string; blob: Blob }
@@ -21,15 +39,19 @@ const scope = self as unknown as {
   onmessage: ((event: MessageEvent<Request>) => void) | null;
 };
 
-let bindings: Bindings | undefined;
+let game: () => Promise<WorkerBindings>;
+let bindings: WorkerBindings | undefined;
 let worker: JobWorker | undefined;
 let broken = false;
 let queue: Promise<void> = Promise.resolve();
 let running = false;
 
-scope.onmessage = (event) => {
-  queue = queue.then(() => handle(event.data)).catch(error => fatal(error) ? stopped(error) : fail(error));
-};
+export function serveJobs(load: () => Promise<WorkerBindings>) {
+  game = load;
+  scope.onmessage = (event) => {
+    queue = queue.then(() => handle(event.data)).catch(error => fatal(error) ? stopped(error) : fail(error));
+  };
+}
 
 function fail(error: unknown) {
   if (broken) return;
@@ -72,15 +94,14 @@ async function work() {
   }
 }
 
-async function start(pinned?: string, compiled?: WebAssembly.Module) {
-  const module = (pinned
-    ? await import(/* @vite-ignore */ pinned)
-    : await import("../../pkg/engine_worker")) as Bindings;
-  await module.default(compiled ? { module_or_path: compiled } : undefined);
+async function start(pinned: string | undefined, compiled: WebAssembly.Module) {
+  const module = (pinned ? await import(/* @vite-ignore */ pinned) : await game()) as WorkerBindings;
+  await module.default({ module_or_path: compiled });
+  module.JobWorker.start();
   bindings = module;
 }
 
-function loaded(): Bindings {
+function loaded(): WorkerBindings {
   if (!bindings) throw new Error("worker unavailable");
   return bindings;
 }

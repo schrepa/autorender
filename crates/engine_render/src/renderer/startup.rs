@@ -1,5 +1,27 @@
 use super::*;
 
+pub(super) fn device_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
+    let required = crate::pipeline_layouts::REQUIRED_LIMITS;
+    wgpu::Limits {
+        max_buffer_size: adapter.max_buffer_size,
+        max_storage_buffer_binding_size: adapter.max_storage_buffer_binding_size,
+        max_texture_dimension_2d: adapter.max_texture_dimension_2d.min(8_192),
+        max_storage_buffers_per_shader_stage: adapter
+            .max_storage_buffers_per_shader_stage
+            .max(required.storage_buffers),
+        max_bind_groups: required.bind_groups,
+        max_uniform_buffers_per_shader_stage: required.uniform_buffers,
+        max_sampled_textures_per_shader_stage: required.sampled_textures,
+        max_samplers_per_shader_stage: required.samplers,
+        max_storage_textures_per_shader_stage: required.storage_textures,
+        max_dynamic_uniform_buffers_per_pipeline_layout: required.dynamic_uniform_buffers,
+        max_dynamic_storage_buffers_per_pipeline_layout: required.dynamic_storage_buffers,
+        max_uniform_buffer_binding_size: crate::pipeline_layouts::UNIFORM_BINDING_BYTES,
+        max_texture_array_layers: adapter.max_texture_array_layers,
+        ..wgpu::Limits::downlevel_defaults()
+    }
+}
+
 pub struct StartingRenderer {
     renderer: Renderer,
     validation: std::pin::Pin<Box<dyn std::future::Future<Output = Option<wgpu::Error>>>>,
@@ -19,10 +41,6 @@ impl Renderer {
         Self::start(target).await?.finish().await
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub async fn start(target: RenderTarget) -> Result<StartingRenderer, Error> {
         let instance = target.instance();
         let surface = target
@@ -38,26 +56,7 @@ impl Renderer {
             .await
             .map_err(|error| failed_with("$.adapter", error))?;
         let adapter_info = crate::AdapterInfo::of(&adapter.get_info());
-        let adapter_limits = adapter.limits();
-        let required = crate::pipeline_layouts::REQUIRED_LIMITS;
-        let limits = wgpu::Limits {
-            max_buffer_size: adapter_limits.max_buffer_size,
-            max_storage_buffer_binding_size: adapter_limits.max_storage_buffer_binding_size,
-            max_texture_dimension_2d: adapter_limits.max_texture_dimension_2d.min(8_192),
-            max_storage_buffers_per_shader_stage: adapter_limits
-                .max_storage_buffers_per_shader_stage
-                .max(required.storage_buffers),
-            max_bind_groups: required.bind_groups,
-            max_uniform_buffers_per_shader_stage: required.uniform_buffers,
-            max_sampled_textures_per_shader_stage: required.sampled_textures,
-            max_samplers_per_shader_stage: required.samplers,
-            max_storage_textures_per_shader_stage: required.storage_textures,
-            max_dynamic_uniform_buffers_per_pipeline_layout: required.dynamic_uniform_buffers,
-            max_dynamic_storage_buffers_per_pipeline_layout: required.dynamic_storage_buffers,
-            max_uniform_buffer_binding_size: crate::pipeline_layouts::UNIFORM_BINDING_BYTES,
-            max_texture_array_layers: adapter_limits.max_texture_array_layers,
-            ..wgpu::Limits::downlevel_defaults()
-        };
+        let limits = device_limits(&adapter.limits());
         let compression = adapter.features()
             & (wgpu::Features::TEXTURE_COMPRESSION_BC
                 | wgpu::Features::TEXTURE_COMPRESSION_ETC2

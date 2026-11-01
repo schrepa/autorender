@@ -14,7 +14,7 @@ const KINDS: &[&str] = &[
     "brick",
     "list",
     "host",
-    "app",
+    "game",
     "tool",
 ];
 
@@ -80,7 +80,6 @@ struct Dependency {
     package: String,
     path: Option<PathBuf>,
     git: bool,
-    build: bool,
 }
 
 fn main() -> ExitCode {
@@ -217,7 +216,6 @@ fn dependency(entry: &Value) -> Dependency {
         git: entry["source"]
             .as_str()
             .is_some_and(|source| source.starts_with("git+")),
-        build: kind == Some("build"),
     }
 }
 
@@ -262,10 +260,10 @@ fn check_member(
             "{at}: the kind {kind} is closed and does not name this crate"
         ));
     }
-    if member.cdylib && kind != "app" {
-        problems.push(format!("{at}: only app crates build a cdylib"));
+    if member.cdylib && kind != "game" {
+        problems.push(format!("{at}: only game crates build a cdylib"));
     }
-    if matches!(kind, "brick" | "place" | "list")
+    if matches!(kind, "brick" | "place" | "list" | "game")
         && !forbids_unsafe(&read(&member.manifest)?, workspace)
     {
         problems.push(format!(
@@ -287,7 +285,7 @@ fn check_member(
             continue;
         }
         if let Some(target) = dependency.path.as_deref().and_then(|dir| folders.get(dir)) {
-            if !allowed(member, kind, target, dependency.build) {
+            if !allowed(member, kind, target) {
                 let target_kind = target.kind.as_deref().unwrap_or("no kind");
                 problems.push(format!(
                     "{edge}: a {kind} crate may not depend on {} ({target_kind})",
@@ -313,7 +311,7 @@ fn check_member(
     Ok(())
 }
 
-fn allowed(member: &Member, kind: &str, target: &Member, build: bool) -> bool {
+fn allowed(member: &Member, kind: &str, target: &Member) -> bool {
     let target_kind = target.kind.as_deref().unwrap_or_default();
     let name = target.name.as_str();
     match kind {
@@ -328,9 +326,10 @@ fn allowed(member: &Member, kind: &str, target: &Member, build: bool) -> bool {
                 || matches!(name, "engine_ecs" | "engine_core" | "engine_render")
         }
         "list" => matches!(target_kind, "place" | "brick" | "list") || name == "engine_core",
-        "app" => {
-            matches!(target_kind, "host" | "list" | "core") || (build && name == "engine_sources")
-        }
+        "game" => matches!(
+            target_kind,
+            "host" | "list" | "brick" | "place" | "core" | "support"
+        ),
         "tool" => {
             !target.at.starts_with("examples/")
                 || game(&member.at).is_some_and(|own| game(&target.at) == Some(own))
@@ -358,6 +357,9 @@ fn external(kind: &str, package: &str) -> Option<String> {
             PLACE_EXTERNALS.join(", ")
         )),
         "support" | "brick" if engine_only(package) => Some(format!("{package} is engine-only")),
+        "game" if engine_only(package) && !page_bindings(package) => {
+            Some(format!("{package} is engine-only"))
+        }
         _ => None,
     }
 }
@@ -368,9 +370,11 @@ fn engine_only(package: &str) -> bool {
         || package.starts_with("wgpu")
         || package == "naga"
         || package == "wesl"
-        || package.starts_with("wasm-bindgen")
-        || package == "web-sys"
-        || package == "js-sys"
+        || page_bindings(package)
+}
+
+fn page_bindings(package: &str) -> bool {
+    package.starts_with("wasm-bindgen") || package == "web-sys" || package == "js-sys"
 }
 
 fn forbids_unsafe(manifest: &Item, workspace: &Item) -> bool {

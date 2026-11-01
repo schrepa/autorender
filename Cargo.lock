@@ -157,6 +157,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "app_template"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "engine_core",
+ "engine_ecs",
+ "engine_fly_camera",
+ "engine_native",
+ "engine_sources",
+ "engine_standard",
+ "engine_worker",
+ "glam 0.30.9",
+ "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "approx"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1441,46 +1460,20 @@ version = "0.1.0"
 dependencies = [
  "engine",
  "engine_core",
+ "engine_ecs",
+ "engine_fly_camera",
  "engine_native",
- "engine_player_bricks",
+ "engine_places",
  "engine_sources",
  "engine_standard",
+ "engine_standard_smokes",
+ "engine_worker",
+ "glam 0.30.9",
+ "serde",
  "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
-]
-
-[[package]]
-name = "engine_player_bricks"
-version = "0.1.0"
-dependencies = [
- "engine_core",
- "engine_fly_camera",
- "engine_player_walk",
- "engine_standard",
- "engine_standard_smokes",
-]
-
-[[package]]
-name = "engine_player_walk"
-version = "0.1.0"
-dependencies = [
- "engine_core",
- "engine_ecs",
- "engine_places",
- "engine_sources",
- "glam 0.30.9",
- "serde",
-]
-
-[[package]]
-name = "engine_player_worker"
-version = "0.1.0"
-dependencies = [
- "engine_player_bricks",
- "engine_worker",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -2358,74 +2351,22 @@ dependencies = [
  "engine",
  "engine_core",
  "engine_ecs",
- "engine_native",
- "engine_sources",
- "highlands_bricks",
- "serde_json",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
-name = "highlands_bricks"
-version = "0.1.0"
-dependencies = [
- "engine_core",
  "engine_fly_camera",
- "engine_lighting",
- "engine_standard",
- "highlands_game",
- "highlands_pond",
- "highlands_toon_lighting",
-]
-
-[[package]]
-name = "highlands_game"
-version = "0.1.0"
-dependencies = [
- "engine_core",
- "engine_ecs",
  "engine_heightfield",
- "engine_places",
- "engine_sources",
- "glam 0.30.9",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "highlands_pond"
-version = "0.1.0"
-dependencies = [
- "engine_core",
- "engine_ecs",
+ "engine_lighting",
+ "engine_native",
  "engine_places",
  "engine_render",
  "engine_sources",
+ "engine_standard",
+ "engine_worker",
  "glam 0.30.9",
  "schemars",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "highlands_toon_lighting"
-version = "0.1.0"
-dependencies = [
- "engine_core",
- "engine_ecs",
- "engine_places",
- "engine_sources",
-]
-
-[[package]]
-name = "highlands_worker"
-version = "0.1.0"
-dependencies = [
- "engine_worker",
- "highlands_bricks",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

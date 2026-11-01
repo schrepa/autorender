@@ -88,7 +88,7 @@ pub(crate) struct BuiltPipeline {
     pub(crate) reads: Vec<Bound>,
     pub(crate) writes: Vec<Bound>,
     pub(crate) made: Vec<(u64, wgpu::RenderPipeline)>,
-    pub(crate) compute: Option<wgpu::ComputePipeline>,
+    pub(crate) computed: Vec<(u64, wgpu::ComputePipeline)>,
     pub(crate) layout_key: String,
 }
 
@@ -664,7 +664,7 @@ impl Machine {
                 reads,
                 writes,
                 made: Vec::new(),
-                compute: None,
+                computed: Vec::new(),
                 layout_key,
             });
         }
@@ -676,21 +676,6 @@ impl Machine {
                 return None;
             }
         };
-        for pipeline in &mut pipelines {
-            if let Program::Compute(_) = pipeline.decl.program
-                && let (Some(module), Some(stage)) = (pipeline.modules.first(), pipeline.stages.first())
-            {
-                crate::pipelines::count(1);
-                pipeline.compute = Some(device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    label: Some(stage.entry.name()),
-                    layout: Some(&pipeline.layout),
-                    module,
-                    entry_point: Some(stage.entry.name()),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    cache: None,
-                }));
-            }
-        }
         Some(Self {
             declared,
             outputs,

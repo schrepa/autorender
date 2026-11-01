@@ -1,4 +1,5 @@
 import { engineFailure } from "../generated/errors";
+import { type JobBindings, type JobWorkerClass, useJobs } from "./jobs";
 
 const simdProbe = new Uint8Array([
   0, 97, 115, 109, 1, 0, 0, 0,
@@ -24,10 +25,17 @@ export function requireWasmSimd(): void {
   }
 }
 
-export async function loadGame<T>(wasm: string, load: () => Promise<T>): Promise<T> {
+export interface GameBindings extends JobBindings {
+  default(): Promise<unknown>;
+}
+
+export async function loadGame<T extends GameBindings>(wasm: string, load: () => Promise<T>, worker: JobWorkerClass): Promise<T> {
   requireWasmSimd();
   const pinned = generationModule(wasm);
-  return pinned ? import(/* @vite-ignore */ pinned) as Promise<T> : load();
+  const bindings = await (pinned ? import(/* @vite-ignore */ pinned) as Promise<T> : load());
+  await bindings.default();
+  useJobs(bindings, worker, pinned);
+  return bindings;
 }
 
 export function generationModule(name: string): string | undefined {
@@ -36,8 +44,4 @@ export function generationModule(name: string): string | undefined {
   if (!generation) return;
   if (!/^[A-Za-z0-9_-]{1,100}$/.test(generation)) throw engineFailure({ code: "invalid_id", path: "?engine_build", expected: "id", got: generation });
   return `/_engine/builds/${generation}/${name}.js`;
-}
-
-export function engineWorkerModule(): string | undefined {
-  return generationModule("engine_worker");
 }

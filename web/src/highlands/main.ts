@@ -2,6 +2,7 @@ import { loadGame } from "../engine/bindings";
 import { type GameOptions, startGame } from "../engine/host";
 import { runSmokes, smokeSelection, type SmokeRun } from "../engine/smokes";
 import type { HighlandsGame, HighlandsRocks } from "../../pkg/highlands";
+import JobWorker from "./worker.ts?worker";
 
 declare const __PUBLIC_KTX2__: readonly string[];
 
@@ -24,8 +25,7 @@ type HighlandsSmokes = (canvas: HTMLCanvasElement, names: string, report: (line:
 const smoke = smokeSelection();
 if (smoke !== null) {
   void runSmokes(smoke, async (): Promise<SmokeRun | undefined> => {
-    const { default: init, HighlandsGame } = await loadGame("highlands", () => import("../../pkg/highlands"));
-    await init();
+    const { HighlandsGame } = await loadGame("highlands", () => import("../../pkg/highlands"), JobWorker);
     const smokes = (HighlandsGame as unknown as { smokes?: HighlandsSmokes }).smokes;
     return smokes && ((canvas, names, report) => smokes.call(HighlandsGame, canvas, names, report, location.search));
   });
@@ -33,8 +33,7 @@ if (smoke !== null) {
   parameters,
   controls,
   async create(canvas, signal) {
-    const { default: init, HighlandsGame, HighlandsRocks } = await loadGame("highlands", () => import("../../pkg/highlands"));
-    await init();
+    const { HighlandsGame, HighlandsRocks } = await loadGame("highlands", () => import("../../pkg/highlands"), JobWorker);
     Object.assign(parameters, JSON.parse(HighlandsGame.parameters()) as Record<string, string>);
     for (const [name, values] of Object.entries(JSON.parse(HighlandsGame.controls()) as Record<string, string>)) {
       controls[name] = { values, run(game, args) { game.control(name, String(args.name)); return { [name]: args.name }; } };

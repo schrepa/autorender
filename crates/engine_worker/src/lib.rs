@@ -290,6 +290,14 @@ macro_rules! __export_worker {
                 Ok(Self { worker })
             }
 
+            pub fn start() {
+                $crate::__private::install();
+            }
+
+            pub fn module() -> $crate::__private::JsValue {
+                $crate::__private::wasm_bindgen::module()
+            }
+
             pub fn share(
                 &mut self,
                 key: &str,

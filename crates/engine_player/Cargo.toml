@@ -13,7 +13,7 @@ name = "engine-player-native"
 path = "src/main.rs"
 
 [package.metadata.engine]
-kind = "app"
+kind = "game"
 page = "player.html"
 game = "player"
 native = "engine-player-native"
@@ -29,8 +29,14 @@ engine_sources.workspace = true
 [dependencies]
 engine.workspace = true
 engine_core.workspace = true
+engine_ecs.workspace = true
+engine_fly_camera.workspace = true
+engine_places.workspace = true
 engine_standard.workspace = true
-engine_player_bricks.workspace = true
+engine_standard_smokes.workspace = true
+engine_worker.workspace = true
+glam.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

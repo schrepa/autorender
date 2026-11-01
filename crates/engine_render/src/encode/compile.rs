@@ -218,25 +218,69 @@ impl Run {
         (formats, depth, main)
     }
 
-    pub(crate) fn warm(&mut self) {
+    #[expect(clippy::disallowed_methods, reason = "the machine keys every pipeline, which the pipeline list records")]
+    pub(super) fn compute_pipeline(&mut self, pipeline: u32) -> Option<wgpu::ComputePipeline> {
+        let built = self.machine.pipelines.get(pipeline as usize)?;
+        let (Program::Compute(_), Some(module), Some(stage)) = (&built.decl.program, built.modules.first(), built.stages.first()) else {
+            return None;
+        };
+        let switches: Vec<(u32, bool)> = self
+            .switches
+            .iter()
+            .filter(|(id, _)| stage.composed.switches.contains(id))
+            .copied()
+            .collect();
+        let mut hasher = DefaultHasher::new();
+        switches.hash(&mut hasher);
+        let key = hasher.finish();
+        if let Some((_, made)) = built.computed.iter().find(|(known, _)| *known == key) {
+            return Some(made.clone());
+        }
+        let constants: Vec<(String, f64)> = switches
+            .iter()
+            .map(|(id, on)| (id.to_string(), f64::from(u8::from(*on))))
+            .collect();
+        let named: Vec<(&str, f64)> = constants.iter().map(|(name, value)| (name.as_str(), *value)).collect();
+        let made = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some(stage.entry.name()),
+            layout: Some(&built.layout),
+            module,
+            entry_point: Some(stage.entry.name()),
+            compilation_options: wgpu::PipelineCompilationOptions {
+                constants: &named,
+                zero_initialize_workgroup_memory: true,
+            },
+            cache: None,
+        });
+        crate::pipelines::count(1);
+        if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize) {
+            built.computed.push((key, made.clone()));
+        }
+        Some(made)
+    }
+
+    pub(crate) fn warm(&mut self, debug: bool) {
         for pipeline in 0..self.machine.pipelines.len() {
-            if !matches!(self.machine.pipelines[pipeline].decl.program, Program::Render(_)) {
+            if matches!(self.machine.pipelines[pipeline].decl.program, Program::Compute(_)) {
+                let _ = self.compute_pipeline(pipeline as u32);
                 continue;
             }
             for pass in self.scope_passes(pipeline) {
-                let lazy = self
-                    .machine
-                    .declared
-                    .passes
-                    .get(pass as usize)
-                    .is_some_and(|declared| declared.name == crate::shared::DEBUG_VIEW);
-                if lazy {
+                let Some(declared) = self.machine.declared.passes.get(pass as usize) else {
+                    continue;
+                };
+                let (lazy, shares) = (declared.name == crate::shared::DEBUG_VIEW, shared(declared));
+                if lazy && !debug {
                     continue;
                 }
                 let (formats, depth, main) = self.pass_formats(pass);
                 let _ = self.compile(pipeline as u32, (&formats, depth), (false, main), None);
                 for layered in self.layered_formats(pipeline, pass, formats.len()) {
                     let _ = self.compile(pipeline as u32, (&layered, None), (false, main), None);
+                }
+                if debug && shares {
+                    let shown: Vec<Option<wgpu::TextureFormat>> = DEBUG_FORMATS.iter().copied().map(Some).collect();
+                    let _ = self.compile(pipeline as u32, (&shown, Some((DEPTH_FORMAT, true))), (true, false), None);
                 }
             }
         }

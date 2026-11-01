@@ -47,7 +47,7 @@ impl HighlandsGame {
         } else {
             RockMaps::default()
         };
-        Self::launch(canvas, highlands_bricks::bricks, move |engine| {
+        Self::launch(canvas, crate::bricks, move |engine| {
             Highlands::build(engine, options, &rocks)
         })
         .await
@@ -80,7 +80,7 @@ engine::__if_dev! {
             let build = move |source: Option<&str>, engine: &mut engine::Engine| {
                 Highlands::played(options.clone(), source, engine)
             };
-            let bricks = highlands_bricks::bricks(engine::BrickList::default());
+            let bricks = crate::bricks(engine::BrickList::default());
             let smokes = crate::smokes(&bricks).map_err(js_error)?;
             engine::smokes::page::run::<Highlands>(
                 canvas,

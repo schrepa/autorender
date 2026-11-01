@@ -1,4 +1,3 @@
-import type { JobCacheIndex, PackDirectory } from "../../pkg/engine_worker";
 import { engineFailure } from "../generated/errors";
 import { JOB_CACHE_MIB, MAX_JOB_CACHE_MIB } from "../generated/host";
 
@@ -9,7 +8,29 @@ const MIB = 1024 * 1024;
 const PACKS = `${import.meta.env.BASE_URL}cooked/`;
 const PACK_HEADER = 32;
 
-type IndexBindings = { JobCacheIndex: typeof JobCacheIndex; PackDirectory: typeof PackDirectory };
+interface JobCacheIndex {
+  verify(): boolean;
+  counters(): Float64Array;
+  lists(name: string): boolean;
+  holds(key: string): boolean;
+  hit(key: string, bytes?: number): boolean;
+  miss(): void;
+  store(key: string, bytes: number): boolean;
+  mismatch(key: string): void;
+  failed(): void;
+  take_removed(): string[];
+  index(): string | undefined;
+}
+
+interface PackDirectory {
+  find(key: string): Float64Array | undefined;
+  unpack(key: string, stored: Uint8Array): Uint8Array;
+}
+
+export interface IndexBindings {
+  JobCacheIndex: new (budget: number, available: number | undefined, verify: boolean, index: string | undefined) => JobCacheIndex;
+  PackDirectory: { new (header: Uint8Array, directory: Uint8Array): PackDirectory; locate(header: Uint8Array): Float64Array };
+}
 
 interface Pack { url: string; directory: PackDirectory }
 

@@ -41,6 +41,7 @@ mod places;
 mod registration;
 mod shaders;
 mod shared;
+mod sizes;
 
 mod buffers;
 mod materials;

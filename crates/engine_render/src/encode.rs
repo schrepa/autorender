@@ -59,6 +59,8 @@ fn specialized(compiled: &Compiled) -> Option<Specialized> {
 
 const GROUPED: bool = cfg!(any(not(target_arch = "wasm32"), feature = "profiling"));
 
+const PLACEHOLDER_BYTES: u64 = 4_096;
+
 pub(crate) struct Allocated {
     pub(crate) texture: wgpu::Texture,
     pub(crate) view: wgpu::TextureView,
@@ -271,7 +273,8 @@ pub(crate) struct Run {
     pub(crate) filled: Vec<Filled>,
     pub(crate) wanted_textures: Vec<TextureHandle>,
     pub(crate) switches: Vec<(u32, bool)>,
-    pub(crate) placeholders: Vec<(Ty, Placeholder)>,
+    pub(crate) placeholders: Vec<((Ty, u64), Placeholder)>,
+    pub(crate) sized: Vec<((Option<usize>, u32, u32), u64)>,
     pub(crate) encoder: Option<wgpu::CommandEncoder>,
     pub(crate) open: Option<Open>,
     pub(crate) computing: Option<(u32, wgpu::ComputePass<'static>)>,
@@ -488,6 +491,7 @@ impl Run {
             wanted_textures: Vec::new(),
             switches: Vec::new(),
             placeholders: Vec::new(),
+            sized: Vec::new(),
             encoder: None,
             open: None,
             computing: None,
@@ -971,14 +975,14 @@ fn depth_ops(ops: Ops) -> wgpu::Operations<f32> {
     }
 }
 
-fn placeholder(device: &wgpu::Device, ty: Ty) -> Placeholder {
+fn placeholder(device: &wgpu::Device, (ty, bytes): (Ty, u64)) -> Placeholder {
     use crate::linker::Sample;
     let buffer = |usage| {
         Placeholder::Buffer(crate::memory::buffer(
             device,
             &wgpu::BufferDescriptor {
                 label: Some("engine/placeholder"),
-                size: 4_096,
+                size: bytes.max(PLACEHOLDER_BYTES),
                 usage,
                 mapped_at_creation: false,
             },

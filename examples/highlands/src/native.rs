@@ -106,7 +106,7 @@ impl Native {
         let build = |source: Option<&str>, engine: &mut Engine| {
             Highlands::played(self.options.clone(), source, engine)
         };
-        let bricks = highlands_bricks::bricks(engine::BrickList::default());
+        let bricks = crate::bricks(engine::BrickList::default());
         let smokes = match crate::smokes(&bricks) {
             Ok(smokes) => smokes,
             Err(error) => return engine_native::exit(Err(error)),
@@ -127,7 +127,7 @@ impl Native {
         if self.host.dev {
             return self.run_dev(build);
         }
-        self.host.run("Highlands", highlands_bricks::bricks, build)
+        self.host.run("Highlands", crate::bricks, build)
     }
 
     fn build(&self, engine: &mut Engine) -> engine::Result<Highlands> {
@@ -146,7 +146,7 @@ impl Native {
     ) -> engine::Result<()> {
         let session = self
             .host
-            .dev_session(highlands_bricks::bricks, build)?
+            .dev_session(crate::bricks, build)?
             .parameters(options());
         controlled(session).run()
     }

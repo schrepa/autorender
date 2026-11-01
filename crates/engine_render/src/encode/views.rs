@@ -211,11 +211,31 @@ impl Run {
         pass_layer(self.machine.declared.passes.get(self.pass as usize)?)
     }
 
-    pub(super) fn placeholder(&mut self, ty: Ty) {
-        if !self.placeholders.iter().any(|(known, _)| *known == ty) {
-            let made = placeholder(&self.device, ty);
-            self.placeholders.push((ty, made));
+    pub(super) fn placeholder(&mut self, key: (Ty, u64)) {
+        if !self.placeholders.iter().any(|(known, _)| *known == key) {
+            let made = placeholder(&self.device, key);
+            self.placeholders.push((key, made));
         }
+    }
+
+    pub(super) fn binding_bytes(&mut self, pipeline: Option<usize>, group: u32, binding: u32) -> u64 {
+        let key = (pipeline, group, binding);
+        if let Some((_, bytes)) = self.sized.iter().find(|(known, _)| *known == key) {
+            return *bytes;
+        }
+        let marker = format!("@binding({binding})");
+        let reach = match pipeline {
+            Some(at) => at..at + 1,
+            None => 0..self.machine.pipelines.len(),
+        };
+        let needed = reach
+            .filter_map(|at| self.machine.pipelines.get(at))
+            .flat_map(|built| built.stages.iter())
+            .filter(|stage| stage.composed.text.contains(&marker))
+            .find_map(|stage| crate::sizes::binding_size(&stage.composed.text, group, binding));
+        let bytes = needed.unwrap_or(0).max(PLACEHOLDER_BYTES).next_multiple_of(16);
+        self.sized.push((key, bytes));
+        bytes
     }
 
     pub(super) fn resource(&mut self, bound: &Bound, ty: Ty, reading: bool) -> Resolved {
@@ -237,15 +257,28 @@ impl Run {
     }
 
     #[expect(clippy::disallowed_methods, reason = "the machine binds groups by the linked declarations")]
-    pub(super) fn bind_group(&mut self, layout: &wgpu::BindGroupLayout, entries: Vec<(u32, Resolved)>) -> wgpu::BindGroup {
-        for (_, resolved) in &entries {
-            if let Resolved::Placeholder(ty) = resolved {
-                self.placeholder(*ty);
+    pub(super) fn bind_group(
+        &mut self,
+        layout: &wgpu::BindGroupLayout,
+        (pipeline, group): (Option<usize>, u32),
+        entries: Vec<(u32, Resolved)>,
+    ) -> wgpu::BindGroup {
+        let mut keys: Vec<Option<(Ty, u64)>> = Vec::with_capacity(entries.len());
+        for (binding, resolved) in &entries {
+            let key = match resolved {
+                Resolved::Placeholder(ty @ (Ty::Uniform | Ty::Storage { .. })) => Some((*ty, self.binding_bytes(pipeline, group, *binding))),
+                Resolved::Placeholder(ty) => Some((*ty, 0)),
+                Resolved::Buffer(_) | Resolved::Dynamic(..) | Resolved::View(_) | Resolved::Sampler(_) => None,
+            };
+            if let Some(key) = key {
+                self.placeholder(key);
             }
+            keys.push(key);
         }
         let resources: Vec<wgpu::BindGroupEntry<'_>> = entries
             .iter()
-            .map(|(binding, resolved)| wgpu::BindGroupEntry {
+            .zip(&keys)
+            .map(|((binding, resolved), key)| wgpu::BindGroupEntry {
                 binding: *binding,
                 resource: match resolved {
                     Resolved::Buffer(buffer) => buffer.as_entire_binding(),
@@ -256,7 +289,7 @@ impl Run {
                     }),
                     Resolved::View(view) => wgpu::BindingResource::TextureView(view),
                     Resolved::Sampler(sampler) => wgpu::BindingResource::Sampler(sampler),
-                    Resolved::Placeholder(ty) => match self.placeholders.iter().find(|(known, _)| known == ty) {
+                    Resolved::Placeholder(_) => match key.and_then(|key| self.placeholders.iter().find(|(known, _)| *known == key)) {
                         Some((_, Placeholder::Buffer(buffer))) => buffer.as_entire_binding(),
                         Some((_, Placeholder::Texture(view))) => wgpu::BindingResource::TextureView(view),
                         Some((_, Placeholder::Sampler(sampler))) => wgpu::BindingResource::Sampler(sampler),
@@ -303,7 +336,7 @@ impl Run {
                     resolved.push((binding, found));
                 }
                 let layout = self.machine.variants[variant].layout.clone();
-                let group = self.bind_group(&layout, resolved);
+                let group = self.bind_group(&layout, (None, 0), resolved);
                 self.frame_groups[variant].0[parity] = Some(group);
                 self.parity = saved;
             }
@@ -326,7 +359,8 @@ impl Run {
                         resolved.push((binding, found));
                     }
                     let layout = self.machine.pipelines[pipeline].groups[group].layout.clone();
-                    let made = self.bind_group(&layout, resolved);
+                    let index = self.machine.pipelines[pipeline].groups[group].index;
+                    let made = self.bind_group(&layout, (Some(pipeline), index), resolved);
                     self.own_groups[pipeline].0[group][parity] = Some(made);
                     self.parity = saved;
                 }

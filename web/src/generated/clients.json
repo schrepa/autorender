@@ -1,13 +1,5 @@
 [
   {
-    "folder": "crates/engine_worker",
-    "game": null,
-    "native": null,
-    "package": "engine_worker",
-    "page": null,
-    "wasm": "engine_worker"
-  },
-  {
     "folder": "crates/engine_player",
     "game": "player",
     "native": "engine-player-native",

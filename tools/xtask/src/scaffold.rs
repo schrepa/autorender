@@ -1,4 +1,7 @@
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use engine_checks::Repository;
 use engine_place::PlaceKind;
@@ -9,24 +12,11 @@ use crate::process::{WASM_TARGET, clients, project_option, run};
 
 const USAGE: &str = "usage: cargo xtask new app --project DIR | new brick PART NAME";
 
-const APP_TEMPLATE: &str = "crates/engine/examples/app_template.rs";
+const APP_TEMPLATE: &str = "crates/engine/examples/app_template";
 
-const APP_NATIVE: &str = "crates/engine_native/examples/app_native.rs";
+const TEMPLATE_CRATE: &str = "app_template";
 
-const APP_XTASK: &str = "crates/engine_checks/examples/app_xtask.rs";
-
-const TEMPLATE_GAME: &str = "#[path = \"../../engine/examples/app_template.rs\"]\nmod app;";
-
-const TEMPLATE_LIST: &str = "pub fn bricks<L: Listing>(list: L) -> L {\n    \
-                             engine_standard::standard(list).with::<FlyCameraBrick>()\n}\n";
-
-const TEMPLATE_USE: &str = "use engine_fly_camera::FlyCameraBrick;\n";
-
-const LIST_USES: &str = "use engine_core::Listing;\nuse engine_fly_camera::FlyCameraBrick;\n\n";
-
-const LIST_DEPENDENCIES: &str = "engine_core.workspace = true\n\
-                                 engine_fly_camera.workspace = true\n\
-                                 engine_standard.workspace = true\n";
+const TEMPLATE_KIND: &str = "kind = \"game\"\n";
 
 const RESERVED: [&str; 4] = ["engine", "generated", "face", "place"];
 
@@ -56,7 +46,7 @@ fn lowercase_words(name: &str, separator: char) -> bool {
         })
 }
 
-fn write_files(root: &Path, files: &[(std::path::PathBuf, String)]) -> Result<(), String> {
+fn write_files(root: &Path, files: &[(PathBuf, String)]) -> Result<(), String> {
     for (path, contents) in files {
         let folder = path
             .parent()
@@ -74,10 +64,30 @@ fn write_files(root: &Path, files: &[(std::path::PathBuf, String)]) -> Result<()
     Ok(())
 }
 
-fn template(root: &Path, path: &str) -> Result<String, String> {
-    fs::read_to_string(root.join(path))
-        .map(|text| text.replace("\r\n", "\n"))
-        .map_err(|error| format!("cannot read {path}: {error}"))
+fn template_files(root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
+    let base = root.join(APP_TEMPLATE);
+    let mut found = Vec::new();
+    let mut folders = vec![base.clone()];
+    while let Some(folder) = folders.pop() {
+        let unreadable =
+            |error: std::io::Error| format!("cannot read {}: {error}", folder.display());
+        for entry in fs::read_dir(&folder).map_err(unreadable)? {
+            let path = entry.map_err(unreadable)?.path();
+            if path.is_dir() {
+                folders.push(path);
+                continue;
+            }
+            let text = fs::read_to_string(&path)
+                .map(|text| text.replace("\r\n", "\n"))
+                .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+            let inside = path
+                .strip_prefix(&base)
+                .map_err(|_| format!("{} lies outside {APP_TEMPLATE}", path.display()))?;
+            found.push((inside.to_path_buf(), text));
+        }
+    }
+    found.sort();
+    Ok(found)
 }
 
 fn app(root: &Path, options: &[String]) -> Result<(), String> {
@@ -100,11 +110,8 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
     let pascal = pascal(&name, '-');
     let crate_dir = root.join(&project);
     let page = format!("{name}.html");
-    for taken in [
-        crate_dir.clone(),
-        root.join("web").join(&page),
-        root.join("web/src").join(&name),
-    ] {
+    let web = root.join("web/src").join(&name);
+    for taken in [crate_dir.clone(), root.join("web").join(&page), web.clone()] {
         if taken.exists() {
             return Err(format!("{} already exists", taken.display()));
         }
@@ -115,81 +122,41 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
     {
         return Err(format!("a client named {name} already exists"));
     }
-    let source = template(root, APP_TEMPLATE)?;
-    for (marker, what) in [(TEMPLATE_LIST, "lists its bricks"), (TEMPLATE_USE, "names them")] {
-        if !source.contains(marker) {
-            return Err(format!(
-                "{APP_TEMPLATE} no longer {what} as `{}`",
-                marker.trim_end()
-            ));
-        }
+    let mut files = Vec::new();
+    for (inside, text) in template_files(root)? {
+        let text = if inside == Path::new("Cargo.toml") {
+            game_manifest(&text, &name, &page)?
+        } else {
+            text.replace(TEMPLATE_CRATE, &wasm)
+                .replace("Template", &pascal)
+        };
+        files.push((crate_dir.join(inside), text));
     }
-    let source = source
-        .replace(TEMPLATE_USE, "")
-        .replace(TEMPLATE_LIST, &format!("pub use {wasm}_bricks::bricks;\n"))
-        .replace("Template", &pascal);
-    let native = template(root, APP_NATIVE)?;
-    let xtask = template(root, APP_XTASK)?;
-    for (path, text) in [(APP_NATIVE, &native), (APP_XTASK, &xtask)] {
-        if !text.contains(TEMPLATE_GAME) {
-            return Err(format!(
-                "{path} no longer reaches the app template as `{TEMPLATE_GAME}`"
-            ));
-        }
-    }
-    let game = format!("use {wasm} as app;");
-    let files = [
-        (crate_dir.join("Cargo.toml"), app_manifest(&name, &page)),
-        (crate_dir.join("src/lib.rs"), source),
-        (
-            crate_dir.join("src/main.rs"),
-            native
-                .replace(TEMPLATE_GAME, &game)
-                .replace("Template", &pascal),
-        ),
-        (
-            crate_dir.join("bricks/Cargo.toml"),
-            list_manifest(&name, LIST_DEPENDENCIES),
-        ),
-        (
-            crate_dir.join("bricks/src/lib.rs"),
-            format!("{LIST_USES}{TEMPLATE_LIST}"),
-        ),
-        (crate_dir.join("worker/Cargo.toml"), worker_manifest(&name)),
-        (
-            crate_dir.join("worker/src/lib.rs"),
-            format!("engine_worker::export_worker!({wasm}_bricks::bricks);\n"),
-        ),
+    let tool = format!("{name}-xtask");
+    files.extend([
         (crate_dir.join("xtask/Cargo.toml"), xtask_manifest(&name)),
-        (
-            crate_dir.join("xtask/src/main.rs"),
-            xtask.replace(TEMPLATE_GAME, &game),
-        ),
+        (crate_dir.join("xtask/src/main.rs"), xtask_main(&wasm)),
         (
             crate_dir.join(".cargo/config.toml"),
-            format!("[alias]\nxtask = \"run -p {name}-xtask --\"\n"),
+            format!("[alias]\nxtask = \"run -p {tool} --\"\n"),
         ),
         (root.join("web").join(&page), page_html(&name, &pascal)),
-        (
-            root.join("web/src").join(&name).join("main.ts"),
-            page_entry(&wasm, &pascal),
-        ),
-    ];
+        (web.join("main.ts"), page_entry(&wasm, &pascal)),
+        (web.join("worker.ts"), worker_entry(&wasm)),
+    ]);
     write_files(root, &files)?;
-    for member in ["", "/bricks", "/worker", "/xtask"] {
+    for member in ["", "/xtask"] {
         join_workspace(root, &format!("{project}{member}"))?;
     }
-    let bricks = format!("{name}-bricks");
-    let worker = format!("{name}-worker");
-    let tool = format!("{name}-xtask");
     join_dependencies(root, &name, &project)?;
-    join_dependencies(root, &bricks, &format!("{project}/bricks"))?;
-    for package in [name.as_str(), bricks.as_str(), worker.as_str(), tool.as_str()] {
+    for package in [name.as_str(), tool.as_str()] {
         run(root, "cargo", &["check", "-p", package])?;
     }
-    for package in [name.as_str(), worker.as_str()] {
-        run(root, "cargo", &["check", "-p", package, "--target", WASM_TARGET])?;
-    }
+    run(
+        root,
+        "cargo",
+        &["check", "-p", &name, "--target", WASM_TARGET],
+    )?;
     run(root, "cargo", &["run", "-q", "-p", "kinds"])?;
     run(root, "cargo", &["xtask", "schema"])?;
     run(root, "cargo", &["run", "-p", &tool, "--", "schema"])?;
@@ -200,104 +167,26 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
             "project": project,
             "page": format!("web/{page}"),
             "native": format!("{name}-native"),
-            "list": bricks,
-            "worker": worker,
             "xtask": tool,
         })
     );
     Ok(())
 }
 
-fn app_manifest(name: &str, page: &str) -> String {
-    format!(
-        r#"[package]
-name = "{name}"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-publish.workspace = true
-
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-[[bin]]
-name = "{name}-native"
-path = "src/main.rs"
-
-[package.metadata.engine]
-kind = "app"
-page = "{page}"
-game = "{name}"
-native = "{name}-native"
-
-[features]
-default = []
-dev = ["engine/dev", "engine_native/dev"]
-profiling = ["engine/profiling", "engine_native/profiling"]
-
-[dependencies]
-engine.workspace = true
-{name}-bricks.workspace = true
-serde_json.workspace = true
-
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-engine_native.workspace = true
-
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen.workspace = true
-wasm-bindgen-futures.workspace = true
-web-sys.workspace = true
-
-[lints]
-workspace = true
-"#
-    )
-}
-
-fn list_manifest(name: &str, dependencies: &str) -> String {
-    format!(
-        r#"[package]
-name = "{name}-bricks"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-publish.workspace = true
-
-[dependencies]
-{dependencies}
-[lints]
-workspace = true
-
-[package.metadata.engine]
-kind = "list"
-"#
-    )
-}
-
-fn worker_manifest(name: &str) -> String {
-    format!(
-        r#"[package]
-name = "{name}-worker"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-publish.workspace = true
-
-[lib]
-crate-type = ["cdylib", "rlib"]
-
-[package.metadata.engine]
-kind = "app"
-worker = true
-
-[dependencies]
-engine_worker.workspace = true
-{name}-bricks.workspace = true
-
-[lints]
-workspace = true
-"#
-    )
+fn game_manifest(template: &str, name: &str, page: &str) -> Result<String, String> {
+    if !template.contains(TEMPLATE_KIND)
+        || !template.contains(&format!("name = \"{TEMPLATE_CRATE}\""))
+    {
+        return Err(format!(
+            "{APP_TEMPLATE}/Cargo.toml no longer declares the crate {TEMPLATE_CRATE} of kind game"
+        ));
+    }
+    let engine = format!(
+        "{TEMPLATE_KIND}page = \"{page}\"\ngame = \"{name}\"\nnative = \"{name}-native\"\n"
+    );
+    Ok(template
+        .replace(TEMPLATE_CRATE, name)
+        .replace(TEMPLATE_KIND, &engine))
 }
 
 fn xtask_manifest(name: &str) -> String {
@@ -318,6 +207,17 @@ workspace = true
 
 [package.metadata.engine]
 kind = "tool"
+"#
+    )
+}
+
+fn xtask_main(wasm: &str) -> String {
+    format!(
+        r#"use {wasm} as app;
+
+fn main() -> std::process::ExitCode {{
+    engine_checks::app::main(env!("CARGO_MANIFEST_DIR"), app::bricks, app::build)
+}}
 "#
     )
 }
@@ -344,14 +244,23 @@ fn page_entry(wasm: &str, pascal: &str) -> String {
     format!(
         r#"import {{ loadGame }} from "../engine/bindings";
 import {{ startGame }} from "../engine/host";
+import JobWorker from "./worker.ts?worker";
 
 startGame({{
   async create(canvas) {{
-    const {{ default: init, {pascal}Game }} = await loadGame("{wasm}", () => import("../../pkg/{wasm}"));
-    await init();
+    const {{ {pascal}Game }} = await loadGame("{wasm}", () => import("../../pkg/{wasm}"), JobWorker);
     return {pascal}Game.create(canvas);
   }},
 }});
+"#
+    )
+}
+
+fn worker_entry(wasm: &str) -> String {
+    format!(
+        r#"import {{ serveJobs }} from "../engine/job-worker";
+
+serveJobs(() => import("../../pkg/{wasm}"));
 "#
     )
 }

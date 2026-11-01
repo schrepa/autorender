@@ -1,9 +1,7 @@
-import workerWasmUrl from "../../pkg/engine_worker_bg.wasm?url";
 import { engineFailure } from "../generated/errors";
 import { FRAME_CORES, MAX_WORKERS, PANIC_PREFIX } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
-import { engineWorkerModule } from "./bindings";
-import { JobStore, jobCacheSettings, type Unpacker } from "./job-cache";
+import { type IndexBindings, JobStore, jobCacheSettings, type Unpacker } from "./job-cache";
 import { fatal, type PanicReport } from "./panic";
 
 export type JobRuntime = Pick<Runtime, "set_job_workers" | "set_job_cache" | "take_jobs" | "complete_job" | "fail_job"
@@ -29,11 +27,29 @@ type WorkerMessage =
 
 export interface Pixels { width: number; height: number; pixels: Uint8Array }
 
+export type JobWorkerClass = new (options?: { name?: string }) => Worker;
+
+export interface JobBindings extends IndexBindings {
+  JobWorker: { module(): WebAssembly.Module };
+}
+
+interface JobGame {
+  index: IndexBindings;
+  module: WebAssembly.Module;
+  worker: JobWorkerClass;
+  bindings?: string;
+}
+
+let game: JobGame | undefined;
+
+export function useJobs(bindings: JobBindings, worker: JobWorkerClass, pinned?: string) {
+  game ??= { index: bindings, module: bindings.JobWorker.module(), worker, bindings: pinned };
+}
+
 interface Slot {
   worker: Worker;
   tasks: Map<number, boolean>;
   broken: boolean;
-  held?: [unknown, Transferable[]][];
 }
 
 interface Task {
@@ -53,13 +69,10 @@ export class JobPool {
   private nextTask = 1;
   private restarts = 0;
   private reported = "";
-  private readonly module: Promise<WebAssembly.Module | undefined> = workerWasm()
-    .then(bytes => bytes && WebAssembly.compile(bytes))
-    .catch(() => undefined);
-  private readonly store: Promise<JobStore | undefined> = this.module.then(module =>
-    openStore(module, (bytes, raw) => this.unpack(bytes, raw)));
+  private readonly store: Promise<JobStore | undefined>;
 
-  constructor(private readonly count: number) {
+  constructor(private readonly count: number, private readonly game: JobGame) {
+    this.store = openStore(game.index, (bytes, raw) => this.unpack(bytes, raw));
     for (let index = 0; index < count; index++) this.slots.push(this.spawn());
   }
 
@@ -201,23 +214,18 @@ export class JobPool {
   }
 
   private spawn(): Slot {
-    const worker = new Worker(new URL("./job-worker.ts", import.meta.url), { type: "module", name: "engine-jobs" });
-    const slot: Slot = { worker, tasks: new Map(), broken: false, held: [] };
+    const worker = new this.game.worker({ name: "engine-jobs" });
+    const slot: Slot = { worker, tasks: new Map(), broken: false };
     worker.onmessage = (event: MessageEvent<WorkerMessage>) => this.receive(slot, event.data);
     worker.onerror = (event) => { event.preventDefault(); this.lose(slot, event.message || "worker error"); };
-    void this.module.then(module => {
-      worker.postMessage({ type: "init", bindings: engineWorkerModule(), module });
-      for (const [message, transfer] of slot.held ?? []) worker.postMessage(message, transfer);
-      slot.held = undefined;
-    });
+    this.post(slot, { type: "init", bindings: this.game.bindings, module: this.game.module });
     if (this.hash) this.post(slot, { type: "list", hash: this.hash });
     for (const [key, blob] of this.shares) this.post(slot, { type: "share", key, blob });
     return slot;
   }
 
   private post(slot: Slot, message: unknown, transfer: Transferable[] = []) {
-    if (slot.held) slot.held.push([message, transfer]);
-    else slot.worker.postMessage(message, transfer);
+    slot.worker.postMessage(message, transfer);
   }
 
   private broadcast(message: Record<string, unknown>) {
@@ -272,42 +280,19 @@ export class JobPool {
   }
 }
 
-let wasm: Promise<ArrayBuffer | undefined> | undefined;
-
-function workerWasm(): Promise<ArrayBuffer | undefined> {
-  wasm ??= fetchWorkerWasm();
-  return wasm;
-}
-
-async function fetchWorkerWasm(): Promise<ArrayBuffer | undefined> {
-  try {
-    const pinned = engineWorkerModule();
-    const url = pinned ? pinned.replace(/\.js$/, "_bg.wasm") : workerWasmUrl;
-    const response = await fetch(url);
-    if (!response.ok) throw engineFailure({ code: "source_io", path: "$", got: { url, status: response.status } });
-    return await response.arrayBuffer();
-  } catch (error) {
-    console.warn(`The job worker module was not fetched: ${String(error)}`);
-    return undefined;
-  }
-}
-
-async function openStore(module: WebAssembly.Module | undefined, unpack: Unpacker): Promise<JobStore | undefined> {
+async function openStore(bindings: IndexBindings, unpack: Unpacker): Promise<JobStore | undefined> {
   const settings = jobCacheSettings();
-  if (!settings || !module) return undefined;
-  const pinned = engineWorkerModule();
-  const bindings = (pinned ? await import(/* @vite-ignore */ pinned) : await import("../../pkg/engine_worker")) as typeof import("../../pkg/engine_worker");
-  await bindings.default({ module_or_path: module });
+  if (!settings) return undefined;
   return JobStore.open(bindings, settings.budget, settings.verify, unpack);
 }
 
 let pool: JobPool | null | undefined;
 
 export function jobPool(): JobPool | undefined {
-  if (pool === undefined) {
+  if (pool === undefined && game) {
     const count = workerCount(new URLSearchParams(location.search).get("workers"));
     jobCacheSettings();
-    pool = new JobPool(typeof Worker !== "undefined" ? count : 0);
+    pool = new JobPool(typeof Worker !== "undefined" ? count : 0, game);
   }
   return pool ?? undefined;
 }

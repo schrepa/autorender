@@ -245,7 +245,7 @@ impl Run {
                 resolved.push((binding, found));
             }
             let layout = self.machine.pipelines[pipeline as usize].groups[group].layout.clone();
-            made.push((index, self.bind_group(&layout, resolved)));
+            made.push((index, self.bind_group(&layout, (Some(pipeline as usize), index), resolved)));
         }
         self.filled[filled].groups = made;
     }
@@ -279,9 +279,10 @@ impl Run {
             self.fault(error);
             return 0;
         }
-        let Some(compute) = built.compute.clone() else {
+        let Some(compute) = self.compute_pipeline(handle) else {
             return 0;
         };
+        let built = &self.machine.pipelines[handle as usize];
         let label = self.label_of(self.pass).unwrap_or("engine/part-dispatch");
         let parity = self.parity;
         let frame_group = self.frame_groups.get(built.variant as usize).and_then(|groups| groups.0[parity].clone());
