@@ -361,6 +361,10 @@ impl Machine {
         let mut staged: Vec<(PipelineDecl, Vec<Stage>, Reached)> = Vec::new();
         for (index, decl) in declared.pipelines.iter().enumerate() {
             let path = format!("$.pipelines.{index}");
+            let named = format!(
+                "{path}.{}",
+                decl.entries().iter().map(|entry| entry.name()).collect::<Vec<_>>().join("+")
+            );
             let mut stages = Vec::new();
             let mut reached: Reached = Vec::new();
             let mut failed = false;
@@ -388,7 +392,7 @@ impl Machine {
             for (var, _) in &decl.bound {
                 let (module, name) = crate::linker::path_of((var.module(), var.name()));
                 if !reached.iter().any(|(known, found, _)| known == module && found.name == name) {
-                    problems.push(Error::new(ErrorCode::UnknownVariable, path.clone()).got(var.name()));
+                    problems.push(Error::new(ErrorCode::UnknownVariable, named.clone()).got(var.name()));
                     failed = true;
                 }
             }
@@ -399,7 +403,7 @@ impl Machine {
                     known == module && name == found.name
                 });
                 if found.group > 0 && !core && !bound {
-                    problems.push(Error::new(ErrorCode::UnknownVariable, path.clone()).got(&found.name));
+                    problems.push(Error::new(ErrorCode::UnknownVariable, named.clone()).got(&found.name));
                     failed = true;
                 }
             }
