@@ -344,6 +344,7 @@ pub fn request_line(verb: &str, body: Value) -> String {
         }
     };
     fields.insert("verb".to_owned(), Value::from(verb));
+    fields.insert("version".to_owned(), Value::from(engine_dev::PROTOCOL_VERSION));
     Value::Object(fields).to_string()
 }
 

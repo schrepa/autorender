@@ -47,7 +47,7 @@ impl Brick for TerrainBrick {
                     publish_programs,
                 ),
             )
-            .systems(Schedule::WorldSync, bridges::sync)
+            .systems(Schedule::Stream, bridges::sync)
             .systems(Schedule::Waiting, stream_terrains)
             .systems(Schedule::BetweenFrames, (work_between_frames, publish_ground))
             .operation::<TerrainEditControl>()
