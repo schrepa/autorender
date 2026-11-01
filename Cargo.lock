@@ -1633,16 +1633,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "engine_tables"
-version = "0.1.0"
-dependencies = [
- "engine_ecs",
- "engine_math",
- "engine_sources",
- "libm",
-]
-
-[[package]]
 name = "engine_terrain"
 version = "0.1.0"
 dependencies = [
@@ -2054,6 +2044,7 @@ dependencies = [
  "approx",
  "engine_math",
  "libm",
+ "serde_core",
 ]
 
 [[package]]
