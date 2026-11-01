@@ -53,7 +53,15 @@ engine_core::gpu_struct! {
 engine_core::gpu_consts! {
     pub(crate) const COVER_LEAVES: u32 = 5;
     pub(crate) const COVER_LUSH_RATIO: f32 = 2.0;
+    pub(crate) const COVER_MATERIAL_ROWS: u32 = 3;
 }
+
+const _: () = assert!(
+    size_of::<CoverMaterial>() == COVER_MATERIAL_ROWS as usize * size_of::<[u32; 4]>(),
+    "material_fills_its_rows"
+);
+
+const _: () = assert!(size_of::<CoverTerrain>() == size_of::<[u32; 4]>(), "terrain_fills_a_row");
 
 pub(crate) const GENERATED: &[&str] = &[
     Grow::WGSL,

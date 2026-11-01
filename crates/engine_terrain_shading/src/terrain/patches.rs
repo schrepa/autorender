@@ -29,8 +29,6 @@ pub(crate) struct PatchDraws {
     record_room: u64,
     fresh: bool,
     uniforms: Vec<TerrainUniform>,
-    written_uniforms: Vec<TerrainUniform>,
-    written_views: Vec<ViewUniform>,
     kept_stack: Vec<(u32, u32, u32)>,
 }
 
@@ -46,6 +44,10 @@ pub(super) struct Layout<'a> {
 impl PatchDraws {
     pub(super) fn index_count(&self) -> u32 {
         self.index_count
+    }
+
+    pub(super) fn uniforms(&self) -> &[TerrainUniform] {
+        &self.uniforms
     }
 
     pub(super) fn lay_out(
@@ -74,7 +76,6 @@ impl PatchDraws {
         }
         let eye = views.eye.as_dvec3();
         std::mem::swap(&mut self.records, &mut self.written);
-        std::mem::swap(&mut self.uniforms, &mut self.written_uniforms);
         self.records.clear();
         self.uniforms.clear();
         let mut frame = TerrainFrame::default();
@@ -146,60 +147,44 @@ impl PatchDraws {
             let offset = (run.start * size_of::<PatchRecord>()) as u64;
             cx.write(handles.patches, offset, &self.records[run]);
         }
-        cx.allocate_buffer(
-            handles.terrains,
-            (self.uniforms.len().max(1) * size_of::<TerrainUniform>()) as u64,
-        );
-        if self.uniforms != self.written_uniforms {
-            cx.write(handles.terrains, 0, &self.uniforms);
-        }
         frame
     }
+}
 
-    pub(super) fn write_views(
-        &mut self,
-        cx: &mut Prepare<'_, TerrainGpu>,
-        handles: &Handles,
-        views: &TerrainViews<'_>,
-        captures: &ProbeCaptures,
-    ) {
-        let mut written = vec![ViewUniform {
-            relative_view_projection: views.camera.to_cols_array_2d(),
-            eye_offset: [0.0; 4],
-            inverse_relative_view_projection: views
-                .camera
+pub(super) fn view_uniforms(
+    views: &TerrainViews<'_>,
+    captures: &ProbeCaptures,
+) -> Vec<ViewUniform> {
+    let mut written = vec![ViewUniform {
+        relative_view_projection: views.camera.to_cols_array_2d(),
+        eye_offset: [0.0; 4],
+        inverse_relative_view_projection: views
+            .camera
+            .as_dmat4()
+            .inverse()
+            .as_mat4()
+            .to_cols_array_2d(),
+    }];
+    for face in &captures.faces {
+        let relative = face.view;
+        let at = 1 + face.face as usize;
+        if written.len() <= at {
+            written.resize(at + 1, ViewUniform::default());
+        }
+        written[at] = ViewUniform {
+            inverse_relative_view_projection: relative
                 .as_dmat4()
                 .inverse()
                 .as_mat4()
                 .to_cols_array_2d(),
-        }];
-        for face in &captures.faces {
-            let relative = face.view;
-            let at = 1 + face.face as usize;
-            if written.len() <= at {
-                written.resize(at + 1, ViewUniform::default());
-            }
-            written[at] = ViewUniform {
-                inverse_relative_view_projection: relative
-                    .as_dmat4()
-                    .inverse()
-                    .as_mat4()
-                    .to_cols_array_2d(),
-                relative_view_projection: relative.to_cols_array_2d(),
-                eye_offset: (views.eye.as_dvec3() - face.center.as_dvec3())
-                    .as_vec3()
-                    .extend(0.0)
-                    .to_array(),
-            };
-        }
-        if written == self.written_views {
-            return;
-        }
-        let views_bytes = written.len().max(super::VIEWS as usize) * size_of::<ViewUniform>();
-        cx.allocate_buffer(handles.views, views_bytes as u64);
-        cx.write(handles.views, 0, &written);
-        self.written_views = written;
+            relative_view_projection: relative.to_cols_array_2d(),
+            eye_offset: (views.eye.as_dvec3() - face.center.as_dvec3())
+                .as_vec3()
+                .extend(0.0)
+                .to_array(),
+        };
     }
+    written
 }
 
 #[derive(Clone, Copy)]
@@ -511,17 +496,13 @@ fn terrain_uniform(
         eye: eye.as_vec3().extend(0.0).to_array(),
         surface: [
             first,
-            tables.fade_words,
+            tables.hole_table,
             anchors.cells[0] as i32 as u32,
             anchors.cells[1] as i32 as u32,
         ],
         origin: terrain.origin.extend(0.0).to_array(),
         directory: [
-            tables
-                .directory_bases
-                .get(parts.index as usize)
-                .copied()
-                .unwrap_or(0),
+            tables.directory_base(parts.index as usize),
             pyramid.levels(),
             tables
                 .palette_bases

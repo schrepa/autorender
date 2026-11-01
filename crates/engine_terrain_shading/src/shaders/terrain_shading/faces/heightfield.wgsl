@@ -2,12 +2,9 @@ import package::place::heightfield::{SurfaceTriangle, TerrainGroundRise, Terrain
     TerrainLevelHeight, TerrainUniform, TerrainView};
 import package::engine::view::camera;
 import package::terrain_shading::draw::{TerrainBlend, TerrainShadingLevel, terrain_band_rise, terrain_border_blend, terrain_control, terrain_control_sampler, terrain_controls_blend, terrain_gradient_between, terrain_layer_fades, terrain_material, terrain_material_rises, terrain_normals, terrain_steep_blend};
-import package::terrain_shading::field::{surface_along, terrain_directory, terrain_load};
+import package::terrain_shading::field::{surface_along, terrain_load};
+import package::terrain_shading::tables::{table_terrain, table_view, terrain_tables};
 import package::generated::terrain_shading::{PATCH_GRID, SUBDIVISION_ARGS, SUBDIVISION_LEAVES, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES};
-
-@group(0) @binding(0) var<storage, read> terrain_views: array<TerrainView>;
-
-@group(0) @binding(0) var<storage, read> terrains: array<TerrainUniform>;
 
 @group(0) @binding(0) var<storage, read> terrain_surface_leaves: array<SurfaceTriangle>;
 
@@ -25,8 +22,8 @@ var<private> terrain_index: u32;
 
 fn use_terrain(index: u32) {
     terrain_index = index;
-    terrain = terrains[index];
-    terrain_view = terrain_views[camera.view.x];
+    terrain = table_terrain(index);
+    terrain_view = table_view(camera.view.x);
 }
 
 fn terrain_uniform() -> TerrainUniform {
@@ -74,9 +71,9 @@ fn terrain_level_height(local: vec2<f32>, level: u32) -> TerrainLevelHeight {
     for (var index = level; index < levels; index++) {
         let header = base + index * 4u;
         let samples = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
-        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+        let tiles = vec2<u32>(terrain_tables[header + 1u], terrain_tables[header + 2u]);
         let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
-        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+        let layer = terrain_tables[terrain_tables[header] + tile.y * tiles.x + tile.x];
         if layer == 0xffffffffu {
             continue;
         }
@@ -106,9 +103,9 @@ fn terrain_ground_samples(local: vec2<f32>) -> TerrainGroundSamples {
     for (var index = 0u; index < levels; index++) {
         let header = base + index * 4u;
         let at = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
-        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+        let tiles = vec2<u32>(terrain_tables[header + 1u], terrain_tables[header + 2u]);
         let tile = min(vec2<u32>(at / 256.0), tiles - vec2<u32>(1u));
-        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+        let layer = terrain_tables[terrain_tables[header] + tile.y * tiles.x + tile.x];
         if layer == 0xffffffffu || terrain_layer_fades(layer).y >= 1.0 {
             continue;
         }

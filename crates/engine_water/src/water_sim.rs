@@ -444,7 +444,7 @@ impl SimWindow {
         }
         let [first_x, first_z] = self.fitted.first;
         let frame = SimSetup {
-            counts: [listed.len() as u32, 0, ghosts, self.solids],
+            counts: [listed.len() as u32, self.room as u32, ghosts, self.solids],
             square: [
                 first_x as u32,
                 first_z as u32,
@@ -826,8 +826,7 @@ impl SimGpu {
                 "water_sim_touches",
             ],
         );
-        let setup_handles =
-            SetupHandles::install(cx, ["water_setup", "water_setup_list", "water_setup_live"]);
+        let setup_handles = SetupHandles::install(cx, ["water_setup", "water_setup_list"]);
         let pass = cx
             .pass("water_sim")
             .label("engine/water-sim")
@@ -883,7 +882,7 @@ impl SimGpu {
         self.setup_held = Some((rooms, setup_generation));
         if let Some(square) = &work.square {
             if !square.words.is_empty() {
-                cx.write(self.setup.live, 0, &square.words);
+                cx.write(self.setup.list, SetupHandles::live_at(rooms.0), &square.words);
             }
             if !square.sources.is_empty() {
                 cx.write(self.slots.inputs, 0, &square.sources);

@@ -3,14 +3,15 @@ import package::cover::laws::{COVER_CLUMP_BRIGHT, COVER_CLUMP_DRY, COVER_CLUMP_H
     cover_clump_hash, cover_widening};
 import package::engine::view::seen_share;
 import package::face::ground_tiles::PALETTE_ENTRIES;
-import package::generated::cover::{COVER_LUSH_RATIO, CoverMaterial, CoverTerrain};
+import package::generated::cover::{COVER_LUSH_RATIO, COVER_MATERIAL_ROWS, CoverMaterial};
 import package::place::cover::{CoverClumped, CoverGrowth, CoverLaw, CoverSeen};
 
 const COVER_FAR_SIDE: f32 = 0.8;
 const COVER_ROUGHNESS: f32 = 0.7;
 
-@group(0) @binding(0) var<storage, read> cover_terrains: array<CoverTerrain>;
-@group(0) @binding(0) var<storage, read> cover_materials: array<CoverMaterial>;
+const COVER_FIRST_TERRAIN: u32 = COVER_MATERIAL_ROWS * PALETTE_ENTRIES;
+
+@group(0) @binding(0) var<storage, read> cover_table: array<vec4<u32>>;
 
 fn cover_growth(lush: f32) -> CoverGrowth {
     let toward = saturate(lush) - 0.5;
@@ -76,14 +77,18 @@ fn cover_seen(depth: f32) -> CoverSeen {
 }
 
 fn material_cover(base: u32, material: u32) -> CoverMaterial {
-    return cover_materials[min(base + material, PALETTE_ENTRIES - 1u)];
+    let at = COVER_MATERIAL_ROWS * min(base + material, PALETTE_ENTRIES - 1u);
+    var spec: CoverMaterial;
+    spec.shape = bitcast<vec4<f32>>(cover_table[at]);
+    spec.color = bitcast<vec4<f32>>(cover_table[at + 1u]);
+    spec.canopy = bitcast<vec4<f32>>(cover_table[at + 2u]);
+    return spec;
 }
 
 fn material_canopy(terrain: u32, material: u32) -> vec4<f32> {
-    return material_cover(cover_terrains[terrain].base, material).canopy;
+    return material_cover(cover_table[COVER_FIRST_TERRAIN + terrain].x, material).canopy;
 }
 
 fn cover_terms(terrain: u32) -> vec2<f32> {
-    let row = cover_terrains[terrain];
-    return vec2<f32>(row.densest, row.width);
+    return bitcast<vec2<f32>>(cover_table[COVER_FIRST_TERRAIN + terrain].yz);
 }

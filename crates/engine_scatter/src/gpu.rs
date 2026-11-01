@@ -176,8 +176,7 @@ pub(crate) struct ScatterGpu {
     listed: Buffer<Self>,
     splats: Vec<Buffer<Self>>,
     listed_draws: Vec<Buffer<Self>>,
-    far_bases: Buffer<Self>,
-    far_entries: Buffer<Self>,
+    placed_far: Buffer<Self>,
     coverage: Texture<Self>,
     heights: Texture<Self>,
     unfiner: [Texture<Self>; 2],
@@ -910,8 +909,7 @@ impl GpuPart for ScatterGpu {
         let debug_records = cx.buffer("debug_records", Lifetime::Kept);
         let covers = cx.buffer("occupancy_covers", Lifetime::Kept);
         let listed = cx.buffer("occupancy_listed", Lifetime::Kept);
-        let far_bases = cx.buffer("placed_far_bases", Lifetime::Kept);
-        let far_entries = cx.buffer("placed_far", Lifetime::Kept);
+        let placed_far = cx.buffer("placed_far", Lifetime::Kept);
         let coverage = cx.texture("occupancy_coverage", COVERAGE_FORMAT, Lifetime::Kept);
         let heights = cx.texture("occupancy_heights", HEIGHTS_FORMAT, Lifetime::Kept);
         let unfiner = [
@@ -926,8 +924,7 @@ impl GpuPart for ScatterGpu {
         cx.frame(faces::occupancy::OCCUPANCY_COVERAGE, Bind::Texture(coverage))?;
         cx.frame(faces::occupancy::OCCUPANCY_HEIGHTS, Bind::Texture(heights))?;
         cx.frame(faces::occupancy::OCCUPANCY_SAMPLER, Bind::Sampler(linear))?;
-        cx.frame(faces::far_cover::PLACED_FAR_BASES, Bind::Buffer(far_bases))?;
-        cx.frame(faces::far_cover::PLACED_FAR, Bind::Buffer(far_entries))?;
+        cx.frame(faces::far_cover::PLACED_FAR, Bind::Buffer(placed_far))?;
         let scatter = cx.pass("scatter").id();
         let occupancy = cx
             .pass("occupancy")
@@ -1051,8 +1048,7 @@ impl GpuPart for ScatterGpu {
             listed,
             splats,
             listed_draws,
-            far_bases,
-            far_entries,
+            placed_far,
             coverage,
             heights,
             unfiner,
@@ -1101,16 +1097,12 @@ impl GpuPart for ScatterGpu {
         }
         self.write_placed_groups(cx, &state);
         if far.is_changed() {
-            let bases = std::mem::size_of_val(far.bases.as_slice()) as u64;
-            let entries = std::mem::size_of_val(far.entries.as_slice()) as u64;
-            cx.allocate_buffer(self.far_bases, bases.max(16));
-            cx.allocate_buffer(self.far_entries, entries.max(32));
-            if !far.bases.is_empty() {
-                cx.write(self.far_bases, 0, &far.bases);
-            }
-            if !far.entries.is_empty() {
-                cx.write(self.far_entries, 0, &far.entries);
-            }
+            let words = far.words();
+            cx.allocate_buffer(
+                self.placed_far,
+                std::mem::size_of_val(words.as_slice()) as u64,
+            );
+            cx.write(self.placed_far, 0, &words);
         }
         self.prepare_snap(cx, (&*state, &*view), (&tiles, &ground));
         self.prepare_cull(cx, &state);

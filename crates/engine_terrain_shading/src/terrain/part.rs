@@ -12,7 +12,7 @@ use engine_render::{
 use glam::{Mat4, Vec3};
 
 use super::atlas::TileAtlas;
-use super::patches::{PatchDraws, patch_layout};
+use super::patches::{PatchDraws, patch_layout, view_uniforms};
 use super::pipelines::{CASTER_BIAS, surface_primitive};
 use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
@@ -46,10 +46,7 @@ pub(crate) struct Handles {
     pub(crate) errors: Texture<TerrainGpu>,
     pub(crate) water_errors: Texture<TerrainGpu>,
     pub(crate) ids: Texture<TerrainGpu>,
-    pub(crate) terrains: Buffer<TerrainGpu>,
-    pub(crate) views: Buffer<TerrainGpu>,
-    pub(crate) holes: Buffer<TerrainGpu>,
-    pub(crate) directory: Buffer<TerrainGpu>,
+    pub(crate) tables: Buffer<TerrainGpu>,
     pub(crate) palette: Buffer<TerrainGpu>,
     pub(crate) leaves: Buffer<TerrainGpu>,
     pub(crate) nodes: Buffer<TerrainGpu>,
@@ -157,7 +154,7 @@ impl GpuPart for TerrainGpu {
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::terrain_shading::{
             bounce, control, debug, draw, faces, field, horizons, normals, shadow, sky,
-            subdivision, surface,
+            subdivision, surface, tables,
         };
         let handles = Handles {
             heights: cx.texture("heights", HEIGHT_FORMAT, Lifetime::Kept),
@@ -171,10 +168,7 @@ impl GpuPart for TerrainGpu {
                 Lifetime::Kept,
             ),
             ids: cx.texture("terrain_ids", IDS_FORMAT, Lifetime::Frame),
-            terrains: cx.buffer("terrains", Lifetime::Kept),
-            views: cx.buffer("terrain_views", Lifetime::Kept),
-            holes: cx.buffer("holes", Lifetime::Kept),
-            directory: cx.buffer("directory", Lifetime::Kept),
+            tables: cx.buffer("tables", Lifetime::Kept),
             palette: cx.buffer("palette", Lifetime::Kept),
             leaves: cx.buffer("leaves", Lifetime::Kept),
             nodes: cx.buffer("nodes", Lifetime::Kept),
@@ -199,8 +193,7 @@ impl GpuPart for TerrainGpu {
         let sky_maps = SkyMaps::install(cx)?;
         let macro_maps = MacroMaps::install(cx)?;
         let horizon_maps = Horizons::install(cx)?;
-        cx.frame(faces::heightfield::TERRAIN_VIEWS, Bind::Buffer(h.views))?;
-        cx.frame(faces::heightfield::TERRAINS, Bind::Buffer(h.terrains))?;
+        cx.frame(tables::TERRAIN_TABLES, Bind::Buffer(h.tables))?;
         cx.frame(
             faces::heightfield::TERRAIN_SURFACE_LEAVES,
             Bind::Buffer(h.leaves),
@@ -210,8 +203,6 @@ impl GpuPart for TerrainGpu {
             Bind::Buffer(h.counters),
         )?;
         cx.frame(field::TERRAIN_HEIGHTS, Bind::Texture(h.heights))?;
-        cx.frame(field::TERRAIN_DIRECTORY, Bind::Buffer(h.directory))?;
-        cx.frame(draw::TERRAIN_HOLES, Bind::Buffer(h.holes))?;
         cx.frame(draw::TERRAIN_NORMALS, Bind::Texture(h.normals))?;
         cx.frame(draw::TERRAIN_CONTROL, Bind::Texture(h.control))?;
         cx.frame(
@@ -237,7 +228,6 @@ impl GpuPart for TerrainGpu {
             Bind::Texture(horizon_maps.probes),
         )?;
         cx.frame(faces::ground_tiles::HEIGHTS, Bind::Texture(h.heights))?;
-        cx.frame(faces::ground_tiles::DIRECTORY, Bind::Buffer(h.directory))?;
         cx.frame(faces::ground_tiles::CONTROL, Bind::Texture(h.control))?;
         cx.frame(faces::ground_tiles::NORMALS, Bind::Texture(h.normals))?;
         cx.frame(
@@ -245,10 +235,6 @@ impl GpuPart for TerrainGpu {
             Bind::Texture(macro_maps.texture),
         )?;
         cx.frame(faces::ground_tiles::PALETTE, Bind::Buffer(h.palette))?;
-        cx.frame(
-            faces::ground_tiles::GROUND_TERRAINS,
-            Bind::Buffer(h.terrains),
-        )?;
         cx.frame(
             faces::ground_tiles::GROUND_SKY_MAP,
             Bind::Texture(sky_maps.texture),
@@ -543,14 +529,14 @@ impl GpuPart for TerrainGpu {
         if self.atlas.control_jobs() > 0 {
             cx.run(self.passes.control);
         }
-        self.tables.write_holes(cx, h, &atlas);
+        self.tables.write_directory(&tiles, &atlas);
+        self.tables.write_holes(&atlas);
         let fades = self.atlas.fade(
             (&atlas, &tiles),
             !view.exact(),
             TerrainTables::fade_words(&atlas),
         );
-        self.tables.write_fades(cx, h, fades);
-        self.tables.write_directory(cx, h, &tiles, &atlas);
+        self.tables.write_fades(fades);
         self.maps.prepare(cx, (&tiles, &assets));
         self.tables
             .write_palette(cx, h, (&tiles, &self.maps, &assets));
@@ -591,6 +577,7 @@ impl GpuPart for TerrainGpu {
         });
         self.drawn = held;
         if !held {
+            self.tables.flush(cx, h);
             self.surface.rest();
             self.frame = TerrainFrame::default();
             self.deferred = false;
@@ -627,7 +614,9 @@ impl GpuPart for TerrainGpu {
             ),
             &views,
         );
-        self.patches.write_views(cx, h, &views, &captures);
+        self.tables.write_terrains(self.patches.uniforms());
+        self.tables.write_views(view_uniforms(&views, &captures));
+        self.tables.flush(cx, h);
         if self.surface.any() {
             cx.run(self.passes.clear_counters);
             cx.run(self.passes.begin);

@@ -73,6 +73,17 @@ impl FarCoverTable {
         );
         self.entries[..entries.len()].copy_from_slice(&entries);
     }
+
+    pub(crate) fn words(&self) -> Vec<u32> {
+        let bases = self.bases.len().max(4);
+        let first = 1 + bases.div_ceil(4);
+        let mut words = Vec::with_capacity(4 * first + 8 * self.entries.len());
+        words.extend_from_slice(&[bases as u32, first as u32, self.entries.len() as u32, 0]);
+        words.extend_from_slice(&self.bases);
+        words.resize(4 * first, 0);
+        words.extend_from_slice(bytemuck::cast_slice(&self.entries));
+        words
+    }
 }
 
 fn octaves(meters: f32) -> f32 {

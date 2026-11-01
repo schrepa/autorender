@@ -1,21 +1,19 @@
 import package::place::ground_tiles::{GroundHeight, GroundMaterial, GroundTerrain, GroundTile,
     LevelTile, MaterialLook, NOT_RESIDENT, PALETTE_ENTRIES, PEAK_CELLS, PEAK_MIPS, TILE_QUADS,
     TerrainInfo};
-import package::place::heightfield::TerrainUniform;
 import package::generated::terrain_shading::PaletteEntry;
+import package::terrain_shading::tables::{table_terrain, terrain_tables};
 
 @group(0) @binding(0) var heights: texture_2d_array<f32>;
-@group(0) @binding(1) var<storage, read> directory: array<u32>;
 @group(0) @binding(2) var control: texture_2d_array<u32>;
 @group(0) @binding(3) var normals: texture_2d_array<u32>;
 @group(0) @binding(4) var macro_maps: texture_2d_array<f32>;
 @group(0) @binding(5) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
-@group(0) @binding(6) var<storage, read> ground_terrains: array<TerrainUniform>;
 @group(0) @binding(7) var ground_sky_map: texture_2d_array<f32>;
 @group(0) @binding(8) var ground_sky_sampler: sampler;
 
 fn terrain_info(terrain: u32) -> TerrainInfo {
-    let held = ground_terrains[terrain];
+    let held = table_terrain(terrain);
     var info: TerrainInfo;
     info.origin = vec4<f32>(held.origin.xyz, held.anchor.w);
     info.levels = vec4<u32>(held.directory.x, held.directory.y, held.directory.z, held.macro_map.x);
@@ -23,7 +21,7 @@ fn terrain_info(terrain: u32) -> TerrainInfo {
 }
 
 fn ground_sky(terrain: u32, local: vec2<f32>) -> vec4<f32> {
-    let layer = ground_terrains[terrain].directory.w;
+    let layer = table_terrain(terrain).directory.w;
     if layer == 0u {
         return vec4<f32>(1.0, 0.5, 0.5, 0.5);
     }
@@ -36,27 +34,27 @@ fn ground_of(info: TerrainInfo) -> GroundTerrain {
 }
 
 fn ground_extent(terrain: GroundTerrain) -> vec2<f32> {
-    return vec2<f32>(f32(directory[terrain.directory + 1u]), f32(directory[terrain.directory + 2u]))
-        * 256.0 * terrain.spacing;
+    return vec2<f32>(f32(terrain_tables[terrain.directory + 1u]),
+        f32(terrain_tables[terrain.directory + 2u])) * 256.0 * terrain.spacing;
 }
 
 fn level_tiles(terrain: GroundTerrain, level: u32) -> vec2<u32> {
     let header = terrain.directory + level * 4u;
-    return vec2<u32>(directory[header + 1u], directory[header + 2u]);
+    return vec2<u32>(terrain_tables[header + 1u], terrain_tables[header + 2u]);
 }
 
 fn tile_layer(terrain: GroundTerrain, level: u32, tile: vec2<u32>) -> u32 {
     let header = terrain.directory + level * 4u;
-    let tiles = vec2<u32>(directory[header + 1u], directory[header + 2u]);
-    return directory[directory[header] + tile.y * tiles.x + tile.x];
+    let tiles = vec2<u32>(terrain_tables[header + 1u], terrain_tables[header + 2u]);
+    return terrain_tables[terrain_tables[header] + tile.y * tiles.x + tile.x];
 }
 
 fn level_tile(terrain: GroundTerrain, level: u32, samples: vec2<f32>) -> LevelTile {
     let header = terrain.directory + level * 4u;
-    let tiles = vec2<u32>(directory[header + 1u], directory[header + 2u]);
+    let tiles = vec2<u32>(terrain_tables[header + 1u], terrain_tables[header + 2u]);
     let tile = min(vec2<u32>(max(samples, vec2<f32>(0.0)) / 256.0), tiles - vec2<u32>(1u));
     var found: LevelTile;
-    found.layer = directory[directory[header] + tile.y * tiles.x + tile.x];
+    found.layer = terrain_tables[terrain_tables[header] + tile.y * tiles.x + tile.x];
     found.first = tile * 256u;
     return found;
 }

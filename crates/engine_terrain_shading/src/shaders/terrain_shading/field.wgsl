@@ -40,8 +40,6 @@ fn terrain_vertex(input: PatchInput) -> vec3<f32> {
         base.y * spacing + terrain.anchor.z);
 }
 
-@group(0) @binding(23) var<storage, read> terrain_directory: array<u32>;
-
 fn surface_along(tail: vec2<f32>, head: vec2<f32>, steps: u32) -> vec2<f32> {
     var low = tail;
     var high = head;

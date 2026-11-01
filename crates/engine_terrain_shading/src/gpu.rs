@@ -42,6 +42,11 @@ gpu_consts! {
     pub const DEBUG_SHOWN_MATERIALS: u32 = 2;
     pub const DEBUG_SHOWN_SKY: u32 = 3;
     pub const DEBUG_SHOWN_DETAIL: u32 = 4;
+    pub const TABLE_TERRAINS: u32 = 0;
+    pub const TABLE_VIEWS: u32 = 1;
+    pub const TABLE_HOLES: u32 = 2;
+    pub const TERRAIN_WORDS: u32 = 44;
+    pub const VIEW_WORDS: u32 = 36;
 }
 
 pub const HEIGHT_FORMAT: engine_render::wgpu::TextureFormat =
@@ -78,6 +83,14 @@ const _: () = assert!(
         && BOUNCE_RECORD_WORDS as usize == crate::bounce::PROBE_BYTES / 4
         && BOUNCE_WINDOW_ROW == crate::bounce::MAX_PROBES,
     "bake_shapes_match_their_shaders"
+);
+
+const _: () = assert!(
+    TERRAIN_WORDS as usize * 4 == size_of::<TerrainUniform>()
+        && VIEW_WORDS as usize * 4 == size_of::<ViewUniform>()
+        && TABLE_TERRAINS < TABLE_VIEWS
+        && TABLE_VIEWS < TABLE_HOLES,
+    "terrain_tables_hold_whole_records"
 );
 
 const _: () = assert!(

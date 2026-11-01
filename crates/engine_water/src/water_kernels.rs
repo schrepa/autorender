@@ -431,15 +431,17 @@ impl Kernels {
 pub(crate) struct SetupHandles {
     pub(crate) frame: Buffer<WaterGpu>,
     pub(crate) list: Buffer<WaterGpu>,
-    pub(crate) live: Buffer<WaterGpu>,
 }
 
 impl SetupHandles {
-    pub(crate) fn install(cx: &mut Install<'_, WaterGpu>, labels: [&'static str; 3]) -> Self {
+    pub(crate) fn install(cx: &mut Install<'_, WaterGpu>, labels: [&'static str; 2]) -> Self {
         let frame = cx.buffer(labels[0], Lifetime::Kept);
         let list = cx.buffer(labels[1], Lifetime::Kept);
-        let live = cx.buffer(labels[2], Lifetime::Kept);
-        Self { frame, list, live }
+        Self { frame, list }
+    }
+
+    pub(crate) fn live_at(room: usize) -> u64 {
+        room as u64 * 16
     }
 
     pub(crate) fn hold(
@@ -450,17 +452,14 @@ impl SetupHandles {
     ) {
         if fresh {
             cx.release_buffer(self.list);
-            cx.release_buffer(self.live);
         }
         cx.allocate_buffer(self.frame, size_of::<crate::gpu::SimSetup>() as u64);
-        cx.allocate_buffer(self.list, room as u64 * 16);
-        cx.allocate_buffer(self.live, live_room as u64 * 4);
+        cx.allocate_buffer(self.list, Self::live_at(room) + live_room as u64 * 4);
     }
 
     pub(crate) fn release(&self, cx: &mut Prepare<'_, WaterGpu>) {
         cx.allocate_buffer(self.frame, size_of::<crate::gpu::SimSetup>() as u64);
         cx.allocate_buffer(self.list, 16);
-        cx.allocate_buffer(self.live, 16);
     }
 
     pub(crate) fn bound(&self, slots: &SlotHandles) -> Vec<(engine_core::Var, Bind<WaterGpu>)> {
@@ -472,7 +471,6 @@ impl SetupHandles {
             (setup::SETUP_CELLS, Bind::Buffer(slots.cells)),
             (setup::SETUP_LOOKS, Bind::Buffer(slots.averages)),
             (setup::SETUP_EDGES, Bind::Buffer(slots.inputs)),
-            (setup::SETUP_LIVE, Bind::Buffer(self.live)),
         ]
     }
 }

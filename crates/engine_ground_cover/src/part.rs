@@ -25,8 +25,7 @@ pub(crate) struct CoverGpu {
     counts: Buffer<Self>,
     args: Buffer<Self>,
     frame: Buffer<Self>,
-    terrains: Buffer<Self>,
-    materials: Buffer<Self>,
+    table: Buffer<Self>,
     growing: ComputePipeline<Self>,
     stepping: ComputePipeline<Self>,
     finishing: ComputePipeline<Self>,
@@ -47,10 +46,8 @@ impl GpuPart for CoverGpu {
         let counts = cx.buffer("cover_counts", Lifetime::Kept);
         let args = cx.buffer("cover_draw", Lifetime::Kept);
         let frame = cx.buffer("cover_frame", Lifetime::Kept);
-        let terrains = cx.buffer("cover_terrains", Lifetime::Kept);
-        let materials = cx.buffer("cover_materials", Lifetime::Kept);
-        cx.frame(face::COVER_TERRAINS, Bind::Buffer(terrains))?;
-        cx.frame(face::COVER_MATERIALS, Bind::Buffer(materials))?;
+        let table = cx.buffer("cover_table", Lifetime::Kept);
+        cx.frame(face::COVER_TABLE, Bind::Buffer(table))?;
         let grow_pass = cx
             .pass("ground_cover")
             .label("engine/cover-grow")
@@ -110,8 +107,7 @@ impl GpuPart for CoverGpu {
             counts,
             args,
             frame,
-            terrains,
-            materials,
+            table,
             growing,
             stepping,
             finishing,
@@ -131,13 +127,12 @@ impl GpuPart for CoverGpu {
     ) {
         if table.is_changed() {
             let terrains = size_of_val(table.terrains.as_slice()) as u64;
-            cx.allocate_buffer(self.terrains, terrains.max(TERRAIN_BYTES));
-            cx.allocate_buffer(self.materials, MATERIAL_BYTES);
+            cx.allocate_buffer(self.table, MATERIAL_BYTES + terrains.max(TERRAIN_BYTES));
             if !table.terrains.is_empty() {
-                cx.write(self.terrains, 0, &table.terrains);
+                cx.write(self.table, MATERIAL_BYTES, &table.terrains);
             }
             if !table.materials.is_empty() {
-                cx.write(self.materials, 0, &table.materials);
+                cx.write(self.table, 0, &table.materials);
             }
         }
         if !plan.shown {

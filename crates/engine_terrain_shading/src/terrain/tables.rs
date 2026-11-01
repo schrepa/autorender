@@ -10,8 +10,11 @@ use engine_places::ground::{
 use engine_render::Prepare;
 
 use super::part::{Handles, TerrainGpu};
-use super::{HOLE_WORDS, NO_HOLES, widen};
-use crate::gpu::{NOT_RESIDENT, PaletteEntry};
+use super::{DIRECTORY_AT, HOLE_WORDS, NO_HOLES, VIEWS, widen};
+use crate::gpu::{
+    NOT_RESIDENT, PaletteEntry, TABLE_HOLES, TABLE_TERRAINS, TABLE_VIEWS, TERRAIN_WORDS,
+    TerrainUniform, VIEW_WORDS, ViewUniform,
+};
 use crate::state::{Atlas, TileId};
 use crate::terrain_maps::TerrainMaps;
 
@@ -19,14 +22,27 @@ use crate::terrain_maps::TerrainMaps;
 pub(crate) struct TerrainTables {
     pub(super) hole_offsets: HashMap<TileId, u32>,
     hole_layers: HashMap<TileId, u32>,
-    holes_bytes: u64,
-    fades_stale: bool,
-    pub(super) fade_words: u32,
-    pub(super) directory_written: Vec<u32>,
+    hole_words: Vec<u32>,
+    holes_at: u32,
+    holes_room: u32,
+    holes_stale: bool,
+    fade_words: u32,
+    pub(super) hole_table: u32,
+    fades: Vec<u32>,
+    fades_dirty: Range<usize>,
+    directory_written: Vec<u32>,
     directory_layout: Vec<(Entity, Pyramid)>,
     directory_spare: Vec<u32>,
-    directory_bytes: u64,
-    pub(super) directory_bases: Vec<u32>,
+    directory_room: u32,
+    directory_dirty: Range<usize>,
+    directory_bases: Vec<u32>,
+    terrains: Vec<TerrainUniform>,
+    terrains_room: u32,
+    terrains_stale: bool,
+    views: Vec<ViewUniform>,
+    views_room: u32,
+    views_stale: bool,
+    laid: Option<[u32; 4]>,
     pub(super) palette_bases: Vec<u32>,
     palette_written: Vec<PaletteEntry>,
     palette_spare: Vec<PaletteEntry>,
@@ -38,20 +54,17 @@ impl TerrainTables {
         atlas.capacity.div_ceil(2).max(1)
     }
 
-    pub(super) fn write_holes(
-        &mut self,
-        cx: &mut Prepare<'_, TerrainGpu>,
-        handles: &Handles,
-        atlas: &Atlas,
-    ) {
+    pub(super) fn write_holes(&mut self, atlas: &Atlas) {
         let max_layers = atlas.capacity;
         let fade_words = Self::fade_words(atlas);
+        let holes_at = DIRECTORY_AT + self.directory_room;
         let edited = atlas
             .uploads
             .iter()
             .any(|(id, _, _)| atlas.holed.contains(id));
         let unchanged = !edited
             && fade_words == self.fade_words
+            && holes_at == self.holes_at
             && atlas.holed.len() == self.hole_offsets.len()
             && atlas.holed.iter().all(|key| {
                 self.hole_offsets.contains_key(key)
@@ -61,14 +74,18 @@ impl TerrainTables {
             return;
         }
         self.fade_words = fade_words;
+        self.holes_at = holes_at;
+        self.hole_table = holes_at + fade_words;
         self.hole_offsets.clear();
         self.hole_layers.clear();
-        let mut words: Vec<u32> = vec![NO_HOLES; max_layers as usize];
+        let mut words = std::mem::take(&mut self.hole_words);
+        words.clear();
+        words.resize(max_layers as usize, NO_HOLES);
         for &key in &atlas.holed {
             let Some(bits) = atlas.held.get(&key).and_then(|tile| tile.holes.as_ref()) else {
                 continue;
             };
-            let offset = fade_words + words.len() as u32;
+            let offset = self.hole_table + words.len() as u32;
             self.hole_offsets.insert(key, offset);
             if let Some(&layer) = atlas.slots.get(&key) {
                 self.hole_layers.insert(key, layer);
@@ -82,51 +99,34 @@ impl TerrainTables {
                     .take(HOLE_WORDS),
             );
         }
-        let start = u64::from(fade_words) * 4;
-        let bytes = start + (words.len() * 4) as u64;
-        if bytes > self.holes_bytes {
-            self.holes_bytes = bytes;
-            self.fades_stale = true;
-        }
-        cx.allocate_buffer(handles.holes, self.holes_bytes.max(16));
-        if !words.is_empty() {
-            cx.write(handles.holes, start, &words);
-        }
+        self.holes_room = self.holes_room.max(fade_words + words.len() as u32);
+        self.hole_words = words;
+        self.holes_stale = true;
     }
 
-    pub(super) fn write_fades(
-        &mut self,
-        cx: &mut Prepare<'_, TerrainGpu>,
-        handles: &Handles,
-        (words, dirty): (&[u32], Range<usize>),
-    ) {
+    pub(super) fn write_fades(&mut self, (words, run): (&[u32], Range<usize>)) {
         if words.is_empty() {
             return;
         }
-        let run = if self.fades_stale {
-            0..words.len()
-        } else {
-            dirty
-        };
-        self.fades_stale = false;
+        if self.fades.len() != words.len() {
+            self.fades.clear();
+            self.fades.extend_from_slice(words);
+            self.fades_dirty = 0..words.len();
+            return;
+        }
         if let Some(changed) = words.get(run.clone()).filter(|changed| !changed.is_empty()) {
-            cx.write(handles.holes, (run.start * 4) as u64, changed);
+            self.fades[run.clone()].copy_from_slice(changed);
+            self.fades_dirty = joined(self.fades_dirty.clone(), run);
         }
     }
 
-    pub(super) fn write_directory(
-        &mut self,
-        cx: &mut Prepare<'_, TerrainGpu>,
-        handles: &Handles,
-        tiles: &TerrainTiles,
-        atlas: &Atlas,
-    ) {
+    pub(super) fn write_directory(&mut self, tiles: &TerrainTiles, atlas: &Atlas) {
         let same = self.directory_layout.len() == tiles.terrains.len()
             && self.directory_layout.iter().zip(tiles.terrains.iter()).all(
                 |(&(id, pyramid), terrain)| id == terrain.terrain && pyramid == terrain.pyramid,
             );
         if !same {
-            self.lay_out_directory(cx, handles, tiles, atlas);
+            self.lay_out_directory(tiles, atlas);
             return;
         }
         let mut dirty = 0..0;
@@ -157,41 +157,22 @@ impl TerrainTables {
                 .directory_bases
                 .get(index)
                 .map(|&base| base as usize + 4 * level as usize);
-            let Some(&first) = header.and_then(|header| self.directory_written.get(header)) else {
+            let Some(first) = header
+                .and_then(|header| self.directory_written.get(header))
+                .and_then(|first| first.checked_sub(DIRECTORY_AT))
+            else {
                 continue;
             };
             let at = first as usize + (u32::from(key.z) * tiles_x + u32::from(key.x)) as usize;
             let layer = atlas.layer_of(id, key).unwrap_or(NOT_RESIDENT);
             set_word(&mut self.directory_written, at, layer, &mut dirty);
         }
-        let bytes = (self.directory_written.len() * 4) as u64;
-        let grown = bytes > self.directory_bytes;
-        if grown {
-            self.directory_bytes = bytes;
-        }
-        cx.allocate_buffer(handles.directory, self.directory_bytes.max(16));
-        let run = if grown {
-            0..self.directory_written.len()
-        } else {
-            dirty
-        };
-        if self.directory_written.is_empty() || run.is_empty() {
-            return;
-        }
-        cx.write(
-            handles.directory,
-            (run.start * 4) as u64,
-            &self.directory_written[run],
-        );
+        let written = self.directory_written.len() as u32;
+        self.directory_room = self.directory_room.max(written);
+        self.directory_dirty = joined(self.directory_dirty.clone(), dirty);
     }
 
-    fn lay_out_directory(
-        &mut self,
-        cx: &mut Prepare<'_, TerrainGpu>,
-        handles: &Handles,
-        tiles: &TerrainTiles,
-        atlas: &Atlas,
-    ) {
+    fn lay_out_directory(&mut self, tiles: &TerrainTiles, atlas: &Atlas) {
         let mut words = std::mem::take(&mut self.directory_spare);
         words.clear();
         self.directory_bases.clear();
@@ -204,7 +185,7 @@ impl TerrainTables {
             for level in 0..pyramid.levels() {
                 let [tiles_x, tiles_z] = pyramid.tiles(level);
                 let header = base + 4 * level as usize;
-                words[header] = words.len() as u32;
+                words[header] = DIRECTORY_AT + words.len() as u32;
                 words[header + 1] = tiles_x;
                 words[header + 2] = tiles_z;
                 words[header + 3] = reach(terrain, level).to_bits();
@@ -223,18 +204,80 @@ impl TerrainTables {
                 .iter()
                 .map(|terrain| (terrain.terrain, terrain.pyramid)),
         );
-        let bytes = (words.len() * 4) as u64;
-        let grown = bytes > self.directory_bytes;
-        if grown {
-            self.directory_bytes = bytes;
-        }
-        cx.allocate_buffer(handles.directory, self.directory_bytes.max(16));
-        if words.is_empty() || (words == self.directory_written && !grown) {
+        self.directory_room = self.directory_room.max(words.len() as u32);
+        if words.is_empty() || words == self.directory_written {
             self.directory_spare = words;
             return;
         }
-        cx.write(handles.directory, 0, &words);
+        self.directory_dirty = 0..words.len();
         self.directory_spare = std::mem::replace(&mut self.directory_written, words);
+    }
+
+    pub(super) fn write_terrains(&mut self, uniforms: &[TerrainUniform]) {
+        if uniforms == self.terrains.as_slice() {
+            return;
+        }
+        self.terrains.clear();
+        self.terrains.extend_from_slice(uniforms);
+        self.terrains_stale = true;
+    }
+
+    pub(super) fn write_views(&mut self, views: Vec<ViewUniform>) {
+        if views == self.views {
+            return;
+        }
+        self.views = views;
+        self.views_stale = true;
+    }
+
+    pub(super) fn flush(&mut self, cx: &mut Prepare<'_, TerrainGpu>, handles: &Handles) {
+        self.terrains_room = self
+            .terrains_room
+            .max(self.terrains.len().max(1) as u32 * TERRAIN_WORDS);
+        self.views_room = self
+            .views_room
+            .max(self.views.len().max(VIEWS as usize) as u32 * VIEW_WORDS);
+        let holes_at = DIRECTORY_AT + self.directory_room;
+        let terrains_at = holes_at + self.holes_room;
+        let views_at = terrains_at + self.terrains_room;
+        let total = views_at + self.views_room;
+        let laid = [terrains_at, views_at, holes_at, total];
+        cx.allocate_buffer(handles.tables, u64::from(total) * 4);
+        let fresh = self.laid != Some(laid);
+        if fresh {
+            self.laid = Some(laid);
+            let mut header = [0_u32; DIRECTORY_AT as usize];
+            header[TABLE_TERRAINS as usize] = terrains_at;
+            header[TABLE_VIEWS as usize] = views_at;
+            header[TABLE_HOLES as usize] = holes_at;
+            cx.write(handles.tables, 0, &header);
+        }
+        let dirty = std::mem::take(&mut self.directory_dirty);
+        let run = if fresh {
+            0..self.directory_written.len()
+        } else {
+            dirty
+        };
+        put(cx, handles, DIRECTORY_AT, &self.directory_written, run);
+        let dirty = std::mem::take(&mut self.fades_dirty);
+        let run = if fresh { 0..self.fades.len() } else { dirty };
+        put(cx, handles, holes_at, &self.fades, run);
+        if std::mem::take(&mut self.holes_stale) || fresh {
+            let (at, run) = (holes_at + self.fade_words, 0..self.hole_words.len());
+            put(cx, handles, at, &self.hole_words, run);
+        }
+        if std::mem::take(&mut self.terrains_stale) || fresh {
+            let run = 0..self.terrains.len();
+            put(cx, handles, terrains_at, &self.terrains, run);
+        }
+        if std::mem::take(&mut self.views_stale) || fresh {
+            let run = 0..self.views.len();
+            put(cx, handles, views_at, &self.views, run);
+        }
+    }
+
+    pub(super) fn directory_base(&self, index: usize) -> u32 {
+        DIRECTORY_AT + self.directory_bases.get(index).copied().unwrap_or(0)
     }
 
     pub(super) fn write_palette(
@@ -290,6 +333,29 @@ fn reach(terrain: &TerrainEntry, level: u32) -> f32 {
         Some(&reach) => reach,
         None if level + 1 == terrain.pyramid.levels() => f32::MAX,
         None => 0.0,
+    }
+}
+
+fn joined(first: Range<usize>, second: Range<usize>) -> Range<usize> {
+    if first.is_empty() {
+        return second;
+    }
+    if second.is_empty() {
+        return first;
+    }
+    first.start.min(second.start)..first.end.max(second.end)
+}
+
+fn put<T: bytemuck::Pod>(
+    cx: &mut Prepare<'_, TerrainGpu>,
+    handles: &Handles,
+    at: u32,
+    records: &[T],
+    run: Range<usize>,
+) {
+    if let Some(written) = records.get(run.clone()).filter(|kept| !kept.is_empty()) {
+        let offset = u64::from(at) * 4 + (run.start * size_of::<T>()) as u64;
+        cx.write(handles.tables, offset, written);
     }
 }
 

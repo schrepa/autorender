@@ -15,7 +15,6 @@ import package::water::faces::water::{water_cell, water_info_at, water_read, wat
 @group(1) @binding(44) var<storage, read_write> setup_cells: array<vec4<f32>>;
 @group(1) @binding(45) var<storage, read_write> setup_looks: array<vec4<f32>>;
 @group(1) @binding(46) var<storage, read_write> setup_edges: array<vec4<f32>>;
-@group(1) @binding(47) var<storage, read> setup_live: array<u32>;
 
 const SETUP_SIDE: u32 = WATER_LIVE_BLOCK + 1u;
 const SETUP_CORNERS: u32 = SETUP_SIDE * SETUP_SIDE;
@@ -81,6 +80,10 @@ fn setup_nearest(cell: WaterCell) -> vec4<u32> {
     return water_info_at(texel);
 }
 
+fn setup_live(word: u32) -> u32 {
+    return setup_list[setup_frame.counts.y + word / 4u][word % 4u];
+}
+
 fn setup_live_cell(at: vec2<i32>) -> SetupLive {
     var live = SetupLive(false, NO_WATER_SURFACE, vec2<f32>(0.0), false);
     let spacing = setup_frame.meters.x * f32(setup_frame.square.w);
@@ -91,30 +94,30 @@ fn setup_live_cell(at: vec2<i32>) -> SetupLive {
     if any(tile < vec2<i32>(0)) || any(tile >= tiles) {
         return live;
     }
-    let table = setup_live[u32(tile.y * tiles.x + tile.x)];
+    let table = setup_live(u32(tile.y * tiles.x + tile.x));
     if table == LIVE_NONE {
         return live;
     }
     live.resident = true;
-    let first = bitcast<vec2<i32>>(vec2<u32>(setup_live[table], setup_live[table + 1u]));
-    let blocks = vec2<i32>(vec2<u32>(setup_live[table + 2u], setup_live[table + 3u]));
+    let first = bitcast<vec2<i32>>(vec2<u32>(setup_live(table), setup_live(table + 1u)));
+    let blocks = vec2<i32>(vec2<u32>(setup_live(table + 2u), setup_live(table + 3u)));
     let side = i32(WATER_LIVE_BLOCK);
     let block = setup_floor(at, side) - first;
     if any(block < vec2<i32>(0)) || any(block >= blocks) {
         return live;
     }
-    let cells = setup_live[table + LIVE_HEAD + u32(block.y * blocks.x + block.x)];
+    let cells = setup_live(table + LIVE_HEAD + u32(block.y * blocks.x + block.x));
     if cells == LIVE_NONE {
         return live;
     }
     let inside = vec2<u32>(at - (first + block) * side);
     let entry = cells + LIVE_CELL * (inside.y * WATER_LIVE_BLOCK + inside.x);
-    let surface = bitcast<f32>(setup_live[entry]);
+    let surface = bitcast<f32>(setup_live(entry));
     if surface <= 0.5 * NO_WATER_SURFACE {
         return live;
     }
-    let flow = vec2<f32>(bitcast<f32>(setup_live[entry + 1u]),
-        bitcast<f32>(setup_live[entry + 2u]));
+    let flow = vec2<f32>(bitcast<f32>(setup_live(entry + 1u)),
+        bitcast<f32>(setup_live(entry + 2u)));
     live.surface = (surface + terrain_uniform().origin.y) - setup_frame.meters.y;
     live.held = flow.x >= 0.5 * LIVE_HELD;
     live.flow = select(flow, vec2<f32>(0.0), live.held);

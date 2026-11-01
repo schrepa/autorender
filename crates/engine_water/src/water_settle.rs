@@ -995,14 +995,8 @@ impl SettleGpu {
                 "water_settle_touches",
             ],
         );
-        let setup_handles = SetupHandles::install(
-            cx,
-            [
-                "water_settle_setup",
-                "water_settle_setup_list",
-                "water_settle_setup_live",
-            ],
-        );
+        let setup_handles =
+            SetupHandles::install(cx, ["water_settle_setup", "water_settle_setup_list"]);
         let raise = cx
             .pass("water_settle_raise")
             .label("engine/water-settle-raise")
@@ -1062,7 +1056,7 @@ impl SettleGpu {
         match work.room {
             Some((room, generation)) => {
                 let fresh = fresh || self.room != Some((room, generation));
-                self.setup.hold((room, 4), fresh, cx);
+                self.setup.hold((room, 0), fresh, cx);
                 self.room = Some((room, generation));
             }
             None => {

@@ -26,6 +26,7 @@ const IDS_FORMAT: engine_render::wgpu::TextureFormat = engine_render::wgpu::Text
 const ARRIVAL_SECONDS: f32 = 0.4;
 
 const NO_HOLES: u32 = u32::MAX;
+const DIRECTORY_AT: u32 = crate::gpu::TABLE_HOLES + 1;
 const HOLE_WORDS: usize = ((LAYER_SIZE - 2) * (LAYER_SIZE - 2)).div_ceil(32) as usize;
 
 pub(crate) fn reached(

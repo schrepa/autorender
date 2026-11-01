@@ -15,13 +15,12 @@ import package::face::water::{WATER_HELD, WaterCell, water_cell, water_level};
 import package::generated::targets::{DepthViewTargets, depth_view_targets};
 import package::terrain_shading::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
 import package::terrain_shading::faces::heightfield::{surface_vertex, terrain, terrain_index, terrain_level_height, terrain_view, use_terrain};
-import package::terrain_shading::field::{spread_slopes, terrain_directory};
+import package::terrain_shading::field::spread_slopes;
 import package::terrain_shading::sky::terrain_sky_map;
 import package::terrain_shading::surface::{surface_leaf, surface_relative, terrain_true_height};
+import package::terrain_shading::tables::{table_fades, terrain_tables};
 import package::generated::terrain_shading::{PaletteEntry, SURFACE_MESHLET_LEVEL, SURFACE_VERTEX_STRIDE};
 import package::place::ground_tiles::PALETTE_ENTRIES;
-
-@group(0) @binding(20) var<storage, read> terrain_holes: array<u32>;
 
 @group(0) @binding(21) var terrain_normals: texture_2d_array<u32>;
 @group(0) @binding(24) var terrain_control: texture_2d_array<u32>;
@@ -52,8 +51,8 @@ fn terrain_macro_colors(site: TerrainSite) -> vec4<f32> {
         return vec4<f32>(0.5);
     }
     let header = terrain.directory.x;
-    let extent = vec2<f32>(f32(terrain_directory[header + 1u]),
-        f32(terrain_directory[header + 2u])) * 256.0 * terrain.anchor.w;
+    let extent = vec2<f32>(f32(terrain_tables[header + 1u]),
+        f32(terrain_tables[header + 2u])) * 256.0 * terrain.anchor.w;
     let size = vec2<f32>(textureDimensions(terrain_macro));
     let step = max(extent.x / size.x, extent.y / size.y);
     let lod = max(log2(max(site.footprint.resolved, 1.0e-6) / step), 0.0);
@@ -123,20 +122,20 @@ fn terrain_holes_test(cell: vec2<f32>, holes: bool) {
     for (var index = 0u; index < levels; index++) {
         let header = base + index * 4u;
         let samples = max(cell / f32(1u << index), vec2<f32>(0.0));
-        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+        let tiles = vec2<u32>(terrain_tables[header + 1u], terrain_tables[header + 2u]);
         let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
-        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+        let layer = terrain_tables[terrain_tables[header] + tile.y * tiles.x + tile.x];
         if layer == 0xffffffffu {
             continue;
         }
-        let holes = terrain_holes[terrain.surface.y + layer];
+        let holes = terrain_tables[terrain.surface.y + layer];
         if holes == 0xffffffffu {
             return;
         }
         let at = vec2<u32>(clamp(floor(samples - vec2<f32>(tile * 256u)), vec2<f32>(0.0),
             vec2<f32>(256.0)));
         let bit = at.y * 257u + at.x;
-        if (terrain_holes[holes + bit / 32u] & (1u << (bit % 32u))) != 0u {
+        if (terrain_tables[holes + bit / 32u] & (1u << (bit % 32u))) != 0u {
             discard;
         }
         return;
@@ -160,7 +159,7 @@ fn terrain_detail(p: vec2<f32>, size: f32, resolved: f32) -> f32 {
 }
 
 fn terrain_layer_fades(layer: u32) -> vec2<f32> {
-    let half = (terrain_holes[layer / 2u] >> ((layer % 2u) * 16u)) & 0xffffu;
+    let half = (table_fades(layer) >> ((layer % 2u) * 16u)) & 0xffffu;
     return vec2<f32>(f32(half & 0xffu), f32(half >> 8u)) * (1.0 / 255.0);
 }
 
@@ -172,9 +171,9 @@ fn terrain_level_gradient(local: vec2<f32>, level: u32) -> vec2<f32> {
     for (var index = level; index < levels; index++) {
         let header = base + index * 4u;
         let samples = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
-        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+        let tiles = vec2<u32>(terrain_tables[header + 1u], terrain_tables[header + 2u]);
         let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
-        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+        let layer = terrain_tables[terrain_tables[header] + tile.y * tiles.x + tile.x];
         if layer == 0xffffffffu {
             continue;
         }
@@ -307,9 +306,9 @@ fn terrain_level_own(blend: ptr<function, TerrainBlend>, local: vec2<f32>, level
         weight: f32) -> f32 {
     let header = terrain.directory.x + level * 4u;
     let samples = max(local / (terrain.anchor.w * f32(1u << level)), vec2<f32>(0.0));
-    let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+    let tiles = vec2<u32>(terrain_tables[header + 1u], terrain_tables[header + 2u]);
     let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
-    let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+    let layer = terrain_tables[terrain_tables[header] + tile.y * tiles.x + tile.x];
     if layer == 0xffffffffu {
         return weight;
     }
@@ -427,9 +426,9 @@ fn terrain_level_wetness(local: vec2<f32>, level: u32) -> f32 {
     for (var index = level; index < levels; index++) {
         let header = base + index * 4u;
         let samples = max(local / (terrain.anchor.w * f32(1u << index)), vec2<f32>(0.0));
-        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+        let tiles = vec2<u32>(terrain_tables[header + 1u], terrain_tables[header + 2u]);
         let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
-        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+        let layer = terrain_tables[terrain_tables[header] + tile.y * tiles.x + tile.x];
         if layer == 0xffffffffu {
             continue;
         }

@@ -1,6 +1,6 @@
 import package::place::heightfield::SurfaceTriangle;
 import package::terrain_shading::faces::heightfield::{terrain, terrain_level_height, terrain_surface_leaves};
-import package::terrain_shading::field::terrain_directory;
+import package::terrain_shading::tables::terrain_tables;
 import package::generated::terrain_shading::{SURFACE_ERROR_MIPS, SURFACE_MESHLET_LEVEL};
 
 fn surface_leaf(leaf: u32) -> SurfaceTriangle {
@@ -39,12 +39,12 @@ fn surface_tile(block: vec2<u32>, first: u32) -> vec2<u32> {
     let base = terrain.directory.x;
     for (var index = first; index < terrain.directory.y; index++) {
         let header = base + index * 4u;
-        let tiles = vec2<u32>(terrain_directory[header + 1u], terrain_directory[header + 2u]);
+        let tiles = vec2<u32>(terrain_tables[header + 1u], terrain_tables[header + 2u]);
         let tile = block >> vec2<u32>(min(index - first, 31u));
         if any(tile >= tiles) {
             continue;
         }
-        let layer = terrain_directory[terrain_directory[header] + tile.y * tiles.x + tile.x];
+        let layer = terrain_tables[terrain_tables[header] + tile.y * tiles.x + tile.x];
         if layer != 0xffffffffu {
             return vec2<u32>(index, layer);
         }
