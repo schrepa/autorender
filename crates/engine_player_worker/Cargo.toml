@@ -16,5 +16,8 @@ worker = true
 engine_worker.workspace = true
 engine_player_bricks.workspace = true
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+
 [lints]
 workspace = true

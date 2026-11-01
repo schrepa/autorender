@@ -321,7 +321,6 @@ pub async fn yield_now() {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub fn ready<F: std::future::Future>(future: F) -> Option<F::Output> {
     let mut future = std::pin::pin!(future);
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());

@@ -1478,6 +1478,7 @@ version = "0.1.0"
 dependencies = [
  "engine_player_bricks",
  "engine_worker",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -2422,6 +2423,7 @@ version = "0.1.0"
 dependencies = [
  "engine_worker",
  "highlands_bricks",
+ "wasm-bindgen",
 ]
 
 [[package]]
