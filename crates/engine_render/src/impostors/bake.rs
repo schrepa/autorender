@@ -47,6 +47,7 @@ impl Atlas {
         gpu: BakeGpu<'_>,
         source: &BakeSource<'_>,
         identity: ImpostorIdentity,
+        hemisphere: bool,
     ) {
         let BakeGpu {
             device,
@@ -55,7 +56,10 @@ impl Atlas {
             pipelines,
         } = gpu;
         let encoder = mip_encoder(device, encoder);
-        let shape = self.shape;
+        let shape = AtlasShape {
+            hemisphere,
+            ..self.shape
+        };
         let targets = self
             .targets
             .get_or_insert_with(|| bake_targets(device, shape));
@@ -63,7 +67,7 @@ impl Atlas {
         for texture in &targets.layer {
             mips.record(device, encoder, texture);
         }
-        self.read_back(device, encoder, identity);
+        self.read_back(device, encoder, (identity, shape));
     }
 }
 

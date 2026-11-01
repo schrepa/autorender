@@ -1,4 +1,4 @@
-import package::shadows::faces::routes::caster_routes;
+import package::shadows::faces::routes::{caster_cull, caster_routes};
 
 const CARD = array<vec2<f32>, 6>(
     vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
@@ -8,10 +8,10 @@ const CARD = array<vec2<f32>, 6>(
 @vertex
 fn vs_clear_moving(@builtin(vertex_index) vertex: u32,
         @builtin(instance_index) tile: u32) -> @builtin(position) vec4<f32> {
-    let slot = caster_routes.slots[tile];
+    let slot = caster_routes[tile].slot;
     let texel = mix(slot.xy, slot.zw, CARD[vertex] * 0.5 + vec2<f32>(0.5));
-    return vec4<f32>(texel.x * caster_routes.atlas.x - 1.0,
-        1.0 - texel.y * caster_routes.atlas.y, 1.0, 1.0);
+    return vec4<f32>(texel.x * caster_cull.atlas.x - 1.0,
+        1.0 - texel.y * caster_cull.atlas.y, 1.0, 1.0);
 }
 
 @group(1) @binding(0) var shadow_regions: texture_depth_2d_array;
@@ -26,8 +26,8 @@ fn vs_compose(@builtin(vertex_index) vertex: u32, @location(3) place: vec4<f32>,
         @location(4) source: vec4<i32>) -> ComposeOutput {
     let texel = mix(place.xy, place.zw, CARD[vertex] * 0.5 + vec2<f32>(0.5));
     var output: ComposeOutput;
-    output.clip = vec4<f32>(texel.x * caster_routes.atlas.x - 1.0,
-        1.0 - texel.y * caster_routes.atlas.y, 1.0, 1.0);
+    output.clip = vec4<f32>(texel.x * caster_cull.atlas.x - 1.0,
+        1.0 - texel.y * caster_cull.atlas.y, 1.0, 1.0);
     output.source = source.xyz;
     return output;
 }

@@ -1,6 +1,6 @@
 import package::engine::view::{DetailLevel, PI, detail_across, detail_level, fade_noise};
 import package::generated::pieces::shadows::piece;
-import package::generated::shadows::SHADOW_APRON;
+import package::generated::shadows::{LEVEL_BAND, LEVEL_WINDOW, SHADOW_APRON};
 import package::place::shadows::KeptLift;
 
 @group(0) @binding(0) var shadow_atlas: texture_depth_2d;
@@ -63,6 +63,25 @@ fn shadow_level(world: vec3<f32>) -> DetailLevel {
         u32(piece().level_state.x));
 }
 
+fn level_words(row: u32, first: u32) -> vec4<f32> {
+    return bitcast<vec4<f32>>(vec4<u32>(textureLoad(shadow_tiles, vec2<u32>(first, row), 0).r,
+        textureLoad(shadow_tiles, vec2<u32>(first + 1u, row), 0).r,
+        textureLoad(shadow_tiles, vec2<u32>(first + 2u, row), 0).r,
+        textureLoad(shadow_tiles, vec2<u32>(first + 3u, row), 0).r));
+}
+
+fn level_row(level: u32) -> u32 {
+    return u32(piece().atlas.x) * u32(piece().level_state.x) + level;
+}
+
+fn level_window(level: u32) -> vec4<f32> {
+    return level_words(level_row(level), LEVEL_WINDOW);
+}
+
+fn level_band(level: u32) -> vec4<f32> {
+    return level_words(level_row(level), LEVEL_BAND);
+}
+
 struct LevelPoint {
     cell: vec2<u32>,
     across: vec2<f32>,
@@ -71,8 +90,10 @@ struct LevelPoint {
 }
 
 fn level_point(level: u32, light: vec3<f32>) -> LevelPoint {
-    let window = piece().windows[level];
-    let band = piece().bands[level];
+    return level_at(level_window(level), level_band(level), light);
+}
+
+fn level_at(window: vec4<f32>, band: vec4<f32>, light: vec3<f32>) -> LevelPoint {
     let side = piece().atlas.x;
     let tiles = (light.xy - window.xy) / window.z;
     let tile = floor(tiles);
@@ -114,9 +135,9 @@ const CROWN_TAPS: u32 = 4u;
 const CROWN_REACH: f32 = 2.0;
 const CROWN_SPIRAL_TURN: f32 = 2.39996323;
 
-fn crown_spread(level: u32, light: vec3<f32>, point: MapPoint, center: LevelPoint, slot: u32,
-        visible: f32) -> f32 {
-    let depth_per_meter = max(piece().bands[level].y, 1.0e-12);
+fn crown_spread(level: u32, window: vec4<f32>, band: vec4<f32>, light: vec3<f32>,
+        point: MapPoint, center: LevelPoint, slot: u32, visible: f32) -> f32 {
+    let depth_per_meter = max(band.y, 1.0e-12);
     let crown = point.soft / depth_per_meter;
     let turn = fade_noise(floor(point.texel) + vec2<f32>(0.5)) * 2.0 * PI;
     var way = vec2<f32>(cos(turn), sin(turn));
@@ -124,7 +145,7 @@ fn crown_spread(level: u32, light: vec3<f32>, point: MapPoint, center: LevelPoin
     var lit = visible;
     for (var tap = 0u; tap < CROWN_TAPS; tap++) {
         let across = CROWN_REACH * crown * sqrt((f32(tap) + 0.5) / f32(CROWN_TAPS));
-        let at = level_point(level, light + vec3<f32>(way, 0.0) * across);
+        let at = level_at(window, band, light + vec3<f32>(way, 0.0) * across);
         way = vec2<f32>(way.x * step.x - way.y * step.y, way.x * step.y + way.y * step.x);
         if !at.inside {
             continue;
@@ -145,12 +166,12 @@ fn crown_spread(level: u32, light: vec3<f32>, point: MapPoint, center: LevelPoin
 
 fn level_visibility(level: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec3<f32>,
         dy: vec3<f32>, spread: bool) -> f32 {
-    let window = piece().windows[level];
-    let band = piece().bands[level];
+    let window = level_window(level);
+    let band = level_band(level);
     let up = vec3<f32>(piece().light[0].y, piece().light[1].y,
         piece().light[2].y);
     let light = light_space(world + normal * band.z) + up * level_lift(level);
-    let at = level_point(level, light);
+    let at = level_at(window, band, light);
     if !at.inside {
         return -1.0;
     }
@@ -167,7 +188,7 @@ fn level_visibility(level: u32, world: vec3<f32>, normal: vec3<f32>, dx: vec3<f3
     point.soft = crown_softness(band.y);
     var visible = plane_visibility(atlas_depths(point), point);
     if spread && point.soft > 0.0 && visible < 1.0 {
-        visible = crown_spread(level, light, point, at, slots.x, visible);
+        visible = crown_spread(level, window, band, light, point, at, slots.x, visible);
     }
     if slots.y != 0u {
         var moving = point;

@@ -8,14 +8,12 @@ mod records;
 
 pub(crate) use bake::ImpostorBake;
 
-use std::collections::BTreeMap;
-
 use bevy_ecs::world::World;
 use engine_core::collections::HashMap;
 use engine_core::glam::Vec3;
 use engine_core::{
-    AtlasDevice, AtlasFormat, AtlasRole, AtlasShape, AtlasWork, IMPOSTOR_KINDS as KINDS,
-    ImpostorBooks, ImpostorIdentity, ImpostorRecord, MaterialHandle, MeshHandle,
+    AtlasDevice, AtlasFormat, AtlasShape, AtlasWork, IMPOSTOR_KINDS as KINDS, ImpostorBooks,
+    ImpostorIdentity, ImpostorRecord, MaterialHandle, MeshHandle,
 };
 
 use crate::bindings::IMPOSTOR_BAKE;
@@ -214,32 +212,16 @@ struct Atlas {
     arrays: Option<Arrays>,
     targets: Option<bake::BakeTargets>,
     readbacks: Vec<records::Readback>,
-    records: wgpu::Buffer,
-    uploaded: Vec<ImpostorRecord>,
-}
-
-fn record_buffer(device: &wgpu::Device, records: usize) -> wgpu::Buffer {
-    crate::memory::buffer(
-        device,
-        &wgpu::BufferDescriptor {
-            label: Some("engine/impostor-records"),
-            size: (records.max(1) * size_of::<ImpostorRecord>()) as u64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        },
-    )
 }
 
 impl Atlas {
-    fn new(device: &wgpu::Device, shape: AtlasShape, format: AtlasFormat) -> Self {
+    fn new(shape: AtlasShape, format: AtlasFormat) -> Self {
         Self {
             shape,
             format,
             arrays: None,
             targets: None,
             readbacks: Vec::new(),
-            records: record_buffer(device, 1),
-            uploaded: Vec::new(),
         }
     }
 
@@ -249,7 +231,7 @@ impl Atlas {
 
     fn capacity_bytes(&self) -> u64 {
         let layers = self.arrays.as_ref().map_or(0, |arrays| arrays.layers);
-        u64::from(layers) * self.layer_bytes() + self.records.size()
+        u64::from(layers) * self.layer_bytes()
     }
 
     fn reset(&mut self, shape: AtlasShape) {
@@ -259,13 +241,10 @@ impl Atlas {
         self.readbacks.clear();
     }
 
-    fn release(&mut self, device: &wgpu::Device) {
+    fn release(&mut self) {
         self.arrays = None;
         self.targets = None;
         self.readbacks.clear();
-        self.uploaded.clear();
-        crate::memory::release_buffer(&self.records);
-        self.records = record_buffer(device, 1);
     }
 
     fn grow(
@@ -359,40 +338,17 @@ impl Atlas {
             layers: capacity,
         });
     }
-
-    fn upload_records(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &crate::gpu_calls::Queue,
-        records: &[ImpostorRecord],
-    ) -> bool {
-        if self.arrays.is_none() || records == self.uploaded.as_slice() {
-            return false;
-        }
-        let bytes = size_of_val(records) as u64;
-        let grown = bytes > self.records.size();
-        if grown {
-            self.records = record_buffer(device, records.len().next_power_of_two());
-        }
-        if !records.is_empty() {
-            queue.write_buffer(&self.records, 0, bytemuck::cast_slice(records));
-        }
-        self.uploaded.clear();
-        self.uploaded.extend_from_slice(records);
-        grown
-    }
 }
 
 pub(crate) enum FrameResource<'a> {
-    Buffer(&'a wgpu::Buffer),
     View(&'a wgpu::TextureView),
     Sampler(&'a wgpu::Sampler),
 }
 
 pub(crate) struct Impostors {
     pipelines: ImpostorPipelines,
-    atlases: BTreeMap<AtlasRole, Atlas>,
-    unbaked: Vec<(AtlasRole, ImpostorIdentity)>,
+    atlas: Option<Atlas>,
+    unbaked: Vec<ImpostorIdentity>,
     done: u64,
     generation: u64,
     _stand_in: wgpu::Texture,
@@ -416,7 +372,7 @@ impl Impostors {
         });
         Self {
             pipelines: ImpostorPipelines::new(device),
-            atlases: BTreeMap::new(),
+            atlas: None,
             unbaked: Vec::new(),
             done: 0,
             generation: 0,
@@ -430,36 +386,22 @@ impl Impostors {
     }
 
     pub(crate) fn forget(&mut self) {
-        self.atlases.clear();
+        self.atlas = None;
         self.unbaked.clear();
         self.generation += 1;
     }
 
     pub(crate) fn capacity_bytes(&self) -> u64 {
-        self.atlases
-            .get(&AtlasRole::Scene)
-            .map_or(0, Atlas::capacity_bytes)
+        self.atlas.as_ref().map_or(0, Atlas::capacity_bytes)
     }
 
     pub(crate) fn frame_resource(&self, name: &str) -> Option<FrameResource<'_>> {
         if name == "impostor_sampler" {
             return Some(FrameResource::Sampler(&self.pipelines.sampler));
         }
-        let (role, name) = match name.strip_prefix("placed_") {
-            Some(name) => (AtlasRole::Placed, name),
-            None => (AtlasRole::Scene, name),
-        };
-        let atlas = self.atlases.get(&role);
-        if name == "impostor_records" {
-            return atlas.map(|atlas| FrameResource::Buffer(&atlas.records));
-        }
-        let Some(arrays) = atlas.and_then(|atlas| atlas.arrays.as_ref()) else {
-            return match (role, name) {
-                (AtlasRole::Placed, "impostor_albedo" | "impostor_atlas") => {
-                    Some(FrameResource::View(&self.stand_in))
-                }
-                (AtlasRole::Scene | AtlasRole::Placed, _) => None,
-            };
+        let Some(arrays) = self.atlas.as_ref().and_then(|atlas| atlas.arrays.as_ref()) else {
+            return matches!(name, "impostor_albedo" | "impostor_atlas")
+                .then_some(FrameResource::View(&self.stand_in));
         };
         let view = match name {
             "impostor_albedo" => &arrays.views[0],
@@ -486,29 +428,28 @@ impl Impostors {
         let Some(facts) = books.device() else {
             return;
         };
-        for (at, role, work) in books.work() {
+        for (at, work) in books.work() {
             if at <= self.done {
                 continue;
             }
             self.done = at;
             if let AtlasWork::Reset { shape } = work {
-                self.atlases
-                    .entry(role)
-                    .or_insert_with(|| Atlas::new(device, *shape, facts.format))
+                self.atlas
+                    .get_or_insert_with(|| Atlas::new(*shape, facts.format))
                     .reset(*shape);
                 self.generation += 1;
                 continue;
             }
-            let Some(atlas) = self.atlases.get_mut(&role) else {
+            let Some(atlas) = self.atlas.as_mut() else {
                 if let AtlasWork::Bake { identity, .. } = work {
-                    self.unbaked.push((role, *identity));
+                    self.unbaked.push(*identity);
                 }
                 continue;
             };
             match work {
                 AtlasWork::Reset { .. } => {}
                 AtlasWork::Release => {
-                    atlas.release(device);
+                    atlas.release();
                     self.generation += 1;
                 }
                 AtlasWork::Grow { layers } => {
@@ -522,11 +463,12 @@ impl Impostors {
                     material,
                     parts,
                     bounds,
+                    hemisphere,
                 } => {
                     let Some(source) =
                         bake_source((meshes, materials), (*mesh, *material), parts, *bounds)
                     else {
-                        self.unbaked.push((role, *identity));
+                        self.unbaked.push(*identity);
                         continue;
                     };
                     let gpu = BakeGpu {
@@ -535,34 +477,25 @@ impl Impostors {
                         mips: materials.mips(),
                         pipelines: &mut self.pipelines,
                     };
-                    atlas.bake(gpu, &source, *identity);
+                    atlas.bake(gpu, &source, *identity, *hemisphere);
                 }
                 AtlasWork::DropTargets => atlas.targets = None,
-            }
-        }
-        for (role, atlas) in &mut self.atlases {
-            if atlas.upload_records(device, queue, books.records(*role)) {
-                self.generation += 1;
             }
         }
     }
 
     pub(crate) fn after_submit(&mut self) {
-        for atlas in self.atlases.values_mut() {
+        if let Some(atlas) = self.atlas.as_mut() {
             atlas.after_submit();
         }
     }
 
     pub(crate) fn deliver(&mut self, world: &mut World) {
-        let mut made: Vec<(AtlasRole, ImpostorIdentity, Option<Vec<u8>>)> = Vec::new();
-        for (&role, atlas) in &mut self.atlases {
-            atlas.take_made(role, &mut made);
+        let mut made: Vec<(ImpostorIdentity, Option<Vec<u8>>)> = Vec::new();
+        if let Some(atlas) = self.atlas.as_mut() {
+            atlas.take_made(&mut made);
         }
-        made.extend(
-            self.unbaked
-                .drain(..)
-                .map(|(role, identity)| (role, identity, None)),
-        );
+        made.extend(self.unbaked.drain(..).map(|identity| (identity, None)));
         engine_core::deliver_impostors(world, self.done, made);
     }
 }

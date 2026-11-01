@@ -42,6 +42,7 @@ enum Mapped {
 
 pub(super) struct Readback {
     identity: ImpostorIdentity,
+    shape: AtlasShape,
     buffer: wgpu::Buffer,
     regions: Vec<Region>,
     mapped: Rc<RefCell<Mapped>>,
@@ -88,9 +89,8 @@ impl Atlas {
         &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        identity: ImpostorIdentity,
+        (identity, shape): (ImpostorIdentity, AtlasShape),
     ) {
-        let shape = self.shape;
         let baked = &self.targets.as_ref().expect("targets_drawn").layer;
         let (regions, bytes) = level_regions(shape);
         let buffer = crate::memory::buffer(
@@ -130,26 +130,25 @@ impl Atlas {
         }
         self.readbacks.push(Readback {
             identity,
+            shape,
             buffer,
             regions,
             mapped: Rc::new(RefCell::new(Mapped::Recorded)),
         });
     }
 
-    pub(super) fn take_made(
-        &mut self,
-        role: AtlasRole,
-        out: &mut Vec<(AtlasRole, ImpostorIdentity, Option<Vec<u8>>)>,
-    ) {
+    pub(super) fn take_made(&mut self, out: &mut Vec<(ImpostorIdentity, Option<Vec<u8>>)>) {
         let mut kept = Vec::with_capacity(self.readbacks.len());
         for readback in std::mem::take(&mut self.readbacks) {
             let read = match &*readback.mapped.borrow() {
-                Mapped::Read(bytes) => Some(Some(self.assemble(&readback.regions, bytes))),
+                Mapped::Read(bytes) => {
+                    Some(Some(self.assemble(readback.shape, &readback.regions, bytes)))
+                }
                 Mapped::Failed => Some(None),
                 Mapped::Recorded | Mapped::Mapping => None,
             };
             match read {
-                Some(bytes) => out.push((role, readback.identity, bytes)),
+                Some(bytes) => out.push((readback.identity, bytes)),
                 None => kept.push(readback),
             }
         }
@@ -184,8 +183,8 @@ impl Atlas {
         }
     }
 
-    fn assemble(&self, regions: &[Region], bytes: &[u8]) -> Vec<u8> {
-        let mut out = impostor_record_header(self.shape, self.format);
+    fn assemble(&self, shape: AtlasShape, regions: &[Region], bytes: &[u8]) -> Vec<u8> {
+        let mut out = impostor_record_header(shape, self.format);
         let levels = self.shape.levels() as usize;
         for (index, region) in regions.iter().enumerate() {
             let mut texels = Vec::with_capacity(region.row as usize * region.rows as usize);

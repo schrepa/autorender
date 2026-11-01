@@ -498,6 +498,7 @@ pub(crate) struct FrameState {
     pub motion_key: Option<(Stamp, u64, u64, glam::UVec2)>,
     pub presented_seconds: f32,
     pub impostor_errors: Vec<f32>,
+    pub impostor_records: Vec<engine_core::ImpostorRecord>,
     pub impostor_generation: u64,
     pub cards: bool,
     pub casts: bool,

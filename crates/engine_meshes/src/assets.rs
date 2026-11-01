@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetUses, AtlasRole, AtlasShape, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk, ImpostorAsks,
-    ImpostorPolicy, Spawner,
+    AssetUses, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk, ImpostorAsks, ImpostorPolicy, Spawner,
 };
 
 use crate::MeshesBrick;
@@ -23,8 +22,7 @@ fn uses(plan: &BatchPlan) -> AssetUses {
 fn asks(retained: &RetainedRender, plan: &BatchPlan) -> ImpostorAsks {
     let snapshot = retained.snapshot();
     ImpostorAsks {
-        role: AtlasRole::Scene,
-        shape: AtlasShape::SPHERE,
+        hemisphere: false,
         asks: plan
             .batches
             .iter()

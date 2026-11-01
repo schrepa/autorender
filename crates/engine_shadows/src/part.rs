@@ -7,8 +7,8 @@ use engine_render::{
     RenderPipeline, SamplerDesc, Shape, Texture, VertexLayout, ViewTarget, wgpu,
 };
 
-use crate::constants::{MARK_GROUP, SKY_LAYERS};
-use crate::gpu_layouts::{CasterCull, ComposeData, Routes, SkyViews};
+use crate::constants::{LEVEL_WORDS, MARK_GROUP, SKY_LAYERS};
+use crate::gpu_layouts::{CasterCull, ComposeData, Route, SkyViews};
 use crate::plan::{DEPTH_MARKS, MAP_MARKS, MASKS, ShadowFeedback, ShadowPlan};
 use crate::regions::{MOVING_VIEW, SKY_VIEW};
 use crate::shaders;
@@ -38,7 +38,8 @@ const COMPOSE_VERTICES: &[VertexLayout] = &[VertexLayout::Buffer(COMPOSE_LAYOUT)
 #[derive(Default)]
 struct Written {
     cameras: Option<Vec<CameraUniform>>,
-    routes: Option<Box<Routes>>,
+    routes: Option<Vec<Route>>,
+    levels: Option<Vec<[u32; LEVEL_WORDS as usize]>>,
     cull: Option<CasterCull>,
     sky: Option<Box<SkyViews>>,
     table: Vec<u64>,
@@ -103,8 +104,8 @@ impl ShadowsGpu {
             cx.cameras(&plan.cameras);
             self.written.cameras = Some(plan.cameras.clone());
         }
-        if self.written.routes.as_deref() != Some(&*plan.routes) {
-            cx.write(self.routes, 0, std::slice::from_ref(&*plan.routes));
+        if self.written.routes.as_deref() != Some(plan.routes.as_slice()) {
+            cx.write(self.routes, 0, &plan.routes);
             self.written.routes = Some(plan.routes.clone());
         }
         if self
@@ -152,6 +153,27 @@ impl ShadowsGpu {
             );
             self.written.table[level] = revision;
         }
+        if !plan.levels.is_empty()
+            && self.written.levels.as_deref() != Some(plan.levels.as_slice())
+        {
+            let count = plan.levels.len() as u32;
+            cx.write_texture(
+                self.tiles,
+                wgpu::Origin3d {
+                    x: 0,
+                    y: count * side,
+                    z: 0,
+                },
+                bytemuck::cast_slice(&plan.levels),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(LEVEL_WORDS * 4),
+                    rows_per_image: Some(count),
+                },
+                extent(LEVEL_WORDS, count, 1),
+            );
+            self.written.levels = Some(plan.levels.clone());
+        }
     }
 
     fn allocate(&mut self, plan: &ShadowPlan, cx: &mut Prepare<'_, Self>) {
@@ -163,12 +185,14 @@ impl ShadowsGpu {
             for texture in [self.atlas, self.regions, self.tiles] {
                 cx.release(texture);
             }
+            self.written.levels = None;
         }
         let (width, height) = key.atlas.size();
         let side = key.region_side();
+        let (columns, rows) = key.table_size();
         cx.allocate(self.atlas, extent(width, height, 1), 1);
         cx.allocate(self.regions, extent(side, side, SHADOW_REGIONS), 1);
-        cx.allocate(self.tiles, extent(key.side, key.side * key.levels, 1), 1);
+        cx.allocate(self.tiles, extent(columns, rows, 1), 1);
         if plan.sky.live {
             cx.allocate(self.sky, extent(RESOLUTION, RESOLUTION, SKY_LAYERS), 1);
         } else {
@@ -177,7 +201,7 @@ impl ShadowsGpu {
         let mask_bytes = plan.mark_bytes().max(4);
         cx.allocate_buffer(self.map_marks, 2 * mask_bytes);
         cx.allocate_buffer(self.depth_marks, mask_bytes);
-        cx.allocate_buffer(self.routes, size_of::<Routes>() as u64);
+        cx.allocate_buffer(self.routes, (plan.routes.len().max(1) * size_of::<Route>()) as u64);
         cx.allocate_buffer(self.cull, size_of::<CasterCull>() as u64);
         cx.allocate_buffer(self.sky_views, size_of::<SkyViews>() as u64);
     }

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, AtlasShape, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk,
-    ImpostorRecord, Material, MaterialHandle, Mesh, MeshHandle, ResidentMesh, TextureHandle,
+    AlphaMode, AssetLibrary, AssetResidency, IMPOSTOR_MIN_TRIANGLES, ImpostorAsk, ImpostorRecord,
+    Material, MaterialHandle, Mesh, MeshHandle, ResidentMesh, TextureHandle,
 };
 use engine_math::collections::HashMap;
 use engine_places::ground::{PlacedAsset, TerrainEntry, TileFace};
@@ -27,8 +27,6 @@ type Levels = (
     [f32; LEVELS as usize - 1],
     u32,
 );
-
-const PLACED_FRAMES: u32 = 12;
 
 #[derive(Clone, Copy)]
 pub(crate) struct ResolvedMesh<'a> {
@@ -69,15 +67,6 @@ impl<'a> Resolved<'a> {
     pub(crate) fn materials(&self) -> impl Iterator<Item = MaterialHandle> + '_ {
         std::iter::once(self.material.handle)
             .chain(self.parts.iter().map(|part| part.material.handle))
-    }
-}
-
-pub(crate) fn placed_shape(pixels: f32) -> AtlasShape {
-    let texels = (pixels.ceil() as u32).clamp(2, 1 << 15);
-    AtlasShape {
-        frames: PLACED_FRAMES,
-        texels: texels.next_power_of_two(),
-        hemisphere: true,
     }
 }
 

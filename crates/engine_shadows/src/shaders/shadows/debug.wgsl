@@ -9,9 +9,9 @@ import package::place::shadows::{DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_HOR
 fn debug_sun_color(sun: u32) -> vec3<f32> {
     let source = sun & (DEBUG_SHADOWED - 1u);
     var color = vec3<f32>(0.0);
-    if source >= DEBUG_SUN_LEVEL && source < DEBUG_SUN_HORIZON {
+    if source >= DEBUG_SUN_LEVEL {
         let level = f32(source - DEBUG_SUN_LEVEL)
-            / f32(DEBUG_SUN_HORIZON - DEBUG_SUN_LEVEL - 1u);
+            / f32(max(u32(piece().level_state.x), 2u) - 1u);
         let green_to_cyan = mix(vec3<f32>(0.3, 1.0, 0.3), vec3<f32>(0.2, 0.9, 0.95),
             saturate(2.0 * level));
         color = mix(green_to_cyan, vec3<f32>(0.25, 0.35, 0.95), saturate(2.0 * level - 1.0));

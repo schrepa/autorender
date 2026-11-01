@@ -405,7 +405,6 @@ impl Run {
             .filter(|(path, _, _)| self.machine.linker.is_core(path));
         if let Some((_, name, _)) = found.filter(|(path, _, _)| path == crate::shaders::IMPOSTORS_MODULE) {
             return match self.assets.impostors.frame_resource(name) {
-                Some(crate::impostors::FrameResource::Buffer(buffer)) => Resolved::Buffer(buffer.clone()),
                 Some(crate::impostors::FrameResource::View(view)) => Resolved::View(view.clone()),
                 Some(crate::impostors::FrameResource::Sampler(sampler)) => Resolved::Sampler(sampler.clone()),
                 None => Resolved::Placeholder(ty),

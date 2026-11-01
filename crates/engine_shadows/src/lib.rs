@@ -18,7 +18,6 @@ use engine_core::{Brick, Bricks, Runs, Schedule, Smoke, Source};
 use engine_places::shadows::{CasterRoutes, ShadowCasters, ShadowMaps};
 use engine_render::{DebugModes, RenderBricks};
 
-pub use constants::{MAX_MOVING_TILES, MAX_SHADOW_LEVELS};
 pub use settings::{ShadowSettings, ShadowStats, SkyOcclusion};
 
 pub struct ShadowsBrick;

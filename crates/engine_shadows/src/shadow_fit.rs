@@ -184,7 +184,7 @@ pub(crate) struct Clipmap {
     settings: Option<ClipSettings>,
     side: u32,
     levels: Vec<ClipLevel>,
-    owners: Vec<Option<(u8, u16)>>,
+    owners: Vec<Option<(u32, u16)>>,
     free: Vec<u16>,
     table: Vec<u32>,
     changed: Vec<bool>,
@@ -468,7 +468,7 @@ impl Clipmap {
                         None => return,
                     },
                 };
-                self.owners[slot as usize] = Some((level as u8, cell as u16));
+                self.owners[slot as usize] = Some((level as u32, cell as u16));
                 self.levels[level].cells[cell].slot = Some(slot);
             }
         }

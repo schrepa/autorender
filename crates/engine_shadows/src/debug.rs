@@ -45,9 +45,7 @@ fn sun_lookup(source: u32) -> (SunLookup, u32) {
     match source {
         DEBUG_SUN_HORIZON => (SunLookup::Horizon, 0),
         DEBUG_SUN_BEYOND => (SunLookup::Beyond, 0),
-        level if (DEBUG_SUN_LEVEL..DEBUG_SUN_HORIZON).contains(&level) => {
-            (SunLookup::Level, level - DEBUG_SUN_LEVEL)
-        }
+        level if level >= DEBUG_SUN_LEVEL => (SunLookup::Level, level - DEBUG_SUN_LEVEL),
         _ => (SunLookup::None, 0),
     }
 }

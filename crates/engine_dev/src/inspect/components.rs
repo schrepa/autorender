@@ -1,4 +1,4 @@
-use engine_core::{AssetResidency, AtlasRole, IMPOSTOR_MIN_TRIANGLES, ImpostorBooks, ResidentMesh};
+use engine_core::{AssetResidency, IMPOSTOR_MIN_TRIANGLES, ImpostorBooks, ResidentMesh};
 
 use super::*;
 
@@ -82,7 +82,7 @@ fn impostor_resident(world: &World, resident: &ResidentMesh, mesh3d: &Mesh3d) ->
         return None;
     }
     let books = world.get_resource::<ImpostorBooks>()?;
-    Some(books.contains(AtlasRole::Scene, mesh3d.mesh, Some(mesh3d.material)))
+    Some(books.contains(mesh3d.mesh, Some(mesh3d.material)))
 }
 
 pub(super) fn mesh_view(
