@@ -54,7 +54,7 @@ pub use engine_assets::{
 pub use engine_place::{
     DrawPoint, Error, ErrorCode, GpuStruct, InterpolateTransform, JobRef, List, MaterialHandle,
     Mesh3d, MeshHandle, PlaceDecl, Runs, Slot, Smoke, SmokeFailure, SmokeSession, Stamp,
-    TextureHandle, gpu_consts, smoke_eq,
+    TextureHandle, gpu_consts, smoke_check, smoke_eq,
 };
 pub use engine_registry::{AuthoredId, ExplainAsk, ExplainRecord, FrameFacts, RecordParity};
 pub use engine_settings::{
@@ -73,9 +73,10 @@ pub use records::*;
 pub use scene::*;
 pub use section::{Cut, Explain, Operation, Readback, Section};
 pub use services::{
-    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, Placed, Placement,
-    Poses, Prepared, Reach, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneIds,
-    ScenePath, View, ViewWind, WorkClock, WorkRemaining, scene_component, scene_components,
+    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, PartFaults, Placed,
+    Placement, Poses, Prepared, Reach, SceneBuffers, SceneComponents, SceneContext, SceneCx,
+    SceneIds, ScenePath, View, ViewWind, WorkClock, WorkRemaining, scene_component,
+    scene_components,
 };
 pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
@@ -118,8 +119,8 @@ use engine_registry::{
 };
 use interpolation::{InterpolationState, ResetWatch};
 use schedules::{
-    BetweenFrames, FixedMove, FixedPostSimulation, FixedPreSimulation, FixedSimulation,
-    Presentation, Stream, TransformPropagation, ViewSync, Waiting, WorldSync,
+    BetweenFrames, FixedMove, FixedPostSimulation, FixedPreSimulation, FixedSimulation, FrameStart,
+    Presentation, Rendered, Stream, TransformPropagation, ViewSync, Waiting, WorldSync,
 };
 
 pub const MAX_DEV_TICKS: u32 = 120;
@@ -330,6 +331,7 @@ impl Engine {
             .insert_resource(DeviceLimits::without_device(cores))
             .init_resource::<WorkClock>()
             .init_resource::<PartDraws>()
+            .init_resource::<PartFaults>()
             .init_resource::<WorkRemaining>()
             .init_resource::<mesh_lods::MeshLevels>()
             .init_resource::<Viewport>()
@@ -380,7 +382,7 @@ impl Engine {
         let world = self.app.world_mut();
         world.insert_resource(JobListed::of(&jobs));
         world.resource_mut::<JobExchange>().set_list(jobs);
-        let labels: [InternedScheduleLabel; 10] = Schedule::ALL.map(Schedule::label);
+        let labels: [InternedScheduleLabel; 12] = Schedule::ALL.map(Schedule::label);
         self.gates = Some(registry.install(world, &labels));
         let twice = world
             .get_resource::<MembersOf<SceneComponents>>()
@@ -490,6 +492,33 @@ impl Engine {
             jobs::admit_orders(world);
         }
         world.resource::<WorkRemaining>().remaining()
+    }
+
+    pub fn start_frame(&mut self) {
+        self.finalize();
+        let world = self.app.world_mut();
+        if has_systems(world, FrameStart) {
+            world.run_schedule(FrameStart);
+        }
+    }
+
+    pub fn rendered(&mut self, submitted: bool) {
+        self.finalize();
+        let world = self.app.world_mut();
+        if world.resource::<View>().submitted() != submitted {
+            modify(world, |view: &mut View| {
+                let state = view.state_mut();
+                let facts = FrameFacts {
+                    submitted,
+                    ..state.facts()
+                };
+                let (view_projection, eye) = (state.view_projection(), state.eye());
+                state.set(facts, view_projection, eye);
+            });
+        }
+        if has_systems(world, Rendered) {
+            world.run_schedule(Rendered);
+        }
     }
 
     pub fn stream_now(&mut self) {

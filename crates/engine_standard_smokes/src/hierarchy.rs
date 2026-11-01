@@ -481,10 +481,10 @@ fn instances(
         smoke_eq!(residency(session)?, initial.clone(), "shared_assets");
         let assets = query(session, "assets", json!({}))?["rendering"].clone();
         smoke_eq!(
-            json!([assets["draw_calls"], assets["instances"]]),
+            json!([assets["draw_calls"], assets["meshes_stats"]["instances"]]),
             json!([
                 rendering["draw_calls"],
-                rendering["instances"].as_u64().unwrap_or(0) + parts
+                rendering["meshes_stats"]["instances"].as_u64().unwrap_or(0) + parts
             ]),
             "shared_assets_and_draws"
         );
@@ -537,9 +537,9 @@ fn removal(
     let retired = query(session, "assets", json!({}))?;
     let drawn = &retired["rendering"];
     smoke_eq!(
-        json!(drawn["instances"]),
+        json!(drawn["meshes_stats"]["instances"]),
         json!(
-            rendering["instances"]
+            rendering["meshes_stats"]["instances"]
                 .as_u64()
                 .unwrap_or(0)
                 .saturating_sub(parts * 2)

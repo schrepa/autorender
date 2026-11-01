@@ -1007,11 +1007,9 @@ dependencies = [
  "engine",
  "engine_core",
  "engine_dev",
- "engine_fly_camera",
  "engine_place",
  "engine_registry",
  "engine_render",
- "engine_standard",
  "serde_json",
  "toml_edit",
 ]
@@ -1105,7 +1103,6 @@ dependencies = [
  "engine_places",
  "engine_render",
  "engine_sources",
- "serde_json",
 ]
 
 [[package]]

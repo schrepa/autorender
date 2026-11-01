@@ -358,6 +358,19 @@ fn names_twice(world: &World, problems: &mut Vec<Error>) {
     }
 }
 
+fn device_limits(device: &wgpu::Device, world: &World) -> engine_core::DeviceLimits {
+    let limits = device.limits();
+    let cores = world.get_resource::<engine_core::DeviceLimits>().map_or(0, |held| held.cores);
+    engine_core::DeviceLimits {
+        storage_room: limits.max_storage_buffer_binding_size.min(limits.max_buffer_size),
+        texture_layers: limits.max_texture_array_layers,
+        max_texture_dimension_2d: limits.max_texture_dimension_2d,
+        max_compute_workgroups_per_dimension: limits.max_compute_workgroups_per_dimension,
+        indirect_first_instance: device.features().contains(wgpu::Features::INDIRECT_FIRST_INSTANCE),
+        ..engine_core::DeviceLimits::without_device(cores)
+    }
+}
+
 pub(crate) fn install(device: &wgpu::Device, world: &mut World) -> Result<Built, Vec<Error>> {
     world.resource_scope::<Registry, _>(|world, registry| install_with(device, world, &registry))
 }
@@ -414,6 +427,7 @@ fn install_with(device: &wgpu::Device, world: &mut World, registry: &Registry) -
         }
     }
     let mut core = InstallCore::new(linker, device.features());
+    core.limits = device_limits(device, world);
     for entry in &listed {
         core.declared.parts.push(PartInfo {
             ty: entry.record.part,
@@ -452,7 +466,13 @@ fn install_with(device: &wgpu::Device, world: &mut World, registry: &Registry) -
         registry.brick(package).is_some_and(|record| record.places().any(|decl| decl.name() == place))
     };
     problems.extend(linker.check(&fills));
-    let passes: Vec<&'static str> = declared.passes.iter().map(|pass| pass.name).collect();
+    let mut passes: Vec<&'static str> = Vec::new();
+    for pass in &declared.passes {
+        let name = pass.group.unwrap_or(pass.name);
+        if !passes.contains(&name) {
+            passes.push(name);
+        }
+    }
     let limits = crate::pipeline_layouts::REQUIRED_LIMITS;
     let scope = crate::gpu_calls::validation_scope(device);
     let machine = Machine::build(device, linker, declared, outputs, switches, &limits, &mut problems);
@@ -498,10 +518,13 @@ impl Renderer {
 
     pub fn install(&mut self, world: &mut World) -> Result<(), Vec<Error>> {
         let installed = install(&self.core.device, world)?;
-        let mut assets = match (self.run.take(), self.assets.take()) {
-            (Some(run), _) => run.assets,
-            (None, Some(assets)) => assets,
-            (None, None) => new_assets(&self.core.device, &self.core.queue),
+        let (mut assets, kept) = match (self.run.take(), self.assets.take()) {
+            (Some(run), _) => {
+                let (assets, kept) = kept_of(run);
+                (assets, Some(kept))
+            }
+            (None, Some(assets)) => (assets, None),
+            (None, None) => (new_assets(&self.core.device, &self.core.queue), None),
         };
         crate::mesh_arena::configure(
             &self.core.device,
@@ -515,6 +538,9 @@ impl Renderer {
             installed.run_parts,
             assets,
         );
+        if let Some(kept) = kept {
+            adopt(&mut run, kept, world);
+        }
         run.gates = installed.gates;
         run.piece_layout = installed.pieces;
         run.surface = self.core.display.format();
@@ -527,10 +553,23 @@ impl Renderer {
         let scope = crate::gpu_calls::validation_scope(&self.core.device);
         run.warm(false);
         self.installing = Some(Box::pin(scope.pop()));
-        self.spans = installed
+        let mut stages: Vec<(&'static str, &'static str)> = Vec::new();
+        self.spans = run
+            .machine
+            .declared
             .passes
             .iter()
-            .map(|pass| -> &'static str { Box::leak(format!("stage_{pass}").into_boxed_str()) })
+            .map(|pass| {
+                let name = pass.group.unwrap_or(pass.name);
+                match stages.iter().find(|(known, _)| *known == name) {
+                    Some(&(_, stage)) => stage,
+                    None => {
+                        let stage: &'static str = Box::leak(format!("stage_{name}").into_boxed_str());
+                        stages.push((name, stage));
+                        stage
+                    }
+                }
+            })
             .collect();
         self.passes = Box::leak(installed.passes.into_boxed_slice());
         self.linked = installed.linked;
@@ -563,6 +602,100 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
         Some(Some(error)) => Err(vec![failed_with("$.pipelines", error)]),
         Some(None) | None => Ok(listed),
     }
+}
+
+struct Kept {
+    declared: crate::install::Declared,
+    parts: Vec<Option<Box<dyn Installed>>>,
+    textures: Vec<[Option<crate::encode::Allocated>; 2]>,
+    sizes: Vec<Option<(wgpu::Extent3d, u32)>>,
+    buffers: Vec<Option<(wgpu::Buffer, u64)>>,
+    filled: Vec<crate::encode::Filled>,
+    rings: Vec<crate::encode::Ring>,
+}
+
+fn kept_of(run: Run) -> (Assets, Kept) {
+    let Run {
+        assets,
+        machine,
+        parts,
+        textures,
+        sizes,
+        buffers,
+        filled,
+        rings,
+        ..
+    } = run;
+    let kept = Kept {
+        declared: machine.declared,
+        parts,
+        textures,
+        sizes,
+        buffers,
+        filled,
+        rings,
+    };
+    (assets, kept)
+}
+
+fn same_shape(old: &crate::install::Declared, new: &crate::install::Declared) -> bool {
+    let parts = |declared: &crate::install::Declared| declared.parts.iter().map(|part| part.ty).collect::<Vec<_>>();
+    let textures = |declared: &crate::install::Declared| {
+        declared
+            .textures
+            .iter()
+            .map(|texture| (texture.label, texture.format, texture.lifetime, texture.part))
+            .collect::<Vec<_>>()
+    };
+    let buffers = |declared: &crate::install::Declared| {
+        declared
+            .buffers
+            .iter()
+            .map(|buffer| (buffer.label, buffer.lifetime, buffer.part, buffer.usage))
+            .collect::<Vec<_>>()
+    };
+    let passes = |declared: &crate::install::Declared| declared.passes.iter().map(|pass| (pass.name, pass.part)).collect::<Vec<_>>();
+    let pipelines = |declared: &crate::install::Declared| {
+        declared.pipelines.iter().map(|pipeline| (pipeline.part, pipeline.scope)).collect::<Vec<_>>()
+    };
+    let inputs = |declared: &crate::install::Declared| {
+        declared
+            .inputs
+            .iter()
+            .map(|input| (input.part, input.scope, input.buffer))
+            .collect::<Vec<_>>()
+    };
+    parts(old) == parts(new)
+        && textures(old) == textures(new)
+        && buffers(old) == buffers(new)
+        && old.samplers == new.samplers
+        && passes(old) == passes(new)
+        && pipelines(old) == pipelines(new)
+        && inputs(old) == inputs(new)
+}
+
+fn adopt(run: &mut Run, kept: Kept, world: &mut World) {
+    if !same_shape(&kept.declared, &run.machine.declared) {
+        return;
+    }
+    for (slot, held) in run.parts.iter_mut().zip(kept.parts) {
+        if let Some(mut held) = held {
+            held.rebind(world);
+            *slot = Some(held);
+        }
+    }
+    run.textures = kept.textures;
+    run.sizes = kept.sizes;
+    run.buffers = kept.buffers;
+    run.filled = kept
+        .filled
+        .into_iter()
+        .map(|mut filled| {
+            filled.groups.clear();
+            filled
+        })
+        .collect();
+    run.rings = kept.rings;
 }
 
 pub(crate) fn switches_of(machine: &Machine, world: &World, faulted: &[GateId]) -> Vec<(u32, bool)> {

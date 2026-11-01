@@ -30,6 +30,7 @@ pub(crate) struct SystemsCall {
     pub(crate) scope: Scope,
     pub(crate) schedule: InternedScheduleLabel,
     pub(crate) make: MakeSystems,
+    pub(crate) off: bool,
 }
 
 pub struct BrickRecord {
@@ -38,6 +39,7 @@ pub struct BrickRecord {
     pub render: Vec<Box<dyn Any + Send + Sync>>,
     brick: TypeId,
     type_name: &'static str,
+    owner: Option<&'static str>,
     source: [u8; 32],
     prefix: Option<&'static str>,
     smokes: &'static [Smoke],
@@ -65,12 +67,14 @@ impl BrickRecord {
         source: [u8; 32],
         smokes: &'static [Smoke],
     ) -> Self {
+        let type_name = std::any::type_name::<B>();
         Self {
             package,
             entries: Vec::new(),
             render: Vec::new(),
             brick: TypeId::of::<B>(),
-            type_name: std::any::type_name::<B>(),
+            type_name,
+            owner: owner_of(type_name, package),
             source,
             prefix: None,
             smokes,
@@ -103,6 +107,10 @@ impl BrickRecord {
 
     pub fn type_name(&self) -> &'static str {
         self.type_name
+    }
+
+    pub fn owner(&self) -> Option<&'static str> {
+        self.owner
     }
 
     pub fn source(&self) -> [u8; 32] {
@@ -216,7 +224,7 @@ impl BrickRecord {
     }
 
     pub fn owns_path(&self, path: &str) -> bool {
-        is_package(crate_segment(path), self.package)
+        self.owner.is_some_and(|owner| within(path, owner))
     }
 
     pub fn when(&mut self, condition: GateFn) {
@@ -259,6 +267,20 @@ impl BrickRecord {
             scope: self.current,
             schedule,
             make: Box::new(move || systems.chain()),
+            off: false,
+        });
+    }
+
+    pub fn off_in<M: 'static>(
+        &mut self,
+        schedule: InternedScheduleLabel,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + Send + Sync + 'static,
+    ) {
+        self.systems.push(SystemsCall {
+            scope: Scope::BRICK,
+            schedule,
+            make: Box::new(move || systems.chain()),
+            off: true,
         });
     }
 
@@ -366,6 +388,25 @@ impl BrickRecord {
 
 pub(crate) fn crate_segment(path: &str) -> &str {
     path.split("::").next().unwrap_or(path)
+}
+
+pub(crate) fn owner_of(type_name: &'static str, package: &str) -> Option<&'static str> {
+    let segment = crate_segment(type_name);
+    if is_package(segment, package) {
+        return Some(segment);
+    }
+    let rest = type_name[segment.len()..].strip_prefix("::bricks::")?;
+    let module = rest.split("::").next()?;
+    let named = package.strip_suffix(module)?.strip_suffix('_')?;
+    if module.is_empty() || !is_package(segment, named) {
+        return None;
+    }
+    Some(&type_name[..type_name.len() - rest.len() + module.len()])
+}
+
+pub(crate) fn within(path: &str, owner: &str) -> bool {
+    path.strip_prefix(owner)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with("::"))
 }
 
 pub(crate) fn is_package(segment: &str, package: &str) -> bool {

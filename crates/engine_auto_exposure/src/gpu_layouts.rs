@@ -18,7 +18,6 @@ gpu_struct! {
         pub held: f32,
         pub view: f32,
         pub day: f32,
-        pub spare: [f32; 2],
     }
 }
 

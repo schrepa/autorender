@@ -148,6 +148,7 @@ pub struct PassEntry {
     pub registered: u32,
     pub layer: Option<Layer>,
     pub shared: bool,
+    pub group: Option<&'static str>,
 }
 
 #[derive(Clone, Debug)]
@@ -158,6 +159,7 @@ pub struct Declared {
     pub colors: Vec<(ResourceId, Access)>,
     pub depth: Option<(ResourceId, Access)>,
     pub after: Vec<PassId>,
+    pub current: Vec<ResourceId>,
 }
 
 #[derive(Clone, Debug)]
@@ -165,6 +167,7 @@ struct Node {
     entry: PassEntry,
     reads: Bits,
     writes: Bits,
+    current: Bits,
     colors: Vec<(ResourceId, Access)>,
     depth: Option<(ResourceId, Access)>,
 }
@@ -281,17 +284,22 @@ impl StaticGraph {
         for declared in passes {
             let mut reads = Bits::of(width);
             let mut writes = Bits::of(width);
+            let mut current = Bits::of(width);
             for resource in &declared.reads {
                 reads.insert(resource.index());
             }
             for resource in &declared.writes {
                 writes.insert(resource.index());
             }
+            for resource in &declared.current {
+                current.insert(resource.index());
+            }
             after.push(declared.after);
             nodes.push(Node {
                 entry: declared.entry,
                 reads,
                 writes,
+                current,
                 colors: declared.colors,
                 depth: declared.depth,
             });
@@ -335,7 +343,7 @@ impl StaticGraph {
                             before[early].insert(late);
                         }
                     } else if reads.contains(resource) {
-                        if entry.life == Life::Kept {
+                        if entry.life == Life::Kept && !reader.current.contains(resource) {
                             kept.push((early, late));
                         } else {
                             before[late].insert(early);
@@ -360,13 +368,23 @@ impl StaticGraph {
             }
         }
         let mut placed = Bits::of(count);
-        let mut order = Vec::with_capacity(count);
+        let mut order: Vec<usize> = Vec::with_capacity(count);
         while order.len() < count {
+            let last = order.last().map(|&last| &nodes[last].entry);
+            let continues = |index: usize| {
+                let entry = &nodes[index].entry;
+                last.is_some_and(|last| {
+                    entry.group.is_some()
+                        && entry.group == last.group
+                        && entry.package == last.package
+                        && entry.layer == last.layer
+                })
+            };
             let next = (0..count)
                 .filter(|&index| {
                     !placed.contains(index) && before[index].without(&placed).is_empty()
                 })
-                .min_by_key(|&index| nodes[index].key(index));
+                .min_by_key(|&index| (!continues(index), nodes[index].key(index)));
             let Some(next) = next else {
                 let stuck = (0..count)
                     .filter(|&index| !placed.contains(index))

@@ -183,6 +183,7 @@ impl GpuPart for WaterGpu {
         Res<'static, GroundTiles>,
         Res<'static, Heightfield>,
     );
+    const NAME: &'static str = "water";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::water::{faces::water as face, foam, refraction, surface};

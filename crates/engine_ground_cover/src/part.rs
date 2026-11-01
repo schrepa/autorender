@@ -39,6 +39,7 @@ pub(crate) struct CoverGpu {
 
 impl GpuPart for CoverGpu {
     type Reads = (Res<'static, CoverPlan>, Res<'static, CoverTable>);
+    const NAME: &'static str = "ground_cover";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let rows = cx.buffer("cover_grow", Lifetime::Kept);

@@ -1,15 +1,16 @@
 use std::any::{Any, TypeId};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::Instant;
 
-use engine::Game;
 use engine::bricks::BrickList;
 use engine::smokes::{
     Build, FRAME_MS, Headless, LIST, SmokeEntry, SmokeFailure, SmokeRecord, SmokeSession, answered,
-    engine_of, fault, idle, joined, listed, routed, select, step_lines,
+    engine_of, fault, idle, joined, listed, members, routed, select, slot, step_lines, without,
 };
-use serde_json::Value;
+use engine::{Engine, Game};
+use serde_json::{Value, json};
 
 use crate::dev::DevSession;
 use crate::{HostOptions, Offscreen};
@@ -70,9 +71,10 @@ struct Runner<'a, G: Game> {
 enum Backend<G: Game> {
     Gpu(Box<DevSession<G>>),
     Headless(Box<Headless<G>>),
+    Closed(Value),
 }
 
-impl<G: Game> Runner<'_, G> {
+impl<'a, G: Game> Runner<'a, G> {
     fn record(&mut self, entry: &SmokeEntry) -> SmokeRecord {
         if entry.gpu() && self.gpu == Some(false) {
             return SmokeRecord::skipped(entry);
@@ -82,7 +84,8 @@ impl<G: Game> Runner<'_, G> {
         let mut faults = Vec::new();
         let first = match entry.restart {
             Some(restart) => {
-                let mut session = match self.session(entry, self.bricks.clone()) {
+                let bricks = self.bricks.clone();
+                let mut session = match self.session(entry, bricks) {
                     Ok(Some(session)) => session,
                     Ok(None) => return SmokeRecord::skipped(entry),
                     Err(error) => {
@@ -98,7 +101,8 @@ impl<G: Game> Runner<'_, G> {
             }
             None => None,
         };
-        let mut session = match self.session(entry, entry.bricks(self.bricks)) {
+        let bricks = entry.bricks(self.bricks);
+        let mut session = match self.session(entry, bricks) {
             Ok(Some(session)) => session,
             Ok(None) => return SmokeRecord::skipped(entry),
             Err(error) => return SmokeRecord::failed(entry, elapsed(), fault("session", &error)),
@@ -115,13 +119,17 @@ impl<G: Game> Runner<'_, G> {
         &mut self,
         entry: &SmokeEntry,
         bricks: BrickList,
-    ) -> engine::Result<Option<Native<G>>> {
-        let backend = self.open(bricks)?;
+    ) -> engine::Result<Option<Native<'_, 'a, G>>> {
+        let backend = self.open(bricks.clone())?;
         if entry.gpu() && matches!(backend, Backend::Headless(_)) {
             return Ok(None);
         }
         Ok(Some(Native {
+            runner: self,
             backend,
+            bricks,
+            source: None,
+            files: BTreeMap::new(),
             clock: 0.0,
             loaded: false,
             faults: Vec::new(),
@@ -148,10 +156,7 @@ impl<G: Game> Runner<'_, G> {
                 }
                 Err(error) if self.gpu == Some(true) => return Err(error),
                 Err(error) => {
-                    eprintln!(
-                        "{}",
-                        serde_json::json!({"event": "gpu_unavailable", "error": error})
-                    );
+                    eprintln!("{}", json!({"event": "gpu_unavailable", "error": error}));
                 }
             }
         }
@@ -169,14 +174,26 @@ impl<G: Game> Runner<'_, G> {
     }
 }
 
-struct Native<G: Game> {
+struct Native<'r, 'a, G: Game> {
+    runner: &'r mut Runner<'a, G>,
     backend: Backend<G>,
+    bricks: BrickList,
+    source: Option<String>,
+    files: BTreeMap<String, Vec<u8>>,
     clock: f64,
     loaded: bool,
     faults: Vec<SmokeFailure>,
 }
 
-impl<G: Game> Native<G> {
+impl<G: Game> Native<'_, '_, G> {
+    fn engine(&self) -> Option<&Engine> {
+        match &self.backend {
+            Backend::Headless(headless) => Some(&headless.engine),
+            Backend::Gpu(session) => Some(session.game.host().engine()),
+            Backend::Closed(_) => None,
+        }
+    }
+
     fn send(&mut self, line: &str) -> Value {
         match &mut self.backend {
             Backend::Headless(headless) => headless.request(line),
@@ -185,17 +202,28 @@ impl<G: Game> Native<G> {
                 session.game.exchange_jobs();
                 reply
             }
+            Backend::Closed(error) => json!({"ok": false, "error": error}),
+        }
+    }
+
+    fn give(&mut self, name: &str, bytes: &[u8]) {
+        match &mut self.backend {
+            Backend::Gpu(session) => session.file(name, bytes),
+            Backend::Headless(headless) => headless.file(name, bytes),
+            Backend::Closed(_) => {}
         }
     }
 }
 
-impl<G: Game> SmokeSession for Native<G> {
+impl<G: Game> SmokeSession for Native<'_, '_, G> {
     fn request(&mut self, verb: &str, body: Value) -> Result<Value, Value> {
-        let line = match &self.backend {
-            Backend::Headless(headless) => routed(headless.engine.app.world(), verb, body),
-            Backend::Gpu(session) => routed(session.game.host().engine().app.world(), verb, body),
-        };
-        answered(self.send(&line))
+        match self
+            .engine()
+            .map(|engine| routed(engine.app.world(), verb, body))
+        {
+            Some(line) => answered(self.send(&line)),
+            None => Err(self.send("")),
+        }
     }
 
     fn step(&mut self, ticks: u32) {
@@ -220,9 +248,11 @@ impl<G: Game> SmokeSession for Native<G> {
     }
 
     fn source(&mut self, document: &str) {
+        self.source = Some(document.to_owned());
         let loaded = match &mut self.backend {
             Backend::Gpu(session) => session.play(document),
             Backend::Headless(headless) => headless.source(document),
+            Backend::Closed(_) => return,
         };
         match loaded {
             Ok(()) => self.loaded = true,
@@ -236,17 +266,51 @@ impl<G: Game> SmokeSession for Native<G> {
     }
 
     fn joined(&mut self, list: TypeId, each: &mut dyn FnMut(&dyn Any)) {
-        let world = match &self.backend {
-            Backend::Headless(headless) => headless.engine.app.world(),
-            Backend::Gpu(session) => session.game.host().engine().app.world(),
+        if let Some(engine) = self.engine() {
+            joined(engine.app.world(), list, each);
+        }
+    }
+
+    fn members(&mut self, place: &str) -> Vec<&'static str> {
+        self.engine()
+            .map(|engine| members(engine.app.world(), place))
+            .unwrap_or_default()
+    }
+
+    fn slot(&mut self, filled: TypeId, each: &mut dyn FnMut(&dyn Any)) {
+        if let Some(engine) = self.engine() {
+            slot(engine.app.world(), filled, each);
+        }
+    }
+
+    fn without(&mut self, bricks: &[&'static str]) {
+        let listed = without(&self.bricks, bricks);
+        self.backend = Backend::Closed(Value::Null);
+        self.backend = match self.runner.open(listed) {
+            Ok(backend) => backend,
+            Err(error) => Backend::Closed(serde_json::to_value(&error).unwrap_or(Value::Null)),
         };
-        joined(world, list, each);
+        self.clock = 0.0;
+        for (name, bytes) in self.files.clone() {
+            self.give(&name, &bytes);
+        }
+        if let Some(document) = self.source.clone() {
+            self.source(&document);
+        }
     }
 
     fn file(&mut self, name: &str, bytes: &[u8]) {
-        match &mut self.backend {
-            Backend::Gpu(session) => session.file(name, bytes),
-            Backend::Headless(headless) => headless.file(name, bytes),
-        }
+        self.files.insert(name.to_owned(), bytes.to_vec());
+        self.give(name, bytes);
+    }
+
+    fn artifact(&mut self, path: &str) -> Option<Vec<u8>> {
+        std::fs::read(path).ok()
+    }
+
+    fn decode_image(&mut self, path: &str, bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), Value> {
+        engine_worker::decode_image(path, bytes)
+            .map(|image| (image.width, image.height, image.pixels))
+            .map_err(|error| serde_json::to_value(&error).unwrap_or(Value::Null))
     }
 }

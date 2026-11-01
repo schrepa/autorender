@@ -3,9 +3,10 @@ use engine_core::{
     CookMode, DeviceLimits, FrameTime, GlobalTransforms, Joined, Projection, View, WorkClock,
     WorkRemaining,
 };
-use engine_places::ground::GroundWork;
+use engine_places::ground::{GroundBaking, GroundWork};
 use engine_places::streaming::StreamingFocus;
 use engine_places::terrain::TerrainLayers;
+use engine_places::water::WaterWork;
 use glam::UVec2;
 
 pub(super) fn vertical_fov(camera: &Camera) -> f32 {
@@ -203,6 +204,7 @@ impl Terrains {
         let mut remaining = limit.map_or(usize::MAX, |limit| limit as usize);
         let frame = self.frame;
         for state in &mut self.entries {
+            state.streamed = false;
             if state.terrain.validate().is_err() {
                 continue;
             }
@@ -291,6 +293,7 @@ impl Terrains {
                 stats.baking += 1;
                 continue;
             }
+            state.streamed = true;
             let missing = std::mem::take(&mut state.missing);
             state.missing = missing
                 .into_iter()
@@ -350,14 +353,10 @@ impl Terrains {
             .sum();
         self.upload_left = work.upload.get();
         release(&self.entries, &mut self.stacks, released, asking.jobs);
-        if !self.loaded
-            && stats.terrains > 0
+        self.settled = stats.terrains > 0
             && stats.baking == 0
             && stats.loading_tiles == 0
-            && stats.fallback_tiles == 0
-        {
-            self.loaded = true;
-        }
+            && stats.fallback_tiles == 0;
         stats.loading = self.loading();
         stats.dropped_tiles = stats.tile_cut.cut;
         let (failed_jobs, latest) = self.job_failures();
@@ -371,7 +370,9 @@ impl Terrains {
         GroundWork {
             slice: u64::from(settings.samples_per_frame),
             millis: clock.map_or(0.0, |clock| work.end - clock()),
+            end: clock.map_or(0.0, |_| work.end),
             upload: work.upload.get(),
+            entries: Arc::default(),
         }
     }
 }
@@ -511,7 +512,7 @@ pub(crate) fn stream_terrains(
         records: &records,
         kinds: &kinds,
     };
-    *ground = terrains.stream(
+    let work = terrains.stream(
         &settings,
         (&*camera, clock.reading),
         (eye, ahead),
@@ -519,6 +520,10 @@ pub(crate) fn stream_terrains(
         (&streaming.points, &streaming.places),
         &mut asking,
     );
+    ground.slice = work.slice;
+    ground.millis = work.millis;
+    ground.end = work.end;
+    ground.upload = work.upload;
     let pending = if cooking.cooking {
         terrains.cook(&settings, &mut asking)
     } else {
@@ -528,6 +533,45 @@ pub(crate) fn stream_terrains(
         pending,
         ..terrains.stats.clone()
     });
+}
+
+pub(crate) fn settle_view(
+    (baking, water, cooking): (Res<GroundBaking>, Res<WaterWork>, Res<CookMode>),
+    mut terrains: ResMut<Terrains>,
+    mut stats: ResMut<TerrainStats>,
+) {
+    terrains.upload_left = terrains.upload_left.saturating_sub(water.uploaded);
+    settle_loading(&baking, cooking.cooking, &mut terrains, &mut stats);
+}
+
+pub(crate) fn settle_waiting(
+    (baking, cooking): (Res<GroundBaking>, Res<CookMode>),
+    mut terrains: ResMut<Terrains>,
+    mut stats: ResMut<TerrainStats>,
+) {
+    settle_loading(&baking, cooking.cooking, &mut terrains, &mut stats);
+}
+
+fn settle_loading(
+    baking: &GroundBaking,
+    cooking: bool,
+    terrains: &mut Terrains,
+    stats: &mut ResMut<'_, TerrainStats>,
+) {
+    if !terrains.loaded && terrains.settled && baking.lighting == 0 && baking.unbounced == 0 {
+        terrains.loaded = true;
+    }
+    let loading = terrains.loading();
+    terrains.stats.loading = loading;
+    let pending = if cooking {
+        stats.pending
+    } else {
+        u32::from(loading)
+    };
+    if stats.loading != loading || stats.pending != pending {
+        stats.loading = loading;
+        stats.pending = pending;
+    }
 }
 
 pub(crate) fn work_between_frames(

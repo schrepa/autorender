@@ -279,6 +279,9 @@ impl GpuPart for LightsGpu {
         Res<'static, ProbeCaptures>,
         Res<'static, DeviceLimits>,
     );
+    const NAME: &'static str = "lights";
+    const LAZY: bool = true;
+    const LABELS: &'static [&'static str] = &["engine/light-", "engine/lights"];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use shaders::lights::{binning, clusters};

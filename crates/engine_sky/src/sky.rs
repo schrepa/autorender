@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::math::{max, min};
 use engine_core::{Camera, Error, FrameTime, View};
-use engine_places::probes::{ProbeView, ProbeViews};
+use engine_places::probes::{ProbeCaptures, ProbeView, ProbeViews};
 use engine_places::sun::{Sun, SunPath};
 use engine_places::tonemap::Display;
 use engine_places::wind::Wind;
@@ -630,7 +630,12 @@ impl SkyGpu {
 }
 
 impl GpuPart for SkyGpu {
-    type Reads = (Res<'static, SkyPlan>, Res<'static, StaticTables>);
+    type Reads = (
+        Res<'static, SkyPlan>,
+        Res<'static, StaticTables>,
+        Res<'static, ProbeCaptures>,
+    );
+    const NAME: &'static str = "sky";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::sky::{debug, draw, piece};
@@ -683,11 +688,11 @@ impl GpuPart for SkyGpu {
         reads: SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        let (plan, tables) = reads;
+        let (plan, tables, captures) = reads;
         self.tables.prepare(cx, (&plan.tables, tables.sky()));
         self.clouds
             .prepare(cx, (&plan.clouds, tables.cloud_noise()), plan.frame);
-        self.environment.prepare(cx, &plan.environment);
+        self.environment.prepare(cx, &plan.environment, &captures);
         self.haze.prepare(cx, &plan.haze);
         cx.allocate_buffer(self.piece_buffer, size_of::<SkyPiece>() as u64);
         cx.write(self.piece_buffer, 0, &[plan.piece]);
@@ -704,6 +709,9 @@ impl GpuPart for SkyGpu {
         }
         if pass == self.environment.pass() {
             return self.environment.encode(cx);
+        }
+        if pass == self.environment.probe_pass() {
+            return self.environment.encode_probe(cx);
         }
         if pass == self.tables.pass {
             return self.tables.encode(cx);

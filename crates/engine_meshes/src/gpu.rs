@@ -76,7 +76,6 @@ pub(crate) struct Compaction {
 }
 
 pub(crate) struct Passes {
-    pub clear_counts: Pass<MeshesGpu>,
     pub presentation: Pass<MeshesGpu>,
     pub keep_poses: Pass<MeshesGpu>,
     pub occlusion: Pass<MeshesGpu>,
@@ -236,7 +235,7 @@ impl GpuPart for MeshesGpu {
         let instances = install_instances(cx)?;
         let presented = install_presented(cx);
         let casters = install_casters(cx);
-        let passes = install_passes(cx, &instances, &presented, &casters);
+        let passes = install_passes(cx, &instances, &casters);
         let computes = install_computes(cx, &passes, &instances, &presented, &casters)?;
         let pipelines = install_pipelines(cx)?;
         let inputs = Inputs {
@@ -385,11 +384,9 @@ fn install_casters(cx: &mut Install<'_, MeshesGpu>) -> CasterBuffers {
 fn install_passes(
     cx: &mut Install<'_, MeshesGpu>,
     instances: &Instances,
-    presented: &Presented,
     casters: &CasterBuffers,
 ) -> Passes {
-    let clear_counts = cx.clear("presentation_occlusion_counts", presented.counts);
-    let presentation = cx.pass("presentation").after(clear_counts).id();
+    let presentation = cx.pass("presentation").id();
     let keep_poses = cx.copy(
         "presentation_keep_poses",
         Copied::Buffer(instances.poses),
@@ -405,6 +402,8 @@ fn install_passes(
         .after(presentation)
         .after(caster_args)
         .id();
+    cx.group(caster_args, "shadow_select");
+    cx.group(casters_pass, "shadow_select");
     let occlusion = cx
         .pass("occlusion_test")
         .at(engine_render::Layer::Late)
@@ -417,7 +416,6 @@ fn install_passes(
         .after(casters_pass)
         .id();
     Passes {
-        clear_counts,
         presentation,
         keep_poses,
         occlusion,

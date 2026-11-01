@@ -14,6 +14,9 @@ pub const CHUNK_LENGTH: f32 = 256.0;
 pub const MAX_SPLINE_POINTS: usize = 4096;
 const STEP: f32 = 0.5;
 
+#[derive(Component, Default)]
+pub(crate) struct SplineBuilt;
+
 #[derive(Resource, Default)]
 pub(crate) struct SplineBuilds {
     built: HashMap<Entity, SplineChunks>,
@@ -100,6 +103,7 @@ pub(crate) fn build(
                         ..SplineChunks::default()
                     },
                 );
+                spawner.mark::<SplineMesh, SplineBuilt>(entity);
                 continue;
             }
         };
@@ -123,28 +127,41 @@ pub(crate) fn build(
                 }
             };
             chunks.meshes.push(handle);
-            let child = spawner.spawn((
-                Transform::default(),
-                Mesh3d {
-                    mesh: handle,
-                    material: spline.material,
+            spawner.spawn_then(
+                (
+                    Transform::default(),
+                    Mesh3d {
+                        mesh: handle,
+                        material: spline.material,
+                    },
+                ),
+                move |builds: &mut SplineBuilds, child| {
+                    if let Some(chunks) = builds.built.get_mut(&entity) {
+                        chunks.entities.push(child);
+                    }
                 },
-            ));
-            chunks.entities.push(child);
+            );
         }
         if parented {
-            let changes: Vec<_> = chunks
-                .entities
-                .iter()
-                .map(|&child| (child, Some(entity)))
-                .collect();
-            spawner.set_parents_then(changes, move |builds: &mut SplineBuilds, parented| {
-                if let (Err(error), Some(chunks)) = (parented, builds.built.get_mut(&entity)) {
-                    chunks.error = Some(error);
-                }
-            });
+            spawner.set_parents_from(
+                move |builds: &SplineBuilds| {
+                    builds.built.get(&entity).map_or_else(Vec::new, |chunks| {
+                        chunks
+                            .entities
+                            .iter()
+                            .map(|&child| (child, Some(entity)))
+                            .collect()
+                    })
+                },
+                move |builds: &mut SplineBuilds, parented| {
+                    if let (Err(error), Some(chunks)) = (parented, builds.built.get_mut(&entity)) {
+                        chunks.error = Some(error);
+                    }
+                },
+            );
         }
         built.insert(entity, chunks);
+        spawner.mark::<SplineMesh, SplineBuilt>(entity);
     }
 }
 

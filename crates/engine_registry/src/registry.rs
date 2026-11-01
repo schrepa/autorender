@@ -15,11 +15,11 @@ use crate::access::AccessRule;
 use crate::attribution::CORE_ROW;
 use crate::entries::{OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
 use crate::explain::ExplainEntry;
-use crate::gates::{Gate, GateDriver, GateId, Gates, Off, Scope, gate_on};
+use crate::gates::{Gate, GateDriver, GateId, Gates, Off, Scope, gate_off, gate_on};
 use crate::hooks::{Named, add_removal, add_settle};
 use crate::jobs::JobQueue;
 use crate::order::{self, PlaceRules};
-use crate::record::{BrickRecord, crate_segment, is_package};
+use crate::record::BrickRecord;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BrickId(pub(crate) u32);
@@ -51,6 +51,7 @@ pub struct Registry {
     named: Vec<Named>,
     eachers: Vec<(TypeId, MemberEach)>,
     firsts: Vec<TypeId>,
+    orders: Vec<(&'static str, &'static str)>,
     problems: Vec<Error>,
 }
 
@@ -60,7 +61,7 @@ impl Registry {
     pub fn add(&mut self, mut record: BrickRecord) {
         self.problems.append(&mut record.take_problems());
         let package = record.package;
-        if !is_package(crate_segment(record.type_name()), package) {
+        if record.owner().is_none() {
             let path = format!("$.bricks.{package}");
             self.problems
                 .push(Error::new(ErrorCode::ForeignAccess, path).got(record.type_name()));
@@ -138,6 +139,12 @@ impl Registry {
         let type_id = TypeId::of::<T>();
         if !self.firsts.contains(&type_id) {
             self.firsts.push(type_id);
+        }
+    }
+
+    pub fn order(&mut self, first: &'static str, then: &'static str) {
+        if !self.orders.contains(&(first, then)) {
+            self.orders.push((first, then));
         }
     }
 
@@ -555,7 +562,12 @@ impl Registry {
     }
 
     fn rule_of(&self) -> AccessRule {
-        let mut rule = AccessRule::new(self.names().collect());
+        let mut rule = AccessRule::new(
+            self.bricks
+                .iter()
+                .map(|record| (record.package, record.owner()))
+                .collect(),
+        );
         for decl in &self.catalog {
             let filler = match decl.kind() {
                 PlaceKind::Slot => self.filler_id(decl.type_id()),
@@ -688,6 +700,11 @@ impl Registry {
             .iter()
             .filter_map(|&type_id| world.components().get_id(type_id))
             .collect();
+        let orders: Box<[(BrickId, BrickId)]> = self
+            .orders
+            .iter()
+            .filter_map(|&(first, then)| Some((self.id(first)?, self.id(then)?)))
+            .collect();
         let mut all = world.get_resource_or_init::<Schedules>();
         for &schedule in schedules {
             let rules = PlaceRules {
@@ -695,6 +712,7 @@ impl Registry {
                 bricks: bricks.clone(),
                 slots: slots.clone(),
                 firsts: firsts.clone(),
+                orders: orders.clone(),
                 rule: self.rule.clone(),
             };
             order::order(all.entry(schedule), rules);
@@ -712,7 +730,11 @@ impl Registry {
             let mut groups: Vec<Group> = Vec::new();
             for call in calls {
                 let mut configs = (call.make)();
-                if self.bricks[brick.index()].gated(call.scope)
+                if call.off {
+                    if let Some(gate) = self.gate(brick, Scope::BRICK) {
+                        configs.run_if_dyn(Box::new(IntoSystem::into_system(gate_off(gate))));
+                    }
+                } else if self.bricks[brick.index()].gated(call.scope)
                     && let Some(gate) = self.gate(brick, call.scope)
                 {
                     configs.run_if_dyn(Box::new(IntoSystem::into_system(gate_on(gate))));

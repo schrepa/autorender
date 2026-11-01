@@ -10,7 +10,7 @@ use engine_render::debug::{
 };
 use engine_render::{
     AfterRead, Buffer, Copied, CopyRegion, DebugModes, DebugShown, GpuPart, Install, Lifetime,
-    Pass, Prepare, ViewTarget, wgpu,
+    Prepare, ViewTarget, wgpu,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -334,72 +334,19 @@ fn texel(at: wgpu::Origin3d, offset: u64) -> CopyRegion {
 pub(crate) struct ProbeGpu {
     probed: Buffer<Self>,
     rows: Buffer<Self>,
-    ids: Pass<Self>,
-    count: Pass<Self>,
-    terrain: Pass<Self>,
-    depth: Pass<Self>,
-    depth_texel: Pass<Self>,
-    scene: Pass<Self>,
-    canvas: Pass<Self>,
     unread: Option<u32>,
 }
 
 impl GpuPart for ProbeGpu {
     type Reads = (Res<'static, Probe>, Res<'static, View>);
+    const NAME: &'static str = "debug_view";
+    const LAZY: bool = true;
+    const LABELS: &'static [&'static str] = &["engine/debug-view"];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let probed = cx.buffer("debug_view_probe", Lifetime::Kept);
-        let rows = cx.buffer("debug_view_probe_depth", Lifetime::Kept);
-        let ids = cx.copy(
-            "debug_view_probe_ids",
-            Copied::Target(ViewTarget::Debug(0)),
-            Copied::Buffer(probed),
-        );
-        let count = cx.copy(
-            "debug_view_probe_count",
-            Copied::Target(ViewTarget::Debug(1)),
-            Copied::Buffer(probed),
-        );
-        let terrain = cx.copy(
-            "debug_view_probe_terrain",
-            Copied::Target(ViewTarget::Debug(2)),
-            Copied::Buffer(probed),
-        );
-        let depth = cx.copy(
-            "debug_view_probe_depth",
-            Copied::Target(ViewTarget::Depth),
-            Copied::Buffer(rows),
-        );
-        let depth_texel = cx.copy(
-            "debug_view_probe_depth_texel",
-            Copied::Buffer(rows),
-            Copied::Buffer(probed),
-        );
-        let scene = cx.copy(
-            "debug_view_probe_scene",
-            Copied::Target(ViewTarget::Scene),
-            Copied::Buffer(probed),
-        );
-        let canvas = cx.copy(
-            "debug_view_probe_canvas",
-            Copied::Canvas,
-            Copied::Buffer(probed),
-        );
-        cx.after(count, ids);
-        cx.after(terrain, count);
-        cx.after(depth_texel, terrain);
-        cx.after(scene, depth_texel);
-        cx.after(canvas, scene);
         Ok(Self {
-            probed,
-            rows,
-            ids,
-            count,
-            terrain,
-            depth,
-            depth_texel,
-            scene,
-            canvas,
+            probed: cx.buffer("debug_view_probe", Lifetime::Kept),
+            rows: cx.buffer("debug_view_probe_depth", Lifetime::Kept),
             unread: None,
         })
     }
@@ -419,15 +366,20 @@ impl GpuPart for ProbeGpu {
             Stage::Debug => {
                 cx.allocate_buffer(self.probed, PROBED_BYTES);
                 cx.write(self.probed, ARMED, &[probe.armed]);
-                cx.copy(self.ids, &[texel(at, IDS)]);
-                cx.copy(self.count, &[texel(at, COUNT)]);
-                cx.copy(self.terrain, &[texel(at, TERRAIN)]);
+                for (debug, offset) in [(0, IDS), (1, COUNT), (2, TERRAIN)] {
+                    cx.copy_at_end(
+                        Copied::Target(ViewTarget::Debug(debug)),
+                        Copied::Buffer(self.probed),
+                        &[texel(at, offset)],
+                    );
+                }
                 if (size.x, size.y) == probe.armed_size {
                     let (width, height) = probe.armed_size;
                     let row = u64::from(probe.depth_row);
                     cx.allocate_buffer(self.rows, row * u64::from(height));
-                    cx.copy(
-                        self.depth,
+                    cx.copy_at_end(
+                        Copied::Target(ViewTarget::Depth),
+                        Copied::Buffer(self.rows),
                         &[CopyRegion::ToBuffer {
                             from: wgpu::Origin3d::ZERO,
                             to: wgpu::TexelCopyBufferLayout {
@@ -442,8 +394,9 @@ impl GpuPart for ProbeGpu {
                             },
                         }],
                     );
-                    cx.copy(
-                        self.depth_texel,
+                    cx.copy_at_end(
+                        Copied::Buffer(self.rows),
+                        Copied::Buffer(self.probed),
                         &[CopyRegion::Bytes {
                             from: u64::from(at.y) * row + u64::from(at.x) * 4,
                             to: DEPTH,
@@ -457,7 +410,11 @@ impl GpuPart for ProbeGpu {
             Stage::Shaded => {
                 cx.allocate_buffer(self.probed, PROBED_BYTES);
                 cx.allocate_buffer(self.rows, 0);
-                cx.copy(self.scene, &[texel(at, SCENE)]);
+                cx.copy_at_end(
+                    Copied::Target(ViewTarget::Scene),
+                    Copied::Buffer(self.probed),
+                    &[texel(at, SCENE)],
+                );
                 let order = cx.canvas().map_or(0, |format| {
                     if matches!(
                         format,
@@ -469,7 +426,11 @@ impl GpuPart for ProbeGpu {
                     }
                 });
                 if order != 0 {
-                    cx.copy(self.canvas, &[texel(at, CANVAS)]);
+                    cx.copy_at_end(
+                        Copied::Canvas,
+                        Copied::Buffer(self.probed),
+                        &[texel(at, CANVAS)],
+                    );
                 }
                 cx.write(self.probed, CANVAS_ORDER, &[order]);
                 self.unread = Some(probe.armed);

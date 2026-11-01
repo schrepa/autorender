@@ -30,6 +30,9 @@ pub(crate) struct BloomGpu {
 
 impl GpuPart for BloomGpu {
     type Reads = Res<'static, View>;
+    const NAME: &'static str = "bloom";
+    const LAZY: bool = true;
+    const LABELS: &'static [&'static str] = &["engine/bloom"];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let format = if cx.features().contains(wgpu::Features::RG11B10UFLOAT_RENDERABLE) {

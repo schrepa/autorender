@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::sync::Arc;
 
 use engine_core::{Error, ErrorCode, Expected, Job, JobCx, JobKind, RecordKey};
@@ -91,35 +90,6 @@ pub struct GridJob {
 
 record!(GridJob { identity, key });
 
-const HELD_RECIPES: usize = 8;
-
-thread_local! {
-    static RECIPES: RefCell<Vec<([u8; 32], Arc<Recipe>)>> = const { RefCell::new(Vec::new()) };
-    static STACKS: RefCell<Vec<([u8; 32], Arc<Layers>)>> = const { RefCell::new(Vec::new()) };
-}
-
-fn held<T>(
-    cache: &'static std::thread::LocalKey<RefCell<Vec<([u8; 32], Arc<T>)>>>,
-    key: [u8; 32],
-    make: impl FnOnce() -> Result<T, Error>,
-) -> Result<Arc<T>, Error> {
-    if let Some(found) = cache.with_borrow(|held| {
-        held.iter()
-            .find(|(at, _)| *at == key)
-            .map(|(_, value)| Arc::clone(value))
-    }) {
-        return Ok(found);
-    }
-    let made = Arc::new(make()?);
-    cache.with_borrow_mut(|held| {
-        if held.len() >= HELD_RECIPES {
-            held.remove(0);
-        }
-        held.push((key, Arc::clone(&made)));
-    });
-    Ok(made)
-}
-
 fn kinds(cx: &JobCx<'_>) -> Vec<&'static LayerKind> {
     cx.members::<TerrainLayers>().copied().collect()
 }
@@ -135,7 +105,7 @@ fn stack(
     key: [u8; 32],
     kinds: &[&'static LayerKind],
 ) -> Result<Arc<Layers>, Error> {
-    held(&STACKS, key, || {
+    cx.held(key, || {
         let mut reader = Reader::new(shared(cx, key, "$.stack")?);
         let layers = Layers::read(&mut reader, kinds)?;
         reader.finish()?;
@@ -148,7 +118,7 @@ fn recipe(
     key: [u8; 32],
     kinds: &[&'static LayerKind],
 ) -> Result<Arc<Recipe>, Error> {
-    held(&RECIPES, key, || {
+    cx.held(key, || {
         Recipe::read(
             shared(cx, key, "$.recipe")?,
             &|stack| cx.share(RecordKey::from_hash(stack)),

@@ -27,6 +27,8 @@ pub enum Blend {
     Replace,
 }
 
+impl engine_codec::Setting for Blend {}
+
 impl Blend {
     #[inline(always)]
     pub fn apply(self, below: f32, value: f32, weight: f32) -> f32 {

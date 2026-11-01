@@ -1,10 +1,11 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, Expected, FrameTime, Operation, SceneIds};
+use engine_core::{Error, ErrorCode, Expected, FrameTime, Operation, PresentedTransforms, SceneIds};
 use engine_places::meshes::Instances;
 use serde_json::{Value, json};
 
 use crate::layouts::LOD_STATE;
 use crate::presentation::PresentationTotals;
+use crate::retained::RetainedRender;
 
 #[derive(Resource, Default)]
 pub(crate) struct WatchedSlot {
@@ -57,6 +58,50 @@ impl Operation for MeshDrawn {
             "read_back": read_back
                 .zip(age)
                 .map(|(level, age)| json!({ "level": level, "age": age })),
+        }))
+    }
+}
+
+#[derive(engine_core::__private::serde::Deserialize)]
+#[serde(crate = "engine_core::__private::serde", deny_unknown_fields)]
+pub(crate) struct ListingRequest {}
+
+pub(crate) struct MeshesListing;
+
+impl Operation for MeshesListing {
+    const NAME: &'static str = "meshes_listing";
+    type Params = (Res<'static, RetainedRender>, Res<'static, PresentedTransforms>);
+    type Request = ListingRequest;
+
+    fn run(
+        (retained, presented): SystemParamItem<'_, '_, Self::Params>,
+        _: ListingRequest,
+    ) -> Result<Value, Error> {
+        let snapshot = retained.snapshot();
+        let instances: Vec<Value> = retained
+            .visible_indices()
+            .iter()
+            .filter_map(|&slot| {
+                let instance = snapshot.instances.get(slot)?;
+                let surface = instance.surface;
+                Some(json!({
+                    "mesh": instance.mesh.slot() as u32,
+                    "material": instance.material.map(|material| material.slot() as u32),
+                    "model": retained.model(slot, &presented).to_cols_array(),
+                    "color": instance.color,
+                    "surface": {
+                        "roughness": surface.roughness,
+                        "metalness": surface.metalness,
+                        "emission": surface.emission,
+                        "ripples": surface.ripples,
+                    },
+                }))
+            })
+            .collect();
+        Ok(json!({
+            "instances": instances,
+            "dropped": snapshot.dropped_instances,
+            "missing": snapshot.missing_assets,
         }))
     }
 }

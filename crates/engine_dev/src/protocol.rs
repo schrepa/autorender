@@ -35,6 +35,7 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("debug_fault", "status"),
     ("debug_device_loss", "status"),
     ("debug_missing_asset", ""),
+    ("parent", ""),
     ("probe", ""),
     ("jobs", "status"),
 ];
@@ -175,22 +176,6 @@ impl Envelope {
     pub fn body<T: DeserializeOwned>(&self) -> Result<T, Error> {
         engine_settings::parse_value(Value::Object(self.fields.clone()))
     }
-}
-
-pub fn request(verb: Verb, fields: Value) -> String {
-    let mut request = match fields {
-        Value::Object(fields) => fields,
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {
-            Map::new()
-        }
-    };
-    request.insert("verb".to_owned(), Value::from(verb.name()));
-    request.insert("version".to_owned(), Value::from(PROTOCOL_VERSION));
-    Value::Object(request).to_string()
-}
-
-pub fn named(verb: Verb, name: &str, args: Value) -> String {
-    request(verb, serde_json::json!({ "name": name, "args": args }))
 }
 
 pub(crate) fn parse_named<T: DeserializeOwned>(name: &str, args: Value) -> Result<T, Error> {
@@ -442,43 +427,7 @@ impl CheckLevel {
 
 pub enum Control {
     Operation(crate::controls::OperationCall),
-    Host(HostControl),
-}
-
-pub enum HostControl {
-    Present {
-        alpha: f64,
-    },
-    Culling {
-        enabled: bool,
-    },
-    Environment(EnvironmentControl),
-    Camera {
-        position: [f32; 3],
-        target: [f32; 3],
-        vertical_fov_radians: f32,
-        near: f32,
-        far: f32,
-    },
-    Step {
-        ticks: u32,
-    },
-    Input {
-        forward: f32,
-        right: f32,
-        up: f32,
-        yaw: f32,
-        pitch: f32,
-        held: u32,
-        pressed: u32,
-        released: u32,
-    },
-    Render,
-    DebugPanic,
-    DebugFault {
-        feature: String,
-    },
-    Loop(BrowserControl),
+    Host(BrowserControl),
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -602,6 +551,12 @@ pub enum BrowserControl {
         #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 192)))]
         entity: String,
     },
+    Parent {
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 192)))]
+        entity: String,
+        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 192)))]
+        parent: String,
+    },
     Probe {
         #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PIXEL)))]
         x: u32,
@@ -624,7 +579,7 @@ pub enum BrowserControl {
 }
 
 impl BrowserControl {
-    pub const NAMES: [&'static str; 19] = [
+    pub const NAMES: [&'static str; 20] = [
         "present",
         "culling",
         "environment",
@@ -642,55 +597,31 @@ impl BrowserControl {
         "debug_fault",
         "debug_device_loss",
         "debug_missing_asset",
+        "parent",
         "probe",
         "jobs",
     ];
 
     pub fn route(self) -> Control {
         match self {
-            Self::Present { alpha } => Control::Host(HostControl::Present { alpha }),
-            Self::Culling { enabled } => Control::Host(HostControl::Culling { enabled }),
-            Self::Environment(control) => Control::Host(HostControl::Environment(control)),
-            Self::Camera {
-                position,
-                target,
-                vertical_fov_radians,
-                near,
-                far,
-            } => Control::Host(HostControl::Camera {
-                position,
-                target,
-                vertical_fov_radians,
-                near,
-                far,
-            }),
-            Self::Step { ticks } => Control::Host(HostControl::Step { ticks }),
-            Self::Input {
-                forward,
-                right,
-                up,
-                yaw,
-                pitch,
-                held,
-                pressed,
-                released,
-            } => Control::Host(HostControl::Input {
-                forward,
-                right,
-                up,
-                yaw,
-                pitch,
-                held,
-                pressed,
-                released,
-            }),
-            Self::Render {} => Control::Host(HostControl::Render),
-            Self::DebugPanic {} => Control::Host(HostControl::DebugPanic),
-            Self::DebugFault { feature } => Control::Host(HostControl::DebugFault { feature }),
             Self::DebugMissingAsset { entity } => {
                 Control::Operation(crate::controls::OperationCall::MissingAsset { entity })
             }
-            control @ (Self::Benchmark { .. }
+            Self::Parent { entity, parent } => {
+                Control::Operation(crate::controls::OperationCall::Parent { entity, parent })
+            }
+            Self::Environment(control) => {
+                Control::Operation(crate::controls::OperationCall::Environment(control))
+            }
+            control @ (Self::Present { .. }
+            | Self::Culling { .. }
+            | Self::Camera { .. }
+            | Self::Step { .. }
+            | Self::Input { .. }
+            | Self::Render {}
+            | Self::DebugPanic {}
+            | Self::DebugFault { .. }
+            | Self::Benchmark { .. }
             | Self::Frames { .. }
             | Self::Pause { .. }
             | Self::Resume { .. }
@@ -698,7 +629,7 @@ impl BrowserControl {
             | Self::Jobs { .. }
             | Self::DebugDeviceLoss { .. }
             | Self::Game { .. }
-            | Self::Reload { .. }) => Control::Host(HostControl::Loop(control)),
+            | Self::Reload { .. }) => Control::Host(control),
         }
     }
 
@@ -719,7 +650,8 @@ impl BrowserControl {
             | Self::DebugPanic { .. }
             | Self::DebugFault { .. }
             | Self::DebugDeviceLoss { .. }
-            | Self::DebugMissingAsset { .. } => true,
+            | Self::DebugMissingAsset { .. }
+            | Self::Parent { .. } => true,
             Self::Pause { .. } | Self::Resume { .. } | Self::Jobs { .. } => false,
         }
     }

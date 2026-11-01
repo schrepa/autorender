@@ -1,11 +1,12 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
+mod agent_lifecycle;
 mod debug_view_smoke;
 mod frame_loop;
 mod hierarchy;
 mod host_parity;
 mod navigation;
-mod requests;
+pub mod requests;
 mod scene_kit;
 mod scene_views;
 mod stats;
@@ -41,6 +42,11 @@ impl Brick for StandardSmokesBrick {
             name: "host_faults",
             runs: Runs::Gpu,
             run: host_parity::host_faults,
+        },
+        Smoke {
+            name: "agent_lifecycle",
+            runs: Runs::Gpu,
+            run: agent_lifecycle::agent_lifecycle,
         },
         Smoke {
             name: "hierarchy",

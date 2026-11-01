@@ -1,6 +1,7 @@
+import package::face::sky::environment_sample;
 import package::generated::probes::PROBE_ENTRY_WORDS;
 import package::place::probe_light::EnvironmentLight;
-import package::probes::sample::{box_projected, probe_sample, probe_words};
+import package::probes::sample::{box_projected, probe_words};
 
 fn environment_light(direction: vec3<f32>, level: f32, world: vec3<f32>,
         reflected_sky: vec3<f32>) -> EnvironmentLight {
@@ -37,7 +38,7 @@ fn environment_light(direction: vec3<f32>, level: f32, world: vec3<f32>,
                 if reflects {
                     let weight = fade * (1.0 - covered);
                     let along = box_projected(world, direction, center, extent);
-                    light += weight * probe_sample(along, second.w, level);
+                    light += weight * environment_sample(along, second.w, level);
                     covered += weight;
                 }
                 if shades {

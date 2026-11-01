@@ -1,6 +1,7 @@
 use engine_places::probes::{ProbeView, ProbeViews};
 use engine_places::shadows::{CasterView, ShadowCasters};
-use engine_render::{Draw, MainView, Shape};
+use engine_core::{MaterialHandle, MeshHandle};
+use engine_render::{Draw, MainView, MeshPass, Shape};
 
 use crate::casters::{map_factor, map_start};
 use crate::debug::{DrawKind, DrawRecord};
@@ -56,18 +57,28 @@ impl MeshesGpu {
             } else {
                 self.pipelines.opaque.of(look)
             };
+            let pass = MeshPass {
+                opaque: !prepass,
+                prepass,
+                ..MeshPass::default()
+            };
+            let (mesh, material) = (batch.mesh, batch.material);
             if !gpu {
-                draw.draw(
+                draw.draw_timed_with(
                     pipeline,
-                    Shape::Mesh {
-                        mesh: batch.mesh,
-                        material: batch.material,
-                        instances: batch.instances.clone(),
-                        streams: &[
-                            (self.inputs.slots, 0),
-                            (records, self.record(DrawKind::Mesh, 0)),
-                        ],
-                    },
+                    (
+                        Shape::Mesh {
+                            mesh,
+                            material,
+                            instances: batch.instances.clone(),
+                            streams: &[
+                                (self.inputs.slots, 0),
+                                (records, self.record(DrawKind::Mesh, 0)),
+                            ],
+                        },
+                        pass,
+                    ),
+                    || draw_label((mesh, material), (phase, None), prepass),
                 );
                 drawn += 1;
                 continue;
@@ -80,18 +91,22 @@ impl MeshesGpu {
                     self.state
                         .groups
                         .draw_source(batch.instances.start, index, level);
-                draw.draw(
+                draw.draw_timed_with(
                     pipeline,
-                    Shape::MeshIndirect {
-                        mesh: batch.mesh,
-                        material: batch.material,
-                        args: self.inputs.args[phase],
-                        offset: args,
-                        streams: &[
-                            (self.inputs.ids[phase], ids),
-                            (records, self.record(DrawKind::Mesh, level)),
-                        ],
-                    },
+                    (
+                        Shape::MeshIndirect {
+                            mesh,
+                            material,
+                            args: self.inputs.args[phase],
+                            offset: args,
+                            streams: &[
+                                (self.inputs.ids[phase], ids),
+                                (records, self.record(DrawKind::Mesh, level)),
+                            ],
+                        },
+                        pass,
+                    ),
+                    || draw_label((mesh, material), (phase, Some(level)), prepass),
                 );
                 drawn += 1;
             }
@@ -216,5 +231,22 @@ impl MeshesGpu {
             }
         }
         drawn
+    }
+}
+
+fn draw_label(
+    (mesh, material): (MeshHandle, Option<MaterialHandle>),
+    (phase, level): (usize, Option<usize>),
+    prepass: bool,
+) -> String {
+    let material =
+        material.map_or_else(|| "none".to_owned(), |material| material.slot().to_string());
+    let mesh = mesh.slot();
+    let stage = if prepass { " depth pre-pass" } else { "" };
+    match level {
+        Some(level) => {
+            format!("mesh {mesh} material {material} phase {phase} level {level}{stage}")
+        }
+        None => format!("mesh {mesh} material {material} phase {phase}{stage}"),
     }
 }

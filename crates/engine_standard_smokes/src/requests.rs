@@ -1,21 +1,21 @@
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
-pub(crate) type Asked = Result<Value, SmokeFailure>;
+pub type Asked = Result<Value, SmokeFailure>;
 
-pub(crate) const FRAME_MS: f64 = 1000.0 / 60.0;
+pub const FRAME_MS: f64 = 1000.0 / 60.0;
 
-pub(crate) fn seen(held: bool, got: Value, expected: &Value) -> Value {
+pub fn seen(held: bool, got: Value, expected: &Value) -> Value {
     if held { expected.clone() } else { got }
 }
 
-pub(crate) fn reply(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Value {
+pub fn reply(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Value {
     match session.request(verb, body) {
         Ok(reply) | Err(reply) => reply,
     }
 }
 
-pub(crate) fn accepted(
+pub fn accepted(
     session: &mut dyn SmokeSession,
     verb: &str,
     body: Value,
@@ -31,7 +31,7 @@ pub(crate) fn accepted(
     Ok(reply)
 }
 
-pub(crate) fn refused_with(
+pub fn refused_with(
     session: &mut dyn SmokeSession,
     verb: &str,
     body: Value,
@@ -52,11 +52,27 @@ pub(crate) fn refused_with(
     Ok(reply)
 }
 
-pub(crate) fn named(name: &str, args: Value) -> Value {
+pub fn refused(
+    session: &mut dyn SmokeSession,
+    verb: &str,
+    body: Value,
+    check: &'static str,
+) -> Asked {
+    let reply = reply(session, verb, body);
+    let wanted = json!({ "ok": false });
+    smoke_eq!(
+        seen(reply["ok"] == false, reply["result"].clone(), &wanted),
+        wanted,
+        check
+    );
+    Ok(reply)
+}
+
+pub fn named(name: &str, args: Value) -> Value {
     json!({ "name": name, "args": args })
 }
 
-pub(crate) fn control(
+pub fn control(
     session: &mut dyn SmokeSession,
     name: &str,
     args: Value,
@@ -65,7 +81,7 @@ pub(crate) fn control(
     accepted(session, "control", named(name, args), check)
 }
 
-pub(crate) fn query(
+pub fn query(
     session: &mut dyn SmokeSession,
     name: &str,
     args: Value,
@@ -74,11 +90,11 @@ pub(crate) fn query(
     accepted(session, "query", named(name, args), check)
 }
 
-pub(crate) fn status(session: &mut dyn SmokeSession, check: &'static str) -> Asked {
+pub fn status(session: &mut dyn SmokeSession, check: &'static str) -> Asked {
     query(session, "status", json!({}), check)
 }
 
-pub(crate) fn inspected(
+pub fn inspected(
     session: &mut dyn SmokeSession,
     component: &str,
     check: &'static str,
@@ -87,7 +103,22 @@ pub(crate) fn inspected(
     Ok(reply["result"]["value"].clone())
 }
 
-pub(crate) fn frames(session: &mut dyn SmokeSession, count: u32, check: &'static str) -> Asked {
+pub fn component(
+    session: &mut dyn SmokeSession,
+    entity: &str,
+    component: &str,
+    check: &'static str,
+) -> Asked {
+    let body = json!({ "entity": entity, "component": component });
+    let reply = accepted(session, "inspect", body, check)?;
+    Ok(reply["result"]["entity"]["components"][component].clone())
+}
+
+pub fn environment(session: &mut dyn SmokeSession, args: Value, check: &'static str) -> Asked {
+    control(session, "environment", args, check)
+}
+
+pub fn frames(session: &mut dyn SmokeSession, count: u32, check: &'static str) -> Asked {
     control(
         session,
         "frames",
@@ -96,7 +127,7 @@ pub(crate) fn frames(session: &mut dyn SmokeSession, count: u32, check: &'static
     )
 }
 
-pub(crate) fn counter(reply: &Value, field: &str) -> u64 {
+pub fn counter(reply: &Value, field: &str) -> u64 {
     let observation = &reply["observation"];
     let observation = if observation.is_object() {
         observation
@@ -109,19 +140,19 @@ pub(crate) fn counter(reply: &Value, field: &str) -> u64 {
         .unwrap_or(u64::MAX)
 }
 
-pub(crate) fn tick(reply: &Value) -> u64 {
+pub fn tick(reply: &Value) -> u64 {
     counter(reply, "tick")
 }
 
-pub(crate) fn frame(reply: &Value) -> u64 {
+pub fn frame(reply: &Value) -> u64 {
     counter(reply, "frame")
 }
 
-pub(crate) fn number(value: &Value) -> f64 {
+pub fn number(value: &Value) -> f64 {
     value.as_f64().unwrap_or(f64::NAN)
 }
 
-pub(crate) fn names(value: &Value) -> Vec<String> {
+pub fn names(value: &Value) -> Vec<String> {
     value
         .as_array()
         .into_iter()
@@ -131,13 +162,26 @@ pub(crate) fn names(value: &Value) -> Vec<String> {
         .collect()
 }
 
-pub(crate) fn serve(session: &mut dyn SmokeSession, document: &Value) -> Result<(), SmokeFailure> {
+pub fn sorted_keys(value: &Value) -> Vec<String> {
+    let mut keys: Vec<String> = value
+        .as_object()
+        .map(|object| object.keys().cloned().collect())
+        .unwrap_or_default();
+    keys.sort();
+    keys
+}
+
+pub fn object(value: &Value) -> Map<String, Value> {
+    value.as_object().cloned().unwrap_or_default()
+}
+
+pub fn serve(session: &mut dyn SmokeSession, document: &Value) -> Result<(), SmokeFailure> {
     session.source(&document.to_string());
     control(session, "pause", json!({}), "pauses")?;
     Ok(())
 }
 
-pub(crate) fn grid(side: usize, moving: bool) -> Value {
+pub fn grid(side: usize, moving: bool) -> Value {
     let paints = [
         [0.85, 0.35, 0.2, 1.0],
         [0.25, 0.6, 0.85, 1.0],

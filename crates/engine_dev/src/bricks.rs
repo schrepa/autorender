@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::World;
-use engine_registry::Registry;
+use engine_registry::{Gates, Registry};
 use engine_scene::SceneEnvironment;
 use engine_settings::{Error, ErrorCode, Expected};
 use serde::Deserialize;
@@ -61,12 +61,31 @@ pub(crate) fn missing_brick(name: &str, path: impl Into<String>) -> Error {
         .got(name)
 }
 
-fn registered(world: &World, name: &str, control: bool) -> Option<&'static str> {
-    world
+fn gated_off(world: &World, brick: &str) -> bool {
+    let (Some(registry), Some(gates)) = (
+        world.get_resource::<Registry>(),
+        world.get_resource::<Gates>(),
+    ) else {
+        return false;
+    };
+    registry
+        .id(brick)
+        .and_then(|id| registry.brick_gate(id))
+        .is_some_and(|gate| !gates.on(gate))
+}
+
+fn registered(world: &World, name: &str, control: bool) -> Result<Option<&'static str>, Error> {
+    let Some(operation) = world
         .get_resource::<Registry>()
         .and_then(|registry| registry.operation(name))
         .filter(|operation| operation.control == control)
-        .map(|operation| operation.name)
+    else {
+        return Ok(None);
+    };
+    if gated_off(world, operation.brick) {
+        return Err(missing_brick(operation.brick, "$.name"));
+    }
+    Ok(Some(operation.name))
 }
 
 pub fn operation_names(world: &World, verb: Verb) -> Vec<&'static str> {
@@ -100,13 +119,17 @@ pub(crate) fn run(world: &mut World, name: &str, args: Value) -> Result<Value, E
         .map_err(|error| error.within("$.args"))
 }
 
+pub fn mesh_drawn(world: &mut World, id: &str) -> Value {
+    run(world, "mesh_drawn", json!({ "entity": id })).unwrap_or(Value::Null)
+}
+
 impl DevTools {
     pub(crate) fn query_operation(
         &self,
         world: &World,
         name: &str,
     ) -> Result<Option<&'static str>, Error> {
-        if let Some(name) = registered(world, name, false) {
+        if let Some(name) = registered(world, name, false)? {
             return Ok(Some(name));
         }
         self.unadded(world, name)?;
@@ -128,7 +151,16 @@ impl DevTools {
     ) -> Result<Control, Error> {
         let name = envelope.name()?;
         let args = envelope.args()?;
-        if let Some(name) = registered(world, name, true) {
+        self.control(world, (name, args), paused)
+    }
+
+    pub fn control(
+        &self,
+        world: &World,
+        (name, args): (&str, Value),
+        paused: bool,
+    ) -> Result<Control, Error> {
+        if let Some(name) = registered(world, name, true)? {
             if !paused {
                 return Err(Error::new(ErrorCode::PauseRequired, "$")
                     .expected(Expected::Paused)
@@ -170,7 +202,11 @@ impl DevTools {
                 Inspector {
                     descriptor: InspectorDescriptor::new(
                         section.key,
-                        schema_value(section.schema()),
+                        schema_value(
+                            registry
+                                .section_schema(section.key)
+                                .unwrap_or_else(|| section.schema()),
+                        ),
                     )
                     .with_default(section.default_value()),
                     kind: InspectorKind::Resource,
@@ -201,9 +237,12 @@ impl DevTools {
             if inspectors.contains_key(key) {
                 continue;
             }
-            let schema = match kind.json_schema_in(&engine_core::SceneCx::of(world)) {
-                Value::Null => json!({ "type": "object" }),
-                schema => schema,
+            let schema = match kind.view_schema() {
+                Some(schema) => schema,
+                None => match kind.json_schema_in(&engine_core::SceneCx::of(world)) {
+                    Value::Null => json!({ "type": "object" }),
+                    schema => schema,
+                },
             };
             let (has, read) = (kind.clone(), kind.clone());
             inspectors.insert(

@@ -14,6 +14,26 @@ use crate::profiling::{GpuProfiler, Span};
 const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
 const RAN_ORDERS: usize = 256;
 const OPAQUE_MESHES: &str = "opaque_meshes";
+const MEMORY: [&str; 18] = [
+    "memory.gpu_shadow_bytes",
+    "memory.gpu_post_bytes",
+    "memory.gpu_environment_bytes",
+    "memory.gpu_light_bytes",
+    "memory.gpu_impostor_bytes",
+    "memory.gpu_terrain_bytes",
+    "memory.gpu_transparent_bytes",
+    "memory.gpu_temporal_bytes",
+    "memory.gpu_presentation_bytes",
+    "memory.render_upload_cache_bytes",
+    "memory.render_upload_range_bytes",
+    "memory.render_staging_capacity_bytes",
+    "memory.gpu_pose_staging_bytes",
+    "memory.gpu_instance_buffer_bytes",
+    "memory.gpu_mesh_payload_bytes",
+    "memory.gpu_mesh_arena_bytes",
+    "memory.gpu_texture_payload_bytes",
+    "memory.gpu_texture_mip_bytes",
+];
 
 struct Viewed {
     view_projection: Mat4,
@@ -108,6 +128,31 @@ impl Renderer {
         if world.get_resource::<engine_core::PartDraws>() != Some(&draws) {
             world.insert_resource(draws);
         }
+        let mut faults = engine_core::PartFaults::default();
+        for (part, fault) in run.machine.declared.parts.iter().zip(&run.faulted) {
+            if fault.is_some() {
+                faults.add(part.ty);
+            }
+        }
+        if world.get_resource::<engine_core::PartFaults>() != Some(&faults) {
+            world.insert_resource(faults);
+        }
+        if let Some(mut gates) = world.get_resource_mut::<engine_registry::Gates>() {
+            for (fault, gate) in run.faulted.iter().zip(&run.gates) {
+                if let (Some(_), Some(gate)) = (fault, gate)
+                    && !gates.faulted(*gate)
+                {
+                    gates.fault(*gate);
+                }
+            }
+        }
+        self.follow_gates(world);
+    }
+
+    pub fn follow_gates(&mut self, world: &mut World) {
+        let Some(run) = self.run.as_mut() else {
+            return;
+        };
         let gates = world.get_resource::<engine_registry::Gates>();
         let live: Vec<bool> = run
             .gates
@@ -187,6 +232,8 @@ impl Renderer {
         run.temporal = temporal_frame;
         run.drawn = 0;
         run.uploads.counted = 0;
+        run.uploads.memory.clear();
+        run.queued.ending.clear();
         run.part_draws.fill(0);
         run.region = region.upscales().then(|| region.render.pixels());
         run.asked_frame = world.get_resource::<FrameTime>().map_or(run.frame, |time| time.frame);
@@ -316,6 +363,7 @@ impl Renderer {
         let mut timed: Option<&'static str> = None;
         let mut parted: Option<(&'static str, u32)> = None;
         let mut ran: Vec<&'static str> = Vec::new();
+        let mut ran_last: Option<u32> = None;
         let declared = run.machine.declared.passes.len();
         let opaque = opaque_span(&run.machine.declared.passes, &plan);
         let mut opaque_open = false;
@@ -354,7 +402,6 @@ impl Renderer {
             if !run.drawable(part) {
                 continue;
             }
-            ran.push(run.group_of(index as u32));
             run.part = part;
             run.pass = index as u32;
             run.planned = Some(planned.clone());
@@ -362,6 +409,11 @@ impl Renderer {
                 run.queued.cleared.push(buffer);
                 continue;
             }
+            let continues = ran_last.is_some_and(|last| last != index as u32 && run.same_group(last, index as u32));
+            if !continues {
+                ran.push(run.group_of(index as u32));
+            }
+            ran_last = Some(index as u32);
             let wanted = run.span_of(index as u32);
             let keeps = match (parted, wanted) {
                 (Some((open, owner)), Some(name)) => open == name && owner == part,
@@ -374,7 +426,9 @@ impl Renderer {
                 if !keeps && let Some((open, _)) = parted.take() {
                     mark_span(&self.core.profiler, encoder.as_mut(), open, true);
                 }
-                self.mark(encoder.as_mut(), timed, span);
+                if !(continues && span == timed) {
+                    self.mark(encoder.as_mut(), timed, span);
+                }
                 timed = span;
                 if !opaque_open && opaque.is_some_and(|(first, _)| first == at) {
                     mark_span(&self.core.profiler, encoder.as_mut(), OPAQUE_MESHES, false);
@@ -399,7 +453,10 @@ impl Renderer {
                         continue;
                     };
                     let drawn = held.encode(index as u32, run, &self.core.profiler);
-                    run.close_encode_span(&self.core.profiler);
+                    let next = plan.passes.get(at + 1).map(|next| next.pass.index() as u32);
+                    if !next.is_some_and(|next| next != index as u32 && run.same_group(index as u32, next)) {
+                        run.close_encode_span(&self.core.profiler);
+                    }
                     if let Some(sum) = run.part_draws.get_mut(part as usize) {
                         *sum += drawn;
                     }
@@ -413,6 +470,7 @@ impl Renderer {
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
         };
+        run.close_encode_span(&self.core.profiler);
         run.flush_clears();
         run.leave();
         let mut encoder = run.encoder.take().unwrap_or_else(|| {
@@ -431,6 +489,7 @@ impl Renderer {
             return Ok(RenderStats::default());
         };
         run.encoder = Some(encoder);
+        run.copy_at_end();
         run.record_readbacks();
         let mut encoder = run.encoder.take().unwrap_or_else(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -483,7 +542,7 @@ impl Renderer {
             readback_overflows: run.overflows,
             ..RenderStats::default()
         };
-        let immediate = self.core.queue.take_immediate();
+        let immediate = self.core.queue.take_immediate() + std::mem::take(&mut run.queued.immediate);
         if engine_profile::active() {
             stat_counters(&stats);
             engine_profile::counter("render.immediate_submissions", f64::from(immediate));
@@ -491,12 +550,21 @@ impl Renderer {
             engine_profile::counter("render.camera_write_bytes", camera_bytes as f64);
             engine_profile::counter("render.gpu_presentation", f64::from(u8::from(gpu_mode)));
             engine_profile::counter("render.camera_upload_reused", f64::from(u8::from(camera_bytes == 0)));
-            engine_profile::counter("memory.gpu_impostor_bytes", run.assets.impostors.capacity_bytes() as f64);
-            engine_profile::counter("memory.gpu_pose_staging_bytes", run.queued.staging.capacity_bytes() as f64);
-            engine_profile::counter("memory.gpu_mesh_payload_bytes", stats.resident_mesh_bytes as f64);
-            engine_profile::counter("memory.gpu_mesh_arena_bytes", run.assets.meshes.capacity_bytes() as f64);
-            engine_profile::counter("memory.gpu_texture_payload_bytes", stats.resident_texture_bytes as f64);
-            engine_profile::counter("memory.gpu_texture_mip_bytes", mip_bytes as f64);
+            for name in MEMORY {
+                let held = match name {
+                    "memory.gpu_impostor_bytes" => run.assets.impostors.capacity_bytes(),
+                    "memory.render_upload_cache_bytes" => size_of::<Option<CameraUniform>>() as u64,
+                    "memory.render_staging_capacity_bytes" => run.assets.meshes.staging_bytes(),
+                    "memory.gpu_pose_staging_bytes" => run.queued.staging.capacity_bytes(),
+                    "memory.gpu_mesh_payload_bytes" => stats.resident_mesh_bytes,
+                    "memory.gpu_mesh_arena_bytes" => run.assets.meshes.capacity_bytes(),
+                    "memory.gpu_texture_payload_bytes" => stats.resident_texture_bytes,
+                    "memory.gpu_texture_mip_bytes" => mip_bytes,
+                    _ => 0,
+                };
+                let parts: u64 = run.uploads.memory.iter().filter(|(known, _)| *known == name).map(|(_, bytes)| *bytes).sum();
+                engine_profile::counter(name, (held + parts) as f64);
+            }
         }
         Ok(stats)
     }

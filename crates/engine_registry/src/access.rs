@@ -6,7 +6,7 @@ use engine_math::collections::HashMap;
 use engine_place::{Error, ErrorCode, PlaceKind};
 
 use crate::BrickId;
-use crate::record::{crate_segment, is_package};
+use crate::record::{crate_segment, within};
 
 const CORE_CRATES: &[&str] = &[
     "bevy_ecs",
@@ -34,12 +34,12 @@ enum Catalogued {
 
 #[derive(Clone, Debug, Default)]
 pub struct AccessRule {
-    packages: Vec<&'static str>,
+    packages: Vec<(&'static str, Option<&'static str>)>,
     places: HashMap<TypeId, Catalogued>,
 }
 
 impl AccessRule {
-    pub(crate) fn new(packages: Vec<&'static str>) -> Self {
+    pub(crate) fn new(packages: Vec<(&'static str, Option<&'static str>)>) -> Self {
         Self {
             packages,
             places: HashMap::default(),
@@ -73,7 +73,7 @@ impl AccessRule {
         world: &World,
         problems: &mut Vec<Error>,
     ) {
-        let Some(&package) = self.packages.get(brick.index()) else {
+        let Some(&(package, owner)) = self.packages.get(brick.index()) else {
             return;
         };
         let Ok(accesses) = access.combined_access().try_iter_access() else {
@@ -100,8 +100,9 @@ impl AccessRule {
                 }
                 continue;
             }
-            let segment = crate_segment(&name);
-            if is_package(segment, package) || CORE_CRATES.contains(&segment) {
+            if owner.is_some_and(|owner| within(&name, owner))
+                || CORE_CRATES.contains(&crate_segment(&name))
+            {
                 continue;
             }
             problems.push(foreign(package, system, &name));
@@ -116,10 +117,10 @@ impl AccessRule {
         filled_slot: bool,
         problems: &mut Vec<Error>,
     ) {
-        let Some(&package) = self.packages.get(brick.index()) else {
+        let Some(&(package, owner)) = self.packages.get(brick.index()) else {
             return;
         };
-        if is_package(crate_segment(type_name), package)
+        if owner.is_some_and(|owner| within(type_name, owner))
             || (filled_slot && self.filler(type_id) == Some(brick))
         {
             return;

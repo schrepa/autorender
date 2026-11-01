@@ -1,4 +1,4 @@
-use engine_core::{Error, ErrorCode, Expected, InvalidSetting, Placed, Rule, Setting};
+use engine_core::{Error, ErrorCode, InvalidSetting, Rule, Setting};
 use engine_places::physics::RigidBody;
 use engine_places::water::WaterKind;
 use glam::Vec3;
@@ -60,13 +60,6 @@ fn ruled(body: &RigidBody) -> Result<(), InvalidSetting> {
 
 pub(crate) fn check_body(body: &RigidBody, path: &str) -> Result<(), Error> {
     ruled(body).map_err(|invalid| invalid.error(ErrorCode::InvalidValue, path))
-}
-
-pub(crate) fn placed_body(_: &RigidBody, placed: Placed, path: &str) -> Result<(), Error> {
-    if placed.root {
-        return Ok(());
-    }
-    Err(Error::new(ErrorCode::InvalidRigidBody, path).expected(Expected::Absent))
 }
 
 pub(crate) fn body_schema() -> Value {

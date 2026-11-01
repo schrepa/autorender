@@ -1,5 +1,6 @@
 use bytemuck::{Pod, Zeroable};
-use engine_core::{Stamp, Surface};
+use engine_core::Stamp;
+use engine_render::{pack_color, pack_surface};
 
 use crate::retained::{Instance, PoseRows, RetainedRender};
 
@@ -11,29 +12,6 @@ pub(crate) struct ColorData {
     pub color: [u32; 2],
     pub surface: u32,
     pub flags: u32,
-}
-
-pub(crate) fn pack_surface(surface: Surface) -> u32 {
-    let unit = |value: f32, fallback: f32, max: f32| {
-        let value = if value.is_nan() { fallback } else { value };
-        (engine_core::math::clamp(value / max, 0.0, 1.0) * 255.0).round() as u32
-    };
-    let matte = Surface::MATTE;
-    unit(surface.roughness, matte.roughness, 1.0)
-        | unit(surface.metalness, matte.metalness, 1.0) << 8
-        | unit(surface.emission, matte.emission, Surface::MAX_EMISSION) << 16
-        | unit(surface.ripples, matte.ripples, 1.0) << 24
-}
-
-pub(crate) fn pack_color(color: [f32; 4]) -> [u32; 2] {
-    let unit = |value: f32, fallback: f32| {
-        let value = if value.is_nan() { fallback } else { value };
-        (engine_core::math::clamp(value, 0.0, 1.0) * 65535.0).round() as u32
-    };
-    [
-        unit(color[0], 0.0) | unit(color[1], 0.0) << 16,
-        unit(color[2], 0.0) | unit(color[3], 1.0) << 16,
-    ]
 }
 
 fn color_data(instance: &Instance) -> ColorData {
@@ -242,6 +220,14 @@ pub(crate) struct PreparedRetained {
 }
 
 impl RetainedUploads {
+    pub fn capacity_bytes(&self) -> usize {
+        size_of::<Self>() + self.stamps.capacity() * size_of::<(u64, u64)>()
+    }
+
+    pub const fn range_scratch_bytes() -> usize {
+        2 * size_of::<[UploadRange; MAX_WRITE_RANGES]>()
+    }
+
     pub fn invalidate(&mut self) {
         self.committed = None;
         self.pending = None;

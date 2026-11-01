@@ -1,5 +1,3 @@
-use std::mem::offset_of;
-
 use bevy_ecs::prelude::*;
 use engine_core::{Error, FrameTime, View};
 use engine_math::{clamp, max};
@@ -17,7 +15,6 @@ use crate::gpu_layouts::{
 use crate::{AutoExposure, ExposureFeedback, shaders};
 
 const STATE_BYTES: u64 = size_of::<ExposureState>() as u64;
-const READ_BYTES: u64 = offset_of!(ExposureState, spare) as u64;
 const UNIFORM_BYTES: u64 = size_of::<ExposureUniform>() as u64;
 const BIN_BYTES: u64 = EXPOSURE_BINS as u64 * 4;
 const STATE_READ: u32 = 0;
@@ -85,6 +82,9 @@ impl GpuPart for MeterGpu {
         Res<'static, FrameTime>,
         Res<'static, View>,
     );
+    const NAME: &'static str = "exposure";
+    const LAZY: bool = true;
+    const LABELS: &'static [&'static str] = &["engine/exposure"];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use shaders::auto_exposure::{faces::exposure as face, meter};
@@ -172,7 +172,7 @@ impl GpuPart for MeterGpu {
             self.written = Some(values);
         }
         cx.run(self.meter);
-        cx.read_back::<ExposureFeedback>(STATE_READ, self.state, 0..READ_BYTES, AfterRead::Keep);
+        cx.read_back::<ExposureFeedback>(STATE_READ, self.state, 0..STATE_BYTES, AfterRead::Keep);
     }
 
     fn encode(&mut self, _: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {

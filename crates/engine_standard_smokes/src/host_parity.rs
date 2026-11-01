@@ -7,7 +7,7 @@ use super::requests::{
 };
 use super::scene_kit::reload;
 
-fn boxed(id: &str) -> Value {
+pub(crate) fn boxed(id: &str) -> Value {
     json!({
         "id": id, "revision": 1,
         "camera": { "position": [0, 2, 4], "target": [0, 0, 0], "fov_degrees": 60, "near": 0.1, "far": 100 },

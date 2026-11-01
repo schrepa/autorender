@@ -1,23 +1,10 @@
 use std::any::{Any, TypeId};
 
 use engine_heightfield::layer::{LayerKind, NoFiles, TYPE_KEY, layer_from_json};
-use engine_place::{Runs, Smoke, SmokeFailure, SmokeSession, smoke_eq};
-use serde_json::{Value, json};
+use engine_place::{Runs, Smoke, SmokeFailure, SmokeSession, ask, smoke_check, smoke_eq};
+use serde_json::json;
 
 use crate::terrain::TerrainLayers;
-
-macro_rules! check {
-    ($condition:expr, $check:expr, $got:expr, $expected:expr $(,)?) => {
-        if !$condition {
-            return ::core::result::Result::Err(SmokeFailure::new(
-                $check,
-                &$got,
-                &$expected,
-                ::core::concat!(::core::file!(), ":", ::core::line!()),
-            ));
-        }
-    };
-}
 
 const fn frames(name: &'static str) -> Smoke {
     Smoke {
@@ -63,19 +50,6 @@ const LAYER_PATH: &str = "$.layers[0]";
 
 const LAYER_DEFINITION: &str = "SceneTerrainLayer";
 
-fn ask(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Result<Value, SmokeFailure> {
-    let reply = session.request(verb, body);
-    check!(
-        reply.is_ok(),
-        "request_answered",
-        &reply.as_ref().err().map(|refused| &refused["error"]),
-        &verb
-    );
-    Ok(reply
-        .map(|mut answered| answered["result"].take())
-        .unwrap_or_default())
-}
-
 fn joined(session: &mut dyn SmokeSession) -> Vec<&'static LayerKind> {
     let mut kinds = Vec::new();
     session.joined(TypeId::of::<TerrainLayers>(), &mut |member: &dyn Any| {
@@ -95,7 +69,7 @@ fn built(kind: &'static LayerKind, kinds: &[&'static LayerKind]) -> Result<(), S
         kinds,
     ) {
         Ok(layer) => {
-            check!(
+            smoke_check!(
                 layer.kind().name == kind.name,
                 "the_kind_builds_its_own_layer",
                 &layer.kind().name,
@@ -103,7 +77,7 @@ fn built(kind: &'static LayerKind, kinds: &[&'static LayerKind]) -> Result<(), S
             );
         }
         Err(error) => {
-            check!(
+            smoke_check!(
                 error.path.starts_with(LAYER_PATH) && error.path != named,
                 "the_kind_refuses_with_a_structured_error",
                 &error,
@@ -132,13 +106,13 @@ fn layers(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         .collect();
     for &kind in &kinds {
         let schema = (kind.schema)();
-        check!(
+        smoke_check!(
             !schema.is_null(),
             "the_kind_has_a_schema",
             &kind.name,
             &json!({ "schema": "not null" })
         );
-        check!(
+        smoke_check!(
             listed.contains(&kind.name),
             "the_scene_schema_lists_the_kind",
             &kind.name,

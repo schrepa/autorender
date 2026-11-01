@@ -322,7 +322,10 @@ fn sky(session: &mut dyn SmokeSession) -> Checked<Value> {
         eye([0.0, 60.0, 0.0], [300.0, 200.0, 200.0], 4000.0),
     )?;
     let authored = capture(session)?;
-    let mut lit = environment(session, json!({"sky": {}, "time_of_day": {"hours": 12.0}}))?;
+    let mut lit = environment(
+        session,
+        json!({"sky": {"enabled": true}, "time_of_day": {"enabled": true, "hours": 12.0}}),
+    )?;
     let mut first = lit["rendering"].take();
     for _ in 0..COMPILE_FRAMES {
         if first["sky_stats"]["tables"] != 0 {
@@ -348,13 +351,19 @@ fn sky(session: &mut dyn SmokeSession) -> Checked<Value> {
         wanted,
         "the_physical_sky_replaces_the_authored_one"
     );
-    let step = environment(session, json!({"time_of_day": {"hours": 19.3}}))?;
+    let step = environment(
+        session,
+        json!({"time_of_day": {"enabled": true, "hours": 19.3}}),
+    )?;
     smoke_eq!(
         &step["rendering"]["sky_stats"]["tables"],
         &json!(1),
         "the_sun_step_builds_the_sky_view_alone"
     );
-    environment(session, json!({"time_of_day": {"hours": 23.0}}))?;
+    environment(
+        session,
+        json!({"time_of_day": {"enabled": true, "hours": 23.0}}),
+    )?;
     let starry = capture(session)?;
     let stars = inspect(session, "night_sky")?;
     smoke_eq!(
@@ -402,7 +411,7 @@ fn exposure(session: &mut dyn SmokeSession, starry: &Value) -> Checked<()> {
         &json!("$.args.haze.visibility"),
         "negative_visibility_is_refused"
     );
-    let mut metering = environment(session, json!({"auto_exposure": {}}))?;
+    let mut metering = environment(session, json!({"auto_exposure": {"enabled": true}}))?;
     let mut exposure = metering["rendering"]["exposure_stats"].take();
     smoke_eq!(
         &exposure["active"],

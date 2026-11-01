@@ -1,23 +1,21 @@
 use engine_core::Error;
+use engine_places::probes::ProbeCaptures;
+use engine_places::sky::{EnvironmentFaces, EnvironmentLayers};
 use engine_render::{
-    Attach, Bind, DepthUse, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare,
-    RenderPipeline, SamplerDesc, Shape, Texture, wgpu,
+    Attach, Bind, DepthUse, Draws, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare,
+    RenderPipeline, SamplerDesc, Shape, Texture, mip_levels, wgpu,
 };
 
 use crate::sky::SkyGpu;
 
 const ENVIRONMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const ENVIRONMENT_SIZE: u32 = 128;
+const MOST_LEVELS: u32 = 11;
 
 const FACES: u32 = 6;
 const FACES_PER_PASS: u32 = 3;
-const CUBES: u32 = 1;
 
 pub(crate) type EnvironmentLight = [[f32; 4]; 5];
-
-fn mip_levels(width: u32, height: u32) -> u32 {
-    u32::BITS - width.max(height).max(1).leading_zeros()
-}
 
 #[derive(Default)]
 pub(crate) struct EnvironmentPlan {
@@ -59,18 +57,21 @@ pub(crate) struct Environment {
     radiance: Texture<SkyGpu>,
     maps: Texture<SkyGpu>,
     pass: Pass<SkyGpu>,
+    probe_pass: Pass<SkyGpu>,
     sky: Pipeline<SkyGpu, Own>,
     down: Vec<Pipeline<SkyGpu, Own>>,
     prefilter: Pipeline<SkyGpu, Own>,
+    layers: Draws<EnvironmentLayers>,
     levels: u32,
+    placed: Option<(u32, u32)>,
     drawn: Option<u64>,
     runs: bool,
+    finished: Option<u32>,
 }
 
 impl Environment {
     pub(crate) fn install(cx: &mut Install<'_, SkyGpu>) -> Result<Self, Error> {
         use crate::shaders::sky::{environment, environment_maps as maps_shaders};
-        let levels = mip_levels(ENVIRONMENT_SIZE, ENVIRONMENT_SIZE);
         let radiance = cx.texture("sky_radiance", ENVIRONMENT_FORMAT, Lifetime::Kept);
         let maps = cx.texture("sky_environment", ENVIRONMENT_FORMAT, Lifetime::Kept);
         let sampler = cx.sampler(SamplerDesc::LINEAR_CLAMP);
@@ -82,6 +83,13 @@ impl Environment {
             .color_cleared(radiance, wgpu::Color::BLACK)
             .color_cleared(maps, wgpu::Color::BLACK)
             .id();
+        let probe_pass = cx
+            .pass("probe_environment")
+            .label("engine/environment")
+            .after(pass)
+            .color_cleared(maps, wgpu::Color::BLACK)
+            .id();
+        let layers = cx.claim::<EnvironmentLayers>(probe_pass)?;
         let faces = |fragment| RenderPipeline {
             vertex: maps_shaders::VS_ENVIRONMENT,
             fragment: Some(fragment),
@@ -93,7 +101,7 @@ impl Environment {
             writes: wgpu::ColorWrites::ALL,
         };
         let sky = cx.render_pipeline(pass, &faces(maps_shaders::FS_ENVIRONMENT_SKY), &[])?;
-        let down = (1..levels)
+        let down = (1..MOST_LEVELS)
             .map(|level| {
                 cx.render_pipeline(
                     pass,
@@ -120,7 +128,7 @@ impl Environment {
                     maps_shaders::RADIANCE,
                     Bind::Slice {
                         texture: radiance,
-                        mips: 0..levels,
+                        mips: 0..MOST_LEVELS,
                         layers: 0..FACES,
                     },
                 ),
@@ -131,12 +139,16 @@ impl Environment {
             radiance,
             maps,
             pass,
+            probe_pass,
             sky,
             down,
             prefilter,
-            levels,
+            layers,
+            levels: 1,
+            placed: None,
             drawn: None,
             runs: false,
+            finished: None,
         })
     }
 
@@ -144,18 +156,51 @@ impl Environment {
         self.pass
     }
 
-    pub(crate) fn prepare(&mut self, cx: &mut Prepare<'_, SkyGpu>, plan: &EnvironmentPlan) {
+    pub(crate) fn probe_pass(&self) -> Pass<SkyGpu> {
+        self.probe_pass
+    }
+
+    pub(crate) fn prepare(
+        &mut self,
+        cx: &mut Prepare<'_, SkyGpu>,
+        plan: &EnvironmentPlan,
+        captures: &ProbeCaptures,
+    ) {
+        let size = if captures.size == 0 {
+            ENVIRONMENT_SIZE
+        } else {
+            captures.size
+        };
+        let cubes = captures.cubes.max(1);
+        self.levels = mip_levels(size, size);
         let extent = |layers| wgpu::Extent3d {
-            width: ENVIRONMENT_SIZE,
-            height: ENVIRONMENT_SIZE,
+            width: size,
+            height: size,
             depth_or_array_layers: layers,
         };
+        let kept = self
+            .placed
+            .is_some_and(|(known, held)| known == size && cubes > held);
+        if self.placed != Some((size, cubes)) {
+            if !kept {
+                self.drawn = None;
+            }
+            self.placed = Some((size, cubes));
+        }
         cx.allocate(self.radiance, extent(FACES), self.levels);
-        cx.allocate(self.maps, extent(CUBES * FACES), self.levels);
+        if kept {
+            cx.grow(self.maps, extent(cubes * FACES), self.levels);
+        } else {
+            cx.allocate(self.maps, extent(cubes * FACES), self.levels);
+        }
         self.runs = self.drawn != Some(plan.changes);
         if self.runs {
             self.drawn = Some(plan.changes);
             cx.run(self.pass);
+        }
+        self.finished = captures.finished.filter(|&cube| cube < cubes);
+        if self.finished.is_some() {
+            cx.run(self.probe_pass);
         }
     }
 
@@ -176,6 +221,28 @@ impl Environment {
             for first in (0..FACES).step_by(FACES_PER_PASS as usize) {
                 let start = level * FACES + first;
                 faces_pass(cx, (self.maps, level, first), &self.prefilter, start);
+            }
+        }
+        0
+    }
+
+    pub(crate) fn encode_probe(&self, cx: &mut Encode<'_, SkyGpu>) -> u32 {
+        let Some(cube) = self.finished else {
+            return 0;
+        };
+        let base = cube * FACES;
+        for level in 0..self.levels {
+            for first in (0..FACES).step_by(FACES_PER_PASS as usize) {
+                let mut draw = cx.render(
+                    Attach::Layers {
+                        texture: self.maps,
+                        mip: level,
+                        layers: base + first..base + first + FACES_PER_PASS,
+                    },
+                    None,
+                );
+                self.layers
+                    .draw(&mut draw, (), &EnvironmentFaces { level, first });
             }
         }
         0

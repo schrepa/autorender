@@ -79,6 +79,18 @@ impl Bricks<'_> {
         self
     }
 
+    pub fn off_in<M>(
+        &mut self,
+        schedule: Schedule,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + Send + Sync + 'static,
+    ) -> &mut Self
+    where
+        M: 'static,
+    {
+        self.record.off_in(schedule.label(), systems);
+        self
+    }
+
     pub fn fill<S: Slot>(&mut self, wgsl: Option<Module>) -> &mut Self {
         self.record.fill::<S>(wgsl.map(boxed_module));
         self
@@ -123,7 +135,27 @@ impl Bricks<'_> {
         self
     }
 
+    #[track_caller]
+    pub fn settled_stats<S: Section + Resource<Mutability = Mutable>, M: 'static>(
+        &mut self,
+        settle: impl IntoSystem<(), (), M> + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.record
+            .stats(StatsEntry::of::<S>(S::KEY, pending_of::<S>, S::schema));
+        self.record.settle(Settle::of(
+            S::KEY,
+            Box::new(IntoSystem::into_system(settle)),
+        ));
+        self
+    }
+
     pub fn piece<T: Resource<Mutability = Mutable> + Default + GpuStruct>(&mut self) -> &mut Self {
+        const {
+            assert!(
+                std::mem::size_of::<T>() % 16 == 0,
+                "a piece is not a multiple of 16 bytes"
+            );
+        }
         self.record.piece::<T>();
         self
     }
@@ -201,6 +233,26 @@ impl Bricks<'_> {
             }));
         self
     }
+
+    pub fn named_by<S: Section, L: List>(
+        &mut self,
+        field: &'static str,
+        kept: &'static [&'static str],
+        name: fn(&L::Member) -> &'static str,
+        order: fn(&L::Member) -> u32,
+    ) -> &mut Self {
+        self.record
+            .named(NamedField::of(S::KEY, field, kept, move |world: &World| {
+                world
+                    .get_resource::<MembersOf<L>>()
+                    .map_or_else(Vec::new, |members| {
+                        let mut all: Vec<&L::Member> = members.all().iter().collect();
+                        all.sort_by_key(|member| order(member));
+                        all.into_iter().map(name).collect()
+                    })
+            }));
+        self
+    }
 }
 
 fn gate_of<M: 'static, F>(gate: F) -> GateFn
@@ -265,9 +317,13 @@ pub(crate) fn run_operation<O: Operation>(
 
 fn run_settled<O: Operation>(world: &mut World, request: Value) -> Result<Value, Error> {
     let request: O::Request = engine_settings::parse_value(request)?;
-    world.run_schedule(crate::schedules::TransformPropagation);
-    engine_registry::run_settles(world, O::NAME);
+    settle_stats(world, O::NAME);
     answer::<O>(world, request)
+}
+
+pub fn settle_stats(world: &mut World, key: &str) {
+    world.run_schedule(crate::schedules::TransformPropagation);
+    engine_registry::run_settles(world, key);
 }
 
 fn run_explain<E: Explain>(world: &mut World, ask: &ExplainAsk<'_>) -> Option<ExplainRecord> {
@@ -529,6 +585,10 @@ impl<L: List> Joined<'_, L> {
     pub fn all(&self) -> impl Iterator<Item = &L::Member> + '_ {
         self.members.iter().flat_map(|members| members.all().iter())
     }
+
+    pub fn every(&self) -> impl Iterator<Item = (std::any::TypeId, u32, &L::Member)> + '_ {
+        self.members.iter().flat_map(|members| members.every())
+    }
 }
 
 #[derive(SystemParam)]
@@ -544,6 +604,12 @@ impl<S: Slot> Filled<'_, S> {
             .as_ref()
             .zip(self.gates.as_ref())
             .is_some_and(|(registry, gates)| registry.slot_on(gates, TypeId::of::<S>()))
+    }
+
+    pub fn listed(&self) -> bool {
+        self.registry
+            .as_ref()
+            .is_some_and(|registry| registry.filler(TypeId::of::<S>()).is_some())
     }
 }
 
@@ -561,9 +627,23 @@ impl<B: Brick> Spawner<'_, '_, B> {
         entity
     }
 
+    pub fn spawn_then<R: Resource<Mutability = Mutable>>(
+        &mut self,
+        bundle: impl Bundle,
+        then: impl FnOnce(&mut R, Entity) + Send + 'static,
+    ) {
+        self.commands
+            .queue(move |world: &mut World| spawned_then::<B, R, _>(world, bundle, then));
+    }
+
     pub fn insert(&mut self, entity: Entity, bundle: impl Bundle) {
         self.commands
             .queue(move |world: &mut World| inserted::<B, _>(world, entity, bundle));
+    }
+
+    pub fn mark<C: Component, T: Component + Default>(&mut self, entity: Entity) {
+        self.commands
+            .queue(move |world: &mut World| marked::<B, C, T>(world, entity));
     }
 
     pub fn remove<T: Bundle>(&mut self, entity: Entity) {
@@ -605,6 +685,23 @@ impl<B: Brick> Spawner<'_, '_, B> {
             parented_then::<B, R>(world, &changes, then);
         });
     }
+
+    pub fn set_parents_from<R: Resource<Mutability = Mutable>>(
+        &mut self,
+        changes: impl FnOnce(&R) -> Vec<(Entity, Option<Entity>)> + Send + 'static,
+        then: impl FnOnce(&mut R, Result<(), Error>) + Send + 'static,
+    ) {
+        self.commands.queue(move |world: &mut World| {
+            if !holds::<B, R>(world) {
+                return;
+            }
+            let Some(held) = world.get_resource::<R>() else {
+                return;
+            };
+            let changes = changes(held);
+            parented_then::<B, R>(world, &changes, then);
+        });
+    }
 }
 
 fn spawned<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
@@ -615,6 +712,52 @@ fn spawned<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
     }
     if let Ok(mut spawned) = world.get_entity_mut(entity) {
         spawned.insert((bundle, SpawnedBy::<B>::new()));
+    }
+}
+
+fn spawned_then<B: Brick, R: Resource<Mutability = Mutable>, T: Bundle>(
+    world: &mut World,
+    bundle: T,
+    then: impl FnOnce(&mut R, Entity),
+) {
+    if carries_resource::<T>(world) {
+        let package = B::SOURCE.package();
+        let error = Error::new(
+            ErrorCode::ForeignEntity,
+            format!("$.bricks.{package}.spawner"),
+        )
+        .got(std::any::type_name::<T>());
+        report(world, error);
+        return;
+    }
+    if !holds::<B, R>(world) {
+        return;
+    }
+    let entity = world.spawn((bundle, SpawnedBy::<B>::new())).id();
+    if let Some(mut held) = world.get_resource_mut::<R>() {
+        then(&mut held, entity);
+    }
+}
+
+fn marked<B: Brick, C: Component, T: Component + Default>(world: &mut World, entity: Entity) {
+    let component = world.register_component::<C>();
+    let kinds: Vec<fn(&mut World) -> bevy_ecs::component::ComponentId> = world
+        .get_resource::<MembersOf<crate::SceneComponents>>()
+        .map(|members| {
+            members
+                .every()
+                .filter(|&(brick, _, _)| brick == TypeId::of::<B>())
+                .map(|(_, _, kind)| kind.registrar())
+                .collect()
+        })
+        .unwrap_or_default();
+    let registered = kinds.into_iter().any(|register| register(world) == component);
+    if !registered || world.get::<C>(entity).is_none() {
+        foreign::<B>(world, entity);
+        return;
+    }
+    if let Ok(mut held) = world.get_entity_mut(entity) {
+        held.insert(T::default());
     }
 }
 
@@ -722,6 +865,16 @@ fn parented_then<B: Brick, R: Resource<Mutability = Mutable>>(
         foreign::<B>(world, child);
         return;
     }
+    if !holds::<B, R>(world) {
+        return;
+    }
+    let parented = crate::set_parents(world, changes);
+    if let Some(mut held) = world.get_resource_mut::<R>() {
+        then(&mut held, parented);
+    }
+}
+
+fn holds<B: Brick, R: Resource>(world: &mut World) -> bool {
     let package = B::SOURCE.package();
     let holds = world
         .get_resource::<Registry>()
@@ -731,12 +884,8 @@ fn parented_then<B: Brick, R: Resource<Mutability = Mutable>>(
         let name = std::any::type_name::<R>();
         let path = format!("$.bricks.{package}.spawner.{name}");
         report(world, Error::new(ErrorCode::ForeignAccess, path).got(name));
-        return;
     }
-    let parented = crate::set_parents(world, changes);
-    if let Some(mut held) = world.get_resource_mut::<R>() {
-        then(&mut held, parented);
-    }
+    holds
 }
 
 fn owned<B: Brick>(world: &World, entity: Entity) -> bool {
@@ -769,6 +918,7 @@ fn report(world: &mut World, error: Error) {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Schedule {
+    FrameStart,
     FixedPreSimulation,
     FixedMove,
     FixedSimulation,
@@ -779,4 +929,5 @@ pub enum Schedule {
     BetweenFrames,
     Waiting,
     Stream,
+    Rendered,
 }

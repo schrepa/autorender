@@ -250,6 +250,39 @@ pub trait SmokeSession {
     }
     fn slot(&mut self, _slot: TypeId, _each: &mut dyn FnMut(&dyn Any)) {}
     fn without(&mut self, _bricks: &[&'static str]) {}
+    fn artifact(&mut self, _path: &str) -> Option<Vec<u8>> {
+        None
+    }
+    fn decode_image(&mut self, _path: &str, _bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), Value> {
+        Err(Value::Null)
+    }
+}
+
+#[macro_export]
+macro_rules! smoke_check {
+    ($condition:expr, $check:expr, $got:expr, $expected:expr $(,)?) => {
+        if !$condition {
+            return ::core::result::Result::Err($crate::SmokeFailure::new(
+                $check,
+                &$got,
+                &$expected,
+                ::core::concat!(::core::file!(), ":", ::core::line!()),
+            ));
+        }
+    };
+}
+
+pub fn ask(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Result<Value, SmokeFailure> {
+    let reply = session.request(verb, body);
+    smoke_check!(
+        reply.is_ok(),
+        "request_answered",
+        &reply.as_ref().err().map(|refused| &refused["error"]),
+        &verb
+    );
+    Ok(reply
+        .map(|mut answered| answered["result"].take())
+        .unwrap_or_default())
 }
 
 #[macro_export]
@@ -344,7 +377,16 @@ macro_rules! gpu_struct {
                 ::core::mem::offset_of!($name, $field) % $crate::gpu_struct!(@align $ty) == 0,
                 "a gpu_struct field is off its WGSL alignment"
             );)*
-            ::core::assert!(::core::mem::size_of::<$name>() % 16 == 0, "a gpu_struct is not a multiple of 16 bytes");
+            let aligns: &[usize] = &[$($crate::gpu_struct!(@align $ty)),*];
+            let mut align = 1;
+            let mut at = 0;
+            while at < aligns.len() {
+                if aligns[at] > align {
+                    align = aligns[at];
+                }
+                at += 1;
+            }
+            ::core::assert!(::core::mem::size_of::<$name>() % align == 0, "a gpu_struct is not a multiple of its WGSL alignment");
         };
 
         impl $crate::GpuStruct for $name {

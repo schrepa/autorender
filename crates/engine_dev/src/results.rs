@@ -41,6 +41,7 @@ results! {
     render: crate::results::RenderResult,
     debug_fault: crate::results::DebugFaultResult,
     debug_missing_asset: crate::results::DebugMissingAssetResult,
+    parent: crate::results::ParentResult,
     input: crate::results::InputResult,
     step: crate::results::StepResult,
     environment: crate::results::EnvironmentResult,
@@ -348,6 +349,12 @@ pub struct DebugFaultResult {
 pub struct DebugMissingAssetResult {
     pub temporary: bool,
     pub entities: usize,
+}
+
+#[derive(Serialize)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+pub struct ParentResult {
+    pub temporary: bool,
 }
 
 #[derive(Serialize)]

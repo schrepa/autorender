@@ -134,8 +134,10 @@ impl WalkRecords {
         let priority = job_priority(GAMEPLAY_JOBS, 1);
         while let Some(&key) = running.search.ahead().get(running.asked_ahead) {
             let input = portals_input(&running.walked, key, &gait);
-            if let Found::Missing = read(&mut self.portals, &input, (tick, &mut self.reads)) {
-                self.ask(jobs, (&PORTALS, input), priority, None);
+            if let Found::Missing = read(&mut self.portals, &input, (tick, &mut self.reads))
+                && !self.ask(jobs, (&PORTALS, input), priority, None)
+            {
+                return;
             }
             running.asked_ahead += 1;
         }
@@ -147,7 +149,10 @@ impl WalkRecords {
         (kind, input): (&'static JobKind, Vec<u8>),
         priority: u32,
         ground: Option<AskedGround>,
-    ) {
+    ) -> bool {
+        if !jobs.admit(priority) {
+            return false;
+        }
         let ticket = jobs.start(kind, input.clone(), priority);
         if ground.is_some() {
             self.grounds.insert(input.clone(), Kept::Asked);
@@ -159,6 +164,7 @@ impl WalkRecords {
             ticket,
             ground,
         });
+        true
     }
 
     pub(super) fn clear(&mut self, jobs: &mut Jobs) {

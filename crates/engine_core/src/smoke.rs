@@ -3,37 +3,14 @@ use std::any::{Any, TypeId};
 use serde::Serialize;
 use serde_json::{Value, json};
 
-use crate::{List, SmokeFailure, SmokeSession};
+pub use engine_place::ask;
+use engine_place::smoke_check;
 
-macro_rules! check {
-    ($condition:expr, $check:expr, $got:expr, $expected:expr $(,)?) => {
-        if !$condition {
-            return ::core::result::Result::Err(SmokeFailure::new(
-                $check,
-                &$got,
-                &$expected,
-                ::core::concat!(::core::file!(), ":", ::core::line!()),
-            ));
-        }
-    };
-}
+use crate::{List, SmokeFailure, SmokeSession};
 
 pub type Checked<T> = Result<T, SmokeFailure>;
 
 pub const COMPILE_FRAMES: u32 = 20_000;
-
-pub fn ask(session: &mut dyn SmokeSession, verb: &str, body: Value) -> Checked<Value> {
-    let reply = session.request(verb, body);
-    check!(
-        reply.is_ok(),
-        "request_answered",
-        &reply.as_ref().err().map(|refused| &refused["error"]),
-        &verb
-    );
-    Ok(reply
-        .map(|mut answered| answered["result"].take())
-        .unwrap_or_default())
-}
 
 pub fn control(session: &mut dyn SmokeSession, name: &str, args: Value) -> Checked<Value> {
     ask(session, "control", json!({"name": name, "args": args}))
@@ -50,7 +27,7 @@ pub fn refuse(
     args: Value,
 ) -> Checked<Value> {
     let reply = session.request(verb, json!({"name": name, "args": args}));
-    check!(
+    smoke_check!(
         reply.is_err(),
         "request_refused",
         &reply.as_ref().ok().map(|answered| &answered["result"]),
@@ -117,7 +94,7 @@ pub fn compiled(session: &mut dyn SmokeSession) -> Checked<Value> {
         }
         rendering = render(session)?;
     }
-    check!(
+    smoke_check!(
         !compiling(&rendering),
         "pipelines_compile",
         &rendering["pipelines_compiling"],
@@ -133,7 +110,7 @@ pub fn compiling(rendering: &Value) -> bool {
 pub fn shot(session: &mut dyn SmokeSession, body: Value) -> Checked<Value> {
     let captured = ask(session, "capture", body)?;
     let digest = captured["artifact"]["sha256"].clone();
-    check!(
+    smoke_check!(
         digest.is_string(),
         "capture_keeps_its_frame",
         &captured["artifact"],

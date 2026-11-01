@@ -266,6 +266,7 @@ pub(crate) struct WaterState {
     pub(crate) settling_records: u32,
     pub(crate) settles_left: u64,
     pub(crate) looks_left: u64,
+    pub(crate) work_end: f64,
     dry: Option<Arc<[u16]>>,
 }
 

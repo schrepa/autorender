@@ -76,22 +76,6 @@ pub(crate) fn rasterized(view: &engine_core::View, offset: glam::Vec2, temporal:
     jittered(view_projection, jitter_clip(offset.to_array(), size.x, size.y))
 }
 
-pub(crate) fn mip_levels(width: u32, height: u32) -> u32 {
-    u32::BITS - width.max(height).max(1).leading_zeros()
-}
-
-pub(crate) fn pyramid_extents(drawn: (u32, u32), count: u32) -> Vec<[u32; 4]> {
-    let mut source = (drawn.0.max(1), drawn.1.max(1));
-    (0..count)
-        .map(|_| {
-            let written = (source.0.div_ceil(2), source.1.div_ceil(2));
-            let extent = [written.0, written.1, source.0 - 1, source.1 - 1];
-            source = written;
-            extent
-        })
-        .collect()
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct FrameTotals {
     pub visible: u32,

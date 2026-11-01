@@ -611,6 +611,16 @@ impl RetainedRender {
         &self.visible
     }
 
+    pub(crate) fn model(&self, slot: usize, presented: &PresentedTransforms) -> Mat4 {
+        self.owners
+            .get(slot)
+            .copied()
+            .flatten()
+            .and_then(|entity| presented.get(entity))
+            .and_then(|pose| pose.matrix())
+            .unwrap_or(Mat4::IDENTITY)
+    }
+
     pub(crate) fn casters(&self) -> &[usize] {
         if self.gpu {
             &self.visible

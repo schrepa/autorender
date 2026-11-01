@@ -1,10 +1,9 @@
-import package::engine::pyramid::{Extent, farthest_depth, farthest_level};
-import package::generated::meshes::PYRAMID_GROUP;
+import package::engine::pyramid::{PYRAMID_GROUP, PyramidExtent, farthest_depth, farthest_level};
 
 @group(1) @binding(0) var source_depth: texture_depth_2d;
 @group(1) @binding(1) var source_level: texture_2d<f32>;
 @group(1) @binding(2) var target_level: texture_storage_2d<r32float, write>;
-@group(1) @binding(3) var<uniform> extent: Extent;
+@group(1) @binding(3) var<uniform> extent: PyramidExtent;
 
 @compute @workgroup_size(PYRAMID_GROUP, PYRAMID_GROUP)
 fn pyramid_first(@builtin(global_invocation_id) id: vec3<u32>) {

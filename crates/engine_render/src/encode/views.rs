@@ -107,7 +107,7 @@ impl Run {
 
     pub(crate) fn read_back(&mut self, asked: Asked) -> bool {
         let slots = self.readback_slots;
-        let free = match self.rings.iter().find(|ring| ring.part == asked.part && ring.tag == asked.tag) {
+        let free = asked.once || match self.rings.iter().find(|ring| ring.part == asked.part && ring.tag == asked.tag) {
             Some(ring) => {
                 ring.kept() < slots
                     || ring.slots.iter().any(|slot| !slot.once && slot.state.load(Ordering::Acquire) == 0)
@@ -193,7 +193,7 @@ impl Run {
                 };
                 let (mips, layers) = match bound {
                     Bound::Slice { mips, layers, .. } => (mips.clone(), layers.clone()),
-                    Bound::Texture(_) | Bound::Buffer(_) | Bound::Sampler(_) | Bound::Target(_) | Bound::Asset => {
+                    Bound::Texture(_) | Bound::Buffer(_) | Bound::Window { .. } | Bound::Sampler(_) | Bound::Target(_) | Bound::Asset => {
                         (0..made.mips, 0..made.layers())
                     }
                 };
@@ -203,7 +203,7 @@ impl Run {
                 let wanted = target_read(*view, self.pass_layer(), self.reads_direct());
                 self.view_of(wanted, false).cloned()
             }
-            Bound::Buffer(_) | Bound::Sampler(_) | Bound::Asset => None,
+            Bound::Buffer(_) | Bound::Window { .. } | Bound::Sampler(_) | Bound::Asset => None,
         }
     }
 
@@ -243,6 +243,10 @@ impl Run {
             Bound::Buffer(buffer) => match self.buffers.get(*buffer as usize).and_then(Option::as_ref) {
                 Some((made, _)) => Resolved::Buffer(made.clone()),
                 None => Resolved::Placeholder(ty),
+            },
+            Bound::Window { buffer, size } => match self.buffers.get(*buffer as usize).and_then(Option::as_ref) {
+                Some((made, bytes)) if *bytes >= *size => Resolved::Dynamic(made.clone(), *size),
+                Some(_) | None => Resolved::Placeholder(ty),
             },
             Bound::Sampler(sampler) => match self.samplers.get(*sampler as usize) {
                 Some(made) => Resolved::Sampler(made.clone()),

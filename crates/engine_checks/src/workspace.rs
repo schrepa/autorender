@@ -42,7 +42,7 @@ impl Package {
     }
 
     pub fn project(&self) -> bool {
-        self.game().is_some() || self.engine["worker"] == true
+        self.game().is_some()
     }
 
     pub fn own(&self) -> bool {

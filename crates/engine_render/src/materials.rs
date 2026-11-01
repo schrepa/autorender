@@ -645,6 +645,7 @@ impl Variant {
     const GROUNDING: u32 = 16384;
     const FADING: u32 = 32768;
     const FOLIAGE: u32 = constants::VARIANT_FOLIAGE;
+    const PREPASS: u32 = 131072;
     const PRETESTED: u32 = 262144;
 
     pub fn of(material: &Material) -> Self {
@@ -731,6 +732,24 @@ impl Variant {
         self.0 & Self::DOUBLE_SIDED != 0
     }
 
+    pub fn alpha_mask(self) -> bool {
+        self.0 & Self::ALPHA_MASK != 0
+    }
+
+    #[must_use]
+    pub fn opaque(self) -> Self {
+        if self.alpha_mask() {
+            Self(self.0 | Self::PRETESTED)
+        } else {
+            self
+        }
+    }
+
+    #[must_use]
+    pub fn prepass(self) -> Self {
+        Self(self.0 & !Self::PRETESTED | Self::PREPASS)
+    }
+
     #[must_use]
     pub fn with_extended(self, extended: bool) -> Self {
         Self(if extended {
@@ -742,5 +761,23 @@ impl Variant {
 
     pub fn extended(self) -> bool {
         self.0 & Self::EXTENDED != 0
+    }
+
+    #[must_use]
+    pub fn with_fading(self, fading: bool) -> Self {
+        Self(if fading {
+            self.0 | Self::FADING
+        } else {
+            self.0 & !Self::FADING
+        })
+    }
+
+    #[must_use]
+    pub fn with_grounding(self, grounding: bool) -> Self {
+        Self(if grounding {
+            self.0 | Self::GROUNDING
+        } else {
+            self.0 & !Self::GROUNDING
+        })
     }
 }

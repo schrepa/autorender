@@ -146,6 +146,7 @@ pub(crate) struct Asked {
     pub(crate) buffer: u32,
     pub(crate) range: Range<u64>,
     pub(crate) then: AfterRead,
+    pub(crate) once: bool,
     pub(crate) deliver: fn(&mut World, u64, u32, &[u8]),
 }
 
@@ -215,6 +216,8 @@ pub(crate) struct Queued {
     pub(crate) delivered: Vec<Delivered>,
     pub(crate) refused: Option<Error>,
     pub(crate) cleared: Vec<u32>,
+    pub(crate) ending: Vec<(Copied, Copied, Vec<crate::CopyRegion>)>,
+    pub(crate) immediate: u32,
     pub(crate) staging: crate::staging::StagingRing,
 }
 
@@ -223,6 +226,7 @@ pub(crate) struct Uploads {
     pub(crate) cameras: Vec<u8>,
     pub(crate) pieces: Option<Vec<u8>>,
     pub(crate) counted: u64,
+    pub(crate) memory: Vec<(&'static str, u64)>,
 }
 
 #[derive(Default)]
@@ -325,7 +329,7 @@ fn fault(path: String, code: ErrorCode) -> Error {
 fn bound_texture(bound: &Bound) -> Option<u32> {
     match bound {
         Bound::Texture(texture) | Bound::Slice { texture, .. } => Some(*texture),
-        Bound::Buffer(_) | Bound::Sampler(_) | Bound::Target(_) | Bound::Asset => None,
+        Bound::Buffer(_) | Bound::Window { .. } | Bound::Sampler(_) | Bound::Target(_) | Bound::Asset => None,
     }
 }
 
@@ -671,11 +675,8 @@ impl Run {
         self.sizes[at] = None;
         self.allocate(texture, size, mips);
         if levels == mips {
-            let device = &self.device;
-            let encoder = self.queued.before.get_or_insert_with(|| {
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("engine/part-grow"),
-                })
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("engine/part-grow"),
             });
             for (old, new) in previous.iter().zip(&self.textures[at]) {
                 let (Some(old), Some(new)) = (old, new) else {
@@ -704,6 +705,8 @@ impl Run {
                     );
                 }
             }
+            crate::gpu_calls::submit(&self.queue, [encoder.finish()]);
+            self.queued.immediate += 1;
         }
         for held in previous.iter().flatten() {
             crate::memory::release_any(&held.texture);
@@ -724,6 +727,32 @@ impl Run {
         *held = [None, None];
         self.sizes[at] = None;
         self.generation += 1;
+    }
+
+    pub(crate) fn renew_buffer(&mut self, buffer: u32, bytes: u64) {
+        self.release_buffer(buffer);
+        self.allocate_buffer(buffer, bytes);
+    }
+
+    pub(crate) fn clear_buffer_range(&mut self, buffer: u32, range: Range<u64>) {
+        let Some(Some((made, size))) = self.buffers.get(buffer as usize) else {
+            let error = fault(self.path("clear_buffer_range"), ErrorCode::InvalidValue);
+            self.fault(error);
+            return;
+        };
+        if range.start > range.end || range.end > *size || range.start % 4 != 0 || range.end % 4 != 0 {
+            let error = fault(self.path("clear_buffer_range"), ErrorCode::OutOfRange);
+            self.fault(error);
+            return;
+        }
+        let made = made.clone();
+        let device = &self.device;
+        let encoder = self.queued.before.get_or_insert_with(|| {
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("engine/part-clears"),
+            })
+        });
+        encoder.clear_buffer(&made, range.start, Some(range.end - range.start));
     }
 
     pub(crate) fn release_buffer(&mut self, buffer: u32) {
