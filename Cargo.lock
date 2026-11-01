@@ -994,7 +994,6 @@ version = "0.1.0"
 dependencies = [
  "engine_core",
  "engine_ecs",
- "engine_places",
  "engine_render",
  "engine_sources",
 ]
@@ -1100,7 +1099,6 @@ version = "0.1.0"
 dependencies = [
  "engine_core",
  "engine_ecs",
- "engine_places",
  "engine_render",
  "engine_sources",
 ]
@@ -1818,6 +1816,7 @@ dependencies = [
  "engine_ecs",
  "engine_math",
  "engine_places",
+ "engine_render",
  "engine_sources",
  "glam 0.30.9",
 ]

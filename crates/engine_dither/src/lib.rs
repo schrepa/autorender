@@ -6,7 +6,7 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use bevy_ecs::prelude::Res;
-use engine_core::{Brick, Bricks, Runs, Smoke, Source, settings};
+use engine_core::{Brick, Bricks, Source, settings};
 use engine_render::PostDisplay;
 
 settings! {
