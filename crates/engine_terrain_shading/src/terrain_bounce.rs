@@ -12,7 +12,7 @@ use crate::bounce::{PROBE_BYTES, TerrainBounce, bin_moments};
 use crate::gpu::{BOUNCE_GROUP, BounceFrame, BounceTerrain};
 use crate::settings::{MAX_BOUNCE_LEVELS, TerrainShading};
 use crate::state::Bakes;
-use crate::terrain::TerrainGpu;
+use crate::terrain::{TerrainGpu, reached};
 use crate::terrain_horizons::Horizons;
 use crate::terrain_macro::MacroMaps;
 use crate::terrain_sky::SkyMaps;
@@ -148,26 +148,29 @@ impl Bounce {
                 (bounce_maps::BOUNCE_SCRATCH, Bind::Buffer(scratch)),
             ]
         };
-        let ground_pipeline = cx.compute_pipeline(
-            pass,
+        let bound = reached(
+            cx,
             bounce_maps::BOUNCE_GROUND,
-            &shared(terrains[0], Bind::Texture(light_stand_in), level(0)),
-        )?;
+            shared(terrains[0], Bind::Texture(light_stand_in), level(0)),
+        );
+        let ground_pipeline = cx.compute_pipeline(pass, bounce_maps::BOUNCE_GROUND, &bound)?;
         let mut downs = Vec::with_capacity(LIGHT_LEVELS - 1);
         for mip in 0..LIGHT_LEVELS as u32 - 1 {
-            downs.push(cx.compute_pipeline(
-                pass,
+            let bound = reached(
+                cx,
                 bounce_maps::BOUNCE_DOWN,
-                &shared(terrains[0], level(mip), level(mip + 1)),
-            )?);
+                shared(terrains[0], level(mip), level(mip + 1)),
+            );
+            downs.push(cx.compute_pipeline(pass, bounce_maps::BOUNCE_DOWN, &bound)?);
         }
         let mut gathers = Vec::with_capacity(MOST_LEVELS);
         for &records in &terrains {
-            gathers.push(cx.compute_pipeline(
-                pass,
+            let bound = reached(
+                cx,
                 bounce_maps::BOUNCE_GATHER,
-                &shared(records, Bind::Texture(light), Bind::Texture(out_stand_in)),
-            )?);
+                shared(records, Bind::Texture(light), Bind::Texture(out_stand_in)),
+            );
+            gathers.push(cx.compute_pipeline(pass, bounce_maps::BOUNCE_GATHER, &bound)?);
         }
         Ok(Self {
             pipelines: Pipelines {

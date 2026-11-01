@@ -1,14 +1,12 @@
 import package::engine::mesh::declarations::AffineVertexInput;
+import package::face::debug::DebugTargets;
 import package::face::dither::stored;
 import package::face::instances::{
+    AffinePose, FADE_SLOT, FADE_WORD_ON, SlotColor, SlotExtras, SlotVertex, SlotVertexExtended,
     slot_debug, slot_fragment, slot_fragment_extended, slot_masked_depth, slot_pixel,
     slot_pixel_extended, slot_shade, slot_vertex, slot_vertex_extended
 };
 import package::generated::targets::{ViewTargets, view_targets};
-import package::place::debug::DebugTargets;
-import package::place::instances::{
-    AffinePose, FADE_SLOT, FADE_WORD_ON, SlotColor, SlotExtras, SlotVertex, SlotVertexExtended
-};
 
 @group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
 @group(2) @binding(1) var<storage, read> colors: array<SlotColor>;

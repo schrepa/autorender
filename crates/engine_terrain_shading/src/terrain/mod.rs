@@ -28,6 +28,17 @@ const ARRIVAL_SECONDS: f32 = 0.4;
 const NO_HOLES: u32 = u32::MAX;
 const HOLE_WORDS: usize = ((LAYER_SIZE - 2) * (LAYER_SIZE - 2)).div_ceil(32) as usize;
 
+pub(crate) fn reached(
+    cx: &mut engine_render::Install<'_, TerrainGpu>,
+    entry: engine_core::Entry,
+    binds: impl IntoIterator<Item = (engine_core::Var, engine_render::Bind<TerrainGpu>)>,
+) -> Vec<(engine_core::Var, engine_render::Bind<TerrainGpu>)> {
+    binds
+        .into_iter()
+        .filter(|(var, _)| cx.reaches(entry, *var))
+        .collect()
+}
+
 fn widen(range: Range<usize>, index: usize) -> Range<usize> {
     if range.is_empty() {
         index..index + 1

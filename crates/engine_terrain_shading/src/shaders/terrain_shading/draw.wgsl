@@ -1,8 +1,7 @@
 import package::face::cover::{COVER_FAR_SIDE, COVER_ROUGHNESS, CoverLaw, cover_clump_layer,
     cover_clump_spacing, cover_clumped, cover_growth, cover_seen, cover_share, cover_shown,
     cover_tint, material_canopy};
-import package::face::far_cover::far_color;
-import package::place::far_cover::GroundAt;
+import package::face::far_cover::{GroundAt, far_color};
 import package::face::dither::stored;
 import package::face::ground_tiles::macro_color;
 import package::face::bounce::bounce_light;

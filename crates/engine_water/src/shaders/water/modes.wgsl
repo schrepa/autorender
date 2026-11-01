@@ -6,7 +6,7 @@ import package::generated::water::{BREAK_FULL, BREAK_ONSET, DEBUG_SPAN_STEPS};
 const DEBUG_WATER_DEPTH: u32 = 0u;
 const DEBUG_WATER_SPEED: u32 = 1u;
 const DEBUG_WATER_FROUDE: u32 = 2u;
-const DEBUG_WATER_TURBULENCE: u32 = 3u;
+const DEBUG_WATER_TURBULENT: u32 = 3u;
 const DEBUG_WATER_WHITE: u32 = 4u;
 const DEBUG_WATER_SPAN: u32 = 6u;
 const DEBUG_WATER_EDDY: u32 = 7u;
@@ -80,7 +80,7 @@ fn debug_water_color(view: u32, ids: vec4<u32>, numbers: vec2<u32>) -> vec3<f32>
         case DEBUG_WATER_FROUDE: {
             return debug_froude_color(froudes.x);
         }
-        case DEBUG_WATER_TURBULENCE: {
+        case DEBUG_WATER_TURBULENT: {
             return debug_ramp(DEBUG_WATER_TURBULENCE, state.x);
         }
         case DEBUG_WATER_WHITE: {

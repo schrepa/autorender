@@ -117,8 +117,9 @@ impl Brick for WaterBrick {
             .piece::<gpu::WaterPiece>()
             .fill::<Waterline>(Some(shaders::water::faces::water::MODULE))
             .observation::<views::WaterFlowQuery>();
-        for mode in debug::modes() {
-            bricks.join::<DebugModes>(mode, Some(shaders::water::modes::MODULE));
+        for (index, mode) in debug::modes().enumerate() {
+            let wgsl = (index == 0).then_some(shaders::water::modes::MODULE);
+            bricks.join::<DebugModes>(mode, wgsl);
         }
         bricks
             .systems(

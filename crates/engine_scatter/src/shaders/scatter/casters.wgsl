@@ -6,8 +6,8 @@ import package::engine::mesh::impostor_frames::{
     impostor_index
 };
 import package::engine::view::camera;
+import package::face::instances::{AffinePose, SlotColor};
 import package::face::wind::{slot_sway, wind_sway};
-import package::place::instances::{AffinePose, SlotColor};
 
 @group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
 @group(2) @binding(1) var<storage, read> colors: array<SlotColor>;

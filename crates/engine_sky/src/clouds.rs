@@ -647,7 +647,10 @@ impl CloudPass {
             ]
         };
         let mut lighted = Vec::from(noise());
-        lighted.push((clouds::LIGHT_CELLS, Bind::Buffer(light_cells)));
+        lighted.extend([
+            (clouds::NOISE_DETAIL, Bind::Texture(noise_detail)),
+            (clouds::LIGHT_CELLS, Bind::Buffer(light_cells)),
+        ]);
         let lighting = cx.compute_pipeline(light_pass, clouds::LIGHT_CLOUDS, &lighted)?;
         let mut marched = Vec::from(noise());
         marched.extend([
@@ -657,7 +660,10 @@ impl CloudPass {
         marched.extend(lit());
         let marching = cx.compute_pipeline(march_pass, clouds::MARCH_CLOUDS, &marched)?;
         let mut shaded = Vec::from(noise());
-        shaded.push((clouds::SHADOW_CELLS, Bind::Buffer(shadow_cells)));
+        shaded.extend([
+            (clouds::NOISE_DETAIL, Bind::Texture(noise_detail)),
+            (clouds::SHADOW_CELLS, Bind::Buffer(shadow_cells)),
+        ]);
         let shading = cx.compute_pipeline(shadow_pass, clouds::SHADOW_CLOUDS, &shaded)?;
         let mut viewed = vec![
             (clouds::CLOUDS, Bind::Buffer(view_clouds)),

@@ -16,7 +16,7 @@ use super::patches::{PatchDraws, patch_layout};
 use super::pipelines::{CASTER_BIAS, surface_primitive};
 use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
-use super::{IDS_FORMAT, SURFACE_SLOTS, TerrainFrame};
+use super::{IDS_FORMAT, SURFACE_SLOTS, TerrainFrame, reached};
 use crate::gpu::HEIGHT_FORMAT;
 use crate::settings::TerrainShading;
 use crate::state::{
@@ -320,21 +320,12 @@ impl GpuPart for TerrainGpu {
         let mut decides = Vec::with_capacity(SURFACE_SLOTS);
         let mut applies = Vec::with_capacity(SURFACE_SLOTS);
         for slot in 0..SURFACE_SLOTS {
-            begins.push(cx.compute_pipeline(
-                begin,
-                subdivision::SUBDIVIDE_BEGIN,
-                &slot_binds(slot),
-            )?);
-            decides.push(cx.compute_pipeline(
-                subdivide,
-                subdivision::SUBDIVIDE_DECIDE,
-                &slot_binds(slot),
-            )?);
-            applies.push(cx.compute_pipeline(
-                subdivide,
-                subdivision::SUBDIVIDE_APPLY,
-                &slot_binds(slot),
-            )?);
+            let bound = reached(cx, subdivision::SUBDIVIDE_BEGIN, slot_binds(slot));
+            begins.push(cx.compute_pipeline(begin, subdivision::SUBDIVIDE_BEGIN, &bound)?);
+            let bound = reached(cx, subdivision::SUBDIVIDE_DECIDE, slot_binds(slot));
+            decides.push(cx.compute_pipeline(subdivide, subdivision::SUBDIVIDE_DECIDE, &bound)?);
+            let bound = reached(cx, subdivision::SUBDIVIDE_APPLY, slot_binds(slot));
+            applies.push(cx.compute_pipeline(subdivide, subdivision::SUBDIVIDE_APPLY, &bound)?);
         }
         let surface = |fragment, debug_fragment, front_face| RenderPipeline {
             vertex: draw::VS_TERRAIN,

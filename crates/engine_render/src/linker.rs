@@ -105,6 +105,7 @@ struct Module {
 pub(crate) struct Composed {
     pub(crate) module: String,
     pub(crate) text: String,
+    pub(crate) bindings: Vec<String>,
     pub(crate) switches: Vec<u32>,
     pub(crate) overrides: Vec<(String, String)>,
 }
@@ -123,10 +124,13 @@ impl Composed {
     }
 }
 
+pub(crate) type Part = (Option<&'static str>, &'static str);
+
 #[derive(Default)]
 pub(crate) struct Linker {
     modules: Vec<Module>,
     sources: Vec<&'static Source>,
+    handed: Vec<(String, &'static str, Vec<Part>)>,
     numbers: BTreeMap<(String, String), u32>,
     composed: BTreeMap<(String, String), Arc<Composed>>,
     numbered: bool,
@@ -161,9 +165,34 @@ impl Linker {
         for module in source.modules() {
             let generated = module.path().starts_with(GENERATED_ROOT);
             self.add(module.path().to_owned(), source.package(), Cow::Borrowed(module.text()), generated);
+            self.place_handed(module.path());
         }
         self.numbered = false;
         self.composed.clear();
+    }
+
+    pub(crate) fn hand(&mut self, path: String, package: &'static str, parts: Vec<Part>) {
+        self.handed.retain(|(known, _, _)| *known != path);
+        self.handed.push((path.clone(), package, parts));
+        self.place_handed(&path);
+    }
+
+    fn place_handed(&mut self, path: &str) {
+        let Some((_, package, parts)) = self.handed.iter().find(|(known, _, _)| known == path) else {
+            return;
+        };
+        let package = *package;
+        let base = self
+            .sources
+            .iter()
+            .flat_map(|source| source.modules())
+            .find(|module| module.path() == path)
+            .map(|module| module.text());
+        let text = handed_text(base, parts);
+        let once = self.modules.iter().filter(|module| module.path == path).count() == 1;
+        if !once || self.text(path) != Some(text.as_str()) {
+            self.add_generated(path.to_owned(), package, text);
+        }
     }
 
     pub(crate) fn add_generated(&mut self, path: String, package: &'static str, text: String) {
@@ -400,7 +429,9 @@ impl Linker {
                 .unwrap_or(self.modules.len())
         };
         result.modules.sort_by_key(|module| order(&module.path));
-        let text = wesl::pass::link(&result.modules, Some(&result.used_items)).to_string();
+        let linked = wesl::pass::link(&result.modules, Some(&result.used_items));
+        let bindings = bound_vars(&linked);
+        let text = linked.to_string();
         let switches = switch_ids(&text);
         let mut overrides = Vec::new();
         for source in &self.modules {
@@ -419,6 +450,7 @@ impl Linker {
         let composed = Arc::new(Composed {
             module: module.to_owned(),
             text,
+            bindings,
             switches,
             overrides,
         });
@@ -455,7 +487,7 @@ impl Linker {
                 Err(_) => return false,
             }
         };
-        declares_var(&composed.text, &mangled)
+        composed.bindings.contains(&mangled)
     }
 
     pub(crate) fn reached(&self, composed: &Composed) -> Vec<(String, Declaration)> {
@@ -525,6 +557,23 @@ impl Linker {
     }
 }
 
+fn handed_text(base: Option<&str>, parts: &[Part]) -> String {
+    let mut text = base.unwrap_or_default().to_owned();
+    for &(name, part) in parts {
+        let declared = match name {
+            Some(name) => declares_struct(&text, name),
+            None => base.is_some() || text.contains(part),
+        };
+        if !declared {
+            text.push_str(part);
+            if !part.ends_with('\n') {
+                text.push('\n');
+            }
+        }
+    }
+    text
+}
+
 fn imports_name(content: &wesl::syntax::ImportContent, name: &str) -> bool {
     match content {
         wesl::syntax::ImportContent::Item(item) => {
@@ -536,7 +585,7 @@ fn imports_name(content: &wesl::syntax::ImportContent, name: &str) -> bool {
     }
 }
 
-pub(crate) fn declares_struct(text: &str, name: &str) -> bool {
+fn declares_struct(text: &str, name: &str) -> bool {
     let declaration = format!("struct {name}");
     text.match_indices(&declaration).any(|(at, _)| {
         let before = text[..at]
@@ -601,10 +650,20 @@ fn defines_function(text: &str, name: &str) -> bool {
     })
 }
 
-fn declares_var(text: &str, name: &str) -> bool {
-    text.lines().any(|line| {
-        declared_binding(line).is_some_and(|(_, _, declared, _)| declared == name)
-    })
+fn bound_vars(unit: &wesl::syntax::TranslationUnit) -> Vec<String> {
+    use wesl::syntax::{Attribute, GlobalDeclaration};
+    unit.global_declarations
+        .iter()
+        .filter_map(|declaration| {
+            let GlobalDeclaration::Declaration(item) = declaration.node() else {
+                return None;
+            };
+            item.attributes
+                .iter()
+                .any(|attribute| matches!(attribute.node(), Attribute::Binding(_)))
+                .then(|| item.ident.to_string())
+        })
+        .collect()
 }
 
 fn declared_overrides(text: &str) -> Vec<String> {

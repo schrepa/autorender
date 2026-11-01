@@ -407,6 +407,7 @@ fn passes(
         Copied::Buffer(counts),
         Copied::Buffer(args),
     );
+    cx.after(second_copy, scan_pass);
     let splat_pass = cx
         .pass("water_particles_splat")
         .after(second_copy)

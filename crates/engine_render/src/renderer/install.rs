@@ -7,7 +7,7 @@ use engine_registry::{GateId, MembersOf, Registry, SettingsEntry};
 
 use super::*;
 use crate::install::{DrawEntry, InstallCore, PartInfo};
-use crate::linker::{CORE_PACKAGE, Linker};
+use crate::linker::{CORE_PACKAGE, Linker, Part};
 use crate::machine::{Machine, OutputDecl};
 use crate::places::{Answered, Fed, checked, face_module, face_source, place_module};
 use crate::registration::{DrawAny, Generated, Installed, PartRecord, ResolvePass};
@@ -271,33 +271,12 @@ fn prefix_of(registry: &Registry, linker: &Linker, brick: engine_registry::Brick
     })
 }
 
-fn handed(linker: &mut Linker, prefix: &str, package: &'static str, texts: &[(Option<&str>, &'static str)]) {
-    let path = format!("generated::{prefix}");
-    let known = linker.text(&path).map(str::to_owned);
-    let mut text = known.clone().unwrap_or_default();
-    for &(name, part) in texts {
-        let declared = match name {
-            Some(name) => crate::linker::declares_struct(&text, name),
-            None => known.is_some() || text.contains(part),
-        };
-        if !declared {
-            text.push_str(part);
-            if !part.ends_with('\n') {
-                text.push('\n');
-            }
-        }
-    }
-    if known.as_ref() != Some(&text) {
-        linker.add_generated(path, package, text);
-    }
-}
-
-type Handed = Vec<(&'static str, &'static str, Vec<(Option<&'static str>, &'static str)>)>;
+type Handed = Vec<(&'static str, &'static str, Vec<Part>)>;
 
 fn hand_generated(registry: &Registry, linker: &mut Linker, pieces: Handed) {
     let mut handed_over: Handed = Vec::new();
     for (brick, record) in registry.iter() {
-        let texts: Vec<(Option<&'static str>, &'static str)> =
+        let texts: Vec<Part> =
             record.render_entries::<Generated>().flat_map(|entry| entry.0.iter().map(|text| (None, *text))).collect();
         if texts.is_empty() {
             continue;
@@ -315,8 +294,8 @@ fn hand_generated(registry: &Registry, linker: &mut Linker, pieces: Handed) {
             None => handed_over.push((prefix, package, piece)),
         }
     }
-    for (prefix, package, texts) in &handed_over {
-        handed(linker, prefix, *package, texts);
+    for (prefix, package, texts) in handed_over {
+        linker.hand(format!("generated::{prefix}"), package, texts);
     }
 }
 
@@ -397,6 +376,7 @@ fn install_with(device: &wgpu::Device, world: &mut World, registry: &Registry) -
     linker.add_generated(crate::shared::TARGETS_MODULE.to_owned(), CORE_PACKAGE, crate::shared::targets_source(&outputs));
     linker.add_generated(crate::shared::COMPOSITE_MODULE.to_owned(), CORE_PACKAGE, crate::shared::composite_source());
     let (pieces, placed, piece_texts) = pieces(registry, &mut linker, &mut problems);
+    hand_generated(registry, &mut linker, piece_texts);
     let resolve = registry.iter().find_map(|(_, record)| {
         let fills = record.fills().iter().any(|filled| filled.slot == TypeId::of::<crate::Resolve>());
         record.render_entries::<ResolvePass>().next().filter(|_| fills).map(|entry| (entry.0, record.package))
@@ -466,9 +446,8 @@ fn install_with(device: &wgpu::Device, world: &mut World, registry: &Registry) -
         }
         gates.push(entry.brick.and_then(|brick| registry.gate(brick, entry.record.scope)));
     }
-    let InstallCore { declared, mut linker, problems: mut declared_problems, .. } = core;
+    let InstallCore { declared, linker, problems: mut declared_problems, .. } = core;
     problems.append(&mut declared_problems);
-    hand_generated(registry, &mut linker, piece_texts);
     let fills = |package: &'static str, place: &str| {
         registry.brick(package).is_some_and(|record| record.places().any(|decl| decl.name() == place))
     };

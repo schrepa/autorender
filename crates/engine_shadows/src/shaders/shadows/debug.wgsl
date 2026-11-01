@@ -1,8 +1,8 @@
-import package::generated::pieces::shadows::piece;
-import package::generated::shadows::{DEBUG_SHOWN_CASTERS, DEBUG_SHOWN_SHADOWS};
-import package::place::debug::{DEBUG_CARDS, DEBUG_CASTS, DEBUG_KIND_CARD, DEBUG_KIND_MESH,
+import package::face::debug::{DEBUG_CARDS, DEBUG_CASTS, DEBUG_KIND_CARD, DEBUG_KIND_MESH,
     DEBUG_KIND_PLACED, DEBUG_KIND_PLACED_CARD, DEBUG_KIND_SKY, DEBUG_KIND_TERRAIN, DEBUG_OTHER,
     DEBUG_SKY, DEBUG_SOURCE_SHIFT, DebugShade, DebugTargets};
+import package::generated::pieces::shadows::piece;
+import package::generated::shadows::{DEBUG_SHOWN_CASTERS, DEBUG_SHOWN_SHADOWS};
 import package::place::shadows::{DEBUG_SHADOWED, DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON,
     DEBUG_SUN_LEVEL, DEBUG_SUN_NONE};
 

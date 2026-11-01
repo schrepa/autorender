@@ -496,7 +496,6 @@ fn install_computes(
         at,
         p::SHIFT_PREVIOUS,
         &[
-            (p::FRAME, Bind::Buffer(presented.frame)),
             (p::INFO, Bind::Buffer(presented.info)),
             (p::LOCALS_SHIFT, Bind::Buffer(presented.locals)),
         ],

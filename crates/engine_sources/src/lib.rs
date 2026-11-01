@@ -547,6 +547,7 @@ fn named(ty: &str) -> bool {
 
 fn consts_wgsl(body: &str) -> Option<String> {
     let mut wgsl = String::new();
+    let mut declared: Vec<&str> = Vec::new();
     for declaration in body.split(';') {
         let declaration = without_visibility(declaration);
         if declaration.is_empty() {
@@ -562,6 +563,14 @@ fn consts_wgsl(body: &str) -> Option<String> {
         if value.contains("::") {
             return None;
         }
+        let known = value
+            .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .filter(|word| word.starts_with(|character: char| character.is_ascii_alphabetic() || character == '_'))
+            .all(|word| declared.contains(&word));
+        if !known {
+            return None;
+        }
+        declared.push(name.trim());
         wgsl.push_str(&format!("const {}: {} = {value};\n", name.trim(), ty.trim()));
     }
     Some(wgsl)

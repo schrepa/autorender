@@ -254,6 +254,24 @@ fn refused(code: ErrorCode, path: String) -> Error {
     Error::new(code, path)
 }
 
+fn follows_of(after: &[Vec<PassId>], count: usize) -> Vec<Bits> {
+    let earlier = |pass: usize| after.get(pass).into_iter().flatten().map(|known| known.index());
+    (0..count)
+        .map(|start| {
+            let mut follows = Bits::of(count);
+            let mut open: Vec<usize> = earlier(start).collect();
+            while let Some(pass) = open.pop() {
+                if follows.contains(pass) {
+                    continue;
+                }
+                follows.insert(pass);
+                open.extend(earlier(pass));
+            }
+            follows
+        })
+        .collect()
+}
+
 impl StaticGraph {
     pub fn build(resources: Vec<ResourceEntry>, passes: Vec<Declared>) -> Result<Self, Error> {
         let width = resources.len();
@@ -292,6 +310,7 @@ impl StaticGraph {
                 ));
             }
         }
+        let follows = follows_of(&after, count);
         let mut before = vec![Bits::of(count); count];
         for (late, reader) in nodes.iter().enumerate() {
             let reads = reader.reads_only();
@@ -316,8 +335,7 @@ impl StaticGraph {
                             before[early].insert(late);
                         }
                     } else if reads.contains(resource) {
-                        let kept_after = entry.life == Life::Kept
-                            && after[early].contains(&PassId::new(late));
+                        let kept_after = entry.life == Life::Kept && follows[early].contains(late);
                         if !kept_after {
                             before[late].insert(early);
                         }

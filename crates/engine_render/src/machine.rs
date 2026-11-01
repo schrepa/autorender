@@ -410,7 +410,7 @@ impl Machine {
             if failed {
                 continue;
             }
-            let label: &'static str = Box::leak(path.into_boxed_str());
+            let label: &'static str = Box::leak(named.into_boxed_str());
             let own: Vec<(Class, Stages)> = reached
                 .iter()
                 .filter(|(_, found, _)| found.group > 0)

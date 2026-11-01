@@ -1,9 +1,9 @@
 import package::face::dither::stored;
 import package::face::instances::{
-    placed_card_debug, placed_card_pixel, placed_card_shade, placed_card_vertex
+    AffinePose, CardDebugTargets, CardVertex, SlotColor, placed_card_debug, placed_card_pixel,
+    placed_card_shade, placed_card_vertex
 };
 import package::generated::targets::{DepthViewTargets, depth_view_targets};
-import package::place::instances::{AffinePose, CardDebugTargets, CardVertex, SlotColor};
 
 @group(2) @binding(0) var<storage, read> poses: array<AffinePose>;
 @group(2) @binding(1) var<storage, read> colors: array<SlotColor>;
